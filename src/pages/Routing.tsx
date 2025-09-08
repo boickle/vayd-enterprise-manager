@@ -77,7 +77,7 @@ export default function Routing() {
   const [form, setForm] = useState<RouteRequest>({
     doctorId: '',
     startDate: new Date().toISOString().slice(0, 10),
-    endDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 13).toISOString().slice(0, 10), // +13 days = 14 inclusive
+    endDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString().slice(0, 10), // +13 days = 14 inclusive
     newAppt: { serviceMinutes: 45, address: '' }, // default 45 mins
   })
   const [loading, setLoading] = useState(false)
@@ -115,32 +115,33 @@ export default function Routing() {
 
   // ========== CLIENT SEARCH ==========
   useEffect(() => {
-    const q = clientQuery.trim()
-    latestClientQueryRef.current = q
-
+    const q = (clientQuery ?? '').trim();
+    latestClientQueryRef.current = q; // keep race guard in sync with the trimmed value
+  
     if (!q) {
-      setClientResults([])
-      setShowClientDropdown(false)
-      return
+      setClientResults([]);
+      setShowClientDropdown(false);
+      return; // no timer when empty
     }
-
+  
     const t = setTimeout(async () => {
-      setClientSearching(true)
+      setClientSearching(true);
       try {
-        const { data } = await http.get('/clients/search', { params: { lastName: q } })
+        const { data } = await http.get('/clients/search', { params: { q } }); // uses ?q=
         if (latestClientQueryRef.current === q) {
-          setClientResults(Array.isArray(data) ? data : [])
-          setShowClientDropdown(true)
+          setClientResults(Array.isArray(data) ? data : []);
+          setShowClientDropdown(true);
         }
       } catch (e) {
-        console.error('Client search failed', e)
+        console.error('Client search failed', e);
       } finally {
-        setClientSearching(false)
+        setClientSearching(false);
       }
-    }, 300)
-
-    return () => clearTimeout(t)
-  }, [clientQuery])
+    }, 300);
+  
+    return () => clearTimeout(t);
+  }, [clientQuery]);
+  
 
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
@@ -194,8 +195,8 @@ export default function Routing() {
     const t = setTimeout(async () => {
       setDoctorSearching(true);
       try {
-        // Your controller: @Get('/search') with ?lastName=
-        const { data } = await http.get(DOCTORS_SEARCH_URL, { params: { lastName: q } });
+        // Updated: backend now expects ?q=
+        const { data } = await http.get(DOCTORS_SEARCH_URL, { params: { q } });
         if (latestDoctorQueryRef.current === q) {
           setDoctorResults(Array.isArray(data) ? data : []);
           setShowDoctorDropdown(true);
@@ -206,6 +207,7 @@ export default function Routing() {
         setDoctorSearching(false);
       }
     }, 300);
+    
   
     return () => clearTimeout(t);
   }, [doctorQuery]);
@@ -275,6 +277,29 @@ export default function Routing() {
     }
   }
 
+  function isoToTime(iso?: string): string {
+    if (!iso) return '-';
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function colorForAddedDrive(seconds?: number): string {
+    if (seconds == null) return 'inherit';
+    const mins = seconds / 60;
+    if (mins < 10) return 'green';
+    if (mins <= 20) return 'orange';
+    return 'red';
+  }
+  
+  function colorForProjectedDrive(seconds?: number): string {
+    if (seconds == null) return 'inherit';
+    const mins = seconds / 60;
+    if (mins <= 90) return 'green';       // 1h30 or less
+    if (mins <= 120) return 'orange';     // 1h30–2h
+    return 'red';
+  }
+  
+
   return (
     <div className="grid" style={{ alignItems: 'start' }}>
       <div className="card">
@@ -300,59 +325,69 @@ export default function Routing() {
                 />
                 {doctorSearching && <div className="muted" style={{ marginTop: 6 }}>Searching...</div>}
                 {showDoctorDropdown && doctorResults.length > 0 && (
-                  <ul
-                    className="dropdown"
-                    style={{
-                      position: 'absolute',
-                      top: 'calc(100% + 4px)',
-                      left: 0,
-                      right: 0,
-                      background: '#fff',
-                      border: '1px solid var(--border)',
-                      borderRadius: 12,
-                      boxShadow: '0 10px 24px rgba(0,0,0,0.08)',
-                      listStyle: 'none',
-                      margin: 0,
-                      padding: 6,
-                      maxHeight: 260,
-                      overflowY: 'auto',
-                      zIndex: 20,
-                    }}
-                  >
-                    {doctorResults.map((d) => (
-                      <li
-                      key={doctorPimsIdOf(d) || String(d.id ?? doctorDisplayName(d))}
-                      onMouseDown={() => pickDoctor(d)}
-                      style={{ padding: '10px 12px', borderRadius: 10, cursor: 'pointer' }}
-                    >
-                      {doctorDisplayName(d)}
-                    </li>
-                    ))}
-                  </ul>
+                 <ul
+                 className="dropdown"
+                 style={{
+                   position: 'absolute',
+                   top: 'calc(100% + 6px)', // add a little gap below the input
+                   left: 0,
+                   right: 0,
+                   background: '#fff',      // solid white background
+                   border: '1px solid #ccc',
+                   borderRadius: 8,
+                   boxShadow: '0 6px 16px rgba(0,0,0,0.15)', // stronger separation
+                   listStyle: 'none',
+                   margin: 0,
+                   padding: 0,
+                   maxHeight: 260,
+                   overflowY: 'auto',
+                   zIndex: 1000,            // make sure it floats above other fields
+                 }}
+               >
+                 {doctorResults.map((d) => (
+                   <li
+                     key={doctorPimsIdOf(d) || String(d.id ?? doctorDisplayName(d))}
+                     onMouseDown={() => pickDoctor(d)}
+                     style={{
+                       padding: '10px 12px',
+                       borderBottom: '1px solid #eee',
+                       cursor: 'pointer',
+                     }}
+                     onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f6fbf9')}
+                     onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                   >
+                     {doctorDisplayName(d)}
+                   </li>
+                 ))}
+               </ul>
+               
                 )}
               </div>
             </Field>
+            </div>
+            {/* Dates side-by-side below doctor */}
+            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <Field label="Start Date">
+                <input
+                  className="date"
+                  type="date"
+                  value={form.startDate}
+                  onChange={(e) => onChange('startDate', e.target.value)}
+                  required
+                />
+              </Field>
+              <Field label="End Date">
+                <input
+                  className="date"
+                  type="date"
+                  value={form.endDate}
+                  onChange={(e) => onChange('endDate', e.target.value)}
+                  required
+                />
+              </Field>
+            </div>
+            
 
-            {/* Dates */}
-            <Field label="Start Date">
-              <input
-                className="date"
-                type="date"
-                value={form.startDate}
-                onChange={(e) => onChange('startDate', e.target.value)}
-                required
-              />
-            </Field>
-            <Field label="End Date">
-              <input
-                className="date"
-                type="date"
-                value={form.endDate}
-                onChange={(e) => onChange('endDate', e.target.value)}
-                required
-              />
-            </Field>
-          </div>
 
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Field label="Service minutes">
@@ -384,24 +419,26 @@ export default function Routing() {
                 {clientSearching && <div className="muted" style={{ marginTop: 6 }}>Searching...</div>}
                 {showClientDropdown && clientResults.length > 0 && (
                   <ul
-                    className="dropdown"
-                    style={{
-                      position: 'absolute',
-                      top: 'calc(100% + 4px)',
-                      left: 0,
-                      right: 0,
-                      background: '#fff',
-                      border: '1px solid var(--border)',
-                      borderRadius: 12,
-                      boxShadow: '0 10px 24px rgba(0,0,0,0.08)',
-                      listStyle: 'none',
-                      margin: 0,
-                      padding: 6,
-                      maxHeight: 260,
-                      overflowY: 'auto',
-                      zIndex: 20,
-                    }}
-                  >
+                  className="dropdown"
+                  style={{
+                    position: 'absolute',
+                    top: '100%',            // sits directly below the input
+                    marginTop: 6,           // extra spacing
+                    left: 0,
+                    right: 0,
+                    background: '#fff',     // ensure white background
+                    border: '1px solid #ccc',
+                    borderRadius: 8,
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.15)', // stronger shadow
+                    listStyle: 'none',
+                    margin: 0,
+                    padding: 0,
+                    maxHeight: 260,
+                    overflowY: 'auto',
+                    zIndex: 1000,           // make sure it floats above everything
+                  }}
+                >
+                
                     {clientResults.map((c) => (
                       <li
                         key={c.id}
@@ -431,7 +468,7 @@ export default function Routing() {
                 placeholder="123 Main St, Portland ME"
               />
             </Field>
-            <Field label="Latitude (optional)">
+            {/* <Field label="Latitude (optional)">
               <input
                 className="input"
                 type="number"
@@ -451,8 +488,8 @@ export default function Routing() {
                 onChange={(e) =>
                   onNewApptChange('lon', e.target.value ? Number(e.target.value) : undefined)
                 }
-              />
-            </Field>
+              /> */}
+            {/* </Field> */}
             <Field label="Client ID (optional)">
               <input
                 className="input"
@@ -476,10 +513,10 @@ export default function Routing() {
 
   {result && (
     <div className="grid">
-      {/* Status */}
+      {/* Status
       {result.status && (
         <div className="pill">Status: {result.status}</div>
-      )}
+      )} */}
 
       {/* Winner */}
       {result.winner && (
@@ -490,19 +527,34 @@ export default function Routing() {
           </h3>
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             <KeyValue k="Insertion Index" v={String(result.winner.insertionIndex)} />
-            <KeyValue k="Start Time" v={result.winner.suggestedStartIso} />
+            <KeyValue k="Start Time" v={isoToTime(result.winner.suggestedStartIso)} />
             <KeyValue
               k="Added Drive"
-              v={result.winner.addedDrivePretty ?? secsToPretty(result.winner.addedDriveSeconds)}
+              v={
+                <span style={{ color: colorForAddedDrive(result.winner.addedDriveSeconds) }}>
+                  {result.winner.addedDrivePretty ?? secsToPretty(result.winner.addedDriveSeconds)}
+                </span>
+              }
             />
+
             <KeyValue
-              k="Projected Drive"
-              v={result.winner.projectedDrivePretty ?? secsToPretty(result.winner.projectedDriveSeconds)}
+              k="Projected Daily Drive"
+              v={
+                <span style={{ color: colorForProjectedDrive(result.winner.projectedDriveSeconds) }}>
+                  {result.winner.projectedDrivePretty ?? secsToPretty(result.winner.projectedDriveSeconds)}
+                </span>
+              }
             />
+
             <KeyValue
               k="Current Drive"
-              v={result.winner.currentDrivePretty ?? secsToPretty(result.winner.currentDriveSeconds)}
+              v={
+                <span style={{ color: 'inherit' }}>
+                  {result.winner.currentDrivePretty ?? secsToPretty(result.winner.currentDriveSeconds)}
+                </span>
+              }
             />
+
           </div>
         </div>
       )}
@@ -550,9 +602,32 @@ export default function Routing() {
                 <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   <KeyValue k="Insertion Index" v={String(a.insertionIndex)} />
                   <KeyValue k="Start Time" v={a.suggestedStartIso} />
-                  <KeyValue k="Added Drive" v={a.addedDrivePretty ?? secsToPretty(a.addedDriveSeconds)} />
-                  <KeyValue k="Projected Drive" v={a.projectedDrivePretty ?? secsToPretty(a.projectedDriveSeconds)} />
-                  <KeyValue k="Current Drive" v={a.currentDrivePretty ?? secsToPretty(a.currentDriveSeconds)} />
+                  <KeyValue
+                    k="Added Drive"
+                    v={
+                      <span style={{ color: colorForAddedDrive(a.addedDriveSeconds) }}>
+                        {a.addedDrivePretty ?? secsToPretty(a.addedDriveSeconds)}
+                      </span>
+                    }
+                  />
+
+                  <KeyValue
+                    k="Projected Drive"
+                    v={
+                      <span style={{ color: colorForProjectedDrive(a.projectedDriveSeconds) }}>
+                        {a.projectedDrivePretty ?? secsToPretty(a.projectedDriveSeconds)}
+                      </span>
+                    }
+                  />
+
+                  <KeyValue
+                    k="Current Drive"
+                    v={
+                      <span style={{ color: 'inherit' }}>
+                        {a.currentDrivePretty ?? secsToPretty(a.currentDriveSeconds)}
+                      </span>
+                    }
+                  />
                 </div>
               </div>
             ))}
