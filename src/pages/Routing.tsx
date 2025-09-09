@@ -530,30 +530,22 @@ export default function Routing() {
             <KeyValue k="Start Time" v={isoToTime(result.winner.suggestedStartIso)} />
             <KeyValue
               k="Added Drive"
-              v={
-                <span style={{ color: colorForAddedDrive(result.winner.addedDriveSeconds) }}>
-                  {result.winner.addedDrivePretty ?? secsToPretty(result.winner.addedDriveSeconds)}
-                </span>
-              }
+              v={result.winner.addedDrivePretty ?? secsToPretty(result.winner.addedDriveSeconds)}
+              color={colorForAddedDrive(result.winner.addedDriveSeconds)}
             />
 
             <KeyValue
               k="Projected Daily Drive"
-              v={
-                <span style={{ color: colorForProjectedDrive(result.winner.projectedDriveSeconds) }}>
-                  {result.winner.projectedDrivePretty ?? secsToPretty(result.winner.projectedDriveSeconds)}
-                </span>
-              }
+              v={result.winner.projectedDrivePretty ?? secsToPretty(result.winner.projectedDriveSeconds)}
+              color={colorForProjectedDrive(result.winner.projectedDriveSeconds)}
             />
 
             <KeyValue
               k="Current Drive"
-              v={
-                <span style={{ color: 'inherit' }}>
-                  {result.winner.currentDrivePretty ?? secsToPretty(result.winner.currentDriveSeconds)}
-                </span>
-              }
+              v={result.winner.currentDrivePretty ?? secsToPretty(result.winner.currentDriveSeconds)}
+              color="inherit"
             />
+
 
           </div>
         </div>
@@ -604,30 +596,22 @@ export default function Routing() {
                   <KeyValue k="Start Time" v={a.suggestedStartIso} />
                   <KeyValue
                     k="Added Drive"
-                    v={
-                      <span style={{ color: colorForAddedDrive(a.addedDriveSeconds) }}>
-                        {a.addedDrivePretty ?? secsToPretty(a.addedDriveSeconds)}
-                      </span>
-                    }
+                    v={a.addedDrivePretty ?? secsToPretty(a.addedDriveSeconds)}
+                    color={colorForAddedDrive(a.addedDriveSeconds)}
                   />
 
                   <KeyValue
                     k="Projected Drive"
-                    v={
-                      <span style={{ color: colorForProjectedDrive(a.projectedDriveSeconds) }}>
-                        {a.projectedDrivePretty ?? secsToPretty(a.projectedDriveSeconds)}
-                      </span>
-                    }
+                    v={a.projectedDrivePretty ?? secsToPretty(a.projectedDriveSeconds)}
+                    color={colorForProjectedDrive(a.projectedDriveSeconds)}
                   />
 
                   <KeyValue
                     k="Current Drive"
-                    v={
-                      <span style={{ color: 'inherit' }}>
-                        {a.currentDrivePretty ?? secsToPretty(a.currentDriveSeconds)}
-                      </span>
-                    }
+                    v={a.currentDrivePretty ?? secsToPretty(a.currentDriveSeconds)}
+                    color="inherit"
                   />
+
                 </div>
               </div>
             ))}

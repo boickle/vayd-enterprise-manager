@@ -1,8 +1,12 @@
-export function KeyValue({k, v}:{k:string; v: string | number | undefined}) {
+export function KeyValue({
+  k,
+  v,
+  color,
+}: { k: string; v: string | number | undefined; color?: string }) {
   return (
-    <div className="row" style={{justifyContent:'space-between'}}>
-      <div className="muted">{k}</div>
-      <div><strong>{v ?? '-'}</strong></div>
+    <div className="kv">
+      <div className="kv-k">{k}</div>
+      <div className="kv-v" style={{ color }}>{v}</div>
     </div>
-  )
+  );
 }
