@@ -551,7 +551,7 @@ export default function Routing() {
         </div>
       )}
 
-      {/* Estimated Cost */}
+      {/* Estimated Cost
       {result.estimatedCost && (
         <div className="card">
           <div className="row" style={{ justifyContent: 'space-between' }}>
@@ -580,7 +580,7 @@ export default function Routing() {
             </tbody>
           </table>
         </div>
-      )}
+      )} */}
 
       {/* Alternates */}
       {Array.isArray(result.alternates) && result.alternates.length > 0 && (
@@ -593,7 +593,7 @@ export default function Routing() {
                 <h3 style={{ margin: '6px 0 8px 0' }}>Day: {a.date}</h3>
                 <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   <KeyValue k="Insertion Index" v={String(a.insertionIndex)} />
-                  <KeyValue k="Start Time" v={a.suggestedStartIso} />
+                  <KeyValue k="Start Time" v={isoToTime(result.winner.suggestedStartIso)} />
                   <KeyValue
                     k="Added Drive"
                     v={a.addedDrivePretty ?? secsToPretty(a.addedDriveSeconds)}
