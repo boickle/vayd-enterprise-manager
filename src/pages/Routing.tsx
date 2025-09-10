@@ -534,17 +534,7 @@ export default function Routing() {
 
           {/* Multi-doctor toggle & threshold */}
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'end' }}>
-            <Field label="Multi-doctor">
-              <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input
-                  type="checkbox"
-                  checked={multiDoctor}
-                  onChange={(e) => setMultiDoctor(e.target.checked)}
-                />
-                <span>Try other doctors if added drive ≤ threshold</span>
-              </label>
-            </Field>
-            {multiDoctor && (
+            {/* {multiDoctor && (
               <Field label="Max Added Drive (minutes)">
                 <input
                   className="input"
@@ -554,7 +544,7 @@ export default function Routing() {
                   onChange={(e) => setMaxAddedDriveMinutes(Math.max(1, Number(e.target.value || 20)))}
                 />
               </Field>
-            )}
+            )} */}
           </div>
 
           {/* Appt + client */}
@@ -636,6 +626,9 @@ export default function Routing() {
                 placeholder="123 Main St, Portland ME"
               />
             </Field>
+            </div>
+            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+
 
             <Field label="Emergency booking">
               <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -644,7 +637,18 @@ export default function Routing() {
                   checked={ignoreEmergencyBlocks}
                   onChange={(e) => setIgnoreEmergencyBlocks(e.target.checked)}
                 />
-                <span>Ignore reserve blocks (120/90/70/50/0 min)</span>
+                <span>Ignore reserve blocks</span>
+              </label>
+            </Field>
+
+            <Field label="Multi-doctor">
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={multiDoctor}
+                  onChange={(e) => setMultiDoctor(e.target.checked)}
+                />
+                <span>Try other doctors for best fit</span>
               </label>
             </Field>
 
