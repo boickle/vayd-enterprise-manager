@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { http } from '../api/http'
 import { Field } from '../components/Field'
 import { KeyValue } from '../components/KeyValue'
@@ -51,7 +51,11 @@ type Result = {
     name?: string
   }
   underThreshold?: boolean
-  // (server may also return `searched`, we don't rely on it here)
+  doctors?: Array<{
+    pimsId: string
+    name?: string
+    top: Winner[]
+  }>
 }
 
 type Client = {
@@ -82,9 +86,6 @@ type Doctor = {
 }
 
 // =========================
-// Constants & helpers
-// =========================
-
 const DOCTORS_SEARCH_URL = '/employees/search'
 
 // Display-friendly doc name
@@ -144,6 +145,35 @@ function formatClientAddress(c: Partial<Client>): string {
   return [line, c.zip].filter(Boolean).join(' ').trim()
 }
 
+// Stable color per doctor (hash PIMS ID → palette)
+const DOCTOR_PALETTE = [
+  '#0ea5e9', // sky-500
+  '#14b8a6', // teal-500
+  '#8b5cf6', // violet-500
+  '#f97316', // orange-500
+  '#ef4444', // red-500
+  '#22c55e', // green-500
+  '#a855f7', // purple-500
+  '#06b6d4', // cyan-500
+  '#f59e0b', // amber-500
+]
+function colorForDoctor(pimsId: string | undefined): string {
+  if (!pimsId) return '#0ea5e9'
+  let h = 0
+  for (let i = 0; i < pimsId.length; i++) h = (h * 31 + pimsId.charCodeAt(i)) >>> 0
+  return DOCTOR_PALETTE[h % DOCTOR_PALETTE.length]
+}
+
+// Tiny doctor icon
+function DoctorIcon({ color = 'white' }: { color?: string }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}>
+      <path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Z" stroke={color} strokeWidth="2" />
+      <path d="M4 21a8 8 0 0 1 16 0" stroke={color} strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 // =========================
 // Component
 // =========================
@@ -158,6 +188,8 @@ export default function Routing() {
   })
   const [multiDoctor, setMultiDoctor] = useState<boolean>(false)
   const [maxAddedDriveMinutes, setMaxAddedDriveMinutes] = useState<number>(20)
+  const [ignoreEmergencyBlocks, setIgnoreEmergencyBlocks] = useState(false);
+
 
   // -------- UX state --------
   const [loading, setLoading] = useState(false)
@@ -254,12 +286,11 @@ export default function Routing() {
     return () => document.removeEventListener('mousedown', onDocClick)
   }, [])
 
-  // When a result arrives (any-doctor) fetch that winner doctor’s name
+  // When a result arrives (any-doctor) fetch the winner doctor’s name (for the top summary)
   useEffect(() => {
     const pid = result?.selectedDoctorPimsId
     if (!pid) return
     if (doctorNames[pid]) return
-
     if (!doctorNameReqs.current[pid]) {
       doctorNameReqs.current[pid] = (async () => {
         try {
@@ -349,21 +380,24 @@ export default function Routing() {
     const endpoint = multiDoctor ? '/routing/any-doctor' : '/routing'
 
     const payload = multiDoctor
-      ? {
-          primaryDoctorPimsId: form.doctorId,
-          startDate: form.startDate,
-          numDays,
-          newAppt: form.newAppt,
-          useTraffic: false,
-          maxAddedDriveMinutes, // threshold
-        }
-      : {
-          doctorId: form.doctorId,
-          startDate: form.startDate,
-          numDays,
-          newAppt: form.newAppt,
-          useTraffic: false,
-        }
+  ? {
+      primaryDoctorPimsId: form.doctorId,
+      startDate: form.startDate,
+      numDays,
+      newAppt: form.newAppt,
+      useTraffic: false,
+      maxAddedDriveMinutes,
+      ignoreEmergencyBlocks,                   // <-- add
+    }
+  : {
+      doctorId: form.doctorId,
+      startDate: form.startDate,
+      numDays,
+      newAppt: form.newAppt,
+      useTraffic: false,
+      ignoreEmergencyBlocks,                   // <-- add
+    };
+
 
     setLoading(true)
     try {
@@ -377,13 +411,38 @@ export default function Routing() {
   }
 
   // =========================
+  // Build multi-doctor option list (flatten + sort)
+  // =========================
+
+  type MultiOption = Winner & { doctorPimsId: string; doctorName: string }
+  const allDoctorOptions: MultiOption[] = useMemo(() => {
+    if (!multiDoctor || !result?.doctors || !Array.isArray(result.doctors)) return []
+    const rows: MultiOption[] = []
+    for (const d of result.doctors) {
+      const pid = d.pimsId
+      const name = d.name || doctorNames[pid] || `Doctor ${pid}`
+      for (const w of (d.top || [])) {
+        rows.push({ ...w, doctorPimsId: pid, doctorName: name })
+      }
+    }
+    // sort by lowest added drive, tie → earliest start time → earliest date → lowest insertion idx
+    rows.sort((a, b) => {
+      if (a.addedDriveSeconds !== b.addedDriveSeconds) return a.addedDriveSeconds - b.addedDriveSeconds
+      if (a.suggestedStartSec !== b.suggestedStartSec) return a.suggestedStartSec - b.suggestedStartSec
+      if (a.date !== b.date) return a.date.localeCompare(b.date)
+      return a.insertionIndex - b.insertionIndex
+    })
+    return rows
+  }, [multiDoctor, result, doctorNames])
+
+  // =========================
   // Render
   // =========================
 
   const winnerDoctorName =
     result?.selectedDoctorPimsId
       ? doctorNames[result.selectedDoctorPimsId] ?? `Doctor ${result.selectedDoctorPimsId}`
-      : '' // single-doctor mode leaves this empty (we already show chosen doctor in input)
+      : ''
 
   return (
     <div className="grid" style={{ alignItems: 'start' }}>
@@ -578,13 +637,24 @@ export default function Routing() {
               />
             </Field>
 
-            <Field label="Client ID (optional)">
+            <Field label="Emergency booking">
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={ignoreEmergencyBlocks}
+                  onChange={(e) => setIgnoreEmergencyBlocks(e.target.checked)}
+                />
+                <span>Ignore reserve blocks (120/90/70/50/0 min)</span>
+              </label>
+            </Field>
+
+            {/* <Field label="Client ID (optional)">
               <input
                 className="input"
                 value={form.newAppt.clientId ?? ''}
                 onChange={(e) => onNewApptChange('clientId', e.target.value || undefined)}
               />
-            </Field>
+            </Field> */}
           </div>
 
           {error && <div className="danger">{error}</div>}
@@ -600,96 +670,152 @@ export default function Routing() {
         {!result && <p className="muted">Run a search to see winner and alternates here.</p>}
 
         {result && (
-          <div className="grid">
-            {/* For any-doctor responses, show winner doctor */}
-            {(multiDoctor || result.selectedDoctorPimsId || result.selectedDoctor) && (
-              <div className="pill">
-                Doctor:{' '}
-                {result.selectedDoctorPimsId
-                  ? winnerDoctorName
-                  : (result.selectedDoctor?.name ||
-                     [result.selectedDoctor?.firstName, result.selectedDoctor?.lastName].filter(Boolean).join(' ') ||
-                     form.doctorId ||
-                     '—')}
-              </div>
-            )}
+          <div className="grid" style={{ gap: 14 }}>
+            {/* Any-doctor: show ALL options across doctors sorted by added drive */}
+            {multiDoctor && allDoctorOptions.length > 0 ? (
+              <div className="grid" style={{ gridTemplateColumns: '1fr', gap: 14 }}>
+                {allDoctorOptions.map((opt, idx) => {
+                  const headerColor = colorForDoctor(opt.doctorPimsId)
+                  return (
+                    <div key={`${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${idx}`} className="card" style={{ position: 'relative', paddingTop: 44 }}>
+                      {/* Colored header bar */}
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: 10,
+                          left: 10,
+                          right: 10,
+                          height: 28,
+                          borderRadius: 10,
+                          padding: '0 12px',
+                          background: `linear-gradient(135deg, ${headerColor}, ${headerColor}cc)`,
+                          color: 'white',
+                          display: 'flex',
+                          alignItems: 'center',
+                          fontWeight: 700,
+                          letterSpacing: 0.2,
+                        }}
+                      >
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {opt.doctorName}
+                        </span>
+                        <span style={{ marginLeft: 'auto' }}>
+                          <DoctorIcon />
+                        </span>
+                      </div>
 
-            {/* Winner */}
-            {result.winner && (
-              <div className="card win">
-                <div className="pill">Winner</div>
-                <h3 style={{ margin: '6px 0 8px 0' }}>
-                  Suggested Day: {result.winner.date}
-                </h3>
-                <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <KeyValue
-                    k="Doctor"
-                    v={
-                      result.selectedDoctorPimsId
-                        ? winnerDoctorName
-                        : (result.selectedDoctor?.name ||
-                           [result.selectedDoctor?.firstName, result.selectedDoctor?.lastName].filter(Boolean).join(' ') ||
-                           form.doctorId ||
-                           '—')
-                    }
-                  />
-                  <KeyValue k="Insertion Index" v={String(result.winner.insertionIndex)} />
-                  <KeyValue k="Start Time" v={isoToTime(result.winner.suggestedStartIso)} />
-                  <KeyValue
-                    k="Added Drive"
-                    v={result.winner.addedDrivePretty ?? secsToPretty(result.winner.addedDriveSeconds)}
-                    color={colorForAddedDrive(result.winner.addedDriveSeconds)}
-                  />
-                  <KeyValue
-                    k="Projected Daily Drive"
-                    v={result.winner.projectedDrivePretty ?? secsToPretty(result.winner.projectedDriveSeconds)}
-                    color={colorForProjectedDrive(result.winner.projectedDriveSeconds)}
-                  />
-                  <KeyValue
-                    k="Current Drive"
-                    v={result.winner.currentDrivePretty ?? secsToPretty(result.winner.currentDriveSeconds)}
-                    color="inherit"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Alternates */}
-            {Array.isArray(result.alternates) && result.alternates.length > 0 && (
-              <div>
-                <h4>Alternates</h4>
-                <div className="grid">
-                  {result.alternates.map((a, idx) => (
-                    <div className="card" key={`${a.date}-${idx}`}>
-                      <div className="pill">Option</div>
-                      <h3 style={{ margin: '6px 0 8px 0' }}>Day: {a.date}</h3>
+                      <h3 style={{ margin: '6px 0 8px 0' }}>Day: {opt.date}</h3>
                       <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                        <KeyValue k="Insertion Index" v={String(a.insertionIndex)} />
-                        <KeyValue k="Start Time" v={isoToTime(a.suggestedStartIso)} />
+                        <KeyValue k="Insertion Index" v={String(opt.insertionIndex)} />
+                        <KeyValue k="Start Time" v={isoToTime(opt.suggestedStartIso)} />
                         <KeyValue
                           k="Added Drive"
-                          v={a.addedDrivePretty ?? secsToPretty(a.addedDriveSeconds)}
-                          color={colorForAddedDrive(a.addedDriveSeconds)}
+                          v={opt.addedDrivePretty ?? secsToPretty(opt.addedDriveSeconds)}
+                          color={colorForAddedDrive(opt.addedDriveSeconds)}
                         />
                         <KeyValue
                           k="Projected Drive"
-                          v={a.projectedDrivePretty ?? secsToPretty(a.projectedDriveSeconds)}
-                          color={colorForProjectedDrive(a.projectedDriveSeconds)}
+                          v={opt.projectedDrivePretty ?? secsToPretty(opt.projectedDriveSeconds)}
+                          color={colorForProjectedDrive(opt.projectedDriveSeconds)}
                         />
                         <KeyValue
                           k="Current Drive"
-                          v={a.currentDrivePretty ?? secsToPretty(a.currentDriveSeconds)}
+                          v={opt.currentDrivePretty ?? secsToPretty(opt.currentDriveSeconds)}
                           color="inherit"
                         />
                       </div>
                     </div>
-                  ))}
-                </div>
+                  )
+                })}
               </div>
+            ) : (
+              // Single-doctor (original view): Winner + Alternates
+              <>
+                {(result.selectedDoctorPimsId || result.selectedDoctor) && (
+                  <div className="pill">
+                    Doctor:{' '}
+                    {result.selectedDoctorPimsId
+                      ? winnerDoctorName
+                      : (result.selectedDoctor?.name ||
+                          [result.selectedDoctor?.firstName, result.selectedDoctor?.lastName].filter(Boolean).join(' ') ||
+                          form.doctorId ||
+                          '—')}
+                  </div>
+                )}
+
+                {result.winner && (
+                  <div className="card win">
+                    <div className="pill">Winner</div>
+                    <h3 style={{ margin: '6px 0 8px 0' }}>
+                      Suggested Day: {result.winner.date}
+                    </h3>
+                    <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      <KeyValue
+                        k="Doctor"
+                        v={
+                          result.selectedDoctorPimsId
+                            ? winnerDoctorName
+                            : (result.selectedDoctor?.name ||
+                                [result.selectedDoctor?.firstName, result.selectedDoctor?.lastName].filter(Boolean).join(' ') ||
+                                form.doctorId ||
+                                '—')
+                        }
+                      />
+                      <KeyValue k="Insertion Index" v={String(result.winner.insertionIndex)} />
+                      <KeyValue k="Start Time" v={isoToTime(result.winner.suggestedStartIso)} />
+                      <KeyValue
+                        k="Added Drive"
+                        v={result.winner.addedDrivePretty ?? secsToPretty(result.winner.addedDriveSeconds)}
+                        color={colorForAddedDrive(result.winner.addedDriveSeconds)}
+                      />
+                      <KeyValue
+                        k="Projected Daily Drive"
+                        v={result.winner.projectedDrivePretty ?? secsToPretty(result.winner.projectedDriveSeconds)}
+                        color={colorForProjectedDrive(result.winner.projectedDriveSeconds)}
+                      />
+                      <KeyValue
+                        k="Current Drive"
+                        v={result.winner.currentDrivePretty ?? secsToPretty(result.winner.currentDriveSeconds)}
+                        color="inherit"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {Array.isArray(result.alternates) && result.alternates.length > 0 && (
+                  <div className="grid" style={{ gridTemplateColumns: '1fr', gap: 14 }}>
+                    {result.alternates.map((a, idx) => (
+                      <div className="card" key={`${a.date}-${idx}`}>
+                        <div className="pill">Option</div>
+                        <h3 style={{ margin: '6px 0 8px 0' }}>Day: {a.date}</h3>
+                        <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                          <KeyValue k="Insertion Index" v={String(a.insertionIndex)} />
+                          <KeyValue k="Start Time" v={isoToTime(a.suggestedStartIso)} />
+                          <KeyValue
+                            k="Added Drive"
+                            v={a.addedDrivePretty ?? secsToPretty(a.addedDriveSeconds)}
+                            color={colorForAddedDrive(a.addedDriveSeconds)}
+                          />
+                          <KeyValue
+                            k="Projected Drive"
+                            v={a.projectedDrivePretty ?? secsToPretty(a.projectedDriveSeconds)}
+                            color={colorForProjectedDrive(a.projectedDriveSeconds)}
+                          />
+                          <KeyValue
+                            k="Current Drive"
+                            v={a.currentDrivePretty ?? secsToPretty(a.currentDriveSeconds)}
+                            color="inherit"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
 
             {/* Estimated Cost (optional) */}
-            {/* {result.estimatedCost && (
+            {/* {result?.estimatedCost && (
               <div className="card">
                 <div className="row" style={{ justifyContent: 'space-between' }}>
                   <div className="pill cost-tag">Estimated API Cost</div>
