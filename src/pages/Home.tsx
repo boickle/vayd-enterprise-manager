@@ -1,30 +1,41 @@
+// src/pages/Home.tsx
 import { Link } from 'react-router-dom'
+import type { AppPage } from '../app-pages'
+import AppTabs from '../components/AppTabs'
 
-export default function Home() {
+export default function Home({ pages = [] as AppPage[] }) {
   return (
-    <div className="hero">
-      <div>
-        <h1>Bring calm, efficient routing to your mobile vet teams.</h1>
-        <p className="muted">
-          Log in and optimize schedules with drive-time aware suggestions.
-          This tool pairs beautifully with your VAYD operations.
-        </p>
-        <div className="row" style={{gap:12, marginTop:10}}>
-          <Link to="/routing" className="btn">Open Routing</Link>
-          <a className="btn secondary" href="https://www.vetatyourdoor.com/" target="_blank" rel="noreferrer">Visit VAYD</a>
+    <div>
+      {/* Inline tabs as part of the home feel (optional; header already shows tabs) */}
+      <AppTabs pages={pages} />
+
+      <div className="hero">
+        <div>
+          <h1>Welcome back 👋</h1>
+          <p className="muted">
+            Pick a section to get started. Your access determines which tabs you see.
+          </p>
+          <div className="row" style={{ gap:12, marginTop:10 }}>
+            {pages.map(p => (
+              <Link key={p.path} to={p.path} className="btn">{p.label}</Link>
+            ))}
+          </div>
         </div>
-      </div>
-      <div className="card">
-        <div className="row" style={{gap:10, marginBottom:8}}>
-          <span className="pill">Low-stress look & feel</span>
-          <span className="pill">Friendly UI</span>
+
+        <div className="card">
+          <div className="row" style={{ gap:10, marginBottom:8 }}>
+            <span className="pill">Protected routes</span>
+            <span className="pill">Role-aware tabs</span>
+          </div>
+          <p className="muted">
+            You can tune visibility via permissions/claims on the user.
+          </p>
+          <ul>
+            <li>Secure login with bearer token</li>
+            <li>Drive-time routing tools</li>
+            <li>Scales as you add more sections</li>
+          </ul>
         </div>
-        <p className="muted">Inspired by Vet At Your Door’s brand — soft greens, rounded cards, and warm, welcoming typography.</p>
-        <ul>
-          <li>Secure login with bearer token</li>
-          <li>Protected routes</li>
-          <li>Drive-time suggestions viewer</li>
-        </ul>
       </div>
     </div>
   )
