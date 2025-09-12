@@ -110,7 +110,7 @@ label > .label {
   margin-bottom: 6px;
 }
 
-.pill {
+/* .pill {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -120,7 +120,7 @@ label > .label {
   border-radius: 999px;
   font-weight: 600;
   font-size: 12px;
-}
+} */
 
 .table { width: 100%; border-collapse: collapse; }
 .table th, .table td {

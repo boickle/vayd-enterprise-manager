@@ -13,6 +13,15 @@ export type DoctorDayAppt = {
   lat: number;
   lon: number;
   startIso?: string;
+
+  // NEW: structured address fields
+  address1?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+
+  // NEW: expected arrival time
+  expectedArrivalIso?: string;
 };
 
 export type DoctorDayResponse = {
@@ -28,7 +37,7 @@ export async function fetchDoctorDay(dateISO: string): Promise<DoctorDayResponse
   });
 
   const rows: any[] = data?.appointments ?? data ?? [];
-
+  console.log(rows)
   const appointments: DoctorDayAppt[] = rows
     .map((a) => ({
       id: a?.id,
@@ -40,6 +49,16 @@ export async function fetchDoctorDay(dateISO: string): Promise<DoctorDayResponse
       lat: a?.lat,
       lon: a?.lon,
       startIso: a?.startIso ?? a?.appointmentStart ?? a?.scheduledStartIso,
+      endIso: a?.endIso ?? a?.appointmentEnd ?? a?.scheduledEndIso,
+
+      // new structured address fields
+      address1: a?.address1 ?? undefined,
+      city: a?.city ?? undefined,
+      state: a?.state ?? undefined,
+      zip: a?.zip ?? undefined,
+
+      // new expected arrival field
+      expectedArrivalIso: a?.expectedArrivalIso ?? undefined,
     }))
     .filter((r) => typeof r.lat === 'number' && typeof r.lon === 'number');
 

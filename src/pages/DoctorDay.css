@@ -50,3 +50,35 @@
 @media (min-width: 560px) {
   .dd-links { grid-template-columns: repeat(2, minmax(180px, 1fr)); }
 }
+
+.pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    border: 1px solid transparent;
+    margin-left: 4px;
+  }
+  
+  /* Red pill */
+  .pill--danger {
+    background-color: #e53935;   /* 🔴 red fill */
+    color: #fff;
+    border-color: #e53935;
+  }
+  
+  /* Green pill */
+  .pill--success {
+    background-color: #21a179;   /* 🟢 green fill */
+    color: #fff;
+    border-color: #21a179;
+  }
+  
+  /* Neutral pill (gray) */
+  .pill--neutral {
+    background-color: #e0e0e0;   /* ⚪ gray fill */
+    color: #333;
+    border-color: #e0e0e0;
+  }
+  
