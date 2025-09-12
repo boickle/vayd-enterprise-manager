@@ -45,10 +45,37 @@ export default function DoctorDay() {
     return () => { on = false; };
   }, [date]);
 
-  const stops: Stop[] = useMemo(
-    () => appts.map((a) => ({ lat: a.lat, lon: a.lon, label: a.clientName })),
-    [appts]
-  );
+  // ---- helper: group appointments by same address (lat/lon rounded) ----
+  function keyFor(lat: number, lon: number, decimals = 6) {
+    const m = Math.pow(10, decimals);
+    const rl = Math.round(lat * m) / m;
+    const ro = Math.round(lon * m) / m;
+    return `${rl},${ro}`;
+  }
+
+  const stops: Stop[] = useMemo(() => {
+    // Map of "lat,lon" -> { lat, lon, firstLabel, count }
+    const grouped = new Map<string, { lat: number; lon: number; firstLabel: string; count: number }>();
+
+    for (const a of appts) {
+      const k = keyFor(a.lat, a.lon, 6); // 6 decimals ~ 0.11m; adjust if needed
+      const cur = grouped.get(k);
+      if (cur) {
+        cur.count += 1;
+        grouped.set(k, cur);
+      } else {
+        grouped.set(k, { lat: a.lat, lon: a.lon, firstLabel: a.clientName, count: 1 });
+      }
+    }
+
+    const deduped: Stop[] = [];
+    for (const g of grouped.values()) {
+      const label =
+        g.count > 1 ? `${g.firstLabel} (+${g.count - 1} more)` : g.firstLabel;
+      deduped.push({ lat: g.lat, lon: g.lon, label });
+    }
+    return deduped;
+  }, [appts]);
 
   const links = useMemo(
     () =>
