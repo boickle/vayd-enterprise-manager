@@ -147,16 +147,18 @@ function formatClientAddress(c: Partial<Client>): string {
 
 // Stable color per doctor (hash PIMS ID → palette)
 const DOCTOR_PALETTE = [
-  '#0ea5e9', // sky-500
-  '#14b8a6', // teal-500
-  '#8b5cf6', // violet-500
-  '#f97316', // orange-500
-  '#ef4444', // red-500
-  '#22c55e', // green-500
-  '#a855f7', // purple-500
-  '#06b6d4', // cyan-500
-  '#f59e0b', // amber-500
-]
+  '#93c5fd', // blue-300
+  '#7dd3fc', // sky-300
+  '#67e8f9', // cyan-300
+  '#5eead4', // teal-300
+  '#6ee7b7', // emerald-300
+  '#a5b4fc', // indigo-300
+  '#c4b5fd', // violet-300
+  '#d8b4fe', // purple-300
+  '#f0abfc', // fuchsia-300 (soft pink)
+  '#cbd5e1', // slate-300 (neutral)
+  '#d6d3d1', // stone-300 (neutral)
+];
 function colorForDoctor(pimsId: string | undefined): string {
   if (!pimsId) return '#0ea5e9'
   let h = 0
