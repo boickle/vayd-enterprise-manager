@@ -20,7 +20,7 @@ export default function App() {
   return (
     <div>
       <header className="navbar">
-        <div className="brand">🐾 VAYD Purrfect Tools</div>
+        <div className="brand">🐾 VAYD Scout</div>
         {/* Show tabs only when signed in */}
         {token ? (
           <AppTabs pages={pages} />
