@@ -1,5 +1,5 @@
 // src/components/AppTabs.tsx
-import { NavLink } from "react-router-dom";
+import { NavLink } from 'react-router-dom';
 
 type Page = { path: string; label: string };
 
@@ -11,9 +11,7 @@ export default function AppTabs({ pages }: { pages: Page[] }) {
           <NavLink
             key={p.path}
             to={p.path}
-            className={({ isActive }) =>
-              `app-tab${isActive ? " is-active" : ""}`
-            }
+            className={({ isActive }) => `app-tab${isActive ? ' is-active' : ''}`}
           >
             {p.label}
           </NavLink>

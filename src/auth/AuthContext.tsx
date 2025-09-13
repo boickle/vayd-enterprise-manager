@@ -1,6 +1,6 @@
 // src/auth/AuthContext.tsx
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 type AuthState = {
   accessToken: string | null;
@@ -18,10 +18,10 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 function decodeExp(token: string): number | null {
   try {
-    const [, payloadB64] = token.split(".");
-    const json = JSON.parse(atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/")));
+    const [, payloadB64] = token.split('.');
+    const json = JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')));
     // JWT exp is seconds since epoch
-    return typeof json?.exp === "number" ? json.exp : null;
+    return typeof json?.exp === 'number' ? json.exp : null;
   } catch {
     return null;
   }
@@ -30,8 +30,8 @@ function decodeExp(token: string): number | null {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const navigate = useNavigate();
   const [auth, setAuth] = useState<AuthState>(() => {
-    const a = localStorage.getItem("accessToken");
-    const r = localStorage.getItem("refreshToken");
+    const a = localStorage.getItem('accessToken');
+    const r = localStorage.getItem('refreshToken');
     return { accessToken: a, refreshToken: r };
   });
 
@@ -47,11 +47,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = () => {
     clearTimer();
     setAuth({ accessToken: null, refreshToken: null });
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("refreshToken");
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
     // broadcast to other tabs
-    localStorage.setItem("logout_broadcast", String(Date.now()));
-    navigate("/login", { replace: true });
+    localStorage.setItem('logout_broadcast', String(Date.now()));
+    navigate('/login', { replace: true });
   };
 
   // Schedule auto-logout a few seconds before exp (with skew protection)
@@ -79,16 +79,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, fireIn) as unknown as number;
   };
 
-  const setTokens: AuthContextValue["setTokens"] = ({ accessToken, refreshToken }) => {
+  const setTokens: AuthContextValue['setTokens'] = ({ accessToken, refreshToken }) => {
     setAuth({ accessToken, refreshToken: refreshToken ?? auth.refreshToken });
-    localStorage.setItem("accessToken", accessToken);
-    if (refreshToken) localStorage.setItem("refreshToken", refreshToken);
+    localStorage.setItem('accessToken', accessToken);
+    if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
     scheduleLogoutForToken(accessToken);
   };
 
-  const login: AuthContextValue["login"] = (accessToken, refreshToken) => {
+  const login: AuthContextValue['login'] = (accessToken, refreshToken) => {
     setTokens({ accessToken, refreshToken });
-    navigate("/", { replace: true });
+    navigate('/', { replace: true });
   };
 
   // Init timer on first load / token changes
@@ -101,12 +101,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Listen for cross-tab logout
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      if (e.key === "logout_broadcast") {
+      if (e.key === 'logout_broadcast') {
         logout();
       }
     };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -120,6 +120,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
 export const useAuth = () => {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 };

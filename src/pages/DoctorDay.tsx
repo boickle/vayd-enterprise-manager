@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { DateTime, Duration } from 'luxon';
+import { DateTime } from 'luxon';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
 import {
@@ -32,6 +32,62 @@ type Household = {
   patients: PatientBadge[];
 };
 
+// ---------- helpers to avoid `any` ----------
+function str(obj: unknown, key: string): string | undefined {
+  const v = (obj as Record<string, unknown> | null)?.[key];
+  return typeof v === 'string' && v.trim() ? v : undefined;
+}
+function num(obj: unknown, key: string): number | undefined {
+  const v = (obj as Record<string, unknown> | null)?.[key];
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v))) return Number(v);
+  return undefined;
+}
+function extractErrorMessage(err: unknown): string {
+  if (typeof err === 'string') return err;
+  if (err && typeof err === 'object') {
+    const e = err as { message?: string; response?: { data?: { message?: string } } };
+    return e.response?.data?.message ?? e.message ?? 'Failed to load';
+  }
+  return 'Failed to load';
+}
+
+// ---------- time helpers (robust to various payload shapes) ----------
+function getStartISO(a: DoctorDayAppt): string | undefined {
+  return str(a, 'appointmentStart') ?? str(a, 'scheduledStartIso') ?? str(a, 'startIso');
+}
+function getEndISO(a: DoctorDayAppt): string | undefined {
+  return str(a, 'appointmentEnd') ?? str(a, 'scheduledEndIso') ?? str(a, 'endIso');
+}
+
+// ---------- address formatting ----------
+function formatAddress(a: DoctorDayAppt) {
+  const address1 = str(a, 'address1');
+  const city = str(a, 'city');
+  const state = str(a, 'state');
+  const zip = str(a, 'zip');
+
+  const line = [address1, [city, state].filter(Boolean).join(', '), zip]
+    .filter(Boolean)
+    .join(', ')
+    .replace(/\s+,/g, ',');
+
+  if (line) return line;
+
+  const freeForm = str(a, 'address') ?? str(a, 'addressStr') ?? str(a, 'fullAddress');
+  if (freeForm) return freeForm;
+
+  return `${a.lat.toFixed(5)}, ${a.lon.toFixed(5)}`;
+}
+
+// ---------- misc ----------
+function keyFor(lat: number, lon: number, decimals = 6) {
+  const m = Math.pow(10, decimals);
+  const rl = Math.round(lat * m) / m;
+  const ro = Math.round(lon * m) / m;
+  return `${rl},${ro}`;
+}
+
 export default function DoctorDay() {
   const { userEmail } = useAuth() as { userEmail?: string };
   const [date, setDate] = useState<string>(() => DateTime.local().toISODate() || '');
@@ -50,72 +106,25 @@ export default function DoctorDay() {
         const resp: DoctorDayResponse = await fetchDoctorDay(date);
         if (!on) return;
         const sorted = [...resp.appointments].sort((a, b) => {
-          const ta = getStartISO(a) ? DateTime.fromISO(getStartISO(a)!).toMillis() : 0;
-          const tb = getStartISO(b) ? DateTime.fromISO(getStartISO(b)!).toMillis() : 0;
+          const sa = getStartISO(a);
+          const sb = getStartISO(b);
+          const ta = sa ? DateTime.fromISO(sa).toMillis() : 0;
+          const tb = sb ? DateTime.fromISO(sb).toMillis() : 0;
           return ta - tb;
         });
         setAppts(sorted);
         setStartDepot(resp.startDepot ?? null);
         setEndDepot(resp.endDepot ?? null);
-      } catch (e: any) {
-        if (on) setErr(e?.message || 'Failed to load');
+      } catch (e: unknown) {
+        if (on) setErr(extractErrorMessage(e));
       } finally {
         if (on) setLoading(false);
       }
     })();
-    return () => { on = false; };
+    return () => {
+      on = false;
+    };
   }, [date]);
-
-  // ---------- time helpers (robust to various payload shapes) ----------
-  function getStartISO(a: any): string | undefined {
-    return a?.appointmentStart || a?.scheduledStartIso || a?.startIso || undefined;
-  }
-  function getEndISO(a: any): string | undefined {
-    return a?.appointmentEnd || a?.scheduledEndIso || a?.endIso || undefined;
-    // derive from service mins if present
-  }
-  function getLengthMinutes(a: any): number | undefined {
-    const explicit =
-      a?.serviceMinutes ??
-      a?.mins ??
-      a?.serviceMins ??
-      a?.durationMinutes ??
-      undefined;
-    if (typeof explicit === 'number' && explicit > 0) return explicit;
-    const start = getStartISO(a);
-    const end = getEndISO(a);
-    if (start && end) {
-      const d = DateTime.fromISO(end).diff(DateTime.fromISO(start)).as('minutes');
-      if (isFinite(d) && d > 0) return Math.round(d);
-    }
-    return undefined;
-  }
-
-  // ---------- household helpers ----------
-  function keyFor(lat: number, lon: number, decimals = 6) {
-    const m = Math.pow(10, decimals);
-    const rl = Math.round(lat * m) / m;
-    const ro = Math.round(lon * m) / m;
-    return `${rl},${ro}`;
-  }
-
-  function formatAddress(a: DoctorDayAppt) {
-    const address1 = (a as any).address1?.toString().trim();
-    const city     = (a as any).city?.toString().trim();
-    const state    = (a as any).state?.toString().trim();
-    const zip      = (a as any).zip?.toString().trim();
-    const line = [address1, [city, state].filter(Boolean).join(', '), zip]
-      .filter(Boolean)
-      .join(', ')
-      .replace(/\s+,/g, ',');
-    if (line) return line;
-
-    const freeForm =
-      (a as any).address || (a as any).addressStr || (a as any).fullAddress;
-    if (typeof freeForm === 'string' && freeForm.trim()) return freeForm.trim();
-
-    return `${a.lat.toFixed(5)}, ${a.lon.toFixed(5)}`;
-  }
 
   const households: Household[] = useMemo(() => {
     const map = new Map<string, Household>();
@@ -123,13 +132,13 @@ export default function DoctorDay() {
     for (const a of appts) {
       const key = keyFor(a.lat, a.lon, 6);
 
-      // build patient row for this appt
+      // build patient row for this appt using safe string lookups
       const patientName =
-        (a as any).patientName || (a as any).petName || (a as any).animalName || 'Patient';
+        str(a, 'patientName') ?? str(a, 'petName') ?? str(a, 'animalName') ?? 'Patient';
       const badge: PatientBadge = {
         name: patientName,
-        pimsId: (a as any).patientPimsId ?? null,
-        status: (a as any).confirmStatusName ?? null,
+        pimsId: str(a, 'patientPimsId') ?? null,
+        status: str(a, 'confirmStatusName') ?? null,
         startIso: getStartISO(a) ?? null,
         endIso: getEndISO(a) ?? null,
       };
@@ -149,7 +158,7 @@ export default function DoctorDay() {
         const h = map.get(key)!;
         // dedupe by pimsId if possible, otherwise by name+start time
         const exists = h.patients.some(
-          p =>
+          (p) =>
             (badge.pimsId && p.pimsId === badge.pimsId) ||
             (!badge.pimsId && p.name === badge.name && p.startIso === badge.startIso)
         );
@@ -175,7 +184,7 @@ export default function DoctorDay() {
   // ---------- navigation ----------
   const stops: Stop[] = useMemo(
     () =>
-      households.map(h => ({
+      households.map((h) => ({
         lat: h.lat,
         lon: h.lon,
         label: h.primary.clientName,
@@ -206,14 +215,10 @@ export default function DoctorDay() {
   }
   function pillClass(status?: string | null) {
     const s = (status || '').trim().toLowerCase();
-    console.log(s.includes('pre-appt email'))
-  
     if (s.includes('pre-appt email')) return 'pill pill--danger';
     if (s.includes('client submitted pre-appt form')) return 'pill pill--success';
-  
     return 'pill pill--neutral';
   }
-  
 
   return (
     <div className="dd-section">
@@ -221,18 +226,29 @@ export default function DoctorDay() {
       <div className="card">
         <h2>My Day</h2>
         <p className="muted">
-          {userEmail ? `Signed in as ${userEmail}` : 'Signed in'} — choose a date to view your route.
+          {userEmail ? `Signed in as ${userEmail}` : 'Signed in'} — choose a date to view your
+          route.
         </p>
 
         <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <label className="muted">Date</label>
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <label className="muted" htmlFor="dd-date">
+            Date
+          </label>
+          <input id="dd-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </div>
 
         {(startDepot || endDepot) && (
           <div className="dd-meta muted">
-            {startDepot && <>Start depot: {startDepot.lat.toFixed(5)}, {startDepot.lon.toFixed(5)} · </>}
-            {endDepot && <>End depot: {endDepot.lat.toFixed(5)}, {endDepot.lon.toFixed(5)}</>}
+            {startDepot && (
+              <>
+                Start depot: {startDepot.lat.toFixed(5)}, {startDepot.lon.toFixed(5)} ·{' '}
+              </>
+            )}
+            {endDepot && (
+              <>
+                End depot: {endDepot.lat.toFixed(5)}, {endDepot.lon.toFixed(5)}
+              </>
+            )}
           </div>
         )}
       </div>
@@ -252,7 +268,9 @@ export default function DoctorDay() {
             <ul className="dd-list">
               {households.map((h, i) => {
                 const a = h.primary;
-                const clientHref = a.clientPimsId ? evetClientLink(a.clientPimsId) : undefined;
+                const clientHref = str(a, 'clientPimsId')
+                  ? evetClientLink(str(a, 'clientPimsId') as string)
+                  : undefined;
 
                 // compute a readable household duration if we have both ends
                 let lengthText: string | null = null;
@@ -268,11 +286,18 @@ export default function DoctorDay() {
                     {/* Title row with client (clickable) */}
                     <div className="dd-top">
                       {clientHref ? (
-                        <a className="dd-title link-strong" href={clientHref} target="_blank" rel="noreferrer">
+                        <a
+                          className="dd-title link-strong"
+                          href={clientHref}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
                           #{i + 1} {a.clientName}
                         </a>
                       ) : (
-                        <div className="dd-title">#{i + 1} {a.clientName}</div>
+                        <div className="dd-title">
+                          #{i + 1} {a.clientName}
+                        </div>
                       )}
                     </div>
 
@@ -305,34 +330,30 @@ export default function DoctorDay() {
                     {/* Address */}
                     <div className="dd-address muted">{h.addressDisplay}</div>
 
-                    {/* Patients list: clickable + pill per patient + their own times */}
+                    {/* Patients list: clickable + pill per patient */}
                     {h.patients.length > 0 && (
                       <div className="dd-pets">
                         <div className="dd-pets-label">Pets:</div>
                         <div className="dd-pets-chips">
                           {h.patients.map((p, idx) => {
                             const href = p.pimsId ? evetPatientLink(p.pimsId) : undefined;
-
-                            // prefer patient’s own length if available
-                            let pLen: string | null = null;
-                            if (p.startIso && p.endIso) {
-                              const mins = Math.round(
-                                DateTime.fromISO(p.endIso).diff(DateTime.fromISO(p.startIso)).as('minutes')
-                              );
-                              if (mins > 0) pLen = `${mins}m`;
-                            }
-
                             return (
                               <div key={`${p.pimsId || p.name}-${idx}`} className="chip">
                                 {href ? (
-                                  <a className="chip-name" href={href} target="_blank" rel="noreferrer">
+                                  <a
+                                    className="chip-name"
+                                    href={href}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
                                     {p.name}
                                   </a>
                                 ) : (
                                   <span className="chip-name">{p.name}</span>
                                 )}
-                                {p.status && <span className={pillClass(p.status)}>{p.status}</span>}
-                            
+                                {p.status && (
+                                  <span className={pillClass(p.status)}>{p.status}</span>
+                                )}
                               </div>
                             );
                           })}
@@ -358,7 +379,8 @@ export default function DoctorDay() {
           ) : (
             <>
               <p className="muted">
-                Your route has many stops. We split it into {links.length} segments (Google Maps allows up to 25 points per link).
+                Your route has many stops. We split it into {links.length} segments (Google Maps
+                allows up to 25 points per link).
               </p>
               <div className="dd-links">
                 {links.map((u, idx) => (
@@ -370,7 +392,8 @@ export default function DoctorDay() {
             </>
           )}
           <p className="muted" style={{ marginTop: 8 }}>
-            Tip: On iOS/Android, this opens the Google Maps app if installed; otherwise it opens in the browser.
+            Tip: On iOS/Android, this opens the Google Maps app if installed; otherwise it opens in
+            the browser.
           </p>
         </div>
       </div>

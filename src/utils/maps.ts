@@ -1,8 +1,6 @@
 // src/utils/maps.ts
 export type Stop = { lat: number; lon: number; label?: string };
 
-const MAX_POINTS_PER_LINK = 25; // Google limit: 1 origin + up to 23 waypoints + 1 destination
-
 function toLatLng(s: Stop) {
   return `${s.lat},${s.lon}`;
 }
@@ -28,10 +26,10 @@ export function buildGoogleMapsLinksForDay(
     const destination =
       hasEnd && i + maxPerLink >= inner.length ? opts!.end! : chunk[chunk.length - 1];
 
-    const waypoints =
-      chunk.filter((p) => p !== origin && p !== destination)
-           .map(toLatLng)
-           .join('|');
+    const waypoints = chunk
+      .filter((p) => p !== origin && p !== destination)
+      .map(toLatLng)
+      .join('|');
 
     const params = new URLSearchParams();
     params.set('api', '1');

@@ -37,7 +37,7 @@ export async function fetchDoctorDay(dateISO: string): Promise<DoctorDayResponse
   });
 
   const rows: any[] = data?.appointments ?? data ?? [];
-  console.log(rows)
+  console.log(rows);
   const appointments: DoctorDayAppt[] = rows
     .map((a) => ({
       id: a?.id,
