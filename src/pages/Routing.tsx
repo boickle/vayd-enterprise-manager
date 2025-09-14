@@ -20,6 +20,8 @@ type RouteRequest = {
   };
 };
 
+type Slot = 'early' | 'mid' | 'late';
+
 type Winner = {
   date: string;
   insertionIndex: number;
@@ -33,6 +35,12 @@ type Winner = {
   addedDrivePretty?: string;
   currentDrivePretty?: string;
   projectedDrivePretty?: string;
+
+  // NEW — preference metadata from backend
+  prefScore?: number;
+  slot?: Slot | null;
+  isFirstEdge?: boolean;
+  isLastEdge?: boolean;
 };
 
 type EstimatedCost = {
@@ -113,12 +121,11 @@ function doctorPimsIdOf(d: Doctor): string {
 }
 
 function secsToPretty(s?: number) {
-  if (!s && s !== 0) return '-';
+  if (s == null) return '-';
   const m = Math.round(s / 60);
   const h = Math.floor(m / 60);
   const mm = m % 60;
-  if (h > 0) return `${h}h ${mm}m`;
-  return `${mm}m`;
+  return h > 0 ? `${h}h ${mm}m` : `${mm}m`;
 }
 
 function isoToTime(iso?: string): string {
@@ -186,6 +193,46 @@ function extractErrorMessage(err: unknown): string {
   return 'Request failed';
 }
 
+function SlotChip({ slot }: { slot?: Slot | null }) {
+  if (!slot) return null;
+  const text = slot === 'early' ? 'Early' : slot === 'mid' ? 'Mid' : 'Late';
+  const bg = slot === 'early' ? '#e0f2fe' : slot === 'mid' ? '#e0ffe7' : '#fef3c7';
+  const fg = slot === 'early' ? '#0369a1' : slot === 'mid' ? '#065f46' : '#92400e';
+  return (
+    <span
+      style={{
+        background: bg,
+        color: fg,
+        padding: '2px 8px',
+        borderRadius: 999,
+        fontSize: 12,
+        fontWeight: 600,
+      }}
+    >
+      {text}
+    </span>
+  );
+}
+
+function EdgeChip({ first, last }: { first?: boolean; last?: boolean }) {
+  if (!first && !last) return null;
+  const text = first ? 'First of day' : 'Last of day';
+  return (
+    <span
+      style={{
+        background: '#eef2ff',
+        color: '#3730a3',
+        padding: '2px 8px',
+        borderRadius: 999,
+        fontSize: 12,
+        fontWeight: 600,
+      }}
+    >
+      {text}
+    </span>
+  );
+}
+
 // =========================
 // Component
 // =========================
@@ -195,10 +242,21 @@ export default function Routing() {
   const [form, setForm] = useState<RouteRequest>({
     doctorId: '',
     startDate: new Date().toISOString().slice(0, 10),
-    endDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString().slice(0, 10),
+    endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
     newAppt: { serviceMinutes: 45, address: '' },
   });
+
+  // Preferences
+  const [preferredWeekday, setPreferredWeekday] = useState<number | null>(null); // 1..7
+  const [preferredTimeOfDay, setPreferredTimeOfDay] = useState<'first' | 'middle' | 'end' | null>(
+    null
+  ); // send exactly these
+  const [edgeFirst, setEdgeFirst] = useState(false);
+  const [edgeLast, setEdgeLast] = useState(false);
+
+  // Toggles
   const [multiDoctor, setMultiDoctor] = useState(false);
+  const [useTraffic, setUseTraffic] = useState(false);
   const [maxAddedDriveMinutes] = useState(20);
   const [ignoreEmergencyBlocks, setIgnoreEmergencyBlocks] = useState(false);
 
@@ -300,8 +358,7 @@ export default function Routing() {
   // Fetch doctor name if missing
   useEffect(() => {
     const pid = result?.selectedDoctorPimsId;
-    if (!pid) return;
-    if (doctorNames[pid]) return;
+    if (!pid || doctorNames[pid]) return;
     if (!doctorNameReqs.current[pid]) {
       doctorNameReqs.current[pid] = (async () => {
         try {
@@ -393,24 +450,24 @@ export default function Routing() {
     const numDays = Math.max(1, diffDaysInclusive(form.startDate, form.endDate));
     const endpoint = multiDoctor ? '/routing/any-doctor' : '/routing';
 
+    // If both edge boxes are selected, cancel the preference.
+    const preferEdge: 'first' | 'last' | null =
+      edgeFirst && !edgeLast ? 'first' : edgeLast && !edgeFirst ? 'last' : null;
+
+    const base = {
+      startDate: form.startDate,
+      numDays,
+      newAppt: form.newAppt,
+      useTraffic,
+      ignoreEmergencyBlocks,
+      preferredWeekday,
+      preferredTimeOfDay, // 'first' | 'middle' | 'end' | null
+      preferEdge, // 'first' | 'last' | null
+    };
+
     const payload = multiDoctor
-      ? {
-          primaryDoctorPimsId: form.doctorId,
-          startDate: form.startDate,
-          numDays,
-          newAppt: form.newAppt,
-          useTraffic: false,
-          maxAddedDriveMinutes,
-          ignoreEmergencyBlocks,
-        }
-      : {
-          doctorId: form.doctorId,
-          startDate: form.startDate,
-          numDays,
-          newAppt: form.newAppt,
-          useTraffic: false,
-          ignoreEmergencyBlocks,
-        };
+      ? { primaryDoctorPimsId: form.doctorId, ...base, maxAddedDriveMinutes }
+      : { doctorId: form.doctorId, ...base };
 
     setLoading(true);
     try {
@@ -435,9 +492,7 @@ export default function Routing() {
       for (const d of result.doctors) {
         const pid = d.pimsId;
         const name = d.name || doctorNames[pid] || `Doctor ${pid}`;
-        for (const w of d.top || []) {
-          rows.push({ ...w, doctorPimsId: pid, doctorName: name });
-        }
+        for (const w of d.top || []) rows.push({ ...w, doctorPimsId: pid, doctorName: name });
       }
     } else if (result) {
       const pid = result.selectedDoctorPimsId || form.doctorId;
@@ -449,14 +504,15 @@ export default function Routing() {
           .join(' ') ||
         `Doctor ${pid}`;
       if (result.winner) rows.push({ ...result.winner, doctorPimsId: pid, doctorName: name });
-      if (result.alternates) {
-        for (const w of result.alternates) {
-          rows.push({ ...w, doctorPimsId: pid, doctorName: name });
-        }
-      }
+      if (result.alternates)
+        for (const w of result.alternates) rows.push({ ...w, doctorPimsId: pid, doctorName: name });
     }
 
+    // 🔑 Sort by preference score first (desc), then low added drive, then earlier time, then date.
     rows.sort((a, b) => {
+      const ap = a.prefScore ?? 0;
+      const bp = b.prefScore ?? 0;
+      if (bp !== ap) return bp - ap;
       if (a.addedDriveSeconds !== b.addedDriveSeconds)
         return a.addedDriveSeconds - b.addedDriveSeconds;
       if (a.suggestedStartSec !== b.suggestedStartSec)
@@ -471,6 +527,16 @@ export default function Routing() {
   // =========================
   // Render
   // =========================
+
+  const weekdayLabels: Array<{ n: number; label: string }> = [
+    { n: 1, label: 'Mon' },
+    { n: 2, label: 'Tue' },
+    { n: 3, label: 'Wed' },
+    { n: 4, label: 'Thu' },
+    { n: 5, label: 'Fri' },
+    { n: 6, label: 'Sat' },
+    { n: 7, label: 'Sun' },
+  ];
 
   return (
     <div className="grid" style={{ alignItems: 'start' }}>
@@ -677,6 +743,100 @@ export default function Routing() {
             </Field>
           </div>
 
+          {/* Preferences */}
+          <div className="card" style={{ padding: 12, background: '#f8fafc' }}>
+            <h4 style={{ margin: '4px 0 10px 0' }}>Preferences (optional)</h4>
+
+            {/* Preferred weekday */}
+            <Field label="Preferred Day of Week">
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {weekdayLabels.map(({ n, label }) => (
+                  <label key={n} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={preferredWeekday === n}
+                      onChange={() => setPreferredWeekday((cur) => (cur === n ? null : n))}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+                <label
+                  style={{ display: 'inline-flex', gap: 6, alignItems: 'center', marginLeft: 8 }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={preferredWeekday === null}
+                    onChange={() => setPreferredWeekday(null)}
+                  />
+                  <span>None</span>
+                </label>
+              </div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                Only one day can be selected. Click again to unselect.
+              </div>
+            </Field>
+
+            {/* Preferred time of day */}
+            <Field label="Preferred Time of Day">
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                {[
+                  { key: 'first', label: 'First part of day' },
+                  { key: 'middle', label: 'Middle of day' },
+                  { key: 'end', label: 'End of day' },
+                ].map(({ key, label }) => (
+                  <label key={key} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={preferredTimeOfDay === (key as 'first' | 'middle' | 'end')}
+                      onChange={() =>
+                        setPreferredTimeOfDay((cur) => (cur === key ? null : (key as any)))
+                      }
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+                <label
+                  style={{ display: 'inline-flex', gap: 6, alignItems: 'center', marginLeft: 8 }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={preferredTimeOfDay === null}
+                    onChange={() => setPreferredTimeOfDay(null)}
+                  />
+                  <span>None</span>
+                </label>
+              </div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                Only one time window can be selected. Click again to unselect.
+              </div>
+            </Field>
+
+            {/* Edge preference
+            <Field label="Edge Preference">
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={edgeFirst}
+                    onChange={(e) => setEdgeFirst(e.target.checked)}
+                  />
+                  <span>Prefer first appointment of the day</span>
+                </label>
+                <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={edgeLast}
+                    onChange={(e) => setEdgeLast(e.target.checked)}
+                  />
+                  <span>Prefer last appointment of the day</span>
+                </label>
+              </div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                Selecting both cancels the edge preference.
+              </div> */}
+            {/* </Field> */}
+          </div>
+
           {/* Toggles */}
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Field label="Emergency booking">
@@ -687,6 +847,17 @@ export default function Routing() {
                   onChange={(e) => setIgnoreEmergencyBlocks(e.target.checked)}
                 />
                 <span>Ignore reserve blocks</span>
+              </label>
+            </Field>
+
+            <Field label="Use traffic">
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={useTraffic}
+                  onChange={(e) => setUseTraffic(e.target.checked)}
+                />
+                <span>Factor live traffic (more API cost)</span>
               </label>
             </Field>
 
@@ -722,7 +893,7 @@ export default function Routing() {
                 <div
                   key={`${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${idx}`}
                   className="card"
-                  style={{ position: 'relative', paddingTop: 44 }}
+                  style={{ position: 'relative', paddingTop: 48 }}
                 >
                   <div
                     style={{
@@ -739,6 +910,7 @@ export default function Routing() {
                       alignItems: 'center',
                       fontWeight: 700,
                       letterSpacing: 0.2,
+                      gap: 10,
                     }}
                   >
                     <span
@@ -752,6 +924,18 @@ export default function Routing() {
                   </div>
 
                   <h3 style={{ margin: '6px 0 8px 0' }}>Day: {opt.date}</h3>
+
+                  {/* Pref badges */}
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
+                    <SlotChip slot={opt.slot ?? null} />
+                    <EdgeChip first={opt.isFirstEdge} last={opt.isLastEdge} />
+                    {typeof opt.prefScore === 'number' && (
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        Pref score: {opt.prefScore}
+                      </span>
+                    )}
+                  </div>
+
                   <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                     <KeyValue k="Insertion Index" v={String(opt.insertionIndex)} />
                     <KeyValue k="Start Time" v={isoToTime(opt.suggestedStartIso)} />
