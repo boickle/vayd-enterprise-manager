@@ -811,7 +811,7 @@ export default function Routing() {
               </div>
             </Field>
 
-            {/* Edge preference */}
+            {/* Edge preference
             <Field label="Edge Preference">
               <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                 <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
@@ -833,8 +833,8 @@ export default function Routing() {
               </div>
               <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
                 Selecting both cancels the edge preference.
-              </div>
-            </Field>
+              </div> */}
+            {/* </Field> */}
           </div>
 
           {/* Toggles */}
