@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { http } from '../api/http';
 import { Field } from '../components/Field';
 import { KeyValue } from '../components/KeyValue';
+import { DateTime } from 'luxon';
 
 // =========================
 // Types
@@ -58,6 +59,7 @@ type Result = {
   alternates?: Winner[];
 
   // Any-doctor extras
+  doctorPimsId?: string;
   selectedDoctorPimsId?: string;
   selectedDoctorDisplayName?: string;
   selectedDoctor?: {
@@ -357,7 +359,8 @@ export default function Routing() {
 
   // Fetch doctor name if missing
   useEffect(() => {
-    const pid = result?.selectedDoctorPimsId;
+    const pid = result?.selectedDoctorPimsId || result?.doctorPimsId;
+    console.log(result);
     if (!pid || doctorNames[pid]) return;
     if (!doctorNameReqs.current[pid]) {
       doctorNameReqs.current[pid] = (async () => {
@@ -923,7 +926,10 @@ export default function Routing() {
                     </span>
                   </div>
 
-                  <h3 style={{ margin: '6px 0 8px 0' }}>Day: {opt.date}</h3>
+                  <h3 style={{ margin: '6px 0 8px 0' }}>
+                    {DateTime.fromISO(opt.date).toFormat('cccc LL-dd-yyyy')} @{' '}
+                    {isoToTime(opt.suggestedStartIso)}
+                  </h3>
 
                   {/* Pref badges */}
                   <div style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
