@@ -10,6 +10,7 @@ import {
 } from '../api/appointments';
 import { useAuth } from '../auth/useAuth';
 import './DoctorDay.css';
+import { fetchEtas } from '../api/routing';
 
 /** Per-patient row rendered inside a household card */
 type PatientBadge = {
@@ -96,6 +97,8 @@ export default function DoctorDay() {
   const [endDepot, setEndDepot] = useState<Depot | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [etas, setEtas] = useState<Record<string, string>>({});
+  const [etaErr, setEtaErr] = useState<string | null>(null);
 
   useEffect(() => {
     let on = true;
@@ -180,6 +183,50 @@ export default function DoctorDay() {
 
     return Array.from(map.values());
   }, [appts]);
+
+  useEffect(() => {
+    let on = true;
+    (async () => {
+      setEtaErr(null);
+      setEtas({});
+      if (households.length === 0) return;
+
+      // Try to infer a doctor id from the data if you don’t have it as a prop.
+      // Adjust these lookups to match your payload shape.
+      console.log(households[0]);
+      const doctorId =
+        (households[0]?.primary as any)?.primaryProviderPimsId ||
+        (households[0]?.primary as any)?.providerPimsId ||
+        (households[0]?.primary as any)?.doctorId ||
+        '';
+
+      // Build request body in the same order you render households
+      const payload = {
+        doctorId,
+        date,
+        households: households.map((h) => ({
+          key: h.key,
+          lat: h.lat,
+          lon: h.lon,
+          startIso: h.startIso ?? null,
+          endIso: h.endIso ?? null,
+        })),
+        startDepot: startDepot ? { lat: startDepot.lat, lon: startDepot.lon } : undefined,
+        useTraffic: true,
+      };
+
+      try {
+        const { etaByKey } = await fetchEtas(payload); // auto stringifies + normalizes response
+        if (on) setEtas(etaByKey);
+      } catch (e: any) {
+        if (on) setEtaErr(e?.message ?? 'Failed to compute ETAs');
+      }
+    })();
+
+    return () => {
+      on = false;
+    };
+  }, [households, startDepot, date]);
 
   // ---------- navigation ----------
   const stops: Stop[] = useMemo(
@@ -281,6 +328,24 @@ export default function DoctorDay() {
                   if (mins > 0) lengthText = `${mins}m`;
                 }
 
+                const etaIso = etas[h.key];
+                const durationMins =
+                  h.startIso && h.endIso
+                    ? Math.max(
+                        0,
+                        Math.round(
+                          DateTime.fromISO(h.endIso)
+                            .diff(DateTime.fromISO(h.startIso))
+                            .as('minutes')
+                        )
+                      )
+                    : 0;
+
+                const etdIso =
+                  etaIso != null
+                    ? DateTime.fromISO(etaIso).plus({ minutes: durationMins }).toISO()
+                    : null;
+
                 return (
                   <li key={h.key} className="dd-item">
                     {/* Title row with client (clickable) */}
@@ -301,34 +366,51 @@ export default function DoctorDay() {
                       )}
                     </div>
 
+                    {/* Address */}
+                    <div className="dd-address muted">{h.addressDisplay}</div>
+
                     {/* Meta row: Start · End · Window */}
                     {(h.startIso || h.endIso) && (
                       <div className="dd-meta-vertical" style={{ marginTop: 6, lineHeight: 1.4 }}>
-                        {h.startIso && (
-                          <div>
-                            <strong>Start:</strong> {fmtTime(h.startIso)}
-                          </div>
-                        )}
-                        {h.endIso && (
-                          <div>
-                            <strong>End:</strong> {fmtTime(h.endIso)}
-                          </div>
-                        )}
-                        {h.startIso && (
-                          <div>
-                            <strong>Window:</strong> {windowTextFromStart(h.startIso)}
-                          </div>
-                        )}
                         {lengthText && (
                           <div className="muted">
                             <strong>Duration:</strong> {lengthText}
                           </div>
                         )}
+                        {h.startIso && (
+                          <div>
+                            <strong>Start:</strong> {fmtTime(h.startIso)} <strong>Window:</strong>{' '}
+                            {windowTextFromStart(h.startIso)}
+                          </div>
+                        )}
+                        {h.startIso && (
+                          <div>
+                            {etaIso && (
+                              <>
+                                <strong>ETA:</strong> {fmtTime(etaIso)}
+                                {etdIso && (
+                                  <>
+                                    {' '}
+                                    <strong>ETD:</strong> {fmtTime(etdIso)}
+                                  </>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
+
+                        {/* {h.endIso && (
+                          <div>
+                            <strong>End:</strong> {fmtTime(h.endIso)}
+                          </div>
+                        )} */}
+                        {/* {h.startIso && (
+                          <div>
+                            <strong>Window:</strong> {windowTextFromStart(h.startIso)}
+                          </div>
+                        )} */}
                       </div>
                     )}
-
-                    {/* Address */}
-                    <div className="dd-address muted">{h.addressDisplay}</div>
 
                     {/* Patients list: clickable + pill per patient */}
                     {h.patients.length > 0 && (

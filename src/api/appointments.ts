@@ -13,7 +13,7 @@ export type DoctorDayAppt = {
   lat: number;
   lon: number;
   startIso?: string;
-
+  appointmentType?: string;
   // NEW: structured address fields
   address1?: string;
   city?: string;
@@ -46,6 +46,7 @@ export async function fetchDoctorDay(dateISO: string): Promise<DoctorDayResponse
       patientName: a?.patientName,
       patientPimsId: a?.patientPimsId,
       confirmStatusName: a?.confirmStatusName ?? undefined,
+      appointmentType: a?.appointmentType?.name,
       lat: a?.lat,
       lon: a?.lon,
       startIso: a?.startIso ?? a?.appointmentStart ?? a?.scheduledStartIso,
