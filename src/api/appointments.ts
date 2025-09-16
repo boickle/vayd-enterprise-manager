@@ -28,6 +28,8 @@ export type DoctorDayResponse = {
   date?: string;
   startDepot?: Depot | null;
   endDepot?: Depot | null;
+  startDepotTime: any;
+  endDepotTime: any;
   appointments: DoctorDayAppt[];
 };
 
@@ -69,10 +71,14 @@ export async function fetchDoctorDay(
     }))
     .filter((r) => typeof r.lat === 'number' && typeof r.lon === 'number');
 
+  console.log(data);
+
   return {
     date: data?.date,
     startDepot: data?.startDepot ?? null,
     endDepot: data?.endDepot ?? null,
+    startDepotTime: data?.startDepotTime,
+    endDepotTime: data?.endDepotTime,
     appointments,
   };
 }

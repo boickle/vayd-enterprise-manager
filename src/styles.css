@@ -301,18 +301,8 @@ label > .label {
   font-weight: 600;
 }
 
-@keyframes pulse-red {
-  0% {
-    color: red;
-  }
-  50% {
-    color: inherit;
-  }
-  100% {
-    color: red;
-  }
-}
-
-.pulse-red {
-  animation: pulse-red 0.5s infinite ease-in-out;
+.field-red {
+  background-color: #f8d7da; /* soft red background */
+  color: #721c24; /* dark red text */
+  border: 1px solid #f5c6cb; /* matching border */
 }

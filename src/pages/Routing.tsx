@@ -753,15 +753,22 @@ export default function Routing() {
             {/* Toggles */}
             <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <Field label="Emergency booking">
-                <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <label
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'center',
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                  }}
+                  className={ignoreEmergencyBlocks ? 'field-red' : ''}
+                >
                   <input
                     type="checkbox"
                     checked={ignoreEmergencyBlocks}
                     onChange={(e) => setIgnoreEmergencyBlocks(e.target.checked)}
                   />
-                  <span className={ignoreEmergencyBlocks ? 'pulse-red' : ''}>
-                    Ignore reserve blocks
-                  </span>
+                  <span>Ignore reserve blocks</span>
                 </label>
               </Field>
 

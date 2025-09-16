@@ -100,8 +100,9 @@ function pickScheduleBounds(
   sortedAppts: DoctorDayAppt[]
 ): { start: string | null; end: string | null } {
   // Try common response shapes first
+  console.log(resp);
   const start =
-    str(resp as any, 'scheduleStartIso') ??
+    str(resp as any, 'startDepotTime') ??
     str(resp as any, 'workdayStartIso') ??
     str(resp as any, 'shiftStartIso') ??
     // nested schedule objects
@@ -110,12 +111,14 @@ function pickScheduleBounds(
     null;
 
   const end =
-    str(resp as any, 'scheduleEndIso') ??
+    str(resp as any, 'endDepotTime') ??
     str(resp as any, 'workdayEndIso') ??
     str(resp as any, 'shiftEndIso') ??
     (resp as any)?.schedule?.endIso ??
     (resp as any)?.schedule?.end ??
     null;
+
+  console.log(start, end);
 
   if (start && end) return { start, end };
 
@@ -582,7 +585,7 @@ export default function DoctorDay() {
     const effectiveShiftSec = scheduleSec ?? derivedShiftSec;
 
     // Use inter-household drive when schedule exists; else include depot legs
-    const driveUsedSec = scheduleSec != null ? interDriveSec : driveSec;
+    const driveUsedSec = driveSec;
 
     // Allow negative whitespace (overbooked/overrun)
     const whiteSec = effectiveShiftSec - householdSec - driveUsedSec;
@@ -672,7 +675,7 @@ export default function DoctorDay() {
             disabled={providersLoading}
           >
             {/* Empty = token doctor (logged-in) */}
-            <option value="">— My Schedule —</option>
+            <option value="">— My Team's Schedule —</option>
 
             {providersLoading && <option disabled>Loading providers…</option>}
 
@@ -846,19 +849,19 @@ export default function DoctorDay() {
                         )}
                         {h.startIso && (
                           <div>
-                            <strong>Start:</strong> {fmtTime(h.startIso)} <strong>Window:</strong>{' '}
-                            {windowTextFromStart(h.startIso)}
+                            <strong>Scheduled Start:</strong> {fmtTime(h.startIso)}{' '}
+                            <strong>Window:</strong> {windowTextFromStart(h.startIso)}
                           </div>
                         )}
                         {h.startIso && (
                           <div>
                             {etaIso && (
                               <>
-                                <strong>ETA:</strong> {fmtTime(etaIso)}
+                                <strong>Projected ETA:</strong> {fmtTime(etaIso)}
                                 {etdIso && (
                                   <>
                                     {' '}
-                                    <strong>ETD:</strong> {fmtTime(etdIso)}
+                                    <strong>Projected ETD:</strong> {fmtTime(etdIso)}
                                   </>
                                 )}
                               </>
