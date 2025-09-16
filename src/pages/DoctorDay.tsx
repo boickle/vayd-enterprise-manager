@@ -844,7 +844,7 @@ export default function DoctorDay() {
                       <div className="dd-meta-vertical" style={{ marginTop: 6, lineHeight: 1.4 }}>
                         {lengthText && (
                           <div className="muted">
-                            <strong>Duration:</strong> {lengthText}
+                            <strong>Scheduled Appointment Duration:</strong> {lengthText}
                           </div>
                         )}
                         {h.startIso && (
