@@ -20,7 +20,15 @@ export default function App() {
   return (
     <div>
       <header className="navbar">
-        <div className="brand">🐾 VAYD Scout</div>
+        <div className="brand">
+          <img
+            src="/final_thick_lines_cropped.jpeg"
+            alt="VAYD Scout Logo"
+            style={{ height: '40px', width: 'auto' }}
+          />
+          <span style={{ marginLeft: '8px', fontWeight: 600 }}>VAYD Scout</span>
+        </div>
+
         {/* Show tabs only when signed in */}
         {token ? (
           <AppTabs pages={pages} />

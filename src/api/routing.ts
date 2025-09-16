@@ -21,39 +21,53 @@ export type EtaRequest = {
   useTraffic?: boolean; // defaults server-side if omitted
 };
 
-// What the backend returns
-export type EtaResponse = {
-  etaIso: string[]; // same order as households[] sent
-  keys?: (string | undefined)[]; // optional echo from server
-};
+// // What the backend returns
+// export type EtaResponse = {
+//   etaIso: string[]; // same order as households[] sent
+//   keys?: (string | undefined)[]; // optional echo from server
+// };
 
-// Convenience return type from fetchEtas
-export type EtaResult = EtaResponse & {
-  /** Map of ETA by household key (only set when a key is present). */
-  etaByKey: Record<string, string>;
-};
+// // Convenience return type from fetchEtas
+// export type EtaResult = EtaResponse & {
+//   /** Map of ETA by household key (only set when a key is present). */
+//   etaByKey: Record<string, string>;
+// };
 
 /**
  * Post to /routing/eta using the required { body: JSON.stringify(payload) } shape.
  * Returns both the raw arrays and a convenient etaByKey map.
  */
+// src/api/routing.ts
+export type EtaResponse = {
+  etaIso: string[];
+  keys?: (string | undefined)[];
+  driveSeconds?: number[]; // ⬅️ NEW (optional)
+  workStartIso?: string; // ⬅️ optional (nice to have)
+};
+
+export type EtaResult = EtaResponse & { etaByKey: Record<string, string> };
+
 export async function fetchEtas(payload: EtaRequest): Promise<EtaResult> {
   const res = await http.post('/routing/eta', { body: JSON.stringify(payload) });
+  const data = (res && (res.data ?? res)) as EtaResponse;
 
-  // Some http helpers put data on res.data; others return JSON directly.
-  const data = (res && (res.data ?? res)) as EtaResponse | undefined;
-
-  const etaIso = Array.isArray(data?.etaIso) ? data!.etaIso : [];
-  const keys = Array.isArray(data?.keys) ? data!.keys : undefined;
-
+  const etaIso = Array.isArray(data?.etaIso) ? data.etaIso : [];
+  const keys = Array.isArray(data?.keys) ? data.keys : undefined;
   const etaByKey: Record<string, string> = {};
+
   payload.households.forEach((h, idx) => {
     const iso = etaIso[idx];
     const k = h.key ?? keys?.[idx];
     if (k && iso) etaByKey[k] = iso;
   });
 
-  return { etaIso, keys, etaByKey };
+  return {
+    etaIso,
+    keys,
+    etaByKey,
+    driveSeconds: data?.driveSeconds,
+    workStartIso: data?.workStartIso,
+  };
 }
 
 /* -------------------------------

@@ -290,3 +290,13 @@ label > .label {
     font-size: 13px;
   }
 }
+
+:root {
+  --ok: #1a7f37; /* green */
+  --warn: #b38600; /* yellow */
+  --bad: #c52828; /* red */
+}
+.dd-meta span b,
+.dd-meta span strong {
+  font-weight: 600;
+}

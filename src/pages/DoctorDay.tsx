@@ -11,6 +11,9 @@ import {
 import { useAuth } from '../auth/useAuth';
 import './DoctorDay.css';
 import { fetchEtas } from '../api/routing';
+import { fetchPrimaryProviders, type Provider } from '../api/employee';
+import { reverseGeocode } from '../api/geo';
+import { formatHM, colorForWhitespace, colorForHDRatio, colorForDrive } from '../utils/statsFormat';
 
 /** Per-patient row rendered inside a household card */
 type PatientBadge = {
@@ -88,6 +91,9 @@ function keyFor(lat: number, lon: number, decimals = 6) {
   const ro = Math.round(lon * m) / m;
   return `${rl},${ro}`;
 }
+function minutes(n?: number | null) {
+  return Math.round((n ?? 0) / 60);
+}
 
 export default function DoctorDay() {
   const { userEmail } = useAuth() as { userEmail?: string };
@@ -97,16 +103,65 @@ export default function DoctorDay() {
   const [endDepot, setEndDepot] = useState<Depot | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
   const [etas, setEtas] = useState<Record<string, string>>({});
   const [etaErr, setEtaErr] = useState<string | null>(null);
+  const [driveSecondsArr, setDriveSecondsArr] = useState<number[] | null>(null);
 
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string>(''); // '' = me (token)
+
+  const [startDepotAddr, setStartDepotAddr] = useState<string | null>(null);
+  const [endDepotAddr, setEndDepotAddr] = useState<string | null>(null);
+
+  // Reverse geocode depots to pretty addresses
+  useEffect(() => {
+    let on = true;
+    (async () => {
+      setStartDepotAddr(null);
+      setEndDepotAddr(null);
+      try {
+        if (startDepot) {
+          const addr = await reverseGeocode(startDepot.lat, startDepot.lon);
+          if (on) setStartDepotAddr(addr);
+        }
+        if (endDepot) {
+          const addr = await reverseGeocode(endDepot.lat, endDepot.lon);
+          if (on) setEndDepotAddr(addr);
+        }
+      } catch {
+        /* noop: fall back to lat/lon */
+      }
+    })();
+    return () => {
+      on = false;
+    };
+  }, [startDepot, endDepot]);
+
+  // Load providers once
+  useEffect(() => {
+    let on = true;
+    (async () => {
+      try {
+        const list = await fetchPrimaryProviders();
+        if (on) setProviders(list);
+      } catch {
+        // ignore silently or toast
+      }
+    })();
+    return () => {
+      on = false;
+    };
+  }, []);
+
+  // Fetch doctor's day (depends on date & selected provider)
   useEffect(() => {
     let on = true;
     (async () => {
       setLoading(true);
       setErr(null);
       try {
-        const resp: DoctorDayResponse = await fetchDoctorDay(date);
+        const resp: DoctorDayResponse = await fetchDoctorDay(date, selectedDoctorId || undefined);
         if (!on) return;
         const sorted = [...resp.appointments].sort((a, b) => {
           const sa = getStartISO(a);
@@ -118,7 +173,7 @@ export default function DoctorDay() {
         setAppts(sorted);
         setStartDepot(resp.startDepot ?? null);
         setEndDepot(resp.endDepot ?? null);
-      } catch (e: unknown) {
+      } catch (e) {
         if (on) setErr(extractErrorMessage(e));
       } finally {
         if (on) setLoading(false);
@@ -127,8 +182,9 @@ export default function DoctorDay() {
     return () => {
       on = false;
     };
-  }, [date]);
+  }, [date, selectedDoctorId]);
 
+  // Group into households (by lat/lon)
   const households: Household[] = useMemo(() => {
     const map = new Map<string, Household>();
 
@@ -166,43 +222,37 @@ export default function DoctorDay() {
             (!badge.pimsId && p.name === badge.name && p.startIso === badge.startIso)
         );
         if (!exists) h.patients.push(badge);
-        // the earliest start at this address becomes the household start
+        // earliest start becomes household start
         const hStart = h.startIso ? DateTime.fromISO(h.startIso) : null;
         const aStart = badge.startIso ? DateTime.fromISO(badge.startIso) : null;
-        if (aStart && (!hStart || aStart < hStart)) {
-          h.startIso = aStart.toISO();
-        }
-        // track latest end for the household
+        if (aStart && (!hStart || aStart < hStart)) h.startIso = aStart.toISO();
+        // latest end becomes household end
         const hEnd = h.endIso ? DateTime.fromISO(h.endIso) : null;
         const aEnd = badge.endIso ? DateTime.fromISO(badge.endIso) : null;
-        if (aEnd && (!hEnd || aEnd > hEnd)) {
-          h.endIso = aEnd.toISO();
-        }
+        if (aEnd && (!hEnd || aEnd > hEnd)) h.endIso = aEnd.toISO();
       }
     }
 
     return Array.from(map.values());
   }, [appts]);
 
+  // Fetch ETAs and (optionally) drive seconds for stats
   useEffect(() => {
     let on = true;
     (async () => {
       setEtaErr(null);
       setEtas({});
+      setDriveSecondsArr(null);
       if (households.length === 0) return;
 
-      // Try to infer a doctor id from the data if you don’t have it as a prop.
-      // Adjust these lookups to match your payload shape.
-      console.log(households[0]);
-      const doctorId =
+      const inferredDoctorId =
         (households[0]?.primary as any)?.primaryProviderPimsId ||
         (households[0]?.primary as any)?.providerPimsId ||
         (households[0]?.primary as any)?.doctorId ||
         '';
 
-      // Build request body in the same order you render households
       const payload = {
-        doctorId,
+        doctorId: selectedDoctorId || inferredDoctorId || '',
         date,
         households: households.map((h) => ({
           key: h.key,
@@ -216,8 +266,10 @@ export default function DoctorDay() {
       };
 
       try {
-        const { etaByKey } = await fetchEtas(payload); // auto stringifies + normalizes response
-        if (on) setEtas(etaByKey);
+        const result: any = await fetchEtas(payload);
+        if (!on) return;
+        setEtas(result?.etaByKey ?? {});
+        if (Array.isArray(result?.driveSeconds)) setDriveSecondsArr(result.driveSeconds);
       } catch (e: any) {
         if (on) setEtaErr(e?.message ?? 'Failed to compute ETAs');
       }
@@ -226,7 +278,7 @@ export default function DoctorDay() {
     return () => {
       on = false;
     };
-  }, [households, startDepot, date]);
+  }, [households, startDepot, date, selectedDoctorId]);
 
   // ---------- navigation ----------
   const stops: Stop[] = useMemo(
@@ -248,6 +300,180 @@ export default function DoctorDay() {
     [stops, startDepot, endDepot]
   );
 
+  // ---------- header stats ----------
+  const stats = useMemo(() => {
+    if (!households.length) {
+      return {
+        driveMin: 0,
+        householdMin: 0,
+        ratioText: '—',
+        whiteMin: 0,
+        whitePctText: '—',
+        shiftMin: 0,
+        points: 0,
+      };
+    }
+
+    // points
+    const points = appts.reduce((total, a) => {
+      const type = a?.appointmentType?.toLowerCase();
+      if (type === 'euthanasia') return total + 2;
+      if (type === 'tech appointment') return total + 0.5;
+      return total + 1;
+    }, 0);
+
+    // --- shift window: include depot edges so whitespace isn’t always 0 ---
+    const first = households[0];
+    const last = households[households.length - 1];
+
+    // duration helper
+    const durSec = (startIso?: string | null, endIso?: string | null) =>
+      startIso && endIso
+        ? Math.max(0, DateTime.fromISO(endIso).diff(DateTime.fromISO(startIso), 'seconds').seconds)
+        : 0;
+
+    // household-only service seconds (unchanged)
+    const householdSec = households.reduce((sum, h) => sum + durSec(h.startIso, h.endIso), 0);
+
+    // infer ETA for first and ETD for last
+    const firstEtaMs =
+      first?.key && etas[first.key] ? DateTime.fromISO(etas[first.key]).toMillis() : null;
+    const firstStartMs = first?.startIso ? DateTime.fromISO(first.startIso).toMillis() : null;
+    const firstAnchorMs = firstEtaMs ?? firstStartMs ?? 0;
+
+    const lastEtaMs =
+      last?.key && etas[last.key] ? DateTime.fromISO(etas[last.key]).toMillis() : null;
+    const lastDurationSec = durSec(last?.startIso ?? null, last?.endIso ?? null);
+    const lastEtdMs =
+      lastEtaMs != null
+        ? lastEtaMs + lastDurationSec * 1000
+        : last?.endIso
+          ? DateTime.fromISO(last.endIso).toMillis()
+          : null;
+
+    // fallback drive sec helper (same as earlier)
+    const fallbackDepotSec = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
+      const R = 6371000,
+        toRad = (d: number) => (d * Math.PI) / 180;
+      const dLat = toRad(b.lat - a.lat),
+        dLon = toRad(b.lon - a.lon);
+      const sLat = toRad(a.lat),
+        sLat2 = toRad(b.lat);
+      const h =
+        Math.sin(dLat / 2) ** 2 + Math.cos(sLat) * Math.cos(sLat2) * Math.sin(dLon / 2) ** 2;
+      const meters = 2 * R * Math.asin(Math.sqrt(h));
+      return Math.round(meters / 15.65); // ~35 mph
+    };
+
+    // add depot legs to the shift window
+    const startPt = startDepot ?? endDepot ?? null; // if only one depot, use it both ways
+    const endPt = endDepot ?? startDepot ?? null;
+    const firstDepotSec =
+      startPt && first ? fallbackDepotSec(startPt, { lat: first.lat, lon: first.lon }) : 0;
+    const lastDepotSec =
+      endPt && last ? fallbackDepotSec({ lat: last.lat, lon: last.lon }, endPt) : 0;
+
+    // final shift start/end
+    const shiftStartMs = Math.max(0, firstAnchorMs - firstDepotSec * 1000);
+    const shiftEndMs = Math.max(
+      shiftStartMs,
+      (lastEtdMs ?? (last?.endIso ? DateTime.fromISO(last.endIso).toMillis() : 0)) +
+        lastDepotSec * 1000
+    );
+    const shiftSec = Math.max(0, (shiftEndMs - shiftStartMs) / 1000);
+
+    // --- DRIVE SECONDS (include depots) ---
+    // helpers
+    const haversineMeters = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
+      const R = 6371000;
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      const dLat = toRad(b.lat - a.lat);
+      const dLon = toRad(b.lon - a.lon);
+      const sLat = toRad(a.lat);
+      const sLat2 = toRad(b.lat);
+      const h =
+        Math.sin(dLat / 2) ** 2 + Math.cos(sLat) * Math.cos(sLat2) * Math.sin(dLon / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(h));
+    };
+    // fallback: straight-line @ 35 mph (~15.65 m/s)
+    const fallbackDriveSec = (
+      from: { lat: number; lon: number },
+      to: { lat: number; lon: number }
+    ) => Math.round(haversineMeters(from, to) / 15.65);
+
+    let driveSec = 0;
+    let idleGapSec = 0;
+
+    if (Array.isArray(driveSecondsArr) && driveSecondsArr.length) {
+      // If your API already returned per-leg seconds, sum them.
+      driveSec = driveSecondsArr.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
+    } else {
+      // Build legs: depot->first, between households, last->depot
+      const first = households[0];
+      const last = households[households.length - 1];
+
+      // choose "some" depot for edges (round-trip if only one present)
+      const startPt = startDepot ?? endDepot ?? null;
+      const endPt = endDepot ?? startDepot ?? null;
+
+      // depot -> first
+      if (startPt && first)
+        driveSec += fallbackDriveSec(
+          { lat: startPt.lat, lon: startPt.lon },
+          { lat: first.lat, lon: first.lon }
+        );
+
+      for (let i = 1; i < households.length; i++) {
+        const prev = households[i - 1];
+        const curr = households[i];
+        const etaIso = etas[curr.key];
+        const prevEndMs = prev.endIso ? DateTime.fromISO(prev.endIso).toMillis() : null;
+
+        if (etaIso && prevEndMs != null) {
+          const etaMs = DateTime.fromISO(etaIso).toMillis();
+          const deltaSec = Math.max(0, (etaMs - prevEndMs) / 1000);
+
+          const estDrive = fallbackDriveSec(
+            { lat: prev.lat, lon: prev.lon },
+            { lat: curr.lat, lon: curr.lon }
+          );
+
+          const legDrive = Math.min(estDrive, deltaSec);
+          const idleGap = Math.max(0, deltaSec - legDrive);
+
+          driveSec += legDrive;
+          idleGapSec += idleGap; // <-- this becomes whitespace later
+        } else {
+          // no ETA: assume pure drive
+          driveSec += fallbackDriveSec(
+            { lat: prev.lat, lon: prev.lon },
+            { lat: curr.lat, lon: curr.lon }
+          );
+        }
+      }
+
+      // last -> depot
+      if (endPt && last)
+        driveSec += fallbackDriveSec(
+          { lat: last.lat, lon: last.lon },
+          { lat: endPt.lat, lon: endPt.lon }
+        );
+    }
+
+    // whitespace
+    const whiteSec = Math.max(0, shiftSec - householdSec - driveSec);
+
+    const driveMin = Math.round(driveSec / 60);
+    const householdMin = Math.round(householdSec / 60);
+    const whiteMin = Math.round(whiteSec / 60);
+    const shiftMin = Math.round(shiftSec / 60);
+
+    const ratioText = driveMin > 0 ? (householdMin / driveMin).toFixed(2) : '—';
+    const whitePctText = shiftSec > 0 ? `${Math.round((whiteSec / shiftSec) * 100)}%` : '—';
+
+    return { driveMin, householdMin, ratioText, whiteMin, whitePctText, shiftMin, points };
+  }, [households, etas, driveSecondsArr, startDepot, endDepot, appts]);
+
   // ---------- display helpers ----------
   function fmtTime(iso?: string | null) {
     if (!iso) return '';
@@ -267,14 +493,33 @@ export default function DoctorDay() {
     return 'pill pill--neutral';
   }
 
+  // Derive numerics if not already present
+  const whitePct =
+    Number.isFinite(stats.shiftMin) && stats.shiftMin > 0
+      ? (stats.whiteMin / stats.shiftMin) * 100
+      : 0;
+
+  const hdRatio =
+    Number.isFinite(stats.driveMin) && stats.driveMin > 0
+      ? stats.householdMin / stats.driveMin // H:D (Household : Drive)
+      : Infinity;
+
+  // Colors
+  const driveColor = colorForDrive(stats.driveMin);
+  const whiteColor = colorForWhitespace(whitePct);
+  const hdColor = colorForHDRatio(hdRatio);
+
+  // Optional: nice text versions
+  const ratioText = Number.isFinite(hdRatio) ? hdRatio.toFixed(2) : '∞';
+  const whitePctText = Number.isFinite(whitePct) ? `${whitePct.toFixed(0)}%` : '—';
+
   return (
     <div className="dd-section">
       {/* Header */}
       <div className="card">
         <h2>My Day</h2>
         <p className="muted">
-          {userEmail ? `Signed in as ${userEmail}` : 'Signed in'} — choose a date to view your
-          route.
+          {userEmail ? `Signed in as ${userEmail}` : 'Signed in'} — choose a date and provider.
         </p>
 
         <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -282,22 +527,71 @@ export default function DoctorDay() {
             Date
           </label>
           <input id="dd-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+
+          <label className="muted" htmlFor="dd-doctor">
+            Provider
+          </label>
+          <select
+            id="dd-doctor"
+            value={selectedDoctorId}
+            onChange={(e) => setSelectedDoctorId(e.target.value)}
+          >
+            {/* Empty value = default to logged-in doctor via token */}
+            <option value="">— My Schedule —</option>
+            {providers.map((p) => (
+              <option key={String(p.id)} value={String(p.id)}>
+                {p.name}
+              </option>
+            ))}
+          </select>
         </div>
 
         {(startDepot || endDepot) && (
-          <div className="dd-meta muted">
+          <div className="dd-meta muted" style={{ marginTop: 6 }}>
             {startDepot && (
               <>
-                Start depot: {startDepot.lat.toFixed(5)}, {startDepot.lon.toFixed(5)} ·{' '}
+                Start depot:{' '}
+                {startDepotAddr ?? `${startDepot.lat.toFixed(5)}, ${startDepot.lon.toFixed(5)}`}{' '}
+                ·{' '}
               </>
             )}
             {endDepot && (
               <>
-                End depot: {endDepot.lat.toFixed(5)}, {endDepot.lon.toFixed(5)}
+                End depot:{' '}
+                {endDepotAddr ?? `${endDepot.lat.toFixed(5)}, ${endDepot.lon.toFixed(5)}`}
               </>
             )}
           </div>
         )}
+
+        {/* Day stats */}
+        <div
+          className="dd-meta muted"
+          style={{ marginTop: 6, display: 'flex', gap: 12, flexWrap: 'wrap' }}
+        >
+          <span>
+            <strong>Points:</strong> {stats.points}
+          </span>
+
+          <span style={{ color: driveColor }}>
+            <strong>Drive:</strong> {formatHM(stats.driveMin)}
+          </span>
+
+          <span>
+            <strong>Households:</strong> {formatHM(stats.householdMin)}
+          </span>
+
+          <span style={{ color: hdColor }}>
+            <strong>H:D ratio:</strong> {ratioText}
+          </span>
+
+          <span style={{ color: whiteColor }}>
+            <strong>Whitespace:</strong> {formatHM(stats.whiteMin)}
+            {stats.shiftMin > 0 && <> ({whitePctText})</>}
+          </span>
+
+          <span className="muted">Shift: {formatHM(stats.shiftMin)}</span>
+        </div>
       </div>
 
       {/* Content grid */}
@@ -307,6 +601,7 @@ export default function DoctorDay() {
           <h3>Households ({households.length})</h3>
           {loading && <p>Loading…</p>}
           {err && <p className="error">{err}</p>}
+          {etaErr && <p className="error">{etaErr}</p>}
           {!loading && !err && households.length === 0 && (
             <p className="muted">No appointments for this date.</p>
           )}
@@ -398,32 +693,36 @@ export default function DoctorDay() {
                             )}
                           </div>
                         )}
-
-                        {/* {h.endIso && (
-                          <div>
-                            <strong>End:</strong> {fmtTime(h.endIso)}
-                          </div>
-                        )} */}
-                        {/* {h.startIso && (
-                          <div>
-                            <strong>Window:</strong> {windowTextFromStart(h.startIso)}
-                          </div>
-                        )} */}
                       </div>
                     )}
 
-                    {/* Patients list: clickable + pill per patient */}
+                    {/* Patients list: bullet list with details */}
                     {h.patients.length > 0 && (
                       <div className="dd-pets">
-                        <div className="dd-pets-label">Pets:</div>
-                        <div className="dd-pets-chips">
+                        <div className="dd-pets-label">Patients:</div>
+
+                        <ul className="dd-patients-list">
                           {h.patients.map((p, idx) => {
                             const href = p.pimsId ? evetPatientLink(p.pimsId) : undefined;
+
+                            const apptType =
+                              (p as any)?.apptTypeName ??
+                              str(h.primary, 'appointmentType') ??
+                              str(h.primary, 'appointmentTypeName') ??
+                              str(h.primary, 'serviceName') ??
+                              'Appointment';
+
+                            const apptDesc =
+                              (p as any)?.description ??
+                              str(h.primary, 'description') ??
+                              str(h.primary, 'visitReason') ??
+                              '';
+
                             return (
-                              <div key={`${p.pimsId || p.name}-${idx}`} className="chip">
+                              <li key={`${p.pimsId || p.name}-${idx}`} className="dd-patient-item">
                                 {href ? (
                                   <a
-                                    className="chip-name"
+                                    className="link-strong"
                                     href={href}
                                     target="_blank"
                                     rel="noreferrer"
@@ -431,15 +730,37 @@ export default function DoctorDay() {
                                     {p.name}
                                   </a>
                                 ) : (
-                                  <span className="chip-name">{p.name}</span>
+                                  <span>{p.name}</span>
                                 )}
-                                {p.status && (
-                                  <span className={pillClass(p.status)}>{p.status}</span>
-                                )}
-                              </div>
+
+                                <ul className="dd-patient-sublist">
+                                  <li>
+                                    <strong>{apptType}:</strong>
+                                    {apptDesc ? <> — {apptDesc}</> : null}
+                                  </li>
+                                  <li>
+                                    <strong>Status:</strong>{' '}
+                                    {p.status ? (
+                                      <span className={pillClass(p.status)}>{p.status}</span>
+                                    ) : (
+                                      '—'
+                                    )}
+                                  </li>
+                                  <li>
+                                    <strong>Records Status:</strong>{' '}
+                                    {str(h.primary, 'statusName') ? (
+                                      <span className={pillClass(str(h.primary, 'statusName'))}>
+                                        {str(h.primary, 'statusName')}
+                                      </span>
+                                    ) : (
+                                      '—'
+                                    )}
+                                  </li>
+                                </ul>
+                              </li>
                             );
                           })}
-                        </div>
+                        </ul>
                       </div>
                     )}
                   </li>

@@ -31,10 +31,14 @@ export type DoctorDayResponse = {
   appointments: DoctorDayAppt[];
 };
 
-export async function fetchDoctorDay(dateISO: string): Promise<DoctorDayResponse> {
-  const { data } = await http.get('/appointments/doctor', {
-    params: { date: dateISO },
-  });
+export async function fetchDoctorDay(
+  dateISO: string,
+  doctorId?: string // ⬅️ NEW (optional)
+): Promise<DoctorDayResponse> {
+  const params: Record<string, string> = { date: dateISO };
+  if (doctorId && String(doctorId).trim() !== '') params.doctorId = String(doctorId);
+
+  const { data } = await http.get('/appointments/doctor', { params });
 
   const rows: any[] = data?.appointments ?? data ?? [];
   console.log(rows);
@@ -57,6 +61,8 @@ export async function fetchDoctorDay(dateISO: string): Promise<DoctorDayResponse
       city: a?.city ?? undefined,
       state: a?.state ?? undefined,
       zip: a?.zip ?? undefined,
+      description: a?.description,
+      statusName: a?.statusName,
 
       // new expected arrival field
       expectedArrivalIso: a?.expectedArrivalIso ?? undefined,
