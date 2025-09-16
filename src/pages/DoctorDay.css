@@ -1,16 +1,21 @@
-/* Container tweaks */
+/* Container tweaks: full-width, stacked */
 .dd-section {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 16px;
 }
-@media (min-width: 900px) {
-  .dd-grid {
-    display: grid;
-    grid-template-columns: 1.3fr 1fr; /* list | actions */
-    gap: 16px;
-    align-items: start;
-  }
+
+/* Always stack cards vertically and stretch */
+.dd-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
+.dd-grid .card {
+  width: 100%;
+}
+
+/* (Removed the 900px two-column grid) */
 
 /* Header row */
 .dd-meta {
@@ -81,16 +86,16 @@
   gap: 8px;
 }
 .dd-links {
-  display: grid;
+  display: flex; /* use flex so buttons wrap nicely */
+  flex-wrap: wrap;
   gap: 8px;
-  grid-template-columns: 1fr;
 }
-@media (min-width: 560px) {
-  .dd-links {
-    grid-template-columns: repeat(2, minmax(180px, 1fr));
-  }
+.dd-links .btn {
+  flex: 0 0 auto;
+  min-width: 180px;
 }
 
+/* Pills */
 .pill {
   display: inline-block;
   padding: 2px 8px;

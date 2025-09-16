@@ -596,6 +596,35 @@ export default function DoctorDay() {
 
       {/* Content grid */}
       <div className="dd-grid">
+        {/* Navigate (now first) */}
+        <div className="card dd-nav">
+          <h3>Navigate</h3>
+          {links.length === 0 ? (
+            <p className="muted">Add at least two stops to generate a route.</p>
+          ) : links.length === 1 ? (
+            <a className="btn" href={links[0]} target="_blank" rel="noreferrer">
+              Open Full Day in Google Maps
+            </a>
+          ) : (
+            <>
+              <p className="muted">
+                Your route has many stops. We split it into {links.length} segments (Google Maps
+                allows up to 25 points per link).
+              </p>
+              <div className="dd-links">
+                {links.map((u, idx) => (
+                  <a key={idx} className="btn" href={u} target="_blank" rel="noreferrer">
+                    Open Segment {idx + 1}
+                  </a>
+                ))}
+              </div>
+            </>
+          )}
+          <p className="muted" style={{ marginTop: 8 }}>
+            Tip: On iOS/Android, this opens the Google Maps app if installed; otherwise it opens in
+            the browser.
+          </p>
+        </div>
         {/* Households */}
         <div className="card">
           <h3>Households ({households.length})</h3>
@@ -768,36 +797,6 @@ export default function DoctorDay() {
               })}
             </ul>
           )}
-        </div>
-
-        {/* Navigate */}
-        <div className="card dd-nav">
-          <h3>Navigate</h3>
-          {links.length === 0 ? (
-            <p className="muted">Add at least two stops to generate a route.</p>
-          ) : links.length === 1 ? (
-            <a className="btn" href={links[0]} target="_blank" rel="noreferrer">
-              Open Full Day in Google Maps
-            </a>
-          ) : (
-            <>
-              <p className="muted">
-                Your route has many stops. We split it into {links.length} segments (Google Maps
-                allows up to 25 points per link).
-              </p>
-              <div className="dd-links">
-                {links.map((u, idx) => (
-                  <a key={idx} className="btn" href={u} target="_blank" rel="noreferrer">
-                    Open Segment {idx + 1}
-                  </a>
-                ))}
-              </div>
-            </>
-          )}
-          <p className="muted" style={{ marginTop: 8 }}>
-            Tip: On iOS/Android, this opens the Google Maps app if installed; otherwise it opens in
-            the browser.
-          </p>
         </div>
       </div>
     </div>
