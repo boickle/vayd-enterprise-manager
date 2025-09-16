@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { DateTime } from 'luxon';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
@@ -113,6 +113,9 @@ export default function DoctorDay() {
 
   const [startDepotAddr, setStartDepotAddr] = useState<string | null>(null);
   const [endDepotAddr, setEndDepotAddr] = useState<string | null>(null);
+  const didInitDoctor = useRef(false);
+  const [providersLoading, setProvidersLoading] = useState(false);
+  const [providersErr, setProvidersErr] = useState<string | null>(null);
 
   // Reverse geocode depots to pretty addresses
   useEffect(() => {
@@ -141,18 +144,53 @@ export default function DoctorDay() {
   // Load providers once
   useEffect(() => {
     let on = true;
+
+    // wait until we at least know who’s logged in (auth ready)
+    if (!userEmail) return;
+
     (async () => {
+      console.log(userEmail);
+      setProvidersLoading(true);
+      setProvidersErr(null);
       try {
-        const list = await fetchPrimaryProviders();
-        if (on) setProviders(list);
-      } catch {
-        // ignore silently or toast
+        const raw = await fetchPrimaryProviders();
+
+        // normalize various shapes to an array
+        const list = Array.isArray(raw)
+          ? raw
+          : Array.isArray((raw as any)?.data)
+            ? (raw as any).data
+            : Array.isArray((raw as any)?.items)
+              ? (raw as any).items
+              : [];
+
+        if (on) setProviders(list as Provider[]);
+      } catch (e) {
+        if (on) setProvidersErr(extractErrorMessage(e));
+      } finally {
+        if (on) setProvidersLoading(false);
       }
     })();
+
     return () => {
       on = false;
     };
-  }, []);
+  }, [userEmail]);
+
+  // Try to auto-select by email once (if provider objects include email)
+  useEffect(() => {
+    if (didInitDoctor.current) return;
+    if (!providers.length) return;
+    if (!userEmail) return;
+    // @ts-expect-error: provider may or may not have email; guard with optional chaining
+    const me = providers.find(
+      (p: any) => (p?.email || '').toLowerCase() === userEmail.toLowerCase()
+    );
+    if (me?.id != null) {
+      setSelectedDoctorId(String(me.id));
+      didInitDoctor.current = true;
+    }
+  }, [providers, userEmail]);
 
   // Fetch doctor's day (depends on date & selected provider)
   useEffect(() => {
@@ -173,6 +211,45 @@ export default function DoctorDay() {
         setAppts(sorted);
         setStartDepot(resp.startDepot ?? null);
         setEndDepot(resp.endDepot ?? null);
+        // Ensure the inferred doctor appears in the dropdown even if provider fetch fails.
+        const firstAppt = sorted[0];
+        const inferredId =
+          (firstAppt as any)?.primaryProviderPimsId ??
+          (firstAppt as any)?.providerPimsId ??
+          (firstAppt as any)?.doctorId ??
+          null;
+
+        const inferredName =
+          (firstAppt as any)?.providerName ??
+          (firstAppt as any)?.doctorName ??
+          (firstAppt as any)?.primaryProviderName ??
+          'My Schedule';
+
+        if (inferredId != null) {
+          setProviders((prev) => {
+            const exists = prev.some((p) => String(p.id) === String(inferredId));
+            return exists
+              ? prev
+              : [...prev, { id: inferredId, name: inferredName } as any as Provider];
+          });
+        }
+        if (!didInitDoctor.current && !selectedDoctorId) {
+          const firstAppt = sorted[0];
+          const inferredId =
+            (firstAppt as any)?.primaryProviderPimsId ??
+            (firstAppt as any)?.providerPimsId ??
+            (firstAppt as any)?.doctorId ??
+            null;
+
+          if (inferredId != null && providers.length) {
+            // If your providers use the same id namespace, this will select the matching provider.
+            const match = providers.find((p) => String(p.id) === String(inferredId));
+            if (match) {
+              setSelectedDoctorId(String(match.id));
+              didInitDoctor.current = true;
+            }
+          }
+        }
       } catch (e) {
         if (on) setErr(extractErrorMessage(e));
       } finally {
@@ -540,15 +617,24 @@ export default function DoctorDay() {
             id="dd-doctor"
             value={selectedDoctorId}
             onChange={(e) => setSelectedDoctorId(e.target.value)}
+            disabled={providersLoading}
           >
-            {/* Empty value = default to logged-in doctor via token */}
+            {/* Empty = token doctor (logged-in) */}
             <option value="">— My Schedule —</option>
+
+            {providersLoading && <option disabled>Loading providers…</option>}
+
             {providers.map((p) => (
               <option key={String(p.id)} value={String(p.id)}>
                 {p.name}
               </option>
             ))}
           </select>
+          {providersErr && (
+            <div className="error" style={{ marginTop: 4 }}>
+              {providersErr}
+            </div>
+          )}
         </div>
 
         {(startDepot || endDepot) && (
