@@ -182,7 +182,6 @@ export default function DoctorDay() {
     if (didInitDoctor.current) return;
     if (!providers.length) return;
     if (!userEmail) return;
-    // @ts-expect-error: provider may or may not have email; guard with optional chaining
     const me = providers.find(
       (p: any) => (p?.email || '').toLowerCase() === userEmail.toLowerCase()
     );
