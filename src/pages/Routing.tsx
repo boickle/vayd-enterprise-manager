@@ -750,6 +750,33 @@ export default function Routing() {
           <div className="card" style={{ padding: 12, background: '#f8fafc' }}>
             <h4 style={{ margin: '4px 0 10px 0' }}>Preferences (optional)</h4>
 
+            {/* Toggles */}
+            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <Field label="Emergency booking">
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={ignoreEmergencyBlocks}
+                    onChange={(e) => setIgnoreEmergencyBlocks(e.target.checked)}
+                  />
+                  <span className={ignoreEmergencyBlocks ? 'pulse-red' : ''}>
+                    Ignore reserve blocks
+                  </span>
+                </label>
+              </Field>
+
+              <Field label="Multi-doctor">
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={multiDoctor}
+                    onChange={(e) => setMultiDoctor(e.target.checked)}
+                  />
+                  <span>Try other doctors for best fit</span>
+                </label>
+              </Field>
+            </div>
+
             {/* Preferred weekday */}
             <Field label="Preferred Day of Week">
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -838,42 +865,6 @@ export default function Routing() {
                 Selecting both cancels the edge preference.
               </div> */}
             {/* </Field> */}
-          </div>
-
-          {/* Toggles */}
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Field label="Emergency booking">
-              <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input
-                  type="checkbox"
-                  checked={ignoreEmergencyBlocks}
-                  onChange={(e) => setIgnoreEmergencyBlocks(e.target.checked)}
-                />
-                <span>Ignore reserve blocks</span>
-              </label>
-            </Field>
-
-            <Field label="Use traffic">
-              <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input
-                  type="checkbox"
-                  checked={useTraffic}
-                  onChange={(e) => setUseTraffic(e.target.checked)}
-                />
-                <span>Factor live traffic (more API cost)</span>
-              </label>
-            </Field>
-
-            <Field label="Multi-doctor">
-              <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input
-                  type="checkbox"
-                  checked={multiDoctor}
-                  onChange={(e) => setMultiDoctor(e.target.checked)}
-                />
-                <span>Try other doctors for best fit</span>
-              </label>
-            </Field>
           </div>
 
           {error && <div className="danger">{error}</div>}

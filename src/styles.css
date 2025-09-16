@@ -300,3 +300,19 @@ label > .label {
 .dd-meta span strong {
   font-weight: 600;
 }
+
+@keyframes pulse-red {
+  0% {
+    color: red;
+  }
+  50% {
+    color: inherit;
+  }
+  100% {
+    color: red;
+  }
+}
+
+.pulse-red {
+  animation: pulse-red 0.5s infinite ease-in-out;
+}

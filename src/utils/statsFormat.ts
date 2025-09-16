@@ -8,15 +8,15 @@ export const formatHM = (mins: number) => {
 
 export const colorForWhitespace = (pct: number) => {
   if (!Number.isFinite(pct)) return undefined;
-  if (pct > 95) return 'var(--ok)'; // green
-  if (pct >= 85) return 'var(--warn)'; // yellow
+  if (pct <= 5) return 'var(--ok)'; // green
+  if (pct <= 15) return 'orange'; // yellow
   return 'var(--bad)'; // red
 };
 
 export const colorForHDRatio = (ratio: number) => {
   if (!Number.isFinite(ratio)) return undefined;
   if (ratio >= 4) return 'var(--ok)'; // green
-  if (ratio >= 3) return 'var(--warn)'; // yellow
+  if (ratio >= 3) return 'orange'; // yellow
   return 'var(--bad)'; // red
 };
 
