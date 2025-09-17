@@ -2,6 +2,7 @@
 import Routing from './pages/Routing';
 import DoctorDay from './pages/DoctorDay';
 import CreateUser from './pages/CreateUser';
+import PaymentsAnalyticsPage from './pages/PaymentAnalytics';
 
 export type AppPage = {
   path: string;
@@ -20,6 +21,12 @@ export function getAccessiblePages(abilities?: string[]): AppPage[] {
       label: 'Create User',
       element: <CreateUser />,
       permission: 'canManageUsers',
+    },
+    {
+      path: '/analytics/payments',
+      label: 'Payments Analytics',
+      element: <PaymentsAnalyticsPage />,
+      permission: 'canSeePaymentsAnalytics', // <-- add a permission key if you want to gate it
     },
   ];
 
