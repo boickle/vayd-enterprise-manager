@@ -157,6 +157,8 @@ export default function DoctorDay() {
   const [providersErr, setProvidersErr] = useState<string | null>(null);
   const [schedStartIso, setSchedStartIso] = useState<string | null>(null);
   const [schedEndIso, setSchedEndIso] = useState<string | null>(null);
+  const [backToDepotSec, setBackToDepotSec] = useState<number | null>(null);
+  const [backToDepotIso, setBackToDepotIso] = useState<string | null>(null);
 
   // Reverse geocode depots to pretty addresses
   useEffect(() => {
@@ -390,8 +392,16 @@ export default function DoctorDay() {
         if (!on) return;
         setEtas(result?.etaByKey ?? {});
         if (Array.isArray(result?.driveSeconds)) setDriveSecondsArr(result.driveSeconds);
+        setBackToDepotSec(
+          typeof result?.backToDepotSec === 'number' ? result.backToDepotSec : null
+        );
+        setBackToDepotIso(result?.backToDepotIso ?? null);
       } catch (e: any) {
-        if (on) setEtaErr(e?.message ?? 'Failed to compute ETAs');
+        if (on) {
+          setEtaErr(e?.message ?? 'Failed to compute ETAs');
+          setBackToDepotSec(null);
+          setBackToDepotIso(null);
+        }
       }
     })();
 
@@ -438,7 +448,9 @@ export default function DoctorDay() {
     const points = appts.reduce((total, a) => {
       const type = a?.appointmentType?.toLowerCase();
       if (type === 'euthanasia') return total + 2;
-      if (type === 'tech appointment') return total + 0.5;
+      if (type?.toLowerCase().includes('tech appointment')) {
+        return total + 0.5;
+      }
       return total + 1;
     }, 0);
 
@@ -493,9 +505,10 @@ export default function DoctorDay() {
           )
         : 0;
     const driveBackSec =
-      endPt && last
+      (typeof backToDepotSec === 'number' ? backToDepotSec : undefined) ??
+      (endPt && last
         ? fallbackDepotSec({ lat: last.lat, lon: last.lon }, { lat: endPt.lat, lon: endPt.lon })
-        : 0;
+        : 0);
 
     // final shift span (derived)
     const shiftStartMs = Math.max(0, firstArriveMs - driveToFirstSec * 1000);
@@ -554,11 +567,7 @@ export default function DoctorDay() {
 
     // last -> depot
     if (endPt && households.length) {
-      const lastH = households[households.length - 1];
-      driveSec += fallbackDriveSec(
-        { lat: lastH.lat, lon: lastH.lon },
-        { lat: endPt.lat, lon: endPt.lon }
-      );
+      driveSec += driveBackSec; // use backend-sec if available, fallback otherwise
     }
 
     // early arrival before first start (if ETA is earlier)
@@ -569,6 +578,12 @@ export default function DoctorDay() {
         idleSec += (firstStartMs2 - firstEtaMs) / 1000;
       }
     }
+
+    const backToDepotIsoFinal =
+      backToDepotIso ??
+      (Number.isFinite(shiftEndMs) && shiftEndMs > 0
+        ? DateTime.fromMillis(shiftEndMs).toISO()
+        : null);
 
     // --- compute SHIFT based on schedule when available ---
     const scheduleSec =
@@ -599,16 +614,26 @@ export default function DoctorDay() {
     const whitePctText =
       effectiveShiftSec > 0 ? `${Math.round((whiteSec / effectiveShiftSec) * 100)}%` : '—';
 
-    return { driveMin, householdMin, ratioText, whiteMin, whitePctText, shiftMin, points };
+    return {
+      driveMin,
+      householdMin,
+      ratioText,
+      whiteMin,
+      whitePctText,
+      shiftMin,
+      points,
+      backToDepotIso: backToDepotIsoFinal,
+    };
   }, [
     households,
+    appts,
     etas,
-    // driveSecondsArr,
     startDepot,
     endDepot,
-    appts,
-    schedStartIso, // <-- include schedule deps so stats refresh when schedule changes
-    schedEndIso, // <--
+    backToDepotSec,
+    backToDepotIso,
+    schedStartIso,
+    schedEndIso,
   ]);
 
   // ---------- display helpers ----------
@@ -737,6 +762,9 @@ export default function DoctorDay() {
           </span>
 
           <span className="muted">Shift: {formatHM(stats.shiftMin)}</span>
+          <span>
+            <strong>Back to depot:</strong> {fmtTime(stats.backToDepotIso) || '—'}
+          </span>
         </div>
       </div>
 

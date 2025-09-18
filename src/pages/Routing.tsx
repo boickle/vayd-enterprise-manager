@@ -884,7 +884,10 @@ export default function Routing() {
       {/* ------- Results ------- */}
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Results</h3>
+
         {!result && <p className="muted">Run a search to see winner and alternates here.</p>}
+
+        {result && displayOptions.length === 0 && <p>no results found</p>}
 
         {result && displayOptions.length > 0 && (
           <div className="grid" style={{ gap: 14 }}>
@@ -929,7 +932,6 @@ export default function Routing() {
                     {isoToTime(opt.suggestedStartIso)}
                   </h3>
 
-                  {/* Pref badges */}
                   <div style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
                     <SlotChip slot={opt.slot ?? null} />
                     <EdgeChip first={opt.isFirstEdge} last={opt.isLastEdge} />
