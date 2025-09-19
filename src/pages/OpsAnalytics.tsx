@@ -36,14 +36,18 @@ import {
 } from 'recharts';
 import { useAuth } from '../auth/useAuth';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
-
-// You will need to implement this API on your backend similar to fetchPaymentsAnalytics
-// and add a thin client wrapper here. See the type and expected response below.
-import { fetchOpsStatsAnalytics, type OpsStatPoint } from '../api/opsStats';
-
-// If you want to prototype without backend first, you can export a mock below
+// revenue helpers (match your current api file)
+import {
+  fetchOpsStatsAnalytics,
+  type OpsStatPoint,
+  fetchRevenueForDay,
+  fetchRevenueTotalForDay,
+  fetchRevenueByDoctorForDay,
+  type DoctorRevenueRow,
+} from '../api/opsStats'; // If you want to prototype without backend first, you can export a mock below
 // and temporarily swap the import to `fetchOpsStatsAnalyticsMock`.
 // import { fetchOpsStatsAnalyticsMock as fetchOpsStatsAnalytics } from '../api/opsStats.mock';
+import { Backdrop, CircularProgress } from '@mui/material';
 
 dayjs.extend(utc);
 
@@ -78,6 +82,12 @@ function daysBetween(a: Dayjs, b: Dayjs) {
   return Math.max(1, b.startOf('day').diff(a.startOf('day'), 'day') + 1);
 }
 
+function fmtUSD(n: number) {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(
+    Number(n) || 0
+  );
+}
+
 const now = dayjs();
 const PRESETS: Record<string, () => DateRange> = {
   '7D': () => ({ from: now.startOf('day').subtract(6, 'day'), to: now.startOf('day') }),
@@ -103,6 +113,50 @@ export default function OpsAnalyticsPage() {
   const [smoothWindow, setSmoothWindow] = useState<number>(7); // 1 = off
   const [normalize, setNormalize] = useState<boolean>(false);
   const [ignoreZeros, setIgnoreZeros] = useState<boolean>(true); // treat zeros as gaps
+  const [revenueDate, setRevenueDate] = useState<string>(toISODate(range.to));
+  const [revenueRows, setRevenueRows] = useState<DoctorRevenueRow[]>([]);
+  const [revenueLoading, setRevenueLoading] = useState(false);
+  const [providersLoading, setProvidersLoading] = useState(false);
+
+  useEffect(() => {
+    setRevenueDate(toISODate(range.to));
+  }, [range.to]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setRevenueLoading(true);
+      try {
+        const params: any = { date: revenueDate };
+
+        if (isAdmin) {
+          // honor current provider selection (empty => ALL on backend)
+          if (providerIds.length) params.providerIds = providerIds;
+        } else if (myDoctorId) {
+          params.providerIds = [String(myDoctorId)];
+        }
+
+        const rows = await fetchRevenueByDoctorForDay(params);
+        if (!alive) return;
+
+        // sort desc just in case
+        setRevenueRows(
+          (rows || [])
+            .slice()
+            .sort((a, b) => Number(b.totalServiceValue || 0) - Number(a.totalServiceValue || 0))
+        );
+      } catch (e) {
+        if (!alive) return;
+        console.error('Revenue by doctor fetch failed:', e);
+        setRevenueRows([]);
+      } finally {
+        if (alive) setRevenueLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [revenueDate, isAdmin, myDoctorId, providerIds]);
 
   // Are we currently on "ALL providers"?
   const isAllSelected =
@@ -134,6 +188,8 @@ export default function OpsAnalyticsPage() {
   };
   const [series, setSeries] = useState<OpsStatPoint[]>([]);
   const [loading, setLoading] = useState(false);
+  // derived: block the whole UI while anything is loading
+  const blocking = loading || revenueLoading || providersLoading;
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -143,14 +199,13 @@ export default function OpsAnalyticsPage() {
 
   const open = Boolean(anchorEl);
 
-  // Load provider list for admin dropdown
   useEffect(() => {
     let alive = true;
     (async () => {
       if (!isAdmin) return;
       try {
+        setProvidersLoading(true);
         const list = await fetchPrimaryProviders();
-
         if (!alive) return;
         const arr = Array.isArray(list)
           ? list
@@ -161,7 +216,9 @@ export default function OpsAnalyticsPage() {
               : [];
         setProviders(arr as Provider[]);
       } catch (e) {
-        // silently ignore; admin can still type IDs via query param if needed
+        // ignore
+      } finally {
+        if (alive) setProvidersLoading(false);
       }
     })();
     return () => {
@@ -292,6 +349,16 @@ export default function OpsAnalyticsPage() {
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
+      <Backdrop open={blocking} sx={{ color: '#fff', zIndex: (theme) => theme.zIndex.modal + 1 }}>
+        <Stack alignItems="center" spacing={2}>
+          <CircularProgress color="inherit" />
+          <Typography variant="body2">Loading analytics…</Typography>
+        </Stack>
+      </Backdrop>
+
+      <Box p={3} display="flex" flexDirection="column" gap={3}>
+        {/* ...rest of your page... */}
+      </Box>
       <Box p={3} display="flex" flexDirection="column" gap={3}>
         {/* Header */}
         <Grid container spacing={2} alignItems="center">
@@ -477,6 +544,73 @@ export default function OpsAnalyticsPage() {
             </Card>
           </Grid>
         </Grid>
+
+        {/* Revenue by Doctor (single day) */}
+        <Card variant="outlined">
+          <CardHeader
+            title={`Revenue by Doctor — ${dayjs(revenueDate).format('MMM D, YYYY')}`}
+            subheader={
+              isAdmin
+                ? providerIds.length
+                  ? `${providerIds.length} provider(s) selected`
+                  : 'All providers'
+                : 'Your revenue only'
+            }
+          />
+          <CardContent>
+            <Box
+              display="flex"
+              justifyContent="space-between"
+              alignItems="center"
+              mb={2}
+              flexWrap="wrap"
+              gap={1}
+            >
+              <Typography variant="subtitle2" color="text.secondary">
+                {revenueLoading ? 'Loading…' : `${revenueRows.length} doctor(s)`}
+              </Typography>
+              <Typography variant="h6" fontWeight={700}>
+                Total:{' '}
+                {fmtUSD(revenueRows.reduce((s, r) => s + Number(r.totalServiceValue || 0), 0))}
+              </Typography>
+            </Box>
+
+            <Box sx={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ color: 'var(--mui-palette-text-secondary)' }}>
+                    <th style={{ textAlign: 'left', padding: '8px' }}>Doctor</th>
+                    <th style={{ textAlign: 'left', padding: '8px' }}>Revenue</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {revenueRows.length === 0 && !revenueLoading ? (
+                    <tr>
+                      <td
+                        colSpan={2}
+                        style={{ padding: '12px', color: 'var(--mui-palette-text-secondary)' }}
+                      >
+                        No revenue data for this day.
+                      </td>
+                    </tr>
+                  ) : (
+                    revenueRows.map((row, idx) => (
+                      <tr
+                        key={`${row.doctorId ?? 'none'}-${idx}`}
+                        style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}
+                      >
+                        <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>
+                          {row.doctorName ?? 'Not Specified'}
+                        </td>
+                        <td style={{ padding: '8px' }}>{fmtUSD(row.totalServiceValue)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </Box>
+          </CardContent>
+        </Card>
 
         {/* Trend chart */}
         <Card variant="outlined">

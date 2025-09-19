@@ -52,6 +52,7 @@ function toISODate(d: Dayjs) {
 function daysBetween(a: Dayjs, b: Dayjs) {
   return Math.max(1, b.startOf('day').diff(a.startOf('day'), 'day') + 1);
 }
+const dayKeyUTC = (d: string | Date | dayjs.Dayjs) => dayjs.utc(d).format('YYYY-MM-DD');
 
 // Presets
 const now = dayjs();
@@ -104,8 +105,8 @@ export default function PaymentsAnalyticsPage() {
     (async () => {
       try {
         const all = await fetchPaymentsAnalytics({
-          start: '2000-01-01', // adjust earlier if you have older data
-          end: toISODate(now.startOf('day')),
+          start: '2000-01-01',
+          end: toISODate(dayjs().startOf('day').add(1, 'day')), // end is next day → backend < end will include today
         });
         if (!alive) return;
         setSeriesAll(all);
@@ -129,10 +130,15 @@ export default function PaymentsAnalyticsPage() {
   // ---------- Leaderboards + Today's revenue ----------
   const dataset = seriesAll ?? series; // prefer all-time; fallback to current selection
   const todayISO = toISODate(now.startOf('day'));
-  const todaysRevenue = useMemo(
-    () => dataset.find((p) => p.date === todayISO)?.revenue ?? 0,
-    [dataset, todayISO]
-  );
+  const todaysRevenue = useMemo(() => {
+    const key = dayKeyUTC(dayjs()); // today in UTC (YYYY-MM-DD)
+
+    // Try the current range first (series), then fall back to all-time if present
+    const rowFromRange = series.find((p) => dayKeyUTC(p.date) === key);
+    const rowFromAll = (seriesAll ?? []).find((p) => dayKeyUTC(p.date) === key);
+
+    return (rowFromRange ?? rowFromAll)?.revenue ?? 0;
+  }, [series, seriesAll]);
 
   const topDays = useMemo(() => {
     const copy = [...dataset];
@@ -143,7 +149,7 @@ export default function PaymentsAnalyticsPage() {
   const topMonths = useMemo(() => {
     const map = new Map<string, { key: string; revenue: number; count: number }>();
     for (const p of dataset) {
-      const key = dayjs(p.date).format('YYYY-MM');
+      const key = dayjs.utc(p.date).format('YYYY-MM');
       const cur = map.get(key) || { key, revenue: 0, count: 0 };
       cur.revenue += p.revenue;
       cur.count += p.count;
@@ -157,7 +163,7 @@ export default function PaymentsAnalyticsPage() {
   const topYears = useMemo(() => {
     const map = new Map<string, { key: string; revenue: number; count: number }>();
     for (const p of dataset) {
-      const key = dayjs(p.date).format('YYYY');
+      const key = dayjs.utc(p.date).format('YYYY');
       const cur = map.get(key) || { key, revenue: 0, count: 0 };
       cur.revenue += p.revenue;
       cur.count += p.count;
