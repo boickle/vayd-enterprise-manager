@@ -360,7 +360,6 @@ export default function Routing() {
   // Fetch doctor name if missing
   useEffect(() => {
     const pid = result?.selectedDoctorPimsId || result?.doctorPimsId;
-    console.log(result);
     if (!pid || doctorNames[pid]) return;
     if (!doctorNameReqs.current[pid]) {
       doctorNameReqs.current[pid] = (async () => {

@@ -16,7 +16,6 @@ export default function CreateUser() {
     try {
       const { data } = await http.post('/create', { email });
       setMsg('Temporary password created and sent (response shown below for dev).');
-      console.log('Create response', data);
     } catch (err: any) {
       setError(err?.response?.data?.message || err.message || 'Create failed');
     } finally {

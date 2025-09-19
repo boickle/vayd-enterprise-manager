@@ -100,7 +100,6 @@ function pickScheduleBounds(
   sortedAppts: DoctorDayAppt[]
 ): { start: string | null; end: string | null } {
   // Try common response shapes first
-  console.log(resp);
   const start =
     str(resp as any, 'startDepotTime') ??
     str(resp as any, 'workdayStartIso') ??
@@ -117,8 +116,6 @@ function pickScheduleBounds(
     (resp as any)?.schedule?.endIso ??
     (resp as any)?.schedule?.end ??
     null;
-
-  console.log(start, end);
 
   if (start && end) return { start, end };
 
@@ -192,7 +189,6 @@ export default function DoctorDay() {
     if (!userEmail) return;
 
     (async () => {
-      console.log(userEmail);
       setProvidersLoading(true);
       setProvidersErr(null);
       try {

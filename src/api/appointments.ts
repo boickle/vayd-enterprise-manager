@@ -43,7 +43,6 @@ export async function fetchDoctorDay(
   const { data } = await http.get('/appointments/doctor', { params });
 
   const rows: any[] = data?.appointments ?? data ?? [];
-  console.log(rows);
   const appointments: DoctorDayAppt[] = rows
     .map((a) => ({
       id: a?.id,
@@ -70,8 +69,6 @@ export async function fetchDoctorDay(
       expectedArrivalIso: a?.expectedArrivalIso ?? undefined,
     }))
     .filter((r) => typeof r.lat === 'number' && typeof r.lon === 'number');
-
-  console.log(data);
 
   return {
     date: data?.date,
