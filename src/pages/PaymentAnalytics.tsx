@@ -53,19 +53,6 @@ function daysBetween(a: Dayjs, b: Dayjs) {
   return Math.max(1, b.startOf('day').diff(a.startOf('day'), 'day') + 1);
 }
 
-// (optional) Mock – now unused but keep if you want a dev toggle
-function generateMock(range: DateRange): PaymentPoint[] {
-  const len = daysBetween(range.from, range.to);
-  const base = Math.max(10, Math.round(200 - len));
-  return Array.from({ length: len }).map((_, i) => {
-    const day = range.from.startOf('day').add(i, 'day');
-    const noise = (Math.sin(i / 3) + Math.cos(i / 5)) * 15 + (Math.random() - 0.5) * 20;
-    const count = Math.max(0, Math.round(base / 10 + noise / 10));
-    const revenue = Math.max(0, Math.round(base * 50 + noise * 20 + Math.random() * 150));
-    return { date: toISODate(day), revenue, count };
-  });
-}
-
 // Presets
 const now = dayjs();
 const PRESETS: Record<string, () => DateRange> = {
@@ -81,28 +68,29 @@ const PRESETS: Record<string, () => DateRange> = {
 export default function PaymentsAnalyticsPage() {
   const [range, setRange] = useState<DateRange>(PRESETS['30D']());
   const [series, setSeries] = useState<PaymentPoint[]>([]);
+  const [seriesAll, setSeriesAll] = useState<PaymentPoint[] | null>(null); // all-time for leaderboards
   const [metric, setMetric] = useState<'revenue' | 'count'>('revenue');
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
   const open = Boolean(anchorEl);
 
+  // Fetch selected-range series (for chart + header totals)
   useEffect(() => {
     let alive = true;
-    setUnauthorized(false); // reset before fetching
+    setUnauthorized(false);
     (async () => {
       try {
         const data = await fetchPaymentsAnalytics({
           start: toISODate(range.from),
           end: toISODate(range.to),
-          // practiceId: 'your-id-here',
         });
         if (!alive) return;
         setSeries(data);
       } catch (err) {
         if (!alive) return;
         console.error('Payments analytics request failed:', err);
-        setUnauthorized(true); // ← show unauthorized for any non-200
-        setSeries([]); // clear data
+        setUnauthorized(true);
+        setSeries([]);
       }
     })();
     return () => {
@@ -110,12 +98,75 @@ export default function PaymentsAnalyticsPage() {
     };
   }, [range.from, range.to]);
 
+  // One-time fetch of "all-time" series for leaderboards (fallback to current range if it fails)
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const all = await fetchPaymentsAnalytics({
+          start: '2000-01-01', // adjust earlier if you have older data
+          end: toISODate(now.startOf('day')),
+        });
+        if (!alive) return;
+        setSeriesAll(all);
+      } catch (_) {
+        // If the all-time pull fails, we’ll use the current series as a fallback
+        setSeriesAll(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const totals = useMemo(() => {
     const revenue = series.reduce((s, p) => s + p.revenue, 0);
     const count = series.reduce((s, p) => s + p.count, 0);
     const avg = series.length ? revenue / series.length : 0;
     return { revenue, count, avg };
   }, [series]);
+
+  // ---------- Leaderboards + Today's revenue ----------
+  const dataset = seriesAll ?? series; // prefer all-time; fallback to current selection
+  const todayISO = toISODate(now.startOf('day'));
+  const todaysRevenue = useMemo(
+    () => dataset.find((p) => p.date === todayISO)?.revenue ?? 0,
+    [dataset, todayISO]
+  );
+
+  const topDays = useMemo(() => {
+    const copy = [...dataset];
+    copy.sort((a, b) => b.revenue - a.revenue);
+    return copy.slice(0, 10);
+  }, [dataset]);
+
+  const topMonths = useMemo(() => {
+    const map = new Map<string, { key: string; revenue: number; count: number }>();
+    for (const p of dataset) {
+      const key = dayjs(p.date).format('YYYY-MM');
+      const cur = map.get(key) || { key, revenue: 0, count: 0 };
+      cur.revenue += p.revenue;
+      cur.count += p.count;
+      map.set(key, cur);
+    }
+    const arr = Array.from(map.values());
+    arr.sort((a, b) => b.revenue - a.revenue);
+    return arr.slice(0, 10);
+  }, [dataset]);
+
+  const topYears = useMemo(() => {
+    const map = new Map<string, { key: string; revenue: number; count: number }>();
+    for (const p of dataset) {
+      const key = dayjs(p.date).format('YYYY');
+      const cur = map.get(key) || { key, revenue: 0, count: 0 };
+      cur.revenue += p.revenue;
+      cur.count += p.count;
+      map.set(key, cur);
+    }
+    const arr = Array.from(map.values());
+    arr.sort((a, b) => b.revenue - a.revenue);
+    return arr.slice(0, 10);
+  }, [dataset]);
 
   if (unauthorized) {
     return (
@@ -183,7 +234,7 @@ export default function PaymentsAnalyticsPage() {
             <Card variant="outlined">
               <CardHeader
                 titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
-                title="Total Revenue"
+                title="Total Revenue (range)"
               />
               <CardContent>
                 <Typography variant="h5" fontWeight={700}>
@@ -199,7 +250,7 @@ export default function PaymentsAnalyticsPage() {
             <Card variant="outlined">
               <CardHeader
                 titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
-                title="Payments"
+                title="Payments (range)"
               />
               <CardContent>
                 <Typography variant="h5" fontWeight={700}>
@@ -215,7 +266,7 @@ export default function PaymentsAnalyticsPage() {
             <Card variant="outlined">
               <CardHeader
                 titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
-                title="Daily Avg"
+                title="Daily Avg (range)"
               />
               <CardContent>
                 <Typography variant="h5" fontWeight={700}>
@@ -228,6 +279,19 @@ export default function PaymentsAnalyticsPage() {
             </Card>
           </Grid>
         </Grid>
+
+        {/* Today's revenue */}
+        <Card variant="outlined">
+          <CardHeader title="Today's Revenue" />
+          <CardContent>
+            <Typography variant="h4" fontWeight={800}>
+              {fmtUSD(todaysRevenue)}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {dayjs(todayISO).format('dddd, MMM D, YYYY')}
+            </Typography>
+          </CardContent>
+        </Card>
 
         {/* Chart */}
         <Card variant="outlined">
@@ -276,34 +340,132 @@ export default function PaymentsAnalyticsPage() {
           </CardContent>
         </Card>
 
-        {/* Table */}
-        <Card variant="outlined">
-          <CardHeader title="Daily Breakdown" />
-          <CardContent>
-            <Box sx={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ color: 'var(--mui-palette-text-secondary)' }}>
-                    <th style={{ textAlign: 'left', padding: '8px' }}>Date</th>
-                    <th style={{ textAlign: 'left', padding: '8px' }}>Revenue</th>
-                    <th style={{ textAlign: 'left', padding: '8px' }}>Payments</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {series.map((p) => (
-                    <tr key={p.date} style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}>
-                      <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>
-                        {dayjs(p.date).format('MMM D, YYYY')}
-                      </td>
-                      <td style={{ padding: '8px' }}>{fmtUSD(p.revenue)}</td>
-                      <td style={{ padding: '8px' }}>{p.count.toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Box>
-          </CardContent>
-        </Card>
+        {/* Leaderboards */}
+        <Grid container spacing={2}>
+          {/* Top 10 Days */}
+          <Grid item xs={12} md={4}>
+            <Card variant="outlined">
+              <CardHeader title="Top 10 Days (all-time)" />
+              <CardContent>
+                <Box sx={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ color: 'var(--mui-palette-text-secondary)' }}>
+                        <th style={{ textAlign: 'left', padding: '8px' }}>Date</th>
+                        <th style={{ textAlign: 'right', padding: '8px' }}>Revenue</th>
+                        <th style={{ textAlign: 'right', padding: '8px' }}>Payments</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {topDays.map((d) => (
+                        <tr key={d.date} style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}>
+                          <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>
+                            {dayjs(d.date).format('MMM D, YYYY')}
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'right' }}>
+                            {fmtUSD(d.revenue)}
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'right' }}>
+                            {d.count.toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                      {topDays.length === 0 && (
+                        <tr>
+                          <td colSpan={3} style={{ padding: '8px' }}>
+                            No data
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* Top 10 Months */}
+          <Grid item xs={12} md={4}>
+            <Card variant="outlined">
+              <CardHeader title="Top 10 Months (all-time)" />
+              <CardContent>
+                <Box sx={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ color: 'var(--mui-palette-text-secondary)' }}>
+                        <th style={{ textAlign: 'left', padding: '8px' }}>Month</th>
+                        <th style={{ textAlign: 'right', padding: '8px' }}>Revenue</th>
+                        <th style={{ textAlign: 'right', padding: '8px' }}>Payments</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {topMonths.map((m) => (
+                        <tr key={m.key} style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}>
+                          <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>
+                            {dayjs(m.key + '-01').format('MMM YYYY')}
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'right' }}>
+                            {fmtUSD(m.revenue)}
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'right' }}>
+                            {m.count.toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                      {topMonths.length === 0 && (
+                        <tr>
+                          <td colSpan={3} style={{ padding: '8px' }}>
+                            No data
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* Top 10 Years */}
+          <Grid item xs={12} md={4}>
+            <Card variant="outlined">
+              <CardHeader title="Top 10 Years (all-time)" />
+              <CardContent>
+                <Box sx={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ color: 'var(--mui-palette-text-secondary)' }}>
+                        <th style={{ textAlign: 'left', padding: '8px' }}>Year</th>
+                        <th style={{ textAlign: 'right', padding: '8px' }}>Revenue</th>
+                        <th style={{ textAlign: 'right', padding: '8px' }}>Payments</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {topYears.map((y) => (
+                        <tr key={y.key} style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}>
+                          <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>{y.key}</td>
+                          <td style={{ padding: '8px', textAlign: 'right' }}>
+                            {fmtUSD(y.revenue)}
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'right' }}>
+                            {y.count.toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                      {topYears.length === 0 && (
+                        <tr>
+                          <td colSpan={3} style={{ padding: '8px' }}>
+                            No data
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
 
         {/* Date Range Popover */}
         <Popover
