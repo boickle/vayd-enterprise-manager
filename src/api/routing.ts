@@ -18,6 +18,7 @@ export type EtaRequest = {
   date: string; // 'YYYY-MM-DD' in doctor's TZ
   households: EtaHouseholdInput[];
   startDepot?: Depot; // optional start depot
+  endDepot?: Depot; // optional start depot
   useTraffic?: boolean; // defaults server-side if omitted
 };
 

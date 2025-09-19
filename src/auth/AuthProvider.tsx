@@ -10,6 +10,7 @@ const MOCK = import.meta.env.VITE_MOCK_AUTH === '1';
 type AuthContextType = {
   token: string | null;
   userEmail: string | null;
+  role: string[]; // add this
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
 };
@@ -32,6 +33,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return null;
     }
   });
+  const [role, setRole] = useState<string[]>([]);
+  useEffect(() => {
+    setToken(tokenState);
+
+    if (tokenState) {
+      const payload = decodeJwt(tokenState);
+      const roleClaim = payload?.role || payload?.role || [];
+      setRole(Array.isArray(roleClaim) ? roleClaim : [String(roleClaim)]);
+    } else {
+      setRole([]);
+    }
+  }, [tokenState]);
 
   // Keep axios Authorization token in sync with state
   useEffect(() => {
@@ -100,11 +113,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     () => ({
       token: tokenState,
       userEmail: email,
+      role,
       login,
       logout,
     }),
-    [tokenState, email]
+    [tokenState, email, role]
   );
+
+  function decodeJwt(token: string): any | null {
+    try {
+      const base64Url = token.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      const jsonPayload = decodeURIComponent(
+        atob(base64)
+          .split('')
+          .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+          .join('')
+      );
+      return JSON.parse(jsonPayload);
+    } catch {
+      return null;
+    }
+  }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -3,6 +3,7 @@ import Routing from './pages/Routing';
 import DoctorDay from './pages/DoctorDay';
 import CreateUser from './pages/CreateUser';
 import PaymentsAnalyticsPage from './pages/PaymentAnalytics';
+import OpsAnalyticsPage from './pages/OpsAnalytics';
 
 export type AppPage = {
   path: string;
@@ -27,6 +28,12 @@ export function getAccessiblePages(abilities?: string[]): AppPage[] {
       label: 'Payments Analytics',
       element: <PaymentsAnalyticsPage />,
       permission: 'canSeePaymentsAnalytics', // <-- add a permission key if you want to gate it
+    },
+    {
+      path: '/analytics/ops',
+      label: 'Ops Analytics',
+      element: <OpsAnalyticsPage />,
+      permission: 'canSeeOpsAnalytics', // <-- add a permission key if you want to gate it
     },
   ];
 
