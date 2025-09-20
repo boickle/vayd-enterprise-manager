@@ -52,16 +52,38 @@ function safeNum(n: any) {
   const v = typeof n === 'number' ? n : Number(n);
   return Number.isFinite(v) ? v : 0;
 }
+const ALL_VALUE = '__ALL__';
 
-type Totals = {
-  day: number;
-  wtd: number;
-  mtd: number;
-  btd: number; // bonus period to date
-};
+type Totals = { day: number; wtd: number; mtd: number; btd: number };
 const ZERO_TOTALS: Totals = { day: 0, wtd: 0, mtd: 0, btd: 0 };
 
-const ALL_VALUE = '__ALL__';
+// Extended Provider with goals (keeps original Provider fields)
+type ProviderWithGoals = Provider & {
+  dailyRevenueGoal?: number | null;
+  bonusRevenueGoal?: number | null;
+  dailyPointGoal?: number | null;
+  weeklyPointGoal?: number | null;
+};
+
+const toNum = (v: unknown): number | null => {
+  if (v === null || v === undefined) return null;
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+const normalizeProvider = (p: any): ProviderWithGoals => ({
+  id: p?.id ?? p?.pimsId ?? p?.employeeId,
+  name:
+    [p?.firstName, p?.lastName].filter(Boolean).join(' ').trim() ||
+    p?.name ||
+    `Provider ${p?.id ?? ''}`,
+  email: p?.email ?? '',
+
+  dailyRevenueGoal: toNum(p?.dailyRevenueGoal),
+  bonusRevenueGoal: toNum(p?.bonusRevenueGoal),
+  dailyPointGoal: toNum(p?.dailyPointGoal),
+  weeklyPointGoal: toNum(p?.weeklyPointGoal),
+});
 
 // Bonus period helpers: 4/1–9/30 and 10/1–3/31
 function startOfBonusPeriod(d: Dayjs) {
@@ -93,11 +115,11 @@ export default function DoctorRevenueAnalyticsPage() {
   // Date (defaults to today)
   const [date, setDate] = useState<Dayjs>(dayjs().startOf('day'));
 
-  // Providers
-  const [providers, setProviders] = useState<Provider[]>([]);
+  // Providers (carry goals)
+  const [providers, setProviders] = useState<ProviderWithGoals[]>([]);
   const [providerIds, setProviderIds] = useState<string[]>([]); // selected (admins)
   const [providersLoading, setProvidersLoading] = useState(false);
-  const allProviderIds = useMemo(() => providers.map((p: any) => String(p.id)), [providers]);
+  const allProviderIds = useMemo(() => providers.map((p) => String(p.id)), [providers]);
   const isAllSelected =
     allProviderIds.length > 0 &&
     providerIds.length === allProviderIds.length &&
@@ -137,21 +159,11 @@ export default function DoctorRevenueAnalyticsPage() {
               ? (list as any).items
               : [];
 
-        const normalize = (p: any) => ({
-          id: String(p.id ?? p.employeeId ?? p.providerId ?? ''),
-          name: p.name ?? ([p.firstName, p.lastName].filter(Boolean).join(' ') || 'Not Specified'),
-          dailyRevenueGoal: safeNum(p.dailyRevenueGoal ?? p.daily_goal ?? p.dailyGoal),
-          bonusRevenueGoal: safeNum(p.bonusRevenueGoal ?? p.bonus_goal ?? p.bonusGoal),
-        });
+        const normalized = (raw as any[]).map(normalizeProvider);
 
-        const normalized = (raw as any[]).map(normalize);
-
+        setProviders(normalized);
         if (isAdmin) {
-          setProviders(normalized);
           setProviderIds(normalized.map((p) => String(p.id))); // default ALL
-        } else {
-          // Keep the full list; we’ll match the correct provider later using rows/auth.
-          setProviders(normalized);
         }
       } finally {
         if (alive) setProvidersLoading(false);
@@ -183,7 +195,7 @@ export default function DoctorRevenueAnalyticsPage() {
 
         // Name normalization from providers
         const nameById = new Map<string, string>();
-        (providers as any[]).forEach((p: any) => nameById.set(String(p.id), p.name));
+        (providers as ProviderWithGoals[]).forEach((p) => nameById.set(String(p.id), p.name));
 
         const byDoc = Array.isArray(resp?.byDoctor) ? resp.byDoctor : [];
         const normalized = byDoc.map((r: any) => ({
@@ -222,50 +234,40 @@ export default function DoctorRevenueAnalyticsPage() {
     };
   }, [date, isAdmin, isAllSelected, JSON.stringify(providerIds), providers, myDoctorId]);
 
-  // ---------- pick selected providers (admins: selection; non-admins: match effective id) ----------
+  // ---------- pick selected providers ----------
   const selectedProviders = useMemo(() => {
     if (isAdmin) {
       const ids = isAllSelected ? allProviderIds : providerIds;
-      return providers.filter((p: any) => ids.includes(String(p.id)));
+      return providers.filter((p) => ids.includes(String(p.id)));
     }
-
     if (!providers.length) return [];
 
     // Try id match first
     if (effectiveDoctorId) {
-      const byId = (providers as any[]).find((p: any) => String(p.id) === effectiveDoctorId);
-      if (byId) return [byId as any];
+      const byId = providers.find((p) => String(p.id) === effectiveDoctorId);
+      if (byId) return [byId];
     }
 
     // Fall back to name match using the first row
     const dn = rows?.[0]?.doctorName?.trim().toLowerCase();
     if (dn) {
-      const byName = (providers as any[]).find(
-        (p: any) => (p.name || '').trim().toLowerCase() === dn
-      );
-      if (byName) return [byName as any];
+      const byName = providers.find((p) => (p.name || '').trim().toLowerCase() === dn);
+      if (byName) return [byName];
     }
 
-    // Last resort: if there is exactly one provider, use it
     return providers.length === 1 ? [providers[0]] : [];
   }, [isAdmin, providers, providerIds, isAllSelected, allProviderIds, effectiveDoctorId, rows]);
 
   // ---------- goal sums ----------
   const goalSums = useMemo(() => {
-    const bonus = selectedProviders.reduce(
-      (s: number, p: any) => s + safeNum(p.bonusRevenueGoal),
-      0
-    );
-    const daily = selectedProviders.reduce(
-      (s: number, p: any) => s + safeNum(p.dailyRevenueGoal),
-      0
-    );
+    const bonus = selectedProviders.reduce((s, p) => s + (p.bonusRevenueGoal ?? 0), 0); // 6-month goal
+    const daily = selectedProviders.reduce((s, p) => s + (p.dailyRevenueGoal ?? 0), 0);
     const weekly = bonus / 26;
     const monthly = bonus / 6;
     return { daily, weekly, monthly, bonus };
   }, [selectedProviders]);
 
-  // ---------- compute Day/WTD/MTD/BTD via series ----------
+  // ---------- compute Day/WTD/MTD/BTD via series(start→end) ----------
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -291,7 +293,7 @@ export default function DoctorRevenueAnalyticsPage() {
 
         const bpStart = startOfBonusPeriod(date);
         const today = date;
-        const weekStart = date.startOf('week');
+        const weekStart = date.startOf('week'); // if needed, switch to isoWeek with plugin
         const monthStart = date.startOf('month');
 
         const sumWithin = (series: { date: string; total: number }[], a: Dayjs, b: Dayjs) => {
@@ -306,25 +308,17 @@ export default function DoctorRevenueAnalyticsPage() {
           }, 0);
         };
 
-        // helper to fetch series (with optional fallback for non-admins)
-        const fetchSeriesFor = async (id?: string) => {
-          const base = {
+        const fetchSeriesFor = async (id: string) => {
+          const resp = await fetchDoctorRevenueSeries({
             start: bpStart.utc().format('YYYY-MM-DD'),
             end: today.utc().format('YYYY-MM-DD'),
-          };
-          const resp = await fetchDoctorRevenueSeries(id ? { ...base, doctorId: id } : base);
-          return Array.isArray(resp?.series) ? resp.series : [];
+            doctorId: id,
+          });
+          return Array.isArray((resp as any)?.series) ? (resp as any).series : [];
         };
 
         const perDoctor = await Promise.all(
-          selIds.map(async (id) => {
-            let series = await fetchSeriesFor(id);
-            if (!isAdmin && (!series || series.length === 0)) {
-              // try server-side inference once
-              series = await fetchSeriesFor(undefined);
-            }
-            return { id, series };
-          })
+          selIds.map(async (id) => ({ id, series: await fetchSeriesFor(id) }))
         );
 
         if (!alive) return;
@@ -336,17 +330,15 @@ export default function DoctorRevenueAnalyticsPage() {
         const btdSum = perDoctor.reduce((s, d) => s + sumWithin(d.series, bpStart, today), 0);
         setSelTotals({ day: daySum, wtd: wtdSum, mtd: mtdSum, btd: btdSum });
 
-        // company average (admins only)
+        // company average (admins only): per-doctor average across ALL providers
         if (isAdmin && allProviderIds.length > 0) {
           const idsForAvg = allProviderIds;
           const have = new Set(selIds);
           const missing = idsForAvg.filter((id) => !have.has(id));
           const fetchedMissing = await Promise.all(
-            missing.map(async (id) => {
-              const series = await fetchSeriesFor(id);
-              return { id, series };
-            })
+            missing.map(async (id) => ({ id, series: await fetchSeriesFor(id) }))
           );
+
           const full = perDoctor.concat(fetchedMissing);
           const cDay = full.reduce((s, d) => s + sumWithin(d.series, today, today), 0);
           const cW = full.reduce((s, d) => s + sumWithin(d.series, weekStart, today), 0);
@@ -373,7 +365,7 @@ export default function DoctorRevenueAnalyticsPage() {
   }, [
     date,
     isAdmin,
-    effectiveDoctorId, // <-- critical for non-admins
+    effectiveDoctorId,
     isAllSelected,
     JSON.stringify(providerIds),
     allProviderIds.length,
@@ -402,85 +394,58 @@ export default function DoctorRevenueAnalyticsPage() {
   // ---------- UI helpers ----------
   const pctOf = (num: number, den: number) => (den > 0 ? num / den : 0);
 
+  // precompute goal sums once
+  const dailyGoal = goalSums.daily;
+  const weeklyGoal = goalSums.weekly;
+  const monthlyGoal = goalSums.monthly;
+  const bonusGoal = goalSums.bonus; // full 6-month goal
+
   const metrics = [
-    {
-      label: 'Daily revenue goal',
-      value: fmtUSD(
-        selectedProviders.reduce((s: number, p: any) => s + safeNum(p.dailyRevenueGoal), 0)
-      ),
-    },
+    { label: 'Daily revenue goal', value: fmtUSD(dailyGoal) },
     {
       label: 'Percent of daily goal',
-      value: fmtPct(
-        pctOf(
-          selTotals.day,
-          selectedProviders.reduce((s: number, p: any) => s + safeNum(p.dailyRevenueGoal), 0)
-        )
-      ),
-      sub: `${fmtUSD(selTotals.day)} / ${fmtUSD(selectedProviders.reduce((s: number, p: any) => s + safeNum(p.dailyRevenueGoal), 0))}`,
+      value: fmtPct(pctOf(selTotals.day, dailyGoal)),
+      sub: `${fmtUSD(selTotals.day)} / ${fmtUSD(dailyGoal)}`,
     },
     {
       label: 'Total revenue this week',
       value: fmtUSD(selTotals.wtd),
-      sub: `${fmtUSD(selTotals.wtd)} / ${fmtUSD(selectedProviders.reduce((s: number, p: any) => s + safeNum(p.bonusRevenueGoal), 0) / 26)} (weekly goal)`,
+      sub: `${fmtUSD(selTotals.wtd)} / ${fmtUSD(weeklyGoal)} (weekly goal)`,
     },
-    {
-      label: 'Percent of weekly goal',
-      value: fmtPct(
-        pctOf(
-          selTotals.wtd,
-          selectedProviders.reduce((s: number, p: any) => s + safeNum(p.bonusRevenueGoal), 0) / 26
-        )
-      ),
-    },
+    { label: 'Percent of weekly goal', value: fmtPct(pctOf(selTotals.wtd, weeklyGoal)) },
     {
       label: 'Total revenue this month',
       value: fmtUSD(selTotals.mtd),
-      sub: `${fmtUSD(selTotals.mtd)} / ${fmtUSD(selectedProviders.reduce((s: number, p: any) => s + safeNum(p.bonusRevenueGoal), 0) / 6)} (monthly goal)`,
+      sub: `${fmtUSD(selTotals.mtd)} / ${fmtUSD(monthlyGoal)} (monthly goal)`,
     },
-    {
-      label: 'Percent of monthly goal',
-      value: fmtPct(
-        pctOf(
-          selTotals.mtd,
-          selectedProviders.reduce((s: number, p: any) => s + safeNum(p.bonusRevenueGoal), 0) / 6
-        )
-      ),
-    },
+    { label: 'Percent of monthly goal', value: fmtPct(pctOf(selTotals.mtd, monthlyGoal)) },
     {
       label: 'Total revenue this bonus period',
       value: fmtUSD(selTotals.btd),
-      sub: `Bonus period: ${startOfBonusPeriod(date).format('M/D')}–${endOfBonusPeriod(date).format('M/D')}`,
+      sub: `Bonus period: ${startOfBonusPeriod(date).format('M/D')}–${endOfBonusPeriod(date).format(
+        'M/D'
+      )}`,
     },
     {
       label: 'Percent of bonus-period goal',
-      value: fmtPct(
-        pctOf(
-          selTotals.btd,
-          selectedProviders.reduce((s: number, p: any) => s + safeNum(p.bonusRevenueGoal), 0)
-        )
-      ),
-      sub: `${fmtUSD(selTotals.btd)} / ${fmtUSD(selectedProviders.reduce((s: number, p: any) => s + safeNum(p.bonusRevenueGoal), 0))} (6-month goal)`,
+      value: fmtPct(pctOf(selTotals.btd, bonusGoal)),
+      sub: `${fmtUSD(selTotals.btd)} / ${fmtUSD(bonusGoal)} (6-month goal)`,
     },
   ];
 
-  // Company average goals (per doctor)
+  // Company average goals (per doctor), include bonus too
   const companyAvgGoals = useMemo(() => {
-    if (!isAdmin || allProviderIds.length === 0) return { daily: 0, weekly: 0, monthly: 0 };
-    const denom = allProviderIds.length;
-    const sums = (providers as any[]).reduce(
-      (acc, p: any) => {
-        acc.daily += safeNum(p.dailyRevenueGoal);
-        acc.weekly += safeNum(p.bonusRevenueGoal) / 26;
-        acc.monthly += safeNum(p.bonusRevenueGoal) / 6;
-        return acc;
-      },
-      { daily: 0, weekly: 0, monthly: 0 }
-    );
+    if (!isAdmin || allProviderIds.length === 0) {
+      return { daily: 0, weekly: 0, monthly: 0, bonus: 0 };
+    }
+    const denom = allProviderIds.length || 1;
+    const bonusSum = providers.reduce((s, p) => s + (p.bonusRevenueGoal ?? 0), 0);
+    const dailySum = providers.reduce((s, p) => s + (p.dailyRevenueGoal ?? 0), 0);
     return {
-      daily: sums.daily / denom,
-      weekly: sums.weekly / denom,
-      monthly: sums.monthly / denom,
+      daily: dailySum / denom,
+      weekly: bonusSum / 26 / denom,
+      monthly: bonusSum / 6 / denom,
+      bonus: bonusSum / denom,
     };
   }, [isAdmin, providers, allProviderIds.length]);
 
@@ -514,6 +479,11 @@ export default function DoctorRevenueAnalyticsPage() {
           sub={fmtPct(pctOf(companyAvgTotals.mtd, companyAvgGoals.monthly))}
         />
         <Metric label="Avg BTD revenue" value={fmtUSD(companyAvgTotals.btd)} />
+        <Metric
+          label="Avg BTD % achieved"
+          value={fmtPct(pctOf(companyAvgTotals.btd, companyAvgGoals.bonus))}
+          sub={`${fmtUSD(companyAvgTotals.btd)} / ${fmtUSD(companyAvgGoals.bonus)}`}
+        />
       </Box>
     </Box>
   ) : null;
@@ -578,9 +548,7 @@ export default function DoctorRevenueAnalyticsPage() {
                         <Chip size="small" label="All doctors" />
                       ) : (
                         (selected as string[]).map((id) => {
-                          const p: any = (providers as any[]).find(
-                            (pp: any) => String(pp.id) === String(id)
-                          );
+                          const p = providers.find((pp) => String(pp.id) === String(id));
                           return <Chip key={id} label={p ? p.name : id} size="small" />;
                         })
                       )}
@@ -591,7 +559,7 @@ export default function DoctorRevenueAnalyticsPage() {
                     <Checkbox checked={isAllSelected} />
                     <ListItemText primary="Select All" />
                   </MenuItem>
-                  {(providers as any[]).map((p: any) => {
+                  {providers.map((p) => {
                     const checked = providerIds.includes(String(p.id)) || isAllSelected;
                     return (
                       <MenuItem key={String(p.id)} value={String(p.id)}>
