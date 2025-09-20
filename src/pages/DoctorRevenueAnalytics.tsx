@@ -405,7 +405,7 @@ export default function DoctorRevenueAnalyticsPage() {
     {
       label: 'Percent of daily goal',
       value: fmtPct(pctOf(selTotals.day, dailyGoal)),
-      sub: `${fmtUSD(selTotals.day)} / ${fmtUSD(dailyGoal)}`,
+      sub: `${fmtUSD(dayTotal)} / ${fmtUSD(dailyGoal)}`,
     },
     {
       label: 'Total revenue this week',
