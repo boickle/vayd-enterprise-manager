@@ -31,7 +31,6 @@ import {
   fetchRevenueForDay,
   fetchDoctorRevenueSeries,
   type DoctorRevenueRow,
-  type DoctorRevenueSeriesResponse,
 } from '../api/opsStats';
 
 dayjs.extend(utc);
@@ -68,59 +67,37 @@ const ALL_VALUE = '__ALL__';
 function startOfBonusPeriod(d: Dayjs) {
   const m = d.month(); // 0=Jan
   const y = d.year();
-  if (m >= 3 && m <= 8) {
-    // Apr..Sep
-    return dayjs.utc(`${y}-04-01`);
-  }
-  if (m >= 9) {
-    // Oct..Dec
-    return dayjs.utc(`${y}-10-01`);
-  }
-  // Jan..Mar -> Oct 1 of prev year
+  if (m >= 3 && m <= 8) return dayjs.utc(`${y}-04-01`);
+  if (m >= 9) return dayjs.utc(`${y}-10-01`);
   return dayjs.utc(`${y - 1}-10-01`);
 }
 function endOfBonusPeriod(d: Dayjs) {
   const m = d.month();
   const y = d.year();
-  if (m >= 3 && m <= 8) {
-    return dayjs.utc(`${y}-09-30`);
-  }
-  if (m >= 9) {
-    return dayjs.utc(`${y + 1}-03-31`);
-  }
+  if (m >= 3 && m <= 8) return dayjs.utc(`${y}-09-30`);
+  if (m >= 9) return dayjs.utc(`${y + 1}-03-31`);
   return dayjs.utc(`${y}-03-31`);
-}
-
-// Replace your existing sumSeries with this version
-function sumSeries(series: { date: string; total: number }[], start: Dayjs, end: Dayjs) {
-  const s = start.startOf('day');
-  const e = end.endOf('day');
-
-  return series.reduce((acc, p) => {
-    // Be defensive about incoming format; treat value as UTC date
-    const d = dayjs.utc(String(p.date));
-    if (!d.isValid()) return acc;
-
-    if ((d.isAfter(s) || d.isSame(s)) && (d.isBefore(e) || d.isSame(e))) {
-      acc += Number(p.total) || 0;
-    }
-    return acc;
-  }, 0);
 }
 
 // ---------- page ----------
 export default function DoctorRevenueAnalyticsPage() {
-  const { role, doctorId: myDoctorId } = (useAuth() as any) || {};
-  const isAdmin = Array.isArray(role) ? role.includes('admin') || role.includes('owner') : false;
+  const auth: any = useAuth() || {};
+  const rawRole = auth?.role;
+  const myDoctorId = auth?.doctorId != null ? String(auth.doctorId) : '';
+  const isAdmin = Array.isArray(rawRole)
+    ? rawRole.some((r: string) => ['admin', 'owner'].includes(String(r).toLowerCase()))
+    : typeof rawRole === 'string'
+      ? ['admin', 'owner'].includes(rawRole.toLowerCase())
+      : false;
 
   // Date (defaults to today)
   const [date, setDate] = useState<Dayjs>(dayjs().startOf('day'));
 
-  // Providers (admins only)
+  // Providers
   const [providers, setProviders] = useState<Provider[]>([]);
-  const [providerIds, setProviderIds] = useState<string[]>([]); // selected
+  const [providerIds, setProviderIds] = useState<string[]>([]); // selected (admins)
   const [providersLoading, setProvidersLoading] = useState(false);
-  const allProviderIds = useMemo(() => providers.map((p) => String(p.id)), [providers]);
+  const allProviderIds = useMemo(() => providers.map((p: any) => String(p.id)), [providers]);
   const isAllSelected =
     allProviderIds.length > 0 &&
     providerIds.length === allProviderIds.length &&
@@ -138,26 +115,44 @@ export default function DoctorRevenueAnalyticsPage() {
   const [rowsLoading, setRowsLoading] = useState(false);
   const [unauthorized, setUnauthorized] = useState(false);
 
+  // The doctor id that actually matches backend productionEmployeeId for series
+  const [effectiveDoctorId, setEffectiveDoctorId] = useState<string>('');
+
   const blocking = providersLoading || rowsLoading || loadingAggregates;
 
-  // ---------- load providers for admins ----------
+  // ---------- load providers (normalize shapes) ----------
   useEffect(() => {
     let alive = true;
     (async () => {
-      if (!isAdmin) return;
       try {
         setProvidersLoading(true);
         const list = await fetchPrimaryProviders();
         if (!alive) return;
-        const arr = Array.isArray(list)
+
+        const raw = Array.isArray(list)
           ? list
           : Array.isArray((list as any)?.data)
             ? (list as any).data
             : Array.isArray((list as any)?.items)
               ? (list as any).items
               : [];
-        setProviders(arr as Provider[]);
-        setProviderIds((arr as Provider[]).map((p) => String(p.id))); // default ALL
+
+        const normalize = (p: any) => ({
+          id: String(p.id ?? p.employeeId ?? p.providerId ?? ''),
+          name: p.name ?? ([p.firstName, p.lastName].filter(Boolean).join(' ') || 'Not Specified'),
+          dailyRevenueGoal: safeNum(p.dailyRevenueGoal ?? p.daily_goal ?? p.dailyGoal),
+          bonusRevenueGoal: safeNum(p.bonusRevenueGoal ?? p.bonus_goal ?? p.bonusGoal),
+        });
+
+        const normalized = (raw as any[]).map(normalize);
+
+        if (isAdmin) {
+          setProviders(normalized);
+          setProviderIds(normalized.map((p) => String(p.id))); // default ALL
+        } else {
+          // Keep the full list; we’ll match the correct provider later using rows/auth.
+          setProviders(normalized);
+        }
       } finally {
         if (alive) setProvidersLoading(false);
       }
@@ -174,31 +169,50 @@ export default function DoctorRevenueAnalyticsPage() {
       setUnauthorized(false);
       setRowsLoading(true);
       try {
-        // Build provider scope
-        let providerScope: string[] | undefined;
+        const params: any = { date: toISODate(date) };
         if (isAdmin) {
-          providerScope = isAllSelected ? undefined : providerIds;
-        } else if (myDoctorId) {
-          providerScope = [String(myDoctorId)];
-        }
+          if (!isAllSelected && providerIds.length) {
+            params.providerIds = providerIds;
+          }
+        } // non-admin: let server infer
 
-        const resp = await fetchRevenueForDay({
-          date: toISODate(date),
-          providerIds: providerScope,
-        });
-
+        const resp = await fetchRevenueForDay(params);
         if (!alive) return;
+
         setDayTotal(Number(resp?.total ?? 0));
+
+        // Name normalization from providers
+        const nameById = new Map<string, string>();
+        (providers as any[]).forEach((p: any) => nameById.set(String(p.id), p.name));
+
         const byDoc = Array.isArray(resp?.byDoctor) ? resp.byDoctor : [];
-        setRows(
-          byDoc.slice().sort((a, b) => Number(b.totalServiceValue) - Number(a.totalServiceValue))
-        );
+        const normalized = byDoc.map((r: any) => ({
+          ...r,
+          doctorName:
+            r.doctorName ??
+            nameById.get(String(r.doctorId ?? '')) ??
+            r.doctorName ??
+            'Not Specified',
+        }));
+
+        const sorted = normalized
+          .slice()
+          .sort((a, b) => Number(b.totalServiceValue) - Number(a.totalServiceValue));
+
+        setRows(sorted);
+
+        // Establish an effective doctor id for series (prefer what API returned)
+        if (!isAdmin) {
+          const idFromRows = sorted?.[0]?.doctorId != null ? String(sorted[0].doctorId) : '';
+          setEffectiveDoctorId(idFromRows || myDoctorId || '');
+        }
       } catch (e) {
         if (!alive) return;
         console.error('fetchRevenueForDay failed:', e);
         setUnauthorized(true);
         setRows([]);
         setDayTotal(0);
+        setEffectiveDoctorId('');
       } finally {
         if (alive) setRowsLoading(false);
       }
@@ -206,45 +220,62 @@ export default function DoctorRevenueAnalyticsPage() {
     return () => {
       alive = false;
     };
-  }, [date, isAdmin, myDoctorId, isAllSelected, JSON.stringify(providerIds)]);
+  }, [date, isAdmin, isAllSelected, JSON.stringify(providerIds), providers, myDoctorId]);
 
-  // ---------- derive selected providers + goal sums ----------
+  // ---------- pick selected providers (admins: selection; non-admins: match effective id) ----------
   const selectedProviders = useMemo(() => {
-    if (!isAdmin) {
-      return providers.filter((p) => String(p.id) === String(myDoctorId));
+    if (isAdmin) {
+      const ids = isAllSelected ? allProviderIds : providerIds;
+      return providers.filter((p: any) => ids.includes(String(p.id)));
     }
-    const ids = isAllSelected ? allProviderIds : providerIds;
-    return providers.filter((p) => ids.includes(String(p.id)));
-  }, [isAdmin, providers, providerIds, isAllSelected, allProviderIds, myDoctorId]);
 
-  // ---------- derive selected providers + goal sums ----------
+    if (!providers.length) return [];
+
+    // Try id match first
+    if (effectiveDoctorId) {
+      const byId = (providers as any[]).find((p: any) => String(p.id) === effectiveDoctorId);
+      if (byId) return [byId as any];
+    }
+
+    // Fall back to name match using the first row
+    const dn = rows?.[0]?.doctorName?.trim().toLowerCase();
+    if (dn) {
+      const byName = (providers as any[]).find(
+        (p: any) => (p.name || '').trim().toLowerCase() === dn
+      );
+      if (byName) return [byName as any];
+    }
+
+    // Last resort: if there is exactly one provider, use it
+    return providers.length === 1 ? [providers[0]] : [];
+  }, [isAdmin, providers, providerIds, isAllSelected, allProviderIds, effectiveDoctorId, rows]);
+
+  // ---------- goal sums ----------
   const goalSums = useMemo(() => {
     const bonus = selectedProviders.reduce(
-      (s, p: any) => s + safeNum((p as any).bonusRevenueGoal), // full 6-month goal
+      (s: number, p: any) => s + safeNum(p.bonusRevenueGoal),
       0
     );
     const daily = selectedProviders.reduce(
-      (s, p: any) => s + safeNum((p as any).dailyRevenueGoal),
+      (s: number, p: any) => s + safeNum(p.dailyRevenueGoal),
       0
     );
-    const weekly = bonus / 26; // derived weekly goal
-    const monthly = bonus / 6; // derived monthly goal
+    const weekly = bonus / 26;
+    const monthly = bonus / 6;
     return { daily, weekly, monthly, bonus };
   }, [selectedProviders]);
 
-  // ---------- compute Day/WTD/MTD/BTD via one series per doctor ----------
-  // ---------- compute Day/WTD/MTD/BTD using series(start→end) ----------
+  // ---------- compute Day/WTD/MTD/BTD via series ----------
   useEffect(() => {
     let alive = true;
-
     (async () => {
       try {
         setLoadingAggregates(true);
 
-        // doctor IDs in scope
+        // doctors in scope
         const selIds: string[] = !isAdmin
-          ? myDoctorId
-            ? [String(myDoctorId)]
+          ? effectiveDoctorId
+            ? [String(effectiveDoctorId)]
             : []
           : isAllSelected
             ? allProviderIds
@@ -252,18 +283,17 @@ export default function DoctorRevenueAnalyticsPage() {
 
         if (!selIds.length) {
           if (alive) {
-            setSelTotals({ day: 0, wtd: 0, mtd: 0, btd: 0 });
-            setCompanyAvgTotals({ day: 0, wtd: 0, mtd: 0, btd: 0 });
+            setSelTotals(ZERO_TOTALS);
+            setCompanyAvgTotals(ZERO_TOTALS);
           }
           return;
         }
 
         const bpStart = startOfBonusPeriod(date);
         const today = date;
-        const weekStart = date.startOf('week'); // use .startOf('isoWeek') if you prefer ISO weeks
+        const weekStart = date.startOf('week');
         const monthStart = date.startOf('month');
 
-        // helper to sum within a date window from a series
         const sumWithin = (series: { date: string; total: number }[], a: Dayjs, b: Dayjs) => {
           const s = a.startOf('day');
           const e = b.endOf('day');
@@ -276,61 +306,52 @@ export default function DoctorRevenueAnalyticsPage() {
           }, 0);
         };
 
-        // one request per doctor with explicit start & end
+        // helper to fetch series (with optional fallback for non-admins)
+        const fetchSeriesFor = async (id?: string) => {
+          const base = {
+            start: bpStart.utc().format('YYYY-MM-DD'),
+            end: today.utc().format('YYYY-MM-DD'),
+          };
+          const resp = await fetchDoctorRevenueSeries(id ? { ...base, doctorId: id } : base);
+          return Array.isArray(resp?.series) ? resp.series : [];
+        };
+
         const perDoctor = await Promise.all(
           selIds.map(async (id) => {
-            const resp = await fetchDoctorRevenueSeries({
-              start: bpStart.utc().format('YYYY-MM-DD'),
-              end: today.utc().format('YYYY-MM-DD'),
-              doctorId: id,
-            });
-            return { id, series: Array.isArray(resp?.series) ? resp.series : [] };
+            let series = await fetchSeriesFor(id);
+            if (!isAdmin && (!series || series.length === 0)) {
+              // try server-side inference once
+              series = await fetchSeriesFor(undefined);
+            }
+            return { id, series };
           })
         );
 
         if (!alive) return;
 
-        // aggregate across selection
-        let daySum = 0,
-          wtdSum = 0,
-          mtdSum = 0,
-          btdSum = 0;
-        for (const { series } of perDoctor) {
-          daySum += sumWithin(series, today, today);
-          wtdSum += sumWithin(series, weekStart, today);
-          mtdSum += sumWithin(series, monthStart, today);
-          btdSum += sumWithin(series, bpStart, today); // full bonus window
-        }
+        // selection totals
+        const daySum = perDoctor.reduce((s, d) => s + sumWithin(d.series, today, today), 0);
+        const wtdSum = perDoctor.reduce((s, d) => s + sumWithin(d.series, weekStart, today), 0);
+        const mtdSum = perDoctor.reduce((s, d) => s + sumWithin(d.series, monthStart, today), 0);
+        const btdSum = perDoctor.reduce((s, d) => s + sumWithin(d.series, bpStart, today), 0);
         setSelTotals({ day: daySum, wtd: wtdSum, mtd: mtdSum, btd: btdSum });
 
-        // company average (admins only): per-doctor average across ALL providers
+        // company average (admins only)
         if (isAdmin && allProviderIds.length > 0) {
           const idsForAvg = allProviderIds;
-          // fetch series for any doctors not in the selection (to avoid re-calling)
           const have = new Set(selIds);
           const missing = idsForAvg.filter((id) => !have.has(id));
           const fetchedMissing = await Promise.all(
             missing.map(async (id) => {
-              const resp = await fetchDoctorRevenueSeries({
-                start: bpStart.utc().format('YYYY-MM-DD'),
-                end: today.utc().format('YYYY-MM-DD'),
-                doctorId: id,
-              });
-              return { id, series: Array.isArray(resp?.series) ? resp.series : [] };
+              const series = await fetchSeriesFor(id);
+              return { id, series };
             })
           );
-
           const full = perDoctor.concat(fetchedMissing);
-          let cDay = 0,
-            cW = 0,
-            cM = 0,
-            cB = 0;
-          for (const { series } of full) {
-            cDay += sumWithin(series, today, today);
-            cW += sumWithin(series, weekStart, today);
-            cM += sumWithin(series, monthStart, today);
-            cB += sumWithin(series, bpStart, today);
-          }
+          const cDay = full.reduce((s, d) => s + sumWithin(d.series, today, today), 0);
+          const cW = full.reduce((s, d) => s + sumWithin(d.series, weekStart, today), 0);
+          const cM = full.reduce((s, d) => s + sumWithin(d.series, monthStart, today), 0);
+          const cB = full.reduce((s, d) => s + sumWithin(d.series, bpStart, today), 0);
           const denom = idsForAvg.length || 1;
           setCompanyAvgTotals({
             day: cDay / denom,
@@ -339,7 +360,7 @@ export default function DoctorRevenueAnalyticsPage() {
             btd: cB / denom,
           });
         } else {
-          setCompanyAvgTotals({ day: 0, wtd: 0, mtd: 0, btd: 0 });
+          setCompanyAvgTotals(ZERO_TOTALS);
         }
       } finally {
         if (alive) setLoadingAggregates(false);
@@ -352,7 +373,7 @@ export default function DoctorRevenueAnalyticsPage() {
   }, [
     date,
     isAdmin,
-    myDoctorId,
+    effectiveDoctorId, // <-- critical for non-admins
     isAllSelected,
     JSON.stringify(providerIds),
     allProviderIds.length,
@@ -382,29 +403,49 @@ export default function DoctorRevenueAnalyticsPage() {
   const pctOf = (num: number, den: number) => (den > 0 ? num / den : 0);
 
   const metrics = [
-    { label: 'Daily revenue goal', value: fmtUSD(goalSums.daily) },
+    {
+      label: 'Daily revenue goal',
+      value: fmtUSD(
+        selectedProviders.reduce((s: number, p: any) => s + safeNum(p.dailyRevenueGoal), 0)
+      ),
+    },
     {
       label: 'Percent of daily goal',
-      value: fmtPct(pctOf(selTotals.day, goalSums.daily)),
-      sub: `${fmtUSD(selTotals.day)} / ${fmtUSD(goalSums.daily)}`,
+      value: fmtPct(
+        pctOf(
+          selTotals.day,
+          selectedProviders.reduce((s: number, p: any) => s + safeNum(p.dailyRevenueGoal), 0)
+        )
+      ),
+      sub: `${fmtUSD(selTotals.day)} / ${fmtUSD(selectedProviders.reduce((s: number, p: any) => s + safeNum(p.dailyRevenueGoal), 0))}`,
     },
     {
       label: 'Total revenue this week',
       value: fmtUSD(selTotals.wtd),
-      sub: `${fmtUSD(selTotals.wtd)} / ${fmtUSD(goalSums.weekly)} (weekly goal)`,
+      sub: `${fmtUSD(selTotals.wtd)} / ${fmtUSD(selectedProviders.reduce((s: number, p: any) => s + safeNum(p.bonusRevenueGoal), 0) / 26)} (weekly goal)`,
     },
     {
       label: 'Percent of weekly goal',
-      value: fmtPct(pctOf(selTotals.wtd, goalSums.weekly)),
+      value: fmtPct(
+        pctOf(
+          selTotals.wtd,
+          selectedProviders.reduce((s: number, p: any) => s + safeNum(p.bonusRevenueGoal), 0) / 26
+        )
+      ),
     },
     {
       label: 'Total revenue this month',
       value: fmtUSD(selTotals.mtd),
-      sub: `${fmtUSD(selTotals.mtd)} / ${fmtUSD(goalSums.monthly)} (monthly goal)`,
+      sub: `${fmtUSD(selTotals.mtd)} / ${fmtUSD(selectedProviders.reduce((s: number, p: any) => s + safeNum(p.bonusRevenueGoal), 0) / 6)} (monthly goal)`,
     },
     {
       label: 'Percent of monthly goal',
-      value: fmtPct(pctOf(selTotals.mtd, goalSums.monthly)),
+      value: fmtPct(
+        pctOf(
+          selTotals.mtd,
+          selectedProviders.reduce((s: number, p: any) => s + safeNum(p.bonusRevenueGoal), 0) / 6
+        )
+      ),
     },
     {
       label: 'Total revenue this bonus period',
@@ -413,19 +454,22 @@ export default function DoctorRevenueAnalyticsPage() {
     },
     {
       label: 'Percent of bonus-period goal',
-      value: fmtPct(pctOf(selTotals.btd, goalSums.bonus)),
-      sub: `${fmtUSD(selTotals.btd)} / ${fmtUSD(goalSums.bonus)} (6-month goal)`,
+      value: fmtPct(
+        pctOf(
+          selTotals.btd,
+          selectedProviders.reduce((s: number, p: any) => s + safeNum(p.bonusRevenueGoal), 0)
+        )
+      ),
+      sub: `${fmtUSD(selTotals.btd)} / ${fmtUSD(selectedProviders.reduce((s: number, p: any) => s + safeNum(p.bonusRevenueGoal), 0))} (6-month goal)`,
     },
   ];
 
   // Company average goals (per doctor)
   const companyAvgGoals = useMemo(() => {
-    if (!isAdmin || allProviderIds.length === 0) {
-      return { daily: 0, weekly: 0, monthly: 0 };
-    }
+    if (!isAdmin || allProviderIds.length === 0) return { daily: 0, weekly: 0, monthly: 0 };
     const denom = allProviderIds.length;
     const sums = (providers as any[]).reduce(
-      (acc, p) => {
+      (acc, p: any) => {
         acc.daily += safeNum(p.dailyRevenueGoal);
         acc.weekly += safeNum(p.bonusRevenueGoal) / 26;
         acc.monthly += safeNum(p.bonusRevenueGoal) / 6;
@@ -534,7 +578,9 @@ export default function DoctorRevenueAnalyticsPage() {
                         <Chip size="small" label="All doctors" />
                       ) : (
                         (selected as string[]).map((id) => {
-                          const p = providers.find((pp) => String(pp.id) === String(id));
+                          const p: any = (providers as any[]).find(
+                            (pp: any) => String(pp.id) === String(id)
+                          );
                           return <Chip key={id} label={p ? p.name : id} size="small" />;
                         })
                       )}
@@ -545,7 +591,7 @@ export default function DoctorRevenueAnalyticsPage() {
                     <Checkbox checked={isAllSelected} />
                     <ListItemText primary="Select All" />
                   </MenuItem>
-                  {providers.map((p) => {
+                  {(providers as any[]).map((p: any) => {
                     const checked = providerIds.includes(String(p.id)) || isAllSelected;
                     return (
                       <MenuItem key={String(p.id)} value={String(p.id)}>
@@ -559,7 +605,7 @@ export default function DoctorRevenueAnalyticsPage() {
             </CardContent>
           </Card>
         ) : (
-          <Alert severity="info">Showing revenue for your production only.</Alert>
+          <Alert severity="info">Showing revenue for your provider only.</Alert>
         )}
 
         {/* Summary with KPIs */}
