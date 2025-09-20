@@ -217,20 +217,19 @@ export default function DoctorRevenueAnalyticsPage() {
     return providers.filter((p) => ids.includes(String(p.id)));
   }, [isAdmin, providers, providerIds, isAllSelected, allProviderIds, myDoctorId]);
 
+  // ---------- derive selected providers + goal sums ----------
   const goalSums = useMemo(() => {
+    const bonus = selectedProviders.reduce(
+      (s, p: any) => s + safeNum((p as any).bonusRevenueGoal), // full 6-month goal
+      0
+    );
     const daily = selectedProviders.reduce(
       (s, p: any) => s + safeNum((p as any).dailyRevenueGoal),
       0
     );
-    const weekly = selectedProviders.reduce(
-      (s, p: any) => s + safeNum((p as any).bonusRevenueGoal) / 26,
-      0
-    );
-    const monthly = selectedProviders.reduce(
-      (s, p: any) => s + safeNum((p as any).bonusRevenueGoal) / 6,
-      0
-    );
-    return { daily, weekly, monthly };
+    const weekly = bonus / 26; // derived weekly goal
+    const monthly = bonus / 6; // derived monthly goal
+    return { daily, weekly, monthly, bonus };
   }, [selectedProviders]);
 
   // ---------- compute Day/WTD/MTD/BTD via one series per doctor ----------
@@ -411,6 +410,11 @@ export default function DoctorRevenueAnalyticsPage() {
       label: 'Total revenue this bonus period',
       value: fmtUSD(selTotals.btd),
       sub: `Bonus period: ${startOfBonusPeriod(date).format('M/D')}–${endOfBonusPeriod(date).format('M/D')}`,
+    },
+    {
+      label: 'Percent of bonus-period goal',
+      value: fmtPct(pctOf(selTotals.btd, goalSums.bonus)),
+      sub: `${fmtUSD(selTotals.btd)} / ${fmtUSD(goalSums.bonus)} (6-month goal)`,
     },
   ];
 
