@@ -6,10 +6,6 @@ import {
   CardHeader,
   CardContent,
   Typography,
-  Button,
-  Popover,
-  Stack,
-  Divider,
   MenuItem,
   Select,
   FormControl,
@@ -18,35 +14,29 @@ import {
   Grid,
   Backdrop,
   CircularProgress,
+  Chip,
+  Stack,
+  Checkbox,
+  ListItemText,
+  Divider,
 } from '@mui/material';
-import { CalendarMonth, Refresh } from '@mui/icons-material';
 import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import dayjs, { Dayjs } from 'dayjs';
 import utc from 'dayjs/plugin/utc';
-import {
-  ResponsiveContainer,
-  LineChart,
-  CartesianGrid,
-  XAxis,
-  YAxis,
-  Tooltip,
-  Line,
-} from 'recharts';
 
 import { useAuth } from '../auth/useAuth';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import {
-  fetchRevenueByDoctorForDay,
-  type DoctorRevenueRow,
+  fetchRevenueForDay,
   fetchDoctorRevenueSeries,
+  type DoctorRevenueRow,
+  type DoctorRevenueSeriesResponse,
 } from '../api/opsStats';
 
 dayjs.extend(utc);
 
-// ---------- Types / utils ----------
-type DateRange = { from: Dayjs; to: Dayjs };
-
+// ---------- utils ----------
 function toISODate(d: Dayjs) {
   return d.utc().format('YYYY-MM-DD');
 }
@@ -55,55 +45,102 @@ function fmtUSD(n: number) {
     Number(n) || 0
   );
 }
+function fmtPct(n: number) {
+  const v = Number.isFinite(n) ? n : 0;
+  return `${(v * 100).toFixed(0)}%`;
+}
+function safeNum(n: any) {
+  const v = typeof n === 'number' ? n : Number(n);
+  return Number.isFinite(v) ? v : 0;
+}
 
-const now = dayjs();
-const PRESETS: Record<string, () => DateRange> = {
-  '7D': () => ({ from: now.startOf('day').subtract(6, 'day'), to: now.startOf('day') }),
-  '30D': () => ({ from: now.startOf('day').subtract(29, 'day'), to: now.startOf('day') }),
-  '90D': () => ({ from: now.startOf('day').subtract(89, 'day'), to: now.startOf('day') }),
-  YTD: () => ({ from: now.startOf('year'), to: now.startOf('day') }),
+type Totals = {
+  day: number;
+  wtd: number;
+  mtd: number;
+  btd: number; // bonus period to date
 };
+const ZERO_TOTALS: Totals = { day: 0, wtd: 0, mtd: 0, btd: 0 };
 
-// ---------- Page ----------
+const ALL_VALUE = '__ALL__';
+
+// Bonus period helpers: 4/1–9/30 and 10/1–3/31
+function startOfBonusPeriod(d: Dayjs) {
+  const m = d.month(); // 0=Jan
+  const y = d.year();
+  if (m >= 3 && m <= 8) {
+    // Apr..Sep
+    return dayjs.utc(`${y}-04-01`);
+  }
+  if (m >= 9) {
+    // Oct..Dec
+    return dayjs.utc(`${y}-10-01`);
+  }
+  // Jan..Mar -> Oct 1 of prev year
+  return dayjs.utc(`${y - 1}-10-01`);
+}
+function endOfBonusPeriod(d: Dayjs) {
+  const m = d.month();
+  const y = d.year();
+  if (m >= 3 && m <= 8) {
+    return dayjs.utc(`${y}-09-30`);
+  }
+  if (m >= 9) {
+    return dayjs.utc(`${y + 1}-03-31`);
+  }
+  return dayjs.utc(`${y}-03-31`);
+}
+
+// Replace your existing sumSeries with this version
+function sumSeries(series: { date: string; total: number }[], start: Dayjs, end: Dayjs) {
+  const s = start.startOf('day');
+  const e = end.endOf('day');
+
+  return series.reduce((acc, p) => {
+    // Be defensive about incoming format; treat value as UTC date
+    const d = dayjs.utc(String(p.date));
+    if (!d.isValid()) return acc;
+
+    if ((d.isAfter(s) || d.isSame(s)) && (d.isBefore(e) || d.isSame(e))) {
+      acc += Number(p.total) || 0;
+    }
+    return acc;
+  }, 0);
+}
+
+// ---------- page ----------
 export default function DoctorRevenueAnalyticsPage() {
   const { role, doctorId: myDoctorId } = (useAuth() as any) || {};
   const isAdmin = Array.isArray(role) ? role.includes('admin') || role.includes('owner') : false;
 
-  // Filters
-  const [range, setRange] = useState<DateRange>(PRESETS['30D']());
-  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
-  const open = Boolean(anchorEl);
+  // Date (defaults to today)
+  const [date, setDate] = useState<Dayjs>(dayjs().startOf('day'));
 
-  // Providers (single-select doctor for this page)
+  // Providers (admins only)
   const [providers, setProviders] = useState<Provider[]>([]);
-  const [selectedDoctorId, setSelectedDoctorId] = useState<string | null>(
-    isAdmin ? null : myDoctorId ? String(myDoctorId) : null
-  );
+  const [providerIds, setProviderIds] = useState<string[]>([]); // selected
   const [providersLoading, setProvidersLoading] = useState(false);
+  const allProviderIds = useMemo(() => providers.map((p) => String(p.id)), [providers]);
+  const isAllSelected =
+    allProviderIds.length > 0 &&
+    providerIds.length === allProviderIds.length &&
+    providerIds.every((id) => allProviderIds.includes(id));
 
-  // Range series (line chart)
-  const [series, setSeries] = useState<Array<{ date: string; total: number }>>([]);
-  const [seriesLoading, setSeriesLoading] = useState(false);
+  // Day rows (by doctor)
+  const [rows, setRows] = useState<DoctorRevenueRow[]>([]);
+  const [dayTotal, setDayTotal] = useState(0);
+
+  // Aggregates
+  const [selTotals, setSelTotals] = useState<Totals>(ZERO_TOTALS);
+  const [companyAvgTotals, setCompanyAvgTotals] = useState<Totals>(ZERO_TOTALS);
+
+  const [loadingAggregates, setLoadingAggregates] = useState(false);
+  const [rowsLoading, setRowsLoading] = useState(false);
   const [unauthorized, setUnauthorized] = useState(false);
 
-  // Per-day table
-  const [revenueDate, setRevenueDate] = useState<string>(toISODate(range.to));
-  const [rows, setRows] = useState<DoctorRevenueRow[]>([]);
-  const [rowsLoading, setRowsLoading] = useState(false);
+  const blocking = providersLoading || rowsLoading || loadingAggregates;
 
-  useEffect(() => setRevenueDate(toISODate(range.to)), [range.to]);
-
-  // Block the whole UI while anything is loading
-  const blocking = providersLoading || seriesLoading || rowsLoading;
-
-  // Provider name helper
-  const selectedDoctorName = useMemo(() => {
-    if (!selectedDoctorId) return null;
-    const p = providers.find((pp) => String(pp.id) === selectedDoctorId);
-    return p?.name ?? null;
-  }, [providers, selectedDoctorId]);
-
-  // ----- Load providers (admins only), default to first doctor -----
+  // ---------- load providers for admins ----------
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -120,11 +157,7 @@ export default function DoctorRevenueAnalyticsPage() {
               ? (list as any).items
               : [];
         setProviders(arr as Provider[]);
-        if (!selectedDoctorId && (arr as Provider[]).length) {
-          setSelectedDoctorId(String((arr as Provider[])[0].id));
-        }
-      } catch {
-        // ignore
+        setProviderIds((arr as Provider[]).map((p) => String(p.id))); // default ALL
       } finally {
         if (alive) setProvidersLoading(false);
       }
@@ -132,75 +165,40 @@ export default function DoctorRevenueAnalyticsPage() {
     return () => {
       alive = false;
     };
-  }, [isAdmin]); // selectedDoctorId intentionally not here
+  }, [isAdmin]);
 
-  // ----- Fetch RANGE revenue series via new endpoint -----
+  // ---------- fetch per-doctor rows for the selected day ----------
   useEffect(() => {
     let alive = true;
     (async () => {
-      // For admins, require a doctor selection (endpoint is per-doctor)
-      if (isAdmin && !selectedDoctorId) {
-        setSeries([]);
-        return;
-      }
-
       setUnauthorized(false);
-      setSeriesLoading(true);
-      try {
-        const resp = await fetchDoctorRevenueSeries({
-          start: toISODate(range.from),
-          end: toISODate(range.to),
-          // Admins must pass doctorId; non-admins may omit (backend uses caller)
-          doctorId: isAdmin ? selectedDoctorId! : undefined,
-        });
-        if (!alive) return;
-        // Defensive sort
-        const pts = (resp.series || []).slice().sort((a, b) => a.date.localeCompare(b.date));
-        setSeries(pts);
-      } catch (err) {
-        if (!alive) return;
-        console.error('Doctor revenue series request failed:', err);
-        setUnauthorized(true);
-        setSeries([]);
-      } finally {
-        if (alive) setSeriesLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [range.from, range.to, isAdmin, selectedDoctorId]);
-
-  // ----- Fetch per-day doctor breakdown (filters to the selected doctor) -----
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      // For admins, require a doctor selection
-      if (isAdmin && !selectedDoctorId) {
-        setRows([]);
-        return;
-      }
-
       setRowsLoading(true);
       try {
-        const params: any = { date: revenueDate };
-        if (isAdmin && selectedDoctorId) {
-          params.providerIds = [selectedDoctorId];
+        // Build provider scope
+        let providerScope: string[] | undefined;
+        if (isAdmin) {
+          providerScope = isAllSelected ? undefined : providerIds;
+        } else if (myDoctorId) {
+          providerScope = [String(myDoctorId)];
         }
-        // Non-admin: backend uses caller's doctor; no need to pass providerIds
 
-        const list = await fetchRevenueByDoctorForDay(params);
+        const resp = await fetchRevenueForDay({
+          date: toISODate(date),
+          providerIds: providerScope,
+        });
+
         if (!alive) return;
-        // This will typically be a single row for the selected doctor
+        setDayTotal(Number(resp?.total ?? 0));
+        const byDoc = Array.isArray(resp?.byDoctor) ? resp.byDoctor : [];
         setRows(
-          (list || [])
-            .slice()
-            .sort((a, b) => Number(b.totalServiceValue || 0) - Number(a.totalServiceValue || 0))
+          byDoc.slice().sort((a, b) => Number(b.totalServiceValue) - Number(a.totalServiceValue))
         );
       } catch (e) {
         if (!alive) return;
-        console.error('Revenue by doctor (day) failed:', e);
+        console.error('fetchRevenueForDay failed:', e);
+        setUnauthorized(true);
         setRows([]);
+        setDayTotal(0);
       } finally {
         if (alive) setRowsLoading(false);
       }
@@ -208,18 +206,158 @@ export default function DoctorRevenueAnalyticsPage() {
     return () => {
       alive = false;
     };
-  }, [revenueDate, isAdmin, selectedDoctorId]);
+  }, [date, isAdmin, myDoctorId, isAllSelected, JSON.stringify(providerIds)]);
 
-  // ----- Totals for header cards -----
-  const totals = useMemo(() => {
-    const revenue = series.reduce((s, p) => s + (Number(p.total) || 0), 0);
-    const days = series.length;
-    return {
-      revenue,
-      days,
-      avgPerDay: days ? revenue / days : 0,
+  // ---------- derive selected providers + goal sums ----------
+  const selectedProviders = useMemo(() => {
+    if (!isAdmin) {
+      return providers.filter((p) => String(p.id) === String(myDoctorId));
+    }
+    const ids = isAllSelected ? allProviderIds : providerIds;
+    return providers.filter((p) => ids.includes(String(p.id)));
+  }, [isAdmin, providers, providerIds, isAllSelected, allProviderIds, myDoctorId]);
+
+  const goalSums = useMemo(() => {
+    const daily = selectedProviders.reduce(
+      (s, p: any) => s + safeNum((p as any).dailyRevenueGoal),
+      0
+    );
+    const weekly = selectedProviders.reduce(
+      (s, p: any) => s + safeNum((p as any).bonusRevenueGoal) / 26,
+      0
+    );
+    const monthly = selectedProviders.reduce(
+      (s, p: any) => s + safeNum((p as any).bonusRevenueGoal) / 6,
+      0
+    );
+    return { daily, weekly, monthly };
+  }, [selectedProviders]);
+
+  // ---------- compute Day/WTD/MTD/BTD via one series per doctor ----------
+  // ---------- compute Day/WTD/MTD/BTD using series(start→end) ----------
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        setLoadingAggregates(true);
+
+        // doctor IDs in scope
+        const selIds: string[] = !isAdmin
+          ? myDoctorId
+            ? [String(myDoctorId)]
+            : []
+          : isAllSelected
+            ? allProviderIds
+            : providerIds;
+
+        if (!selIds.length) {
+          if (alive) {
+            setSelTotals({ day: 0, wtd: 0, mtd: 0, btd: 0 });
+            setCompanyAvgTotals({ day: 0, wtd: 0, mtd: 0, btd: 0 });
+          }
+          return;
+        }
+
+        const bpStart = startOfBonusPeriod(date);
+        const today = date;
+        const weekStart = date.startOf('week'); // use .startOf('isoWeek') if you prefer ISO weeks
+        const monthStart = date.startOf('month');
+
+        // helper to sum within a date window from a series
+        const sumWithin = (series: { date: string; total: number }[], a: Dayjs, b: Dayjs) => {
+          const s = a.startOf('day');
+          const e = b.endOf('day');
+          return series.reduce((acc, p) => {
+            const d = dayjs.utc(String(p.date));
+            if (d.isValid() && (d.isAfter(s) || d.isSame(s)) && (d.isBefore(e) || d.isSame(e))) {
+              acc += Number(p.total) || 0;
+            }
+            return acc;
+          }, 0);
+        };
+
+        // one request per doctor with explicit start & end
+        const perDoctor = await Promise.all(
+          selIds.map(async (id) => {
+            const resp = await fetchDoctorRevenueSeries({
+              start: bpStart.utc().format('YYYY-MM-DD'),
+              end: today.utc().format('YYYY-MM-DD'),
+              doctorId: id,
+            });
+            return { id, series: Array.isArray(resp?.series) ? resp.series : [] };
+          })
+        );
+
+        if (!alive) return;
+
+        // aggregate across selection
+        let daySum = 0,
+          wtdSum = 0,
+          mtdSum = 0,
+          btdSum = 0;
+        for (const { series } of perDoctor) {
+          daySum += sumWithin(series, today, today);
+          wtdSum += sumWithin(series, weekStart, today);
+          mtdSum += sumWithin(series, monthStart, today);
+          btdSum += sumWithin(series, bpStart, today); // full bonus window
+        }
+        setSelTotals({ day: daySum, wtd: wtdSum, mtd: mtdSum, btd: btdSum });
+
+        // company average (admins only): per-doctor average across ALL providers
+        if (isAdmin && allProviderIds.length > 0) {
+          const idsForAvg = allProviderIds;
+          // fetch series for any doctors not in the selection (to avoid re-calling)
+          const have = new Set(selIds);
+          const missing = idsForAvg.filter((id) => !have.has(id));
+          const fetchedMissing = await Promise.all(
+            missing.map(async (id) => {
+              const resp = await fetchDoctorRevenueSeries({
+                start: bpStart.utc().format('YYYY-MM-DD'),
+                end: today.utc().format('YYYY-MM-DD'),
+                doctorId: id,
+              });
+              return { id, series: Array.isArray(resp?.series) ? resp.series : [] };
+            })
+          );
+
+          const full = perDoctor.concat(fetchedMissing);
+          let cDay = 0,
+            cW = 0,
+            cM = 0,
+            cB = 0;
+          for (const { series } of full) {
+            cDay += sumWithin(series, today, today);
+            cW += sumWithin(series, weekStart, today);
+            cM += sumWithin(series, monthStart, today);
+            cB += sumWithin(series, bpStart, today);
+          }
+          const denom = idsForAvg.length || 1;
+          setCompanyAvgTotals({
+            day: cDay / denom,
+            wtd: cW / denom,
+            mtd: cM / denom,
+            btd: cB / denom,
+          });
+        } else {
+          setCompanyAvgTotals({ day: 0, wtd: 0, mtd: 0, btd: 0 });
+        }
+      } finally {
+        if (alive) setLoadingAggregates(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
     };
-  }, [series]);
+  }, [
+    date,
+    isAdmin,
+    myDoctorId,
+    isAllSelected,
+    JSON.stringify(providerIds),
+    allProviderIds.length,
+  ]);
 
   if (unauthorized) {
     return (
@@ -231,9 +369,110 @@ export default function DoctorRevenueAnalyticsPage() {
     );
   }
 
+  // ---------- handlers ----------
+  const handleMultiSelectChange = (e: any) => {
+    const next = e.target.value as string[];
+    if (next.includes(ALL_VALUE)) {
+      setProviderIds(isAllSelected ? [] : allProviderIds);
+      return;
+    }
+    setProviderIds(next);
+  };
+
+  // ---------- UI helpers ----------
+  const pctOf = (num: number, den: number) => (den > 0 ? num / den : 0);
+
+  const metrics = [
+    { label: 'Daily revenue goal', value: fmtUSD(goalSums.daily) },
+    {
+      label: 'Percent of daily goal',
+      value: fmtPct(pctOf(selTotals.day, goalSums.daily)),
+      sub: `${fmtUSD(selTotals.day)} / ${fmtUSD(goalSums.daily)}`,
+    },
+    {
+      label: 'Total revenue this week',
+      value: fmtUSD(selTotals.wtd),
+      sub: `${fmtUSD(selTotals.wtd)} / ${fmtUSD(goalSums.weekly)} (weekly goal)`,
+    },
+    {
+      label: 'Percent of weekly goal',
+      value: fmtPct(pctOf(selTotals.wtd, goalSums.weekly)),
+    },
+    {
+      label: 'Total revenue this month',
+      value: fmtUSD(selTotals.mtd),
+      sub: `${fmtUSD(selTotals.mtd)} / ${fmtUSD(goalSums.monthly)} (monthly goal)`,
+    },
+    {
+      label: 'Percent of monthly goal',
+      value: fmtPct(pctOf(selTotals.mtd, goalSums.monthly)),
+    },
+    {
+      label: 'Total revenue this bonus period',
+      value: fmtUSD(selTotals.btd),
+      sub: `Bonus period: ${startOfBonusPeriod(date).format('M/D')}–${endOfBonusPeriod(date).format('M/D')}`,
+    },
+  ];
+
+  // Company average goals (per doctor)
+  const companyAvgGoals = useMemo(() => {
+    if (!isAdmin || allProviderIds.length === 0) {
+      return { daily: 0, weekly: 0, monthly: 0 };
+    }
+    const denom = allProviderIds.length;
+    const sums = (providers as any[]).reduce(
+      (acc, p) => {
+        acc.daily += safeNum(p.dailyRevenueGoal);
+        acc.weekly += safeNum(p.bonusRevenueGoal) / 26;
+        acc.monthly += safeNum(p.bonusRevenueGoal) / 6;
+        return acc;
+      },
+      { daily: 0, weekly: 0, monthly: 0 }
+    );
+    return {
+      daily: sums.daily / denom,
+      weekly: sums.weekly / denom,
+      monthly: sums.monthly / denom,
+    };
+  }, [isAdmin, providers, allProviderIds.length]);
+
+  const CompanyAvgRow = isAdmin ? (
+    <Box mt={1.5}>
+      <Divider sx={{ my: 1 }} />
+      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+        Company average (per doctor)
+      </Typography>
+      <Box
+        sx={{
+          display: 'grid',
+          gap: 1,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+        }}
+      >
+        <Metric label="Avg daily goal" value={fmtUSD(companyAvgGoals.daily)} />
+        <Metric
+          label="Avg daily % achieved"
+          value={fmtPct(pctOf(companyAvgTotals.day, companyAvgGoals.daily))}
+          sub={`${fmtUSD(companyAvgTotals.day)} / ${fmtUSD(companyAvgGoals.daily)}`}
+        />
+        <Metric
+          label="Avg WTD vs goal"
+          value={`${fmtUSD(companyAvgTotals.wtd)} / ${fmtUSD(companyAvgGoals.weekly)}`}
+          sub={fmtPct(pctOf(companyAvgTotals.wtd, companyAvgGoals.weekly))}
+        />
+        <Metric
+          label="Avg MTD vs goal"
+          value={`${fmtUSD(companyAvgTotals.mtd)} / ${fmtUSD(companyAvgGoals.monthly)}`}
+          sub={fmtPct(pctOf(companyAvgTotals.mtd, companyAvgGoals.monthly))}
+        />
+        <Metric label="Avg BTD revenue" value={fmtUSD(companyAvgTotals.btd)} />
+      </Box>
+    </Box>
+  ) : null;
+
+  // ---------- render ----------
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
-      {/* Global loading overlay */}
       <Backdrop open={blocking} sx={{ color: '#fff', zIndex: (t) => t.zIndex.modal + 1 }}>
         <Stack alignItems="center" spacing={2}>
           <CircularProgress color="inherit" />
@@ -244,196 +483,129 @@ export default function DoctorRevenueAnalyticsPage() {
       <Box p={3} display="flex" flexDirection="column" gap={3}>
         {/* Header */}
         <Grid container spacing={2} alignItems="center">
-          <Grid item xs={12} md={6}>
+          <Grid item xs={12} md={7}>
             <Typography variant="h5" fontWeight={600}>
-              Doctor Revenue Analytics
+              Daily Revenue by Doctor
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Explore a single doctor’s revenue over any date range.
+              View primary providers and their revenue for a specific day.
             </Typography>
           </Grid>
-          <Grid item xs={12} md={6}>
+          <Grid item xs={12} md={5}>
             <Box
               display="flex"
               justifyContent={{ xs: 'flex-start', md: 'flex-end' }}
-              gap={1}
+              gap={2}
               flexWrap="wrap"
             >
-              {Object.keys(PRESETS).map((k) => (
-                <Button
-                  key={k}
-                  variant="outlined"
-                  size="small"
-                  onClick={() => setRange(PRESETS[k]())}
-                >
-                  {k}
-                </Button>
-              ))}
-              <Button
-                variant="outlined"
-                size="small"
-                startIcon={<CalendarMonth />}
-                onClick={(e) => setAnchorEl(e.currentTarget)}
-              >
-                {range.from.format('MMM D, YYYY')} – {range.to.format('MMM D, YYYY')}
-              </Button>
-              <Button
-                variant="outlined"
-                size="small"
-                title="Refresh"
-                onClick={() => setRange({ ...range })}
-              >
-                <Refresh fontSize="small" />
-              </Button>
+              <DatePicker
+                label="Pick a day"
+                value={date}
+                onChange={(v) => v && setDate(v.startOf('day'))}
+                slotProps={{ textField: { size: 'small' } }}
+              />
             </Box>
           </Grid>
         </Grid>
 
-        {/* Admin: single-doctor picker */}
+        {/* Admin: provider multi-select with Select All */}
         {isAdmin ? (
           <Card variant="outlined">
             <CardHeader
-              title="Doctor"
-              subheader="Pick a single doctor to view their revenue series"
+              title="Filter Doctors"
+              subheader="Choose one or more doctors. Select All shows totals for all providers."
             />
             <CardContent>
-              <FormControl fullWidth>
-                <InputLabel id="doctor-label">Doctor</InputLabel>
+              <FormControl fullWidth size="small">
+                <InputLabel id="providers-label">Doctors</InputLabel>
                 <Select
-                  labelId="doctor-label"
-                  label="Doctor"
-                  value={selectedDoctorId ?? ''}
-                  onChange={(e) => setSelectedDoctorId(String(e.target.value))}
+                  multiple
+                  labelId="providers-label"
+                  label="Doctors"
+                  value={isAllSelected ? [...allProviderIds] : providerIds}
+                  onChange={handleMultiSelectChange}
+                  renderValue={(selected) => (
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                      {isAllSelected ? (
+                        <Chip size="small" label="All doctors" />
+                      ) : (
+                        (selected as string[]).map((id) => {
+                          const p = providers.find((pp) => String(pp.id) === String(id));
+                          return <Chip key={id} label={p ? p.name : id} size="small" />;
+                        })
+                      )}
+                    </Box>
+                  )}
                 >
-                  {providers.map((p) => (
-                    <MenuItem key={String(p.id)} value={String(p.id)}>
-                      {p.name}
-                    </MenuItem>
-                  ))}
+                  <MenuItem value={ALL_VALUE}>
+                    <Checkbox checked={isAllSelected} />
+                    <ListItemText primary="Select All" />
+                  </MenuItem>
+                  {providers.map((p) => {
+                    const checked = providerIds.includes(String(p.id)) || isAllSelected;
+                    return (
+                      <MenuItem key={String(p.id)} value={String(p.id)}>
+                        <Checkbox checked={checked} />
+                        <ListItemText primary={p.name} />
+                      </MenuItem>
+                    );
+                  })}
                 </Select>
               </FormControl>
-              {!selectedDoctorId && (
-                <Alert sx={{ mt: 2 }} severity="info">
-                  Select a doctor to load data.
-                </Alert>
-              )}
             </CardContent>
           </Card>
         ) : (
           <Alert severity="info">Showing revenue for your production only.</Alert>
         )}
 
-        {/* Summary cards */}
+        {/* Summary with KPIs */}
         <Grid container spacing={2}>
-          <Grid item xs={12} sm={4}>
+          <Grid item xs={12}>
             <Card variant="outlined">
               <CardHeader
                 titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
-                title="Total Revenue (range)"
+                title={`Totals & Goals — ${dayjs(date).format('MMM D, YYYY')}`}
               />
               <CardContent>
-                <Typography variant="h5" fontWeight={700}>
-                  {fmtUSD(totals.revenue)}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {totals.days} days
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={12} sm={4}>
-            <Card variant="outlined">
-              <CardHeader
-                titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
-                title="Daily Avg (range)"
-              />
-              <CardContent>
-                <Typography variant="h5" fontWeight={700}>
-                  {fmtUSD(totals.avgPerDay)}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  avg revenue / day
-                </Typography>
+                <Box
+                  sx={{
+                    display: 'grid',
+                    gap: 1.5,
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                  }}
+                >
+                  <Metric label="Total revenue (day)" value={fmtUSD(dayTotal)} />
+                  {metrics.map((m) => (
+                    <Metric key={m.label} label={m.label} value={m.value} sub={m.sub} />
+                  ))}
+                </Box>
+
+                {/* Company average row (admins only) */}
+                {CompanyAvgRow}
               </CardContent>
             </Card>
           </Grid>
         </Grid>
 
-        {/* Revenue trend (per-doctor) */}
+        {/* Table */}
         <Card variant="outlined">
           <CardHeader
-            title={
-              selectedDoctorName
-                ? `Revenue Trend — ${selectedDoctorName}`
-                : 'Revenue Trend — (select a doctor)'
-            }
-          />
-          <CardContent>
-            <Box height={340}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={series} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis
-                    dataKey="date"
-                    tickFormatter={(d) => dayjs(d).format('MM/DD')}
-                    minTickGap={24}
-                  />
-                  <YAxis tickFormatter={(v) => fmtUSD(Number(v) || 0)} />
-                  <Tooltip
-                    formatter={(value: number) => fmtUSD(value)}
-                    labelFormatter={(l) => dayjs(l).format('ddd, MMM D, YYYY')}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="total"
-                    strokeWidth={2}
-                    dot={false}
-                    isAnimationActive
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </Box>
-          </CardContent>
-        </Card>
-
-        {/* Per-day table (shows the selected doctor's row for that day) */}
-        <Card variant="outlined">
-          <CardHeader
-            title={
-              selectedDoctorName
-                ? `Revenue on ${dayjs(revenueDate).format('MMM D, YYYY')} — ${selectedDoctorName}`
-                : `Revenue on ${dayjs(revenueDate).format('MMM D, YYYY')}`
-            }
+            title={`Revenue by Doctor — ${dayjs(date).format('MMM D, YYYY')}`}
             subheader={
               isAdmin
-                ? selectedDoctorId
-                  ? 'Single doctor'
-                  : 'Select a doctor to view'
+                ? isAllSelected
+                  ? 'All doctors'
+                  : `${providerIds.length} selected`
                 : 'Your revenue only'
             }
           />
           <CardContent>
-            <Box display="flex" alignItems="center" gap={2} flexWrap="wrap" mb={2}>
-              <DatePicker
-                label="Pick a day"
-                value={dayjs(revenueDate)}
-                onChange={(v) => v && setRevenueDate(toISODate(v.startOf('day')))}
-                slotProps={{ textField: { size: 'small' } }}
-              />
-              <Typography variant="subtitle2" color="text.secondary" sx={{ ml: 'auto' }}>
-                {rowsLoading ? 'Loading…' : `${rows.length} row(s)`}
-              </Typography>
-              <Typography variant="h6" fontWeight={700}>
-                Total: {fmtUSD(rows.reduce((s, r) => s + Number(r.totalServiceValue || 0), 0))}
-              </Typography>
-            </Box>
-
             <Box sx={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ color: 'var(--mui-palette-text-secondary)' }}>
-                    <th style={{ textAlign: 'left', padding: '8px' }}>Doctor</th>
-                    <th style={{ textAlign: 'right', padding: '8px' }}>Revenue</th>
+                    <th style={{ textAlign: 'left', padding: 8 }}>Doctor</th>
+                    <th style={{ textAlign: 'right', padding: 8 }}>Revenue</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -441,7 +613,7 @@ export default function DoctorRevenueAnalyticsPage() {
                     <tr>
                       <td
                         colSpan={2}
-                        style={{ padding: '12px', color: 'var(--mui-palette-text-secondary)' }}
+                        style={{ padding: 12, color: 'var(--mui-palette-text-secondary)' }}
                       >
                         No revenue data for this day.
                       </td>
@@ -452,72 +624,58 @@ export default function DoctorRevenueAnalyticsPage() {
                         key={`${r.doctorId ?? 'none'}-${i}`}
                         style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}
                       >
-                        <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>
+                        <td style={{ padding: 8, whiteSpace: 'nowrap' }}>
                           {r.doctorName ?? 'Not Specified'}
                         </td>
-                        <td style={{ padding: '8px', textAlign: 'right' }}>
+                        <td style={{ padding: 8, textAlign: 'right' }}>
                           {fmtUSD(r.totalServiceValue)}
                         </td>
                       </tr>
                     ))
                   )}
                 </tbody>
+                {rows.length > 0 && (
+                  <tfoot>
+                    <tr style={{ borderTop: '2px solid rgba(0,0,0,0.12)' }}>
+                      <td style={{ padding: 8, fontWeight: 700 }}>Total</td>
+                      <td style={{ padding: 8, textAlign: 'right', fontWeight: 700 }}>
+                        {fmtUSD(dayTotal)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </Box>
           </CardContent>
         </Card>
-
-        {/* Date Range Popover */}
-        <Popover
-          open={open}
-          anchorEl={anchorEl}
-          onClose={() => setAnchorEl(null)}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-          PaperProps={{ sx: { p: 2, width: 420 } }}
-        >
-          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-            <Stack spacing={1} flex={1}>
-              <DatePicker
-                label="Start date"
-                value={range.from}
-                onChange={(v) => v && setRange((r) => ({ ...r, from: v.startOf('day') }))}
-              />
-              <DatePicker
-                label="End date"
-                value={range.to}
-                onChange={(v) => v && setRange((r) => ({ ...r, to: v.startOf('day') }))}
-              />
-            </Stack>
-            <Divider flexItem orientation="vertical" />
-            <Stack spacing={1} minWidth={180}>
-              <Typography variant="subtitle2" color="text.secondary">
-                Quick ranges
-              </Typography>
-              <Button variant="outlined" onClick={() => setRange(PRESETS['7D']())}>
-                Last 7 days
-              </Button>
-              <Button variant="outlined" onClick={() => setRange(PRESETS['30D']())}>
-                Last 30 days
-              </Button>
-              <Button variant="outlined" onClick={() => setRange(PRESETS['90D']())}>
-                Last 90 days
-              </Button>
-              <Button variant="outlined" onClick={() => setRange(PRESETS['YTD']())}>
-                Year to date
-              </Button>
-              <Box display="flex" gap={1} mt={1}>
-                <Button fullWidth variant="contained" onClick={() => setAnchorEl(null)}>
-                  Apply
-                </Button>
-                <Button fullWidth variant="outlined" onClick={() => setAnchorEl(null)}>
-                  Cancel
-                </Button>
-              </Box>
-            </Stack>
-          </Stack>
-        </Popover>
       </Box>
     </LocalizationProvider>
+  );
+}
+
+/** Small KPI display component */
+function Metric({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
+  return (
+    <Box
+      sx={{
+        p: 1,
+        borderRadius: 1,
+        border: '1px solid',
+        borderColor: 'divider',
+        minHeight: 64,
+      }}
+    >
+      <Typography variant="caption" color="text.secondary">
+        {label}
+      </Typography>
+      <Typography variant="subtitle1" fontWeight={700}>
+        {value}
+      </Typography>
+      {sub ? (
+        <Typography variant="caption" color="text.secondary">
+          {sub}
+        </Typography>
+      ) : null}
+    </Box>
   );
 }
