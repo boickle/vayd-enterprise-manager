@@ -5,6 +5,7 @@ import CreateUser from './pages/CreateUser';
 import PaymentsAnalyticsPage from './pages/PaymentAnalytics';
 import OpsAnalyticsPage from './pages/OpsAnalytics';
 import DoctorRevenueAnalyticsPage from './pages/DoctorRevenueAnalytics';
+import AuditAdminPage from './pages/AuditAdmin';
 
 export type AppPage = {
   path: string;
@@ -41,6 +42,12 @@ export function getAccessiblePages(abilities?: string[]): AppPage[] {
       label: 'Doctor Revenue Analytics',
       element: <DoctorRevenueAnalyticsPage />,
       permission: 'canSeeDoctorAnalytics', // <-- add a permission key if you want to gate it
+    },
+    {
+      path: '/audit',
+      label: 'Super Admin Audit',
+      element: <AuditAdminPage />,
+      permission: 'superadmin', // <-- add a permission key if you want to gate it
     },
   ];
 
