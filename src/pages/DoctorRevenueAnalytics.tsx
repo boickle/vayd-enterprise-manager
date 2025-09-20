@@ -136,11 +136,19 @@ export default function DoctorRevenueAnalyticsPage() {
   const [loadingAggregates, setLoadingAggregates] = useState(false);
   const [rowsLoading, setRowsLoading] = useState(false);
   const [unauthorized, setUnauthorized] = useState(false);
+  // The doctor id that actually matches backend productionEmployeeId for series
+  // keep it synced if auth changes; don't blow away an existing non-empty id
 
   // The doctor id that actually matches backend productionEmployeeId for series
   const [effectiveDoctorId, setEffectiveDoctorId] = useState<string>('');
 
   const blocking = providersLoading || rowsLoading || loadingAggregates;
+
+  useEffect(() => {
+    if (myDoctorId && !effectiveDoctorId) {
+      setEffectiveDoctorId(String(myDoctorId));
+    }
+  }, [myDoctorId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------- load providers (normalize shapes) ----------
   useEffect(() => {
@@ -216,7 +224,7 @@ export default function DoctorRevenueAnalyticsPage() {
         // Establish an effective doctor id for series (prefer what API returned)
         if (!isAdmin) {
           const idFromRows = sorted?.[0]?.doctorId != null ? String(sorted[0].doctorId) : '';
-          setEffectiveDoctorId(idFromRows || myDoctorId || '');
+          setEffectiveDoctorId((prev) => idFromRows || myDoctorId || prev || '');
         }
       } catch (e) {
         if (!alive) return;
@@ -274,26 +282,9 @@ export default function DoctorRevenueAnalyticsPage() {
       try {
         setLoadingAggregates(true);
 
-        // doctors in scope
-        const selIds: string[] = !isAdmin
-          ? effectiveDoctorId
-            ? [String(effectiveDoctorId)]
-            : []
-          : isAllSelected
-            ? allProviderIds
-            : providerIds;
-
-        if (!selIds.length) {
-          if (alive) {
-            setSelTotals(ZERO_TOTALS);
-            setCompanyAvgTotals(ZERO_TOTALS);
-          }
-          return;
-        }
-
         const bpStart = startOfBonusPeriod(date);
         const today = date;
-        const weekStart = date.startOf('week'); // if needed, switch to isoWeek with plugin
+        const weekStart = date.startOf('week'); // switch to isoWeek if you prefer
         const monthStart = date.startOf('month');
 
         const sumWithin = (series: { date: string; total: number }[], a: Dayjs, b: Dayjs) => {
@@ -308,37 +299,73 @@ export default function DoctorRevenueAnalyticsPage() {
           }, 0);
         };
 
-        const fetchSeriesFor = async (id: string) => {
+        let perDoctor: Array<{ id: string; series: { date: string; total: number }[] }> = [];
+
+        if (!isAdmin) {
+          // ⬅️ Non-admin: let backend infer the doctor by OMITTING doctorId
           const resp = await fetchDoctorRevenueSeries({
             start: bpStart.utc().format('YYYY-MM-DD'),
             end: today.utc().format('YYYY-MM-DD'),
-            doctorId: id,
           });
-          return Array.isArray((resp as any)?.series) ? (resp as any).series : [];
-        };
-
-        const perDoctor = await Promise.all(
-          selIds.map(async (id) => ({ id, series: await fetchSeriesFor(id) }))
-        );
+          const series = Array.isArray((resp as any)?.series) ? (resp as any).series : [];
+          const inferredId =
+            (resp as any)?.doctorId != null ? String((resp as any).doctorId) : myDoctorId || 'self';
+          perDoctor = [{ id: inferredId, series }];
+        } else {
+          // Admin: per selected doctor (or all)
+          const selIds = isAllSelected ? allProviderIds : providerIds;
+          if (!selIds.length) {
+            if (alive) {
+              setSelTotals({ day: 0, wtd: 0, mtd: 0, btd: 0 });
+              setCompanyAvgTotals({ day: 0, wtd: 0, mtd: 0, btd: 0 });
+            }
+            return;
+          }
+          perDoctor = await Promise.all(
+            selIds.map(async (id) => {
+              const resp = await fetchDoctorRevenueSeries({
+                start: bpStart.utc().format('YYYY-MM-DD'),
+                end: today.utc().format('YYYY-MM-DD'),
+                doctorId: id,
+              });
+              return {
+                id,
+                series: Array.isArray((resp as any)?.series) ? (resp as any).series : [],
+              };
+            })
+          );
+        }
 
         if (!alive) return;
 
         // selection totals
-        const daySum = perDoctor.reduce((s, d) => s + sumWithin(d.series, today, today), 0);
+        const dayFromSeries = perDoctor.reduce((s, d) => s + sumWithin(d.series, today, today), 0);
         const wtdSum = perDoctor.reduce((s, d) => s + sumWithin(d.series, weekStart, today), 0);
         const mtdSum = perDoctor.reduce((s, d) => s + sumWithin(d.series, monthStart, today), 0);
         const btdSum = perDoctor.reduce((s, d) => s + sumWithin(d.series, bpStart, today), 0);
-        setSelTotals({ day: daySum, wtd: wtdSum, mtd: mtdSum, btd: btdSum });
 
-        // company average (admins only): per-doctor average across ALL providers
+        // Use dayTotal (from the day endpoint) if today's bucket is missing in the series
+        const effectiveDay = dayFromSeries > 0 ? dayFromSeries : dayTotal;
+        setSelTotals({ day: effectiveDay, wtd: wtdSum, mtd: mtdSum, btd: btdSum });
+
+        // company average (admins only)
         if (isAdmin && allProviderIds.length > 0) {
           const idsForAvg = allProviderIds;
-          const have = new Set(selIds);
+          const have = new Set(isAllSelected ? allProviderIds : providerIds);
           const missing = idsForAvg.filter((id) => !have.has(id));
           const fetchedMissing = await Promise.all(
-            missing.map(async (id) => ({ id, series: await fetchSeriesFor(id) }))
+            missing.map(async (id) => {
+              const resp = await fetchDoctorRevenueSeries({
+                start: bpStart.utc().format('YYYY-MM-DD'),
+                end: today.utc().format('YYYY-MM-DD'),
+                doctorId: id,
+              });
+              return {
+                id,
+                series: Array.isArray((resp as any)?.series) ? (resp as any).series : [],
+              };
+            })
           );
-
           const full = perDoctor.concat(fetchedMissing);
           const cDay = full.reduce((s, d) => s + sumWithin(d.series, today, today), 0);
           const cW = full.reduce((s, d) => s + sumWithin(d.series, weekStart, today), 0);
@@ -351,8 +378,8 @@ export default function DoctorRevenueAnalyticsPage() {
             mtd: cM / denom,
             btd: cB / denom,
           });
-        } else {
-          setCompanyAvgTotals(ZERO_TOTALS);
+        } else if (!isAdmin) {
+          setCompanyAvgTotals({ day: 0, wtd: 0, mtd: 0, btd: 0 });
         }
       } finally {
         if (alive) setLoadingAggregates(false);
@@ -365,10 +392,11 @@ export default function DoctorRevenueAnalyticsPage() {
   }, [
     date,
     isAdmin,
-    effectiveDoctorId,
     isAllSelected,
     JSON.stringify(providerIds),
     allProviderIds.length,
+    myDoctorId,
+    dayTotal, // keep daily % aligned with the day endpoint
   ]);
 
   if (unauthorized) {
