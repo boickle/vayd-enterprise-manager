@@ -104,9 +104,6 @@ type Doctor = {
 };
 
 // =========================
-// Helpers
-// =========================
-
 const DOCTORS_SEARCH_URL = '/employees/search';
 
 function localDoctorDisplayName(d: Doctor) {
@@ -252,9 +249,9 @@ export default function Routing() {
   const [preferredWeekday, setPreferredWeekday] = useState<number | null>(null); // 1..7
   const [preferredTimeOfDay, setPreferredTimeOfDay] = useState<'first' | 'middle' | 'end' | null>(
     null
-  ); // send exactly these
-  const [edgeFirst, setEdgeFirst] = useState(false);
-  const [edgeLast, setEdgeLast] = useState(false);
+  );
+  const [edgeFirst] = useState(false);
+  const [edgeLast] = useState(false);
 
   // Toggles
   const [multiDoctor, setMultiDoctor] = useState(false);
@@ -267,19 +264,23 @@ export default function Routing() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
 
-  // -------- Client search --------
+  // -------- Client search (Autocomplete) --------
   const [clientQuery, setClientQuery] = useState('');
   const [clientResults, setClientResults] = useState<Client[]>([]);
   const [clientSearching, setClientSearching] = useState(false);
   const [showClientDropdown, setShowClientDropdown] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [clientError, setClientError] = useState<string | null>(null);
   const clientBoxRef = useRef<HTMLDivElement | null>(null);
   const latestClientQueryRef = useRef('');
 
-  // -------- Doctor search --------
+  // -------- Doctor search (Autocomplete) --------
   const [doctorQuery, setDoctorQuery] = useState('');
   const [doctorResults, setDoctorResults] = useState<Doctor[]>([]);
   const [doctorSearching, setDoctorSearching] = useState(false);
   const [showDoctorDropdown, setShowDoctorDropdown] = useState(false);
+  const [selectedDoctor, setSelectedDoctor] = useState<Doctor | null>(null);
+  const [doctorError, setDoctorError] = useState<string | null>(null);
   const doctorBoxRef = useRef<HTMLDivElement | null>(null);
   const latestDoctorQueryRef = useRef('');
 
@@ -295,6 +296,10 @@ export default function Routing() {
   useEffect(() => {
     const q = (clientQuery ?? '').trim();
     latestClientQueryRef.current = q;
+    // Any typing invalidates current selection
+    if (selectedClient) setSelectedClient(null);
+    setClientError(null);
+
     if (!q) {
       setClientResults([]);
       setShowClientDropdown(false);
@@ -321,6 +326,10 @@ export default function Routing() {
   useEffect(() => {
     const q = doctorQuery.trim();
     latestDoctorQueryRef.current = q;
+    // Any typing invalidates current selection
+    if (selectedDoctor) setSelectedDoctor(null);
+    setDoctorError(null);
+
     if (!q) {
       setDoctorResults([]);
       setShowDoctorDropdown(false);
@@ -384,6 +393,68 @@ export default function Routing() {
   }, [result, doctorNames]);
 
   // =========================
+  // Autocomplete helpers
+  // =========================
+
+  const normalize = (s: string) => s.trim().toLowerCase();
+
+  function resolveBestDoctor(query: string, results: Doctor[]) {
+    const q = normalize(query);
+    if (!q || results.length === 0) return null;
+
+    const byLabel = (d: Doctor) => normalize(localDoctorDisplayName(d));
+    // Exact label
+    const exact = results.find((d) => byLabel(d) === q);
+    if (exact) return exact;
+    // Starts with label
+    const starts = results.find((d) => byLabel(d).startsWith(q));
+    if (starts) return starts;
+    // Single candidate
+    if (results.length === 1) return results[0];
+    return null;
+  }
+
+  function resolveBestClient(query: string, results: Client[]) {
+    const q = normalize(query);
+    if (!q || results.length === 0) return null;
+
+    const label = (c: Client) => normalize(`${c.lastName}, ${c.firstName}`);
+    const exact = results.find((c) => label(c) === q);
+    if (exact) return exact;
+    const starts = results.find((c) => label(c).startsWith(q));
+    if (starts) return starts;
+    if (results.length === 1) return results[0];
+    return null;
+  }
+
+  async function ensureDoctorSelected() {
+    if (selectedDoctor) return true;
+    const match = resolveBestDoctor(doctorQuery, doctorResults);
+    if (match) {
+      pickDoctor(match);
+      return true;
+    }
+    setDoctorError('Please choose a doctor from the list.');
+    return false;
+  }
+
+  async function ensureClientSelected() {
+    // Client selection is only enforced if the user typed something
+    if (!clientQuery.trim()) {
+      setClientError(null);
+      return true;
+    }
+    if (selectedClient) return true;
+    const match = resolveBestClient(clientQuery, clientResults);
+    if (match) {
+      pickClient(match);
+      return true;
+    }
+    setClientError('Please choose a client from the list or clear the field.');
+    return false;
+  }
+
+  // =========================
   // Handlers
   // =========================
 
@@ -403,6 +474,12 @@ export default function Routing() {
     const latNum = typeof c.lat === 'string' ? parseFloat(c.lat) : c.lat;
     const lonNum = typeof c.lon === 'string' ? parseFloat(c.lon) : c.lon;
 
+    setSelectedClient(c);
+    setClientQuery(`${c.lastName}, ${c.firstName}`);
+    setClientResults([]);
+    setShowClientDropdown(false);
+    setClientError(null);
+
     setForm((f) => ({
       ...f,
       newAppt: {
@@ -413,22 +490,22 @@ export default function Routing() {
         lon: Number.isFinite(lonNum as number) ? (lonNum as number) : undefined,
       },
     }));
-
-    setClientQuery(`${c.lastName}, ${c.firstName}`);
-    setClientResults([]);
-    setShowClientDropdown(false);
   }
 
   function pickDoctor(d: Doctor) {
     const pimsId = doctorPimsIdOf(d);
     if (!pimsId) {
       console.warn('No pimsId on doctor record', d);
+      setDoctorError('This doctor record has no ID; choose another.');
       return;
     }
-    setForm((f) => ({ ...f, doctorId: pimsId }));
+    setSelectedDoctor(d);
     setDoctorQuery(localDoctorDisplayName(d));
     setDoctorResults([]);
     setShowDoctorDropdown(false);
+    setDoctorError(null);
+
+    setForm((f) => ({ ...f, doctorId: pimsId }));
   }
 
   function diffDaysInclusive(aISO: string, bISO: string) {
@@ -443,6 +520,11 @@ export default function Routing() {
     e.preventDefault();
     setError(null);
     setResult(null);
+
+    // Enforce "no partial selection"
+    const okDoctor = await ensureDoctorSelected();
+    const okClient = await ensureClientSelected();
+    if (!okDoctor || !okClient) return;
 
     if (new Date(form.endDate) < new Date(form.startDate)) {
       setError('End date must be on or after the start date.');
@@ -546,7 +628,7 @@ export default function Routing() {
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Get Best Route</h2>
         <form onSubmit={onSubmit} className="grid" style={{ gap: 12 }}>
-          {/* Doctor picker */}
+          {/* Doctor picker (Autocomplete, enforced) */}
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Field label="Doctor">
               <div ref={doctorBoxRef} style={{ position: 'relative' }}>
@@ -557,16 +639,26 @@ export default function Routing() {
                   placeholder="Type doctor name..."
                   onFocus={() => doctorResults.length && setShowDoctorDropdown(true)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && doctorResults[0]) {
+                    if (e.key === 'Enter') {
                       e.preventDefault();
-                      pickDoctor(doctorResults[0]);
+                      if (doctorResults[0]) pickDoctor(doctorResults[0]);
+                      else void ensureDoctorSelected();
                     }
+                  }}
+                  onBlur={async () => {
+                    await ensureDoctorSelected(); // enforce selection or error
+                    setShowDoctorDropdown(false);
                   }}
                   required
                 />
                 {doctorSearching && (
                   <div className="muted" style={{ marginTop: 6 }}>
                     Searching...
+                  </div>
+                )}
+                {doctorError && (
+                  <div className="danger" role="alert" style={{ marginTop: 6 }}>
+                    {doctorError}
                   </div>
                 )}
                 {showDoctorDropdown && doctorResults.length > 0 && (
@@ -659,6 +751,7 @@ export default function Routing() {
               />
             </Field>
 
+            {/* Client picker (Autocomplete, enforced if typed) */}
             <Field label="Search Client (last name)">
               <div ref={clientBoxRef} style={{ position: 'relative' }}>
                 <input
@@ -668,15 +761,25 @@ export default function Routing() {
                   placeholder="Type last name..."
                   onFocus={() => clientResults.length && setShowClientDropdown(true)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && clientResults[0]) {
+                    if (e.key === 'Enter') {
                       e.preventDefault();
-                      pickClient(clientResults[0]);
+                      if (clientResults[0]) pickClient(clientResults[0]);
+                      else void ensureClientSelected();
                     }
+                  }}
+                  onBlur={async () => {
+                    await ensureClientSelected(); // enforce or clear with error
+                    setShowClientDropdown(false);
                   }}
                 />
                 {clientSearching && (
                   <div className="muted" style={{ marginTop: 6 }}>
                     Searching...
+                  </div>
+                )}
+                {clientError && (
+                  <div className="danger" role="alert" style={{ marginTop: 6 }}>
+                    {clientError}
                   </div>
                 )}
                 {showClientDropdown && clientResults.length > 0 && (
@@ -846,31 +949,6 @@ export default function Routing() {
                 Only one time window can be selected. Click again to unselect.
               </div>
             </Field>
-
-            {/* Edge preference
-            <Field label="Edge Preference">
-              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-                <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                  <input
-                    type="checkbox"
-                    checked={edgeFirst}
-                    onChange={(e) => setEdgeFirst(e.target.checked)}
-                  />
-                  <span>Prefer first appointment of the day</span>
-                </label>
-                <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                  <input
-                    type="checkbox"
-                    checked={edgeLast}
-                    onChange={(e) => setEdgeLast(e.target.checked)}
-                  />
-                  <span>Prefer last appointment of the day</span>
-                </label>
-              </div>
-              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                Selecting both cancels the edge preference.
-              </div> */}
-            {/* </Field> */}
           </div>
 
           {error && <div className="danger">{error}</div>}
