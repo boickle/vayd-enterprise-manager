@@ -385,6 +385,7 @@ export default function DoctorDay() {
 
       try {
         const result: any = await fetchEtas(payload);
+        console.log(result);
         if (!on) return;
         setEtas(result?.etaByKey ?? {});
         if (Array.isArray(result?.driveSeconds)) setDriveSecondsArr(result.driveSeconds);
@@ -437,151 +438,107 @@ export default function DoctorDay() {
         whitePctText: '—',
         shiftMin: 0,
         points: 0,
+        backToDepotIso: null as string | null,
       };
     }
 
-    // points
+    // Points
     const points = appts.reduce((total, a) => {
-      const type = a?.appointmentType?.toLowerCase();
+      const type = (a?.appointmentType || '').toLowerCase();
       if (type === 'euthanasia') return total + 2;
-      if (type?.toLowerCase().includes('tech appointment')) {
-        return total + 0.5;
-      }
+      if (type.includes('tech appointment')) return total + 0.5;
       return total + 1;
     }, 0);
 
-    // --- shift window: depot -> first arrival, last end -> depot (works for 1+ appts) ---
-    const first = households[0];
-    const last = households[households.length - 1];
-
+    // Helpers
     const durSec = (startIso?: string | null, endIso?: string | null) =>
       startIso && endIso
         ? Math.max(0, DateTime.fromISO(endIso).diff(DateTime.fromISO(startIso), 'seconds').seconds)
         : 0;
 
-    // total service
-    const householdSec = households.reduce((sum, h) => sum + durSec(h.startIso, h.endIso), 0);
-
-    // first arrival time: ETA if available, else scheduled start
-    const firstArriveMs =
-      (first?.key && etas[first.key] ? DateTime.fromISO(etas[first.key]).toMillis() : null) ??
-      (first?.startIso ? DateTime.fromISO(first.startIso).toMillis() : 0);
-
-    // last end time: prefer explicit endIso; else ETA+duration; else start+duration
-    const lastEndMsExplicit = last?.endIso ? DateTime.fromISO(last.endIso).toMillis() : null;
-    const lastEtaMs =
-      last?.key && etas[last.key] ? DateTime.fromISO(etas[last.key]).toMillis() : null;
-    const lastStartMs = last?.startIso ? DateTime.fromISO(last.startIso).toMillis() : null;
-    const lastDurationSec = durSec(last?.startIso ?? null, last?.endIso ?? null);
-    const lastEndMsFallback =
-      (lastEtaMs != null ? lastEtaMs : (lastStartMs ?? 0)) + lastDurationSec * 1000;
-    const lastEndMs = lastEndMsExplicit ?? lastEndMsFallback;
-
-    // depot legs used to expand the shift
-    const fallbackDepotSec = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
-      const R = 6371000,
-        toRad = (d: number) => (d * Math.PI) / 180;
-      const dLat = toRad(b.lat - a.lat),
-        dLon = toRad(b.lon - a.lon);
-      const sLat = toRad(a.lat),
-        sLat2 = toRad(b.lat);
-      const h =
-        Math.sin(dLat / 2) ** 2 + Math.cos(sLat) * Math.cos(sLat2) * Math.sin(dLon / 2) ** 2;
-      const meters = 2 * R * Math.asin(Math.sqrt(h));
-      return Math.round(meters / 15.65); // ~35 mph
-    };
-    const startPt = startDepot ?? endDepot ?? null; // reuse one if only one depot known
-    const endPt = endDepot ?? startDepot ?? null;
-
-    const driveToFirstSec =
-      startPt && first
-        ? fallbackDepotSec(
-            { lat: startPt.lat, lon: startPt.lon },
-            { lat: first.lat, lon: first.lon }
-          )
-        : 0;
-    const driveBackSec =
-      (typeof backToDepotSec === 'number' ? backToDepotSec : undefined) ??
-      (endPt && last
-        ? fallbackDepotSec({ lat: last.lat, lon: last.lon }, { lat: endPt.lat, lon: endPt.lon })
-        : 0);
-
-    // final shift span (derived)
-    const shiftStartMs = Math.max(0, firstArriveMs - driveToFirstSec * 1000);
-    const shiftEndMs = Math.max(shiftStartMs, lastEndMs + driveBackSec * 1000);
-
-    // --- DRIVE SECONDS (split inter-household vs depot legs) ---
     const haversineMeters = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
-      const R = 6371000,
-        toRad = (d: number) => (d * Math.PI) / 180;
-      const dLat = toRad(b.lat - a.lat),
-        dLon = toRad(b.lon - a.lon);
-      const sLat = toRad(a.lat),
-        sLat2 = toRad(b.lat);
+      const R = 6371000;
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      const dLat = toRad(b.lat - a.lat);
+      const dLon = toRad(b.lon - a.lon);
+      const sLat = toRad(a.lat);
+      const sLat2 = toRad(b.lat);
       const h =
         Math.sin(dLat / 2) ** 2 + Math.cos(sLat) * Math.cos(sLat2) * Math.sin(dLon / 2) ** 2;
       return 2 * R * Math.asin(Math.sqrt(h));
     };
+
+    // ~35 mph fallback (15.65 m/s)
     const fallbackDriveSec = (
       from: { lat: number; lon: number },
       to: { lat: number; lon: number }
     ) => Math.round(haversineMeters(from, to) / 15.65);
 
-    let driveSec = 0; // includes depot legs
-    let interDriveSec = 0; // only between households
-    const idleGapSec = 0;
-    let idleSec = 0;
+    const first = households[0];
+    const last = households[households.length - 1];
+
+    // Total service time from scheduled windows (same rule your cards use)
+    const householdSec = households.reduce((sum, h) => sum + durSec(h.startIso, h.endIso), 0);
+
+    // First arrival = ETA(first) if available, otherwise scheduled start
+    const firstArriveMs =
+      (first?.key && etas[first.key] ? DateTime.fromISO(etas[first.key]).toMillis() : null) ??
+      (first?.startIso ? DateTime.fromISO(first.startIso).toMillis() : 0);
+
+    // Last end = ETA(last) + scheduled duration (fallbacks to start+duration, then explicit end)
+    const lastEtaMs =
+      last?.key && etas[last.key] ? DateTime.fromISO(etas[last.key]).toMillis() : null;
+    const lastDurSec = durSec(last?.startIso ?? null, last?.endIso ?? null);
+    const lastStartMs = last?.startIso ? DateTime.fromISO(last.startIso).toMillis() : null;
+    const lastEndMsFromEta = lastEtaMs != null ? lastEtaMs + lastDurSec * 1000 : null;
+    const lastEndMsFromStart = lastStartMs != null ? lastStartMs + lastDurSec * 1000 : null;
+    const lastEndMsExplicit = last?.endIso ? DateTime.fromISO(last.endIso).toMillis() : null;
+    const lastEndMs = lastEndMsFromEta ?? lastEndMsFromStart ?? lastEndMsExplicit ?? 0;
+
+    // Depot legs (prefer backend backToDepotSec if provided)
+    const startPt = startDepot ?? endDepot ?? null; // reuse one if only one depot exists
+    const endPt = endDepot ?? startDepot ?? null;
+
+    const driveToFirstSec =
+      startPt && first ? fallbackDriveSec(startPt, { lat: first.lat, lon: first.lon }) : 0;
+
+    const driveBackSecFinal =
+      (typeof backToDepotSec === 'number' ? backToDepotSec : undefined) ??
+      (endPt && last ? fallbackDriveSec({ lat: last.lat, lon: last.lon }, endPt) : 0);
+
+    // Shift bounds derived from routed timeline
+    const shiftStartMs = Math.max(0, firstArriveMs - driveToFirstSec * 1000);
+    const shiftEndMs = Math.max(shiftStartMs, lastEndMs + driveBackSecFinal * 1000);
+
+    const backToDepotIsoFinal =
+      backToDepotIso ?? (shiftEndMs > 0 ? DateTime.fromMillis(shiftEndMs).toISO() : null);
+
+    // Drive time (inter-household + depot legs, using fallback)
+    let driveSec = 0;
 
     // depot -> first
     if (startPt && first) {
-      driveSec += fallbackDriveSec(
-        { lat: startPt.lat, lon: startPt.lon },
-        { lat: first.lat, lon: first.lon }
-      );
+      driveSec += fallbackDriveSec(startPt, { lat: first.lat, lon: first.lon });
     }
 
-    // between households
+    // between households (fallback estimate; if you add backend driveSeconds later, you can swap it in)
     for (let i = 1; i < households.length; i++) {
       const prev = households[i - 1];
       const curr = households[i];
-
-      const prevEndMs2 = prev.endIso ? DateTime.fromISO(prev.endIso).toMillis() : null;
-      const currStartMs2 = curr.startIso ? DateTime.fromISO(curr.startIso).toMillis() : null;
-
-      const estDrive = fallbackDriveSec(
+      driveSec += fallbackDriveSec(
         { lat: prev.lat, lon: prev.lon },
         { lat: curr.lat, lon: curr.lon }
       );
-      driveSec += estDrive;
-      interDriveSec += estDrive;
-
-      if (prevEndMs2 != null && currStartMs2 != null) {
-        const gapSec = Math.max(0, (currStartMs2 - prevEndMs2) / 1000);
-        idleSec += Math.max(0, gapSec - estDrive);
-      }
     }
 
     // last -> depot
-    if (endPt && households.length) {
-      driveSec += driveBackSec; // use backend-sec if available, fallback otherwise
+    if (endPt && last) {
+      driveSec += driveBackSecFinal;
     }
 
-    // early arrival before first start (if ETA is earlier)
-    if (first) {
-      const firstEtaMs = etas[first.key] ? DateTime.fromISO(etas[first.key]).toMillis() : null;
-      const firstStartMs2 = first.startIso ? DateTime.fromISO(first.startIso).toMillis() : null;
-      if (firstEtaMs != null && firstStartMs2 != null && firstEtaMs < firstStartMs2) {
-        idleSec += (firstStartMs2 - firstEtaMs) / 1000;
-      }
-    }
+    // If the backend returned an inter-stop drive array, you could replace driveSec here.
 
-    const backToDepotIsoFinal =
-      backToDepotIso ??
-      (Number.isFinite(shiftEndMs) && shiftEndMs > 0
-        ? DateTime.fromMillis(shiftEndMs).toISO()
-        : null);
-
-    // --- compute SHIFT based on schedule when available ---
+    // Schedule window (if provided by backend) — used as the preferred shift span
     const scheduleSec =
       schedStartIso && schedEndIso
         ? Math.max(
@@ -592,16 +549,13 @@ export default function DoctorDay() {
 
     const derivedShiftSec = Math.max(0, (shiftEndMs - shiftStartMs) / 1000);
 
-    // Prefer schedule window; fall back to derived
+    // Prefer schedule window when available; else use derived
     const effectiveShiftSec = scheduleSec ?? derivedShiftSec;
 
-    // Use inter-household drive when schedule exists; else include depot legs
-    const driveUsedSec = driveSec;
+    // Whitespace can go negative if overbooked/overrun
+    const whiteSec = effectiveShiftSec - householdSec - driveSec;
 
-    // Allow negative whitespace (overbooked/overrun)
-    const whiteSec = effectiveShiftSec - householdSec - driveUsedSec;
-
-    const driveMin = Math.round(driveUsedSec / 60);
+    const driveMin = Math.round(driveSec / 60);
     const householdMin = Math.round(householdSec / 60);
     const whiteMin = Math.round(whiteSec / 60);
     const shiftMin = Math.round(effectiveShiftSec / 60);
