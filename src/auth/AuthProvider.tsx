@@ -1,24 +1,35 @@
+// src/auth/useAuth.tsx
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { http, setToken } from '../api/http';
-
-// If you added setLogoutHandler/forceLogout in http.ts (as suggested),
-// import it; otherwise this will be tree-shaken/ignored by TS if not exported.
 import { setLogoutHandler } from '../api/http';
 
 const MOCK = import.meta.env.VITE_MOCK_AUTH === '1';
 
+export type LoginResult = {
+  token?: string | null;
+  user?: {
+    id?: number;
+    email?: string;
+    requiresPasswordReset?: boolean;
+    resetPasswordCode?: string | null;
+    [k: string]: any;
+  } | null;
+  resetRequired: boolean;
+  resetCode?: string | null;
+};
+
 type AuthContextType = {
   token: string | null;
   userEmail: string | null;
-  role: string[]; // add this
-  login: (email: string, password: string) => Promise<void>;
+  role: string[];
+  // ⬅️ now returns a LoginResult instead of void
+  login: (email: string, password: string) => Promise<LoginResult>;
   logout: () => void;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  // Initialize from sessionStorage once on mount
   const [tokenState, setTokenState] = useState<string | null>(() => {
     try {
       return sessionStorage.getItem('vayd_token');
@@ -34,33 +45,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   });
   const [role, setRole] = useState<string[]>([]);
+
   useEffect(() => {
     setToken(tokenState);
-
     if (tokenState) {
       const payload = decodeJwt(tokenState);
-      const roleClaim = payload?.role || payload?.role || [];
+      const roleClaim = payload?.role || [];
       setRole(Array.isArray(roleClaim) ? roleClaim : [String(roleClaim)]);
     } else {
       setRole([]);
     }
   }, [tokenState]);
 
-  // Keep axios Authorization token in sync with state
   useEffect(() => {
-    setToken(tokenState); // this schedules auto-logout if you used the http.ts from earlier
+    setToken(tokenState);
   }, [tokenState]);
 
-  // Register a global logout handler that the axios interceptor can call on 401
   useEffect(() => {
     if (typeof setLogoutHandler === 'function') {
       setLogoutHandler(() => {
         try {
           sessionStorage.removeItem('vayd_token');
           sessionStorage.removeItem('vayd_email');
-        } catch {
-          /* empty */
-        }
+        } catch {}
         setTokenState(null);
         setEmail(null);
         setToken(null);
@@ -68,42 +75,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  async function login(emailInput: string, password: string) {
+  // -------------------
+  // LOGIN (updated)
+  // -------------------
+  async function login(emailInput: string, password: string): Promise<LoginResult> {
     if (MOCK) {
       if (!emailInput || !password) throw new Error('Missing credentials');
-      // mock token (no exp claim; auto-logout won’t schedule—fine for mock)
       const fakeToken = 'mock.' + Math.random().toString(36).slice(2);
       try {
         sessionStorage.setItem('vayd_token', fakeToken);
         sessionStorage.setItem('vayd_email', emailInput);
-      } catch {
-        /* empty */
-      }
+      } catch {}
       setTokenState(fakeToken);
       setEmail(emailInput);
-      return;
+      return {
+        token: fakeToken,
+        user: { email: emailInput, requiresPasswordReset: false, resetPasswordCode: null },
+        resetRequired: false,
+      };
     }
 
     const { data } = await http.post('/auth/login', { email: emailInput, password });
-    if (!data?.token) throw new Error('Invalid login response');
 
-    try {
-      sessionStorage.setItem('vayd_token', data.token);
-      sessionStorage.setItem('vayd_email', emailInput);
-    } catch {
-      /* empty */
+    // Your response example:
+    // { token: "...", user: { requiresPasswordReset: true, resetPasswordCode: "808759", ... } }
+    const token: string | null = data?.token ?? null;
+    const user = (data?.user ?? null) as LoginResult['user'];
+    const resetRequired = !!(user?.requiresPasswordReset || user?.resetPasswordCode);
+    const resetCode = user?.resetPasswordCode ?? null;
+
+    // Persist token/email if token is present (even if reset is required)
+    if (token) {
+      try {
+        sessionStorage.setItem('vayd_token', token);
+        sessionStorage.setItem('vayd_email', emailInput);
+      } catch {}
+      setTokenState(token);
+      setEmail(emailInput);
+    } else {
+      // No token returned — ensure we don't have a stale token set
+      try {
+        sessionStorage.removeItem('vayd_token');
+      } catch {}
+      setTokenState(null);
     }
-    setTokenState(data.token);
-    setEmail(emailInput);
+
+    return { token, user, resetRequired, resetCode };
   }
 
   function logout() {
     try {
       sessionStorage.removeItem('vayd_token');
       sessionStorage.removeItem('vayd_email');
-    } catch {
-      /* empty */
-    }
+    } catch {}
     setTokenState(null);
     setEmail(null);
     setToken(null);
