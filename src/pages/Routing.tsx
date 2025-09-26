@@ -104,6 +104,9 @@ type Doctor = {
 };
 
 // =========================
+// Helpers
+// =========================
+
 const DOCTORS_SEARCH_URL = '/employees/search';
 
 function localDoctorDisplayName(d: Doctor) {
@@ -249,9 +252,9 @@ export default function Routing() {
   const [preferredWeekday, setPreferredWeekday] = useState<number | null>(null); // 1..7
   const [preferredTimeOfDay, setPreferredTimeOfDay] = useState<'first' | 'middle' | 'end' | null>(
     null
-  );
-  const [edgeFirst] = useState(false);
-  const [edgeLast] = useState(false);
+  ); // send exactly these
+  const [edgeFirst, setEdgeFirst] = useState(false);
+  const [edgeLast, setEdgeLast] = useState(false);
 
   // Toggles
   const [multiDoctor, setMultiDoctor] = useState(false);
@@ -264,25 +267,23 @@ export default function Routing() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
 
-  // -------- Client search (Autocomplete) --------
+  // -------- Client search --------
   const [clientQuery, setClientQuery] = useState('');
   const [clientResults, setClientResults] = useState<Client[]>([]);
   const [clientSearching, setClientSearching] = useState(false);
   const [showClientDropdown, setShowClientDropdown] = useState(false);
-  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
-  const [clientError, setClientError] = useState<string | null>(null);
   const clientBoxRef = useRef<HTMLDivElement | null>(null);
   const latestClientQueryRef = useRef('');
 
-  // -------- Doctor search (Autocomplete) --------
+  // -------- Doctor search --------
   const [doctorQuery, setDoctorQuery] = useState('');
   const [doctorResults, setDoctorResults] = useState<Doctor[]>([]);
   const [doctorSearching, setDoctorSearching] = useState(false);
   const [showDoctorDropdown, setShowDoctorDropdown] = useState(false);
-  const [selectedDoctor, setSelectedDoctor] = useState<Doctor | null>(null);
-  const [doctorError, setDoctorError] = useState<string | null>(null);
   const doctorBoxRef = useRef<HTMLDivElement | null>(null);
   const latestDoctorQueryRef = useRef('');
+  const [doctorActiveIdx, setDoctorActiveIdx] = useState<number>(-1);
+  const [clientActiveIdx, setClientActiveIdx] = useState<number>(-1);
 
   // -------- Winner doctor name cache --------
   const [doctorNames, setDoctorNames] = useState<Record<string, string>>({});
@@ -296,10 +297,6 @@ export default function Routing() {
   useEffect(() => {
     const q = (clientQuery ?? '').trim();
     latestClientQueryRef.current = q;
-    // Any typing invalidates current selection
-    if (selectedClient) setSelectedClient(null);
-    setClientError(null);
-
     if (!q) {
       setClientResults([]);
       setShowClientDropdown(false);
@@ -326,10 +323,6 @@ export default function Routing() {
   useEffect(() => {
     const q = doctorQuery.trim();
     latestDoctorQueryRef.current = q;
-    // Any typing invalidates current selection
-    if (selectedDoctor) setSelectedDoctor(null);
-    setDoctorError(null);
-
     if (!q) {
       setDoctorResults([]);
       setShowDoctorDropdown(false);
@@ -393,68 +386,6 @@ export default function Routing() {
   }, [result, doctorNames]);
 
   // =========================
-  // Autocomplete helpers
-  // =========================
-
-  const normalize = (s: string) => s.trim().toLowerCase();
-
-  function resolveBestDoctor(query: string, results: Doctor[]) {
-    const q = normalize(query);
-    if (!q || results.length === 0) return null;
-
-    const byLabel = (d: Doctor) => normalize(localDoctorDisplayName(d));
-    // Exact label
-    const exact = results.find((d) => byLabel(d) === q);
-    if (exact) return exact;
-    // Starts with label
-    const starts = results.find((d) => byLabel(d).startsWith(q));
-    if (starts) return starts;
-    // Single candidate
-    if (results.length === 1) return results[0];
-    return null;
-  }
-
-  function resolveBestClient(query: string, results: Client[]) {
-    const q = normalize(query);
-    if (!q || results.length === 0) return null;
-
-    const label = (c: Client) => normalize(`${c.lastName}, ${c.firstName}`);
-    const exact = results.find((c) => label(c) === q);
-    if (exact) return exact;
-    const starts = results.find((c) => label(c).startsWith(q));
-    if (starts) return starts;
-    if (results.length === 1) return results[0];
-    return null;
-  }
-
-  async function ensureDoctorSelected() {
-    if (selectedDoctor) return true;
-    const match = resolveBestDoctor(doctorQuery, doctorResults);
-    if (match) {
-      pickDoctor(match);
-      return true;
-    }
-    setDoctorError('Please choose a doctor from the list.');
-    return false;
-  }
-
-  async function ensureClientSelected() {
-    // Client selection is only enforced if the user typed something
-    if (!clientQuery.trim()) {
-      setClientError(null);
-      return true;
-    }
-    if (selectedClient) return true;
-    const match = resolveBestClient(clientQuery, clientResults);
-    if (match) {
-      pickClient(match);
-      return true;
-    }
-    setClientError('Please choose a client from the list or clear the field.');
-    return false;
-  }
-
-  // =========================
   // Handlers
   // =========================
 
@@ -474,12 +405,6 @@ export default function Routing() {
     const latNum = typeof c.lat === 'string' ? parseFloat(c.lat) : c.lat;
     const lonNum = typeof c.lon === 'string' ? parseFloat(c.lon) : c.lon;
 
-    setSelectedClient(c);
-    setClientQuery(`${c.lastName}, ${c.firstName}`);
-    setClientResults([]);
-    setShowClientDropdown(false);
-    setClientError(null);
-
     setForm((f) => ({
       ...f,
       newAppt: {
@@ -490,22 +415,22 @@ export default function Routing() {
         lon: Number.isFinite(lonNum as number) ? (lonNum as number) : undefined,
       },
     }));
+
+    setClientQuery(`${c.lastName}, ${c.firstName}`);
+    setClientResults([]);
+    setShowClientDropdown(false);
   }
 
   function pickDoctor(d: Doctor) {
     const pimsId = doctorPimsIdOf(d);
     if (!pimsId) {
       console.warn('No pimsId on doctor record', d);
-      setDoctorError('This doctor record has no ID; choose another.');
       return;
     }
-    setSelectedDoctor(d);
+    setForm((f) => ({ ...f, doctorId: pimsId }));
     setDoctorQuery(localDoctorDisplayName(d));
     setDoctorResults([]);
     setShowDoctorDropdown(false);
-    setDoctorError(null);
-
-    setForm((f) => ({ ...f, doctorId: pimsId }));
   }
 
   function diffDaysInclusive(aISO: string, bISO: string) {
@@ -520,11 +445,6 @@ export default function Routing() {
     e.preventDefault();
     setError(null);
     setResult(null);
-
-    // Enforce "no partial selection"
-    const okDoctor = await ensureDoctorSelected();
-    const okClient = await ensureClientSelected();
-    if (!okDoctor || !okClient) return;
 
     if (new Date(form.endDate) < new Date(form.startDate)) {
       setError('End date must be on or after the start date.');
@@ -628,42 +548,56 @@ export default function Routing() {
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Get Best Route</h2>
         <form onSubmit={onSubmit} className="grid" style={{ gap: 12 }}>
-          {/* Doctor picker (Autocomplete, enforced) */}
+          {/* Doctor picker */}
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Field label="Doctor">
               <div ref={doctorBoxRef} style={{ position: 'relative' }}>
                 <input
                   className="input"
                   value={doctorQuery}
-                  onChange={(e) => setDoctorQuery(e.target.value)}
+                  onChange={(e) => {
+                    setDoctorQuery(e.target.value);
+                    setDoctorActiveIdx(-1);
+                  }}
                   placeholder="Type doctor name..."
                   onFocus={() => doctorResults.length && setShowDoctorDropdown(true)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
+                    if (!doctorResults.length) return;
+
+                    if (e.key === 'ArrowDown') {
                       e.preventDefault();
-                      if (doctorResults[0]) pickDoctor(doctorResults[0]);
-                      else void ensureDoctorSelected();
+                      setShowDoctorDropdown(true);
+                      setDoctorActiveIdx((i) => (i < doctorResults.length - 1 ? i + 1 : 0));
+                    } else if (e.key === 'ArrowUp') {
+                      e.preventDefault();
+                      setShowDoctorDropdown(true);
+                      setDoctorActiveIdx((i) => (i <= 0 ? doctorResults.length - 1 : i - 1));
+                    } else if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const pick =
+                        doctorActiveIdx >= 0 ? doctorResults[doctorActiveIdx] : doctorResults[0];
+                      if (pick) {
+                        pickDoctor(pick);
+                        setShowDoctorDropdown(false);
+                        setDoctorResults([]); // ensure no later “auto-pick” overrides
+                      }
+                    } else if (e.key === 'Escape') {
+                      setShowDoctorDropdown(false);
                     }
-                  }}
-                  onBlur={async () => {
-                    await ensureDoctorSelected(); // enforce selection or error
-                    setShowDoctorDropdown(false);
                   }}
                   required
                 />
+
                 {doctorSearching && (
                   <div className="muted" style={{ marginTop: 6 }}>
                     Searching...
                   </div>
                 )}
-                {doctorError && (
-                  <div className="danger" role="alert" style={{ marginTop: 6 }}>
-                    {doctorError}
-                  </div>
-                )}
+
                 {showDoctorDropdown && doctorResults.length > 0 && (
                   <ul
                     className="dropdown"
+                    role="listbox"
                     style={{
                       position: 'absolute',
                       top: 'calc(100% + 6px)',
@@ -680,37 +614,49 @@ export default function Routing() {
                       overflowY: 'auto',
                       zIndex: 1000,
                     }}
-                    role="listbox"
                   >
-                    {doctorResults.map((d) => (
-                      <li
-                        key={doctorPimsIdOf(d) || String(d.id ?? localDoctorDisplayName(d))}
-                        role="option"
-                        aria-selected="false"
-                        style={{ padding: 0, borderBottom: '1px solid #eee' }}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => pickDoctor(d)}
-                          className="dropdown-btn"
-                          style={{
-                            width: '100%',
-                            textAlign: 'left',
-                            padding: '10px 12px',
-                            background: 'transparent',
-                            border: 'none',
-                            cursor: 'pointer',
-                            borderRadius: 10,
-                          }}
-                          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f6fbf9')}
-                          onMouseLeave={(e) =>
-                            (e.currentTarget.style.backgroundColor = 'transparent')
-                          }
-                        >
-                          {localDoctorDisplayName(d)}
-                        </button>
-                      </li>
-                    ))}
+                    {doctorResults.map((d, i) => {
+                      const selected = i === doctorActiveIdx;
+                      const key = doctorPimsIdOf(d) || String(d.id ?? localDoctorDisplayName(d));
+                      return (
+                        <li key={key} role="presentation" style={{ padding: 0 }}>
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            // CRITICAL: select on mousedown, *before* blur/outside-click closes list
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              pickDoctor(d);
+                              setShowDoctorDropdown(false);
+                              setDoctorResults([]);
+                            }}
+                            className="dropdown-btn"
+                            style={{
+                              width: '100%',
+                              textAlign: 'left',
+                              padding: '10px 12px',
+                              background: selected ? '#f0f7f4' : 'transparent',
+                              border: 'none',
+                              cursor: 'pointer',
+                              borderRadius: 10,
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.backgroundColor = '#f6fbf9';
+                              setDoctorActiveIdx(i);
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.backgroundColor = selected
+                                ? '#f0f7f4'
+                                : 'transparent';
+                            }}
+                          >
+                            {localDoctorDisplayName(d)}
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>
@@ -751,40 +697,53 @@ export default function Routing() {
               />
             </Field>
 
-            {/* Client picker (Autocomplete, enforced if typed) */}
             <Field label="Search Client (last name)">
               <div ref={clientBoxRef} style={{ position: 'relative' }}>
                 <input
                   className="input"
                   value={clientQuery}
-                  onChange={(e) => setClientQuery(e.target.value)}
+                  onChange={(e) => {
+                    setClientQuery(e.target.value);
+                    setClientActiveIdx(-1);
+                  }}
                   placeholder="Type last name..."
                   onFocus={() => clientResults.length && setShowClientDropdown(true)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
+                    if (!clientResults.length) return;
+
+                    if (e.key === 'ArrowDown') {
                       e.preventDefault();
-                      if (clientResults[0]) pickClient(clientResults[0]);
-                      else void ensureClientSelected();
+                      setShowClientDropdown(true);
+                      setClientActiveIdx((i) => (i < clientResults.length - 1 ? i + 1 : 0));
+                    } else if (e.key === 'ArrowUp') {
+                      e.preventDefault();
+                      setShowClientDropdown(true);
+                      setClientActiveIdx((i) => (i <= 0 ? clientResults.length - 1 : i - 1));
+                    } else if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const pick =
+                        clientActiveIdx >= 0 ? clientResults[clientActiveIdx] : clientResults[0];
+                      if (pick) {
+                        pickClient(pick);
+                        setShowClientDropdown(false);
+                        setClientResults([]);
+                      }
+                    } else if (e.key === 'Escape') {
+                      setShowClientDropdown(false);
                     }
                   }}
-                  onBlur={async () => {
-                    await ensureClientSelected(); // enforce or clear with error
-                    setShowClientDropdown(false);
-                  }}
                 />
+
                 {clientSearching && (
                   <div className="muted" style={{ marginTop: 6 }}>
                     Searching...
                   </div>
                 )}
-                {clientError && (
-                  <div className="danger" role="alert" style={{ marginTop: 6 }}>
-                    {clientError}
-                  </div>
-                )}
+
                 {showClientDropdown && clientResults.length > 0 && (
                   <ul
                     className="dropdown"
+                    role="listbox"
                     style={{
                       position: 'absolute',
                       top: '100%',
@@ -802,37 +761,54 @@ export default function Routing() {
                       overflowY: 'auto',
                       zIndex: 1000,
                     }}
-                    role="listbox"
                   >
-                    {clientResults.map((c) => (
-                      <li key={c.id} role="option" aria-selected="false" style={{ padding: 0 }}>
-                        <button
-                          type="button"
-                          onClick={() => pickClient(c)}
-                          className="dropdown-btn"
-                          style={{
-                            width: '100%',
-                            textAlign: 'left',
-                            padding: '10px 12px',
-                            background: 'transparent',
-                            border: 'none',
-                            cursor: 'pointer',
-                            borderRadius: 10,
-                          }}
-                          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f6fbf9')}
-                          onMouseLeave={(e) =>
-                            (e.currentTarget.style.backgroundColor = 'transparent')
-                          }
-                        >
-                          <div style={{ fontWeight: 600 }}>
-                            {c.lastName}, {c.firstName}
-                          </div>
-                          <div className="muted" style={{ fontSize: 12 }}>
-                            {formatClientAddress(c) || '—'}
-                          </div>
-                        </button>
-                      </li>
-                    ))}
+                    {clientResults.map((c, i) => {
+                      const selected = i === clientActiveIdx;
+                      const key = String(c.id);
+                      return (
+                        <li key={key} role="presentation" style={{ padding: 0 }}>
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            // CRITICAL: select on mousedown to beat blur/outside-click
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              pickClient(c);
+                              setShowClientDropdown(false);
+                              setClientResults([]);
+                            }}
+                            className="dropdown-btn"
+                            style={{
+                              width: '100%',
+                              textAlign: 'left',
+                              padding: '10px 12px',
+                              background: selected ? '#f0f7f4' : 'transparent',
+                              border: 'none',
+                              cursor: 'pointer',
+                              borderRadius: 10,
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.backgroundColor = '#f6fbf9';
+                              setClientActiveIdx(i);
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.backgroundColor = selected
+                                ? '#f0f7f4'
+                                : 'transparent';
+                            }}
+                          >
+                            <div style={{ fontWeight: 600 }}>
+                              {c.lastName}, {c.firstName}
+                            </div>
+                            <div className="muted" style={{ fontSize: 12 }}>
+                              {formatClientAddress(c) || '—'}
+                            </div>
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>
@@ -949,6 +925,31 @@ export default function Routing() {
                 Only one time window can be selected. Click again to unselect.
               </div>
             </Field>
+
+            {/* Edge preference
+            <Field label="Edge Preference">
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={edgeFirst}
+                    onChange={(e) => setEdgeFirst(e.target.checked)}
+                  />
+                  <span>Prefer first appointment of the day</span>
+                </label>
+                <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={edgeLast}
+                    onChange={(e) => setEdgeLast(e.target.checked)}
+                  />
+                  <span>Prefer last appointment of the day</span>
+                </label>
+              </div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                Selecting both cancels the edge preference.
+              </div> */}
+            {/* </Field> */}
           </div>
 
           {error && <div className="danger">{error}</div>}
