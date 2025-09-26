@@ -456,6 +456,7 @@ export default function DoctorDay() {
         ? Math.max(0, DateTime.fromISO(endIso).diff(DateTime.fromISO(startIso), 'seconds').seconds)
         : 0;
 
+    // Fallback distance → time (~35 mph) ONLY when API values are missing
     const haversineMeters = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
       const R = 6371000;
       const toRad = (d: number) => (d * Math.PI) / 180;
@@ -467,8 +468,6 @@ export default function DoctorDay() {
         Math.sin(dLat / 2) ** 2 + Math.cos(sLat) * Math.cos(sLat2) * Math.sin(dLon / 2) ** 2;
       return 2 * R * Math.asin(Math.sqrt(h));
     };
-
-    // ~35 mph fallback (15.65 m/s)
     const fallbackDriveSec = (
       from: { lat: number; lon: number },
       to: { lat: number; lon: number }
@@ -477,7 +476,7 @@ export default function DoctorDay() {
     const first = households[0];
     const last = households[households.length - 1];
 
-    // Total service time from scheduled windows (same rule your cards use)
+    // Service time from scheduled windows (same rule as cards)
     const householdSec = households.reduce((sum, h) => sum + durSec(h.startIso, h.endIso), 0);
 
     // First arrival = ETA(first) if available, otherwise scheduled start
@@ -495,48 +494,78 @@ export default function DoctorDay() {
     const lastEndMsExplicit = last?.endIso ? DateTime.fromISO(last.endIso).toMillis() : null;
     const lastEndMs = lastEndMsFromEta ?? lastEndMsFromStart ?? lastEndMsExplicit ?? 0;
 
-    // Depot legs (prefer backend backToDepotSec if provided)
+    // --- Use ACTUAL routing drive seconds when available ---
+    // The API may return:
+    // - between-household legs only: length === N-1
+    // - depot→first + between + last→depot: length === N+1
+    // - ambiguous length === N: assume includes depot→first when startDepot exists,
+    //   or last→depot when endDepot exists; otherwise treat as between legs.
+    const N = households.length;
+    let apiToFirstSec: number | null = null;
+    let apiBetweenSecs: number[] = [];
+    let apiBackSec: number | null = null;
+
+    if (Array.isArray(driveSecondsArr)) {
+      if (driveSecondsArr.length === N - 1) {
+        // between only
+        apiBetweenSecs = driveSecondsArr;
+      } else if (driveSecondsArr.length === N + 1) {
+        // [toFirst, ...between (N-1), back]
+        apiToFirstSec = driveSecondsArr[0] ?? null;
+        apiBetweenSecs = driveSecondsArr.slice(1, N) ?? [];
+        apiBackSec = driveSecondsArr[N] ?? null;
+      } else if (driveSecondsArr.length === N) {
+        if (startDepot) {
+          // [toFirst, ...between]
+          apiToFirstSec = driveSecondsArr[0] ?? null;
+          apiBetweenSecs = driveSecondsArr.slice(1) ?? [];
+        } else if (endDepot) {
+          // [...between, back]
+          apiBetweenSecs = driveSecondsArr.slice(0, N - 1) ?? [];
+          apiBackSec = driveSecondsArr[N - 1] ?? null;
+        } else {
+          // treat as between
+          apiBetweenSecs = driveSecondsArr;
+        }
+      }
+    }
+
+    // Depot legs (prefer backend values when present)
     const startPt = startDepot ?? endDepot ?? null; // reuse one if only one depot exists
     const endPt = endDepot ?? startDepot ?? null;
 
     const driveToFirstSec =
-      startPt && first ? fallbackDriveSec(startPt, { lat: first.lat, lon: first.lon }) : 0;
+      (typeof apiToFirstSec === 'number' ? apiToFirstSec : undefined) ??
+      (startPt && first ? fallbackDriveSec(startPt, { lat: first.lat, lon: first.lon }) : 0);
 
     const driveBackSecFinal =
       (typeof backToDepotSec === 'number' ? backToDepotSec : undefined) ??
+      (typeof apiBackSec === 'number' ? apiBackSec : undefined) ??
       (endPt && last ? fallbackDriveSec({ lat: last.lat, lon: last.lon }, endPt) : 0);
 
-    // Shift bounds derived from routed timeline
-    const shiftStartMs = Math.max(0, firstArriveMs - driveToFirstSec * 1000);
-    const shiftEndMs = Math.max(shiftStartMs, lastEndMs + driveBackSecFinal * 1000);
+    // Inter-household drive (actual when provided)
+    const interDriveSec =
+      apiBetweenSecs.length === Math.max(0, N - 1)
+        ? apiBetweenSecs.reduce((s, v) => s + Math.max(0, v || 0), 0)
+        : // fallback if API didn’t provide between legs
+          households.slice(1).reduce((s, curr, i) => {
+            const prev = households[i];
+            return (
+              s +
+              fallbackDriveSec({ lat: prev.lat, lon: prev.lon }, { lat: curr.lat, lon: curr.lon })
+            );
+          }, 0);
+
+    // Total drive seconds (actual when available)
+    const driveSec =
+      Math.max(0, driveToFirstSec) + Math.max(0, interDriveSec) + Math.max(0, driveBackSecFinal);
+
+    // Shift bounds derived from routed timeline + actual depot legs
+    const shiftStartMs = Math.max(0, firstArriveMs - Math.max(0, driveToFirstSec) * 1000);
+    const shiftEndMs = Math.max(shiftStartMs, lastEndMs + Math.max(0, driveBackSecFinal) * 1000);
 
     const backToDepotIsoFinal =
       backToDepotIso ?? (shiftEndMs > 0 ? DateTime.fromMillis(shiftEndMs).toISO() : null);
-
-    // Drive time (inter-household + depot legs, using fallback)
-    let driveSec = 0;
-
-    // depot -> first
-    if (startPt && first) {
-      driveSec += fallbackDriveSec(startPt, { lat: first.lat, lon: first.lon });
-    }
-
-    // between households (fallback estimate; if you add backend driveSeconds later, you can swap it in)
-    for (let i = 1; i < households.length; i++) {
-      const prev = households[i - 1];
-      const curr = households[i];
-      driveSec += fallbackDriveSec(
-        { lat: prev.lat, lon: prev.lon },
-        { lat: curr.lat, lon: curr.lon }
-      );
-    }
-
-    // last -> depot
-    if (endPt && last) {
-      driveSec += driveBackSecFinal;
-    }
-
-    // If the backend returned an inter-stop drive array, you could replace driveSec here.
 
     // Schedule window (if provided by backend) — used as the preferred shift span
     const scheduleSec =
@@ -580,6 +609,7 @@ export default function DoctorDay() {
     etas,
     startDepot,
     endDepot,
+    driveSecondsArr, // ✅ important: re-compute when API drive seconds arrive
     backToDepotSec,
     backToDepotIso,
     schedStartIso,
