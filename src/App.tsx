@@ -11,11 +11,16 @@ import AppTabs from './components/AppTabs';
 import { getAccessiblePages } from './app-pages';
 
 export default function App() {
-  const { token, logout, userEmail, abilities } = useAuth() as any; // abilities optional
-  const nav = useNavigate();
+  const { token, logout, userEmail, abilities, role } = useAuth() as any;
 
-  // Pages the current user can see (fallback built-in if abilities undefined)
-  const pages = getAccessiblePages(abilities);
+  // Normalize roles to string[]
+  const roles: string[] = Array.isArray(role) ? role : role ? [String(role)] : [];
+  console.log(roles);
+
+  // Pages the current user can see (roles + abilities)
+  const pages = getAccessiblePages(abilities, roles);
+
+  const nav = useNavigate();
 
   return (
     <div>
@@ -61,7 +66,6 @@ export default function App() {
 
       <main className="container">
         <Routes>
-          {/* Root: go to home if authenticated */}
           <Route
             path="/"
             element={token ? <Navigate to="/home" replace /> : <Navigate to="/login" replace />}
@@ -83,7 +87,7 @@ export default function App() {
             }
           />
 
-          {/* Protected pages (generated from config for convenience) */}
+          {/* Protected pages — already filtered, so only allowed routes are registered */}
           {pages.map((p) => (
             <Route
               key={p.path}
