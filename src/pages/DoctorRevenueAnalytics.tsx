@@ -136,9 +136,11 @@ export default function DoctorRevenueAnalyticsPage() {
   const rawRole = auth?.role;
   const myDoctorId = auth?.doctorId != null ? String(auth.doctorId) : '';
   const isAdmin = Array.isArray(rawRole)
-    ? rawRole.some((r: string) => ['admin', 'owner'].includes(String(r).toLowerCase()))
+    ? rawRole.some((r: string) =>
+        ['admin', 'owner', 'superadmin'].includes(String(r).toLowerCase())
+      )
     : typeof rawRole === 'string'
-      ? ['admin', 'owner'].includes(rawRole.toLowerCase())
+      ? ['admin', 'owner', 'superadmin'].includes(rawRole.toLowerCase())
       : false;
 
   // Date (defaults to today)

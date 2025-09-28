@@ -101,7 +101,9 @@ const PRESETS: Record<string, () => DateRange> = {
 // ----------------------------------
 export default function OpsAnalyticsPage() {
   const { userEmail, role, doctorId: myDoctorId } = (useAuth() as any) || {};
-  const isAdmin = Array.isArray(role) ? role.includes('admin') || role.includes('owner') : false;
+  const isAdmin = Array.isArray(role)
+    ? role.includes('admin') || role.includes('superadmin')
+    : false;
   const [range, setRange] = useState<DateRange>(PRESETS['30D']());
   const [metric, setMetric] = useState<MetricKey>('driveMin');
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
