@@ -1,8 +1,10 @@
+// src/pages/Routing.tsx
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { http } from '../api/http';
 import { Field } from '../components/Field';
 import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
+import { PreviewMyDayModal } from '../components/PreviewMyDayModal';
 
 // =========================
 // Types
@@ -42,6 +44,11 @@ type Winner = {
   slot?: Slot | null;
   isFirstEdge?: boolean;
   isLastEdge?: boolean;
+
+  // NEW — day facts for computing remaining non-drive time
+  workStartLocal?: string; // "HH:mm" or "HH:mm:ss"
+  effectiveEndLocal?: string; // "HH:mm" or "HH:mm:ss"
+  bookedServiceSeconds?: number; // seconds of booked service (no driving)
 };
 
 type EstimatedCost = {
@@ -104,7 +111,7 @@ type Doctor = {
 };
 
 // =========================
-// Helpers
+/** Helpers */
 // =========================
 
 const DOCTORS_SEARCH_URL = '/employees/search';
@@ -235,6 +242,62 @@ function EdgeChip({ first, last }: { first?: boolean; last?: boolean }) {
   );
 }
 
+/** "HH:mm" or "HH:mm:ss" → seconds since midnight */
+function hmsToSec(hms?: string): number | undefined {
+  if (!hms) return undefined;
+  const [hh = 0, mm = 0, ss = 0] = hms.split(':').map(Number);
+  if ([hh, mm, ss].some((n) => Number.isNaN(n))) return undefined;
+  return hh * 3600 + mm * 60 + ss;
+}
+
+/** Best-effort: if booked is suspiciously small, treat it as minutes. */
+function normalizeBookedServiceToSeconds(booked?: number, windowSec?: number): number {
+  if (typeof booked !== 'number' || !Number.isFinite(booked) || booked < 0) return 0;
+  // If value looks like minutes (e.g., < 8 hours) and minutes*60 fits window, convert.
+  const asSec = Math.floor(booked);
+  if (asSec < 8 * 3600 && windowSec && booked * 60 <= windowSec) return Math.floor(booked * 60);
+  return asSec;
+}
+
+/** DoctorDay-style whitespace after insertion */
+/** Remaining whitespace after inserting the new appt.
+ *  Mirrors DoctorDay: whitespace = shift - (drive + service + new)
+ */
+function remainingWhitespaceSeconds(
+  opt: {
+    workStartLocal?: string; // "HH:mm" or "HH:mm:ss"
+    effectiveEndLocal?: string; // "HH:mm" or "HH:mm:ss"
+    bookedServiceSeconds?: number; // seconds of existing service (non-drive)
+    projectedDriveSeconds?: number; // drive *with* the new appt
+    currentDriveSeconds?: number; // fallback only
+  },
+  newServiceMinutes: number
+): number | undefined {
+  const ws = hmsToSec(opt.workStartLocal);
+  const ee = hmsToSec(opt.effectiveEndLocal);
+
+  // We need the work window and the *existing* service to compute whitespace.
+  if (ws == null || ee == null) return undefined;
+  if (typeof opt.bookedServiceSeconds !== 'number' || opt.bookedServiceSeconds < 0) {
+    // Backend didn’t send booked service → avoid showing a misleading, too-large number.
+    return undefined;
+  }
+
+  const windowSec = Math.max(0, ee - ws);
+
+  // Use projected drive if present; fall back to current drive.
+  const driveSec = Math.max(
+    0,
+    Math.floor(opt.projectedDriveSeconds ?? opt.currentDriveSeconds ?? 0)
+  );
+
+  const bookedServiceSec = Math.max(0, Math.floor(opt.bookedServiceSeconds));
+  const newServiceSec = Math.max(0, Math.floor(newServiceMinutes * 60));
+
+  const used = driveSec + bookedServiceSec + newServiceSec;
+  return Math.max(0, windowSec - used);
+}
+
 // =========================
 // Component
 // =========================
@@ -288,6 +351,76 @@ export default function Routing() {
   // -------- Winner doctor name cache --------
   const [doctorNames, setDoctorNames] = useState<Record<string, string>>({});
   const doctorNameReqs = useRef<Record<string, Promise<string>>>({});
+
+  const [myDayOpen, setMyDayOpen] = useState(false);
+  const [previewOpt, setPreviewOpt] = useState<UnifiedOption | null>(null);
+  const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({}); // <—
+
+  async function openMyDay(opt: UnifiedOption) {
+    // Try cache first
+    let internalId = doctorIdByPims[opt.doctorPimsId];
+
+    // Fallback: fetch if not cached yet
+    if (!internalId) {
+      try {
+        const { data } = await http.get(`/employees/pims/${encodeURIComponent(opt.doctorPimsId)}`);
+        const emp = Array.isArray(data) ? data[0] : data;
+        internalId =
+          (emp?.id != null ? String(emp.id) : undefined) ??
+          (emp?.employee?.id != null ? String(emp.employee.id) : undefined);
+        if (internalId) {
+          setDoctorIdByPims((m) => ({ ...m, [opt.doctorPimsId]: internalId }));
+        }
+      } catch {
+        /* keep undefined; modal won’t open if we can’t resolve */
+      }
+    }
+
+    if (!internalId) {
+      // Optional UX: surface a toast or alert if you want
+      return;
+    }
+
+    // Pass the INTERNAL id via the same field (so PreviewMyDayModal/DoctorDay receive `id`)
+    setPreviewOpt({ ...opt, doctorPimsId: internalId });
+    setMyDayOpen(true);
+  }
+  function closeMyDay() {
+    setMyDayOpen(false);
+    setPreviewOpt(null);
+  }
+
+  useEffect(() => {
+    const pid = result?.selectedDoctorPimsId || result?.doctorPimsId;
+    if (!pid || doctorNames[pid]) return;
+    if (!doctorNameReqs.current[pid]) {
+      doctorNameReqs.current[pid] = (async () => {
+        try {
+          const { data } = await http.get(`/employees/pims/${encodeURIComponent(pid)}`);
+          const emp = Array.isArray(data) ? data[0] : data;
+
+          const name =
+            [emp?.firstName, emp?.lastName].filter(Boolean).join(' ') ||
+            [emp?.employee?.firstName, emp?.employee?.lastName].filter(Boolean).join(' ') ||
+            `Doctor ${pid}`;
+
+          const internalId =
+            (emp?.id != null ? String(emp.id) : undefined) ??
+            (emp?.employee?.id != null ? String(emp.employee.id) : undefined);
+
+          setDoctorNames((m) => ({ ...m, [pid]: name }));
+          if (internalId) setDoctorIdByPims((m) => ({ ...m, [pid]: internalId })); // <—
+          return name;
+        } catch {
+          const fallback = `Doctor ${pid}`;
+          setDoctorNames((m) => ({ ...m, [pid]: fallback }));
+          return fallback;
+        } finally {
+          delete doctorNameReqs.current[pid];
+        }
+      })();
+    }
+  }, [result, doctorNames]);
 
   // =========================
   // Effects
@@ -926,30 +1059,8 @@ export default function Routing() {
               </div>
             </Field>
 
-            {/* Edge preference
-            <Field label="Edge Preference">
-              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-                <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                  <input
-                    type="checkbox"
-                    checked={edgeFirst}
-                    onChange={(e) => setEdgeFirst(e.target.checked)}
-                  />
-                  <span>Prefer first appointment of the day</span>
-                </label>
-                <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                  <input
-                    type="checkbox"
-                    checked={edgeLast}
-                    onChange={(e) => setEdgeLast(e.target.checked)}
-                  />
-                  <span>Prefer last appointment of the day</span>
-                </label>
-              </div>
-              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                Selecting both cancels the edge preference.
-              </div> */}
-            {/* </Field> */}
+            {/* Edge preference (kept hidden for now) */}
+            {/* ... */}
           </div>
 
           {error && <div className="danger">{error}</div>}
@@ -971,11 +1082,23 @@ export default function Routing() {
           <div className="grid" style={{ gap: 14 }}>
             {displayOptions.map((opt, idx) => {
               const headerColor = colorForDoctor(opt.doctorPimsId);
+              const remainingSec = remainingWhitespaceSeconds(
+                {
+                  workStartLocal: opt.workStartLocal,
+                  effectiveEndLocal: opt.effectiveEndLocal,
+                  bookedServiceSeconds: opt.bookedServiceSeconds,
+                  projectedDriveSeconds: opt.projectedDriveSeconds,
+                  currentDriveSeconds: opt.currentDriveSeconds,
+                },
+                form.newAppt.serviceMinutes
+              );
+
               return (
                 <div
                   key={`${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${idx}`}
                   className="card"
-                  style={{ position: 'relative', paddingTop: 48 }}
+                  style={{ position: 'relative', paddingTop: 48, cursor: 'pointer' }}
+                  onClick={() => openMyDay(opt)}
                 >
                   <div
                     style={{
@@ -1038,6 +1161,28 @@ export default function Routing() {
                       v={opt.currentDrivePretty ?? secsToPretty(opt.currentDriveSeconds)}
                       color="inherit"
                     />
+                    {/* NEW: Remaining non-drive time */}
+                    <KeyValue
+                      k="Remaining Whitespace"
+                      v={secsToPretty(remainingSec)}
+                      color="inherit"
+                    />
+                  </div>
+
+                  {/* Optional tiny footnote with window/service stats */}
+                  <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                    {opt.workStartLocal && opt.effectiveEndLocal
+                      ? `Work window: ${opt.workStartLocal}–${opt.effectiveEndLocal}`
+                      : 'Work window: —'}
+                    {` • Projected drive: ${secsToPretty(
+                      (opt.projectedDriveSeconds ?? opt.currentDriveSeconds) || 0
+                    )}`}
+                    {typeof opt.bookedServiceSeconds === 'number'
+                      ? ` • Booked service: ${secsToPretty(opt.bookedServiceSeconds)}`
+                      : ''}
+                    {form?.newAppt?.serviceMinutes
+                      ? ` • New service: ${form.newAppt.serviceMinutes}m`
+                      : ''}
                   </div>
                 </div>
               );
@@ -1045,6 +1190,19 @@ export default function Routing() {
           </div>
         )}
       </div>
+      {myDayOpen && previewOpt && (
+        <PreviewMyDayModal
+          option={previewOpt}
+          onClose={closeMyDay}
+          serviceMinutes={form.newAppt.serviceMinutes}
+          newApptMeta={{
+            clientId: form.newAppt.clientId,
+            address: form.newAppt.address,
+            lat: form.newAppt.lat,
+            lon: form.newAppt.lon,
+          }}
+        />
+      )}
     </div>
   );
 }

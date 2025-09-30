@@ -128,8 +128,10 @@ export default function AuditAdminPage() {
     );
   }
 
+  const toISODateExclusiveEnd = (d: Dayjs) => d.add(1, 'day').utc().format('YYYY-MM-DD');
+
   const startISO = toISODate(range.from);
-  const endISO = toISODate(range.to);
+  const endISO = toISODateExclusiveEnd(range.to); // send exclusive end to APIs
   const methodFilter = httpMethod === 'ALL' ? undefined : httpMethod;
   const pathFilter = pathPrefix?.trim() ? pathPrefix.trim() : undefined;
 

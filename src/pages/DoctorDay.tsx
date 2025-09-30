@@ -1,3 +1,4 @@
+// src/pages/DoctorDay.tsx
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { DateTime } from 'luxon';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
@@ -15,28 +16,31 @@ import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { reverseGeocode } from '../api/geo';
 import { formatHM, colorForWhitespace, colorForHDRatio, colorForDrive } from '../utils/statsFormat';
 
-/** Per-patient row rendered inside a household card */
-type PatientBadge = {
-  name: string;
-  pimsId?: string | null;
-  status?: string | null;
-  startIso?: string | null;
-  endIso?: string | null;
+/* =========================
+   Public props (used by PreviewMyDayModal)
+   ========================= */
+export type DoctorDayProps = {
+  readOnly?: boolean;
+  initialDate?: string; // YYYY-MM-DD
+  initialDoctorId?: string; // provider/doctor id used by fetchDoctorDay
+  virtualAppt?: {
+    date: string; // YYYY-MM-DD
+    insertionIndex: number; // position in the day's route
+    suggestedStartIso: string; // ISO start in doctor's TZ
+    serviceMinutes: number;
+    clientName?: string;
+    lat?: number;
+    lon?: number;
+    address1?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+  };
 };
 
-type Household = {
-  key: string;
-  primary: DoctorDayAppt;
-  addressDisplay: string;
-  lat: number;
-  lon: number;
-  // household-level meta (derived from first appt at this address)
-  startIso?: string | null;
-  endIso?: string | null;
-  patients: PatientBadge[];
-};
-
-// ---------- helpers to avoid `any` ----------
+/* =========================
+   Narrow helpers
+   ========================= */
 function str(obj: unknown, key: string): string | undefined {
   const v = (obj as Record<string, unknown> | null)?.[key];
   return typeof v === 'string' && v.trim() ? v : undefined;
@@ -56,7 +60,7 @@ function extractErrorMessage(err: unknown): string {
   return 'Failed to load';
 }
 
-// ---------- time helpers (robust to various payload shapes) ----------
+// ISO getters (varied backend shapes)
 function getStartISO(a: DoctorDayAppt): string | undefined {
   return str(a, 'appointmentStart') ?? str(a, 'scheduledStartIso') ?? str(a, 'startIso');
 }
@@ -64,7 +68,6 @@ function getEndISO(a: DoctorDayAppt): string | undefined {
   return str(a, 'appointmentEnd') ?? str(a, 'scheduledEndIso') ?? str(a, 'endIso');
 }
 
-// ---------- address formatting ----------
 function formatAddress(a: DoctorDayAppt) {
   const address1 = str(a, 'address1');
   const city = str(a, 'city');
@@ -81,30 +84,46 @@ function formatAddress(a: DoctorDayAppt) {
   const freeForm = str(a, 'address') ?? str(a, 'addressStr') ?? str(a, 'fullAddress');
   if (freeForm) return freeForm;
 
-  return `${a.lat.toFixed(5)}, ${a.lon.toFixed(5)}`;
+  const lat = (a as any)?.lat ?? 0;
+  const lon = (a as any)?.lon ?? 0;
+  return `${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}`;
 }
 
-// ---------- misc ----------
+type PatientBadge = {
+  name: string;
+  pimsId?: string | null;
+  status?: string | null;
+  startIso?: string | null;
+  endIso?: string | null;
+};
+
+type Household = {
+  key: string;
+  primary: DoctorDayAppt;
+  addressDisplay: string;
+  lat: number;
+  lon: number;
+  startIso?: string | null;
+  endIso?: string | null;
+  patients: PatientBadge[];
+  isPreview?: boolean; // 👈 marks the injected appointment's card
+};
+
 function keyFor(lat: number, lon: number, decimals = 6) {
   const m = Math.pow(10, decimals);
   const rl = Math.round(lat * m) / m;
   const ro = Math.round(lon * m) / m;
   return `${rl},${ro}`;
 }
-function minutes(n?: number | null) {
-  return Math.round((n ?? 0) / 60);
-}
 
 function pickScheduleBounds(
   resp: DoctorDayResponse,
   sortedAppts: DoctorDayAppt[]
 ): { start: string | null; end: string | null } {
-  // Try common response shapes first
   const start =
     str(resp as any, 'startDepotTime') ??
     str(resp as any, 'workdayStartIso') ??
     str(resp as any, 'shiftStartIso') ??
-    // nested schedule objects
     (resp as any)?.schedule?.startIso ??
     (resp as any)?.schedule?.start ??
     null;
@@ -119,7 +138,7 @@ function pickScheduleBounds(
 
   if (start && end) return { start, end };
 
-  // Fallback: earliest start to latest end across the day
+  // Fallback: min start / max end from the set
   let earliest: string | null = null;
   let latest: string | null = null;
   for (const a of sortedAppts) {
@@ -131,9 +150,19 @@ function pickScheduleBounds(
   return { start: earliest, end: latest };
 }
 
-export default function DoctorDay() {
+/* =========================
+   Component
+   ========================= */
+export default function DoctorDay({
+  readOnly,
+  initialDate,
+  initialDoctorId,
+  virtualAppt,
+}: DoctorDayProps) {
   const { userEmail } = useAuth() as { userEmail?: string };
-  const [date, setDate] = useState<string>(() => DateTime.local().toISODate() || '');
+
+  // ── state
+  const [date, setDate] = useState<string>(() => initialDate || DateTime.local().toISODate() || '');
   const [appts, setAppts] = useState<DoctorDayAppt[]>([]);
   const [startDepot, setStartDepot] = useState<Depot | null>(null);
   const [endDepot, setEndDepot] = useState<Depot | null>(null);
@@ -145,19 +174,20 @@ export default function DoctorDay() {
   const [driveSecondsArr, setDriveSecondsArr] = useState<number[] | null>(null);
 
   const [providers, setProviders] = useState<Provider[]>([]);
-  const [selectedDoctorId, setSelectedDoctorId] = useState<string>(''); // '' = me (token)
-
-  const [startDepotAddr, setStartDepotAddr] = useState<string | null>(null);
-  const [endDepotAddr, setEndDepotAddr] = useState<string | null>(null);
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string>(initialDoctorId || '');
   const didInitDoctor = useRef(false);
   const [providersLoading, setProvidersLoading] = useState(false);
   const [providersErr, setProvidersErr] = useState<string | null>(null);
+
   const [schedStartIso, setSchedStartIso] = useState<string | null>(null);
   const [schedEndIso, setSchedEndIso] = useState<string | null>(null);
   const [backToDepotSec, setBackToDepotSec] = useState<number | null>(null);
   const [backToDepotIso, setBackToDepotIso] = useState<string | null>(null);
 
   // Reverse geocode depots to pretty addresses
+  const [startDepotAddr, setStartDepotAddr] = useState<string | null>(null);
+  const [endDepotAddr, setEndDepotAddr] = useState<string | null>(null);
+
   useEffect(() => {
     let on = true;
     (async () => {
@@ -173,7 +203,7 @@ export default function DoctorDay() {
           if (on) setEndDepotAddr(addr);
         }
       } catch {
-        /* noop: fall back to lat/lon */
+        /* ignore */
       }
     })();
     return () => {
@@ -181,11 +211,9 @@ export default function DoctorDay() {
     };
   }, [startDepot, endDepot]);
 
-  // Load providers once
+  // Providers
   useEffect(() => {
     let on = true;
-
-    // wait until we at least know who’s logged in (auth ready)
     if (!userEmail) return;
 
     (async () => {
@@ -193,8 +221,6 @@ export default function DoctorDay() {
       setProvidersErr(null);
       try {
         const raw = await fetchPrimaryProviders();
-
-        // normalize various shapes to an array
         const list = Array.isArray(raw)
           ? raw
           : Array.isArray((raw as any)?.data)
@@ -202,7 +228,6 @@ export default function DoctorDay() {
             : Array.isArray((raw as any)?.items)
               ? (raw as any).items
               : [];
-
         if (on) setProviders(list as Provider[]);
       } catch (e) {
         if (on) setProvidersErr(extractErrorMessage(e));
@@ -216,7 +241,7 @@ export default function DoctorDay() {
     };
   }, [userEmail]);
 
-  // Try to auto-select by email once (if provider objects include email)
+  // Auto-select by email once
   useEffect(() => {
     if (didInitDoctor.current) return;
     if (!providers.length) return;
@@ -224,13 +249,15 @@ export default function DoctorDay() {
     const me = providers.find(
       (p: any) => (p?.email || '').toLowerCase() === userEmail.toLowerCase()
     );
-    if (me?.id != null) {
+    if (me?.id != null && !initialDoctorId) {
       setSelectedDoctorId(String(me.id));
       didInitDoctor.current = true;
     }
-  }, [providers, userEmail]);
+  }, [providers, userEmail, initialDoctorId]);
 
-  // Fetch doctor's day (depends on date & selected provider)
+  /* =========================
+     Fetch real day, then inject the virtual appt
+     ========================= */
   useEffect(() => {
     let on = true;
     (async () => {
@@ -239,6 +266,7 @@ export default function DoctorDay() {
       try {
         const resp: DoctorDayResponse = await fetchDoctorDay(date, selectedDoctorId || undefined);
         if (!on) return;
+
         const sorted = [...resp.appointments].sort((a, b) => {
           const sa = getStartISO(a);
           const sb = getStartISO(b);
@@ -246,14 +274,67 @@ export default function DoctorDay() {
           const tb = sb ? DateTime.fromISO(sb).toMillis() : 0;
           return ta - tb;
         });
-        setAppts(sorted);
+
+        // inject virtual appointment if provided and date matches
+        const finalAppts = (() => {
+          if (!virtualAppt || virtualAppt.date !== date) return sorted;
+
+          const start = DateTime.fromISO(virtualAppt.suggestedStartIso);
+          const end = start.plus({ minutes: Math.max(0, virtualAppt.serviceMinutes || 0) });
+          const startIso = start.toISO();
+          const endIso = end.toISO();
+
+          // coords: use provided; if absent, borrow median appt coords to avoid empty group
+          let lat = virtualAppt.lat;
+          let lon = virtualAppt.lon;
+          if ((lat == null || lon == null) && sorted.length > 0) {
+            const mid = sorted[Math.floor(sorted.length / 2)];
+            lat = (mid as any)?.lat;
+            lon = (mid as any)?.lon;
+          }
+
+          const previewAppt: DoctorDayAppt = {
+            id: `virtual-${start.toMillis()}`,
+            clientName: virtualAppt.clientName || 'New Appointment',
+            lat: lat ?? 0,
+            lon: lon ?? 0,
+            address1: virtualAppt.address1 ?? '',
+            city: virtualAppt.city ?? '',
+            state: virtualAppt.state ?? '',
+            zip: virtualAppt.zip ?? '',
+            appointmentType: 'Preview',
+            confirmStatusName: 'Proposed',
+            statusName: 'Proposed',
+            // timing (multiple shapes)
+            appointmentStart: startIso,
+            appointmentEnd: endIso,
+            scheduledStartIso: startIso,
+            scheduledEndIso: endIso,
+            startIso,
+            endIso,
+            // provider hints
+            providerPimsId:
+              selectedDoctorId || initialDoctorId || (sorted[0] as any)?.providerPimsId,
+            providerName: (sorted[0] as any)?.providerName ?? (sorted[0] as any)?.doctorName ?? '',
+            mins: Math.max(1, Math.round(end.diff(start).as('minutes'))),
+            // 🔑 mark as preview so we can style its card
+            isPreview: true as any,
+          } as any;
+
+          const idx = Math.max(0, Math.min(sorted.length, virtualAppt.insertionIndex));
+          return [...sorted.slice(0, idx), previewAppt, ...sorted.slice(idx)];
+        })();
+
+        setAppts(finalAppts);
         setStartDepot(resp.startDepot ?? null);
         setEndDepot(resp.endDepot ?? null);
-        const { start: schedStart, end: schedEnd } = pickScheduleBounds(resp, sorted);
+
+        const { start: schedStart, end: schedEnd } = pickScheduleBounds(resp, finalAppts);
         setSchedStartIso(schedStart);
         setSchedEndIso(schedEnd);
-        // Ensure the inferred doctor appears in the dropdown even if provider fetch fails.
-        const firstAppt = sorted[0];
+
+        // inferred doctor fallback
+        const firstAppt = finalAppts[0];
         const inferredId =
           (firstAppt as any)?.primaryProviderPimsId ??
           (firstAppt as any)?.providerPimsId ??
@@ -269,27 +350,17 @@ export default function DoctorDay() {
         if (inferredId != null) {
           setProviders((prev) => {
             const exists = prev.some((p) => String(p.id) === String(inferredId));
-            return exists
-              ? prev
-              : [...prev, { id: inferredId, name: inferredName } as any as Provider];
+            return exists ? prev : [...prev, { id: inferredId, name: inferredName } as any];
           });
         }
-        if (!didInitDoctor.current && !selectedDoctorId) {
-          const firstAppt = sorted[0];
-          const inferredId =
-            (firstAppt as any)?.primaryProviderPimsId ??
-            (firstAppt as any)?.providerPimsId ??
-            (firstAppt as any)?.doctorId ??
-            null;
 
-          if (inferredId != null && providers.length) {
-            // If your providers use the same id namespace, this will select the matching provider.
-            const match = providers.find((p) => String(p.id) === String(inferredId));
-            if (match) {
-              setSelectedDoctorId(String(match.id));
-              didInitDoctor.current = true;
-            }
-          }
+        if (
+          !didInitDoctor.current &&
+          !selectedDoctorId &&
+          (initialDoctorId || inferredId != null)
+        ) {
+          setSelectedDoctorId(String(initialDoctorId || inferredId));
+          didInitDoctor.current = true;
         }
       } catch (e) {
         if (on) setErr(extractErrorMessage(e));
@@ -300,16 +371,19 @@ export default function DoctorDay() {
     return () => {
       on = false;
     };
-  }, [date, selectedDoctorId]);
+  }, [date, selectedDoctorId, initialDoctorId, virtualAppt]);
 
-  // Group into households (by lat/lon)
+  /* =========================
+     Group into households (by lat/lon) — carry isPreview flag
+     ========================= */
   const households: Household[] = useMemo(() => {
     const map = new Map<string, Household>();
 
     for (const a of appts) {
-      const key = keyFor(a.lat, a.lon, 6);
+      const lat = num(a, 'lat') ?? (a as any)?.lat ?? 0;
+      const lon = num(a, 'lon') ?? (a as any)?.lon ?? 0;
+      const key = keyFor(lat, lon, 6);
 
-      // build patient row for this appt using safe string lookups
       const patientName =
         str(a, 'patientName') ?? str(a, 'petName') ?? str(a, 'animalName') ?? 'Patient';
       const badge: PatientBadge = {
@@ -320,41 +394,51 @@ export default function DoctorDay() {
         endIso: getEndISO(a) ?? null,
       };
 
+      const apptIsPreview = (a as any)?.isPreview === true;
+
       if (!map.has(key)) {
         map.set(key, {
           key,
           primary: a,
           addressDisplay: formatAddress(a),
-          lat: a.lat,
-          lon: a.lon,
+          lat,
+          lon,
           startIso: getStartISO(a) ?? null,
           endIso: getEndISO(a) ?? null,
           patients: [badge],
+          isPreview: apptIsPreview, // 👈 mark household if this stop is preview
         });
       } else {
         const h = map.get(key)!;
-        // dedupe by pimsId if possible, otherwise by name+start time
         const exists = h.patients.some(
           (p) =>
             (badge.pimsId && p.pimsId === badge.pimsId) ||
             (!badge.pimsId && p.name === badge.name && p.startIso === badge.startIso)
         );
         if (!exists) h.patients.push(badge);
-        // earliest start becomes household start
+        if (apptIsPreview) h.isPreview = true; // 👈 carry forward if any appt at this address is preview
+
         const hStart = h.startIso ? DateTime.fromISO(h.startIso) : null;
         const aStart = badge.startIso ? DateTime.fromISO(badge.startIso) : null;
         if (aStart && (!hStart || aStart < hStart)) h.startIso = aStart.toISO();
-        // latest end becomes household end
+
         const hEnd = h.endIso ? DateTime.fromISO(h.endIso) : null;
         const aEnd = badge.endIso ? DateTime.fromISO(badge.endIso) : null;
         if (aEnd && (!hEnd || aEnd > hEnd)) h.endIso = aEnd.toISO();
       }
     }
 
-    return Array.from(map.values());
+    // Keep timeline order
+    return Array.from(map.values()).sort((a, b) => {
+      const ta = a.startIso ? DateTime.fromISO(a.startIso).toMillis() : 0;
+      const tb = b.startIso ? DateTime.fromISO(b.startIso).toMillis() : 0;
+      return ta - tb;
+    });
   }, [appts]);
 
-  // Fetch ETAs and (optionally) drive seconds for stats
+  /* =========================
+     ETAs + drive seconds for stats
+     ========================= */
   useEffect(() => {
     let on = true;
     (async () => {
@@ -367,10 +451,11 @@ export default function DoctorDay() {
         (households[0]?.primary as any)?.primaryProviderPimsId ||
         (households[0]?.primary as any)?.providerPimsId ||
         (households[0]?.primary as any)?.doctorId ||
+        selectedDoctorId ||
         '';
 
       const payload = {
-        doctorId: selectedDoctorId || inferredDoctorId || '',
+        doctorId: inferredDoctorId,
         date,
         households: households.map((h) => ({
           key: h.key,
@@ -385,7 +470,6 @@ export default function DoctorDay() {
 
       try {
         const result: any = await fetchEtas(payload);
-        console.log(result);
         if (!on) return;
         setEtas(result?.etaByKey ?? {});
         if (Array.isArray(result?.driveSeconds)) setDriveSecondsArr(result.driveSeconds);
@@ -407,7 +491,9 @@ export default function DoctorDay() {
     };
   }, [households, startDepot, date, selectedDoctorId]);
 
-  // ---------- navigation ----------
+  /* =========================
+     Navigation links
+     ========================= */
   const stops: Stop[] = useMemo(
     () =>
       households.map((h) => ({
@@ -427,7 +513,9 @@ export default function DoctorDay() {
     [stops, startDepot, endDepot]
   );
 
-  // ---------- header stats ----------
+  /* =========================
+     Stats (drive/household/whitespace/points)
+     ========================= */
   const stats = useMemo(() => {
     if (!households.length) {
       return {
@@ -442,7 +530,7 @@ export default function DoctorDay() {
       };
     }
 
-    // Points
+    // Points (simple rule)
     const points = appts.reduce((total, a) => {
       const type = (a?.appointmentType || '').toLowerCase();
       if (type === 'euthanasia') return total + 2;
@@ -450,13 +538,12 @@ export default function DoctorDay() {
       return total + 1;
     }, 0);
 
-    // Helpers
     const durSec = (startIso?: string | null, endIso?: string | null) =>
       startIso && endIso
         ? Math.max(0, DateTime.fromISO(endIso).diff(DateTime.fromISO(startIso), 'seconds').seconds)
         : 0;
 
-    // Fallback distance → time (~35 mph) ONLY when API values are missing
+    // Fallback distance → time (~35 mph) if API drive times are missing
     const haversineMeters = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
       const R = 6371000;
       const toRad = (d: number) => (d * Math.PI) / 180;
@@ -471,20 +558,17 @@ export default function DoctorDay() {
     const fallbackDriveSec = (
       from: { lat: number; lon: number },
       to: { lat: number; lon: number }
-    ) => Math.round(haversineMeters(from, to) / 15.65);
+    ) => Math.round(haversineMeters(from, to) / 11.65);
 
     const first = households[0];
     const last = households[households.length - 1];
 
-    // Service time from scheduled windows (same rule as cards)
     const householdSec = households.reduce((sum, h) => sum + durSec(h.startIso, h.endIso), 0);
 
-    // First arrival = ETA(first) if available, otherwise scheduled start
     const firstArriveMs =
       (first?.key && etas[first.key] ? DateTime.fromISO(etas[first.key]).toMillis() : null) ??
       (first?.startIso ? DateTime.fromISO(first.startIso).toMillis() : 0);
 
-    // Last end = ETA(last) + scheduled duration (fallbacks to start+duration, then explicit end)
     const lastEtaMs =
       last?.key && etas[last.key] ? DateTime.fromISO(etas[last.key]).toMillis() : null;
     const lastDurSec = durSec(last?.startIso ?? null, last?.endIso ?? null);
@@ -494,12 +578,7 @@ export default function DoctorDay() {
     const lastEndMsExplicit = last?.endIso ? DateTime.fromISO(last.endIso).toMillis() : null;
     const lastEndMs = lastEndMsFromEta ?? lastEndMsFromStart ?? lastEndMsExplicit ?? 0;
 
-    // --- Use ACTUAL routing drive seconds when available ---
-    // The API may return:
-    // - between-household legs only: length === N-1
-    // - depot→first + between + last→depot: length === N+1
-    // - ambiguous length === N: assume includes depot→first when startDepot exists,
-    //   or last→depot when endDepot exists; otherwise treat as between legs.
+    // Drive seconds – use API when present
     const N = households.length;
     let apiToFirstSec: number | null = null;
     let apiBetweenSecs: number[] = [];
@@ -507,48 +586,35 @@ export default function DoctorDay() {
 
     if (Array.isArray(driveSecondsArr)) {
       if (driveSecondsArr.length === N - 1) {
-        // between only
         apiBetweenSecs = driveSecondsArr;
       } else if (driveSecondsArr.length === N + 1) {
-        // [toFirst, ...between (N-1), back]
         apiToFirstSec = driveSecondsArr[0] ?? null;
         apiBetweenSecs = driveSecondsArr.slice(1, N) ?? [];
         apiBackSec = driveSecondsArr[N] ?? null;
       } else if (driveSecondsArr.length === N) {
         if (startDepot) {
-          // [toFirst, ...between]
           apiToFirstSec = driveSecondsArr[0] ?? null;
           apiBetweenSecs = driveSecondsArr.slice(1) ?? [];
         } else if (endDepot) {
-          // [...between, back]
           apiBetweenSecs = driveSecondsArr.slice(0, N - 1) ?? [];
           apiBackSec = driveSecondsArr[N - 1] ?? null;
         } else {
-          // treat as between
           apiBetweenSecs = driveSecondsArr;
         }
       }
     }
 
-    // Depot legs (prefer backend values when present)
-    const startPt = startDepot ?? endDepot ?? null; // reuse one if only one depot exists
+    const startPt = startDepot ?? endDepot ?? null;
     const endPt = endDepot ?? startDepot ?? null;
 
     const driveToFirstSec =
       (typeof apiToFirstSec === 'number' ? apiToFirstSec : undefined) ??
       (startPt && first ? fallbackDriveSec(startPt, { lat: first.lat, lon: first.lon }) : 0);
 
-    const driveBackSecFinal =
-      (typeof backToDepotSec === 'number' ? backToDepotSec : undefined) ??
-      (typeof apiBackSec === 'number' ? apiBackSec : undefined) ??
-      (endPt && last ? fallbackDriveSec({ lat: last.lat, lon: last.lon }, endPt) : 0);
-
-    // Inter-household drive (actual when provided)
     const interDriveSec =
       apiBetweenSecs.length === Math.max(0, N - 1)
         ? apiBetweenSecs.reduce((s, v) => s + Math.max(0, v || 0), 0)
-        : // fallback if API didn’t provide between legs
-          households.slice(1).reduce((s, curr, i) => {
+        : households.slice(1).reduce((s, curr, i) => {
             const prev = households[i];
             return (
               s +
@@ -556,18 +622,20 @@ export default function DoctorDay() {
             );
           }, 0);
 
-    // Total drive seconds (actual when available)
+    const driveBackSecFinal =
+      (typeof backToDepotSec === 'number' ? backToDepotSec : undefined) ??
+      (typeof apiBackSec === 'number' ? apiBackSec : undefined) ??
+      (endPt && last ? fallbackDriveSec({ lat: last.lat, lon: last.lon }, endPt) : 0);
+
     const driveSec =
       Math.max(0, driveToFirstSec) + Math.max(0, interDriveSec) + Math.max(0, driveBackSecFinal);
 
-    // Shift bounds derived from routed timeline + actual depot legs
     const shiftStartMs = Math.max(0, firstArriveMs - Math.max(0, driveToFirstSec) * 1000);
     const shiftEndMs = Math.max(shiftStartMs, lastEndMs + Math.max(0, driveBackSecFinal) * 1000);
 
     const backToDepotIsoFinal =
       backToDepotIso ?? (shiftEndMs > 0 ? DateTime.fromMillis(shiftEndMs).toISO() : null);
 
-    // Schedule window (if provided by backend) — used as the preferred shift span
     const scheduleSec =
       schedStartIso && schedEndIso
         ? Math.max(
@@ -577,11 +645,8 @@ export default function DoctorDay() {
         : null;
 
     const derivedShiftSec = Math.max(0, (shiftEndMs - shiftStartMs) / 1000);
-
-    // Prefer schedule window when available; else use derived
     const effectiveShiftSec = scheduleSec ?? derivedShiftSec;
 
-    // Whitespace can go negative if overbooked/overrun
     const whiteSec = effectiveShiftSec - householdSec - driveSec;
 
     const driveMin = Math.round(driveSec / 60);
@@ -609,14 +674,14 @@ export default function DoctorDay() {
     etas,
     startDepot,
     endDepot,
-    driveSecondsArr, // ✅ important: re-compute when API drive seconds arrive
+    driveSecondsArr,
     backToDepotSec,
     backToDepotIso,
     schedStartIso,
     schedEndIso,
   ]);
 
-  // ---------- display helpers ----------
+  // ----- small display helpers -----
   function fmtTime(iso?: string | null) {
     if (!iso) return '';
     return DateTime.fromISO(iso).toLocaleString(DateTime.TIME_SIMPLE);
@@ -635,26 +700,24 @@ export default function DoctorDay() {
     return 'pill pill--neutral';
   }
 
-  // Derive numerics if not already present
+  // Colors for header chips
+  const driveColor = colorForDrive(stats.driveMin);
   const whitePct =
     Number.isFinite(stats.shiftMin) && stats.shiftMin > 0
       ? (stats.whiteMin / stats.shiftMin) * 100
       : 0;
-
+  const whiteColor = colorForWhitespace(whitePct);
   const hdRatio =
     Number.isFinite(stats.driveMin) && stats.driveMin > 0
-      ? stats.householdMin / stats.driveMin // H:D (Household : Drive)
+      ? stats.householdMin / stats.driveMin
       : Infinity;
-
-  // Colors
-  const driveColor = colorForDrive(stats.driveMin);
-  const whiteColor = colorForWhitespace(whitePct);
   const hdColor = colorForHDRatio(hdRatio);
-
-  // Optional: nice text versions
   const ratioText = Number.isFinite(hdRatio) ? hdRatio.toFixed(2) : '∞';
   const whitePctText = Number.isFinite(whitePct) ? `${whitePct.toFixed(0)}%` : '—';
 
+  /* =========================
+     Render
+     ========================= */
   return (
     <div className="dd-section">
       {/* Header */}
@@ -668,7 +731,13 @@ export default function DoctorDay() {
           <label className="muted" htmlFor="dd-date">
             Date
           </label>
-          <input id="dd-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <input
+            id="dd-date"
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            disabled={readOnly} // lock date inside modal preview
+          />
 
           <label className="muted" htmlFor="dd-doctor">
             Provider
@@ -677,13 +746,10 @@ export default function DoctorDay() {
             id="dd-doctor"
             value={selectedDoctorId}
             onChange={(e) => setSelectedDoctorId(e.target.value)}
-            disabled={providersLoading}
+            disabled={providersLoading || readOnly} // lock provider in preview
           >
-            {/* Empty = token doctor (logged-in) */}
             <option value="">— My Team's Schedule —</option>
-
             {providersLoading && <option disabled>Loading providers…</option>}
-
             {providers.map((p) => (
               <option key={String(p.id)} value={String(p.id)}>
                 {p.name}
@@ -721,7 +787,7 @@ export default function DoctorDay() {
           style={{ marginTop: 6, display: 'flex', gap: 12, flexWrap: 'wrap' }}
         >
           <span>
-            <strong>Points:</strong> {stats.points}
+            <strong>Points:</strong> {appts.length}
           </span>
 
           <span style={{ color: driveColor }}>
@@ -750,7 +816,7 @@ export default function DoctorDay() {
 
       {/* Content grid */}
       <div className="dd-grid">
-        {/* Navigate (now first) */}
+        {/* Navigate */}
         <div className="card dd-nav">
           <h3>Navigate</h3>
           {links.length === 0 ? (
@@ -779,6 +845,7 @@ export default function DoctorDay() {
             the browser.
           </p>
         </div>
+
         {/* Households */}
         <div className="card">
           <h3>Households ({households.length})</h3>
@@ -793,11 +860,11 @@ export default function DoctorDay() {
             <ul className="dd-list">
               {households.map((h, i) => {
                 const a = h.primary;
+
                 const clientHref = str(a, 'clientPimsId')
                   ? evetClientLink(str(a, 'clientPimsId') as string)
                   : undefined;
 
-                // compute a readable household duration if we have both ends
                 let lengthText: string | null = null;
                 if (h.startIso && h.endIso) {
                   const mins = Math.round(
@@ -825,9 +892,25 @@ export default function DoctorDay() {
                     : null;
 
                 return (
-                  <li key={h.key} className="dd-item">
-                    {/* Title row with client (clickable) */}
-                    <div className="dd-top">
+                  <li
+                    key={h.key}
+                    className="dd-item"
+                    style={
+                      h.isPreview
+                        ? {
+                            background: '#f3e8ff', // light purple background
+                            border: '1px solid #a855f7', // purple border
+                            borderRadius: 8,
+                            padding: 12,
+                          }
+                        : undefined
+                    }
+                  >
+                    {/* Title row */}
+                    <div
+                      className="dd-top"
+                      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                    >
                       {clientHref ? (
                         <a
                           className="dd-title link-strong"
@@ -842,12 +925,27 @@ export default function DoctorDay() {
                           #{i + 1} {a.clientName}
                         </div>
                       )}
+                      {h.isPreview && (
+                        <span
+                          style={{
+                            marginLeft: 'auto',
+                            background: '#ede9fe',
+                            color: '#6b21a8',
+                            fontWeight: 700,
+                            fontSize: 12,
+                            padding: '2px 8px',
+                            borderRadius: 999,
+                          }}
+                        >
+                          Preview
+                        </span>
+                      )}
                     </div>
 
                     {/* Address */}
                     <div className="dd-address muted">{h.addressDisplay}</div>
 
-                    {/* Meta row: Start · End · Window */}
+                    {/* Meta row */}
                     {(h.startIso || h.endIso) && (
                       <div className="dd-meta-vertical" style={{ marginTop: 6, lineHeight: 1.4 }}>
                         {lengthText && (
@@ -861,17 +959,13 @@ export default function DoctorDay() {
                             <strong>Window:</strong> {windowTextFromStart(h.startIso)}
                           </div>
                         )}
-                        {h.startIso && (
+                        {h.startIso && etaIso && (
                           <div>
-                            {etaIso && (
+                            <strong>Projected ETA:</strong> {fmtTime(etaIso)}
+                            {etdIso && (
                               <>
-                                <strong>Projected ETA:</strong> {fmtTime(etaIso)}
-                                {etdIso && (
-                                  <>
-                                    {' '}
-                                    <strong>Projected ETD:</strong> {fmtTime(etdIso)}
-                                  </>
-                                )}
+                                {' '}
+                                <strong>Projected ETD:</strong> {fmtTime(etdIso)}
                               </>
                             )}
                           </div>
@@ -879,13 +973,12 @@ export default function DoctorDay() {
                       </div>
                     )}
 
-                    {/* Patients list: bullet list with details */}
+                    {/* Patients list */}
                     {h.patients.length > 0 && (
                       <div className="dd-pets">
                         <div className="dd-pets-label">Patients:</div>
-
                         <ul className="dd-patients-list">
-                          {h.patients.map((p, idx) => {
+                          {h.patients.map((p, idx2) => {
                             const href = p.pimsId ? evetPatientLink(p.pimsId) : undefined;
 
                             const apptType =
@@ -902,7 +995,7 @@ export default function DoctorDay() {
                               '';
 
                             return (
-                              <li key={`${p.pimsId || p.name}-${idx}`} className="dd-patient-item">
+                              <li key={`${p.pimsId || p.name}-${idx2}`} className="dd-patient-item">
                                 {href ? (
                                   <a
                                     className="link-strong"

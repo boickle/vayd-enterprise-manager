@@ -28,8 +28,20 @@ function matchesRole(required: AppPage['role'], userRoles?: string[]) {
 
 export function getAccessiblePages(abilities?: string[], roles?: string[]): AppPage[] {
   const all: AppPage[] = [
-    { path: '/routing', label: 'Routing', element: <Routing />, permission: 'canSeeRouting' },
-    { path: '/doctor', label: 'My Day', element: <DoctorDay />, permission: 'canSeeDoctorDay' },
+    {
+      path: '/routing',
+      label: 'Routing',
+      element: <Routing />,
+      permission: 'canSeeRouting',
+      role: ['employee', 'admin'],
+    },
+    {
+      path: '/doctor',
+      label: 'My Day',
+      element: <DoctorDay />,
+      permission: 'canSeeDoctorDay',
+      role: ['employee', 'admin'],
+    },
     {
       path: '/users/create',
       label: 'Create User',
@@ -49,14 +61,14 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       label: 'Ops Analytics',
       element: <OpsAnalyticsPage />,
       permission: 'canSeeOpsAnalytics',
-      role: ['client'],
+      role: ['employee', 'admin'],
     },
     {
       path: '/analytics/revenue/doctor',
       label: 'Doctor Revenue Analytics',
       element: <DoctorRevenueAnalyticsPage />,
       permission: 'canSeeDoctorAnalytics',
-      role: ['client'],
+      role: ['employee', 'admin'],
     },
     {
       path: '/audit',

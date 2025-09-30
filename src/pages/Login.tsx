@@ -13,41 +13,48 @@ export default function LoginPage() {
   const nav = useNavigate();
   const location = useLocation() as any;
   const { login } = useAuth();
-  const from = location.state?.from?.pathname ?? '/routing';
+  const from = location.state?.from?.pathname ?? '/';
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      const res = await login(email, password); // returns { token, user, resetRequired, resetCode }
+      const res = await login(email, password); // { token, user, resetRequired, resetCode }
 
       if (res?.resetRequired) {
-        // If backend provided a short code (e.g., for temp-password flow), go to code-based reset
         if (res.resetCode) {
           nav('/resetpass', {
             replace: true,
-            state: {
-              email,
-              code: res.resetCode,
-              reason: 'temp-password',
-            },
+            state: { email, code: res.resetCode, reason: 'temp-password' },
           });
         } else {
-          // Otherwise, prompt them to request a reset link
-          nav('/requestreset', {
-            replace: true,
-            state: {
-              email,
-              reason: 'temp-password',
-            },
-          });
+          nav('/requestreset', { replace: true, state: { email, reason: 'temp-password' } });
         }
         return;
       }
 
-      // Normal success path
-      nav(from, { replace: true });
+      // ------ NEW: role-aware redirect ------
+      const roles: string[] = Array.isArray(res?.user?.role)
+        ? res.user.role
+        : res?.user?.role
+          ? [String(res.user.role)]
+          : Array.isArray(res?.user?.roles)
+            ? res.user.roles
+            : [];
+
+      const isClient = roles.includes('client');
+
+      if (isClient) {
+        // Clients always land on the standalone client portal
+        nav('/client-portal', { replace: true });
+        return;
+      }
+
+      // Employees: go back to where they came from, or /home
+      const fallback = from && from !== '/' && from !== '/login' ? from : '/home';
+      nav(fallback, { replace: true });
+      // --------------------------------------
     } catch (err: any) {
       setError(err?.response?.data?.message || err.message || 'Login failed');
     } finally {
@@ -92,7 +99,6 @@ export default function LoginPage() {
           </Link>
           <div className="row" style={{ gap: 12 }}>
             <Link to="/create">Create user</Link>
-            {/* “Reset with token/code” page — will read state.email/state.code if present */}
             <Link to="/resetpass" state={{ email }}>
               Reset with token
             </Link>
