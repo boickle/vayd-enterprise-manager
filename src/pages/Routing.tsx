@@ -357,31 +357,31 @@ export default function Routing() {
   const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({}); // <—
 
   async function openMyDay(opt: UnifiedOption) {
-    // Try cache first
-    let internalId = doctorIdByPims[opt.doctorPimsId];
+    // 👇 allow undefined here
+    let internalId: string | undefined = doctorIdByPims[opt.doctorPimsId];
 
-    // Fallback: fetch if not cached yet
     if (!internalId) {
       try {
         const { data } = await http.get(`/employees/pims/${encodeURIComponent(opt.doctorPimsId)}`);
         const emp = Array.isArray(data) ? data[0] : data;
-        internalId =
+
+        // 👇 resolve to a temp, then narrow
+        const resolvedId =
           (emp?.id != null ? String(emp.id) : undefined) ??
           (emp?.employee?.id != null ? String(emp.employee.id) : undefined);
-        if (internalId) {
-          setDoctorIdByPims((m) => ({ ...m, [opt.doctorPimsId]: internalId }));
+
+        if (resolvedId) {
+          internalId = resolvedId;
+          setDoctorIdByPims((m) => ({ ...m, [opt.doctorPimsId]: resolvedId }));
         }
       } catch {
-        /* keep undefined; modal won’t open if we can’t resolve */
+        /* ignore; we'll bail below if still missing */
       }
     }
 
-    if (!internalId) {
-      // Optional UX: surface a toast or alert if you want
-      return;
-    }
+    if (!internalId) return; // couldn’t resolve → don’t open
 
-    // Pass the INTERNAL id via the same field (so PreviewMyDayModal/DoctorDay receive `id`)
+    // Pass INTERNAL id via the same property your Preview/DoctorDay read
     setPreviewOpt({ ...opt, doctorPimsId: internalId });
     setMyDayOpen(true);
   }

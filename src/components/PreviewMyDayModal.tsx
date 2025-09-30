@@ -82,11 +82,6 @@ export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose
             city: newApptMeta.city,
             state: newApptMeta.state,
             zip: newApptMeta.zip,
-
-            // NEW — styling hints
-            isPreview: true,
-            highlightColor: '#f5f3ff', // light purple background
-            highlightBorder: '#a78bfa', // purple border
           }}
         />
       </div>
