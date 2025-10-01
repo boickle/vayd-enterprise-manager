@@ -81,12 +81,48 @@ function formatAddress(a: DoctorDayAppt) {
 
   if (line) return line;
 
-  const freeForm = str(a, 'address') ?? str(a, 'addressStr') ?? str(a, 'fullAddress');
+  const freeForm =
+    str(a as any, 'address') ?? str(a as any, 'addressStr') ?? str(a as any, 'fullAddress');
   if (freeForm) return freeForm;
 
-  const lat = (a as any)?.lat ?? 0;
-  const lon = (a as any)?.lon ?? 0;
-  return `${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}`;
+  // If we truly have coords, show them; otherwise show a clean placeholder
+  const lat = num(a as any, 'lat');
+  const lon = num(a as any, 'lon');
+  if (typeof lat === 'number' && typeof lon === 'number') {
+    return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+  }
+  return 'Address not available';
+}
+
+function normalizeAddressString(s?: string): string | null {
+  if (!s) return null;
+  // lowercase, trim, collapse whitespace, remove trailing commas/punctuation
+  return (
+    s
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .replace(/[,\s]+$/g, '')
+      .trim() || null
+  );
+}
+
+/** Build a stable address key from structured or free-form fields */
+function addressKeyForAppt(a: DoctorDayAppt): string | null {
+  const address1 = normalizeAddressString(str(a, 'address1'));
+  const city = normalizeAddressString(str(a, 'city'));
+  const state = normalizeAddressString(str(a, 'state'));
+  const zip = normalizeAddressString(str(a, 'zip'));
+
+  // Prefer structured parts when present
+  const structured = [address1, city, state, zip].filter(Boolean).join('|');
+  if (structured) return `structured:${structured}`;
+
+  // Fall back to any free-form address fields the backend may send
+  const free =
+    normalizeAddressString(str(a as any, 'address')) ||
+    normalizeAddressString(str(a as any, 'addressStr')) ||
+    normalizeAddressString(str(a as any, 'fullAddress'));
+  return free ? `free:${free}` : null;
 }
 
 type PatientBadge = {
@@ -107,6 +143,7 @@ type Household = {
   endIso?: string | null;
   patients: PatientBadge[];
   isPreview?: boolean; // 👈 marks the injected appointment's card
+  isNoLocation?: boolean;
 };
 
 function keyFor(lat: number, lon: number, decimals = 6) {
@@ -296,8 +333,7 @@ export default function DoctorDay({
           const previewAppt: DoctorDayAppt = {
             id: `virtual-${start.toMillis()}`,
             clientName: virtualAppt.clientName || 'New Appointment',
-            lat: lat ?? 0,
-            lon: lon ?? 0,
+            ...(lat != null && lon != null ? { lat, lon } : {}),
             address1: virtualAppt.address1 ?? '',
             city: virtualAppt.city ?? '',
             state: virtualAppt.state ?? '',
@@ -305,19 +341,16 @@ export default function DoctorDay({
             appointmentType: 'Preview',
             confirmStatusName: 'Proposed',
             statusName: 'Proposed',
-            // timing (multiple shapes)
             appointmentStart: startIso,
             appointmentEnd: endIso,
             scheduledStartIso: startIso,
             scheduledEndIso: endIso,
             startIso,
             endIso,
-            // provider hints
             providerPimsId:
               selectedDoctorId || initialDoctorId || (sorted[0] as any)?.providerPimsId,
             providerName: (sorted[0] as any)?.providerName ?? (sorted[0] as any)?.doctorName ?? '',
             mins: Math.max(1, Math.round(end.diff(start).as('minutes'))),
-            // 🔑 mark as preview so we can style its card
             isPreview: true as any,
           } as any;
 
@@ -379,13 +412,40 @@ export default function DoctorDay({
   const households: Household[] = useMemo(() => {
     const map = new Map<string, Household>();
 
-    for (const a of appts) {
-      const lat = num(a, 'lat') ?? (a as any)?.lat ?? 0;
-      const lon = num(a, 'lon') ?? (a as any)?.lon ?? 0;
-      const key = keyFor(lat, lon, 6);
+    for (const [idx, a] of appts.entries()) {
+      const rawLat = num(a, 'lat');
+      const rawLon = num(a, 'lon');
+
+      const backendNoLoc = Boolean(
+        (a as any)?.isNoLocation ?? (a as any)?.noLocation ?? (a as any)?.unroutable
+      );
+
+      const inRange =
+        typeof rawLat === 'number' &&
+        typeof rawLon === 'number' &&
+        Math.abs(rawLat) <= 90 &&
+        Math.abs(rawLon) <= 180;
+
+      const nonZero =
+        typeof rawLat === 'number' &&
+        typeof rawLon === 'number' &&
+        Math.abs(rawLat) > 1e-6 &&
+        Math.abs(rawLon) > 1e-6;
+
+      const hasGeo = !backendNoLoc && inRange && nonZero;
+      const lat = hasGeo ? (rawLat as number) : 0;
+      const lon = hasGeo ? (rawLon as number) : 0;
+
+      // 🔑 NEW: if no geo, try to group by normalized address
+      const addrKey = hasGeo ? null : addressKeyForAppt(a);
+      const idPart = (a as any)?.id != null ? String((a as any).id) : String(idx);
+      const key = hasGeo ? keyFor(lat, lon, 6) : addrKey ? `addr:${addrKey}` : `noloc:${idPart}`; // final fallback only if we truly have no address text
 
       const patientName =
-        str(a, 'patientName') ?? str(a, 'petName') ?? str(a, 'animalName') ?? 'Patient';
+        str(a, 'patientName') ??
+        str(a as any, 'petName') ??
+        str(a as any, 'animalName') ??
+        'Patient';
       const badge: PatientBadge = {
         name: patientName,
         pimsId: str(a, 'patientPimsId') ?? null,
@@ -400,13 +460,14 @@ export default function DoctorDay({
         map.set(key, {
           key,
           primary: a,
-          addressDisplay: formatAddress(a),
+          addressDisplay: formatAddress(a), // this now returns a clean string for noloc too
           lat,
           lon,
           startIso: getStartISO(a) ?? null,
           endIso: getEndISO(a) ?? null,
           patients: [badge],
-          isPreview: apptIsPreview, // 👈 mark household if this stop is preview
+          isPreview: apptIsPreview,
+          isNoLocation: !hasGeo, // keep the red styling for unroutable groups
         });
       } else {
         const h = map.get(key)!;
@@ -416,7 +477,7 @@ export default function DoctorDay({
             (!badge.pimsId && p.name === badge.name && p.startIso === badge.startIso)
         );
         if (!exists) h.patients.push(badge);
-        if (apptIsPreview) h.isPreview = true; // 👈 carry forward if any appt at this address is preview
+        if (apptIsPreview) h.isPreview = true;
 
         const hStart = h.startIso ? DateTime.fromISO(h.startIso) : null;
         const aStart = badge.startIso ? DateTime.fromISO(badge.startIso) : null;
@@ -428,7 +489,6 @@ export default function DoctorDay({
       }
     }
 
-    // Keep timeline order
     return Array.from(map.values()).sort((a, b) => {
       const ta = a.startIso ? DateTime.fromISO(a.startIso).toMillis() : 0;
       const tb = b.startIso ? DateTime.fromISO(b.startIso).toMillis() : 0;
@@ -437,27 +497,39 @@ export default function DoctorDay({
   }, [appts]);
 
   /* =========================
-     ETAs + drive seconds for stats
-     ========================= */
+   ETAs + drive seconds for stats (adjusted)
+   - Derives "leave office" as ETA(first) - driveToFirst
+   - Clamps each ETA to its arrival window (±1h around scheduled start)
+   - Keeps sequencing: ETA(i) ≥ ETD(i-1) + drive(i-1→i)
+   ========================= */
   useEffect(() => {
     let on = true;
+
     (async () => {
+      // reset
       setEtaErr(null);
       setEtas({});
       setDriveSecondsArr(null);
+      setBackToDepotSec(null);
+      setBackToDepotIso(null);
+
       if (households.length === 0) return;
 
+      // ⭐ NEW: only request ETAs for routable households
+      const routableHouseholds = households.filter((h) => !h.isNoLocation);
+      if (routableHouseholds.length === 0) return;
+
       const inferredDoctorId =
-        (households[0]?.primary as any)?.primaryProviderPimsId ||
-        (households[0]?.primary as any)?.providerPimsId ||
-        (households[0]?.primary as any)?.doctorId ||
+        (routableHouseholds[0]?.primary as any)?.primaryProviderPimsId ||
+        (routableHouseholds[0]?.primary as any)?.providerPimsId ||
+        (routableHouseholds[0]?.primary as any)?.doctorId ||
         selectedDoctorId ||
         '';
 
       const payload = {
         doctorId: inferredDoctorId,
         date,
-        households: households.map((h) => ({
+        households: routableHouseholds.map((h) => ({
           key: h.key,
           lat: h.lat,
           lon: h.lon,
@@ -471,12 +543,131 @@ export default function DoctorDay({
       try {
         const result: any = await fetchEtas(payload);
         if (!on) return;
-        setEtas(result?.etaByKey ?? {});
-        if (Array.isArray(result?.driveSeconds)) setDriveSecondsArr(result.driveSeconds);
-        setBackToDepotSec(
-          typeof result?.backToDepotSec === 'number' ? result.backToDepotSec : null
-        );
-        setBackToDepotIso(result?.backToDepotIso ?? null);
+
+        const rawEtaByKey: Record<string, string> = result?.etaByKey ?? {};
+        const rawDriveSeconds: number[] | null = Array.isArray(result?.driveSeconds)
+          ? result.driveSeconds
+          : null;
+        const rawBackToDepotSec: number | null =
+          typeof result?.backToDepotSec === 'number' ? result.backToDepotSec : null;
+        const rawBackToDepotIso: string | null = result?.backToDepotIso ?? null;
+
+        // keep raw numbers for stats (drive minutes, etc.)
+        setDriveSecondsArr(rawDriveSeconds);
+        setBackToDepotSec(rawBackToDepotSec);
+        setBackToDepotIso(rawBackToDepotIso);
+
+        // -------- helpers (scoped to this effect) --------
+        const clamp = (t: DateTime, lo: DateTime, hi: DateTime) => (t < lo ? lo : t > hi ? hi : t);
+
+        const durMins = (h: (typeof households)[number]) =>
+          h.startIso && h.endIso
+            ? Math.max(
+                0,
+                Math.round(
+                  DateTime.fromISO(h.endIso).diff(DateTime.fromISO(h.startIso)).as('minutes')
+                )
+              )
+            : 0;
+
+        // Fallback distance -> time (~35 mph) if OSRM drive seconds aren't present
+        const haversineMeters = (
+          a: { lat: number; lon: number },
+          b: { lat: number; lon: number }
+        ) => {
+          const R = 6371000;
+          const toRad = (d: number) => (d * Math.PI) / 180;
+          const dLat = toRad(b.lat - a.lat);
+          const dLon = toRad(b.lon - a.lon);
+          const sLat = toRad(a.lat);
+          const sLat2 = toRad(b.lat);
+          const h =
+            Math.sin(dLat / 2) ** 2 + Math.cos(sLat) * Math.cos(sLat2) * Math.sin(dLon / 2) ** 2;
+          return 2 * R * Math.asin(Math.sqrt(h));
+        };
+        const fallbackDriveSec = (
+          from: { lat: number; lon: number },
+          to: { lat: number; lon: number }
+        ) => Math.round(haversineMeters(from, to) / 11.65);
+
+        // Normalize driveSeconds into [toFirst, between..., back?]
+        const N = households.length;
+        let toFirstSec: number | null = null;
+        let betweenSecs: number[] = [];
+
+        if (Array.isArray(rawDriveSeconds)) {
+          if (rawDriveSeconds.length === N + 1) {
+            // [toFirst, between..., back]  -> use first N values here
+            toFirstSec = rawDriveSeconds[0] ?? null;
+            betweenSecs = rawDriveSeconds.slice(1, N);
+          } else if (rawDriveSeconds.length === N) {
+            // If we have a start depot, treat first as toFirst; else N likely includes the back
+            if (startDepot) {
+              toFirstSec = rawDriveSeconds[0] ?? null;
+              betweenSecs = rawDriveSeconds.slice(1);
+            } else {
+              betweenSecs = rawDriveSeconds.slice(0, N - 1);
+            }
+          } else if (rawDriveSeconds.length === N - 1) {
+            betweenSecs = rawDriveSeconds;
+          }
+        }
+
+        // -------- sequential ETA adjustment with window clamping --------
+        const adjusted: Record<string, string> = {};
+        let prevETD: DateTime | null = null;
+
+        for (let i = 0; i < N; i++) {
+          const h = households[i];
+
+          const start = h.startIso ? DateTime.fromISO(h.startIso) : null;
+          const windowStart = start ? start.minus({ hours: 1 }) : null;
+          const windowEnd = start ? start.plus({ hours: 1 }) : null;
+
+          // Drive time from previous location (or depot for first)
+          let driveSecFromPrev = 0;
+          if (i === 0) {
+            const sDepot = startDepot ?? endDepot ?? null; // prefer startDepot, fall back to endDepot if only one is set
+            driveSecFromPrev = sDepot
+              ? typeof toFirstSec === 'number'
+                ? toFirstSec
+                : fallbackDriveSec(sDepot, { lat: h.lat, lon: h.lon })
+              : 0;
+          } else {
+            if (betweenSecs.length === Math.max(0, N - 1)) {
+              driveSecFromPrev = Math.max(0, betweenSecs[i - 1] || 0);
+            } else {
+              const prev = households[i - 1];
+              driveSecFromPrev = fallbackDriveSec(
+                { lat: prev.lat, lon: prev.lon },
+                { lat: h.lat, lon: h.lon }
+              );
+            }
+          }
+
+          // Earliest arrival given prior ETD + drive (or just scheduled start for the first)
+          const seqArrival = prevETD
+            ? prevETD.plus({ seconds: driveSecFromPrev })
+            : (start ?? DateTime.invalid('no start'));
+
+          // Start with server ETA if present; otherwise the sequential arrival
+          const serverEtaIso = rawEtaByKey[h.key];
+          let eta = serverEtaIso ? DateTime.fromISO(serverEtaIso) : seqArrival;
+
+          // Clamp ETA to arrival window so we never "arrive early" during big gaps
+          if (windowStart && windowEnd && eta.isValid) {
+            eta = clamp(eta, windowStart, windowEnd);
+          }
+
+          // Save adjusted ETA
+          adjusted[h.key] = eta.toISO();
+
+          // Compute ETD for next leg (ETA + on-site duration)
+          const stay = durMins(h);
+          prevETD = eta.isValid ? eta.plus({ minutes: stay }) : null;
+        }
+
+        if (on) setEtas(adjusted);
       } catch (e: any) {
         if (on) {
           setEtaErr(e?.message ?? 'Failed to compute ETAs');
@@ -489,18 +680,21 @@ export default function DoctorDay({
     return () => {
       on = false;
     };
-  }, [households, startDepot, date, selectedDoctorId]);
+  }, [households, startDepot, endDepot, date, selectedDoctorId]);
 
   /* =========================
      Navigation links
      ========================= */
   const stops: Stop[] = useMemo(
     () =>
-      households.map((h) => ({
-        lat: h.lat,
-        lon: h.lon,
-        label: h.primary.clientName,
-      })),
+      // ⭐ NEW: filter out non-geocoded households from routing links
+      households
+        .filter((h) => !h.isNoLocation)
+        .map((h) => ({
+          lat: h.lat,
+          lon: h.lon,
+          label: h.primary.clientName,
+        })),
     [households]
   );
 
@@ -896,14 +1090,21 @@ export default function DoctorDay({
                     key={h.key}
                     className="dd-item"
                     style={
-                      h.isPreview
+                      h.isNoLocation
                         ? {
-                            background: '#f3e8ff', // light purple background
-                            border: '1px solid #a855f7', // purple border
+                            background: '#fee2e2', // light red
+                            border: '1px solid #ef4444', // red border
                             borderRadius: 8,
                             padding: 12,
                           }
-                        : undefined
+                        : h.isPreview
+                          ? {
+                              background: '#f3e8ff',
+                              border: '1px solid #a855f7',
+                              borderRadius: 8,
+                              padding: 12,
+                            }
+                          : undefined
                     }
                   >
                     {/* Title row */}
@@ -911,6 +1112,7 @@ export default function DoctorDay({
                       className="dd-top"
                       style={{ display: 'flex', alignItems: 'center', gap: 8 }}
                     >
+                      {/* existing title */}
                       {clientHref ? (
                         <a
                           className="dd-title link-strong"
@@ -925,25 +1127,48 @@ export default function DoctorDay({
                           #{i + 1} {a.clientName}
                         </div>
                       )}
-                      {h.isPreview && (
-                        <span
-                          style={{
-                            marginLeft: 'auto',
-                            background: '#ede9fe',
-                            color: '#6b21a8',
-                            fontWeight: 700,
-                            fontSize: 12,
-                            padding: '2px 8px',
-                            borderRadius: 999,
-                          }}
-                        >
-                          Preview
-                        </span>
-                      )}
+
+                      <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                        {h.isNoLocation && (
+                          <span
+                            style={{
+                              background: '#fee2e2',
+                              color: '#b91c1c',
+                              fontWeight: 700,
+                              fontSize: 12,
+                              padding: '2px 8px',
+                              borderRadius: 999,
+                            }}
+                          >
+                            No location
+                          </span>
+                        )}
+                        {h.isPreview && (
+                          <span
+                            style={{
+                              background: '#ede9fe',
+                              color: '#6b21a8',
+                              fontWeight: 700,
+                              fontSize: 12,
+                              padding: '2px 8px',
+                              borderRadius: 999,
+                            }}
+                          >
+                            Preview
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     {/* Address */}
                     <div className="dd-address muted">{h.addressDisplay}</div>
+
+                    {/* ⭐ NEW: warning line for unroutable appointments */}
+                    {h.isNoLocation && (
+                      <div style={{ marginTop: 6, color: '#b91c1c', fontWeight: 600 }}>
+                        No location — routing not available
+                      </div>
+                    )}
 
                     {/* Meta row */}
                     {(h.startIso || h.endIso) && (

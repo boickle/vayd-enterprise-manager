@@ -26,6 +26,32 @@ type Props = {
 };
 
 export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose }: Props) {
+  const hasCoords = Number.isFinite(newApptMeta?.lat) && Number.isFinite(newApptMeta?.lon);
+  const hasAddress = Boolean(newApptMeta?.address);
+  const shouldGhost = !newApptMeta?.clientId && (hasCoords || hasAddress);
+
+  // Only build a ghost when we truly need it (typed-in address / no client).
+  const ghost = shouldGhost
+    ? {
+        id: 'proposed-ghost',
+        isGhost: true, // <-- let DoctorDay render even w/o client/patient
+        title: 'Proposed (address only)',
+        date: option.date,
+        insertionIndex: option.insertionIndex,
+        suggestedStartIso: option.suggestedStartIso,
+        serviceMinutes: Math.max(1, Math.floor(serviceMinutes)),
+        // display fields
+        clientName: 'New Appointment',
+        // location hints (map pin if coords available)
+        lat: hasCoords ? Number(newApptMeta!.lat) : undefined,
+        lon: hasCoords ? Number(newApptMeta!.lon) : undefined,
+        address1: newApptMeta?.address ?? 'Typed address',
+        city: newApptMeta?.city,
+        state: newApptMeta?.state,
+        zip: newApptMeta?.zip,
+      }
+    : undefined;
+
   return (
     <div
       role="dialog"
@@ -69,20 +95,8 @@ export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose
         <DoctorDay
           readOnly
           initialDate={option.date}
-          initialDoctorId={option.doctorPimsId} // this is the INTERNAL id now
-          virtualAppt={{
-            date: option.date,
-            insertionIndex: option.insertionIndex,
-            suggestedStartIso: option.suggestedStartIso,
-            serviceMinutes,
-            clientName: 'New Appointment',
-            lat: newApptMeta.lat,
-            lon: newApptMeta.lon,
-            address1: newApptMeta.address,
-            city: newApptMeta.city,
-            state: newApptMeta.state,
-            zip: newApptMeta.zip,
-          }}
+          initialDoctorId={option.doctorPimsId} // INTERNAL id (resolved earlier)
+          virtualAppt={ghost ?? undefined}
         />
       </div>
     </div>

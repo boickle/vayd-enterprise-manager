@@ -137,10 +137,24 @@ function secsToPretty(s?: number) {
   return h > 0 ? `${h}h ${mm}m` : `${mm}m`;
 }
 
+// Round an ISO timestamp to the nearest N-minute boundary (preserves original TZ)
+const ROUND_STEP_MIN = 5;
+
+function roundIsoToStep(iso?: string, stepMin = ROUND_STEP_MIN): string | undefined {
+  if (!iso) return undefined;
+  const dt = DateTime.fromISO(iso);
+  if (!dt.isValid) return iso;
+  const stepMs = stepMin * 60 * 1000;
+  const roundedMs = Math.round(dt.toMillis() / stepMs) * stepMs;
+  // keep the same zone as the incoming ISO
+  return DateTime.fromMillis(roundedMs, { zone: dt.zoneName }).toISO() || '';
+}
+
 function isoToTime(iso?: string): string {
   if (!iso) return '-';
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const roundedIso = roundIsoToStep(iso) ?? iso;
+  const dt = DateTime.fromISO(roundedIso);
+  return dt.isValid ? dt.toLocaleString(DateTime.TIME_SIMPLE) : '-';
 }
 
 function colorForAddedDrive(seconds?: number): string {
