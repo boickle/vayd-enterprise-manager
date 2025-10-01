@@ -1136,11 +1136,11 @@ export default function Routing() {
                   <div style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
                     <SlotChip slot={opt.slot ?? null} />
                     <EdgeChip first={opt.isFirstEdge} last={opt.isLastEdge} />
-                    {typeof opt.prefScore === 'number' && (
+                    {/* {typeof opt.prefScore === 'number' && (
                       <span className="muted" style={{ fontSize: 12 }}>
                         Pref score: {opt.prefScore}
                       </span>
-                    )}
+                    )} */}
                   </div>
 
                   <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -1163,13 +1163,13 @@ export default function Routing() {
                     />
                     {/* NEW: Remaining non-drive time */}
                     <KeyValue
-                      k="Remaining Whitespace"
+                      k="Whitespace After Booking"
                       v={secsToPretty(remainingSec)}
                       color="inherit"
                     />
                   </div>
 
-                  {/* Optional tiny footnote with window/service stats */}
+                  {/* Optional tiny footnote with window/service stats
                   <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
                     {opt.workStartLocal && opt.effectiveEndLocal
                       ? `Work window: ${opt.workStartLocal}–${opt.effectiveEndLocal}`
@@ -1183,7 +1183,7 @@ export default function Routing() {
                     {form?.newAppt?.serviceMinutes
                       ? ` • New service: ${form.newAppt.serviceMinutes}m`
                       : ''}
-                  </div>
+                  </div> */}
                 </div>
               );
             })}
