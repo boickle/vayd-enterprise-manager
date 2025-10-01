@@ -646,21 +646,20 @@ export default function DoctorDay({
           }
 
           // Earliest arrival given prior ETD + drive (or just scheduled start for the first)
-          const seqArrival = prevETD
+          const seqArrival: DateTime = prevETD
             ? prevETD.plus({ seconds: driveSecFromPrev })
             : (start ?? DateTime.invalid('no start'));
 
           // Start with server ETA if present; otherwise the sequential arrival
           const serverEtaIso = rawEtaByKey[h.key];
-          let eta = serverEtaIso ? DateTime.fromISO(serverEtaIso) : seqArrival;
-
+          let eta: DateTime = serverEtaIso ? DateTime.fromISO(serverEtaIso) : seqArrival;
           // Clamp ETA to arrival window so we never "arrive early" during big gaps
           if (windowStart && windowEnd && eta.isValid) {
             eta = clamp(eta, windowStart, windowEnd);
           }
 
           // Save adjusted ETA
-          adjusted[h.key] = eta.toISO();
+          adjusted[h.key] = eta.toISO() ?? '';
 
           // Compute ETD for next leg (ETA + on-site duration)
           const stay = durMins(h);
