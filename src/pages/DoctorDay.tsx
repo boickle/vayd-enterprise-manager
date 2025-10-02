@@ -537,9 +537,9 @@ export default function DoctorDay({
           endIso: h.endIso ?? null,
         })),
         startDepot: startDepot ? { lat: startDepot.lat, lon: startDepot.lon } : undefined,
-        useTraffic: true,
+        endDepot: endDepot ? { lat: endDepot.lat, lon: endDepot.lon } : undefined, // ⬅️ add this
+        useTraffic: false,
       };
-
       try {
         const result: any = await fetchEtas(payload);
         if (!on) return;
