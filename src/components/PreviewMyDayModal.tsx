@@ -6,7 +6,7 @@ export type PreviewMyDayOption = {
   date: string; // YYYY-MM-DD
   insertionIndex: number;
   suggestedStartIso: string;
-  doctorPimsId: string;
+  doctorPimsId: string; // already mapped to INTERNAL id earlier
   doctorName: string;
 };
 
@@ -25,32 +25,33 @@ type Props = {
   onClose: () => void;
 };
 
-export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose }: Props) {
-  const hasCoords = Number.isFinite(newApptMeta?.lat) && Number.isFinite(newApptMeta?.lon);
-  const hasAddress = Boolean(newApptMeta?.address);
-  const shouldGhost = !newApptMeta?.clientId && (hasCoords || hasAddress);
+function splitAddress(addr?: string) {
+  if (!addr) return {};
+  const [line, rest = ''] = addr.split(',').map((s) => s.trim());
+  const m = rest.match(/^([^,]+)\s+([A-Z]{2})(?:\s+(\d{5}(?:-\d{4})?))?$/i);
+  return m
+    ? { address1: line, city: m[1], state: m[2].toUpperCase(), zip: m[3] }
+    : { address1: addr };
+}
 
-  // Only build a ghost when we truly need it (typed-in address / no client).
-  const ghost = shouldGhost
-    ? {
-        id: 'proposed-ghost',
-        isGhost: true, // <-- let DoctorDay render even w/o client/patient
-        title: 'Proposed (address only)',
-        date: option.date,
-        insertionIndex: option.insertionIndex,
-        suggestedStartIso: option.suggestedStartIso,
-        serviceMinutes: Math.max(1, Math.floor(serviceMinutes)),
-        // display fields
-        clientName: 'New Appointment',
-        // location hints (map pin if coords available)
-        lat: hasCoords ? Number(newApptMeta!.lat) : undefined,
-        lon: hasCoords ? Number(newApptMeta!.lon) : undefined,
-        address1: newApptMeta?.address ?? 'Typed address',
-        city: newApptMeta?.city,
-        state: newApptMeta?.state,
-        zip: newApptMeta?.zip,
-      }
-    : undefined;
+export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose }: Props) {
+  const parts = splitAddress(newApptMeta?.address);
+
+  const virtualAppt = {
+    date: option.date,
+    insertionIndex: option.insertionIndex,
+    suggestedStartIso: option.suggestedStartIso,
+    serviceMinutes: Math.max(1, Math.floor(serviceMinutes)),
+    clientName: 'New Appointment',
+    // coordinates (optional; DoctorDay will borrow a midpoint if missing)
+    lat: Number.isFinite(newApptMeta?.lat) ? Number(newApptMeta!.lat) : undefined,
+    lon: Number.isFinite(newApptMeta?.lon) ? Number(newApptMeta!.lon) : undefined,
+    // address fields used by DoctorDay.formatAddress
+    address1: parts.address1 ?? newApptMeta?.address ?? '',
+    city: parts.city ?? newApptMeta?.city,
+    state: parts.state ?? newApptMeta?.state,
+    zip: parts.zip ?? newApptMeta?.zip,
+  };
 
   return (
     <div
@@ -93,10 +94,12 @@ export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose
         </div>
 
         <DoctorDay
+          // ⬇️ force a remount per click so new props always apply
+          key={`${option.doctorPimsId}-${option.date}-${option.insertionIndex}-${option.suggestedStartIso}`}
           readOnly
           initialDate={option.date}
-          initialDoctorId={option.doctorPimsId} // INTERNAL id (resolved earlier)
-          virtualAppt={ghost ?? undefined}
+          initialDoctorId={option.doctorPimsId} // INTERNAL id (already resolved)
+          virtualAppt={virtualAppt}
         />
       </div>
     </div>
