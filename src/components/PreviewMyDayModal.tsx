@@ -99,7 +99,7 @@ export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose
           readOnly
           initialDate={option.date}
           initialDoctorId={option.doctorPimsId} // INTERNAL id (already resolved)
-          virtualAppt={virtualAppt}
+          virtualAppt={newApptMeta?.address ? virtualAppt : undefined}
         />
       </div>
     </div>
