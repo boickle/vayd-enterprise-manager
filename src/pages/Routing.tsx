@@ -5,6 +5,7 @@ import { Field } from '../components/Field';
 import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
 import { PreviewMyDayModal } from '../components/PreviewMyDayModal';
+import { validateAddress } from '../api/geo';
 
 // =========================
 // Types
@@ -313,7 +314,7 @@ function remainingWhitespaceSeconds(
 }
 
 // =========================
-// Component
+/* Component */
 // =========================
 
 export default function Routing() {
@@ -343,6 +344,7 @@ export default function Routing() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
+  const [addressError, setAddressError] = useState<string | null>(null);
 
   // -------- Client search --------
   const [clientQuery, setClientQuery] = useState('');
@@ -544,7 +546,21 @@ export default function Routing() {
     key: K,
     value: RouteRequest['newAppt'][K]
   ) {
-    setForm((f) => ({ ...f, newAppt: { ...f.newAppt, [key]: value } }));
+    setForm((f) => {
+      if (key === 'address') {
+        setAddressError(null);
+        return {
+          ...f,
+          newAppt: {
+            ...f.newAppt,
+            address: (value as string) ?? '',
+            lat: undefined,
+            lon: undefined,
+          },
+        };
+      }
+      return { ...f, newAppt: { ...f.newAppt, [key]: value } };
+    });
   }
 
   function pickClient(c: Client) {
@@ -562,6 +578,7 @@ export default function Routing() {
         lon: Number.isFinite(lonNum as number) ? (lonNum as number) : undefined,
       },
     }));
+    setAddressError(null);
 
     setClientQuery(`${c.lastName}, ${c.firstName}`);
     setClientResults([]);
@@ -592,10 +609,50 @@ export default function Routing() {
     e.preventDefault();
     setError(null);
     setResult(null);
+    setAddressError(null);
 
     if (new Date(form.endDate) < new Date(form.startDate)) {
       setError('End date must be on or after the start date.');
       return;
+    }
+
+    // Ensure we have coords; if not, validate typed address to street-level.
+    let newApptPayload = { ...form.newAppt };
+    const hasCoords =
+      Number.isFinite(newApptPayload.lat as number) &&
+      Number.isFinite(newApptPayload.lon as number);
+    const addr = (newApptPayload.address ?? '').trim();
+
+    if (!hasCoords) {
+      if (!addr) {
+        setError('Please select a client or enter a valid street address.');
+        setAddressError('Enter a street address or pick a client.');
+        return;
+      }
+      try {
+        const chk = await validateAddress(addr, { minLevel: 'street' });
+        if (!chk.ok) {
+          setError(chk.message);
+          setAddressError(chk.message);
+          return;
+        }
+        newApptPayload = {
+          ...newApptPayload,
+          lat: chk.result.lat,
+          lon: chk.result.lon,
+          address: chk.result.formattedAddress || addr,
+        };
+        // Persist so preview/modal have coordinates.
+        setForm((f) => ({ ...f, newAppt: newApptPayload }));
+      } catch (geErr) {
+        const msg =
+          (geErr as any)?.response?.data?.message ||
+          (geErr as any)?.message ||
+          'Failed to validate address.';
+        setError(msg);
+        setAddressError(msg);
+        return;
+      }
     }
 
     const numDays = Math.max(1, diffDaysInclusive(form.startDate, form.endDate));
@@ -608,7 +665,7 @@ export default function Routing() {
     const base = {
       startDate: form.startDate,
       numDays,
-      newAppt: form.newAppt,
+      newAppt: newApptPayload,
       useTraffic,
       ignoreEmergencyBlocks,
       preferredWeekday,
@@ -968,6 +1025,19 @@ export default function Routing() {
                 onChange={(e) => onNewApptChange('address', e.target.value)}
                 placeholder="123 Main St, Portland ME"
               />
+              {addressError ? (
+                <div className="danger" style={{ marginTop: 6 }}>
+                  {addressError}
+                </div>
+              ) : (
+                form.newAppt.lat != null &&
+                form.newAppt.lon != null &&
+                (form.newAppt.address ?? '').trim() && (
+                  <div className="muted" style={{ marginTop: 6 }}>
+                    ✓ Address verified
+                  </div>
+                )
+              )}
             </Field>
           </div>
 
@@ -1150,11 +1220,6 @@ export default function Routing() {
                   <div style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
                     <SlotChip slot={opt.slot ?? null} />
                     <EdgeChip first={opt.isFirstEdge} last={opt.isLastEdge} />
-                    {/* {typeof opt.prefScore === 'number' && (
-                      <span className="muted" style={{ fontSize: 12 }}>
-                        Pref score: {opt.prefScore}
-                      </span>
-                    )} */}
                   </div>
 
                   <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -1182,22 +1247,6 @@ export default function Routing() {
                       color="inherit"
                     />
                   </div>
-
-                  {/* Optional tiny footnote with window/service stats
-                  <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                    {opt.workStartLocal && opt.effectiveEndLocal
-                      ? `Work window: ${opt.workStartLocal}–${opt.effectiveEndLocal}`
-                      : 'Work window: —'}
-                    {` • Projected drive: ${secsToPretty(
-                      (opt.projectedDriveSeconds ?? opt.currentDriveSeconds) || 0
-                    )}`}
-                    {typeof opt.bookedServiceSeconds === 'number'
-                      ? ` • Booked service: ${secsToPretty(opt.bookedServiceSeconds)}`
-                      : ''}
-                    {form?.newAppt?.serviceMinutes
-                      ? ` • New service: ${form.newAppt.serviceMinutes}m`
-                      : ''}
-                  </div> */}
                 </div>
               );
             })}
