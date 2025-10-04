@@ -1,6 +1,6 @@
 // src/api/patients.ts
 import { http } from './http';
-import type { PatientDto } from '../patients/patient.dto';
+// import type { PatientDto } from '../';
 
 // ---------------------------
 // Basic lookups / search
@@ -30,15 +30,15 @@ export async function getLatestModifiedPatient() {
 // Create / Upsert / Save
 // ---------------------------
 
-// Upsert one or many patients
-export async function upsertPatients(patients: PatientDto | PatientDto[]) {
-  return http.post('/patients/upsert', patients);
-}
+// // Upsert one or many patients
+// export async function upsertPatients(patients: PatientDto | PatientDto[]) {
+//   return http.post('/patients/upsert', patients);
+// }
 
-// Save (insert/update) one or many patients
-export async function savePatients(patients: PatientDto | PatientDto[]) {
-  return http.post('/patients', patients);
-}
+// // Save (insert/update) one or many patients
+// export async function savePatients(patients: PatientDto | PatientDto[]) {
+//   return http.post('/patients', patients);
+// }
 
 // ---------------------------
 // Delete
