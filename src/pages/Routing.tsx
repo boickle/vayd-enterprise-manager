@@ -729,7 +729,11 @@ export default function Routing() {
       return a.insertionIndex - b.insertionIndex;
     });
 
-    return rows;
+    return rows.map((r) => ({
+      ...r,
+      // protect against undefined
+      displayInsertionIndex: (r.insertionIndex ?? 0) + 1,
+    }));
   }, [multiDoctor, result, doctorNames, form.doctorId]);
 
   // =========================
@@ -1223,7 +1227,10 @@ export default function Routing() {
                   </div>
 
                   <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                    <KeyValue k="Insertion Index" v={String(opt.insertionIndex)} />
+                    <KeyValue
+                      k="Insertion Index"
+                      v={String((opt as any).displayInsertionIndex ?? opt.insertionIndex + 1)}
+                    />
                     <KeyValue k="Start Time" v={isoToTime(opt.suggestedStartIso)} />
                     <KeyValue
                       k="Added Drive"
