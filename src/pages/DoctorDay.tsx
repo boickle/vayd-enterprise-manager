@@ -497,7 +497,7 @@ export default function DoctorDay({
   }, [appts]);
 
   /* =========================
-   ETAs + drive seconds (pure sequential, routable only)
+   ETAs + drive seconds (prefer server; fallback clamps to windows)
    ========================= */
   useEffect(() => {
     let on = true;
@@ -516,15 +516,14 @@ export default function DoctorDay({
       const routable = households.filter((h) => !h.isNoLocation);
       if (routable.length === 0) return;
 
-      // Helper: parse "HH:mm" (e.g., startDepotTime) into a DateTime on this date
+      // Helper: parse "HH:mm" into DateTime on this date
       const parseDayTime = (d: string, hm?: string | null): DateTime | null => {
-        if (!d) return null;
-        if (!hm) return null;
+        if (!d || !hm) return null;
         const m = String(hm)
           .trim()
           .match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
-        const [h, mnt] = m ? [Math.min(23, +m[1] || 0), Math.min(59, +m[2] || 0)] : [8, 30];
-        return DateTime.fromISO(d).set({ hour: h, minute: mnt, second: 0, millisecond: 0 });
+        const [h, mn] = m ? [Math.min(23, +m[1] || 0), Math.min(59, +m[2] || 0)] : [8, 30];
+        return DateTime.fromISO(d).set({ hour: h, minute: mn, second: 0, millisecond: 0 });
       };
 
       // Use schedule start if we have it; else earliest appt start; else 08:30
@@ -572,23 +571,28 @@ export default function DoctorDay({
         setBackToDepotSec(rawBackToDepotSec);
         setBackToDepotIso(rawBackToDepotIso);
 
-        // -------- derive toFirst / between from driveSeconds --------
+        // ---------- 1) Prefer server ETAs (already clamped) ----------
+        const serverEtas: Record<string, string> = result?.etaByKey || {};
+        if (serverEtas && Object.keys(serverEtas).length > 0) {
+          setEtas(serverEtas);
+          return;
+        }
+
+        // ---------- 2) Fallback: compute locally, but CLAMP to window start ----------
+        // derive toFirst/between from driveSeconds
         const N = routable.length;
-        let toFirstSec: number = 0;
+        let toFirstSec = 0;
         let betweenSecs: number[] = [];
 
         if (Array.isArray(rawDriveSeconds)) {
           if (rawDriveSeconds.length === N + 1) {
-            // [toFirst, between..., back]
             toFirstSec = Math.max(0, rawDriveSeconds[0] || 0);
             betweenSecs = rawDriveSeconds.slice(1, N).map((v) => Math.max(0, v || 0));
           } else if (rawDriveSeconds.length === N) {
-            // With start depot present we interpret first as toFirst
             if (startDepot) {
               toFirstSec = Math.max(0, rawDriveSeconds[0] || 0);
               betweenSecs = rawDriveSeconds.slice(1).map((v) => Math.max(0, v || 0));
             } else {
-              // No start depot: assume these are only inter-stop legs
               betweenSecs = rawDriveSeconds.slice(0, N - 1).map((v) => Math.max(0, v || 0));
             }
           } else if (rawDriveSeconds.length === N - 1) {
@@ -596,7 +600,14 @@ export default function DoctorDay({
           }
         }
 
-        // -------- duration helper (prefer scheduled diff, else 60m) --------
+        // replace clampToWindowStart with a window-start clamp
+        const clampToWindowStart = (arriveIso: string, startIso?: string | null) => {
+          if (!startIso) return arriveIso;
+          const arrive = DateTime.fromISO(arriveIso);
+          const winStart = DateTime.fromISO(startIso).minus({ hours: 1 }); // 👈 earliest window time
+          return arrive < winStart ? winStart.toISO() : arriveIso;
+        };
+
         const durMins = (h: (typeof routable)[number]) =>
           h.startIso && h.endIso
             ? Math.max(
@@ -607,27 +618,27 @@ export default function DoctorDay({
               )
             : 60;
 
-        // -------- sequential timeline --------
-        const depart0 = DateTime.fromISO(startAnchorIso!); // when we leave depot/office
-        let cursor = depart0; // current departure time (ETD) for chaining
+        const depart0 = DateTime.fromISO(startAnchorIso!);
+        let cursorDT = depart0;
         const adjusted: Record<string, string> = {};
 
         if (N > 0) {
-          // first stop: depart at anchor + toFirst
-          const eta0 = cursor.plus({ seconds: Math.max(0, toFirstSec) });
-          adjusted[routable[0].key] = eta0.toISO()!;
-          cursor = eta0.plus({ minutes: durMins(routable[0]) });
+          // first stop
+          const eta0Raw = cursorDT.plus({ seconds: Math.max(0, toFirstSec) }).toISO()!;
+          const eta0 = clampToWindowStart(eta0Raw, routable[0].startIso || undefined)!;
+          adjusted[routable[0].key] = eta0;
+          cursorDT = DateTime.fromISO(eta0).plus({ minutes: durMins(routable[0]) });
 
-          // next stops: ETA = previous ETD + drive(i-1→i)
+          // subsequent
           for (let i = 1; i < N; i++) {
             const travel = Math.max(0, betweenSecs[i - 1] || 0);
-            const eta = cursor.plus({ seconds: travel });
-            adjusted[routable[i].key] = eta.toISO()!;
-            cursor = eta.plus({ minutes: durMins(routable[i]) });
+            const etaRaw = cursorDT.plus({ seconds: travel }).toISO()!;
+            const eta = clampToWindowStart(etaRaw, routable[i].startIso || undefined)!;
+            adjusted[routable[i].key] = eta;
+            cursorDT = DateTime.fromISO(eta).plus({ minutes: durMins(routable[i]) });
           }
         }
 
-        // Save only routable ETAs; unroutable remain absent (UI already guards)
         if (on) setEtas(adjusted);
       } catch (e: any) {
         if (on) {

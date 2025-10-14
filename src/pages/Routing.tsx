@@ -50,6 +50,7 @@ type Winner = {
   workStartLocal?: string; // "HH:mm" or "HH:mm:ss"
   effectiveEndLocal?: string; // "HH:mm" or "HH:mm:ss"
   bookedServiceSeconds?: number; // seconds of booked service (no driving)
+  _emptyDay?: boolean;
 };
 
 type EstimatedCost = {
@@ -729,11 +730,15 @@ export default function Routing() {
       return a.insertionIndex - b.insertionIndex;
     });
 
-    return rows.map((r) => ({
-      ...r,
-      // protect against undefined
-      displayInsertionIndex: (r.insertionIndex ?? 0) + 1,
-    }));
+    return rows.map((r) => {
+      // If backend says it's an empty day, force index = 1 (0-based 0)
+      const displayInsertionIndex = (r as any)._emptyDay ? 1 : (r.insertionIndex ?? 0) + 1;
+
+      return {
+        ...r,
+        displayInsertionIndex,
+      };
+    });
   }, [multiDoctor, result, doctorNames, form.doctorId]);
 
   // =========================

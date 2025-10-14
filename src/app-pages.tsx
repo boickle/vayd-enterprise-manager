@@ -8,6 +8,7 @@ import DoctorRevenueAnalyticsPage from './pages/DoctorRevenueAnalytics';
 import AuditAdminPage from './pages/AuditAdmin';
 import SimResults from './pages/SimResults';
 import MyMonth from './pages/MyMonth.';
+import MyDayToggle from './pages/MyDayToggle';
 
 // src/app-pages.ts
 export type AppPage = {
@@ -39,7 +40,7 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
     {
       path: '/doctor',
       label: 'My Day',
-      element: <DoctorDay />,
+      element: <MyDayToggle />,
       permission: 'canSeeDoctorDay',
       role: ['employee', 'admin'],
     },
