@@ -1,5 +1,6 @@
 // src/pages/DoctorDayVisual.tsx
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
 import type { DoctorDayProps } from './DoctorDay';
 import {
@@ -15,6 +16,7 @@ import { useAuth } from '../auth/useAuth';
 // ===== Vertical scale (pixels per minute). Tweak to taste. =====
 const PPM = 2.2;
 
+/* ----------------- narrow helpers ----------------- */
 const str = (o: any, k: string) => (typeof o?.[k] === 'string' ? o[k] : undefined);
 const num = (o: any, k: string) => {
   const v = o?.[k];
@@ -49,6 +51,64 @@ function formatAddress(a: DoctorDayAppt) {
   );
 }
 
+/* ---- address-based fallback grouping for no-geo ---- */
+function normalizeAddressString(s?: string): string | null {
+  if (!s) return null;
+  return (
+    s
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .replace(/[,\s]+$/g, '')
+      .trim() || null
+  );
+}
+function addressKeyForAppt(a: DoctorDayAppt): string | null {
+  const address1 = normalizeAddressString(str(a, 'address1'));
+  const city = normalizeAddressString(str(a, 'city'));
+  const state = normalizeAddressString(str(a, 'state'));
+  const zip = normalizeAddressString(str(a, 'zip'));
+  const structured = [address1, city, state, zip].filter(Boolean).join('|');
+  if (structured) return `structured:${structured}`;
+  const free =
+    normalizeAddressString(str(a as any, 'address')) ||
+    normalizeAddressString(str(a as any, 'addressStr')) ||
+    normalizeAddressString(str(a as any, 'fullAddress'));
+  return free ? `free:${free}` : null;
+}
+
+/* ----------------- patient extraction ----------------- */
+type PatientBadge = {
+  name: string;
+  pimsId?: string | null;
+  status?: string | null;
+  type?: string | null;
+  desc?: string | null;
+  startIso?: string | null;
+  endIso?: string | null;
+};
+function makePatientBadge(a: any): PatientBadge {
+  const name =
+    str(a, 'patientName') ||
+    str(a, 'petName') ||
+    str(a, 'animalName') ||
+    str(a, 'name') ||
+    'Patient';
+  const type =
+    str(a, 'appointmentType') || str(a, 'appointmentTypeName') || str(a, 'serviceName') || null;
+  const desc = str(a, 'description') || str(a, 'visitReason') || null;
+  const status = str(a, 'confirmStatusName') || str(a, 'statusName') || null;
+  return {
+    name,
+    type,
+    desc,
+    status,
+    pimsId: str(a, 'patientPimsId') ?? null,
+    startIso: getStartISO(a) ?? null,
+    endIso: getEndISO(a) ?? null,
+  };
+}
+
+/* ----------------- data types ----------------- */
 type Household = {
   key: string;
   client: string;
@@ -59,6 +119,7 @@ type Household = {
   endIso?: string | null;
   isNoLocation?: boolean;
   isPreview?: boolean;
+  patients: PatientBadge[];
 };
 
 export default function DoctorDayVisual({
@@ -83,7 +144,27 @@ export default function DoctorDayVisual({
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // providers
+  // routing
+  const [projEtas, setProjEtas] = useState<Record<string, string>>({});
+  const [driveSecondsArr, setDriveSecondsArr] = useState<number[] | null>(null);
+  const [etaErr, setEtaErr] = useState<string | null>(null);
+
+  // hover card (global, mouse-anchored)
+  const [hoverCard, setHoverCard] = useState<{
+    key: string;
+    x: number;
+    y: number;
+    client: string;
+    address: string;
+    durMin: number;
+    etaIso?: string | null;
+    etdIso?: string | null;
+    sIso: string;
+    eIso: string;
+    patients: PatientBadge[];
+  } | null>(null);
+
+  /* ------------ load providers ------------ */
   useEffect(() => {
     let on = true;
     if (!userEmail) return;
@@ -122,7 +203,7 @@ export default function DoctorDayVisual({
     }
   }, [providers, userEmail, initialDoctorId]);
 
-  // fetch day
+  /* ------------ load day (with optional preview injection) ------------ */
   useEffect(() => {
     let on = true;
     (async () => {
@@ -176,40 +257,74 @@ export default function DoctorDayVisual({
     };
   }, [date, selectedDoctorId, virtualAppt]);
 
-  // households
+  /* ------------ group into households + patients ------------ */
   const households = useMemo<Household[]>(() => {
     const m = new Map<string, Household>();
-    for (const a of appts) {
-      const lat = num(a, 'lat');
-      const lon = num(a, 'lon');
-      const hasGeo =
-        typeof lat === 'number' &&
-        typeof lon === 'number' &&
-        Math.abs(lat) <= 90 &&
-        Math.abs(lon) <= 180 &&
-        Math.abs(lat) > 1e-6 &&
-        Math.abs(lon) > 1e-6;
-      const k = hasGeo ? keyFor(lat!, lon!) : `noloc:${(a as any)?.id ?? Math.random()}`;
-      const s = getStartISO(a) ?? null;
-      const e = getEndISO(a) ?? null;
-      if (!m.has(k)) {
-        m.set(k, {
-          key: k,
+    for (const [idx, a] of appts.entries()) {
+      const rawLat = num(a, 'lat');
+      const rawLon = num(a, 'lon');
+
+      const backendNoLoc = Boolean(
+        (a as any)?.isNoLocation ?? (a as any)?.noLocation ?? (a as any)?.unroutable
+      );
+
+      const inRange =
+        typeof rawLat === 'number' &&
+        typeof rawLon === 'number' &&
+        Math.abs(rawLat) <= 90 &&
+        Math.abs(rawLon) <= 180;
+
+      const nonZero =
+        typeof rawLat === 'number' &&
+        typeof rawLon === 'number' &&
+        Math.abs(rawLat) > 1e-6 &&
+        Math.abs(rawLon) > 1e-6;
+
+      const hasGeo = !backendNoLoc && inRange && nonZero;
+      const lat = hasGeo ? (rawLat as number) : 0;
+      const lon = hasGeo ? (rawLon as number) : 0;
+
+      const addrKey = hasGeo ? null : addressKeyForAppt(a);
+      const idPart = (a as any)?.id != null ? String((a as any).id) : String(idx);
+      const key = hasGeo ? keyFor(lat, lon, 6) : addrKey ? `addr:${addrKey}` : `noloc:${idPart}`;
+
+      const patient = makePatientBadge(a);
+      const apptIsPreview = (a as any)?.isPreview === true;
+
+      if (!m.has(key)) {
+        m.set(key, {
+          key,
           client: (a as any)?.clientName ?? 'Client',
           address: formatAddress(a),
-          lat: hasGeo ? lat! : 0,
-          lon: hasGeo ? lon! : 0,
-          startIso: s,
-          endIso: e,
+          lat,
+          lon,
+          startIso: getStartISO(a) ?? null,
+          endIso: getEndISO(a) ?? null,
           isNoLocation: !hasGeo,
-          isPreview: (a as any)?.isPreview === true,
+          isPreview: apptIsPreview,
+          patients: [patient],
         });
       } else {
-        const h = m.get(k)!;
+        const h = m.get(key)!;
+
+        // time window expand
+        const s = getStartISO(a);
+        const e = getEndISO(a);
         const sDt = s ? DateTime.fromISO(s) : null;
         const eDt = e ? DateTime.fromISO(e) : null;
         if (sDt && (!h.startIso || sDt < DateTime.fromISO(h.startIso))) h.startIso = sDt.toISO();
         if (eDt && (!h.endIso || eDt > DateTime.fromISO(h.endIso))) h.endIso = eDt.toISO();
+
+        // mark preview if any appt in household is preview
+        if (apptIsPreview) h.isPreview = true;
+
+        // add unique patient
+        const exists = h.patients.some(
+          (p) =>
+            (patient.pimsId && p.pimsId === patient.pimsId) ||
+            (!patient.pimsId && p.name === patient.name && p.startIso === patient.startIso)
+        );
+        if (!exists) h.patients.push(patient);
       }
     }
     return Array.from(m.values()).sort(
@@ -219,15 +334,13 @@ export default function DoctorDayVisual({
     );
   }, [appts]);
 
-  // ETAs (prefer server; fallback clamps to earliest window start = startIso - 60m)
-  const [projEtas, setProjEtas] = useState<Record<string, string>>({});
-  const [etaErr, setEtaErr] = useState<string | null>(null);
-
+  /* ------------ ETAs + driveSeconds ------------ */
   useEffect(() => {
     let on = true;
     (async () => {
       setEtaErr(null);
       setProjEtas({});
+      setDriveSecondsArr(null);
 
       // Only route over households with usable lat/lon
       const routable = households.filter((h) => !h.isNoLocation);
@@ -238,7 +351,7 @@ export default function DoctorDayVisual({
         routable[0]?.startIso ??
         DateTime.fromISO(date).set({ hour: 8, minute: 30, second: 0, millisecond: 0 }).toISO();
 
-      // infer doctor the same way the list view does (best-effort)
+      // infer doctor
       const inferredDoctorId =
         (appts[0] as any)?.primaryProviderPimsId ??
         (appts[0] as any)?.providerPimsId ??
@@ -264,81 +377,14 @@ export default function DoctorDayVisual({
       try {
         const result: any = await fetchEtas(payload);
 
-        // ---------- 1) Prefer server-provided ETAs (already clamped) ----------
         const serverEtas: Record<string, string> = result?.etaByKey || {};
-        if (serverEtas && Object.keys(serverEtas).length > 0) {
-          if (on) setProjEtas(serverEtas);
-          return;
+        if (serverEtas && Object.keys(serverEtas).length > 0 && on) {
+          setProjEtas(serverEtas);
         }
 
-        // ---------- 2) Fallback: build ETAs from driveSeconds AND clamp to (startIso - 60m) ----------
-        const ds: number[] | null = Array.isArray(result?.driveSeconds)
-          ? result.driveSeconds
-          : null;
-        const N = routable.length;
-
-        // derive toFirst/between from driveSeconds
-        let toFirst = 0;
-        let between: number[] = [];
-        if (ds) {
-          if (ds.length === N + 1) {
-            toFirst = ds[0] || 0;
-            between = ds.slice(1, N).map((v) => Math.max(0, v || 0));
-          } else if (ds.length === N) {
-            if (startDepot) {
-              toFirst = ds[0] || 0;
-              between = ds.slice(1).map((v) => Math.max(0, v || 0));
-            } else {
-              between = ds.slice(0, N - 1).map((v) => Math.max(0, v || 0));
-            }
-          } else if (ds.length === N - 1) {
-            between = ds.map((v) => Math.max(0, v || 0));
-          }
+        if (Array.isArray(result?.driveSeconds) && on) {
+          setDriveSecondsArr(result.driveSeconds as number[]);
         }
-
-        // duration helper from scheduled bounds (or 60m default)
-        const durMins = (h: (typeof routable)[number]) =>
-          h.startIso && h.endIso
-            ? Math.max(
-                1,
-                Math.round(
-                  DateTime.fromISO(h.endIso).diff(DateTime.fromISO(h.startIso)).as('minutes')
-                )
-              )
-            : 60;
-
-        // clamp helper: earliest window time = startIso - 60m
-        const clampToWindowStart = (arriveIso: string, startIso?: string | null) => {
-          if (!startIso) return arriveIso;
-          const arrive = DateTime.fromISO(arriveIso);
-          const winStart = DateTime.fromISO(startIso).minus({ hours: 1 });
-          return arrive < winStart ? winStart.toISO()! : arriveIso;
-        };
-
-        // sequential chain
-        let cursor = DateTime.fromISO(startAnchorIso!);
-        const out: Record<string, string> = {};
-
-        if (N > 0) {
-          // first stop (depart at anchor + toFirst, then clamp to earliest window)
-          const eta0Raw = cursor.plus({ seconds: Math.max(0, toFirst) }).toISO()!;
-          const eta0 = clampToWindowStart(eta0Raw, routable[0].startIso);
-          out[routable[0].key] = eta0;
-
-          cursor = DateTime.fromISO(eta0).plus({ minutes: durMins(routable[0]) });
-
-          // subsequent stops
-          for (let i = 1; i < N; i++) {
-            const travel = Math.max(0, between[i - 1] || 0);
-            const etaRaw = cursor.plus({ seconds: travel }).toISO()!;
-            const eta = clampToWindowStart(etaRaw, routable[i].startIso);
-            out[routable[i].key] = eta;
-
-            cursor = DateTime.fromISO(eta).plus({ minutes: durMins(routable[i]) });
-          }
-        }
-
-        if (on) setProjEtas(out);
       } catch (e: any) {
         if (on) setEtaErr(e?.message ?? 'Failed to compute ETAs');
       }
@@ -349,7 +395,7 @@ export default function DoctorDayVisual({
     };
   }, [households, startDepot, endDepot, date, selectedDoctorId, appts]);
 
-  // vertical window
+  /* ------------ visual time window ------------ */
   const t0 = useMemo(() => {
     const first = households[0]?.startIso
       ? DateTime.fromISO(households[0].startIso).minus({ minutes: 10 })
@@ -365,7 +411,7 @@ export default function DoctorDayVisual({
 
   const totalMin = Math.max(60, Math.round(tEnd.diff(t0).as('minutes')));
 
-  // hour ticks (horizontal lines)
+  /* ------------ hour tick marks ------------ */
   const hours = useMemo(() => {
     const out: { top: number; label: string }[] = [];
     let h = t0.startOf('hour');
@@ -379,31 +425,100 @@ export default function DoctorDayVisual({
     return out;
   }, [t0, tEnd]);
 
-  // drive bars (between appts)
-  const drives = useMemo(() => {
-    const arr: { top: number; width: number; label: string }[] = [];
-    for (let i = 1; i < households.length; i++) {
-      const prev = households[i - 1],
-        curr = households[i];
-      if (!prev.endIso || !curr.startIso) continue;
-      const gapMin = Math.max(
-        0,
-        Math.round(
-          DateTime.fromISO(curr.startIso).diff(DateTime.fromISO(prev.endIso)).as('minutes')
-        )
-      );
-      if (gapMin <= 0) continue;
-      const top =
-        Math.max(0, Math.round(DateTime.fromISO(prev.endIso).diff(t0).as('minutes'))) * PPM;
-      arr.push({ top, width: Math.max(24, gapMin * PPM), label: `${gapMin} min drive` });
+  /* ------------ helpers derived from ETAs ------------ */
+  const etdByKey = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const h of households) {
+      const s = h.startIso ? DateTime.fromISO(h.startIso) : null;
+      const e = h.endIso ? DateTime.fromISO(h.endIso) : null;
+      if (!s || !e) continue;
+      const durMin = Math.max(1, Math.round(e.diff(s).as('minutes')));
+      const etaIso = projEtas[h.key];
+      const etdIso = etaIso
+        ? DateTime.fromISO(etaIso).plus({ minutes: durMin }).toISO()
+        : e.toISO(); // fallback to scheduled end
+      map[h.key] = etdIso!;
     }
-    return arr;
-  }, [households, t0]);
+    return map;
+  }, [households, projEtas]);
+
+  /* ------------ compute drive-to-next minutes ------------ */
+  const driveBetweenMin = useMemo(() => {
+    const N = households.length;
+    if (N <= 1) return [] as number[];
+
+    // derive toFirst/between from API array if present
+    let between: number[] | null = null;
+    if (Array.isArray(driveSecondsArr)) {
+      if (driveSecondsArr.length === N + 1) {
+        between = driveSecondsArr.slice(1, N); // [between 0->1, 1->2, ...]
+      } else if (driveSecondsArr.length === N) {
+        if (startDepot) between = driveSecondsArr.slice(1);
+        else if (!startDepot) between = driveSecondsArr.slice(0, N - 1);
+      } else if (driveSecondsArr.length === N - 1) {
+        between = driveSecondsArr;
+      }
+    }
+
+    const out: number[] = [];
+
+    for (let i = 0; i < N - 1; i++) {
+      const apiMin =
+        between && typeof between[i] === 'number' ? Math.round(Math.max(0, between[i]) / 60) : null;
+
+      if (apiMin != null) {
+        out.push(apiMin);
+        continue;
+      }
+
+      // fallback from ETA gap: ETA(next) - ETD(prev)
+      const prevETD = etdByKey[households[i].key];
+      const nextETA = projEtas[households[i + 1].key];
+      if (prevETD && nextETA) {
+        const mins = Math.max(
+          0,
+          Math.round(DateTime.fromISO(nextETA).diff(DateTime.fromISO(prevETD)).as('minutes'))
+        );
+        out.push(mins);
+      } else {
+        // last fallback: scheduled gap
+        const prevEnd = households[i].endIso;
+        const nextStart = households[i + 1].startIso;
+        const mins =
+          prevEnd && nextStart
+            ? Math.max(
+                0,
+                Math.round(
+                  DateTime.fromISO(nextStart).diff(DateTime.fromISO(prevEnd)).as('minutes')
+                )
+              )
+            : 0;
+        out.push(mins);
+      }
+    }
+    return out;
+  }, [households, driveSecondsArr, projEtas, etdByKey, startDepot]);
+
+  /* ------------ visual drive bars placed at ETD(prev) ------------ */
+  const driveBars = useMemo(() => {
+    const bars: { top: number; width: number; label: string }[] = [];
+    for (let i = 0; i < households.length - 1; i++) {
+      const prev = households[i];
+      const startIso = etdByKey[prev.key] ?? prev.endIso;
+      if (!startIso) continue;
+
+      const top = Math.max(0, Math.round(DateTime.fromISO(startIso).diff(t0).as('minutes'))) * PPM;
+      const mins = Math.max(0, driveBetweenMin[i] || 0);
+      const width = Math.max(24, mins * PPM);
+      bars.push({ top, width, label: `${mins} min drive` });
+    }
+    return bars;
+  }, [households, etdByKey, t0, driveBetweenMin]);
 
   return (
     <div className="card" style={{ paddingBottom: 16 }}>
       <h2>My Day — Visual</h2>
-      <p className="muted">A time-scaled vertical view with hover details.</p>
+      <p className="muted">A time-scaled vertical view with drive time and patient details.</p>
 
       <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <label className="muted" htmlFor="vdd-date">
@@ -472,6 +587,7 @@ export default function DoctorDayVisual({
                   left: 64,
                   right: 8,
                   borderTop: '1px dashed #e5e7eb',
+                  zIndex: 0,
                 }}
               />
               <div
@@ -495,25 +611,49 @@ export default function DoctorDayVisual({
             const s = h.startIso ? DateTime.fromISO(h.startIso) : null;
             const e = h.endIso ? DateTime.fromISO(h.endIso) : null;
             if (!s || !e) return null;
+
             const top = Math.max(0, Math.round(s.diff(t0).as('minutes'))) * PPM;
-            const height = Math.max(18, Math.round(e.diff(s).as('minutes')) * PPM);
+            const height = Math.max(22, Math.round(e.diff(s).as('minutes')) * PPM);
 
             const etaIso = projEtas[h.key];
             const durMin = Math.max(1, Math.round(e.diff(s).as('minutes')));
             const etdIso = etaIso
               ? DateTime.fromISO(etaIso).plus({ minutes: durMin }).toISO()
-              : null;
+              : e.toISO();
+
+            const patientsPreview = h.patients
+              .map((p) => p.name)
+              .slice(0, 3)
+              .join(', ');
+            const moreCount = Math.max(0, (h.patients?.length || 0) - 3);
+
+            // drive to next chip
+            const driveToNext = idx < households.length - 1 ? driveBetweenMin[idx] || 0 : null;
 
             return (
               <div
                 key={h.key}
-                title={
-                  `${h.client}\n${h.address}\nDuration: ${durMin} min` +
-                  (etaIso
-                    ? `\nETA: ${DateTime.fromISO(etaIso).toLocaleString(DateTime.TIME_SIMPLE)}  ETD: ${etdIso ? DateTime.fromISO(etdIso).toLocaleString(DateTime.TIME_SIMPLE) : '—'}`
-                    : '') +
-                  `\nWindow: ${s.minus({ hours: 1 }).toLocaleString(DateTime.TIME_SIMPLE)} – ${s.plus({ hours: 1 }).toLocaleString(DateTime.TIME_SIMPLE)}`
-                }
+                onMouseEnter={(ev) => {
+                  setHoverCard({
+                    key: h.key,
+                    x: ev.clientX,
+                    y: ev.clientY,
+                    client: h.client,
+                    address: h.address,
+                    durMin,
+                    etaIso: etaIso ?? null,
+                    etdIso: etdIso ?? null,
+                    sIso: s.toISO()!,
+                    eIso: e.toISO()!,
+                    patients: h.patients || [],
+                  });
+                }}
+                onMouseMove={(ev) => {
+                  setHoverCard((prev) =>
+                    prev && prev.key === h.key ? { ...prev, x: ev.clientX, y: ev.clientY } : prev
+                  );
+                }}
+                onMouseLeave={() => setHoverCard((prev) => (prev?.key === h.key ? null : prev))}
                 style={{
                   position: 'absolute',
                   left: 88,
@@ -527,8 +667,10 @@ export default function DoctorDayVisual({
                   display: 'flex',
                   alignItems: 'center',
                   padding: '8px 10px',
-                  gap: 8,
+                  gap: 10,
                   overflow: 'hidden',
+                  cursor: 'default',
+                  zIndex: 2,
                 }}
               >
                 <div style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>
@@ -541,32 +683,201 @@ export default function DoctorDayVisual({
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
+                    flex: 1,
                   }}
                 >
                   {h.address}
                 </div>
+                {!!h.patients?.length && (
+                  <div
+                    className="muted"
+                    style={{
+                      fontSize: 12,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    • {patientsPreview}
+                    {moreCount > 0 ? ` +${moreCount} more` : ''}
+                  </div>
+                )}
+                {driveToNext != null && idx < households.length - 1 && (
+                  <div
+                    title="Drive to next stop"
+                    style={{
+                      marginLeft: 8,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      padding: '2px 8px',
+                      borderRadius: 999,
+                      background: '#e5e7eb',
+                      color: '#334155',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    → {driveToNext}m
+                  </div>
+                )}
               </div>
             );
           })}
 
-          {/* drive bars (small horizontal bars between blocks) */}
-          {drives.map((d, i) => (
-            <div
-              key={i}
-              title={d.label}
-              style={{
-                position: 'absolute',
-                left: 110,
-                right: 48,
-                top: d.top,
-                height: 6,
-                background: '#94a3b8',
-                borderRadius: 999,
-              }}
-            />
+          {/* drive bars (true drive duration; placed at ETD(prev)) */}
+          {driveBars.map((d, i) => (
+            <div key={i}>
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 110,
+                  right: 48,
+                  top: d.top,
+                  height: 6,
+                  background: '#94a3b8',
+                  borderRadius: 999,
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  top: d.top - 16,
+                  left: 110,
+                  fontSize: 12,
+                  color: '#64748b',
+                  fontWeight: 700,
+                }}
+              >
+                {d.label}
+              </div>
+            </div>
           ))}
         </div>
       </div>
+
+      {/* Global hover card (renders to document.body so it never gets clipped) */}
+      {hoverCard &&
+        createPortal(
+          (() => {
+            const CARD_MAX_W = 520; // room for patient list
+            const CARD_MIN_W = 340;
+            const PADDING = 12;
+            const OFFSET = 14;
+
+            // Prefer left of cursor; flip right if needed
+            let left = hoverCard.x - OFFSET - CARD_MAX_W;
+            let top = hoverCard.y - 12;
+
+            if (left < PADDING) left = hoverCard.x + OFFSET;
+
+            const vwH = window.innerHeight;
+            const estimatedH = 280;
+            if (top + estimatedH > vwH - PADDING) top = vwH - PADDING - estimatedH;
+            if (top < PADDING) top = PADDING;
+
+            const s = DateTime.fromISO(hoverCard.sIso);
+            const e = DateTime.fromISO(hoverCard.eIso);
+
+            return (
+              <div
+                style={{
+                  position: 'fixed',
+                  left,
+                  top,
+                  zIndex: 9999,
+                  maxWidth: CARD_MAX_W,
+                  minWidth: CARD_MIN_W,
+                  maxHeight: '60vh',
+                  overflow: 'auto',
+                  background: '#ffffff',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 12,
+                  padding: 14,
+                  boxShadow: '0 12px 28px rgba(0,0,0,0.18)',
+                  fontSize: 15,
+                  lineHeight: 1.35,
+                  pointerEvents: 'none',
+                }}
+              >
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>{hoverCard.client}</div>
+                <div style={{ color: '#475569', marginBottom: 10 }}>{hoverCard.address}</div>
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 10 }}>
+                  <span>
+                    <b>Scheduled:</b> {s.toLocaleString(DateTime.TIME_SIMPLE)} –{' '}
+                    {e.toLocaleString(DateTime.TIME_SIMPLE)}
+                  </span>
+                  <span>
+                    <b>Duration:</b> {hoverCard.durMin} min
+                  </span>
+                  <span>
+                    <b>ETA/ETD:</b>{' '}
+                    {hoverCard.etaIso
+                      ? `${DateTime.fromISO(hoverCard.etaIso).toLocaleString(DateTime.TIME_SIMPLE)} – ${
+                          hoverCard.etdIso
+                            ? DateTime.fromISO(hoverCard.etdIso).toLocaleString(
+                                DateTime.TIME_SIMPLE
+                              )
+                            : '—'
+                        }`
+                      : '—'}
+                  </span>
+                  <span>
+                    <b>Window:</b> {s.minus({ hours: 1 }).toLocaleString(DateTime.TIME_SIMPLE)} –{' '}
+                    {s.plus({ hours: 1 }).toLocaleString(DateTime.TIME_SIMPLE)}
+                  </span>
+                </div>
+
+                {!!hoverCard.patients?.length && (
+                  <div>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>Patients</div>
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {hoverCard.patients.map((p, i) => (
+                        <li key={i} style={{ marginBottom: 6 }}>
+                          <div style={{ fontWeight: 600 }}>{p.name}</div>
+                          <div style={{ fontSize: 13, color: '#475569' }}>
+                            {p.type ? (
+                              <>
+                                <b>{p.type}</b>
+                                {p.desc ? ` — ${p.desc}` : ''}
+                              </>
+                            ) : (
+                              p.desc || '—'
+                            )}
+                          </div>
+                          {p.status && (
+                            <div
+                              style={{
+                                display: 'inline-block',
+                                marginTop: 4,
+                                fontSize: 12,
+                                fontWeight: 700,
+                                padding: '2px 8px',
+                                borderRadius: 999,
+                                background: p.status.toLowerCase().includes('pre-appt email')
+                                  ? '#fee2e2'
+                                  : p.status.toLowerCase().includes('pre-appt form')
+                                    ? '#dcfce7'
+                                    : '#e5e7eb',
+                                color: p.status.toLowerCase().includes('pre-appt email')
+                                  ? '#b91c1c'
+                                  : p.status.toLowerCase().includes('pre-appt form')
+                                    ? '#166534'
+                                    : '#334155',
+                              }}
+                            >
+                              {p.status}
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            );
+          })(),
+          document.body
+        )}
     </div>
   );
 }
