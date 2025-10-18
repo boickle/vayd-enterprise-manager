@@ -159,11 +159,13 @@ function pickScheduleBounds(
 
 /* ----------------- visual window helpers (8:30–10:30 + day-start clamp) ----------------- */
 function eightThirtyIsoFor(date: string): string {
-  return DateTime.fromISO(date).set({ hour: 8, minute: 30, second: 0, millisecond: 0 }).toISO();
+  return DateTime.fromISO(date).set({ hour: 8, minute: 30, second: 0, millisecond: 0 }).toISO()!; // ← non-null assert
 }
+
 function tenThirtyIsoFor(date: string): string {
-  return DateTime.fromISO(date).set({ hour: 10, minute: 30, second: 0, millisecond: 0 }).toISO();
+  return DateTime.fromISO(date).set({ hour: 10, minute: 30, second: 0, millisecond: 0 }).toISO()!; // ← non-null assert
 }
+
 /** Return doctor's visual work start for the date (schedStartIso if valid time/ISO; else 08:30) */
 function workStartIsoFor(date: string, schedStartIso?: string | null): string {
   if (schedStartIso && /^\d{2}:\d{2}(:\d{2})?$/.test(schedStartIso)) {
@@ -175,11 +177,12 @@ function workStartIsoFor(date: string, schedStartIso?: string | null): string {
         second: 0,
         millisecond: 0,
       })
-      .toISO();
+      .toISO()!; // ← non-null assert
   }
   if (schedStartIso && DateTime.fromISO(schedStartIso).isValid) return schedStartIso;
   return eightThirtyIsoFor(date);
 }
+
 /** Visual rule: given an appointment start, return [winStartIso, winEndIso] */
 function adjustedWindowForStart(
   date: string,
