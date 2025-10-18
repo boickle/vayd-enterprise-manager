@@ -122,6 +122,91 @@ type Household = {
   patients: PatientBadge[];
 };
 
+/* ----------------- schedule bounds (for work start) ----------------- */
+function pickScheduleBounds(
+  resp: DoctorDayResponse,
+  sortedAppts: DoctorDayAppt[]
+): { start: string | null; end: string | null } {
+  const start =
+    str(resp as any, 'startDepotTime') ??
+    str(resp as any, 'workdayStartIso') ??
+    str(resp as any, 'shiftStartIso') ??
+    (resp as any)?.schedule?.startIso ??
+    (resp as any)?.schedule?.start ??
+    null;
+
+  const end =
+    str(resp as any, 'endDepotTime') ??
+    str(resp as any, 'workdayEndIso') ??
+    str(resp as any, 'shiftEndIso') ??
+    (resp as any)?.schedule?.endIso ??
+    (resp as any)?.schedule?.end ??
+    null;
+
+  if (start && end) return { start, end };
+
+  // Fallback: min start / max end from the set
+  let earliest: string | null = null;
+  let latest: string | null = null;
+  for (const a of sortedAppts) {
+    const s = getStartISO(a);
+    const e = getEndISO(a);
+    if (s && (!earliest || DateTime.fromISO(s) < DateTime.fromISO(earliest))) earliest = s;
+    if (e && (!latest || DateTime.fromISO(e) > DateTime.fromISO(latest))) latest = e;
+  }
+  return { start: earliest, end: latest };
+}
+
+/* ----------------- visual window helpers (8:30–10:30 + day-start clamp) ----------------- */
+function eightThirtyIsoFor(date: string): string {
+  return DateTime.fromISO(date).set({ hour: 8, minute: 30, second: 0, millisecond: 0 }).toISO();
+}
+function tenThirtyIsoFor(date: string): string {
+  return DateTime.fromISO(date).set({ hour: 10, minute: 30, second: 0, millisecond: 0 }).toISO();
+}
+/** Return doctor's visual work start for the date (schedStartIso if valid time/ISO; else 08:30) */
+function workStartIsoFor(date: string, schedStartIso?: string | null): string {
+  if (schedStartIso && /^\d{2}:\d{2}(:\d{2})?$/.test(schedStartIso)) {
+    const [hh, mm] = schedStartIso.split(':');
+    return DateTime.fromISO(date)
+      .set({
+        hour: Math.min(23, Number(hh) || 0),
+        minute: Math.min(59, Number(mm) || 0),
+        second: 0,
+        millisecond: 0,
+      })
+      .toISO();
+  }
+  if (schedStartIso && DateTime.fromISO(schedStartIso).isValid) return schedStartIso;
+  return eightThirtyIsoFor(date);
+}
+/** Visual rule: given an appointment start, return [winStartIso, winEndIso] */
+function adjustedWindowForStart(
+  date: string,
+  startIso: string,
+  schedStartIso?: string | null
+): { winStartIso: string; winEndIso: string } {
+  const start = DateTime.fromISO(startIso);
+  const workStart = DateTime.fromISO(workStartIsoFor(date, schedStartIso));
+  const eightThirty = DateTime.fromISO(eightThirtyIsoFor(date));
+  const tenThirty = DateTime.fromISO(tenThirtyIsoFor(date));
+
+  // symmetric 2h window anchor: [start-1h, start+1h]
+  const symmetricEarly = start.minus({ hours: 1 });
+
+  // If symmetric early < 08:30 AND appt <= 10:30 → force 08:30–10:30 (respect workStart)
+  if (symmetricEarly < eightThirty && start <= tenThirty) {
+    const ws = workStart > eightThirty ? workStart : eightThirty;
+    const we = ws.plus({ hours: 2 });
+    return { winStartIso: ws.toISO()!, winEndIso: we.toISO()! };
+  }
+
+  // Default: [max(workStart, start-1h), start+1h]
+  const ws = DateTime.max(workStart, start.minus({ hours: 1 }));
+  const we = start.plus({ hours: 1 });
+  return { winStartIso: ws.toISO()!, winEndIso: we.toISO()! };
+}
+
 export default function DoctorDayVisual({
   readOnly,
   initialDate,
@@ -148,6 +233,10 @@ export default function DoctorDayVisual({
   const [projEtas, setProjEtas] = useState<Record<string, string>>({});
   const [driveSecondsArr, setDriveSecondsArr] = useState<number[] | null>(null);
   const [etaErr, setEtaErr] = useState<string | null>(null);
+
+  // schedule bounds for visual work start
+  const [schedStartIso, setSchedStartIso] = useState<string | null>(null);
+  const [schedEndIso, setSchedEndIso] = useState<string | null>(null);
 
   // hover card (global, mouse-anchored)
   const [hoverCard, setHoverCard] = useState<{
@@ -246,6 +335,11 @@ export default function DoctorDayVisual({
         setAppts(final);
         setStartDepot(resp.startDepot ?? null);
         setEndDepot(resp.endDepot ?? null);
+
+        // schedule bounds for day-start/day-end visuals
+        const { start: schedStart, end: schedEnd } = pickScheduleBounds(resp, final);
+        setSchedStartIso(schedStart);
+        setSchedEndIso(schedEnd);
       } catch (e: any) {
         if (on) setErr(e?.message ?? 'Failed to load day');
       } finally {
@@ -630,6 +724,13 @@ export default function DoctorDayVisual({
             // drive to next chip
             const driveToNext = idx < households.length - 1 ? driveBetweenMin[idx] || 0 : null;
 
+            // adjusted window for display
+            const { winStartIso, winEndIso } = adjustedWindowForStart(
+              date,
+              s.toISO()!,
+              schedStartIso
+            );
+
             return (
               <div
                 key={h.key}
@@ -672,6 +773,9 @@ export default function DoctorDayVisual({
                   cursor: 'default',
                   zIndex: 2,
                 }}
+                title={`Window: ${DateTime.fromISO(winStartIso).toLocaleString(
+                  DateTime.TIME_SIMPLE
+                )} – ${DateTime.fromISO(winEndIso).toLocaleString(DateTime.TIME_SIMPLE)}`}
               >
                 <div style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>
                   #{idx + 1} {h.client}
@@ -777,6 +881,13 @@ export default function DoctorDayVisual({
             const s = DateTime.fromISO(hoverCard.sIso);
             const e = DateTime.fromISO(hoverCard.eIso);
 
+            // adjusted visual window (for hover)
+            const { winStartIso, winEndIso } = adjustedWindowForStart(
+              date,
+              hoverCard.sIso,
+              schedStartIso
+            );
+
             return (
               <div
                 style={{
@@ -822,8 +933,9 @@ export default function DoctorDayVisual({
                       : '—'}
                   </span>
                   <span>
-                    <b>Window:</b> {s.minus({ hours: 1 }).toLocaleString(DateTime.TIME_SIMPLE)} –{' '}
-                    {s.plus({ hours: 1 }).toLocaleString(DateTime.TIME_SIMPLE)}
+                    <b>Window:</b>{' '}
+                    {DateTime.fromISO(winStartIso).toLocaleString(DateTime.TIME_SIMPLE)} –{' '}
+                    {DateTime.fromISO(winEndIso).toLocaleString(DateTime.TIME_SIMPLE)}
                   </span>
                 </div>
 

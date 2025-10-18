@@ -188,6 +188,59 @@ function pickScheduleBounds(
 }
 
 /* =========================
+   Visual window helpers (8:30–10:30 rule + work start clamp)
+   ========================= */
+function eightThirtyIsoFor(date: string): string {
+  return DateTime.fromISO(date).set({ hour: 8, minute: 30, second: 0, millisecond: 0 }).toISO();
+}
+function tenThirtyIsoFor(date: string): string {
+  return DateTime.fromISO(date).set({ hour: 10, minute: 30, second: 0, millisecond: 0 }).toISO();
+}
+/** Return doctor's visual work start for the date (schedStartIso if valid time/ISO; else 08:30) */
+function workStartIsoFor(date: string, schedStartIso?: string | null): string {
+  if (schedStartIso && /^\d{2}:\d{2}(:\d{2})?$/.test(schedStartIso)) {
+    // HH:mm string → put on this date
+    const [hh, mm] = schedStartIso.split(':');
+    return DateTime.fromISO(date)
+      .set({
+        hour: Math.min(23, Number(hh) || 0),
+        minute: Math.min(59, Number(mm) || 0),
+        second: 0,
+        millisecond: 0,
+      })
+      .toISO();
+  }
+  if (schedStartIso && DateTime.fromISO(schedStartIso).isValid) return schedStartIso;
+  return eightThirtyIsoFor(date);
+}
+/** Visual rule: given an appointment start, return [winStartIso, winEndIso] */
+function adjustedWindowForStart(
+  date: string,
+  startIso: string,
+  schedStartIso?: string | null
+): { winStartIso: string; winEndIso: string } {
+  const start = DateTime.fromISO(startIso);
+  const workStart = DateTime.fromISO(workStartIsoFor(date, schedStartIso));
+  const eightThirty = DateTime.fromISO(eightThirtyIsoFor(date));
+  const tenThirty = DateTime.fromISO(tenThirtyIsoFor(date));
+
+  // symmetric 2h window anchor
+  const symmetricEarly = start.minus({ hours: 1 });
+
+  // If symmetric early < 08:30 AND appt <= 10:30 → force 08:30–10:30 (respect workStart)
+  if (symmetricEarly < eightThirty && start <= tenThirty) {
+    const ws = workStart > eightThirty ? workStart : eightThirty;
+    const we = ws.plus({ hours: 2 });
+    return { winStartIso: ws.toISO()!, winEndIso: we.toISO()! };
+  }
+
+  // Default: [max(workStart, start-1h), start+1h]
+  const ws = DateTime.max(workStart, start.minus({ hours: 1 }));
+  const we = start.plus({ hours: 1 });
+  return { winStartIso: ws.toISO()!, winEndIso: we.toISO()! };
+}
+
+/* =========================
    Component
    ========================= */
 export default function DoctorDay({
@@ -578,7 +631,7 @@ export default function DoctorDay({
           return;
         }
 
-        // ---------- 2) Fallback: compute locally, but CLAMP to window start ----------
+        // ---------- 2) Fallback: compute locally, but CLAMP to adjusted window start ----------
         // derive toFirst/between from driveSeconds
         const N = routable.length;
         let toFirstSec = 0;
@@ -600,12 +653,13 @@ export default function DoctorDay({
           }
         }
 
-        // replace clampToWindowStart with a window-start clamp
+        // 👇 Updated clamp using adjustedWindowForStart (mirrors backend / visual)
         const clampToWindowStart = (arriveIso: string, startIso?: string | null) => {
           if (!startIso) return arriveIso;
+          const { winStartIso } = adjustedWindowForStart(date, startIso, schedStartIso);
           const arrive = DateTime.fromISO(arriveIso);
-          const winStart = DateTime.fromISO(startIso).minus({ hours: 1 }); // 👈 earliest window time
-          return arrive < winStart ? winStart.toISO() : arriveIso;
+          const winStart = DateTime.fromISO(winStartIso);
+          return arrive < winStart ? winStart.toISO()! : arriveIso;
         };
 
         const durMins = (h: (typeof routable)[number]) =>
@@ -854,9 +908,9 @@ export default function DoctorDay({
   }
   function windowTextFromStart(iso?: string | null) {
     if (!iso) return '';
-    const t = DateTime.fromISO(iso);
-    const start = t.minus({ hours: 1 }).toLocaleString(DateTime.TIME_SIMPLE);
-    const end = t.plus({ hours: 1 }).toLocaleString(DateTime.TIME_SIMPLE);
+    const { winStartIso, winEndIso } = adjustedWindowForStart(date, iso, schedStartIso);
+    const start = DateTime.fromISO(winStartIso).toLocaleString(DateTime.TIME_SIMPLE);
+    const end = DateTime.fromISO(winEndIso).toLocaleString(DateTime.TIME_SIMPLE);
     return `${start} – ${end}`;
   }
   function pillClass(status?: string | null) {
