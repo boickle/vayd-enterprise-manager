@@ -51,6 +51,8 @@ type Winner = {
   effectiveEndLocal?: string; // "HH:mm" or "HH:mm:ss"
   bookedServiceSeconds?: number; // seconds of booked service (no driving)
   _emptyDay?: boolean;
+  dayIsEmpty?: boolean;
+  flags?: string[];
 };
 
 type EstimatedCost = {
@@ -198,6 +200,10 @@ function colorForDoctor(pimsId: string | undefined): string {
   let h = 0;
   for (let i = 0; i < pimsId.length; i++) h = (h * 31 + pimsId.charCodeAt(i)) >>> 0;
   return DOCTOR_PALETTE[h % DOCTOR_PALETTE.length];
+}
+
+function isEmptyDay(x: any) {
+  return Boolean(x?._emptyDay || x?.dayIsEmpty || x?.flags?.includes?.('EMPTY'));
 }
 
 function DoctorIcon({ color = 'white' }: { color?: string }) {
@@ -717,8 +723,32 @@ export default function Routing() {
         for (const w of result.alternates) rows.push({ ...w, doctorPimsId: pid, doctorName: name });
     }
 
+    // ---- NEW helpers + global condition ----
+    const isEmptyDay = (x: any) =>
+      Boolean(x?.dayIsEmpty || x?._emptyDay || x?.flags?.includes?.('EMPTY'));
+
+    const isLowDrive = (x: any) =>
+      Number.isFinite(x?.addedDriveSeconds) && x.addedDriveSeconds / 60 <= 20;
+
+    // If there are NO non-empty results with <=20 added minutes, prioritize EMPTY
+    const hasNonEmptyUnder20 = rows.some((r) => !isEmptyDay(r) && isLowDrive(r));
+
     // 🔑 Sort by preference score first (desc), then low added drive, then earlier time, then date.
     rows.sort((a, b) => {
+      if (!hasNonEmptyUnder20) {
+        const ae = isEmptyDay(a);
+        const be = isEmptyDay(b);
+        if (ae !== be) return ae ? -1 : 1; // EMPTY first
+      }
+
+      // (Optional) soft nudge: when both are <=20, prefer EMPTY
+      const aLow = isLowDrive(a),
+        bLow = isLowDrive(b);
+      if (aLow && bLow) {
+        const ae = isEmptyDay(a),
+          be = isEmptyDay(b);
+        if (ae !== be) return ae ? -1 : 1;
+      }
       const ap = a.prefScore ?? 0;
       const bp = b.prefScore ?? 0;
       if (bp !== ap) return bp - ap;
@@ -731,13 +761,10 @@ export default function Routing() {
     });
 
     return rows.map((r) => {
-      // If backend says it's an empty day, force index = 1 (0-based 0)
-      const displayInsertionIndex = (r as any)._emptyDay ? 1 : (r.insertionIndex ?? 0) + 1;
-
-      return {
-        ...r,
-        displayInsertionIndex,
-      };
+      // Force index look nice for EMPTY day
+      const empty = isEmptyDay(r);
+      const displayInsertionIndex = empty ? 1 : (r.insertionIndex ?? 0) + 1;
+      return { ...r, displayInsertionIndex };
     });
   }, [multiDoctor, result, doctorNames, form.doctorId]);
 
@@ -1186,6 +1213,8 @@ export default function Routing() {
                 form.newAppt.serviceMinutes
               );
 
+              const emptyBadge = isEmptyDay(opt);
+
               return (
                 <div
                   key={`${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${idx}`}
@@ -1220,6 +1249,27 @@ export default function Routing() {
                       <DoctorIcon />
                     </span>
                   </div>
+
+                  {emptyBadge && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: 8,
+                        right: -20,
+                        transform: 'rotate(35deg)',
+                        background: '#16a34a',
+                        color: 'white',
+                        padding: '6px 18px',
+                        fontWeight: 800,
+                        letterSpacing: 1,
+                        boxShadow: '0 6px 14px rgba(0,0,0,0.2)',
+                        borderRadius: 6,
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      EMPTY
+                    </div>
+                  )}
 
                   <h3 style={{ margin: '6px 0 8px 0' }}>
                     {DateTime.fromISO(opt.date).toFormat('cccc LL-dd-yyyy')} @{' '}
