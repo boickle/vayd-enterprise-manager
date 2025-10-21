@@ -63,8 +63,11 @@ export async function fetchDoctorDay(
   const params: Record<string, string> = { date: dateISO };
   if (doctorId && String(doctorId).trim() !== '') params.doctorId = String(doctorId);
 
+  // inside fetchDoctorDay(...)
+
   const { data } = await http.get('/appointments/doctor', { params });
 
+  // --- map normal appointments (existing code) ---
   const rows: any[] = data?.appointments ?? data ?? [];
   const appointments: DoctorDayAppt[] = rows.map((a) => {
     const lat = typeof a?.lat === 'number' ? a.lat : undefined;
@@ -105,13 +108,34 @@ export async function fetchDoctorDay(
     };
   });
 
+  // --- NEW: map personal blocks coming from the server ---
+  const blockRows: any[] = Array.isArray(data?.personalBlocks) ? data.personalBlocks : [];
+  const blockAppts: DoctorDayAppt[] = blockRows.map((b) => ({
+    id: b?.id ?? `block-${String(b?.startIso || b?.appointmentStart || '')}`,
+    clientName: b?.title ?? 'Personal Block',
+    appointmentType: 'Personal Block',
+    description: b?.description,
+    // never routable, no coordinates:
+    routingAvailable: false,
+    isNoLocation: true,
+    // carry schedule/time fields so UI can place them on the timeline
+    startIso: b?.startIso ?? b?.appointmentStart ?? undefined,
+    endIso: b?.endIso ?? b?.appointmentEnd ?? undefined,
+    // flag for UI behavior
+    // @ts-expect-error: extend shape at runtime
+    isPersonalBlock: true,
+  }));
+
+  // Combine & let the page sort by start time as usual
+  const combined: DoctorDayAppt[] = [...appointments, ...blockAppts];
+
   return {
     date: data?.date,
     startDepot: data?.startDepot ?? null,
     endDepot: data?.endDepot ?? null,
     startDepotTime: data?.startDepotTime,
     endDepotTime: data?.endDepotTime,
-    appointments,
+    appointments: combined,
   };
 }
 

@@ -175,6 +175,7 @@ type Household = {
   patients: PatientBadge[];
   isPreview?: boolean;
   isNoLocation?: boolean;
+  isPersonalBlock?: boolean;
 };
 /** one row per rendered household */
 type DisplaySlot = { eta?: string | null; etd?: string | null };
@@ -462,6 +463,7 @@ export default function DoctorDay({
       };
 
       const apptIsPreview = (a as any)?.isPreview === true;
+      const isPersonalBlock = (a as any)?.isPersonalBlock === true;
 
       if (!map.has(key)) {
         map.set(key, {
@@ -475,15 +477,18 @@ export default function DoctorDay({
           patients: [badge],
           isPreview: apptIsPreview,
           isNoLocation: !hasGeo,
+          isPersonalBlock,
         });
       } else {
         const h = map.get(key)!;
-        const exists = h.patients.some(
-          (p) =>
-            (badge.pimsId && p.pimsId === badge.pimsId) ||
-            (!badge.pimsId && p.name === badge.name && p.startIso === badge.startIso)
-        );
-        if (!exists) h.patients.push(badge);
+        if (!isPersonalBlock) {
+          const exists = h.patients.some(
+            (p) =>
+              (badge.pimsId && p.pimsId === badge.pimsId) ||
+              (!badge.pimsId && p.name === badge.name && p.startIso === badge.startIso)
+          );
+          if (!exists) h.patients.push(badge);
+        }
         if (apptIsPreview) h.isPreview = true;
 
         const hStart = h.startIso ? DateTime.fromISO(h.startIso) : null;
@@ -518,35 +523,56 @@ export default function DoctorDay({
 
       if (households.length === 0) return;
 
-      // routable slice and mapping back to view index
-      const indexMap: number[] = []; // routableIdx -> viewIdx
-      const routable = households
-        .map((h, viewIdx) => ({ h, viewIdx }))
-        .filter(({ h }) => !h.isNoLocation)
-        .map(({ h, viewIdx }, rIdx) => {
-          indexMap[rIdx] = viewIdx;
-          return { rIdx, viewIdx, h };
-        });
+      // Keep the original order (do NOT filter out blocks anymore)
+      const ordered = households.map((h, viewIdx) => ({ h, viewIdx }));
 
-      if (routable.length === 0) return;
+      // If there are zero routables, we still want blocks stamped, so keep going
 
+      // Pick doctorId from the first thing with a primary, else fallback
+      const firstWithPrimary = ordered.find((o) => o.h.primary) ?? ordered[0];
       const inferredDoctorId =
-        (routable[0]?.h.primary as any)?.primaryProviderPimsId ||
-        (routable[0]?.h.primary as any)?.providerPimsId ||
-        (routable[0]?.h.primary as any)?.doctorId ||
+        (firstWithPrimary?.h.primary as any)?.primaryProviderPimsId ||
+        (firstWithPrimary?.h.primary as any)?.providerPimsId ||
+        (firstWithPrimary?.h.primary as any)?.doctorId ||
         selectedDoctorId ||
         '';
 
+      // Build payload: include ALL rows, but only provide lat/lon when routable
       const payload = {
         doctorId: inferredDoctorId,
         date,
-        households: routable.map(({ h }) => ({
-          key: h.key,
-          lat: h.lat,
-          lon: h.lon,
-          startIso: h.startIso ?? null,
-          endIso: h.endIso ?? null,
-        })),
+        households: ordered.map(({ h }) => {
+          const isBlock = (h as any)?.isPersonalBlock === true;
+          const isRoutable =
+            !isBlock && !h.isNoLocation && Number.isFinite(h.lat) && Number.isFinite(h.lon);
+
+          return {
+            key: h.key,
+            // Only send lat/lon for routable stops. Blocks or no-location rows omit them.
+            ...(isRoutable ? { lat: h.lat, lon: h.lon } : {}),
+
+            // timing
+            startIso: h.startIso ?? null,
+            endIso: h.endIso ?? null,
+
+            // Tell the server this is a personal block (time barrier)
+            ...(isBlock
+              ? {
+                  isPersonalBlock: true,
+                  windowStartIso: h.startIso ?? null,
+                  windowEndIso: h.endIso ?? null,
+                }
+              : {}),
+
+            // Optional hints we already support server-side
+            isAlternateStop: (h.primary as any)?.isAlternateStop ?? undefined,
+            alternateAddressText: (h.primary as any)?.alternateAddressText ?? undefined,
+            appointmentTypeName:
+              (h.primary as any)?.appointmentTypeName ??
+              (h.primary as any)?.appointmentType ??
+              undefined,
+          };
+        }),
         startDepot: startDepot ? { lat: startDepot.lat, lon: startDepot.lon } : undefined,
         endDepot: endDepot ? { lat: endDepot.lat, lon: endDepot.lon } : undefined,
         useTraffic: false,
@@ -561,13 +587,16 @@ export default function DoctorDay({
         const serverETD: boolean[] = households.map(() => false);
         const validIso = (s?: string | null) => !!(s && DateTime.fromISO(s).isValid);
 
-        // 1) byIndex (authoritative)
+        // ----------------------------
+        // 1) byIndex is now 1:1 with "ordered" (includes blocks)
+        // ----------------------------
         const byIndex: Array<{ etaIso?: string; etdIso?: string }> = Array.isArray(result?.byIndex)
           ? result.byIndex
           : [];
-        for (let r = 0; r < routable.length; r++) {
-          const { viewIdx } = routable[r];
-          const row = byIndex[r] || {};
+
+        for (let i = 0; i < ordered.length; i++) {
+          const { viewIdx } = ordered[i];
+          const row = byIndex[i] || {};
           if (validIso(row.etaIso)) {
             tl[viewIdx].eta = row.etaIso!;
             serverETA[viewIdx] = true;
@@ -578,45 +607,54 @@ export default function DoctorDay({
           }
         }
 
-        // 2) etaIso/etdIso arrays (authoritative, position-based) if still missing
+        // ----------------------------
+        // 2) Position arrays as a fallback (same length & order as input)
+        // ----------------------------
         const etaIsoArr: string[] = Array.isArray(result?.etaIso) ? result.etaIso : [];
         const etdIsoArr: string[] = Array.isArray(result?.etdIso) ? result.etdIso : [];
-        for (let r = 0; r < routable.length; r++) {
-          const { viewIdx } = routable[r];
-          if (!tl[viewIdx].eta && validIso(etaIsoArr[r])) {
-            tl[viewIdx].eta = etaIsoArr[r];
+        for (let i = 0; i < ordered.length; i++) {
+          const { viewIdx } = ordered[i];
+          if (!tl[viewIdx].eta && validIso(etaIsoArr[i])) {
+            tl[viewIdx].eta = etaIsoArr[i];
             serverETA[viewIdx] = true;
           }
-          if (!tl[viewIdx].etd && validIso(etdIsoArr[r])) {
-            tl[viewIdx].etd = etdIsoArr[r];
+          if (!tl[viewIdx].etd && validIso(etdIsoArr[i])) {
+            tl[viewIdx].etd = etdIsoArr[i];
             serverETD[viewIdx] = true;
           }
         }
 
-        // 3) key maps for ETA if still missing
+        // ----------------------------
+        // 3) key maps (only helps for routables that had lat/lon)
+        // ----------------------------
         const etaByKey: Record<string, string> = result?.etaByKey || {};
         const etaByLL6: Record<string, string> = result?.etaByLL6 || {};
         const etaByLL5: Record<string, string> = result?.etaByLL5 || {};
-        for (let r = 0; r < routable.length; r++) {
-          const { h, viewIdx } = routable[r];
+
+        for (let i = 0; i < ordered.length; i++) {
+          const { h, viewIdx } = ordered[i];
           if (!tl[viewIdx].eta) {
-            const k6 = `${h.lat.toFixed(6)},${h.lon.toFixed(6)}`;
-            const k5 = `${h.lat.toFixed(5)},${h.lon.toFixed(5)}`;
-            const v =
-              etaByKey[h.key] ??
-              etaByKey[k6] ??
-              etaByKey[k5] ??
-              etaByLL6[k6] ??
-              etaByLL5[k5] ??
-              null;
-            if (validIso(v)) {
-              tl[viewIdx].eta = v!;
-              serverETA[viewIdx] = true;
+            if (!h.isNoLocation && Number.isFinite(h.lat) && Number.isFinite(h.lon)) {
+              const k6 = `${h.lat.toFixed(6)},${h.lon.toFixed(6)}`;
+              const k5 = `${h.lat.toFixed(5)},${h.lon.toFixed(5)}`;
+              const v =
+                etaByKey[h.key] ??
+                etaByKey[k6] ??
+                etaByKey[k5] ??
+                etaByLL6[k6] ??
+                etaByLL5[k5] ??
+                null;
+              if (validIso(v)) {
+                tl[viewIdx].eta = v!;
+                serverETA[viewIdx] = true;
+              }
             }
           }
         }
 
-        // 4) fallbacks ONLY where server omitted values
+        // ----------------------------
+        // 4) Local fallbacks only where server omitted values
+        // ----------------------------
         const durationMins = (h: Household) =>
           h.startIso && h.endIso
             ? Math.max(
@@ -627,16 +665,22 @@ export default function DoctorDay({
               )
             : 60;
 
-        for (let r = 0; r < routable.length; r++) {
-          const { h, viewIdx } = routable[r];
+        for (let i = 0; i < ordered.length; i++) {
+          const { h, viewIdx } = ordered[i];
 
-          // ETA fallback to window start
+          // ETA fallback to window start (skip if it's a personal block — server should have stamped it,
+          // but if not, use startIso as arrival)
           if (!tl[viewIdx].eta && h.startIso) {
-            const { winStartIso } = adjustedWindowForStart(date, h.startIso, schedStartIso);
-            tl[viewIdx].eta = winStartIso;
+            const isBlock = (h as any)?.isPersonalBlock === true;
+            if (isBlock) {
+              tl[viewIdx].eta = h.startIso;
+            } else {
+              const { winStartIso } = adjustedWindowForStart(date, h.startIso, schedStartIso);
+              tl[viewIdx].eta = winStartIso;
+            }
           }
 
-          // ETD fallback = ETA + duration (no window clamp; server is the only authority)
+          // ETD fallback = ETA + duration
           if (!tl[viewIdx].etd && tl[viewIdx].eta) {
             tl[viewIdx].etd = DateTime.fromISO(tl[viewIdx].eta!)
               .plus({ minutes: durationMins(h) })
@@ -644,7 +688,10 @@ export default function DoctorDay({
           }
         }
 
-        // 5) monotonic pass — only shift rows whose ETA & ETD are BOTH fallbacks
+        // ----------------------------
+        // 5) Monotonic pass — only shift rows whose ETA & ETD are BOTH fallbacks
+        // (unchanged logic; still works because tl is full length)
+        // ----------------------------
         for (let i = 1; i < households.length; i++) {
           if (serverETA[i] || serverETD[i]) continue;
           const prev = tl[i - 1];
@@ -716,6 +763,7 @@ export default function DoctorDay({
     }
 
     const points = appts.reduce((total, a) => {
+      if ((a as any)?.isPersonalBlock) return total; // ignore blocks
       const type = (a?.appointmentType || '').toLowerCase();
       if (type === 'euthanasia') return total + 2;
       if (type.includes('tech appointment')) return total + 0.5;
@@ -969,7 +1017,7 @@ export default function DoctorDay({
           style={{ marginTop: 6, display: 'flex', gap: 12, flexWrap: 'wrap' }}
         >
           <span>
-            <strong>Points:</strong> {appts.length}
+            <strong>Points:</strong> {appts.filter((a: any) => !(a as any).isPersonalBlock).length}
           </span>
           <span style={{ color: driveColor }}>
             <strong>Drive:</strong> {formatHM(stats.driveMin)}
@@ -1057,21 +1105,30 @@ export default function DoctorDay({
                     key={h.key}
                     className="dd-item"
                     style={
-                      h.isNoLocation
+                      h.isPersonalBlock
                         ? {
-                            background: '#fee2e2',
-                            border: '1px solid #ef4444',
+                            background: '#f3f4f6', // light gray
+                            border: '1px solid #9ca3af', // gray-400
                             borderRadius: 8,
                             padding: 12,
+                            color: '#111827', // near-black text
+                            opacity: 0.65, // greyed out feel
                           }
-                        : h.isPreview
+                        : h.isNoLocation
                           ? {
-                              background: '#f3e8ff',
-                              border: '1px solid #a855f7',
+                              background: '#fee2e2',
+                              border: '1px solid #ef4444',
                               borderRadius: 8,
                               padding: 12,
                             }
-                          : undefined
+                          : h.isPreview
+                            ? {
+                                background: '#f3e8ff',
+                                border: '1px solid #a855f7',
+                                borderRadius: 8,
+                                padding: 12,
+                              }
+                            : undefined
                     }
                   >
                     {/* Title row */}
@@ -1095,19 +1152,34 @@ export default function DoctorDay({
                       )}
 
                       <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-                        {h.isNoLocation && (
+                        {h.isPersonalBlock ? (
                           <span
                             style={{
-                              background: '#fee2e2',
-                              color: '#b91c1c',
+                              background: '#000',
+                              color: '#fff',
                               fontWeight: 700,
                               fontSize: 12,
                               padding: '2px 8px',
                               borderRadius: 999,
                             }}
                           >
-                            No location
+                            Personal Block
                           </span>
+                        ) : (
+                          h.isNoLocation && (
+                            <span
+                              style={{
+                                background: '#fee2e2',
+                                color: '#b91c1c',
+                                fontWeight: 700,
+                                fontSize: 12,
+                                padding: '2px 8px',
+                                borderRadius: 999,
+                              }}
+                            >
+                              No location
+                            </span>
+                          )
                         )}
                         {h.isPreview && (
                           <span
@@ -1145,10 +1217,16 @@ export default function DoctorDay({
                         )}
                         {h.startIso && (
                           <div>
-                            <strong>Scheduled Start:</strong> {fmtTime(h.startIso)}{' '}
-                            <strong>Window:</strong> {windowTextFromStart(h.startIso)}
+                            <strong>Scheduled Start:</strong> {fmtTime(h.startIso)}
+                            {!h.isPersonalBlock && (
+                              <>
+                                {' '}
+                                <strong>Window:</strong> {windowTextFromStart(h.startIso)}
+                              </>
+                            )}
                           </div>
                         )}
+
                         {h.startIso && etaIso && (
                           <div>
                             <strong>Projected ETA:</strong> {fmtTime(etaIso)}
@@ -1160,6 +1238,14 @@ export default function DoctorDay({
                             )}
                           </div>
                         )}
+                      </div>
+                    )}
+                    {!h.isPersonalBlock && (
+                      <div className="dd-address muted">{h.addressDisplay}</div>
+                    )}
+                    {h.isPersonalBlock && (
+                      <div className="dd-address muted">
+                        Provider not available during this time
                       </div>
                     )}
 
