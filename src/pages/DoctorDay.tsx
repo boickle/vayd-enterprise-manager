@@ -152,13 +152,18 @@ function adjustedWindowForStart(
 /* =========================================================================
    Types
    ========================================================================= */
+// add these optional fields
 type PatientBadge = {
   name: string;
   pimsId?: string | null;
   status?: string | null;
   startIso?: string | null;
   endIso?: string | null;
+  apptTypeName?: string | null;
+  description?: string | null;
+  recordStatus?: string | null;
 };
+
 type Household = {
   key: string;
   primary: DoctorDayAppt;
@@ -445,6 +450,15 @@ export default function DoctorDay({
         status: str(a, 'confirmStatusName') ?? null,
         startIso: getStartISO(a) ?? null,
         endIso: getEndISO(a) ?? null,
+        // NEW: per-pet fields
+        apptTypeName:
+          str(a, 'appointmentType') ??
+          str(a, 'appointmentTypeName') ??
+          str(a, 'serviceName') ??
+          str(a as any, 'apptTypeName') ??
+          'Appointment',
+        description: str(a as any, 'description') ?? str(a as any, 'visitReason') ?? null,
+        recordStatus: str(a, 'statusName') ?? null,
       };
 
       const apptIsPreview = (a as any)?.isPreview === true;
@@ -1196,9 +1210,9 @@ export default function DoctorDay({
                                   </li>
                                   <li>
                                     <strong>Records Status:</strong>{' '}
-                                    {str(h.primary, 'statusName') ? (
-                                      <span className={pillClass(str(h.primary, 'statusName'))}>
-                                        {str(h.primary, 'statusName')}
+                                    {p.recordStatus ? (
+                                      <span className={pillClass(p.recordStatus)}>
+                                        {p.recordStatus}
                                       </span>
                                     ) : (
                                       '—'
