@@ -85,6 +85,7 @@ type PatientBadge = {
   desc?: string | null;
   startIso?: string | null;
   endIso?: string | null;
+  alerts?: string | null;
 };
 function makePatientBadge(a: any): PatientBadge {
   const name =
@@ -105,6 +106,7 @@ function makePatientBadge(a: any): PatientBadge {
     pimsId: str(a, 'patientPimsId') ?? null,
     startIso: getStartISO(a) ?? null,
     endIso: getEndISO(a) ?? null,
+    alerts: str(a, 'alerts') ?? null,
   };
 }
 
@@ -1156,7 +1158,17 @@ export default function DoctorDayVisual({
                     <ul style={{ margin: 0, paddingLeft: 18 }}>
                       {hoverCard.patients.map((p, i) => (
                         <li key={i} style={{ marginBottom: 6 }}>
-                          <div style={{ fontWeight: 600 }}>{p.name}</div>
+                          <div style={{ fontWeight: 600 }}>
+                            {p.name}
+                            {p?.alerts ? (
+                              <>
+                                {' '}
+                                — <strong>Alert:</strong>{' '}
+                                <span style={{ color: '#dc2626' }}>{p.alerts}</span>
+                              </>
+                            ) : null}
+                          </div>
+
                           <div style={{ fontSize: 13, color: '#475569' }}>
                             {p.type ? (
                               <>

@@ -81,6 +81,7 @@ export async function fetchDoctorDay(
       clientName: a?.clientName ?? 'Client',
       clientPimsId: a?.clientPimsId,
       patientName: a?.patientName,
+      alerts: a?.alerts,
       patientPimsId: a?.patientPimsId,
       confirmStatusName: a?.confirmStatusName ?? undefined,
       appointmentType: a?.appointmentType?.name ?? a?.appointmentType ?? undefined,

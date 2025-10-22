@@ -162,6 +162,7 @@ type PatientBadge = {
   apptTypeName?: string | null;
   description?: string | null;
   recordStatus?: string | null;
+  alerts?: string | null;
 };
 
 type Household = {
@@ -460,6 +461,7 @@ export default function DoctorDay({
           'Appointment',
         description: str(a as any, 'description') ?? str(a as any, 'visitReason') ?? null,
         recordStatus: str(a, 'statusName') ?? null,
+        alerts: str(a, 'alerts') ?? null,
       };
 
       const apptIsPreview = (a as any)?.isPreview === true;
@@ -1255,6 +1257,7 @@ export default function DoctorDay({
                         <div className="dd-pets-label">Patients:</div>
                         <ul className="dd-patients-list">
                           {h.patients.map((p, idx2) => {
+                            console.log(p);
                             const href = p.pimsId ? evetPatientLink(p.pimsId) : undefined;
                             const apptType =
                               (p as any)?.apptTypeName ??
@@ -1280,7 +1283,14 @@ export default function DoctorDay({
                                   </a>
                                 ) : (
                                   <span>{p.name}</span>
-                                )}
+                                )}{' '}
+                                {p?.alerts ? (
+                                  <>
+                                    {' '}
+                                    — <strong>Alert:</strong>{' '}
+                                    <span style={{ color: '#dc2626' }}>{p.alerts}</span>
+                                  </>
+                                ) : null}
                                 <ul className="dd-patient-sublist">
                                   <li>
                                     <strong>{apptType}:</strong>

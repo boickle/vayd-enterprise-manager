@@ -97,6 +97,7 @@ type Client = {
   zip?: string;
   lat?: number | string;
   lon?: number | string;
+  alerts?: string | null;
 };
 
 type Doctor = {
@@ -377,7 +378,8 @@ export default function Routing() {
 
   const [myDayOpen, setMyDayOpen] = useState(false);
   const [previewOpt, setPreviewOpt] = useState<UnifiedOption | null>(null);
-  const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({}); // <—
+  const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({});
+  const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(null); // 👈 NEW
 
   async function openMyDay(opt: UnifiedOption) {
     // 👇 allow undefined here
@@ -590,6 +592,7 @@ export default function Routing() {
     setClientQuery(`${c.lastName}, ${c.firstName}`);
     setClientResults([]);
     setShowClientDropdown(false);
+    setSelectedClientAlerts((c as any).alerts ?? null);
   }
 
   function pickDoctor(d: Doctor) {
@@ -945,6 +948,7 @@ export default function Routing() {
                   onChange={(e) => {
                     setClientQuery(e.target.value);
                     setClientActiveIdx(-1);
+                    setSelectedClientAlerts(null);
                   }}
                   placeholder="Type last name..."
                   onFocus={() => clientResults.length && setShowClientDropdown(true)}
@@ -1075,6 +1079,23 @@ export default function Routing() {
                 )
               )}
             </Field>
+            {!clientSearching && selectedClientAlerts && selectedClientAlerts.trim() && (
+              <div
+                style={{
+                  marginTop: 6,
+                  padding: '8px 10px',
+                  background: '#fff7ed', // soft amber
+                  border: '1px solid #fdba74', // amber border
+                  color: '#7c2d12', // dark amber text
+                  borderRadius: 8,
+                  whiteSpace: 'pre-wrap', // keep line breaks from server
+                  fontSize: 13,
+                  lineHeight: 1.3,
+                }}
+              >
+                <strong style={{ fontWeight: 700 }}>Client alert:</strong> {selectedClientAlerts}
+              </div>
+            )}
           </div>
 
           {/* Preferences */}
