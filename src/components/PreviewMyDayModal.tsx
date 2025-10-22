@@ -8,6 +8,12 @@ export type PreviewMyDayOption = {
   suggestedStartIso: string;
   doctorPimsId: string; // already mapped to INTERNAL id earlier
   doctorName: string;
+  projectedDriveSeconds?: number;
+  currentDriveSeconds?: number;
+  workStartLocal?: string;
+  effectiveEndLocal?: string;
+  bookedServiceSeconds?: number;
+  whitespaceAfterBookingSeconds?: number;
 };
 
 type Props = {
@@ -51,7 +57,17 @@ export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose
     city: parts.city ?? newApptMeta?.city,
     state: parts.state ?? newApptMeta?.state,
     zip: parts.zip ?? newApptMeta?.zip,
+    // --- Authoritative “winner” facts (what DoctorDay prefers) ---
+    projectedDriveSeconds: option.projectedDriveSeconds,
+    currentDriveSeconds: option.currentDriveSeconds, // fallback only
+    workStartLocal: option.workStartLocal, // "HH:mm" or "HH:mm:ss"
+    effectiveEndLocal: option.effectiveEndLocal, // "HH:mm" or "HH:mm:ss"
+    bookedServiceSeconds: option.bookedServiceSeconds,
+    // If backend returned this on the option, forward it too:
+    whitespaceAfterBookingSeconds: (option as any).whitespaceAfterBookingSeconds,
   };
+
+  console.log(virtualAppt);
 
   return (
     <div
@@ -99,7 +115,8 @@ export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose
           readOnly
           initialDate={option.date}
           initialDoctorId={option.doctorPimsId} // INTERNAL id (already resolved)
-          virtualAppt={newApptMeta?.address ? virtualAppt : undefined}
+          // virtualAppt={newApptMeta?.address ? virtualAppt : undefined}
+          virtualAppt={virtualAppt}
         />
       </div>
     </div>

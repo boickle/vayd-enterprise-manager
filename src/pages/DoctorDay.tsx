@@ -35,6 +35,12 @@ export type DoctorDayProps = {
     city?: string;
     state?: string;
     zip?: string;
+    projectedDriveSeconds?: number;
+    currentDriveSeconds?: number;
+    workStartLocal?: string;
+    effectiveEndLocal?: string;
+    bookedServiceSeconds?: number;
+    whitespaceAfterBookingSeconds?: number;
   };
 };
 
@@ -750,6 +756,7 @@ export default function DoctorDay({
   );
 
   /* ---------- Stats (uses server times if present) ---------- */
+  /* ---------- Stats (prefer Routing winner fields; fall back to derivation) ---------- */
   const stats = useMemo(() => {
     if (!households.length) {
       return {
@@ -764,55 +771,118 @@ export default function DoctorDay({
       };
     }
 
+    // ----- helpers -----
+    const durSec = (startIso?: string | null, endIso?: string | null) =>
+      startIso && endIso
+        ? Math.max(0, DateTime.fromISO(endIso).diff(DateTime.fromISO(startIso), 'seconds').seconds)
+        : 0;
+
+    const hmsToSec = (hms?: string) => {
+      if (!hms) return undefined;
+      const [hh = 0, mm = 0, ss = 0] = hms.split(':').map(Number);
+      if ([hh, mm, ss].some((n) => Number.isNaN(n))) return undefined;
+      return hh * 3600 + mm * 60 + ss;
+    };
+
+    const isPreviewDay = Boolean(virtualAppt && virtualAppt.date === date);
+    const previewServiceSec =
+      isPreviewDay && Number.isFinite(virtualAppt?.serviceMinutes)
+        ? Math.max(0, Math.floor((virtualAppt!.serviceMinutes as number) * 60))
+        : 0;
+
+    // Fallback booked-service (excludes preview & blocks)
+    const bookedServiceSecFallback = households.reduce((sum, h) => {
+      if ((h as any)?.isPersonalBlock === true) return sum;
+      if ((h as any)?.isPreview === true) return sum;
+      return sum + durSec(h.startIso, h.endIso);
+    }, 0);
+
+    // Points (unchanged)
     const points = appts.reduce((total, a) => {
-      if ((a as any)?.isPersonalBlock) return total; // ignore blocks
+      if ((a as any)?.isPersonalBlock) return total;
       const type = (a?.appointmentType || '').toLowerCase();
       if (type === 'euthanasia') return total + 2;
       if (type.includes('tech appointment')) return total + 0.5;
       return total + 1;
     }, 0);
 
-    const durSec = (startIso?: string | null, endIso?: string | null) =>
-      startIso && endIso
-        ? Math.max(0, DateTime.fromISO(endIso).diff(DateTime.fromISO(startIso), 'seconds').seconds)
-        : 0;
+    // ---------- Prefer authoritative fields from Routing winner ----------
+    const winnerDriveSec = Number.isFinite(virtualAppt?.projectedDriveSeconds as number)
+      ? Math.floor(virtualAppt!.projectedDriveSeconds as number)
+      : undefined;
 
-    const haversineMeters = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
-      const R = 6371000;
-      const toRad = (d: number) => (d * Math.PI) / 180;
-      const dLat = toRad(b.lat - a.lat);
-      const dLon = toRad(b.lon - a.lon);
-      const sLat = toRad(a.lat);
-      const sLat2 = toRad(b.lat);
-      const h =
-        Math.sin(dLat / 2) ** 2 + Math.cos(sLat) * Math.cos(sLat2) * Math.sin(dLon / 2) ** 2;
-      return 2 * R * Math.asin(Math.sqrt(h));
-    };
-    const fallbackDriveSec = (
-      from: { lat: number; lon: number },
-      to: { lat: number; lon: number }
-    ) => Math.round(haversineMeters(from, to) / 11.65);
+    const winWs = hmsToSec(virtualAppt?.workStartLocal);
+    const winEe = hmsToSec(virtualAppt?.effectiveEndLocal);
+    const winnerWindowSec =
+      winWs != null && winEe != null && winEe >= winWs ? winEe - winWs : undefined;
 
+    const winnerBookedSec = Number.isFinite(virtualAppt?.bookedServiceSeconds as number)
+      ? Math.floor(virtualAppt!.bookedServiceSeconds as number)
+      : undefined;
+
+    // If the backend already computed whitespace-after-booking for this option,
+    // we can use it directly for the header (most exact match to the card).
+    const winnerWhitespaceAfterBookingSec = Number.isFinite(
+      virtualAppt?.whitespaceAfterBookingSeconds as number
+    )
+      ? Math.max(0, Math.floor(virtualAppt!.whitespaceAfterBookingSeconds as number))
+      : undefined;
+
+    // ---------- If we have the full winner quartet, use it exactly ----------
+    if (winnerDriveSec != null && winnerWindowSec != null && winnerBookedSec != null) {
+      const whiteSec =
+        winnerWhitespaceAfterBookingSec != null
+          ? winnerWhitespaceAfterBookingSec
+          : Math.max(0, winnerWindowSec - winnerDriveSec - winnerBookedSec - previewServiceSec);
+
+      const driveMin = Math.round(winnerDriveSec / 60);
+
+      // Choose what “Households” means in header:
+      //   booked only (consistent with day facts concept)
+      const householdMin = Math.round(winnerBookedSec / 60);
+      //   or booked + preview (uncomment if you want it to include the new appt)
+      // const householdMin = Math.round((winnerBookedSec + previewServiceSec) / 60);
+
+      const whiteMin = Math.round(whiteSec / 60);
+      const shiftMin = Math.round(winnerWindowSec / 60);
+
+      const ratioText = driveMin > 0 ? (householdMin / driveMin).toFixed(2) : '—';
+      const whitePctText =
+        shiftMin > 0 ? `${Math.round((whiteSec / (shiftMin * 60)) * 100)}%` : '—';
+
+      // Back to depot display: keep existing behavior (derived if server didn’t send)
+      const backToDepotIsoFinal = backToDepotIso ?? null;
+
+      return {
+        driveMin,
+        householdMin,
+        ratioText,
+        whiteMin,
+        whitePctText,
+        shiftMin,
+        points,
+        backToDepotIso: backToDepotIsoFinal,
+      };
+    }
+
+    // ---------- Fallback to your existing derivation (when winner fields not present) ----------
     const first = households[0];
     const last = households[households.length - 1];
-
-    const householdSec = households.reduce((sum, h) => sum + durSec(h.startIso, h.endIso), 0);
 
     const firstArriveMs =
       (timeline[0]?.eta ? DateTime.fromISO(timeline[0].eta!).toMillis() : null) ??
       (first?.startIso ? DateTime.fromISO(first.startIso).toMillis() : 0);
 
-    const lastDurSec = durSec(last?.startIso ?? null, last?.endIso ?? null);
+    const lastDur = durSec(last?.startIso ?? null, last?.endIso ?? null);
     const lastEndMs =
       timeline[timeline.length - 1]?.etd != null
         ? DateTime.fromISO(timeline[timeline.length - 1].etd!).toMillis()
         : timeline[timeline.length - 1]?.eta != null
-          ? DateTime.fromISO(timeline[timeline.length - 1].eta!).toMillis() + lastDurSec * 1000
+          ? DateTime.fromISO(timeline[timeline.length - 1].eta!).toMillis() + lastDur * 1000
           : last?.endIso
             ? DateTime.fromISO(last.endIso).toMillis()
             : 0;
 
-    // Drive seconds from API if present; otherwise fallback
     const N = households.length;
     let apiToFirstSec: number | null = null;
     let apiBetweenSecs: number[] = [];
@@ -837,6 +907,22 @@ export default function DoctorDay({
         }
       }
     }
+
+    const haversineMeters = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
+      const R = 6371000;
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      const dLat = toRad(b.lat - a.lat);
+      const dLon = toRad(b.lon - a.lon);
+      const sLat = toRad(a.lat);
+      const sLat2 = toRad(b.lat);
+      const h =
+        Math.sin(dLat / 2) ** 2 + Math.cos(sLat) * Math.cos(sLat2) * Math.sin(dLon / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(h));
+    };
+    const fallbackDriveSec = (
+      from: { lat: number; lon: number },
+      to: { lat: number; lon: number }
+    ) => Math.round(haversineMeters(from, to) / 11.65);
 
     const startPt = startDepot ?? endDepot ?? null;
     const endPt = endDepot ?? startDepot ?? null;
@@ -881,10 +967,16 @@ export default function DoctorDay({
     const derivedShiftSec = Math.max(0, (shiftEndMs - shiftStartMs) / 1000);
     const effectiveShiftSec = scheduleSec ?? derivedShiftSec;
 
-    const whiteSec = effectiveShiftSec - householdSec - driveSec;
+    const bookedServiceSeconds = Math.floor(bookedServiceSecFallback);
+
+    // match Routing: whitespace = shift − (drive + booked + preview)
+    const whiteSec = Math.max(
+      0,
+      effectiveShiftSec - driveSec - Math.max(0, bookedServiceSeconds) - previewServiceSec
+    );
 
     const driveMin = Math.round(driveSec / 60);
-    const householdMin = Math.round(householdSec / 60);
+    const householdMin = Math.round(bookedServiceSeconds / 60);
     const whiteMin = Math.round(whiteSec / 60);
     const shiftMin = Math.round(effectiveShiftSec / 60);
 
@@ -913,6 +1005,8 @@ export default function DoctorDay({
     backToDepotIso,
     schedStartIso,
     schedEndIso,
+    virtualAppt, // <-- important for winner fields
+    date,
   ]);
 
   /* ---------- UI helpers ---------- */
@@ -940,12 +1034,11 @@ export default function DoctorDay({
       ? (stats.whiteMin / stats.shiftMin) * 100
       : 0;
   const whiteColor = colorForWhitespace(whitePct);
-  const hdRatio =
-    Number.isFinite(stats.driveMin) && stats.driveMin > 0
-      ? households.reduce((m, h) => m + (h.startIso && h.endIso ? 1 : 0), 0) / stats.driveMin
-      : Infinity;
-  const hdColor = colorForHDRatio(hdRatio);
-  const ratioText = Number.isFinite(hdRatio) ? hdRatio.toFixed(2) : '∞';
+
+  // ✅ numeric ratio for color; text stays from stats.ratioText
+  const ratioNum = stats.driveMin > 0 ? stats.householdMin / stats.driveMin : Infinity;
+  const hdColor = colorForHDRatio(ratioNum);
+
   const whitePctText = Number.isFinite(whitePct) ? `${whitePct.toFixed(0)}%` : '—';
 
   /* ---------- Render ---------- */
@@ -1028,7 +1121,7 @@ export default function DoctorDay({
             <strong>Households:</strong> {formatHM(stats.householdMin)}
           </span>
           <span style={{ color: hdColor }}>
-            <strong>H:D ratio:</strong> {ratioText}
+            <strong>H:D ratio:</strong> {stats.ratioText}
           </span>
           <span style={{ color: whiteColor }}>
             <strong>Whitespace:</strong> {formatHM(stats.whiteMin)}
@@ -1087,7 +1180,6 @@ export default function DoctorDay({
             <ul className="dd-list">
               {households.map((h, i) => {
                 const a = h.primary;
-                console.log(a);
                 const clientHref = str(a, 'clientPimsId')
                   ? evetClientLink(str(a, 'clientPimsId') as string)
                   : undefined;
