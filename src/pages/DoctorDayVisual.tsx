@@ -461,36 +461,39 @@ export default function DoctorDayVisual({
         '';
 
       // Build payload: include ALL rows, but only provide lat/lon when routable.
+      // Build payload: include ALL rows; always include lat/lon (0 for non-routable)
+      const householdsPayload = ordered.map(({ h }) => {
+        const isBlock = h.isPersonalBlock === true;
+
+        // EtaHouseholdInput requires numbers → always provide them.
+        const lat = Number.isFinite(h.lat) ? (h.lat as number) : 0;
+        const lon = Number.isFinite(h.lon) ? (h.lon as number) : 0;
+
+        return {
+          key: h.key,
+          lat,
+          lon,
+          startIso: h.startIso ?? null,
+          endIso: h.endIso ?? null,
+          ...(isBlock
+            ? {
+                isPersonalBlock: true,
+                windowStartIso: h.startIso ?? null,
+                windowEndIso: h.endIso ?? null,
+              }
+            : {}),
+          // optional hints omitted or set explicitly if your backend supports them
+        } as any;
+      });
+
       const payload = {
         doctorId: inferredDoctorId,
         date,
-        households: ordered.map(({ h }) => {
-          const isBlock = h.isPersonalBlock === true;
-          const isRoutable =
-            !isBlock && !h.isNoLocation && Number.isFinite(h.lat) && Number.isFinite(h.lon);
-
-          return {
-            key: h.key,
-            ...(isRoutable ? { lat: h.lat, lon: h.lon } : {}),
-            startIso: h.startIso ?? null,
-            endIso: h.endIso ?? null,
-            ...(isBlock
-              ? {
-                  isPersonalBlock: true,
-                  windowStartIso: h.startIso ?? null,
-                  windowEndIso: h.endIso ?? null,
-                }
-              : {}),
-            // lightweight hints (optional)
-            isAlternateStop: undefined,
-            alternateAddressText: undefined,
-            appointmentTypeName: undefined,
-          };
-        }),
+        households: householdsPayload,
         startDepot: startDepot ? { lat: startDepot.lat, lon: startDepot.lon } : undefined,
         endDepot: endDepot ? { lat: endDepot.lat, lon: endDepot.lon } : undefined,
         useTraffic: false,
-      };
+      } as any;
 
       try {
         const result: any = await fetchEtas(payload);

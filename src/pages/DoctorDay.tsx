@@ -538,45 +538,45 @@ export default function DoctorDay({
         '';
 
       // Build payload: include ALL rows, but only provide lat/lon when routable
+      const householdsPayload = ordered.map(({ h }) => {
+        const isBlock = (h as any)?.isPersonalBlock === true;
+        const isRoutable =
+          !isBlock && !h.isNoLocation && Number.isFinite(h.lat) && Number.isFinite(h.lon);
+
+        // EtaHouseholdInput requires numbers for lat/lon → always provide them.
+        const lat = Number.isFinite(h.lat) ? (h.lat as number) : 0;
+        const lon = Number.isFinite(h.lon) ? (h.lon as number) : 0;
+
+        return {
+          key: h.key,
+          lat, // always present
+          lon, // always present
+          startIso: h.startIso ?? null,
+          endIso: h.endIso ?? null,
+          ...(isBlock
+            ? {
+                isPersonalBlock: true,
+                windowStartIso: h.startIso ?? null,
+                windowEndIso: h.endIso ?? null,
+              }
+            : {}),
+          isAlternateStop: (h.primary as any)?.isAlternateStop ?? undefined,
+          alternateAddressText: (h.primary as any)?.alternateAddressText ?? undefined,
+          appointmentTypeName:
+            (h.primary as any)?.appointmentTypeName ??
+            (h.primary as any)?.appointmentType ??
+            undefined,
+        } as any; // keeps compile-time happy if EtaHouseholdInput isn't imported here
+      });
+
       const payload = {
         doctorId: inferredDoctorId,
         date,
-        households: ordered.map(({ h }) => {
-          const isBlock = (h as any)?.isPersonalBlock === true;
-          const isRoutable =
-            !isBlock && !h.isNoLocation && Number.isFinite(h.lat) && Number.isFinite(h.lon);
-
-          return {
-            key: h.key,
-            // Only send lat/lon for routable stops. Blocks or no-location rows omit them.
-            ...(isRoutable ? { lat: h.lat, lon: h.lon } : {}),
-
-            // timing
-            startIso: h.startIso ?? null,
-            endIso: h.endIso ?? null,
-
-            // Tell the server this is a personal block (time barrier)
-            ...(isBlock
-              ? {
-                  isPersonalBlock: true,
-                  windowStartIso: h.startIso ?? null,
-                  windowEndIso: h.endIso ?? null,
-                }
-              : {}),
-
-            // Optional hints we already support server-side
-            isAlternateStop: (h.primary as any)?.isAlternateStop ?? undefined,
-            alternateAddressText: (h.primary as any)?.alternateAddressText ?? undefined,
-            appointmentTypeName:
-              (h.primary as any)?.appointmentTypeName ??
-              (h.primary as any)?.appointmentType ??
-              undefined,
-          };
-        }),
+        households: householdsPayload,
         startDepot: startDepot ? { lat: startDepot.lat, lon: startDepot.lon } : undefined,
         endDepot: endDepot ? { lat: endDepot.lat, lon: endDepot.lon } : undefined,
         useTraffic: false,
-      };
+      } as any; // or `as EtaRequest` if you can import the type
 
       try {
         const result: any = await fetchEtas(payload);

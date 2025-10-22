@@ -122,7 +122,6 @@ export async function fetchDoctorDay(
     startIso: b?.startIso ?? b?.appointmentStart ?? undefined,
     endIso: b?.endIso ?? b?.appointmentEnd ?? undefined,
     // flag for UI behavior
-    // @ts-expect-error: extend shape at runtime
     isPersonalBlock: true,
   }));
 
