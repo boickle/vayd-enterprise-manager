@@ -119,6 +119,7 @@ type Household = {
   endIso?: string | null;
   isNoLocation?: boolean;
   isPreview?: boolean;
+  isPersonalBlock?: boolean;
   patients: PatientBadge[];
 };
 
@@ -159,13 +160,11 @@ function pickScheduleBounds(
 
 /* ----------------- visual window helpers (8:30–10:30 + day-start clamp) ----------------- */
 function eightThirtyIsoFor(date: string): string {
-  return DateTime.fromISO(date).set({ hour: 8, minute: 30, second: 0, millisecond: 0 }).toISO()!; // ← non-null assert
+  return DateTime.fromISO(date).set({ hour: 8, minute: 30, second: 0, millisecond: 0 }).toISO()!;
 }
-
 function tenThirtyIsoFor(date: string): string {
-  return DateTime.fromISO(date).set({ hour: 10, minute: 30, second: 0, millisecond: 0 }).toISO()!; // ← non-null assert
+  return DateTime.fromISO(date).set({ hour: 10, minute: 30, second: 0, millisecond: 0 }).toISO()!;
 }
-
 /** Return doctor's visual work start for the date (schedStartIso if valid time/ISO; else 08:30) */
 function workStartIsoFor(date: string, schedStartIso?: string | null): string {
   if (schedStartIso && /^\d{2}:\d{2}(:\d{2})?$/.test(schedStartIso)) {
@@ -177,12 +176,11 @@ function workStartIsoFor(date: string, schedStartIso?: string | null): string {
         second: 0,
         millisecond: 0,
       })
-      .toISO()!; // ← non-null assert
+      .toISO()!;
   }
   if (schedStartIso && DateTime.fromISO(schedStartIso).isValid) return schedStartIso;
   return eightThirtyIsoFor(date);
 }
-
 /** Visual rule: given an appointment start, return [winStartIso, winEndIso] */
 function adjustedWindowForStart(
   date: string,
@@ -194,21 +192,19 @@ function adjustedWindowForStart(
   const eightThirty = DateTime.fromISO(eightThirtyIsoFor(date));
   const tenThirty = DateTime.fromISO(tenThirtyIsoFor(date));
 
-  // symmetric 2h window anchor: [start-1h, start+1h]
   const symmetricEarly = start.minus({ hours: 1 });
-
-  // If symmetric early < 08:30 AND appt <= 10:30 → force 08:30–10:30 (respect workStart)
   if (symmetricEarly < eightThirty && start <= tenThirty) {
     const ws = workStart > eightThirty ? workStart : eightThirty;
     const we = ws.plus({ hours: 2 });
     return { winStartIso: ws.toISO()!, winEndIso: we.toISO()! };
   }
-
-  // Default: [max(workStart, start-1h), start+1h]
   const ws = DateTime.max(workStart, start.minus({ hours: 1 }));
   const we = start.plus({ hours: 1 });
   return { winStartIso: ws.toISO()!, winEndIso: we.toISO()! };
 }
+
+/* ----------------- ETA timeline type (aligned to households) ----------------- */
+type DisplaySlot = { eta?: string | null; etd?: string | null };
 
 export default function DoctorDayVisual({
   readOnly,
@@ -232,9 +228,11 @@ export default function DoctorDayVisual({
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // routing
-  const [projEtas, setProjEtas] = useState<Record<string, string>>({});
+  // server ETA/depot/drive
+  const [timeline, setTimeline] = useState<DisplaySlot[]>([]);
   const [driveSecondsArr, setDriveSecondsArr] = useState<number[] | null>(null);
+  const [backToDepotSec, setBackToDepotSec] = useState<number | null>(null);
+  const [backToDepotIso, setBackToDepotIso] = useState<string | null>(null);
   const [etaErr, setEtaErr] = useState<string | null>(null);
 
   // schedule bounds for visual work start
@@ -354,7 +352,7 @@ export default function DoctorDayVisual({
     };
   }, [date, selectedDoctorId, virtualAppt]);
 
-  /* ------------ group into households + patients ------------ */
+  /* ------------ group into households + patients (keep personal blocks) ------------ */
   const households = useMemo<Household[]>(() => {
     const m = new Map<string, Household>();
     for (const [idx, a] of appts.entries()) {
@@ -385,6 +383,8 @@ export default function DoctorDayVisual({
       const idPart = (a as any)?.id != null ? String((a as any).id) : String(idx);
       const key = hasGeo ? keyFor(lat, lon, 6) : addrKey ? `addr:${addrKey}` : `noloc:${idPart}`;
 
+      const isPersonalBlock = (a as any)?.isPersonalBlock === true;
+
       const patient = makePatientBadge(a);
       const apptIsPreview = (a as any)?.isPreview === true;
 
@@ -399,7 +399,8 @@ export default function DoctorDayVisual({
           endIso: getEndISO(a) ?? null,
           isNoLocation: !hasGeo,
           isPreview: apptIsPreview,
-          patients: [patient],
+          isPersonalBlock,
+          patients: isPersonalBlock ? [] : [patient],
         });
       } else {
         const h = m.get(key)!;
@@ -415,13 +416,15 @@ export default function DoctorDayVisual({
         // mark preview if any appt in household is preview
         if (apptIsPreview) h.isPreview = true;
 
-        // add unique patient
-        const exists = h.patients.some(
-          (p) =>
-            (patient.pimsId && p.pimsId === patient.pimsId) ||
-            (!patient.pimsId && p.name === patient.name && p.startIso === patient.startIso)
-        );
-        if (!exists) h.patients.push(patient);
+        // add unique patient (skip for blocks)
+        if (!h.isPersonalBlock) {
+          const exists = h.patients.some(
+            (p) =>
+              (patient.pimsId && p.pimsId === patient.pimsId) ||
+              (!patient.pimsId && p.name === patient.name && p.startIso === patient.startIso)
+          );
+          if (!exists) h.patients.push(patient);
+        }
       }
     }
     return Array.from(m.values()).sort(
@@ -431,24 +434,25 @@ export default function DoctorDayVisual({
     );
   }, [appts]);
 
-  /* ------------ ETAs + driveSeconds ------------ */
+  /* =========================================================================
+     ROUTING: Make server ETA/ETD authoritative (no local overrides)
+     ========================================================================= */
   useEffect(() => {
     let on = true;
+
     (async () => {
       setEtaErr(null);
-      setProjEtas({});
+      setTimeline(households.map(() => ({ eta: null, etd: null })));
       setDriveSecondsArr(null);
+      setBackToDepotSec(null);
+      setBackToDepotIso(null);
 
-      // Only route over households with usable lat/lon
-      const routable = households.filter((h) => !h.isNoLocation);
-      if (routable.length === 0) return;
+      if (households.length === 0) return;
 
-      // Anchor: earliest routable start or 08:30 on that date
-      const startAnchorIso =
-        routable[0]?.startIso ??
-        DateTime.fromISO(date).set({ hour: 8, minute: 30, second: 0, millisecond: 0 }).toISO();
+      // Keep the original order (do NOT filter out blocks anymore)
+      const ordered = households.map((h, viewIdx) => ({ h, viewIdx }));
 
-      // infer doctor
+      // Pick doctorId from the first appt with provider info; fallback to selection
       const inferredDoctorId =
         (appts[0] as any)?.primaryProviderPimsId ??
         (appts[0] as any)?.providerPimsId ??
@@ -456,16 +460,33 @@ export default function DoctorDayVisual({
         selectedDoctorId ??
         '';
 
+      // Build payload: include ALL rows, but only provide lat/lon when routable.
       const payload = {
         doctorId: inferredDoctorId,
         date,
-        households: routable.map((h) => ({
-          key: h.key,
-          lat: h.lat,
-          lon: h.lon,
-          startIso: h.startIso ?? null,
-          endIso: h.endIso ?? null,
-        })),
+        households: ordered.map(({ h }) => {
+          const isBlock = h.isPersonalBlock === true;
+          const isRoutable =
+            !isBlock && !h.isNoLocation && Number.isFinite(h.lat) && Number.isFinite(h.lon);
+
+          return {
+            key: h.key,
+            ...(isRoutable ? { lat: h.lat, lon: h.lon } : {}),
+            startIso: h.startIso ?? null,
+            endIso: h.endIso ?? null,
+            ...(isBlock
+              ? {
+                  isPersonalBlock: true,
+                  windowStartIso: h.startIso ?? null,
+                  windowEndIso: h.endIso ?? null,
+                }
+              : {}),
+            // lightweight hints (optional)
+            isAlternateStop: undefined,
+            alternateAddressText: undefined,
+            appointmentTypeName: undefined,
+          };
+        }),
         startDepot: startDepot ? { lat: startDepot.lat, lon: startDepot.lon } : undefined,
         endDepot: endDepot ? { lat: endDepot.lat, lon: endDepot.lon } : undefined,
         useTraffic: false,
@@ -473,38 +494,170 @@ export default function DoctorDayVisual({
 
       try {
         const result: any = await fetchEtas(payload);
+        if (!on) return;
 
-        const serverEtas: Record<string, string> = result?.etaByKey || {};
-        if (serverEtas && Object.keys(serverEtas).length > 0 && on) {
-          setProjEtas(serverEtas);
+        const tl: DisplaySlot[] = households.map(() => ({ eta: null, etd: null }));
+        const serverETA: boolean[] = households.map(() => false);
+        const serverETD: boolean[] = households.map(() => false);
+        const validIso = (s?: string | null) => !!(s && DateTime.fromISO(s).isValid);
+
+        // 1) byIndex aligns 1:1 with ordered (includes blocks)
+        const byIndex: Array<{ etaIso?: string; etdIso?: string }> = Array.isArray(result?.byIndex)
+          ? result.byIndex
+          : [];
+
+        for (let i = 0; i < ordered.length; i++) {
+          const { viewIdx } = ordered[i];
+          const row = byIndex[i] || {};
+          if (validIso(row.etaIso)) {
+            tl[viewIdx].eta = row.etaIso!;
+            serverETA[viewIdx] = true;
+          }
+          if (validIso(row.etdIso)) {
+            tl[viewIdx].etd = row.etdIso!;
+            serverETD[viewIdx] = true;
+          }
         }
 
-        if (Array.isArray(result?.driveSeconds) && on) {
-          setDriveSecondsArr(result.driveSeconds as number[]);
+        // 2) Fallback arrays
+        const etaIsoArr: string[] = Array.isArray(result?.etaIso) ? result.etaIso : [];
+        const etdIsoArr: string[] = Array.isArray(result?.etdIso) ? result.etdIso : [];
+        for (let i = 0; i < ordered.length; i++) {
+          const { viewIdx } = ordered[i];
+          if (!tl[viewIdx].eta && validIso(etaIsoArr[i])) {
+            tl[viewIdx].eta = etaIsoArr[i];
+            serverETA[viewIdx] = true;
+          }
+          if (!tl[viewIdx].etd && validIso(etdIsoArr[i])) {
+            tl[viewIdx].etd = etdIsoArr[i];
+            serverETD[viewIdx] = true;
+          }
         }
+
+        // 3) Key maps for routables
+        const etaByKey: Record<string, string> = result?.etaByKey || {};
+        const etaByLL6: Record<string, string> = result?.etaByLL6 || {};
+        const etaByLL5: Record<string, string> = result?.etaByLL5 || {};
+
+        for (let i = 0; i < ordered.length; i++) {
+          const { h, viewIdx } = ordered[i];
+          if (!tl[viewIdx].eta) {
+            if (!h.isNoLocation && Number.isFinite(h.lat) && Number.isFinite(h.lon)) {
+              const k6 = `${h.lat.toFixed(6)},${h.lon.toFixed(6)}`;
+              const k5 = `${h.lat.toFixed(5)},${h.lon.toFixed(5)}`;
+              const v =
+                etaByKey[h.key] ??
+                etaByKey[k6] ??
+                etaByKey[k5] ??
+                etaByLL6[k6] ??
+                etaByLL5[k5] ??
+                null;
+              if (validIso(v)) {
+                tl[viewIdx].eta = v!;
+                serverETA[viewIdx] = true;
+              }
+            }
+          }
+        }
+
+        // 4) Local fallbacks (window start or block start)
+        const durationMins = (h: Household) =>
+          h.startIso && h.endIso
+            ? Math.max(
+                1,
+                Math.round(
+                  DateTime.fromISO(h.endIso).diff(DateTime.fromISO(h.startIso)).as('minutes')
+                )
+              )
+            : 60;
+
+        for (let i = 0; i < ordered.length; i++) {
+          const { h, viewIdx } = ordered[i];
+
+          // ETA fallback
+          if (!tl[viewIdx].eta && h.startIso) {
+            if (h.isPersonalBlock) {
+              tl[viewIdx].eta = h.startIso;
+            } else {
+              const { winStartIso } = adjustedWindowForStart(date, h.startIso, schedStartIso);
+              tl[viewIdx].eta = winStartIso;
+            }
+          }
+
+          // ETD fallback = ETA + duration
+          if (!tl[viewIdx].etd && tl[viewIdx].eta) {
+            tl[viewIdx].etd = DateTime.fromISO(tl[viewIdx].eta!)
+              .plus({ minutes: durationMins(h) })
+              .toISO();
+          }
+        }
+
+        // 5) Monotonic pass — only shift rows whose ETA & ETD are BOTH fallbacks
+        for (let i = 1; i < households.length; i++) {
+          if (serverETA[i] || serverETD[i]) continue;
+          const prev = tl[i - 1];
+          const curr = tl[i];
+          if (!prev?.etd || !curr?.eta) continue;
+          const prevETD = DateTime.fromISO(prev.etd);
+          const currETA = DateTime.fromISO(curr.eta);
+          if (currETA < prevETD) {
+            const mins = durationMins(households[i]);
+            const shiftedETA = prev.etd!;
+            const shiftedETD = DateTime.fromISO(shiftedETA).plus({ minutes: mins }).toISO();
+            curr.eta = shiftedETA;
+            curr.etd = shiftedETD;
+          }
+        }
+
+        // 6) store drive/depot fields
+        setDriveSecondsArr(Array.isArray(result?.driveSeconds) ? result.driveSeconds : null);
+        setBackToDepotSec(
+          typeof result?.backToDepotSec === 'number' ? result.backToDepotSec : null
+        );
+        setBackToDepotIso(result?.backToDepotIso ?? null);
+
+        if (on) setTimeline(tl);
       } catch (e: any) {
-        if (on) setEtaErr(e?.message ?? 'Failed to compute ETAs');
+        if (on) {
+          setEtaErr(e?.message ?? 'Failed to compute ETAs');
+          setDriveSecondsArr(null);
+          setBackToDepotSec(null);
+          setBackToDepotIso(null);
+        }
       }
     })();
 
     return () => {
       on = false;
     };
-  }, [households, startDepot, endDepot, date, selectedDoctorId, appts]);
+  }, [households, startDepot, endDepot, date, selectedDoctorId, appts, schedStartIso]);
 
-  /* ------------ visual time window ------------ */
+  /* ------------ visual time window (based on ETA) ------------ */
   const t0 = useMemo(() => {
-    const first = households[0]?.startIso
-      ? DateTime.fromISO(households[0].startIso).minus({ minutes: 10 })
-      : DateTime.fromISO(date).set({ hour: 8, minute: 30 });
-    return first.startOf('minute');
-  }, [households, date]);
+    const firstEta =
+      timeline
+        .map((t) => (t?.eta ? DateTime.fromISO(t.eta) : null))
+        .filter(Boolean)
+        .sort((a: any, b: any) => a!.toMillis() - b!.toMillis())[0] || null;
+    const anchor =
+      firstEta ?? (households[0]?.startIso ? DateTime.fromISO(households[0].startIso) : null);
+    const base = anchor ?? DateTime.fromISO(date).set({ hour: 8, minute: 30 });
+    return base.minus({ minutes: 10 }).startOf('minute');
+  }, [timeline, households, date]);
 
   const tEnd = useMemo(() => {
-    const last = households[households.length - 1];
-    const end = last?.endIso ? DateTime.fromISO(last.endIso) : t0.plus({ hours: 4 });
+    // last ETD if present; else last scheduled end; else +4h
+    const lastEtd =
+      timeline
+        .map((t) => (t?.etd ? DateTime.fromISO(t.etd) : null))
+        .filter(Boolean)
+        .sort((a: any, b: any) => b!.toMillis() - a!.toMillis())[0] || null;
+    const lastSchedEnd = households[households.length - 1]?.endIso
+      ? DateTime.fromISO(households[households.length - 1].endIso!)
+      : null;
+    const end = lastEtd ?? lastSchedEnd ?? t0.plus({ hours: 4 });
     return end.plus({ minutes: 30 });
-  }, [households, t0]);
+  }, [timeline, households, t0]);
 
   const totalMin = Math.max(60, Math.round(tEnd.diff(t0).as('minutes')));
 
@@ -522,55 +675,29 @@ export default function DoctorDayVisual({
     return out;
   }, [t0, tEnd]);
 
-  /* ------------ helpers derived from ETAs ------------ */
-  const etdByKey = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const h of households) {
-      const s = h.startIso ? DateTime.fromISO(h.startIso) : null;
-      const e = h.endIso ? DateTime.fromISO(h.endIso) : null;
-      if (!s || !e) continue;
-      const durMin = Math.max(1, Math.round(e.diff(s).as('minutes')));
-      const etaIso = projEtas[h.key];
-      const etdIso = etaIso
-        ? DateTime.fromISO(etaIso).plus({ minutes: durMin }).toISO()
-        : e.toISO(); // fallback to scheduled end
-      map[h.key] = etdIso!;
-    }
-    return map;
-  }, [households, projEtas]);
+  /* ------------ derive ETD (from timeline) ------------ */
+  const etdByIndex = useMemo(() => timeline.map((t) => t?.etd ?? null), [timeline]);
 
-  /* ------------ compute drive-to-next minutes ------------ */
+  /* ------------ compute drive-to-next minutes (server between if provided) ------------ */
   const driveBetweenMin = useMemo(() => {
     const N = households.length;
     if (N <= 1) return [] as number[];
-
-    // derive toFirst/between from API array if present
-    let between: number[] | null = null;
+    // Prefer server driveSeconds if shape matches between segments
     if (Array.isArray(driveSecondsArr)) {
-      if (driveSecondsArr.length === N + 1) {
-        between = driveSecondsArr.slice(1, N); // [between 0->1, 1->2, ...]
-      } else if (driveSecondsArr.length === N) {
-        if (startDepot) between = driveSecondsArr.slice(1);
-        else if (!startDepot) between = driveSecondsArr.slice(0, N - 1);
-      } else if (driveSecondsArr.length === N - 1) {
-        between = driveSecondsArr;
+      if (driveSecondsArr.length === N - 1) {
+        return driveSecondsArr.map((s) => Math.max(0, Math.round((s || 0) / 60)));
+      } else if (driveSecondsArr.length === N || driveSecondsArr.length === N + 1) {
+        // try to extract between segments heuristically
+        const between =
+          driveSecondsArr.length === N + 1 ? driveSecondsArr.slice(1, N) : driveSecondsArr.slice(1);
+        return between.map((s) => Math.max(0, Math.round((s || 0) / 60)));
       }
     }
-
+    // Fallback: ETA/ETD gaps between consecutive rows
     const out: number[] = [];
-
     for (let i = 0; i < N - 1; i++) {
-      const apiMin =
-        between && typeof between[i] === 'number' ? Math.round(Math.max(0, between[i]) / 60) : null;
-
-      if (apiMin != null) {
-        out.push(apiMin);
-        continue;
-      }
-
-      // fallback from ETA gap: ETA(next) - ETD(prev)
-      const prevETD = etdByKey[households[i].key];
-      const nextETA = projEtas[households[i + 1].key];
+      const prevETD = etdByIndex[i];
+      const nextETA = timeline[i + 1]?.eta ?? null;
       if (prevETD && nextETA) {
         const mins = Math.max(
           0,
@@ -594,14 +721,13 @@ export default function DoctorDayVisual({
       }
     }
     return out;
-  }, [households, driveSecondsArr, projEtas, etdByKey, startDepot]);
+  }, [households, driveSecondsArr, timeline, etdByIndex]);
 
-  /* ------------ visual drive bars placed at ETD(prev) ------------ */
+  /* ------------ drive bars (placed at ETD(prev), by row order) ------------ */
   const driveBars = useMemo(() => {
     const bars: { top: number; width: number; label: string }[] = [];
     for (let i = 0; i < households.length - 1; i++) {
-      const prev = households[i];
-      const startIso = etdByKey[prev.key] ?? prev.endIso;
+      const startIso = etdByIndex[i] ?? households[i].endIso;
       if (!startIso) continue;
 
       const top = Math.max(0, Math.round(DateTime.fromISO(startIso).diff(t0).as('minutes'))) * PPM;
@@ -610,12 +736,14 @@ export default function DoctorDayVisual({
       bars.push({ top, width, label: `${mins} min drive` });
     }
     return bars;
-  }, [households, etdByKey, t0, driveBetweenMin]);
+  }, [households, etdByIndex, t0, driveBetweenMin]);
 
   return (
     <div className="card" style={{ paddingBottom: 16 }}>
       <h2>My Day — Visual</h2>
-      <p className="muted">A time-scaled vertical view with drive time and patient details.</p>
+      <p className="muted">
+        Blocks are positioned by <b>projected ETA</b> (server-calculated), not scheduled start.
+      </p>
 
       <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <label className="muted" htmlFor="vdd-date">
@@ -705,18 +833,27 @@ export default function DoctorDayVisual({
 
           {/* appointment blocks (single column) */}
           {households.map((h, idx) => {
-            const s = h.startIso ? DateTime.fromISO(h.startIso) : null;
-            const e = h.endIso ? DateTime.fromISO(h.endIso) : null;
-            if (!s || !e) return null;
+            const schedStart = h.startIso ? DateTime.fromISO(h.startIso) : null;
+            const schedEnd = h.endIso ? DateTime.fromISO(h.endIso) : null;
+            if (!schedStart || !schedEnd) return null;
 
-            const top = Math.max(0, Math.round(s.diff(t0).as('minutes'))) * PPM;
-            const height = Math.max(22, Math.round(e.diff(s).as('minutes')) * PPM);
+            const durMin = Math.max(1, Math.round(schedEnd.diff(schedStart).as('minutes')));
 
-            const etaIso = projEtas[h.key];
-            const durMin = Math.max(1, Math.round(e.diff(s).as('minutes')));
-            const etdIso = etaIso
-              ? DateTime.fromISO(etaIso).plus({ minutes: durMin }).toISO()
-              : e.toISO();
+            // ---- ETA-based positioning (authoritative) ----
+            const etaIso = timeline[idx]?.eta ?? null;
+            const etdIso = timeline[idx]?.etd ?? null;
+
+            const anchorIso = etaIso ?? h.startIso!; // position by ETA; fallback to scheduled start
+            const top =
+              Math.max(0, Math.round(DateTime.fromISO(anchorIso).diff(t0).as('minutes'))) * PPM;
+            const height = Math.max(22, durMin * PPM);
+
+            // adjusted window for tooltip
+            const { winStartIso, winEndIso } = adjustedWindowForStart(
+              date,
+              h.startIso!,
+              schedStartIso
+            );
 
             const patientsPreview = h.patients
               .map((p) => p.name)
@@ -724,15 +861,8 @@ export default function DoctorDayVisual({
               .join(', ');
             const moreCount = Math.max(0, (h.patients?.length || 0) - 3);
 
-            // drive to next chip
+            // drive to next chip (uses computed between mins)
             const driveToNext = idx < households.length - 1 ? driveBetweenMin[idx] || 0 : null;
-
-            // adjusted window for display
-            const { winStartIso, winEndIso } = adjustedWindowForStart(
-              date,
-              s.toISO()!,
-              schedStartIso
-            );
 
             return (
               <div
@@ -747,8 +877,8 @@ export default function DoctorDayVisual({
                     durMin,
                     etaIso: etaIso ?? null,
                     etdIso: etdIso ?? null,
-                    sIso: s.toISO()!,
-                    eIso: e.toISO()!,
+                    sIso: h.startIso!,
+                    eIso: h.endIso!,
                     patients: h.patients || [],
                   });
                 }}
@@ -764,8 +894,22 @@ export default function DoctorDayVisual({
                   right: 24,
                   top,
                   height,
-                  background: h.isNoLocation ? '#fee2e2' : h.isPreview ? '#ede9fe' : '#e0f2fe',
-                  border: `1px solid ${h.isNoLocation ? '#ef4444' : h.isPreview ? '#a855f7' : '#38bdf8'}`,
+                  background: h.isPersonalBlock
+                    ? '#f3f4f6'
+                    : h.isNoLocation
+                      ? '#fee2e2'
+                      : h.isPreview
+                        ? '#ede9fe'
+                        : '#e0f2fe',
+                  border: `1px solid ${
+                    h.isPersonalBlock
+                      ? '#9ca3af'
+                      : h.isNoLocation
+                        ? '#ef4444'
+                        : h.isPreview
+                          ? '#a855f7'
+                          : '#38bdf8'
+                  }`,
                   borderRadius: 8,
                   boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
                   display: 'flex',
@@ -775,6 +919,8 @@ export default function DoctorDayVisual({
                   overflow: 'hidden',
                   cursor: 'default',
                   zIndex: 2,
+                  color: h.isPersonalBlock ? '#111827' : undefined,
+                  opacity: h.isPersonalBlock ? 0.65 : 1,
                 }}
                 title={`Window: ${DateTime.fromISO(winStartIso).toLocaleString(
                   DateTime.TIME_SIMPLE
@@ -795,7 +941,59 @@ export default function DoctorDayVisual({
                 >
                   {h.address}
                 </div>
-                {!!h.patients?.length && (
+
+                {/* status chips */}
+                {h.isPersonalBlock ? (
+                  <div
+                    title="Personal Block"
+                    style={{
+                      marginLeft: 8,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      padding: '2px 8px',
+                      borderRadius: 999,
+                      background: '#000',
+                      color: '#fff',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Personal Block
+                  </div>
+                ) : h.isNoLocation ? (
+                  <div
+                    title="No location — routing not available"
+                    style={{
+                      marginLeft: 8,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      padding: '2px 8px',
+                      borderRadius: 999,
+                      background: '#fee2e2',
+                      color: '#b91c1c',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    No location
+                  </div>
+                ) : h.isPreview ? (
+                  <div
+                    title="Preview"
+                    style={{
+                      marginLeft: 8,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      padding: '2px 8px',
+                      borderRadius: 999,
+                      background: '#ede9fe',
+                      color: '#6b21a8',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Preview
+                  </div>
+                ) : null}
+
+                {!!h.patients?.length && !h.isPersonalBlock && (
                   <div
                     className="muted"
                     style={{
@@ -809,6 +1007,7 @@ export default function DoctorDayVisual({
                     {moreCount > 0 ? ` +${moreCount} more` : ''}
                   </div>
                 )}
+
                 {driveToNext != null && idx < households.length - 1 && (
                   <div
                     title="Drive to next stop"
@@ -940,6 +1139,12 @@ export default function DoctorDayVisual({
                     {DateTime.fromISO(winStartIso).toLocaleString(DateTime.TIME_SIMPLE)} –{' '}
                     {DateTime.fromISO(winEndIso).toLocaleString(DateTime.TIME_SIMPLE)}
                   </span>
+                  {backToDepotIso && (
+                    <span>
+                      <b>Back to depot:</b>{' '}
+                      {DateTime.fromISO(backToDepotIso).toLocaleString(DateTime.TIME_SIMPLE)}
+                    </span>
+                  )}
                 </div>
 
                 {!!hoverCard.patients?.length && (
