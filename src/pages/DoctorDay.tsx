@@ -1087,6 +1087,7 @@ export default function DoctorDay({
             <ul className="dd-list">
               {households.map((h, i) => {
                 const a = h.primary;
+                console.log(a);
                 const clientHref = str(a, 'clientPimsId')
                   ? evetClientLink(str(a, 'clientPimsId') as string)
                   : undefined;
@@ -1139,18 +1140,25 @@ export default function DoctorDay({
                       style={{ display: 'flex', alignItems: 'center', gap: 8 }}
                     >
                       {clientHref ? (
-                        <a
-                          className="dd-title link-strong"
-                          href={clientHref}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          #{i + 1} {a.clientName}
-                        </a>
+                        <>
+                          <a
+                            className="dd-title link-strong"
+                            href={clientHref}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            #{i + 1} {a.clientName}
+                          </a>
+                          {a?.clientAlert && (
+                            <div style={{ color: '#dc2626' }}>Alert: {a.clientAlert}</div>
+                          )}
+                        </>
                       ) : (
-                        <div className="dd-title">
-                          #{i + 1} {a.clientName}
-                        </div>
+                        <>
+                          <div className="dd-title">
+                            #{i + 1} {a.clientName}
+                          </div>
+                        </>
                       )}
 
                       <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
@@ -1257,7 +1265,6 @@ export default function DoctorDay({
                         <div className="dd-pets-label">Patients:</div>
                         <ul className="dd-patients-list">
                           {h.patients.map((p, idx2) => {
-                            console.log(p);
                             const href = p.pimsId ? evetPatientLink(p.pimsId) : undefined;
                             const apptType =
                               (p as any)?.apptTypeName ??

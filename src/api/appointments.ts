@@ -9,6 +9,7 @@ export type DoctorDayAppt = {
   id: number | string;
   clientName: string;
   clientPimsId?: string;
+  clientAlert?: string;
   patientName?: string;
   patientPimsId?: string;
   confirmStatusName?: string;
@@ -75,11 +76,11 @@ export async function fetchDoctorDay(
 
     const backendNoLoc =
       Boolean(a?.isNoLocation ?? a?.noLocation ?? a?.unroutable) || a?.routingAvailable === false;
-
     return {
       id: a?.id,
       clientName: a?.clientName ?? 'Client',
       clientPimsId: a?.clientPimsId,
+      clientAlert: a?.clientAlert,
       patientName: a?.patientName,
       alerts: a?.alerts,
       patientPimsId: a?.patientPimsId,

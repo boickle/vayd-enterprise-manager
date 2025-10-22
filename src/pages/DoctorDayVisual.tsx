@@ -114,6 +114,7 @@ function makePatientBadge(a: any): PatientBadge {
 type Household = {
   key: string;
   client: string;
+  clientAlert?: string;
   address: string;
   lat: number;
   lon: number;
@@ -247,6 +248,7 @@ export default function DoctorDayVisual({
     x: number;
     y: number;
     client: string;
+    clientAlert?: string;
     address: string;
     durMin: number;
     etaIso?: string | null;
@@ -394,6 +396,7 @@ export default function DoctorDayVisual({
         m.set(key, {
           key,
           client: (a as any)?.clientName ?? 'Client',
+          clientAlert: (a as any)?.clientAlert ?? null,
           address: formatAddress(a),
           lat,
           lon,
@@ -885,6 +888,7 @@ export default function DoctorDayVisual({
                     sIso: h.startIso!,
                     eIso: h.endIso!,
                     patients: h.patients || [],
+                    clientAlert: h?.clientAlert,
                   });
                 }}
                 onMouseMove={(ev) => {
@@ -1094,7 +1098,7 @@ export default function DoctorDayVisual({
               hoverCard.sIso,
               schedStartIso
             );
-
+            console.log(hoverCard);
             return (
               <div
                 style={{
@@ -1117,6 +1121,11 @@ export default function DoctorDayVisual({
                 }}
               >
                 <div style={{ fontWeight: 800, marginBottom: 6 }}>{hoverCard.client}</div>
+                {hoverCard?.clientAlert && (
+                  <div style={{ marginBottom: 6, color: '#dc2626' }}>
+                    Alert: {hoverCard.clientAlert}
+                  </div>
+                )}
                 <div style={{ color: '#475569', marginBottom: 10 }}>{hoverCard.address}</div>
 
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 10 }}>
