@@ -1233,12 +1233,18 @@ export default function Routing() {
                       workStartLocal: opt.workStartLocal,
                       effectiveEndLocal: opt.effectiveEndLocal,
                       bookedServiceSeconds: opt.bookedServiceSeconds,
+
                       projectedDriveSeconds:
-                        projectedDriveSecSafe({
-                          projectedDriveSeconds: opt.projectedDriveSeconds,
-                          currentDriveSeconds: opt.currentDriveSeconds,
-                          addedDriveSeconds: opt.addedDriveSeconds,
-                        }) ?? undefined,
+                        (Number.isFinite(opt.projectedDriveSeconds) &&
+                          Math.floor(opt.projectedDriveSeconds)) ||
+                        (Number.isFinite(opt.currentDriveSeconds) &&
+                        Number.isFinite(opt.addedDriveSeconds)
+                          ? Math.floor(
+                              (opt.currentDriveSeconds as number) +
+                                (opt.addedDriveSeconds as number)
+                            )
+                          : undefined),
+
                       currentDriveSeconds: opt.currentDriveSeconds,
                     },
                     form.newAppt.serviceMinutes
