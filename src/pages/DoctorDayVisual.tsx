@@ -465,12 +465,10 @@ export default function DoctorDayVisual({
         selectedDoctorId ??
         '';
 
-      // Build payload: include ALL rows, but only provide lat/lon when routable.
       // Build payload: include ALL rows; always include lat/lon (0 for non-routable)
       const householdsPayload = ordered.map(({ h }) => {
         const isBlock = h.isPersonalBlock === true;
 
-        // EtaHouseholdInput requires numbers → always provide them.
         const lat = Number.isFinite(h.lat) ? (h.lat as number) : 0;
         const lon = Number.isFinite(h.lon) ? (h.lon as number) : 0;
 
@@ -487,7 +485,6 @@ export default function DoctorDayVisual({
                 windowEndIso: h.endIso ?? null,
               }
             : {}),
-          // optional hints omitted or set explicitly if your backend supports them
         } as any;
       });
 
@@ -745,6 +742,60 @@ export default function DoctorDayVisual({
     }
     return bars;
   }, [households, etdByIndex, t0, driveBetweenMin]);
+
+  // Geometry of each appointment block (top + height), aligned to ETA
+  const blockGeom = useMemo(() => {
+    return households.map((h, idx) => {
+      const s = h.startIso ? DateTime.fromISO(h.startIso) : null;
+      const e = h.endIso ? DateTime.fromISO(h.endIso) : null;
+      if (!s || !e || !s.isValid || !e.isValid) return null;
+
+      const durMin = Math.max(1, Math.round(e.diff(s).as('minutes')));
+      const etaIso = timeline[idx]?.eta ?? h.startIso!;
+      const top = Math.max(0, Math.round(DateTime.fromISO(etaIso).diff(t0).as('minutes'))) * PPM;
+      const height = Math.max(22, durMin * PPM);
+      return { top, height };
+    });
+  }, [households, timeline, t0]);
+
+  // Vertical connectors between consecutive blocks
+  const vConnectors = useMemo(() => {
+    const out: Array<{ top: number; height: number; mins: number }> = [];
+    for (let i = 0; i < households.length - 1; i++) {
+      const a = blockGeom[i];
+      const b = blockGeom[i + 1];
+      if (!a || !b) continue;
+      const y1 = a.top + a.height;
+      const y2 = b.top;
+      const height = Math.max(0, y2 - y1);
+      if (height <= 0) continue; // overlapping or abutting — no connector
+      const mins = Math.max(0, driveBetweenMin[i] || 0);
+      out.push({ top: y1, height, mins });
+    }
+    return out;
+  }, [blockGeom, households.length, driveBetweenMin]);
+
+  /* ------------ depot chips ------------ */
+  const fromDepotMin = useMemo(() => {
+    if (Array.isArray(driveSecondsArr) && households.length > 0) {
+      // If driveSeconds includes depot leg first → use index 0 when >= N
+      if (driveSecondsArr.length >= households.length) {
+        return Math.max(0, Math.round((driveSecondsArr[0] || 0) / 60));
+      }
+    }
+    return null;
+  }, [driveSecondsArr, households]);
+
+  const backDepotMin = useMemo(() => {
+    if (typeof backToDepotSec === 'number') return Math.max(0, Math.round(backToDepotSec / 60));
+    if (Array.isArray(driveSecondsArr) && households.length > 0) {
+      if (driveSecondsArr.length === households.length + 1) {
+        const last = driveSecondsArr[driveSecondsArr.length - 1] || 0;
+        return Math.max(0, Math.round(last / 60));
+      }
+    }
+    return null;
+  }, [driveSecondsArr, backToDepotSec, households]);
 
   return (
     <div className="card" style={{ paddingBottom: 16 }}>
@@ -1039,33 +1090,94 @@ export default function DoctorDayVisual({
           })}
 
           {/* drive bars (true drive duration; placed at ETD(prev)) */}
-          {driveBars.map((d, i) => (
+          {/* drive bars (true drive duration; placed at ETD(prev)) */}
+          {/* vertical connectors between appointments */}
+          {vConnectors.map((c, i) => (
             <div key={i}>
+              {/* the vertical line */}
               <div
                 style={{
                   position: 'absolute',
-                  left: 110,
-                  right: 48,
-                  top: d.top,
-                  height: 6,
+                  left: 110, // x-position of the connector (kept constant)
+                  width: 2, // thin vertical line
+                  top: c.top,
+                  height: c.height,
                   background: '#94a3b8',
                   borderRadius: 999,
+                  zIndex: 1,
                 }}
               />
+              {/* centered minutes badge next to the line */}
               <div
                 style={{
                   position: 'absolute',
-                  top: d.top - 16,
-                  left: 110,
+                  top: c.top + c.height / 2 - 10, // center on the line
+                  left: 118, // a bit to the right of the line
                   fontSize: 12,
-                  color: '#64748b',
-                  fontWeight: 700,
+                  fontWeight: 800,
+                  padding: '2px 8px',
+                  borderRadius: 999,
+                  background: '#e5e7eb',
+                  color: '#334155',
+                  whiteSpace: 'nowrap',
+                  transform: 'translateY(-50%)',
+                  zIndex: 2,
                 }}
+                title="Drive to next stop"
               >
-                {d.label}
+                → {c.mins}m
               </div>
             </div>
           ))}
+
+          {/* Depot drive chips */}
+          {fromDepotMin != null && (
+            <div
+              title="Drive time from depot to first stop"
+              style={{
+                position: 'absolute',
+                top: 8,
+                left: 8,
+                fontSize: 12,
+                fontWeight: 800,
+                padding: '4px 10px',
+                borderRadius: 999,
+                background: '#e5e7eb',
+                color: '#111827',
+                whiteSpace: 'nowrap',
+                zIndex: 3,
+              }}
+            >
+              from depot: {fromDepotMin}m
+            </div>
+          )}
+
+          {backDepotMin != null && (
+            <div
+              title={
+                backToDepotIso
+                  ? `Back to depot ETA: ${DateTime.fromISO(backToDepotIso).toLocaleString(
+                      DateTime.TIME_SIMPLE
+                    )}`
+                  : 'Drive time from last stop back to depot'
+              }
+              style={{
+                position: 'absolute',
+                bottom: 8,
+                right: 8,
+                fontSize: 12,
+                fontWeight: 800,
+                padding: '4px 10px',
+                borderRadius: 999,
+                background: '#e5e7eb',
+                color: '#111827',
+                whiteSpace: 'nowrap',
+                zIndex: 3,
+              }}
+            >
+              back to depot: {backDepotMin}m
+            </div>
+          )}
         </div>
       </div>
 
@@ -1098,7 +1210,6 @@ export default function DoctorDayVisual({
               hoverCard.sIso,
               schedStartIso
             );
-            console.log(hoverCard);
             return (
               <div
                 style={{
@@ -1172,7 +1283,7 @@ export default function DoctorDayVisual({
                             {p?.alerts ? (
                               <>
                                 {' '}
-                                — <strong>Alert:</strong>{' '}
+                                — <strong>Alert</strong>:{' '}
                                 <span style={{ color: '#dc2626' }}>{p.alerts}</span>
                               </>
                             ) : null}

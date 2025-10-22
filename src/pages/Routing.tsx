@@ -1223,16 +1223,27 @@ export default function Routing() {
           <div className="grid" style={{ gap: 14 }}>
             {displayOptions.map((opt, idx) => {
               const headerColor = colorForDoctor(opt.doctorPimsId);
-              const remainingSec = remainingWhitespaceSeconds(
-                {
-                  workStartLocal: opt.workStartLocal,
-                  effectiveEndLocal: opt.effectiveEndLocal,
-                  bookedServiceSeconds: opt.bookedServiceSeconds,
-                  projectedDriveSeconds: opt.projectedDriveSeconds,
-                  currentDriveSeconds: opt.currentDriveSeconds,
-                },
-                form.newAppt.serviceMinutes
-              );
+              // Prefer gap-level whitespace from backend; fall back to your day-level method.
+              const whitespaceAfterBookingSec =
+                (opt as any).whitespaceAfterBookingSeconds ??
+                (function () {
+                  // day-level fallback (what you already had)
+                  return remainingWhitespaceSeconds(
+                    {
+                      workStartLocal: opt.workStartLocal,
+                      effectiveEndLocal: opt.effectiveEndLocal,
+                      bookedServiceSeconds: opt.bookedServiceSeconds,
+                      projectedDriveSeconds:
+                        projectedDriveSecSafe({
+                          projectedDriveSeconds: opt.projectedDriveSeconds,
+                          currentDriveSeconds: opt.currentDriveSeconds,
+                          addedDriveSeconds: opt.addedDriveSeconds,
+                        }) ?? undefined,
+                      currentDriveSeconds: opt.currentDriveSeconds,
+                    },
+                    form.newAppt.serviceMinutes
+                  );
+                })();
 
               const emptyBadge = isEmptyDay(opt);
 
@@ -1326,7 +1337,7 @@ export default function Routing() {
                     {/* NEW: Remaining non-drive time */}
                     <KeyValue
                       k="Whitespace After Booking"
-                      v={secsToPretty(remainingSec)}
+                      v={secsToPretty(whitespaceAfterBookingSec)}
                       color="inherit"
                     />
                   </div>
