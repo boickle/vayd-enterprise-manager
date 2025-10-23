@@ -70,14 +70,14 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       label: 'Ops Analytics',
       element: <OpsAnalyticsPage />,
       permission: 'canSeeOpsAnalytics',
-      role: ['employee', 'admin'],
+      role: ['admin'],
     },
     {
       path: '/analytics/revenue/doctor',
       label: 'Doctor Revenue Analytics',
       element: <DoctorRevenueAnalyticsPage />,
       permission: 'canSeeDoctorAnalytics',
-      role: ['employee', 'admin'],
+      role: ['admin'],
     },
     {
       path: '/audit',

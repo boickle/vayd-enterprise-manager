@@ -141,17 +141,22 @@ export async function fetchAuditDailySeries(params: {
     params: { ...params, userId: params.userId ?? undefined },
   });
 
-  const days = (Array.isArray(data?.days) ? data.days : []).map((r: any) => ({
-    date: String(r.date),
-    requests: n(r.requests),
-    errors: n(r.errors),
-    avgDurationMs: n(r.avgDurationMs),
+  // Accept either:
+  //  - Array payload: [{ date, requests, errors, avgDurationMs }, ...]
+  //  - Object payload: { days: [...] }
+  const raw: any[] = Array.isArray(data) ? data : Array.isArray(data?.days) ? data.days : [];
+
+  const days = raw.map((r: any) => ({
+    date: String(r?.date ?? ''),
+    requests: Number.isFinite(Number(r?.requests)) ? Number(r.requests) : 0,
+    errors: Number.isFinite(Number(r?.errors)) ? Number(r.errors) : 0,
+    avgDurationMs: Number.isFinite(Number(r?.avgDurationMs)) ? Number(r.avgDurationMs) : 0,
   }));
 
   return {
-    start: String(data?.start ?? params.start),
-    end: String(data?.end ?? params.end),
-    userId: data?.userId ?? params.userId ?? null,
+    start: String((data as any)?.start ?? params.start),
+    end: String((data as any)?.end ?? params.end),
+    userId: (data as any)?.userId ?? params.userId ?? null,
     days,
   };
 }
