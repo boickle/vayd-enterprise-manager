@@ -1170,7 +1170,7 @@ export default function Routing() {
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 {[
                   { key: 'first', label: 'First part of day' },
-                  { key: 'middle', label: 'Middle of day' },
+                  // { key: 'middle', label: 'Middle of day' },
                   { key: 'end', label: 'End of day' },
                 ].map(({ key, label }) => (
                   <label key={key} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
