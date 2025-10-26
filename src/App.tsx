@@ -158,7 +158,7 @@ export default function App() {
           <Route
             path="/client-portal"
             element={
-              <ProtectedRoute allowRoles={['client']} redirectTo="/login">
+              <ProtectedRoute>
                 <ClientPortal />
               </ProtectedRoute>
             }
