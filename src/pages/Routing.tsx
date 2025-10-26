@@ -53,6 +53,9 @@ type Winner = {
   _emptyDay?: boolean;
   dayIsEmpty?: boolean;
   flags?: string[];
+  // 👇 Add these lines:
+  overrunSeconds?: number;
+  overrunPretty?: string;
 };
 
 type EstimatedCost = {
@@ -319,6 +322,47 @@ function remainingWhitespaceSeconds(
 
   const used = driveSec + bookedServiceSec + newServiceSec;
   return Math.max(0, windowSec - used);
+}
+
+/** Guard for finite numbers */
+function finite(n: unknown): n is number {
+  return typeof n === 'number' && Number.isFinite(n);
+}
+
+/** How many seconds the shift overruns the work window (>=0). */
+function endOfDayOverrunSeconds(
+  opt: {
+    workStartLocal?: string; // "HH:mm" or "HH:mm:ss"
+    effectiveEndLocal?: string; // "HH:mm" or "HH:mm:ss"
+    bookedServiceSeconds?: number; // may be minutes in some responses
+    projectedDriveSeconds?: number;
+    currentDriveSeconds?: number;
+    addedDriveSeconds?: number;
+  },
+  newServiceMinutes: number
+): number | undefined {
+  const ws = hmsToSec(opt.workStartLocal);
+  const ee = hmsToSec(opt.effectiveEndLocal);
+  if (ws == null || ee == null) return undefined;
+
+  const windowSec = Math.max(0, ee - ws);
+
+  // Drive: prefer projected; otherwise current + added
+  const driveSec = finite(opt.projectedDriveSeconds)
+    ? Math.floor(opt.projectedDriveSeconds)
+    : finite(opt.currentDriveSeconds) && finite(opt.addedDriveSeconds)
+      ? Math.floor(opt.currentDriveSeconds + opt.addedDriveSeconds)
+      : undefined;
+  if (!finite(driveSec)) return undefined;
+
+  // Service: normalize to seconds (handles minute-vs-second ambiguity)
+  const bookedServiceSec = normalizeBookedServiceToSeconds(opt.bookedServiceSeconds, windowSec);
+  const newServiceSec = Math.max(0, Math.floor(newServiceMinutes * 60));
+
+  // Overrun = -(time budget delta) when delta < 0
+  const used = driveSec + bookedServiceSec + newServiceSec;
+  const delta = windowSec - used;
+  return delta < 0 ? -delta : 0;
 }
 
 // =========================
@@ -1253,6 +1297,14 @@ export default function Routing() {
 
               const emptyBadge = isEmptyDay(opt);
 
+              // NEW: compute “Shift Overrun” (positive seconds if return-to-depot goes past end of day)
+              // NEW: compute “Shift Overrun” (positive seconds if return-to-depot goes past end of day)
+              // Use backend overrun value (already includes final drive + service time)
+              const shiftOverrunSec =
+                typeof opt.overrunSeconds === 'number' ? opt.overrunSeconds : 0;
+
+              const overtimeBadge = finite(shiftOverrunSec) && shiftOverrunSec > 0;
+
               return (
                 <div
                   key={`${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${idx}`}
@@ -1306,6 +1358,28 @@ export default function Routing() {
                       }}
                     >
                       EMPTY
+                    </div>
+                  )}
+
+                  {overtimeBadge && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: emptyBadge ? 40 : 8,
+                        right: -20,
+                        transform: 'rotate(35deg)',
+                        background: '#dc2626',
+                        color: 'white',
+                        padding: '6px 18px',
+                        fontWeight: 800,
+                        letterSpacing: 1,
+                        boxShadow: '0 6px 14px rgba(0,0,0,0.2)',
+                        borderRadius: 6,
+                        pointerEvents: 'none',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {`OVERFLOW +${Math.round((shiftOverrunSec ?? 0) / 60)}m`}
                     </div>
                   )}
 
