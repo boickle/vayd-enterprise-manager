@@ -424,6 +424,7 @@ export default function Routing() {
   const [previewOpt, setPreviewOpt] = useState<UnifiedOption | null>(null);
   const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({});
   const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(null); // 👈 NEW
+  const [allowOverflow, setAllowOverflow] = useState(false);
 
   async function openMyDay(opt: UnifiedOption) {
     // 👇 allow undefined here
@@ -725,6 +726,12 @@ export default function Routing() {
       preferredWeekday,
       preferredTimeOfDay, // 'first' | 'middle' | 'end' | null
       preferEdge, // 'first' | 'last' | null
+      ...(allowOverflow
+        ? {
+            returnToDepot: 'afterHoursOk' as const,
+            tailOvertimeMinutes: 60 as const,
+          }
+        : {}),
     };
 
     const payload = multiDoctor
@@ -1165,6 +1172,23 @@ export default function Routing() {
                     onChange={(e) => setIgnoreEmergencyBlocks(e.target.checked)}
                   />
                   <span>Ignore reserve blocks</span>
+                </label>
+                <label
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'center',
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                    marginTop: 6, // small vertical spacing under the first checkbox
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={allowOverflow}
+                    onChange={(e) => setAllowOverflow(e.target.checked)}
+                  />
+                  <span>Overflow Booking</span>
                 </label>
               </Field>
 
