@@ -787,31 +787,61 @@ export default function Routing() {
     // If there are NO non-empty results with <=20 added minutes, prioritize EMPTY
     const hasNonEmptyUnder20 = rows.some((r) => !isEmptyDay(r) && isLowDrive(r));
 
-    // 🔑 Sort by preference score first (desc), then low added drive, then earlier time, then date.
+    // ---- helpers for sorting rules ----
+    const ADDED_CAP_MIN = 20;
+
+    const addedMin = (x: any) =>
+      Number.isFinite(x?.addedDriveSeconds) ? (x.addedDriveSeconds as number) / 60 : Infinity;
+
+    // NOTE: use the top-level isEmptyDay() helper you defined above
+
     rows.sort((a, b) => {
-      if (!hasNonEmptyUnder20) {
-        const ae = isEmptyDay(a);
-        const be = isEmptyDay(b);
-        if (ae !== be) return ae ? -1 : 1; // EMPTY first
+      const aEmpty = isEmptyDay(a);
+      const bEmpty = isEmptyDay(b);
+      const aAdded = addedMin(a);
+      const bAdded = addedMin(b);
+
+      // 1) EMPTY should be shown above any driving times > 20 minutes
+      if (aEmpty !== bEmpty) {
+        // If the *other* candidate is over the 20-min threshold, put EMPTY first
+        if (aEmpty && bAdded > ADDED_CAP_MIN) return -1;
+        if (bEmpty && aAdded > ADDED_CAP_MIN) return 1;
+        // Otherwise (<=20 min), don't special-case EMPTY; fall through to drive-first
       }
 
-      // (Optional) soft nudge: when both are <=20, prefer EMPTY
-      const aLow = isLowDrive(a),
-        bLow = isLowDrive(b);
-      if (aLow && bLow) {
-        const ae = isEmptyDay(a),
-          be = isEmptyDay(b);
-        if (ae !== be) return ae ? -1 : 1;
+      // 2) Drive time first (lowest addedDriveSeconds wins)
+      if (a.addedDriveSeconds !== b.addedDriveSeconds) {
+        const aVal = Number.isFinite(a.addedDriveSeconds)
+          ? a.addedDriveSeconds!
+          : Number.POSITIVE_INFINITY;
+        const bVal = Number.isFinite(b.addedDriveSeconds)
+          ? b.addedDriveSeconds!
+          : Number.POSITIVE_INFINITY;
+        if (aVal !== bVal) return aVal - bVal;
       }
+
+      // 3) Then "soonest available in the lot":
+      //    earlier date, then earlier suggestedStartSec
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+
+      if (a.suggestedStartSec !== b.suggestedStartSec) {
+        const aStart = Number.isFinite(a.suggestedStartSec)
+          ? a.suggestedStartSec!
+          : Number.POSITIVE_INFINITY;
+        const bStart = Number.isFinite(b.suggestedStartSec)
+          ? b.suggestedStartSec!
+          : Number.POSITIVE_INFINITY;
+        if (aStart !== bStart) return aStart - bStart;
+      }
+
+      // 4) Soft nudge: higher preference score next (does NOT override drive/time)
       const ap = a.prefScore ?? 0;
       const bp = b.prefScore ?? 0;
       if (bp !== ap) return bp - ap;
-      if (a.addedDriveSeconds !== b.addedDriveSeconds)
-        return a.addedDriveSeconds - b.addedDriveSeconds;
-      if (a.suggestedStartSec !== b.suggestedStartSec)
-        return a.suggestedStartSec - b.suggestedStartSec;
-      if (a.date !== b.date) return a.date.localeCompare(b.date);
-      return a.insertionIndex - b.insertionIndex;
+
+      // 5) Stable tie-breaks
+      if (a.insertionIndex !== b.insertionIndex) return a.insertionIndex - b.insertionIndex;
+      return 0;
     });
 
     return rows.map((r) => {
