@@ -1212,6 +1212,7 @@ export default function Routing() {
                     borderRadius: 6,
                     marginTop: 6, // small vertical spacing under the first checkbox
                   }}
+                  className={allowOverflow ? 'field-red' : ''}
                 >
                   <input
                     type="checkbox"
