@@ -361,3 +361,45 @@ export async function fetchClientPetsWithWellness(): Promise<Pet[]> {
 
   return out;
 }
+
+export type ClientReminder = {
+  id: number | string;
+  clientId?: number | string;
+  clientName?: string;
+  patientId?: number | string;
+  patientName?: string;
+  kind?: string;
+  description?: string;
+  dueIso?: string; // ISO datetime if available
+  dueDate?: string; // YYYY-MM-DD if date-only
+  statusName?: string; // pending | queued | sent | completed | etc.
+  lastNotifiedIso?: string;
+  completedIso?: string;
+};
+
+function mapClientReminder(r: any): ClientReminder {
+  return {
+    id: r?.id,
+    clientId: r?.clientId ?? r?.client?.id,
+    clientName:
+      r?.clientName ??
+      (r?.client ? `${r.client.firstName ?? ''} ${r.client.lastName ?? ''}`.trim() : undefined),
+    patientId: r?.patientId ?? r?.patient?.id,
+    patientName: r?.patientName ?? r?.patient?.name,
+    kind: r?.kind ?? r?.reminderType ?? r?.type,
+    description: r?.description ?? r?.text,
+    dueIso:
+      r?.dueIso ?? r?.dueAt ?? r?.dueDateTime ?? (r?.dueDate ? `${r.dueDate}T00:00:00` : undefined),
+    dueDate: r?.dueDate,
+    statusName: r?.statusName ?? r?.status,
+    lastNotifiedIso: r?.lastNotifiedIso ?? r?.lastSentAt ?? r?.lastNotifiedAt,
+    completedIso: r?.completedIso ?? r?.completedAt,
+  };
+}
+
+/** Client-portal reminders for the signed-in user (AuthGuard-backed). */
+export async function fetchClientReminders(): Promise<ClientReminder[]> {
+  const { data } = await http.get('/reminders/client'); // server resolves by req.user.email
+  const rows: any[] = Array.isArray(data) ? data : (data?.items ?? []);
+  return rows.map(mapClientReminder);
+}

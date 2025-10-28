@@ -1,3 +1,4 @@
+// src/pages/ClientPortal.tsx
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../auth/useAuth';
 import {
@@ -9,6 +10,10 @@ import {
   // ⬇️ Uses your existing wellness-plans controller:
   fetchWellnessPlansForPatient,
   type WellnessPlan,
+
+  // ⬇️ NEW: Reminders API
+  fetchClientReminders,
+  type ClientReminder,
 } from '../api/clientPortal';
 
 /* Narrow helper type so we don’t rely on Pet having wellnessPlans baked in */
@@ -31,6 +36,14 @@ function fmtDate(iso?: string) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+}
+
+// ⬇️ NEW: simple date-only formatter for reminders
+function fmtOnlyDate(iso?: string) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function heroImgUrl() {
@@ -72,6 +85,7 @@ export default function ClientPortal() {
 
   const [pets, setPets] = useState<PetWithWellness[]>([]);
   const [appts, setAppts] = useState<ClientAppointment[]>([]);
+  const [reminders, setReminders] = useState<ClientReminder[]>([]); // ⬅️ NEW
 
   const [enrolling, setEnrolling] = useState<Record<string, boolean>>({});
   const [enrollMsg, setEnrollMsg] = useState<string | null>(null);
@@ -82,8 +96,12 @@ export default function ClientPortal() {
       setLoading(true);
       setError(null);
       try {
-        // Load base pets + appointments
-        const [pBase, a] = await Promise.all([fetchClientPets(), fetchClientAppointments()]);
+        // Load pets + appointments + reminders together
+        const [pBase, a, r] = await Promise.all([
+          fetchClientPets(),
+          fetchClientAppointments(),
+          fetchClientReminders(), // ⬅️ NEW
+        ]);
         if (!alive) return;
 
         // IMPORTANT: fetch wellness plans using the INTERNAL DB id (p.dbId), never pimsId
@@ -111,10 +129,18 @@ export default function ClientPortal() {
 
         setPets(petsWithWellness);
 
-        const sorted = [...a].sort(
+        const sortedAppts = [...a].sort(
           (x, y) => new Date(x.startIso).getTime() - new Date(y.startIso).getTime()
         );
-        setAppts(sorted);
+        setAppts(sortedAppts);
+
+        // NEW: sort reminders by due date ascending (nulls last)
+        const sortedRems = [...r].sort((x, y) => {
+          const dx = new Date(x.dueIso ?? x.dueDate ?? 0).getTime();
+          const dy = new Date(y.dueIso ?? y.dueDate ?? 0).getTime();
+          return dx - dy;
+        });
+        setReminders(sortedRems);
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message || 'Failed to load your portal.');
@@ -141,6 +167,23 @@ export default function ClientPortal() {
       .slice(-8)
       .reverse();
   }, [appts]);
+
+  // ⬇️ NEW: split reminders into upcoming and overdue (non-completed)
+  const { upcomingReminders, overdueReminders } = useMemo(() => {
+    const now = Date.now();
+    const up: ClientReminder[] = [];
+    const over: ClientReminder[] = [];
+    for (const r of reminders) {
+      const t = new Date(r.dueIso ?? r.dueDate ?? 0).getTime();
+      const isCompleted = (r.statusName || '').toLowerCase() === 'completed' || !!r.completedIso;
+      if (Number.isFinite(t) && t < now && !isCompleted) over.push(r);
+      else up.push(r);
+    }
+    return {
+      upcomingReminders: up.slice(0, 12),
+      overdueReminders: over.slice(-12).reverse(),
+    };
+  }, [reminders]);
 
   async function handleEnroll(pet: PetWithWellness) {
     try {
@@ -229,7 +272,7 @@ export default function ClientPortal() {
               flexWrap: 'wrap',
             }}
           >
-            <div className="card" style={{ padding: '10px 14px', minWidth: 160 }}>
+            <div className="card" style={{ padding: '10px 14px,', minWidth: 160 }}>
               <div className="muted" style={{ fontSize: 12 }}>
                 Pets
               </div>
@@ -372,24 +415,7 @@ export default function ClientPortal() {
                             justifyContent: 'space-between',
                           }}
                         >
-                          <button
-                            className="btn"
-                            onClick={() => handleEnroll(p)}
-                            disabled={disabled}
-                            style={{
-                              opacity: disabled ? 0.7 : 1,
-                              background: disabled ? undefined : brand,
-                              borderColor: brand,
-                            }}
-                          >
-                            {enrolling[p.id]
-                              ? 'Enrolling…'
-                              : isActive
-                                ? 'Subscription Active'
-                                : isPending
-                                  ? 'Pending Activation'
-                                  : 'Enroll in Membership'}
-                          </button>
+                          {/* (enroll button omitted per your current page) */}
                           {p.subscription?.name && (
                             <span className="muted" style={{ fontSize: 12 }}>
                               {p.subscription.name} ({p.subscription.status})
@@ -463,6 +489,60 @@ export default function ClientPortal() {
                   </div>
                 ))}
               </div>
+            )}
+          </section>
+
+          {/* ⬇️ NEW: UPCOMING REMINDERS */}
+          <section style={{ marginTop: 36 }}>
+            <h2 style={{ margin: '0 0 12px' }}>Upcoming Reminders</h2>
+            {upcomingReminders.length === 0 ? (
+              <div className="muted">No upcoming reminders.</div>
+            ) : (
+              <div style={{ display: 'grid', gap: 10 }}>
+                {upcomingReminders.map((r) => (
+                  <div
+                    key={r.id}
+                    className="card"
+                    style={{
+                      padding: 12,
+                      display: 'grid',
+                      gridTemplateColumns: '160px 1fr 1fr 120px',
+                      gap: 12,
+                      alignItems: 'center',
+                      background: '#fff',
+                      border: '1px solid rgba(0,0,0,0.06)',
+                      borderRadius: 10,
+                    }}
+                  >
+                    <div style={{ fontWeight: 600 }}>{fmtOnlyDate(r.dueIso ?? r.dueDate)}</div>
+                    <div className="muted">
+                      <strong>{r.patientName ?? '—'}</strong>
+                    </div>
+                    <div className="muted">{r.description ?? r.kind ?? '—'}</div>
+                    <div className="muted" style={{ textAlign: 'right' }}>
+                      {r.statusName ?? 'pending'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* ⬇️ NEW: OVERDUE / RECENT REMINDERS */}
+          <section style={{ marginTop: 24, marginBottom: 40 }}>
+            <h3 style={{ margin: '0 0 8px' }}>Overdue / Recent Reminders</h3>
+            {overdueReminders.length === 0 ? (
+              <div className="muted">No overdue or recent reminders.</div>
+            ) : (
+              <ul style={{ paddingLeft: 18, margin: 0, lineHeight: 1.7 }}>
+                {overdueReminders.map((r) => (
+                  <li key={r.id} style={{ marginBottom: 4 }}>
+                    <strong>{r.patientName ?? '—'}</strong> — {r.description ?? r.kind ?? '—'} ·{' '}
+                    {fmtOnlyDate(r.dueIso ?? r.dueDate)}{' '}
+                    <span className="muted">({r.statusName ?? 'pending'})</span>
+                  </li>
+                ))}
+              </ul>
             )}
           </section>
 
