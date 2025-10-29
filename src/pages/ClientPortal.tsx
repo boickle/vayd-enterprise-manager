@@ -7,16 +7,12 @@ import {
   enrollPetInPlan,
   type Pet,
   type ClientAppointment,
-  // ⬇️ Uses your existing wellness-plans controller:
   fetchWellnessPlansForPatient,
   type WellnessPlan,
-
-  // ⬇️ NEW: Reminders API
   fetchClientReminders,
   type ClientReminder,
 } from '../api/clientPortal';
 
-/* Narrow helper type so we don’t rely on Pet having wellnessPlans baked in */
 type PetWithWellness = Pet & {
   wellnessPlans?: Pick<WellnessPlan, 'id' | 'packageName' | 'name'>[];
 };
@@ -30,27 +26,31 @@ function fmtDateTime(iso?: string) {
   if (Number.isNaN(d.getTime())) return iso;
   return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 }
-
 function fmtDate(iso?: string) {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
 }
-
-// ⬇️ NEW: simple date-only formatter for reminders
 function fmtOnlyDate(iso?: string) {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
-
+function fmtReminderDate(r: ClientReminder): string {
+  if (!r?.dueIso) return '—';
+  const t = Date.parse(r.dueIso);
+  if (!Number.isFinite(t)) return r.dueIso;
+  return new Date(t).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
 function heroImgUrl() {
-  // Calming clinic / vet / animal vibe
   return 'https://images.unsplash.com/photo-1601758123927-196d1b1e6c3f?q=80&w=1600&auto=format&fit=crop';
 }
-
 function petImg(p: Pet) {
   const s = (p.species || '').toLowerCase();
   if (s.includes('canine') || s.includes('dog')) {
@@ -61,7 +61,6 @@ function petImg(p: Pet) {
   }
   return 'https://images.unsplash.com/photo-1507146426996-ef05306b995a?q=80&w=800&auto=format&fit=crop';
 }
-
 function groupApptsByDay(appts: ClientAppointment[]) {
   const map = new Map<string, ClientAppointment[]>();
   for (const a of appts) {
@@ -85,8 +84,7 @@ export default function ClientPortal() {
 
   const [pets, setPets] = useState<PetWithWellness[]>([]);
   const [appts, setAppts] = useState<ClientAppointment[]>([]);
-  const [reminders, setReminders] = useState<ClientReminder[]>([]); // ⬅️ NEW
-
+  const [reminders, setReminders] = useState<ClientReminder[]>([]);
   const [enrolling, setEnrolling] = useState<Record<string, boolean>>({});
   const [enrollMsg, setEnrollMsg] = useState<string | null>(null);
 
@@ -96,29 +94,24 @@ export default function ClientPortal() {
       setLoading(true);
       setError(null);
       try {
-        // Load pets + appointments + reminders together
         const [pBase, a, r] = await Promise.all([
           fetchClientPets(),
           fetchClientAppointments(),
-          fetchClientReminders(), // ⬅️ NEW
+          fetchClientReminders(),
         ]);
         if (!alive) return;
 
-        // IMPORTANT: fetch wellness plans using the INTERNAL DB id (p.dbId), never pimsId
         const petsWithWellness = await Promise.all(
           pBase.map(async (pet) => {
             try {
               const dbId = (pet as any).dbId as string | undefined;
-              if (!dbId) {
-                // no internal id available → don't call endpoint with pimsId
-                return pet;
-              }
-              const plans = await fetchWellnessPlansForPatient(dbId); // <-- dbId, not pet.id
+              if (!dbId) return pet;
+              const plans = await fetchWellnessPlansForPatient(dbId);
               const slim =
                 plans?.map((pl) => ({
                   id: pl.id,
-                  packageName: pl.package?.name ?? pl.packageName ?? null, // prefer package name
-                  name: pl.name ?? null, // keep plan name as fallback
+                  packageName: pl.package?.name ?? pl.packageName ?? null,
+                  name: pl.name ?? null,
                 })) ?? [];
               return { ...pet, wellnessPlans: slim };
             } catch {
@@ -128,19 +121,10 @@ export default function ClientPortal() {
         );
 
         setPets(petsWithWellness);
-
-        const sortedAppts = [...a].sort(
-          (x, y) => new Date(x.startIso).getTime() - new Date(y.startIso).getTime()
+        setAppts([...a].sort((x, y) => +new Date(x.startIso) - +new Date(y.startIso)));
+        setReminders(
+          [...r].sort((x, y) => Date.parse(x.dueIso ?? '') - Date.parse(y.dueIso ?? ''))
         );
-        setAppts(sortedAppts);
-
-        // NEW: sort reminders by due date ascending (nulls last)
-        const sortedRems = [...r].sort((x, y) => {
-          const dx = new Date(x.dueIso ?? x.dueDate ?? 0).getTime();
-          const dy = new Date(y.dueIso ?? y.dueDate ?? 0).getTime();
-          return dx - dy;
-        });
-        setReminders(sortedRems);
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message || 'Failed to load your portal.');
@@ -157,9 +141,7 @@ export default function ClientPortal() {
     const now = Date.now();
     return appts.filter((a) => new Date(a.startIso).getTime() >= now);
   }, [appts]);
-
   const upcomingByDay = useMemo(() => groupApptsByDay(upcomingAppts), [upcomingAppts]);
-
   const pastAppts = useMemo(() => {
     const now = Date.now();
     return appts
@@ -168,69 +150,84 @@ export default function ClientPortal() {
       .reverse();
   }, [appts]);
 
-  // ⬇️ NEW: split reminders into upcoming and overdue (non-completed)
   const { upcomingReminders, overdueReminders } = useMemo(() => {
     const now = Date.now();
     const up: ClientReminder[] = [];
     const over: ClientReminder[] = [];
     for (const r of reminders) {
-      const t = new Date(r.dueIso ?? r.dueDate ?? 0).getTime();
-      const isCompleted = (r.statusName || '').toLowerCase() === 'completed' || !!r.completedIso;
-      if (Number.isFinite(t) && t < now && !isCompleted) over.push(r);
+      const t = r.dueIso ? Date.parse(r.dueIso) : NaN;
+      const done = (r.statusName || '').toLowerCase() === 'completed' || !!r.completedIso;
+      if (Number.isFinite(t) && t < now && !done) over.push(r);
       else up.push(r);
     }
-    return {
-      upcomingReminders: up.slice(0, 12),
-      overdueReminders: over.slice(-12).reverse(),
-    };
+    over.sort((a, b) => Date.parse(a.dueIso!) - Date.parse(b.dueIso!));
+    up.sort((a, b) => Date.parse(a.dueIso!) - Date.parse(b.dueIso!));
+    return { upcomingReminders: up.slice(0, 12), overdueReminders: over.slice(-12) };
   }, [reminders]);
 
-  async function handleEnroll(pet: PetWithWellness) {
-    try {
-      setEnrollMsg(null);
-      setEnrolling((s) => ({ ...s, [pet.id]: true }));
-      const sub = await enrollPetInPlan(pet.id);
-      setPets((list) =>
-        list.map((p) =>
-          p.id === pet.id ? { ...p, subscription: sub || { status: 'pending' as const } } : p
-        )
-      );
-      setEnrollMsg(`Enrolled ${pet.name} successfully.`);
-    } catch (e: any) {
-      setEnrollMsg(e?.message || `Failed to enroll ${pet.name}.`);
-    } finally {
-      setEnrolling((s) => ({ ...s, [pet.id]: false }));
-      setTimeout(() => setEnrollMsg(null), 3500);
-    }
-  }
-
-  // brand helpers
-  const brand = 'var(--brand, #0f766e)'; // teal-ish default if var not set
+  const brand = 'var(--brand, #0f766e)';
   const brandSoft = 'var(--brand-soft, #e6f7f5)';
 
   return (
     <div style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px' }}>
+      {/* Scoped responsive styles */}
+      <style>{`
+        .cp-card { border: 1px solid rgba(0,0,0,0.06); border-radius: 12px; background: #fff; }
+        .cp-muted { color: rgba(0,0,0,0.62); }
+        .cp-grid-gap { display: grid; gap: 12px; }
+        .cp-hero { position: relative; overflow: hidden; border-radius: 16px; }
+        .cp-hero-img { position: absolute; inset: 0; object-fit: cover; filter: brightness(0.9) saturate(1.1); }
+        .cp-hero-inner { padding: 28px 20px; min-height: 200px; }
+        .cp-stat { padding: 10px 14px; min-width: 140px; }
+        .cp-pets { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+        .cp-pet-img { height: 120px; }
+        .cp-appt-row, .cp-rem-row {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+          align-items: center;
+          padding: 10px 12px;
+        }
+        .cp-hide-xs { display: none; }
+        .cp-section { margin-top: 28px; }
+        h1.cp-title { margin: 12px 0 4px; font-size: 28px; }
+        h2.cp-h2 { margin: 0 0 10px; font-size: 20px; }
+        h3.cp-h3 { margin: 0 0 8px; font-size: 16px; }
+
+        /* >= 480px */
+        @media (min-width: 480px) {
+          .cp-hero-inner { padding: 28px 24px; }
+          .cp-pets { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+          .cp-pet-img { height: 130px; }
+        }
+
+        /* >= 640px (sm) */
+        @media (min-width: 640px) {
+          h1.cp-title { font-size: 32px; }
+          .cp-hero-inner { padding: 32px 28px; min-height: 220px; }
+          .cp-appt-row {
+            grid-template-columns: 160px 1fr 1fr 1fr 120px; /* time | pet | type | addr | status */
+          }
+          .cp-rem-row {
+            grid-template-columns: 140px 1fr 1fr 120px; /* date | pet | desc | status */
+          }
+          .cp-hide-xs { display: initial; }
+          .cp-pet-img { height: 140px; }
+        }
+
+        /* >= 900px */
+        @media (min-width: 900px) {
+          .cp-pets { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+        }
+      `}</style>
+
       {/* HERO */}
       <div
-        style={{
-          position: 'relative',
-          overflow: 'hidden',
-          borderRadius: 16,
-          background: `linear-gradient( to right, ${brandSoft}, #fff )`,
-        }}
+        className="cp-hero"
+        style={{ background: `linear-gradient( to right, ${brandSoft}, #fff )` }}
       >
-        <img
-          src={heroImgUrl()}
-          alt=""
-          style={{
-            position: 'absolute',
-            inset: 0,
-            objectFit: 'cover',
-            filter: 'brightness(0.9) saturate(1.1)',
-          }}
-        />
-
-        <div style={{ padding: '32px 28px', minHeight: 220 }}>
+        <img src={heroImgUrl()} alt="" className="cp-hero-img" />
+        <div className="cp-hero-inner">
           <div
             style={{
               display: 'inline-flex',
@@ -251,35 +248,26 @@ export default function ClientPortal() {
                 background: brand,
               }}
             />
-            <span className="muted" style={{ fontSize: 13 }}>
+            <span className="cp-muted" style={{ fontSize: 13 }}>
               You’re signed in as <strong style={{ color: 'inherit' }}>{userEmail}</strong>
             </span>
           </div>
 
-          <h1 style={{ marginTop: 14, marginBottom: 6, fontSize: 32 }}>
-            Welcome to your Client Portal
-          </h1>
-          <p className="muted" style={{ maxWidth: 640, margin: 0 }}>
+          <h1 className="cp-title">Welcome to your Client Portal</h1>
+          <p className="cp-muted" style={{ maxWidth: 640, margin: 0 }}>
             See your pets, manage subscriptions, and review upcoming visits—all in one place.
           </p>
 
           {/* Tiny stats */}
-          <div
-            style={{
-              marginTop: 18,
-              display: 'flex',
-              gap: 12,
-              flexWrap: 'wrap',
-            }}
-          >
-            <div className="card" style={{ padding: '10px 14px,', minWidth: 160 }}>
-              <div className="muted" style={{ fontSize: 12 }}>
+          <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <div className="cp-card cp-stat">
+              <div className="cp-muted" style={{ fontSize: 12 }}>
                 Pets
               </div>
               <div style={{ fontWeight: 700, fontSize: 20 }}>{pets.length}</div>
             </div>
-            <div className="card" style={{ padding: '10px 14px', minWidth: 220 }}>
-              <div className="muted" style={{ fontSize: 12 }}>
+            <div className="cp-card cp-stat" style={{ minWidth: 200 }}>
+              <div className="cp-muted" style={{ fontSize: 12 }}>
                 Next visit
               </div>
               <div style={{ fontWeight: 600, fontSize: 16 }}>
@@ -291,12 +279,12 @@ export default function ClientPortal() {
       </div>
 
       {/* NOTICES */}
-      {loading && <div style={{ marginTop: 20 }}>Loading your information…</div>}
-      {error && <div style={{ marginTop: 20, color: '#b00020' }}>{error}</div>}
+      {loading && <div style={{ marginTop: 16 }}>Loading your information…</div>}
+      {error && <div style={{ marginTop: 16, color: '#b00020' }}>{error}</div>}
       {enrollMsg && (
         <div
           style={{
-            marginTop: 16,
+            marginTop: 14,
             padding: '10px 12px',
             border: `1px solid ${brand}`,
             borderRadius: 8,
@@ -311,35 +299,29 @@ export default function ClientPortal() {
       {!loading && !error && (
         <>
           {/* PETS */}
-          <section style={{ marginTop: 28 }}>
+          <section className="cp-section">
             <div
               style={{
                 display: 'flex',
                 alignItems: 'baseline',
                 justifyContent: 'space-between',
-                marginBottom: 12,
+                marginBottom: 10,
               }}
             >
-              <h2 style={{ margin: 0 }}>Your Pets</h2>
+              <h2 className="cp-h2" style={{ margin: 0 }}>
+                Your Pets
+              </h2>
             </div>
 
             {pets.length === 0 ? (
-              <div className="muted">No pets found yet.</div>
+              <div className="cp-muted">No pets found yet.</div>
             ) : (
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-                  gap: 16,
-                }}
-              >
+              <div className="cp-pets">
                 {pets.map((p) => {
                   const subStatus = p.subscription?.status;
                   const isActive = subStatus === 'active';
                   const isPending = subStatus === 'pending';
-                  const disabled = isActive || isPending || !!enrolling[p.id];
 
-                  // Wellness package label(s)
                   const wellnessNames = (p.wellnessPlans || [])
                     .map((w) => w.packageName || w.name)
                     .filter(Boolean)
@@ -348,16 +330,13 @@ export default function ClientPortal() {
                   return (
                     <article
                       key={p.id}
-                      className="card"
-                      style={{
-                        borderRadius: 14,
-                        overflow: 'hidden',
-                        border: '1px solid rgba(0,0,0,0.06)',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-                        background: '#fff',
-                      }}
+                      className="cp-card"
+                      style={{ borderRadius: 14, overflow: 'hidden' }}
                     >
-                      <div style={{ position: 'relative', height: 140, overflow: 'hidden' }}>
+                      <div
+                        className="cp-pet-img"
+                        style={{ position: 'relative', overflow: 'hidden' }}
+                      >
                         <img
                           src={petImg(p)}
                           alt=""
@@ -381,47 +360,52 @@ export default function ClientPortal() {
                         )}
                       </div>
 
-                      <div style={{ padding: 14 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <strong style={{ fontSize: 16 }}>{p.name}</strong>
-                          <span className="muted" style={{ fontSize: 12 }}>
+                      <div style={{ padding: 12 }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            gap: 8,
+                            alignItems: 'center',
+                          }}
+                        >
+                          <strong
+                            style={{
+                              fontSize: 16,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {p.name}
+                          </strong>
+                          <span
+                            className="cp-muted"
+                            style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis' }}
+                          >
                             {p.id}
                           </span>
                         </div>
 
-                        <div className="muted" style={{ marginTop: 6, fontSize: 14 }}>
+                        <div className="cp-muted" style={{ marginTop: 6, fontSize: 14 }}>
                           {p.species || p.breed
                             ? [p.species, p.breed].filter(Boolean).join(' • ')
                             : '—'}
                         </div>
                         {p.dob && (
-                          <div className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+                          <div className="cp-muted" style={{ marginTop: 4, fontSize: 12 }}>
                             DOB: {new Date(p.dob).toLocaleDateString()}
                           </div>
                         )}
-
-                        {/* ⬇️ Wellness package names */}
-                        <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
+                        <div className="cp-muted" style={{ marginTop: 8, fontSize: 13 }}>
                           <strong style={{ fontWeight: 600 }}>Wellness:</strong>{' '}
                           {wellnessNames || '—'}
                         </div>
-
-                        <div
-                          style={{
-                            marginTop: 12,
-                            display: 'flex',
-                            gap: 8,
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                          }}
-                        >
-                          {/* (enroll button omitted per your current page) */}
-                          {p.subscription?.name && (
-                            <span className="muted" style={{ fontSize: 12 }}>
-                              {p.subscription.name} ({p.subscription.status})
-                            </span>
-                          )}
-                        </div>
+                        {p.subscription?.name && (
+                          <div className="cp-muted" style={{ marginTop: 10, fontSize: 12 }}>
+                            {p.subscription.name} ({p.subscription.status})
+                          </div>
+                        )}
                       </div>
                     </article>
                   );
@@ -431,15 +415,15 @@ export default function ClientPortal() {
           </section>
 
           {/* UPCOMING APPOINTMENTS */}
-          <section style={{ marginTop: 36 }}>
-            <h2 style={{ margin: '0 0 12px' }}>Upcoming Appointments</h2>
+          <section className="cp-section">
+            <h2 className="cp-h2">Upcoming Appointments</h2>
 
             {upcomingAppts.length === 0 ? (
-              <div className="muted">No upcoming appointments.</div>
+              <div className="cp-muted">No upcoming appointments.</div>
             ) : (
-              <div style={{ display: 'grid', gap: 12 }}>
+              <div className="cp-grid-gap">
                 {upcomingByDay.map(({ key, label, items }) => (
-                  <div key={key} className="card" style={{ padding: 16 }}>
+                  <div key={key} className="cp-card" style={{ padding: 14 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <div
                         style={{
@@ -450,38 +434,40 @@ export default function ClientPortal() {
                           flexShrink: 0,
                         }}
                       />
-                      <h3 style={{ margin: 0 }}>{label}</h3>
+                      <h3 className="cp-h3" style={{ margin: 0 }}>
+                        {label}
+                      </h3>
                     </div>
 
-                    <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
+                    <div className="cp-grid-gap" style={{ marginTop: 10 }}>
                       {items.map((a) => (
                         <div
                           key={a.id}
-                          style={{
-                            display: 'grid',
-                            gridTemplateColumns: '160px 1fr 1fr 1fr 120px',
-                            gap: 12,
-                            alignItems: 'center',
-                            padding: '10px 12px',
-                            border: '1px solid rgba(0,0,0,0.06)',
-                            borderRadius: 10,
-                            background: '#fff',
-                          }}
+                          className="cp-card"
+                          style={{ padding: 0, overflow: 'hidden' }}
                         >
-                          <div style={{ fontWeight: 600 }}>{fmtDateTime(a.startIso)}</div>
-                          <div className="muted">{a.patientName ?? '—'}</div>
-                          <div className="muted">
-                            {a.appointmentTypeName ??
-                              (typeof a.appointmentType === 'string'
-                                ? a.appointmentType
-                                : a.appointmentType?.name) ??
-                              '—'}
-                          </div>
-                          <div className="muted">
-                            {[a.address1, a.city, a.state, a.zip].filter(Boolean).join(', ') || '—'}
-                          </div>
-                          <div className="muted" style={{ textAlign: 'right' }}>
-                            {a.statusName ?? '—'}
+                          <div className="cp-appt-row">
+                            <div style={{ fontWeight: 600 }}>{fmtDateTime(a.startIso)}</div>
+                            <div className="cp-muted">
+                              <strong>{a.patientName ?? '—'}</strong>
+                            </div>
+                            <div className="cp-muted cp-hide-xs">
+                              {a.appointmentTypeName ??
+                                (typeof a.appointmentType === 'string'
+                                  ? a.appointmentType
+                                  : a.appointmentType?.name) ??
+                                '—'}
+                            </div>
+                            <div
+                              className="cp-muted cp-hide-xs"
+                              style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
+                            >
+                              {[a.address1, a.city, a.state, a.zip].filter(Boolean).join(', ') ||
+                                '—'}
+                            </div>
+                            <div className="cp-muted cp-hide-xs" style={{ textAlign: 'right' }}>
+                              {a.statusName ?? '—'}
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -492,35 +478,29 @@ export default function ClientPortal() {
             )}
           </section>
 
-          {/* ⬇️ NEW: UPCOMING REMINDERS */}
-          <section style={{ marginTop: 36 }}>
-            <h2 style={{ margin: '0 0 12px' }}>Upcoming Reminders</h2>
+          {/* UPCOMING REMINDERS */}
+          <section className="cp-section">
+            <h2 className="cp-h2">Upcoming Reminders</h2>
             {upcomingReminders.length === 0 ? (
-              <div className="muted">No upcoming reminders.</div>
+              <div className="cp-muted">No upcoming reminders.</div>
             ) : (
-              <div style={{ display: 'grid', gap: 10 }}>
+              <div className="cp-grid-gap">
                 {upcomingReminders.map((r) => (
-                  <div
-                    key={r.id}
-                    className="card"
-                    style={{
-                      padding: 12,
-                      display: 'grid',
-                      gridTemplateColumns: '160px 1fr 1fr 120px',
-                      gap: 12,
-                      alignItems: 'center',
-                      background: '#fff',
-                      border: '1px solid rgba(0,0,0,0.06)',
-                      borderRadius: 10,
-                    }}
-                  >
-                    <div style={{ fontWeight: 600 }}>{fmtOnlyDate(r.dueIso ?? r.dueDate)}</div>
-                    <div className="muted">
-                      <strong>{r.patientName ?? '—'}</strong>
-                    </div>
-                    <div className="muted">{r.description ?? r.kind ?? '—'}</div>
-                    <div className="muted" style={{ textAlign: 'right' }}>
-                      {r.statusName ?? 'pending'}
+                  <div key={r.id} className="cp-card">
+                    <div className="cp-rem-row">
+                      <div style={{ fontWeight: 600 }}>{fmtReminderDate(r)}</div>
+                      <div className="cp-muted">
+                        <strong>{r.patientName ?? '—'}</strong>
+                      </div>
+                      <div
+                        className="cp-muted cp-hide-xs"
+                        style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
+                      >
+                        {r.description ?? r.kind ?? '—'}
+                      </div>
+                      <div className="cp-muted cp-hide-xs" style={{ textAlign: 'right' }}>
+                        {r.statusName ?? 'pending'}
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -528,18 +508,18 @@ export default function ClientPortal() {
             )}
           </section>
 
-          {/* ⬇️ NEW: OVERDUE / RECENT REMINDERS */}
-          <section style={{ marginTop: 24, marginBottom: 40 }}>
-            <h3 style={{ margin: '0 0 8px' }}>Overdue / Recent Reminders</h3>
+          {/* OVERDUE / RECENT REMINDERS */}
+          <section className="cp-section" style={{ marginBottom: 36 }}>
+            <h3 className="cp-h3">Overdue / Recent Reminders</h3>
             {overdueReminders.length === 0 ? (
-              <div className="muted">No overdue or recent reminders.</div>
+              <div className="cp-muted">No overdue or recent reminders.</div>
             ) : (
               <ul style={{ paddingLeft: 18, margin: 0, lineHeight: 1.7 }}>
                 {overdueReminders.map((r) => (
                   <li key={r.id} style={{ marginBottom: 4 }}>
                     <strong>{r.patientName ?? '—'}</strong> — {r.description ?? r.kind ?? '—'} ·{' '}
                     {fmtOnlyDate(r.dueIso ?? r.dueDate)}{' '}
-                    <span className="muted">({r.statusName ?? 'pending'})</span>
+                    <span className="cp-muted">({r.statusName ?? 'pending'})</span>
                   </li>
                 ))}
               </ul>
@@ -547,10 +527,10 @@ export default function ClientPortal() {
           </section>
 
           {/* RECENT APPOINTMENTS */}
-          <section style={{ marginTop: 32, marginBottom: 40 }}>
-            <h3 style={{ margin: '0 0 8px' }}>Recent Appointments</h3>
+          <section className="cp-section" style={{ marginBottom: 36 }}>
+            <h3 className="cp-h3">Recent Appointments</h3>
             {pastAppts.length === 0 ? (
-              <div className="muted">No recent appointments.</div>
+              <div className="cp-muted">No recent appointments.</div>
             ) : (
               <ul style={{ paddingLeft: 18, margin: 0, lineHeight: 1.7 }}>
                 {pastAppts.map((a) => (

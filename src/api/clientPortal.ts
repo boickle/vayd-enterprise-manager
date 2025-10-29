@@ -362,6 +362,7 @@ export async function fetchClientPetsWithWellness(): Promise<Pet[]> {
   return out;
 }
 
+// api/clientPortal.ts
 export type ClientReminder = {
   id: number | string;
   clientId?: number | string;
@@ -370,36 +371,49 @@ export type ClientReminder = {
   patientName?: string;
   kind?: string;
   description?: string;
-  dueIso?: string; // ISO datetime if available
-  dueDate?: string; // YYYY-MM-DD if date-only
+  dueIso?: string; // full ISO like 2025-10-18T13:57:00.000Z
+  dueDate?: string; // optional date-only (YYYY-MM-DD) if you ever send that
   statusName?: string; // pending | queued | sent | completed | etc.
   lastNotifiedIso?: string;
   completedIso?: string;
 };
 
-function mapClientReminder(r: any): ClientReminder {
+// ✅ Do NOT append "T00:00:00". Keep server ISO as-is.
+export function mapClientReminder(r: any): ClientReminder {
+  const patient = r?.patient;
+  const client = r?.client;
+
+  const dueIso =
+    r?.dueIso ??
+    r?.dueDate ?? // server sends full ISO in dueDate (per your JSON)
+    null;
+
   return {
     id: r?.id,
-    clientId: r?.clientId ?? r?.client?.id,
+    clientId: r?.clientId ?? client?.id ?? undefined,
     clientName:
       r?.clientName ??
-      (r?.client ? `${r.client.firstName ?? ''} ${r.client.lastName ?? ''}`.trim() : undefined),
-    patientId: r?.patientId ?? r?.patient?.id,
-    patientName: r?.patientName ?? r?.patient?.name,
+      (client ? `${client.firstName ?? ''} ${client.lastName ?? ''}`.trim() : undefined),
+    patientId: r?.patientId ?? patient?.id ?? undefined,
+    patientName: r?.patientName ?? patient?.name ?? undefined,
     kind: r?.kind ?? r?.reminderType ?? r?.type,
     description: r?.description ?? r?.text,
-    dueIso:
-      r?.dueIso ?? r?.dueAt ?? r?.dueDateTime ?? (r?.dueDate ? `${r.dueDate}T00:00:00` : undefined),
-    dueDate: r?.dueDate,
-    statusName: r?.statusName ?? r?.status,
-    lastNotifiedIso: r?.lastNotifiedIso ?? r?.lastSentAt ?? r?.lastNotifiedAt,
-    completedIso: r?.completedIso ?? r?.completedAt,
+    dueIso: typeof dueIso === 'string' ? dueIso : undefined,
+    // leave dueDate undefined unless you truly have a YYYY-MM-DD string
+    statusName: r?.statusName ?? (r?.isSatisfied ? 'completed' : 'pending'),
+    lastNotifiedIso: r?.lastNotifiedIso ?? undefined,
+    completedIso:
+      r?.completedIso ?? (r?.isSatisfied ? (r?.updated ?? r?.externalUpdated) : undefined),
   };
 }
 
-/** Client-portal reminders for the signed-in user (AuthGuard-backed). */
+// Example fetch using the mapper + sort by due date
 export async function fetchClientReminders(): Promise<ClientReminder[]> {
-  const { data } = await http.get('/reminders/client'); // server resolves by req.user.email
-  const rows: any[] = Array.isArray(data) ? data : (data?.items ?? []);
-  return rows.map(mapClientReminder);
+  const resp = await http.get('/reminders/client'); // your endpoint
+  const list = Array.isArray(resp.data) ? resp.data.map(mapClientReminder) : [];
+  return list.sort((a, b) => {
+    const ta = a.dueIso ? Date.parse(a.dueIso) : Number.POSITIVE_INFINITY;
+    const tb = b.dueIso ? Date.parse(b.dueIso) : Number.POSITIVE_INFINITY;
+    return ta - tb;
+  });
 }
