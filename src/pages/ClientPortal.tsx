@@ -18,6 +18,14 @@ type PetWithWellness = Pet & {
 };
 
 /* ---------------------------
+   App Constants (edit me)
+---------------------------- */
+const CONTACT_PHONE = '+1-555-555-5555'; // TODO: set your real phone number
+const CONTACT_EMAIL = 'support@yourpractice.com'; // TODO: set your real email
+const BOOKING_PATH = '/booking'; // TODO: update if you use a different route
+const CONTACT_PATH = '/contact'; // optional route if you have one
+
+/* ---------------------------
    Helpers
 ---------------------------- */
 function fmtDateTime(iso?: string) {
@@ -168,10 +176,36 @@ export default function ClientPortal() {
   const brand = 'var(--brand, #0f766e)';
   const brandSoft = 'var(--brand-soft, #e6f7f5)';
 
+  /* ---------------------------
+     Bottom Nav Handlers
+  ---------------------------- */
+  function handleBook() {
+    if (BOOKING_PATH) {
+      window.location.assign(BOOKING_PATH);
+    }
+  }
+  function handleContact() {
+    if (CONTACT_PATH) {
+      window.location.assign(CONTACT_PATH);
+    } else {
+      window.location.assign(`mailto:${CONTACT_EMAIL}`);
+    }
+  }
+  function handleCall() {
+    window.location.assign(`tel:${CONTACT_PHONE}`);
+  }
+  function handleMessages() {
+    // If you have a /messages route or in-app inbox, navigate there:
+    window.location.assign('/messages'); // TODO: update or remove if not used
+  }
+
   return (
-    <div style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px' }}>
+    <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px' }}>
       {/* Scoped responsive styles */}
       <style>{`
+        :root {
+          --bottom-nav-h: 68px;
+        }
         .cp-card { border: 1px solid rgba(0,0,0,0.06); border-radius: 12px; background: #fff; }
         .cp-muted { color: rgba(0,0,0,0.62); }
         .cp-grid-gap { display: grid; gap: 12px; }
@@ -193,6 +227,45 @@ export default function ClientPortal() {
         h1.cp-title { margin: 12px 0 4px; font-size: 28px; }
         h2.cp-h2 { margin: 0 0 10px; font-size: 20px; }
         h3.cp-h3 { margin: 0 0 8px; font-size: 16px; }
+
+        /* Bottom nav (hidden by default; shown on small screens) */
+        .cp-bottom-nav {
+          position: fixed;
+          left: 0; right: 0; bottom: 0;
+          height: var(--bottom-nav-h);
+          display: none;
+          background: rgba(255,255,255,0.98);
+          backdrop-filter: saturate(150%) blur(8px);
+          border-top: 1px solid rgba(0,0,0,0.08);
+          z-index: 1000;
+          padding-bottom: env(safe-area-inset-bottom);
+        }
+        .cp-bottom-inner {
+          height: 100%;
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          align-items: center;
+          gap: 4px;
+          max-width: 1120px;
+          margin: 0 auto;
+          padding: 0 8px;
+        }
+        .cp-tab {
+          height: calc(var(--bottom-nav-h) - 10px - env(safe-area-inset-bottom));
+          border: none;
+          background: transparent;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          align-items: center;
+          justify-content: center;
+          border-radius: 10px;
+          font-size: 12px;
+          color: #111;
+          text-decoration: none;
+        }
+        .cp-tab:active { background: rgba(15, 118, 110, 0.08); }
+        .cp-tab svg { width: 22px; height: 22px; }
 
         /* >= 480px */
         @media (min-width: 480px) {
@@ -218,6 +291,12 @@ export default function ClientPortal() {
         /* >= 900px */
         @media (min-width: 900px) {
           .cp-pets { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+        }
+
+        /* Show bottom nav & add bottom padding on small screens only */
+        @media (max-width: 639px) {
+          .cp-bottom-nav { display: block; }
+          .cp-wrap { padding-bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + 12px); }
         }
       `}</style>
 
@@ -548,6 +627,52 @@ export default function ClientPortal() {
           </section>
         </>
       )}
+
+      {/* ---------------------------
+          Mobile Bottom Navigation
+          (shows only under 640px)
+      ---------------------------- */}
+      <nav className="cp-bottom-nav" aria-label="Primary">
+        <div className="cp-bottom-inner">
+          <button className="cp-tab" onClick={handleBook} aria-label="Book an appointment">
+            {/* calendar-plus icon (inline svg) */}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+              <line x1="12" y1="14" x2="12" y2="20" />
+              <line x1="9" y1="17" x2="15" y2="17" />
+            </svg>
+            <span>Book</span>
+          </button>
+
+          <button className="cp-tab" onClick={handleContact} aria-label="Contact us">
+            {/* chat-bubble */}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+            </svg>
+            <span>Contact</span>
+          </button>
+
+          <button className="cp-tab" onClick={handleCall} aria-label="Call us">
+            {/* phone */}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.08 4.18 2 2 0 0 1 4.06 2h3a2 2 0 0 1 2 1.72c.12.9.32 1.77.59 2.6a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.48-1.11a2 2 0 0 1 2.11-.45c.83.27 1.7.47 2.6.59A2 2 0 0 1 22 16.92z" />
+            </svg>
+            <span>Call</span>
+          </button>
+
+          <button className="cp-tab" onClick={handleMessages} aria-label="Messages">
+            {/* inbox */}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M22 12h-6l-2 3h-4l-2-3H2" />
+              <path d="M5 7h14l3 5v6a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3v-6l3-5z" />
+            </svg>
+            <span>Messages</span>
+          </button>
+        </div>
+      </nav>
     </div>
   );
 }
