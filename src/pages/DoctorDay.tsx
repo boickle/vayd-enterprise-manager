@@ -801,6 +801,7 @@ export default function DoctorDay({
     const points = appts.reduce((total, a) => {
       if ((a as any)?.isPersonalBlock) return total;
       const type = (a?.appointmentType || '').toLowerCase();
+      console.log(type, total);
       if (type === 'euthanasia') return total + 2;
       if (type.includes('tech appointment')) return total + 0.5;
       return total + 1;
@@ -1041,6 +1042,15 @@ export default function DoctorDay({
 
   const whitePctText = Number.isFinite(whitePct) ? `${whitePct.toFixed(0)}%` : '—';
 
+  const points = appts.reduce((total, a) => {
+    if ((a as any)?.isPersonalBlock) return total;
+    const type = (a?.appointmentType || '').toLowerCase();
+    console.log(type, total);
+    if (type === 'euthanasia') return total + 2;
+    if (type.includes('tech appointment')) return total + 0.5;
+    return total + 1;
+  }, 0);
+
   /* ---------- Render ---------- */
   return (
     <div className="dd-section">
@@ -1112,7 +1122,7 @@ export default function DoctorDay({
           style={{ marginTop: 6, display: 'flex', gap: 12, flexWrap: 'wrap' }}
         >
           <span>
-            <strong>Points:</strong> {appts.filter((a: any) => !(a as any).isPersonalBlock).length}
+            <strong>Points:</strong> {points}
           </span>
           <span style={{ color: driveColor }}>
             <strong>Drive:</strong> {formatHM(stats.driveMin)}
