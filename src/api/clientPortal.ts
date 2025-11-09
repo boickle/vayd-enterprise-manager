@@ -12,10 +12,41 @@ export type Pet = {
   breed?: string;
   dob?: string; // ISO
   subscription?: { id?: string; name?: string; status: 'active' | 'pending' | 'canceled' };
+  primaryProviderName?: string | null;
 
   /** Optional: attached from /wellness-plans?patientId=<DB id> */
   wellnessPlans?: WellnessPlan[];
 };
+
+function normalizeProviderName(raw: any): string | undefined {
+  const direct =
+    typeof raw?.primaryProviderName === 'string' ? raw.primaryProviderName :
+    typeof raw?.providerName === 'string' ? raw.providerName :
+    typeof raw?.primaryVetName === 'string' ? raw.primaryVetName :
+    undefined;
+
+  if (direct && direct.trim()) return direct.trim();
+
+  const src =
+    raw?.primaryProvider ?? raw?.provider ?? raw?.primaryVet ?? raw?.primaryDoctor ?? raw?.doctor ?? null;
+
+  if (src) {
+    const nameLike =
+      typeof src?.name === 'string' ? src.name :
+      typeof src?.fullName === 'string' ? src.fullName :
+      typeof src?.displayName === 'string' ? src.displayName :
+      undefined;
+    if (nameLike && nameLike.trim()) return nameLike.trim();
+
+    const first =
+      src?.firstName ?? src?.first_name ?? src?.givenName ?? src?.given_name ?? undefined;
+    const last = src?.lastName ?? src?.last_name ?? src?.familyName ?? src?.family_name ?? undefined;
+    const combined = [first, last].filter(Boolean).join(' ').trim();
+    if (combined) return combined;
+  }
+
+  return undefined;
+}
 
 export type ClientAppointment = {
   id: string;
@@ -71,6 +102,7 @@ export type WellnessPlan = {
   patientId?: string | number | null;
   practiceId?: string | number | null;
   status?: 'active' | 'pending' | 'canceled' | 'expired';
+  isActive?: boolean;
   monthlyPriceCents?: number | null;
   annualPriceCents?: number | null;
 
@@ -84,13 +116,29 @@ export type WellnessPlan = {
 
 /* ----------------- internal normalizers ----------------- */
 function normalizeWellnessPlan(p: any): WellnessPlan {
+  const status: WellnessPlan['status'] =
+    typeof p?.status === 'string' ? (p.status.toLowerCase() as WellnessPlan['status']) : undefined;
+
+  const rawIsActive =
+    p?.isActive ?? p?.active ?? p?.is_active ?? p?.Active ?? p?.isactive ?? undefined;
+
+  const isActive =
+    typeof rawIsActive === 'boolean'
+      ? rawIsActive
+      : typeof rawIsActive === 'string'
+        ? ['true', '1', 'active'].includes(rawIsActive.toLowerCase())
+        : typeof rawIsActive === 'number'
+          ? rawIsActive === 1
+          : status === 'active';
+
   return {
     id: String(p?.id ?? ''),
     name: p?.name ?? null,
     description: p?.description ?? null,
     patientId: p?.patient?.id ?? p?.patientId ?? null,
     practiceId: p?.practice?.id ?? p?.practiceId ?? null,
-    status: p?.status ?? undefined,
+    status,
+    isActive,
     monthlyPriceCents: p?.monthlyPriceCents ?? null,
     annualPriceCents: p?.annualPriceCents ?? null,
     // add these ↓↓↓
@@ -222,6 +270,7 @@ export async function fetchClientPets(): Promise<Pet[]> {
               status: (p.subscription.status as 'active' | 'pending' | 'canceled') ?? 'active',
             }
           : undefined,
+        primaryProviderName: normalizeProviderName(p) ?? null,
       })) as Pet[];
     }
   } catch {
@@ -248,6 +297,7 @@ export async function fetchClientPets(): Promise<Pet[]> {
         id: pimsId ?? key,
         name: a.patientName ?? 'Pet',
         _pimsId: pimsId,
+        primaryProviderName: normalizeProviderName(a) ?? null,
       });
     } else {
       const cur = byKey.get(key)!;
@@ -256,6 +306,10 @@ export async function fetchClientPets(): Promise<Pet[]> {
         cur.id = pimsId;
       }
       if (a.patientName && a.patientName.trim()) cur.name = a.patientName.trim();
+      const appointProvider = normalizeProviderName(a);
+      if (!cur.primaryProviderName && appointProvider) {
+        cur.primaryProviderName = appointProvider;
+      }
     }
   }
 
@@ -281,6 +335,7 @@ export async function fetchClientPets(): Promise<Pet[]> {
           breed,
           dob,
           dbId, // <- capture real DB id
+          primaryProviderName: normalizeProviderName(data) ?? normalizeProviderName(p) ?? null,
         });
       } catch {
         return stripPrivate(p);

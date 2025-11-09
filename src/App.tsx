@@ -19,6 +19,8 @@ import AppTabs from './components/AppTabs';
 import { getAccessiblePages } from './app-pages';
 import CreateClientUser from './pages/CreateClientUser';
 import ClientPortal from './pages/ClientPortal';
+import MembershipSignup from './pages/MembershipSignup';
+import MembershipPayment from './pages/MembershipPayment';
 
 /** ------------------------------------------------------------------
  * KeepAliveOutlet
@@ -160,6 +162,22 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <ClientPortal />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/client-portal/membership-signup"
+            element={
+              <ProtectedRoute>
+                <MembershipSignup />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/client-portal/membership-payment"
+            element={
+              <ProtectedRoute>
+                <MembershipPayment />
               </ProtectedRoute>
             }
           />

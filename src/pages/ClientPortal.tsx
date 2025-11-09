@@ -1,10 +1,10 @@
 // src/pages/ClientPortal.tsx
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import {
   fetchClientAppointments,
   fetchClientPets,
-  enrollPetInPlan,
   type Pet,
   type ClientAppointment,
   fetchWellnessPlansForPatient,
@@ -56,18 +56,69 @@ function fmtReminderDate(r: ClientReminder): string {
     year: 'numeric',
   });
 }
+
+function planIsActive(plan: Pick<WellnessPlan, 'isActive' | 'status'> | null | undefined): boolean {
+  if (!plan) return false;
+
+  const direct =
+    plan.isActive === true ||
+    String(plan.isActive).toLowerCase() === 'true' ||
+    String(plan.isActive) === '1';
+  if (direct) return true;
+
+  if (typeof (plan as any)?.active === 'boolean' && (plan as any).active) return true;
+  if (typeof (plan as any)?.active === 'string') {
+    const activeStr = String((plan as any).active).toLowerCase();
+    if (activeStr === 'true' || activeStr === '1' || activeStr === 'active') return true;
+  }
+
+  const status = typeof plan.status === 'string' ? plan.status.toLowerCase() : undefined;
+  return status === 'active';
+}
 function heroImgUrl() {
   return 'https://images.unsplash.com/photo-1601758123927-196d1b1e6c3f?q=80&w=1600&auto=format&fit=crop';
 }
+function encodeSvgData(svg: string): string {
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+const DOG_PLACEHOLDER = encodeSvgData(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect width="128" height="128" fill="#ffffff" />
+  <g fill="none" stroke="#0f172a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M30 44V26c0-10 8-18 18-18h18c22 0 38 16 38 38v20" />
+    <path d="M30 40L16 30" />
+    <path d="M100 42l16-14" />
+    <path d="M40 70h52c16 0 28 12 28 26s-12 26-28 26H48c-18 0-30-10-30-24s12-28 30-28z" />
+    <path d="M46 44c0 10 8 18 18 18s18-8 18-18" />
+  </g>
+</svg>`);
+
+const CAT_PLACEHOLDER = encodeSvgData(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect width="128" height="128" fill="#ffffff" />
+  <g fill="none" stroke="#0f172a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M40 32V14l18 12 18-12v18" />
+    <path d="M34 62c0-18 12-34 30-34s30 16 30 34" />
+    <path d="M94 62c0 32-18 50-30 50S34 94 34 62" />
+    <path d="M34 104c-8 6-12 14-12 22" />
+    <path d="M94 82c12 4 20 14 18 26" />
+    <path d="M54 58h4" />
+    <path d="M78 58h4" />
+    <path d="M56 72c6 4 12 4 16 0" />
+  </g>
+</svg>`);
+
 function petImg(p: Pet) {
-  const s = (p.species || '').toLowerCase();
+  const s = (p.species || p.breed || '').toLowerCase();
   if (s.includes('canine') || s.includes('dog')) {
-    return 'https://images.unsplash.com/photo-1548199973-03cce0bbc87b?q=80&w=800&auto=format&fit=crop';
+    return DOG_PLACEHOLDER;
   }
   if (s.includes('feline') || s.includes('cat')) {
-    return 'https://images.unsplash.com/photo-1518791841217-8f162f1e1131?q=80&w=800&auto=format&fit=crop';
+    return CAT_PLACEHOLDER;
   }
-  return 'https://images.unsplash.com/photo-1507146426996-ef05306b995a?q=80&w=800&auto=format&fit=crop';
+  if ('photoUrl' in p && (p as any).photoUrl) {
+    return (p as any).photoUrl as string;
+  }
+  return CAT_PLACEHOLDER;
 }
 function groupApptsByDay(appts: ClientAppointment[]) {
   const map = new Map<string, ClientAppointment[]>();
@@ -86,6 +137,7 @@ function groupApptsByDay(appts: ClientAppointment[]) {
 ---------------------------- */
 export default function ClientPortal() {
   const { userEmail } = useAuth() as any;
+  const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -93,8 +145,6 @@ export default function ClientPortal() {
   const [pets, setPets] = useState<PetWithWellness[]>([]);
   const [appts, setAppts] = useState<ClientAppointment[]>([]);
   const [reminders, setReminders] = useState<ClientReminder[]>([]);
-  const [enrolling, setEnrolling] = useState<Record<string, boolean>>({});
-  const [enrollMsg, setEnrollMsg] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -115,8 +165,10 @@ export default function ClientPortal() {
               const dbId = (pet as any).dbId as string | undefined;
               if (!dbId) return pet;
               const plans = await fetchWellnessPlansForPatient(dbId);
+              // Only include active wellness plans
+              const activePlans = plans?.filter((pl) => planIsActive(pl)) ?? [];
               const slim =
-                plans?.map((pl) => ({
+                activePlans.map((pl) => ({
                   id: pl.id,
                   packageName: pl.package?.name ?? pl.packageName ?? null,
                   name: pl.name ?? null,
@@ -172,6 +224,13 @@ export default function ClientPortal() {
     up.sort((a, b) => Date.parse(a.dueIso!) - Date.parse(b.dueIso!));
     return { upcomingReminders: up.slice(0, 12), overdueReminders: over.slice(-12) };
   }, [reminders]);
+
+  function handleEnrollMembership(pet: PetWithWellness) {
+    if (!pet.id) {
+      return;
+    }
+    navigate('/client-portal/membership-signup', { state: { petId: pet.id } });
+  }
 
   const brand = 'var(--brand, #0f766e)';
   const brandSoft = 'var(--brand-soft, #e6f7f5)';
@@ -360,20 +419,6 @@ export default function ClientPortal() {
       {/* NOTICES */}
       {loading && <div style={{ marginTop: 16 }}>Loading your information…</div>}
       {error && <div style={{ marginTop: 16, color: '#b00020' }}>{error}</div>}
-      {enrollMsg && (
-        <div
-          style={{
-            marginTop: 14,
-            padding: '10px 12px',
-            border: `1px solid ${brand}`,
-            borderRadius: 8,
-            color: brand,
-            background: brandSoft,
-          }}
-        >
-          {enrollMsg}
-        </div>
-      )}
 
       {!loading && !error && (
         <>
@@ -400,11 +445,15 @@ export default function ClientPortal() {
                   const subStatus = p.subscription?.status;
                   const isActive = subStatus === 'active';
                   const isPending = subStatus === 'pending';
-
+                  const hasMembership = isActive || isPending;
+                  
                   const wellnessNames = (p.wellnessPlans || [])
                     .map((w) => w.packageName || w.name)
                     .filter(Boolean)
                     .join(', ');
+                  
+                  const hasWellnessPlans = (p.wellnessPlans || []).length > 0;
+                  const showMembershipButton = !hasMembership && !hasWellnessPlans;
 
                   return (
                     <article
@@ -414,12 +463,25 @@ export default function ClientPortal() {
                     >
                       <div
                         className="cp-pet-img"
-                        style={{ position: 'relative', overflow: 'hidden' }}
+                        style={{
+                          position: 'relative',
+                          overflow: 'hidden',
+                          background: '#fff',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
                       >
                         <img
                           src={petImg(p)}
                           alt=""
-                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          style={{
+                            maxWidth: '100%',
+                            maxHeight: '100%',
+                            width: 'auto',
+                            height: 'auto',
+                            objectFit: 'contain',
+                          }}
                         />
                         {isActive && (
                           <span
@@ -466,6 +528,10 @@ export default function ClientPortal() {
                           </span>
                         </div>
 
+                        <div className="cp-muted" style={{ marginTop: 4, fontSize: 12 }}>
+                          <strong style={{ fontWeight: 600 }}>Primary Provider:</strong>{' '}
+                          {p.primaryProviderName || '—'}
+                        </div>
                         <div className="cp-muted" style={{ marginTop: 6, fontSize: 14 }}>
                           {p.species || p.breed
                             ? [p.species, p.breed].filter(Boolean).join(' • ')
@@ -484,6 +550,33 @@ export default function ClientPortal() {
                           <div className="cp-muted" style={{ marginTop: 10, fontSize: 12 }}>
                             {p.subscription.name} ({p.subscription.status})
                           </div>
+                        )}
+                        
+                        {showMembershipButton && (
+                          <button
+                            onClick={() => handleEnrollMembership(p)}
+                            style={{
+                              marginTop: 12,
+                              width: '100%',
+                              padding: '8px 12px',
+                              backgroundColor: brand,
+                              color: '#fff',
+                              border: 'none',
+                              borderRadius: 8,
+                              fontSize: 14,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              transition: 'opacity 0.2s',
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.opacity = '0.9';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.opacity = '1';
+                            }}
+                          >
+                            Sign up for Membership
+                          </button>
                         )}
                       </div>
                     </article>
