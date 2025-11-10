@@ -328,6 +328,7 @@ export default function ClientPortal() {
         .cp-hero-inner { padding: 28px 20px; min-height: 200px; }
         .cp-stat { padding: 10px 14px; min-width: 140px; }
         .cp-pets { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+        .cp-pet-card { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
         .cp-pet-img { height: 120px; }
         .cp-appt-row, .cp-rem-row {
           display: grid;
@@ -515,12 +516,12 @@ export default function ClientPortal() {
                           .trim()
                       )
                     : null;
-                  const membershipDisplayText = [
-                    p.membershipPlanName ?? null,
-                    membershipPricingLabel,
-                  ]
-                    .filter(Boolean)
-                    .join(' • ');
+                  const membershipDisplayText = (() => {
+                    const parts: string[] = [];
+                    if (p.membershipPlanName) parts.push(p.membershipPlanName);
+                    if (membershipPricingLabel) parts.push(membershipPricingLabel);
+                    return parts.join(' • ');
+                  })();
                   const membershipStatusTitle = membershipStatusRaw
                     ? titleCase(String(membershipStatusRaw))
                     : null;
@@ -534,11 +535,6 @@ export default function ClientPortal() {
                           .join(' • ')
                       : null;
                   const showMembershipNotice = membershipInfoLine != null;
-                  
-                  const wellnessNames = (p.wellnessPlans || [])
-                    .map((w) => w.packageName || w.name)
-                    .filter(Boolean)
-                    .join(', ');
                   
                   const hasWellnessPlans = (p.wellnessPlans || []).length > 0;
                   const showMembershipButton =
@@ -561,7 +557,7 @@ export default function ClientPortal() {
                   return (
                     <article
                       key={p.id}
-                      className="cp-card"
+                      className="cp-card cp-pet-card"
                       style={{ borderRadius: 14, overflow: 'hidden' }}
                     >
                       <div
@@ -638,27 +634,26 @@ export default function ClientPortal() {
                             DOB: {new Date(p.dob).toLocaleDateString()}
                           </div>
                         )}
-                        <div className="cp-muted" style={{ marginTop: 8, fontSize: 13 }}>
-                          <strong style={{ fontWeight: 600 }}>Wellness:</strong>{' '}
-                          {wellnessNames || '—'}
+                        <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                          {showMembershipNotice && (
+                            <div className="cp-muted" style={{ fontSize: 13 }}>
+                              <strong style={{ fontWeight: 600 }}>Membership:</strong>{' '}
+                              {membershipInfoLine}
+                            </div>
+                          )}
+                          {p.subscription?.name && (
+                            <div className="cp-muted" style={{ fontSize: 12 }}>
+                              {p.subscription.name} ({p.subscription.status})
+                            </div>
+                          )}
                         </div>
-                        {showMembershipNotice && (
-                          <div className="cp-muted" style={{ marginTop: 6, fontSize: 13 }}>
-                            <strong style={{ fontWeight: 600 }}>Membership:</strong>{' '}
-                            {membershipInfoLine}
-                          </div>
-                        )}
-                        {p.subscription?.name && (
-                          <div className="cp-muted" style={{ marginTop: 10, fontSize: 12 }}>
-                            {p.subscription.name} ({p.subscription.status})
-                          </div>
-                        )}
-                        
+                      </div>
+
+                      <div style={{ padding: '0 12px 12px' }}>
                         {showMembershipButton && (
                           <button
                             onClick={() => handleEnrollMembership(p)}
                             style={{
-                              marginTop: 12,
                               width: '100%',
                               padding: '8px 12px',
                               backgroundColor: brand,

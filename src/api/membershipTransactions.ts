@@ -39,6 +39,11 @@ function normalizeTransaction(raw: any): MembershipTransaction {
       ? (raw.metadata as Record<string, any>)
       : null;
 
+  const primaryPlan =
+    Array.isArray(raw.plansSelected) && raw.plansSelected.length > 0
+      ? raw.plansSelected[0]
+      : null;
+
   return {
     id,
     status: raw.status ?? metadata?.status ?? null,
@@ -60,10 +65,16 @@ function normalizeTransaction(raw: any): MembershipTransaction {
       raw.practice?.id ??
       metadata?.practiceId ??
       null,
-    planName: raw.planName ?? raw.plan?.name ?? metadata?.planName ?? null,
+    planName:
+      raw.planName ??
+      raw.plan?.name ??
+      primaryPlan?.planName ??
+      metadata?.planName ??
+      null,
     pricingOption:
       raw.pricingOption ??
       raw.pricing_option ??
+      primaryPlan?.pricingOption ??
       metadata?.pricingOption ??
       metadata?.billingPreference ??
       null,
