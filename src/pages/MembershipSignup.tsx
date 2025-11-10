@@ -6,7 +6,12 @@ import {
   type Pet,
   fetchClientAppointments,
 } from '../api/clientPortal';
-import { PaymentIntent } from '../api/payments';
+import {
+  PaymentIntent,
+  type MembershipTransactionPayload,
+  type MembershipTransactionAddOn,
+} from '../api/payments';
+import { useAuth } from '../auth/useAuth';
 
  type MembershipPlan = {
   id: string;
@@ -108,6 +113,51 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
   },
 ];
 
+const ADD_ON_PRICING: Record<string, { label: string; monthly: number; annual?: number }> = {
+  'plus-addon': {
+    label: 'PLUS Add-on',
+    monthly: 49,
+    annual: 529,
+  },
+  'starter-addon': {
+    label: 'Starter Wellness Add-On',
+    monthly: 29,
+    annual: 309,
+  },
+};
+
+const MEMBERSHIP_AGREEMENT_TEXT = [
+  'By enrolling your pet in a Vet At Your Door Membership Plan, you agree to the following terms and conditions.',
+  'Membership Plans',
+  'Foundations: Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours telehealth. Requires a 12-month commitment.',
+  'Golden: Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours telehealth. Requires a 12-month commitment.',
+  'Comfort Care: A month-to-month plan that includes one visit with trip fee, one telehealth consult during business hours per month, after-hours telehealth, and a one hundred dollar credit toward euthanasia.',
+  'Plus Add-On: Provides ten percent off all services and medications, fifty percent off exams, and a two-hour guaranteed response time by one of your One Team members during business hours if the need arises. The term matches the main plan. A store discount code is issued after sign-up.',
+  'Starter Wellness Add-On: Covers booster vaccine appointments during your pet’s first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.',
+  'After-Hours Telehealth',
+  'Members may access our virtual triage chat after hours during these times: Monday through Friday from 5 pm to 9 pm, and Saturday through Sunday from 8 am to 5 pm. A Triage Technician will review your pet’s history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. Service is unavailable on listed holidays. Hours may change with 30 days of notice.',
+  'VCPR Requirements and Limitations for New or Lapsed Patients',
+  'A valid Veterinarian-Client-Patient Relationship requires an in-person exam within the past 365 days. If more than 12 months have passed since your pet’s most recent in-person exam with us, the VCPR is considered expired.',
+  'For pets we have not yet seen, or for pets whose VCPR has lapsed, the following services cannot be provided until a current VCPR is re-established through an in-person exam: After-hours telehealth; Medical advice, triage guidance, or care recommendations from your One Team; Prescription medications or refills of any kind.',
+  'Once the initial or renewal exam is completed, all membership benefits become fully active. Memberships do not automatically cancel when the VCPR expires. It is the client’s responsibility to remain current.',
+  'Membership Rules',
+  'Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of discounts.',
+  'Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight years of age for dogs or nine years of age for cats. We will email you twenty to thirty days before renewal with a recommendation. You may change your selection or cancel at that time.',
+  'Foundations, Golden, Plus, and Starter Wellness plans require a twelve-month term. Comfort Care is month-to-month, as is Plus when selected with Comfort Care.',
+  'If your pet passes away, moves, or transitions to Comfort Care, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.',
+  'If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client’s new lease or mortgage agreement.',
+  'A one-time registration fee, if charged, supports our Angel Fund for pets in need.',
+  'Scheduling and Availability',
+  'Visits should be scheduled in advance for best availability. Specific appointment times cannot be guaranteed. Services are available only within our service area and during our regular appointment hours.',
+  'We will make every reasonable effort for your pet’s care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.',
+  'If we cannot accommodate an urgent case, we may refer you to another facility or veterinary team.',
+  'Access and Technology Requirements',
+  'Internet access and a compatible device are required for virtual chat and use of our online store. Instructions will be provided in the Welcome Email.',
+  'Client Conduct',
+  'We strive to provide compassionate and high-quality care and expect respectful communication in return. Disrespectful behavior may result in termination of membership without refund.',
+  'Membership supports proactive and routine care. Membership does not guarantee emergency availability.',
+].join('\n\n');
+
 function formatMoney(amount?: number | null): string {
   if (amount == null) return '—';
   return amount.toLocaleString(undefined, {
@@ -129,30 +179,9 @@ function encodeSvgData(svg: string): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-const DOG_PLACEHOLDER = encodeSvgData(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" fill="#ffffff" />
-  <g fill="none" stroke="#0f172a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M30 44V26c0-10 8-18 18-18h18c22 0 38 16 38 38v20" />
-    <path d="M30 40L16 30" />
-    <path d="M100 42l16-14" />
-    <path d="M40 70h52c16 0 28 12 28 26s-12 26-28 26H48c-18 0-30-10-30-24s12-28 30-28z" />
-    <path d="M46 44c0 10 8 18 18 18s18-8 18-18" />
-  </g>
-</svg>`);
+const DOG_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}dog.png`;
 
-const CAT_PLACEHOLDER = encodeSvgData(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" fill="#ffffff" />
-  <g fill="none" stroke="#0f172a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M40 32V14l18 12 18-12v18" />
-    <path d="M34 62c0-18 12-34 30-34s30 16 30 34" />
-    <path d="M94 62c0 32-18 50-30 50S34 94 34 62" />
-    <path d="M34 104c-8 6-12 14-12 22" />
-    <path d="M94 82c12 4 20 14 18 26" />
-    <path d="M54 58h4" />
-    <path d="M78 58h4" />
-    <path d="M56 72c6 4 12 4 16 0" />
-  </g>
-</svg>`);
+const CAT_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}cat.jpg`;
 
 function petImg(pet: Pet | null): string {
   if (!pet) return DOG_PLACEHOLDER;
@@ -166,6 +195,11 @@ function petImg(pet: Pet | null): string {
 type PlanCombination = 'base' | 'plus' | 'starter' | 'plusStarter';
 type BillingCadence = 'monthly' | 'annual';
 
+type PlanEntry = {
+  planId: string;
+  planVariationId: string;
+};
+
 const SQUARE_SUBSCRIPTION_PLAN_IDS: Record<
   string,
   any
@@ -173,74 +207,82 @@ const SQUARE_SUBSCRIPTION_PLAN_IDS: Record<
   foundations: {
     cat: {
       monthly: {
-        base: 'ZTZRCAHSSLO3BIYJWIPP2AD3',
-        plus: 'IY7OIPSM25VK6YQNR3DLVPLR',
-        starter: 'GNNHHFBFEGQCTOLOEJPZQWCF',
-        plusStarter: 'LIPFFGRYE5YEUIKICTBRPJTY',
+        base: { planId: '3O5TN62Y7DLAYX5GEWRIMWA6', planVariationId: 'BRD2Q3LSJMHPXOAEPX7GI3MJ' },
+        plus: { planId: 'L3SU6H5CELKAMUMA73KVEQR7', planVariationId: 'QMANSSNAMUATEDBOZKKZOEOB' },
+        starter: { planId: 'PEIVO4ZYPSDI7AM6MFYIZ6Z5', planVariationId: '74RPQOWMY25WBMJVJ33P7ZPN' },
+        plusStarter: { planId: 'QK6RR2IHYS2VOCJKLAXHVTD6', planVariationId: 'RQLX72QNDMKF4EA7XPYBOY34' },
       },
       annual: {
-        base: 'AVIQJIB6WYAAZY7DC264HI64',
-        plus: 'KCAWAG2JG7IYEXV7M6CCNLZT',
-        starter: 'JUUIIJH4NR7DXMBUUXQ3J5UU',
-        plusStarter: '6FYYF6C7IQ3QU6Y6PWEE4BRD',
+        base: { planId: 'VFXIWMFA7HQDAAIIBBMRBFWX', planVariationId: '5OQ62K7VIPCPH4JCXS5NWE4Y' },
+        plus: { planId: 'GLEZPBB6V4K53XUWTAVO3UQJ', planVariationId: 'AANYKRRBUAQN7EKR24LKVUNO' },
+        starter: { planId: 'YDSKJOC2HYHEJSYVSD6EMYO2', planVariationId: 'JGGM6P6ENLQ6HLCU4DUY6O3R' },
+        plusStarter: { planId: '4YRLNQNYLVMRIMB7GDZ7BGDT', planVariationId: 'HSMKGW35MECRD32D3DTU2FQX' },
       },
     },
     dog: {
       monthly: {
-        base: '5I54A473HZT7CUGZ6IEHO7OA',
-        plus: 'FES67HTK6SRQBNIQ5GUYRNE6',
-        starter: 'O4P22UD2DA5GXYLF27J73BGS',
-        plusStarter: 'N63NY2IXZHNG4U4JAHSLLNYZ',
+        base: { planId: 'M24K2SK4SQLOCP4UUYLBCUIX', planVariationId: 'XE374BMB5RXUKQVP3A6BDZUQ' },
+        plus: { planId: 'OGDNWNO6VCHDYOC6U7ACBNJW', planVariationId: 'PNSPSOCWSSJZZG4OBGEWPC3W' },
+        starter: { planId: '6QKSIPEX3YIMW2V65RQSOTHZ', planVariationId: 'SHSPTGWRO3X42RZNT3HY62RB' },
+        plusStarter: { planId: 'CJ65WLVASXCWCXQCV3OOAVF5', planVariationId: 'NVIEYLDGGF2QSO3Y4JXYYJ2R' },
       },
       annual: {
-        base: 'FRGJHQQPGDW5H7WHBI6VFRTF',
-        plus: 'DT4QBXAQV2YJODKRNHUW34O3',
-        starter: '4SV2DLCVFMS7UYWKJI5IFCEU',
-        plusStarter: 'BZEFGHT366NGDNTDCKMB44DO',
+        base: { planId: 'UT5KMJWVJS3L6GC2POVUCAGP', planVariationId: 'AMDGXI7ROH6462N7PZD7RDIU' },
+        plus: { planId: 'FGHIFGX3MBPYP6LEPNUIGZ3F', planVariationId: 'RTYPGILYTOK7BZMT2SAO5XFV' },
+        starter: { planId: '5USFRLPPLUDS4WEBHJXUNH47', planVariationId: 'QUDUN2GBYXT2QJUFO3LFJJGM' },
+        plusStarter: { planId: 'WN275KVMCGN4M2FB2ABCU5IP', planVariationId: 'TRMKVONWNQJC7GZECRYJRV3Z' },
       },
     },
   },
   golden: {
     cat: {
       monthly: {
-        base: '44LEPDCQSGQM2ZOE4YQIJ2ZW',
-        plus: 'BGZF6NNIGDAWWJGIZZRZRSGM',
-        starter: 'LZLYJLD5QFRNJHZXRXDJW5XR',
-        plusStarter: 'XFX6JOPHKV44POIISSMEUPPR',
+        base: { planId: 'VCSITYBBKORNG5EWM4QI5LYY', planVariationId: '2F3ABTFBE3Z7OPDECO57PHPC' },
+        plus: { planId: 'WQEO6ULSOE4H3DIKLOFOUXLL', planVariationId: '4GL4IUTI4OHKOCC7RRM7EI4A' },
+        starter: { planId: 'LUXFFRJLXYN3RUD6WQ6YDSCR', planVariationId: '24XVI27NI6YCGPDW4H64YOPT' },
+        plusStarter: { planId: '56H7HDI2KLU7JSZSX2GITQU5', planVariationId: '573BWBOGXNUQC3DXWYW54HUK' },
       },
       annual: {
-        base: 'FKLUTV45LTFZ3MLW5OWUFRNP',
-        plus: '2J267W6GZGSJ7KUPJGTJEMKJ',
-        starter: 'X7NEDWOA5WMUR7OX2GJHS7PR',
-        plusStarter: 'CGDSN7XIM5CAUUZKILLFY2Z6',
+        base: { planId: 'AQ4KRGTZHRH6YDPVVCDNL3XH', planVariationId: 'IJYCVVH6N3PNO5QXMJI7M2LQ' },
+        plus: { planId: 'RYRAMC6XCNT3K5U2Z4W7Z74N', planVariationId: 'D3T3LWYD2E5NHDYRNWNVOP2E' },
+        starter: { planId: 'INXGIVB645YS4AWHOJG6TFYE', planVariationId: 'S3YLEKDQQ5TTLCCMRIEZS6WR' },
+        plusStarter: { planId: 'WW3Q47W55BX3PJXGOQYDU4NP', planVariationId: 'QVQFXAMK7KWYGXJ2CUMRPV5G' },
       },
     },
     dog: {
       monthly: {
-        base: 'RXZFOC3QLTUVGQAFWE3YJZEK',
-        plus: 'IYMGNS73D5EH6M2FDX5FDXZD',
-        starter: 'XVUSVIW2KEMPSSBAHJDOL3D7',
-        plusStarter: 'AUAFEG2QNQDT6VVLTD7Z2JHB',
+        base: { planId: '7GZ45YBFP7DKGKZ2OGHJBONU', planVariationId: 'BTIH3URCGEW2WUWZI7XSINRQ' },
+        plus: { planId: 'LOZ3PKT3NVP2W75JEHH6MVTP', planVariationId: 'OUSM2IVBVCDRVP4ZPPDR72UR' },
+        starter: { planId: 'V6HJ5WEBBG4SHNDL6HQ6YYIC', planVariationId: '2CMH2AK7FB7SZNE3THIHA7SR' },
+        plusStarter: { planId: 'XRLHQB7INB7AM3KHG5M5MC7F', planVariationId: 'MIBM4AMFZDOEK67JRFSALG6Z' },
       },
       annual: {
-        base: 'FNUCYA75WYS32UA5XOOWDXQY',
-        plus: 'EJATWGRASOTLDZ3NHDRPG3PV',
-        starter: 'VFY4ATUXNNIS6C5FEHE53FAN',
-        plusStarter: '2QERSUEGX7OWW34UKVCWRTVB',
+        base: { planId: 'OUT5QOAHR3K5XOJHDZUGDQP5', planVariationId: 'MY32ZVY7HZBYEFWQAQFNV7E5' },
+        plus: { planId: 'TBCLYF2P6HATHPBI345UV4UJ', planVariationId: 'IABLQIWGTY7I2F3A5GVRNS7M' },
+        starter: { planId: 'SASV4AFSJFEZB4LPDHARNNV7', planVariationId: '34IJUNRMJ66NG74PT63AVJ3J' },
+        plusStarter: { planId: '5E6RUC3EHRHXPXKKB2ZRKXYA', planVariationId: 'TL7CXZLA3ANLW3TSTMPPJ5UI' },
       },
     },
   },
   'comfort-care': {
     monthly: {
-      base: 'K2BNHCOEPC3LZRXV52CTGHZP',
-      plus: 'LJO3SITA4J3HRJIXLVNYWDET',
+      base: { planId: 'HUCHWCLTKGCJFM7GHAVJ7A6Q', planVariationId: 'UKQB5YYSJYQ7FOW6LJTVFHYB' },
+      plus: { planId: 'WBITPU7MQ4JXCQTHFBJB7IS2', planVariationId: '7BC2YZZIPHHVENHCXZSSUIHC' },
     },
   },
 };
 
+function toNumber(value: unknown): number | undefined {
+  if (value == null) return undefined;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export default function MembershipSignup() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { userId: authUserId } = useAuth() as any;
 
   const petId = (location.state as any)?.petId;
 
@@ -494,20 +536,117 @@ export default function MembershipSignup() {
     const combination: PlanCombination = plusExplicit && includeStarter ? 'plusStarter' : plusExplicit ? 'plus' : includeStarter ? 'starter' : 'base';
 
     let subscriptionPlanId: string | undefined;
+    let subscriptionPlanVariationId: string | undefined;
     if (selectedPlanExplicit === 'comfort-care') {
-      subscriptionPlanId = SQUARE_SUBSCRIPTION_PLAN_IDS['comfort-care']?.[billingKey]?.[
+      const entry = SQUARE_SUBSCRIPTION_PLAN_IDS['comfort-care']?.[billingKey]?.[
         plusExplicit ? 'plus' : 'base'
-      ];
+      ] as PlanEntry | undefined;
+      subscriptionPlanId = entry?.planId;
+      subscriptionPlanVariationId = entry?.planVariationId;
     } else if (speciesKey) {
-      subscriptionPlanId = SQUARE_SUBSCRIPTION_PLAN_IDS[selectedPlanExplicit]?.[speciesKey]?.[billingKey]?.[
+      const entry = SQUARE_SUBSCRIPTION_PLAN_IDS[selectedPlanExplicit]?.[speciesKey]?.[billingKey]?.[
         combination
-      ];
+      ] as PlanEntry | undefined;
+      subscriptionPlanId = entry?.planId;
+      subscriptionPlanVariationId = entry?.planVariationId;
     }
 
-    if (!subscriptionPlanId) {
+    if (!subscriptionPlanId || !subscriptionPlanVariationId) {
       setError('This membership combination is not yet configured for automated billing. Please contact support.');
       return;
     }
+
+    const matchedTier =
+      chosenPlan?.pricing?.find((tier) => (petDetails.kind ? tier.species === petDetails.kind : false)) ??
+      chosenPlan?.pricing?.[0];
+
+    const baseMonthlyPrice =
+      selectedPlanExplicit === 'comfort-care'
+        ? chosenPlan?.pricing?.[0]?.monthly ?? null
+        : matchedTier?.monthly ?? null;
+    const baseAnnualPrice =
+      selectedPlanExplicit === 'comfort-care'
+        ? null
+        : matchedTier?.annual ?? null;
+
+    const planPrice =
+      billingKey === 'annual' && baseAnnualPrice != null ? baseAnnualPrice : baseMonthlyPrice;
+
+    if (planPrice == null) {
+      setError('Unable to determine pricing for this membership selection.');
+      return;
+    }
+
+    const agreementSignedAt = new Date().toISOString();
+
+    const addOnDetails: MembershipTransactionAddOn[] = addOns
+      .map((slug) => {
+        const config = ADD_ON_PRICING[slug];
+        if (!config) return null;
+        const price =
+          billingKey === 'annual' &&
+          config.annual != null &&
+          selectedPlanExplicit !== 'comfort-care'
+            ? config.annual
+            : config.monthly;
+        return {
+          id: slug,
+          name: config.label,
+          price,
+          pricingOption: billingKey,
+        };
+      })
+      .filter(Boolean) as MembershipTransactionAddOn[];
+
+    const rawClientId =
+      (pet as any)?.clientId ??
+      (pet as any)?.client?.id ??
+      (pet as any)?.ownerId ??
+      (pet as any)?.owner?.id ??
+      authUserId ??
+      null;
+    const clientIdNumber = toNumber(rawClientId);
+    const clientIdValue =
+      clientIdNumber != null
+        ? clientIdNumber
+        : rawClientId != null
+          ? String(rawClientId)
+          : undefined;
+    const patientId = toNumber(pet.dbId ?? (pet as any).patientId ?? pet.id);
+    const practiceId = toNumber(
+      (pet as any).practiceId ?? (pet as any).practice?.id ?? (pet as any).location?.practiceId,
+    );
+
+    const effectiveBillingPreference = hasAnnualOption ? billingPreference : 'monthly';
+
+    const membershipTransaction: MembershipTransactionPayload = {
+      agreementSignedAt,
+      agreementText: MEMBERSHIP_AGREEMENT_TEXT,
+      plansSelected: [
+        {
+          planId: subscriptionPlanId,
+          planName: chosenPlan?.name ?? selectedPlanExplicit,
+          pricingOption: billingKey,
+          price: planPrice,
+          quantity: 1,
+          addOns: addOnDetails,
+        },
+      ],
+      metadata: (() => {
+        const meta: Record<string, any> = {
+          petId: pet.id,
+          agreementSignature: agreementSignature.trim(),
+          billingPreference: billingKey,
+          addOns,
+        };
+        if (clientIdValue != null) meta.clientId = clientIdValue;
+        return meta;
+      })(),
+    };
+
+    if (clientIdValue != null) membershipTransaction.clientId = clientIdValue;
+    if (patientId != null) membershipTransaction.patientId = patientId;
+    if (practiceId != null) membershipTransaction.practiceId = practiceId;
 
     const enrollmentPayload: Record<string, any> = {};
     if (chosenPlan?.apiPlanId) enrollmentPayload.planId = chosenPlan.apiPlanId;
@@ -515,14 +654,27 @@ export default function MembershipSignup() {
     if (addOns.length) enrollmentPayload.addOns = addOns;
     if (selectedPlanExplicit === 'comfort-care') enrollmentPayload.comfortCare = true;
 
-    const note = `Membership for ${pet.name} - ${chosenPlan?.name ?? selectedPlanExplicit} (${billingPreference})`;
+    const note = `Membership for ${pet.name} - ${chosenPlan?.name ?? selectedPlanExplicit} (${effectiveBillingPreference})`;
+
+    const metadata = (() => {
+      const meta: Record<string, any> = {
+        petId: pet.id,
+        planName: chosenPlan?.name ?? selectedPlanExplicit,
+        billingPreference: effectiveBillingPreference,
+        addOns,
+        agreementSignature: agreementSignature.trim(),
+        agreementSignedAt,
+      };
+      if (clientIdValue != null) meta.clientId = clientIdValue;
+      return meta;
+    })();
 
     const paymentState = {
       petId: pet.id,
       petName: pet.name,
       selectedPlanId: selectedPlanExplicit,
       planName: chosenPlan?.name ?? selectedPlanExplicit,
-      billingPreference: hasAnnualOption ? billingPreference : 'monthly',
+      billingPreference: effectiveBillingPreference,
       amountCents,
       currency: 'USD' as const,
       costSummary,
@@ -532,14 +684,10 @@ export default function MembershipSignup() {
       agreementSignature,
       intent: PaymentIntent.SUBSCRIPTION,
       subscriptionPlanId,
-      metadata: {
-        petId: pet.id,
-        planName: chosenPlan?.name ?? selectedPlanExplicit,
-        billingPreference: hasAnnualOption ? billingPreference : 'monthly',
-        addOns,
-        agreementSignature,
-      },
-    } as const;
+      subscriptionPlanVariationId,
+      metadata,
+      membershipTransaction,
+    };
 
     setError(null);
     navigate('/client-portal/membership-payment', { state: paymentState });
@@ -951,13 +1099,12 @@ export default function MembershipSignup() {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
+                  backgroundImage: `url(${petImg(pet)})`,
+                  backgroundRepeat: 'no-repeat',
+                  backgroundPosition: 'center',
+                  backgroundSize: 'contain',
                 }}
               >
-                <img
-                  src={petImg(pet)}
-                  alt={pet.name}
-                  style={{ maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto', objectFit: 'contain' }}
-                />
               </div>
               <div style={{ flex: 1 }}>
                 <h3 style={{ margin: '0 0 8px', fontSize: 20 }}>{pet.name}</h3>

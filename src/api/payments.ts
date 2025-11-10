@@ -14,6 +14,34 @@ export enum PaymentIntent {
   SUBSCRIPTION = 'SUBSCRIPTION',
 }
 
+export type BillingPreference = 'monthly' | 'annual';
+
+export interface MembershipTransactionAddOn {
+  id: string;
+  name: string;
+  price: number;
+  pricingOption: BillingPreference;
+}
+
+export interface MembershipTransactionPlanSelection {
+  planId: string;
+  planName: string;
+  pricingOption: BillingPreference;
+  price: number;
+  quantity: number;
+  addOns?: MembershipTransactionAddOn[];
+}
+
+export interface MembershipTransactionPayload {
+  clientId?: number | string;
+  patientId?: number | string;
+  practiceId?: number | string;
+  agreementSignedAt?: string;
+  agreementText?: string;
+  plansSelected?: MembershipTransactionPlanSelection[];
+  metadata?: Record<string, any>;
+}
+
 export interface PaymentRequest {
   provider?: PaymentProviderType;
   idempotencyKey: string;
@@ -24,11 +52,13 @@ export interface PaymentRequest {
   note?: string;
   intent?: PaymentIntent;
   subscriptionPlanId?: string;
+  subscriptionPlanVariationId?: string;
   subscriptionStartDate?: string;
   customerId?: string;
   customerEmail?: string;
   customerName?: string;
   metadata?: Record<string, any>;
+  membershipTransaction?: MembershipTransactionPayload;
 }
 
 export interface PaymentResponse {

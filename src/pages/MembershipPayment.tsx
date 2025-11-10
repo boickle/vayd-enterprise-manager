@@ -1,7 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { enrollPetInPlan } from '../api/clientPortal';
-import { createPayment, type PaymentResponse, PaymentIntent } from '../api/payments';
+import {
+  createPayment,
+  type PaymentResponse,
+  PaymentIntent,
+  type MembershipTransactionPayload,
+} from '../api/payments';
 import { useAuth } from '../auth/useAuth';
 
 declare global {
@@ -73,8 +77,10 @@ type PaymentNavigationState = {
   agreementSignature?: string;
   intent: PaymentIntent;
   subscriptionPlanId?: string;
+  subscriptionPlanVariationId?: string;
   subscriptionStartDate?: string;
   metadata?: Record<string, any>;
+  membershipTransaction?: MembershipTransactionPayload;
 };
 
 export default function MembershipPayment() {
@@ -177,9 +183,25 @@ export default function MembershipPayment() {
 
   const costSummaryItems = useMemo(() => state?.costSummary?.items ?? [], [state]);
 
+  const [cardholderName, setCardholderName] = useState('');
+  const [addressLine1, setAddressLine1] = useState('');
+  const [addressLine2, setAddressLine2] = useState('');
+  const [locality, setLocality] = useState('');
+  const [administrativeDistrictLevel1, setAdministrativeDistrictLevel1] = useState('');
+  const [postalCode, setPostalCode] = useState('');
+  const [country, setCountry] = useState('US');
+
   async function handlePaymentSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!state || !card) return;
+    if (!cardholderName.trim()) {
+      setError('Please enter the cardholder name.');
+      return;
+    }
+    if (!addressLine1.trim() || !locality.trim() || !administrativeDistrictLevel1.trim() || !postalCode.trim()) {
+      setError('Please complete the billing address.');
+      return;
+    }
     setProcessing(true);
     setError(null);
 
@@ -198,6 +220,15 @@ export default function MembershipPayment() {
         throw new Error('Subscription plan ID is missing for this selection.');
       }
 
+      const membershipTransactionPayload = state.membershipTransaction
+        ? {
+            ...state.membershipTransaction,
+            metadata: {
+              ...(state.membershipTransaction.metadata ?? {}),
+            },
+          }
+        : undefined;
+
       const payment = await createPayment({
         sourceId: tokenResult.token,
         idempotencyKey,
@@ -207,9 +238,22 @@ export default function MembershipPayment() {
         note: state.note,
         intent: state.intent,
         subscriptionPlanId: state.subscriptionPlanId,
+        subscriptionPlanVariationId: state.subscriptionPlanVariationId,
         subscriptionStartDate: state.subscriptionStartDate,
         customerEmail: userEmail ?? undefined,
-        metadata: state.metadata,
+        metadata: {
+          ...(state.metadata ?? {}),
+          cardholderName: cardholderName.trim(),
+          billingAddress: {
+            addressLine1: addressLine1.trim(),
+            addressLine2: addressLine2.trim() || undefined,
+            locality: locality.trim(),
+            administrativeDistrictLevel1: administrativeDistrictLevel1.trim(),
+            postalCode: postalCode.trim(),
+            country: country.trim() || 'US',
+          },
+        },
+        membershipTransaction: membershipTransactionPayload,
       });
 
       setPaymentResponse(payment);
@@ -218,15 +262,7 @@ export default function MembershipPayment() {
         throw new Error(payment.status || 'Payment was not successful.');
       }
 
-      await enrollPetInPlan(
-        state.petId,
-        state.enrollmentPayload && Object.keys(state.enrollmentPayload).length > 0
-          ? state.enrollmentPayload
-          : undefined,
-      );
-
       setEnrollmentComplete(true);
-      setTimeout(() => navigate('/client-portal'), 2500);
     } catch (err: any) {
       setError(err?.message || 'Unable to process payment.');
     } finally {
@@ -236,6 +272,98 @@ export default function MembershipPayment() {
 
   if (!state) {
     return null;
+  }
+
+  if (enrollmentComplete && paymentResponse?.success) {
+    const providerPaymentId =
+      paymentResponse.providerPaymentId ??
+      paymentResponse.providerResponse?.payment?.id ??
+      paymentResponse.providerResponse?.id ??
+      null;
+    return (
+      <div className="cp-wrap" style={{ maxWidth: 720, margin: '32px auto', padding: '0 16px' }}>
+        <div className="cp-card" style={{ padding: 24, borderLeft: '4px solid var(--brand, #0f766e)' }}>
+          <h1 className="cp-title" style={{ margin: '0 0 12px' }}>
+            Payment Successful
+          </h1>
+          <p className="cp-muted" style={{ marginBottom: 20 }}>
+            {state.petName} is now enrolled in the {state.planName} membership. A confirmation email will arrive shortly.
+          </p>
+          <div style={{ display: 'grid', gap: 8, fontSize: 15 }}>
+            <div>
+              <strong>Plan:</strong> {state.planName}
+            </div>
+            <div>
+              <strong>Billing preference:</strong> {state.billingPreference === 'annual' ? 'Annual' : 'Monthly'}
+            </div>
+            <div>
+              <strong>Total paid today:</strong> {formatMoney(state.amountCents, state.currency)}
+            </div>
+            {state.addOns.length > 0 && (
+              <div>
+                <strong>Add-ons:</strong> {state.addOns.join(', ')}
+              </div>
+            )}
+            {providerPaymentId && (
+              <div>
+                <strong>Payment reference:</strong> {providerPaymentId}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {costSummaryItems.length > 0 && (
+          <section className="cp-section" style={{ marginTop: 24 }}>
+            <div className="cp-card" style={{ padding: 20 }}>
+              <h3 style={{ marginTop: 0, marginBottom: 12 }}>Breakdown</h3>
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
+                {costSummaryItems.map((item) => {
+                  const monthly =
+                    item.monthly != null ? `${formatMoney(item.monthly * 100, state.currency)}/mo` : null;
+                  const annual =
+                    item.annual != null ? `${formatMoney(item.annual * 100, state.currency)} annually (10% discount!)` : null;
+                  return (
+                    <li
+                      key={item.label}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        fontSize: 14,
+                        borderBottom: '1px solid rgba(0,0,0,0.06)',
+                        paddingBottom: 6,
+                      }}
+                    >
+                      <span>{item.label}</span>
+                      <span className="cp-muted">{[monthly, annual].filter(Boolean).join(' • ')}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  fontWeight: 700,
+                  fontSize: 16,
+                  marginTop: 16,
+                }}
+              >
+                <span>Total</span>
+                <span>{formatMoney(state.amountCents, state.currency)}</span>
+              </div>
+            </div>
+          </section>
+        )}
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 24 }}>
+          <button className="btn" onClick={() => navigate('/client-portal')}>
+            Return to Client Portal
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -321,27 +449,102 @@ export default function MembershipPayment() {
       <section className="cp-section">
         <div className="cp-card" style={{ padding: 20 }}>
           <h3 style={{ marginTop: 0, marginBottom: 12 }}>Payment Method</h3>
-          {!squareAppId || !locationId ? (
-            <p className="cp-muted" style={{ color: '#b91c1c' }}>
-              Square configuration is missing. Please contact support.
-            </p>
-          ) : (
-            <form onSubmit={handlePaymentSubmit} style={{ display: 'grid', gap: 16 }}>
-              <div id="card-container" style={{ border: '1px solid rgba(0,0,0,0.08)', borderRadius: 8, padding: 12 }} />
-              <button
-                type="submit"
-                className="btn"
-                disabled={processing || initializingPaymentForm || !card}
-                style={{
-                  minWidth: 200,
-                  opacity: processing || initializingPaymentForm || !card ? 0.6 : 1,
-                  cursor: processing || initializingPaymentForm || !card ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {processing ? 'Processing…' : 'Pay & Enroll'}
-              </button>
-            </form>
-          )}
+          <form onSubmit={handlePaymentSubmit} style={{ display: 'grid', gap: 16 }}>
+            <div style={{ display: 'grid', gap: 10 }}>
+              <div>
+                <label style={{ display: 'block', fontWeight: 600, fontSize: 14, marginBottom: 6 }}>Cardholder Name</label>
+                <input
+                  type="text"
+                  value={cardholderName}
+                  onChange={(e) => setCardholderName(e.target.value)}
+                  placeholder="Full name on card"
+                  className="input"
+                  required
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontWeight: 600, fontSize: 14, marginBottom: 6 }}>Billing Address</label>
+                <input
+                  type="text"
+                  value={addressLine1}
+                  onChange={(e) => setAddressLine1(e.target.value)}
+                  placeholder="Address line 1"
+                  className="input"
+                  required
+                  style={{ marginBottom: 8 }}
+                />
+                <input
+                  type="text"
+                  value={addressLine2}
+                  onChange={(e) => setAddressLine2(e.target.value)}
+                  placeholder="Address line 2 (optional)"
+                  className="input"
+                  style={{ marginBottom: 8 }}
+                />
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <input
+                    type="text"
+                    value={locality}
+                    onChange={(e) => setLocality(e.target.value)}
+                    placeholder="City"
+                    className="input"
+                    style={{ flex: '1 1 140px' }}
+                    required
+                  />
+                  <input
+                    type="text"
+                    value={administrativeDistrictLevel1}
+                    onChange={(e) => setAdministrativeDistrictLevel1(e.target.value.toUpperCase())}
+                    placeholder="State"
+                    className="input"
+                    style={{ flex: '0 0 120px' }}
+                    required
+                    maxLength={2}
+                  />
+                  <input
+                    type="text"
+                    value={postalCode}
+                    onChange={(e) => setPostalCode(e.target.value)}
+                    placeholder="Postal Code"
+                    className="input"
+                    style={{ flex: '0 0 140px' }}
+                    required
+                  />
+                  <input
+                    type="text"
+                    value={country}
+                    onChange={(e) => setCountry(e.target.value.toUpperCase())}
+                    placeholder="Country"
+                    className="input"
+                    style={{ flex: '0 0 100px' }}
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+
+            {!squareAppId || !locationId ? (
+              <p className="cp-muted" style={{ color: '#b91c1c' }}>
+                Square configuration is missing. Please contact support.
+              </p>
+            ) : (
+              <>
+                <div id="card-container" style={{ border: '1px solid rgba(0,0,0,0.08)', borderRadius: 8, padding: 12 }} />
+                <button
+                  type="submit"
+                  className="btn"
+                  disabled={processing || initializingPaymentForm || !card}
+                  style={{
+                    minWidth: 200,
+                    opacity: processing || initializingPaymentForm || !card ? 0.6 : 1,
+                    cursor: processing || initializingPaymentForm || !card ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {processing ? 'Processing…' : 'Pay & Enroll'}
+                </button>
+              </>
+            )}
+          </form>
         </div>
       </section>
 

@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Open+Sans:wght@400;600;700&display=swap');
+
 :root {
   --bg: #f6fbf9;
   --surface: #ffffff;
@@ -31,16 +33,29 @@ body,
 body {
   margin: 0;
   font-family:
-    Inter,
+    'Open Sans',
     ui-sans-serif,
-    system-ui,
     -apple-system,
-    Segoe UI,
+    BlinkMacSystemFont,
+    'Segoe UI',
     Roboto,
-    Helvetica,
-    Arial;
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
   color: var(--text);
   background: radial-gradient(1000px 600px at 20% -10%, #ecfff8 0%, transparent 60%), var(--bg);
+}
+
+h1,
+h2,
+h3,
+.cp-title,
+.cp-h2,
+.cp-card-head h3,
+.cp-card-head .cp-card-sub,
+.cp-card strong,
+.hero h1 {
+  font-family: 'Libre Baskerville', 'Times New Roman', serif;
 }
 
 a {

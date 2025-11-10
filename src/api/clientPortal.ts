@@ -7,6 +7,7 @@ export type Pet = {
   id: string; // prefer PIMS id when available
   /** Internal database id for the patient (used for wellness plan lookups). */
   dbId?: string;
+  clientId?: string | number | null;
   name: string;
   species?: string;
   breed?: string;
@@ -258,6 +259,8 @@ export async function fetchClientPets(): Promise<Pet[]> {
         id: String(p?.pimsId ?? p?.id ?? ''),
         // always retain the internal DB id explicitly for backend lookups
         dbId: p?.id != null ? String(p.id) : undefined,
+        clientId:
+          p?.clientId ?? p?.client?.id ?? p?.ownerId ?? p?.owner?.id ?? null,
         name: String(p?.name ?? 'Pet'),
         species: p?.species ?? p?.speciesName ?? undefined,
         breed: p?.breed ?? p?.breedName ?? undefined,
@@ -298,6 +301,7 @@ export async function fetchClientPets(): Promise<Pet[]> {
         name: a.patientName ?? 'Pet',
         _pimsId: pimsId,
         primaryProviderName: normalizeProviderName(a) ?? null,
+        clientId: a.client?.id ?? a.clientId ?? a.clientPimsId ?? null,
       });
     } else {
       const cur = byKey.get(key)!;
@@ -310,6 +314,10 @@ export async function fetchClientPets(): Promise<Pet[]> {
       if (!cur.primaryProviderName && appointProvider) {
         cur.primaryProviderName = appointProvider;
       }
+       const appointClientId = a.client?.id ?? a.clientId ?? a.clientPimsId ?? null;
+       if (!cur.clientId && appointClientId != null) {
+         cur.clientId = appointClientId;
+       }
     }
   }
 
@@ -328,6 +336,7 @@ export async function fetchClientPets(): Promise<Pet[]> {
           data?.dateOfBirth ??
           (typeof data?.birthDate === 'string' ? data.birthDate : undefined);
         const dbId = data?.id != null ? String(data.id) : undefined;
+        const clientId = data?.client?.id ?? data?.clientId ?? data?.ownerId ?? null;
 
         return stripPrivate({
           ...p,
@@ -335,10 +344,14 @@ export async function fetchClientPets(): Promise<Pet[]> {
           breed,
           dob,
           dbId, // <- capture real DB id
+          clientId: clientId ?? p.clientId ?? null,
           primaryProviderName: normalizeProviderName(data) ?? normalizeProviderName(p) ?? null,
         });
       } catch {
-        return stripPrivate(p);
+        return stripPrivate({
+          ...p,
+          clientId: p.clientId ?? null,
+        });
       }
     })
   );

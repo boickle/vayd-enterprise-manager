@@ -12,9 +12,14 @@ import {
   fetchClientReminders,
   type ClientReminder,
 } from '../api/clientPortal';
+import { listMembershipTransactions } from '../api/membershipTransactions';
 
 type PetWithWellness = Pet & {
   wellnessPlans?: Pick<WellnessPlan, 'id' | 'packageName' | 'name'>[];
+  membershipStatus?: string | null;
+  membershipPlanName?: string | null;
+  membershipPricingOption?: string | null;
+  membershipUpdatedAt?: string | null;
 };
 
 /* ---------------------------
@@ -82,30 +87,9 @@ function encodeSvgData(svg: string): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-const DOG_PLACEHOLDER = encodeSvgData(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" fill="#ffffff" />
-  <g fill="none" stroke="#0f172a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M30 44V26c0-10 8-18 18-18h18c22 0 38 16 38 38v20" />
-    <path d="M30 40L16 30" />
-    <path d="M100 42l16-14" />
-    <path d="M40 70h52c16 0 28 12 28 26s-12 26-28 26H48c-18 0-30-10-30-24s12-28 30-28z" />
-    <path d="M46 44c0 10 8 18 18 18s18-8 18-18" />
-  </g>
-</svg>`);
+const DOG_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}dog.png`;
 
-const CAT_PLACEHOLDER = encodeSvgData(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" fill="#ffffff" />
-  <g fill="none" stroke="#0f172a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M40 32V14l18 12 18-12v18" />
-    <path d="M34 62c0-18 12-34 30-34s30 16 30 34" />
-    <path d="M94 62c0 32-18 50-30 50S34 94 34 62" />
-    <path d="M34 104c-8 6-12 14-12 22" />
-    <path d="M94 82c12 4 20 14 18 26" />
-    <path d="M54 58h4" />
-    <path d="M78 58h4" />
-    <path d="M56 72c6 4 12 4 16 0" />
-  </g>
-</svg>`);
+const CAT_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}cat.jpg`;
 
 function petImg(p: Pet) {
   const s = (p.species || p.breed || '').toLowerCase();
@@ -131,12 +115,19 @@ function groupApptsByDay(appts: ClientAppointment[]) {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, items]) => ({ key, label: fmtDate(items[0]?.startIso), items }));
 }
+function titleCase(value: string): string {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
 
 /* ---------------------------
    Page
 ---------------------------- */
 export default function ClientPortal() {
-  const { userEmail } = useAuth() as any;
+  const { userEmail, userId } = useAuth() as any;
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
@@ -159,24 +150,88 @@ export default function ClientPortal() {
         ]);
         if (!alive) return;
 
+        const clientIdForTransactions =
+          typeof userId === 'string' && userId.trim().length
+            ? userId
+            : userId != null
+            ? String(userId)
+            : undefined;
+
         const petsWithWellness = await Promise.all(
           pBase.map(async (pet) => {
-            try {
-              const dbId = (pet as any).dbId as string | undefined;
-              if (!dbId) return pet;
-              const plans = await fetchWellnessPlansForPatient(dbId);
-              // Only include active wellness plans
-              const activePlans = plans?.filter((pl) => planIsActive(pl)) ?? [];
-              const slim =
-                activePlans.map((pl) => ({
-                  id: pl.id,
-                  packageName: pl.package?.name ?? pl.packageName ?? null,
-                  name: pl.name ?? null,
-                })) ?? [];
-              return { ...pet, wellnessPlans: slim };
-            } catch {
-              return pet;
-            }
+            const dbId = (pet as any).dbId as string | undefined;
+
+            const [wellnessPlans, membershipInfo] = await Promise.all([
+              (async () => {
+                try {
+                  if (!dbId) return null;
+                  const plans = await fetchWellnessPlansForPatient(dbId);
+                  const activePlans = plans?.filter((pl) => planIsActive(pl)) ?? [];
+                  return (
+                    activePlans.map((pl) => ({
+                      id: pl.id,
+                      packageName: pl.package?.name ?? pl.packageName ?? null,
+                      name: pl.name ?? null,
+                    })) ?? []
+                  );
+                } catch {
+                  return null;
+                }
+              })(),
+              (async () => {
+                try {
+                  const patientIdentifier = dbId ?? pet.id;
+                  if (!patientIdentifier) return null;
+                  const patientNumeric = Number(patientIdentifier);
+                  if (!Number.isFinite(patientNumeric)) return null;
+
+                  const queryClientId =
+                    clientIdForTransactions ?? (pet as any)?.clientId ?? undefined;
+
+                  const txns = await listMembershipTransactions({
+                    patientId: patientNumeric,
+                    clientId: queryClientId,
+                  });
+                  if (!Array.isArray(txns) || txns.length === 0) return null;
+                  const sorted = txns
+                    .slice()
+                    .sort((a, b) => {
+                      const aTime = Date.parse(a.updatedAt ?? a.createdAt ?? '');
+                      const bTime = Date.parse(b.updatedAt ?? b.createdAt ?? '');
+                      if (Number.isFinite(bTime) && Number.isFinite(aTime)) {
+                        return bTime - aTime;
+                      }
+                      return (b.id ?? 0) - (a.id ?? 0);
+                    });
+                  return sorted[0] ?? null;
+                } catch {
+                  return null;
+                }
+              })(),
+            ]);
+
+            const membershipStatus = membershipInfo?.status ?? membershipInfo?.metadata?.status ?? null;
+            const membershipPlanName =
+              membershipInfo?.planName ??
+              membershipInfo?.metadata?.planName ??
+              null;
+            const membershipPricingOption =
+              membershipInfo?.pricingOption ??
+              membershipInfo?.metadata?.billingPreference ??
+              null;
+            const membershipUpdatedAt =
+              membershipInfo?.updatedAt ??
+              membershipInfo?.createdAt ??
+              null;
+
+            return {
+              ...pet,
+              wellnessPlans: wellnessPlans ?? pet.wellnessPlans,
+              membershipStatus,
+              membershipPlanName,
+              membershipPricingOption,
+              membershipUpdatedAt,
+            };
           })
         );
 
@@ -446,6 +501,39 @@ export default function ClientPortal() {
                   const isActive = subStatus === 'active';
                   const isPending = subStatus === 'pending';
                   const hasMembership = isActive || isPending;
+
+                  const membershipStatusRaw = p.membershipStatus ?? null;
+                  const membershipStatusNormalized = membershipStatusRaw
+                    ? String(membershipStatusRaw).toLowerCase()
+                    : null;
+                  const membershipIsActive = membershipStatusNormalized === 'active';
+                  const membershipIsPending = membershipStatusNormalized === 'pending';
+                  const membershipPricingLabel = p.membershipPricingOption
+                    ? titleCase(
+                        String(p.membershipPricingOption)
+                          .replace(/[_-]+/g, ' ')
+                          .trim()
+                      )
+                    : null;
+                  const membershipDisplayText = [
+                    p.membershipPlanName ?? null,
+                    membershipPricingLabel,
+                  ]
+                    .filter(Boolean)
+                    .join(' • ');
+                  const membershipStatusTitle = membershipStatusRaw
+                    ? titleCase(String(membershipStatusRaw))
+                    : null;
+                  const membershipInfoLine =
+                    membershipStatusTitle || membershipDisplayText
+                      ? [
+                          membershipDisplayText || 'Membership',
+                          membershipStatusTitle ? `Status: ${membershipStatusTitle}` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' • ')
+                      : null;
+                  const showMembershipNotice = membershipInfoLine != null;
                   
                   const wellnessNames = (p.wellnessPlans || [])
                     .map((w) => w.packageName || w.name)
@@ -453,7 +541,22 @@ export default function ClientPortal() {
                     .join(', ');
                   
                   const hasWellnessPlans = (p.wellnessPlans || []).length > 0;
-                  const showMembershipButton = !hasMembership && !hasWellnessPlans;
+                  const showMembershipButton =
+                    !hasMembership && !hasWellnessPlans && !membershipIsActive;
+
+                  const badgeLabel = isActive
+                    ? 'Subscription Active'
+                    : isPending
+                    ? 'Subscription Pending'
+                    : membershipIsActive
+                    ? 'Membership Active'
+                    : membershipIsPending
+                    ? 'Membership Pending'
+                    : null;
+                  const badgeColor =
+                    isActive || membershipIsActive
+                      ? brand
+                      : '#f97316';
 
                   return (
                     <article
@@ -470,33 +573,26 @@ export default function ClientPortal() {
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
+                          backgroundImage: `url(${petImg(p)})`,
+                          backgroundRepeat: 'no-repeat',
+                          backgroundPosition: 'center',
+                          backgroundSize: 'contain',
                         }}
                       >
-                        <img
-                          src={petImg(p)}
-                          alt=""
-                          style={{
-                            maxWidth: '100%',
-                            maxHeight: '100%',
-                            width: 'auto',
-                            height: 'auto',
-                            objectFit: 'contain',
-                          }}
-                        />
-                        {isActive && (
+                        {badgeLabel && (
                           <span
                             style={{
                               position: 'absolute',
                               top: 10,
                               left: 10,
-                              background: brand,
+                              background: badgeColor,
                               color: '#fff',
                               fontSize: 12,
                               padding: '4px 8px',
                               borderRadius: 999,
                             }}
                           >
-                            Subscription Active
+                            {badgeLabel}
                           </span>
                         )}
                       </div>
@@ -546,6 +642,12 @@ export default function ClientPortal() {
                           <strong style={{ fontWeight: 600 }}>Wellness:</strong>{' '}
                           {wellnessNames || '—'}
                         </div>
+                        {showMembershipNotice && (
+                          <div className="cp-muted" style={{ marginTop: 6, fontSize: 13 }}>
+                            <strong style={{ fontWeight: 600 }}>Membership:</strong>{' '}
+                            {membershipInfoLine}
+                          </div>
+                        )}
                         {p.subscription?.name && (
                           <div className="cp-muted" style={{ marginTop: 10, fontSize: 12 }}>
                             {p.subscription.name} ({p.subscription.status})

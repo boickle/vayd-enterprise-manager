@@ -21,6 +21,7 @@ export type LoginResult = {
 type AuthContextType = {
   token: string | null;
   userEmail: string | null;
+  userId: string | null;
   role: string[];
   // ⬅️ now returns a LoginResult instead of void
   login: (email: string, password: string) => Promise<LoginResult>;
@@ -45,6 +46,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   });
   const [role, setRole] = useState<string[]>([]);
+  const [userId, setUserId] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem('vayd_clientId');
+    } catch {
+      return null;
+    }
+  });
 
   useEffect(() => {
     setToken(tokenState);
@@ -52,10 +60,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const payload = decodeJwt(tokenState);
       const roleClaim = payload?.role || [];
       setRole(Array.isArray(roleClaim) ? roleClaim : [String(roleClaim)]);
+      const claimedId =
+        payload?.clientId ??
+        payload?.client_id ??
+        payload?.client?.id ??
+        payload?.userId ??
+        payload?.user_id ??
+        payload?.sub ??
+        null;
+      if (claimedId != null) {
+        const claimString = String(claimedId);
+        if (claimString !== userId) {
+          setUserId(claimString);
+          try {
+            sessionStorage.setItem('vayd_clientId', claimString);
+          } catch {}
+        }
+      }
     } else {
       setRole([]);
+      setUserId(null);
+      try {
+        sessionStorage.removeItem('vayd_clientId');
+      } catch {}
     }
-  }, [tokenState]);
+  }, [tokenState, userId]);
 
   useEffect(() => {
     setToken(tokenState);
@@ -67,9 +96,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
           sessionStorage.removeItem('vayd_token');
           sessionStorage.removeItem('vayd_email');
+          sessionStorage.removeItem('vayd_clientId');
         } catch {}
         setTokenState(null);
         setEmail(null);
+        setUserId(null);
         setToken(null);
       });
     }
@@ -85,9 +116,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         sessionStorage.setItem('vayd_token', fakeToken);
         sessionStorage.setItem('vayd_email', emailInput);
+        sessionStorage.setItem('vayd_clientId', 'mock-client');
       } catch {}
       setTokenState(fakeToken);
       setEmail(emailInput);
+      setUserId('mock-client');
       return {
         token: fakeToken,
         user: { email: emailInput, requiresPasswordReset: false, resetPasswordCode: null },
@@ -109,6 +142,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         sessionStorage.setItem('vayd_token', token);
         sessionStorage.setItem('vayd_email', emailInput);
+        const inferredClientId =
+          (user as any)?.clientId ??
+          (user as any)?.client?.id ??
+          user?.id ??
+          null;
+        if (inferredClientId != null) {
+          const inferredStr = String(inferredClientId);
+          sessionStorage.setItem('vayd_clientId', inferredStr);
+          setUserId(inferredStr);
+        } else {
+          sessionStorage.removeItem('vayd_clientId');
+          setUserId(null);
+        }
       } catch {}
       setTokenState(token);
       setEmail(emailInput);
@@ -116,8 +162,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // No token returned — ensure we don't have a stale token set
       try {
         sessionStorage.removeItem('vayd_token');
+        sessionStorage.removeItem('vayd_email');
+        sessionStorage.removeItem('vayd_clientId');
       } catch {}
       setTokenState(null);
+      setEmail(null);
+      setUserId(null);
     }
 
     return { token, user, resetRequired, resetCode };
@@ -127,21 +177,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       sessionStorage.removeItem('vayd_token');
       sessionStorage.removeItem('vayd_email');
+      sessionStorage.removeItem('vayd_clientId');
     } catch {}
     setTokenState(null);
     setEmail(null);
     setToken(null);
+    setUserId(null);
   }
 
   const value = useMemo<AuthContextType>(
     () => ({
       token: tokenState,
       userEmail: email,
+      userId,
       role,
       login,
       logout,
     }),
-    [tokenState, email, role]
+    [tokenState, email, userId, role]
   );
 
   function decodeJwt(token: string): any | null {

@@ -1,0 +1,1029 @@
+{
+  "idempotency_key": "membership-plans-20250209-variation-update",
+  "batches": [
+    {
+      "objects": [
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "3O5TN62Y7DLAYX5GEWRIMWA6",
+          "subscription_plan_data": {
+            "name": "Foundations Only - Cat, Monthly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "BRD2Q3LSJMHPXOAEPX7GI3MJ",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Only - Cat, Monthly",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 5900,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "3O5TN62Y7DLAYX5GEWRIMWA6"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "VFXIWMFA7HQDAAIIBBMRBFWX",
+          "subscription_plan_data": {
+            "name": "Foundations Only - Cat, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "5OQ62K7VIPCPH4JCXS5NWE4Y",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Only - Cat, Yearly",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 65900,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "VFXIWMFA7HQDAAIIBBMRBFWX"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "L3SU6H5CELKAMUMA73KVEQR7",
+          "subscription_plan_data": {
+            "name": "Foundations Plus - Cat, Monthly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "QMANSSNAMUATEDBOZKKZOEOB",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Plus - Cat, Monthly",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 10800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "L3SU6H5CELKAMUMA73KVEQR7"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "GLEZPBB6V4K53XUWTAVO3UQJ",
+          "subscription_plan_data": {
+            "name": "Foundations Plus - Cat, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "AANYKRRBUAQN7EKR24LKVUNO",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Plus - Cat, Yearly",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 118800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "GLEZPBB6V4K53XUWTAVO3UQJ"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "PEIVO4ZYPSDI7AM6MFYIZ6Z5",
+          "subscription_plan_data": {
+            "name": "Foundations Starter Wellness - Cat, Monthly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "74RPQOWMY25WBMJVJ33P7ZPN",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Starter Wellness - Cat, Monthly",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 8800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "PEIVO4ZYPSDI7AM6MFYIZ6Z5"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "YDSKJOC2HYHEJSYVSD6EMYO2",
+          "subscription_plan_data": {
+            "name": "Foundations Starter Wellness - Cat, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "JGGM6P6ENLQ6HLCU4DUY6O3R",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Starter Wellness - Cat, Yearly",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 96800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "YDSKJOC2HYHEJSYVSD6EMYO2"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "QK6RR2IHYS2VOCJKLAXHVTD6",
+          "subscription_plan_data": {
+            "name": "Foundations Starter Wellness Plus - Cat, Monthly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "RQLX72QNDMKF4EA7XPYBOY34",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Starter Wellness Plus - Cat, Monthly",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 13700,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "QK6RR2IHYS2VOCJKLAXHVTD6"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "4YRLNQNYLVMRIMB7GDZ7BGDT",
+          "subscription_plan_data": {
+            "name": "Foundations Starter Wellness Plus - Cat, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "HSMKGW35MECRD32D3DTU2FQX",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Starter Wellness Plus - Cat, Yearly",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 149700,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "4YRLNQNYLVMRIMB7GDZ7BGDT"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "M24K2SK4SQLOCP4UUYLBCUIX",
+          "subscription_plan_data": {
+            "name": "Foundations Only - Dog, Monthly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "XE374BMB5RXUKQVP3A6BDZUQ",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Only - Dog, Monthly",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 6900,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "M24K2SK4SQLOCP4UUYLBCUIX"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "UT5KMJWVJS3L6GC2POVUCAGP",
+          "subscription_plan_data": {
+            "name": "Foundations Only - Dog, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "AMDGXI7ROH6462N7PZD7RDIU",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Only - Dog, Yearly",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 76900,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "UT5KMJWVJS3L6GC2POVUCAGP"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "OGDNWNO6VCHDYOC6U7ACBNJW",
+          "subscription_plan_data": {
+            "name": "Foundations Plus - Dog, Monthly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "PNSPSOCWSSJZZG4OBGEWPC3W",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Plus - Dog, Monthly",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 11800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "OGDNWNO6VCHDYOC6U7ACBNJW"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "FGHIFGX3MBPYP6LEPNUIGZ3F",
+          "subscription_plan_data": {
+            "name": "Foundations Plus - Dog, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "RTYPGILYTOK7BZMT2SAO5XFV",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Plus - Dog, Yearly",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 129800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "FGHIFGX3MBPYP6LEPNUIGZ3F"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "6QKSIPEX3YIMW2V65RQSOTHZ",
+          "subscription_plan_data": {
+            "name": "Foundations Starter Wellness - Dog, Monthly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "SHSPTGWRO3X42RZNT3HY62RB",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Starter Wellness - Dog, Monthly",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 9800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "6QKSIPEX3YIMW2V65RQSOTHZ"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "5USFRLPPLUDS4WEBHJXUNH47",
+          "subscription_plan_data": {
+            "name": "Foundations Starter Wellness - Dog, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "QUDUN2GBYXT2QJUFO3LFJJGM",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Starter Wellness - Dog, Yearly",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 107800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "5USFRLPPLUDS4WEBHJXUNH47"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "CJ65WLVASXCWCXQCV3OOAVF5",
+          "subscription_plan_data": {
+            "name": "Foundations Starter Wellness Plus - Dog, Monthly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "NVIEYLDGGF2QSO3Y4JXYYJ2R",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Starter Wellness Plus - Dog, Monthly",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 14700,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "CJ65WLVASXCWCXQCV3OOAVF5"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "WN275KVMCGN4M2FB2ABCU5IP",
+          "subscription_plan_data": {
+            "name": "Foundations Starter Wellness Plus - Dog, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "TRMKVONWNQJC7GZECRYJRV3Z",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Starter Wellness Plus - Dog, Yearly",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 160700,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "WN275KVMCGN4M2FB2ABCU5IP"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "VCSITYBBKORNG5EWM4QI5LYY",
+          "subscription_plan_data": {
+            "name": "Golden Only - Cat, Monthly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "2F3ABTFBE3Z7OPDECO57PHPC",
+                "subscription_plan_variation_data": {
+                  "name": "Golden Only - Cat, Monthly",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 8900,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "VCSITYBBKORNG5EWM4QI5LYY"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "AQ4KRGTZHRH6YDPVVCDNL3XH",
+          "subscription_plan_data": {
+            "name": "Golden Only - Cat, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "IJYCVVH6N3PNO5QXMJI7M2LQ",
+                "subscription_plan_variation_data": {
+                  "name": "Golden Only - Cat, Yearly",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 94900,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "AQ4KRGTZHRH6YDPVVCDNL3XH"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "WQEO6ULSOE4H3DIKLOFOUXLL",
+          "subscription_plan_data": {
+            "name": "Golden Plus - Cat, Monthly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "4GL4IUTI4OHKOCC7RRM7EI4A",
+                "subscription_plan_variation_data": {
+                  "name": "Golden Plus - Cat, Monthly",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 13800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "WQEO6ULSOE4H3DIKLOFOUXLL"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "RYRAMC6XCNT3K5U2Z4W7Z74N",
+          "subscription_plan_data": {
+            "name": "Golden Plus - Cat, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "D3T3LWYD2E5NHDYRNWNVOP2E",
+                "subscription_plan_variation_data": {
+                  "name": "Golden Plus - Cat, Yearly",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 147800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "RYRAMC6XCNT3K5U2Z4W7Z74N"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "LUXFFRJLXYN3RUD6WQ6YDSCR",
+          "subscription_plan_data": {
+            "name": "Golden Starter Wellness - Cat, Monthly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "24XVI27NI6YCGPDW4H64YOPT",
+                "subscription_plan_variation_data": {
+                  "name": "Golden Starter Wellness - Cat, Monthly",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 11800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "LUXFFRJLXYN3RUD6WQ6YDSCR"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "INXGIVB645YS4AWHOJG6TFYE",
+          "subscription_plan_data": {
+            "name": "Golden Starter Wellness - Cat, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "S3YLEKDQQ5TTLCCMRIEZS6WR",
+                "subscription_plan_variation_data": {
+                  "name": "Golden Starter Wellness - Cat, Yearly",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 125800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "INXGIVB645YS4AWHOJG6TFYE"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "56H7HDI2KLU7JSZSX2GITQU5",
+          "subscription_plan_data": {
+            "name": "Golden Starter Wellness Plus - Cat, Monthly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "573BWBOGXNUQC3DXWYW54HUK",
+                "subscription_plan_variation_data": {
+                  "name": "Golden Starter Wellness Plus - Cat, Monthly",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 16700,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "56H7HDI2KLU7JSZSX2GITQU5"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "WW3Q47W55BX3PJXGOQYDU4NP",
+          "subscription_plan_data": {
+            "name": "Golden Starter Wellness Plus - Cat, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "QVQFXAMK7KWYGXJ2CUMRPV5G",
+                "subscription_plan_variation_data": {
+                  "name": "Golden Starter Wellness Plus - Cat, Yearly",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 178700,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "WW3Q47W55BX3PJXGOQYDU4NP"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "7GZ45YBFP7DKGKZ2OGHJBONU",
+          "subscription_plan_data": {
+            "name": "Golden Only - Dog, Monthly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "BTIH3URCGEW2WUWZI7XSINRQ",
+                "subscription_plan_variation_data": {
+                  "name": "Golden Only - Dog, Monthly",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 9900,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "7GZ45YBFP7DKGKZ2OGHJBONU"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "OUT5QOAHR3K5XOJHDZUGDQP5",
+          "subscription_plan_data": {
+            "name": "Golden Only - Dog, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "MY32ZVY7HZBYEFWQAQFNV7E5",
+                "subscription_plan_variation_data": {
+                  "name": "Golden Only - Dog, Yearly",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 104900,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "OUT5QOAHR3K5XOJHDZUGDQP5"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "LOZ3PKT3NVP2W75JEHH6MVTP",
+          "subscription_plan_data": {
+            "name": "Golden Plus - Dog, Monthly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "OUSM2IVBVCDRVP4ZPPDR72UR",
+                "subscription_plan_variation_data": {
+                  "name": "Golden Plus - Dog, Monthly",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 14800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "LOZ3PKT3NVP2W75JEHH6MVTP"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "TBCLYF2P6HATHPBI345UV4UJ",
+          "subscription_plan_data": {
+            "name": "Golden Plus - Dog, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "IABLQIWGTY7I2F3A5GVRNS7M",
+                "subscription_plan_variation_data": {
+                  "name": "Golden Plus - Dog, Yearly",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 157800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "TBCLYF2P6HATHPBI345UV4UJ"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "V6HJ5WEBBG4SHNDL6HQ6YYIC",
+          "subscription_plan_data": {
+            "name": "Golden Starter Wellness - Dog, Monthly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "2CMH2AK7FB7SZNE3THIHA7SR",
+                "subscription_plan_variation_data": {
+                  "name": "Golden Starter Wellness - Dog, Monthly",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 12800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "V6HJ5WEBBG4SHNDL6HQ6YYIC"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "SASV4AFSJFEZB4LPDHARNNV7",
+          "subscription_plan_data": {
+            "name": "Golden Starter Wellness - Dog, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "34IJUNRMJ66NG74PT63AVJ3J",
+                "subscription_plan_variation_data": {
+                  "name": "Golden Starter Wellness - Dog, Yearly",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 135800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "SASV4AFSJFEZB4LPDHARNNV7"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "XRLHQB7INB7AM3KHG5M5MC7F",
+          "subscription_plan_data": {
+            "name": "Golden Starter Wellness Plus - Dog, Monthly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "MIBM4AMFZDOEK67JRFSALG6Z",
+                "subscription_plan_variation_data": {
+                  "name": "Golden Starter Wellness Plus - Dog, Monthly",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 17700,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "XRLHQB7INB7AM3KHG5M5MC7F"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "5E6RUC3EHRHXPXKKB2ZRKXYA",
+          "subscription_plan_data": {
+            "name": "Golden Starter Wellness Plus - Dog, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "TL7CXZLA3ANLW3TSTMPPJ5UI",
+                "subscription_plan_variation_data": {
+                  "name": "Golden Starter Wellness Plus - Dog, Yearly",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 188700,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "5E6RUC3EHRHXPXKKB2ZRKXYA"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "HUCHWCLTKGCJFM7GHAVJ7A6Q",
+          "subscription_plan_data": {
+            "name": "Comfort Care",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "UKQB5YYSJYQ7FOW6LJTVFHYB",
+                "subscription_plan_variation_data": {
+                  "name": "Comfort Care",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 34900,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "HUCHWCLTKGCJFM7GHAVJ7A6Q"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "WBITPU7MQ4JXCQTHFBJB7IS2",
+          "subscription_plan_data": {
+            "name": "Comfort Care Plus",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "id": "7BC2YZZIPHHVENHCXZSSUIHC",
+                "subscription_plan_variation_data": {
+                  "name": "Comfort Care Plus",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 39800,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "WBITPU7MQ4JXCQTHFBJB7IS2"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
