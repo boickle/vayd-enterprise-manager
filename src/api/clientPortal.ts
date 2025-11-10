@@ -53,6 +53,17 @@ export type ClientAppointment = {
   id: string;
   clientName?: string | null;
   clientPimsId?: string | null;
+  clientId?: number | string | null;
+  client?: {
+    id?: number | string | null;
+    lat?: number | null;
+    lon?: number | null;
+    address1?: string | null;
+    city?: string | null;
+    state?: string | null;
+    zip?: string | null;
+    clientZone?: { id: string | number; name: string | null } | null;
+  } | null;
   clientAlert?: any;
 
   patientName?: string | null;
