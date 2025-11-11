@@ -10,6 +10,8 @@ import {
   PaymentIntent,
   type MembershipTransactionPayload,
   type MembershipTransactionAddOn,
+  fetchSubscriptionPlanCatalog,
+  type SubscriptionPlanCatalog,
 } from '../api/payments';
 import { useAuth } from '../auth/useAuth';
 
@@ -200,83 +202,77 @@ type PlanEntry = {
   planVariationId: string;
 };
 
-const SQUARE_SUBSCRIPTION_PLAN_IDS: Record<
-  string,
-  any
-> = {
-  foundations: {
-    cat: {
-      monthly: {
-        base: { planId: '3O5TN62Y7DLAYX5GEWRIMWA6', planVariationId: 'BRD2Q3LSJMHPXOAEPX7GI3MJ' },
-        plus: { planId: 'L3SU6H5CELKAMUMA73KVEQR7', planVariationId: 'QMANSSNAMUATEDBOZKKZOEOB' },
-        starter: { planId: 'PEIVO4ZYPSDI7AM6MFYIZ6Z5', planVariationId: '74RPQOWMY25WBMJVJ33P7ZPN' },
-        plusStarter: { planId: 'QK6RR2IHYS2VOCJKLAXHVTD6', planVariationId: 'RQLX72QNDMKF4EA7XPYBOY34' },
-      },
-      annual: {
-        base: { planId: 'VFXIWMFA7HQDAAIIBBMRBFWX', planVariationId: '5OQ62K7VIPCPH4JCXS5NWE4Y' },
-        plus: { planId: 'GLEZPBB6V4K53XUWTAVO3UQJ', planVariationId: 'AANYKRRBUAQN7EKR24LKVUNO' },
-        starter: { planId: 'YDSKJOC2HYHEJSYVSD6EMYO2', planVariationId: 'JGGM6P6ENLQ6HLCU4DUY6O3R' },
-        plusStarter: { planId: '4YRLNQNYLVMRIMB7GDZ7BGDT', planVariationId: 'HSMKGW35MECRD32D3DTU2FQX' },
-      },
-    },
-    dog: {
-      monthly: {
-        base: { planId: 'M24K2SK4SQLOCP4UUYLBCUIX', planVariationId: 'XE374BMB5RXUKQVP3A6BDZUQ' },
-        plus: { planId: 'OGDNWNO6VCHDYOC6U7ACBNJW', planVariationId: 'PNSPSOCWSSJZZG4OBGEWPC3W' },
-        starter: { planId: '6QKSIPEX3YIMW2V65RQSOTHZ', planVariationId: 'SHSPTGWRO3X42RZNT3HY62RB' },
-        plusStarter: { planId: 'CJ65WLVASXCWCXQCV3OOAVF5', planVariationId: 'NVIEYLDGGF2QSO3Y4JXYYJ2R' },
-      },
-      annual: {
-        base: { planId: 'UT5KMJWVJS3L6GC2POVUCAGP', planVariationId: 'AMDGXI7ROH6462N7PZD7RDIU' },
-        plus: { planId: 'FGHIFGX3MBPYP6LEPNUIGZ3F', planVariationId: 'RTYPGILYTOK7BZMT2SAO5XFV' },
-        starter: { planId: '5USFRLPPLUDS4WEBHJXUNH47', planVariationId: 'QUDUN2GBYXT2QJUFO3LFJJGM' },
-        plusStarter: { planId: 'WN275KVMCGN4M2FB2ABCU5IP', planVariationId: 'TRMKVONWNQJC7GZECRYJRV3Z' },
-      },
-    },
-  },
-  golden: {
-    cat: {
-      monthly: {
-        base: { planId: 'VCSITYBBKORNG5EWM4QI5LYY', planVariationId: '2F3ABTFBE3Z7OPDECO57PHPC' },
-        plus: { planId: 'WQEO6ULSOE4H3DIKLOFOUXLL', planVariationId: '4GL4IUTI4OHKOCC7RRM7EI4A' },
-        starter: { planId: 'LUXFFRJLXYN3RUD6WQ6YDSCR', planVariationId: '24XVI27NI6YCGPDW4H64YOPT' },
-        plusStarter: { planId: '56H7HDI2KLU7JSZSX2GITQU5', planVariationId: '573BWBOGXNUQC3DXWYW54HUK' },
-      },
-      annual: {
-        base: { planId: 'AQ4KRGTZHRH6YDPVVCDNL3XH', planVariationId: 'IJYCVVH6N3PNO5QXMJI7M2LQ' },
-        plus: { planId: 'RYRAMC6XCNT3K5U2Z4W7Z74N', planVariationId: 'D3T3LWYD2E5NHDYRNWNVOP2E' },
-        starter: { planId: 'INXGIVB645YS4AWHOJG6TFYE', planVariationId: 'S3YLEKDQQ5TTLCCMRIEZS6WR' },
-        plusStarter: { planId: 'WW3Q47W55BX3PJXGOQYDU4NP', planVariationId: 'QVQFXAMK7KWYGXJ2CUMRPV5G' },
-      },
-    },
-    dog: {
-      monthly: {
-        base: { planId: '7GZ45YBFP7DKGKZ2OGHJBONU', planVariationId: 'BTIH3URCGEW2WUWZI7XSINRQ' },
-        plus: { planId: 'LOZ3PKT3NVP2W75JEHH6MVTP', planVariationId: 'OUSM2IVBVCDRVP4ZPPDR72UR' },
-        starter: { planId: 'V6HJ5WEBBG4SHNDL6HQ6YYIC', planVariationId: '2CMH2AK7FB7SZNE3THIHA7SR' },
-        plusStarter: { planId: 'XRLHQB7INB7AM3KHG5M5MC7F', planVariationId: 'MIBM4AMFZDOEK67JRFSALG6Z' },
-      },
-      annual: {
-        base: { planId: 'OUT5QOAHR3K5XOJHDZUGDQP5', planVariationId: 'MY32ZVY7HZBYEFWQAQFNV7E5' },
-        plus: { planId: 'TBCLYF2P6HATHPBI345UV4UJ', planVariationId: 'IABLQIWGTY7I2F3A5GVRNS7M' },
-        starter: { planId: 'SASV4AFSJFEZB4LPDHARNNV7', planVariationId: '34IJUNRMJ66NG74PT63AVJ3J' },
-        plusStarter: { planId: '5E6RUC3EHRHXPXKKB2ZRKXYA', planVariationId: 'TL7CXZLA3ANLW3TSTMPPJ5UI' },
-      },
-    },
-  },
-  'comfort-care': {
-    monthly: {
-      base: { planId: 'HUCHWCLTKGCJFM7GHAVJ7A6Q', planVariationId: 'UKQB5YYSJYQ7FOW6LJTVFHYB' },
-      plus: { planId: 'WBITPU7MQ4JXCQTHFBJB7IS2', planVariationId: '7BC2YZZIPHHVENHCXZSSUIHC' },
-    },
-  },
-};
-
 function toNumber(value: unknown): number | undefined {
   if (value == null) return undefined;
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function catalogHasCadence(
+  catalog: SubscriptionPlanCatalog | null,
+  planKey: string,
+  species: 'cat' | 'dog' | null,
+  cadence: BillingCadence,
+): boolean {
+  if (!catalog || !planKey) return false;
+  const planNode = catalog[planKey];
+  if (!planNode) return false;
+  const nodes: any[] = [];
+  if (species && (planNode as any)[species]) {
+    const speciesNode = (planNode as any)[species];
+    if (speciesNode && speciesNode[cadence]) nodes.push(speciesNode[cadence]);
+  }
+  if ((planNode as any)[cadence]) {
+    nodes.push((planNode as any)[cadence]);
+  }
+  return nodes.some(
+    (node) => node && Object.values(node as Record<string, any>).some(Boolean),
+  );
+}
+
+function lookupCatalogEntry(
+  catalog: SubscriptionPlanCatalog | null,
+  planKey: string,
+  species: 'cat' | 'dog' | null,
+  cadence: BillingCadence,
+  combination: PlanCombination,
+  comfortPlus: boolean,
+): PlanEntry | undefined {
+  if (!catalog) return undefined;
+  const planNode = catalog[planKey];
+  if (!planNode) return undefined;
+
+  const extractEntry = (target: any, combo: PlanCombination): PlanEntry | undefined => {
+    if (!target) return undefined;
+    const entry = target[combo];
+    if (entry && entry.planId && entry.planVariationId) {
+      return entry as PlanEntry;
+    }
+    return undefined;
+  };
+
+  if (planKey === 'comfort-care') {
+    const cadenceNode = (planNode as any)[cadence];
+    if (!cadenceNode) return undefined;
+    const combo = comfortPlus ? 'plus' : 'base';
+    return extractEntry(cadenceNode, combo as PlanCombination);
+  }
+
+  if (species && (planNode as any)[species]) {
+    const speciesNode = (planNode as any)[species];
+    const cadenceNode = speciesNode?.[cadence];
+    const entry = extractEntry(cadenceNode, combination);
+    if (entry) return entry;
+  }
+
+  const fallbackCadence = (planNode as any)[cadence];
+  if (fallbackCadence) {
+    const entry = extractEntry(fallbackCadence, combination);
+    if (entry) return entry;
+  }
+
+  return undefined;
 }
 
 export default function MembershipSignup() {
@@ -302,6 +298,9 @@ export default function MembershipSignup() {
   const [hasUpcomingAppointment, setHasUpcomingAppointment] = useState(false);
   const [agreementAccepted, setAgreementAccepted] = useState(false);
   const [agreementSignature, setAgreementSignature] = useState('');
+  const [planCatalog, setPlanCatalog] = useState<SubscriptionPlanCatalog | null>(null);
+  const [planCatalogError, setPlanCatalogError] = useState<string | null>(null);
+  const [planCatalogLoading, setPlanCatalogLoading] = useState(true);
 
   const brand = 'var(--brand, #0f766e)';
   const brandSoft = 'var(--brand-soft, #e6f7f5)';
@@ -368,6 +367,27 @@ export default function MembershipSignup() {
     };
   }, [petId]);
 
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setPlanCatalogLoading(true);
+      setPlanCatalogError(null);
+      try {
+        const catalog = await fetchSubscriptionPlanCatalog();
+        if (alive) setPlanCatalog(catalog);
+      } catch (e: any) {
+        if (alive) {
+          setPlanCatalogError(e?.message || 'Unable to load membership catalog.');
+        }
+      } finally {
+        if (alive) setPlanCatalogLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const petDetails = useMemo(() => {
     if (!pet) return { kind: null as null | 'dog' | 'cat', ageYears: null as number | null };
     const speciesSource = (pet.species ?? pet.breed ?? '').toLowerCase();
@@ -391,6 +411,8 @@ export default function MembershipSignup() {
     if (!petDetails.kind || petDetails.ageYears == null) return false;
     return petDetails.ageYears >= 9;
   }, [petDetails]);
+
+  const combinedError = error ?? planCatalogError;
 
   const recommendedPlanId = meetsGolden ? 'golden' : null;
   const isNewPatient = !hasPastAppointment;
@@ -524,32 +546,49 @@ export default function MembershipSignup() {
     if (plusExplicit) addOns.push('plus-addon');
     if (includeStarter) addOns.push('starter-addon');
 
-    const speciesKey =
-      selectedPlanExplicit === 'comfort-care' ? null : petDetails.kind === 'dog' ? 'dog' : petDetails.kind === 'cat' ? 'cat' : null;
-
-    const hasAnnualOption =
-      selectedPlanExplicit === 'comfort-care'
-        ? false
-        : !!SQUARE_SUBSCRIPTION_PLAN_IDS[selectedPlanExplicit]?.[speciesKey ?? '']?.annual;
-    const billingKey: BillingCadence = billingPreference === 'annual' && hasAnnualOption ? 'annual' : 'monthly';
-
-    const combination: PlanCombination = plusExplicit && includeStarter ? 'plusStarter' : plusExplicit ? 'plus' : includeStarter ? 'starter' : 'base';
-
-    let subscriptionPlanId: string | undefined;
-    let subscriptionPlanVariationId: string | undefined;
-    if (selectedPlanExplicit === 'comfort-care') {
-      const entry = SQUARE_SUBSCRIPTION_PLAN_IDS['comfort-care']?.[billingKey]?.[
-        plusExplicit ? 'plus' : 'base'
-      ] as PlanEntry | undefined;
-      subscriptionPlanId = entry?.planId;
-      subscriptionPlanVariationId = entry?.planVariationId;
-    } else if (speciesKey) {
-      const entry = SQUARE_SUBSCRIPTION_PLAN_IDS[selectedPlanExplicit]?.[speciesKey]?.[billingKey]?.[
-        combination
-      ] as PlanEntry | undefined;
-      subscriptionPlanId = entry?.planId;
-      subscriptionPlanVariationId = entry?.planVariationId;
+    if (!planCatalog) {
+      setError('Membership catalog is unavailable. Please try again later.');
+      return;
     }
+
+    const speciesKey =
+      selectedPlanExplicit === 'comfort-care'
+        ? null
+        : petDetails.kind === 'dog'
+          ? 'dog'
+          : petDetails.kind === 'cat'
+            ? 'cat'
+            : null;
+
+    const hasAnnualOption = catalogHasCadence(
+      planCatalog,
+      selectedPlanExplicit,
+      speciesKey,
+      'annual',
+    );
+    const billingKey: BillingCadence =
+      billingPreference === 'annual' && hasAnnualOption ? 'annual' : 'monthly';
+
+    const combination: PlanCombination =
+      plusExplicit && includeStarter
+        ? 'plusStarter'
+        : plusExplicit
+          ? 'plus'
+          : includeStarter
+            ? 'starter'
+            : 'base';
+
+    const catalogEntry = lookupCatalogEntry(
+      planCatalog,
+      selectedPlanExplicit,
+      speciesKey,
+      billingKey,
+      combination,
+      plusExplicit,
+    );
+
+    const subscriptionPlanId = catalogEntry?.planId;
+    const subscriptionPlanVariationId = catalogEntry?.planVariationId;
 
     if (!subscriptionPlanId || !subscriptionPlanVariationId) {
       setError('This membership combination is not yet configured for automated billing. Please contact support.');
@@ -693,7 +732,7 @@ export default function MembershipSignup() {
     navigate('/client-portal/membership-payment', { state: paymentState });
   }
 
-  if (loading) {
+  if (loading || planCatalogLoading) {
     return (
       <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px' }}>
         <div style={{ textAlign: 'center', padding: '40px 0' }}>
@@ -703,12 +742,12 @@ export default function MembershipSignup() {
     );
   }
 
-  if (error && !pet) {
+  if (combinedError && !pet) {
     return (
       <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px' }}>
         <div className="card" style={{ maxWidth: 600, margin: '30px auto' }}>
           <h2 style={{ marginTop: 0, color: '#e11d48' }}>Error</h2>
-          <p className="muted">{error}</p>
+          <p className="muted">{combinedError}</p>
           <button className="btn" onClick={() => navigate('/client-portal')} style={{ marginTop: 16 }}>
             Back to Portal
           </button>
@@ -1205,7 +1244,7 @@ export default function MembershipSignup() {
 
         {comfortAnswer === 'no' && recommendationCopy}
 
-        {error && (
+        {combinedError && (
           <div
             style={{
               padding: '12px 16px',
@@ -1216,7 +1255,7 @@ export default function MembershipSignup() {
               marginBottom: 16,
             }}
           >
-            {error}
+            {combinedError}
           </div>
         )}
 
@@ -1567,11 +1606,31 @@ export default function MembershipSignup() {
           <button
             className="btn"
             onClick={handleProceedToPayment}
-            disabled={!selectedPlanExplicit || !agreementAccepted || !agreementSignature.trim()}
+            disabled={
+              !selectedPlanExplicit ||
+              !agreementAccepted ||
+              !agreementSignature.trim() ||
+              planCatalogLoading ||
+              !planCatalog
+            }
             style={{
               minWidth: 200,
-              opacity: !selectedPlanExplicit || !agreementAccepted || !agreementSignature.trim() ? 0.5 : 1,
-              cursor: !selectedPlanExplicit || !agreementAccepted || !agreementSignature.trim() ? 'not-allowed' : 'pointer',
+              opacity:
+                !selectedPlanExplicit ||
+                !agreementAccepted ||
+                !agreementSignature.trim() ||
+                planCatalogLoading ||
+                !planCatalog
+                  ? 0.5
+                  : 1,
+              cursor:
+                !selectedPlanExplicit ||
+                !agreementAccepted ||
+                !agreementSignature.trim() ||
+                planCatalogLoading ||
+                !planCatalog
+                  ? 'not-allowed'
+                  : 'pointer',
             }}
           >
             Continue to Payment
@@ -1581,6 +1640,16 @@ export default function MembershipSignup() {
           {!selectedPlanExplicit && (
             <p className="cp-muted" style={{ marginBottom: 4 }}>
               Please select a plan above
+            </p>
+          )}
+          {planCatalogLoading && (
+            <p className="cp-muted" style={{ color: '#b91c1c' }}>
+              Loading membership catalog…
+            </p>
+          )}
+          {!planCatalogLoading && !planCatalog && (
+            <p className="cp-muted" style={{ color: '#b91c1c' }}>
+              Membership catalog unavailable. Please try again later.
             </p>
           )}
           {selectedPlanExplicit && (!agreementAccepted || !agreementSignature.trim()) && (

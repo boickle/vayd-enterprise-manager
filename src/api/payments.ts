@@ -42,6 +42,30 @@ export interface MembershipTransactionPayload {
   metadata?: Record<string, any>;
 }
 
+export type SubscriptionPlanEntry = {
+  planId: string;
+  planVariationId: string;
+};
+
+export type SubscriptionPlanCombination = {
+  base?: SubscriptionPlanEntry;
+  plus?: SubscriptionPlanEntry;
+  starter?: SubscriptionPlanEntry;
+  plusStarter?: SubscriptionPlanEntry;
+};
+
+export type SubscriptionPlanCadence = {
+  monthly?: SubscriptionPlanCombination;
+  annual?: SubscriptionPlanCombination;
+};
+
+export type SubscriptionPlanSpecies = SubscriptionPlanCadence & {
+  cat?: SubscriptionPlanCadence;
+  dog?: SubscriptionPlanCadence;
+};
+
+export type SubscriptionPlanCatalog = Record<string, SubscriptionPlanSpecies>;
+
 export interface PaymentRequest {
   provider?: PaymentProviderType;
   idempotencyKey: string;
@@ -91,6 +115,14 @@ export async function fetchPaymentsAnalytics(params: {
 export async function createPayment(payload: PaymentRequest): Promise<PaymentResponse> {
   const { data } = await http.post('/payment-processing/payments', payload);
   return data;
+}
+
+export async function fetchSubscriptionPlanCatalog(): Promise<SubscriptionPlanCatalog> {
+  const { data } = await http.get('/payment-processing/subscription-plan-catalog');
+  if (data && typeof data === 'object') {
+    return data as SubscriptionPlanCatalog;
+  }
+  return {};
 }
 
 export async function listPaymentProviders(): Promise<string[]> {
