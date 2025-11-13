@@ -492,61 +492,29 @@ export default function ClientPortal() {
         }
       `}</style>
 
-      {/* HERO */}
+      {/* HERO - Logo */}
       <div
-        className="cp-hero"
-        style={{ background: `linear-gradient( to right, ${brandSoft}, #fff )` }}
+        style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          marginBottom: '32px',
+          marginTop: '16px',
+          background: 'radial-gradient(1000px 600px at 20% -10%, #ecfff8 0%, transparent 60%), #f6fbf9',
+          padding: '20px',
+          borderRadius: '16px',
+        }}
       >
-        <img src={heroImgUrl()} alt="" className="cp-hero-img" />
-        <div className="cp-hero-inner">
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '6px 10px',
-              background: 'rgba(255,255,255,0.8)',
-              borderRadius: 999,
-              border: '1px solid rgba(0,0,0,0.05)',
-            }}
-          >
-            <span
-              style={{
-                display: 'inline-block',
-                width: 8,
-                height: 8,
-                borderRadius: 999,
-                background: brand,
-              }}
-            />
-            <span className="cp-muted" style={{ fontSize: 13 }}>
-              You’re signed in as <strong style={{ color: 'inherit' }}>{userEmail}</strong>
-            </span>
-          </div>
-
-          <h1 className="cp-title">Welcome to your Client Portal</h1>
-          <p className="cp-muted" style={{ maxWidth: 640, margin: 0 }}>
-            See your pets, manage subscriptions, and review upcoming visits—all in one place.
-          </p>
-
-          {/* Tiny stats */}
-          <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <div className="cp-card cp-stat">
-              <div className="cp-muted" style={{ fontSize: 12 }}>
-                Pets
-              </div>
-              <div style={{ fontWeight: 700, fontSize: 20 }}>{pets.length}</div>
-            </div>
-            <div className="cp-card cp-stat" style={{ minWidth: 200 }}>
-              <div className="cp-muted" style={{ fontSize: 12 }}>
-                Next visit
-              </div>
-              <div style={{ fontWeight: 600, fontSize: 16 }}>
-                {upcomingAppts[0] ? fmtDateTime(upcomingAppts[0].startIso) : '—'}
-              </div>
-            </div>
-          </div>
-        </div>
+        <img
+          src="/final_thick_lines_cropped.jpeg"
+          alt="Vet At Your Door logo"
+          style={{
+            width: 'min(320px, 60vw)',
+            maxWidth: 360,
+            height: 'auto',
+            mixBlendMode: 'multiply',
+          }}
+        />
       </div>
 
       {/* NOTICES */}
