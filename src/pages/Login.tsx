@@ -145,8 +145,10 @@ export default function LoginPage() {
   const logoContainerStyle: CSSProperties = {
     gridColumn: '1 / -1',
     display: 'flex',
-    justifyContent: 'center',
+    flexDirection: 'column',
+    alignItems: 'center',
     marginBottom: '-120px',
+    width: '100%',
   };
 
   const logoStyle: CSSProperties = {
@@ -154,6 +156,23 @@ export default function LoginPage() {
     maxWidth: 360,
     height: 'auto',
     mixBlendMode: 'multiply',
+    marginBottom: '16px',
+  };
+
+  const logoTextStyle: CSSProperties = {
+    fontSize: 'clamp(28px, 5vw, 36px)',
+    fontWeight: 700,
+    color: '#10b981',
+    margin: 0,
+    textAlign: 'center',
+  };
+
+  const taglineStyle: CSSProperties = {
+    fontSize: 'clamp(16px, 3vw, 20px)',
+    color: '#1f2937',
+    margin: '8px 0 0 0',
+    textAlign: 'center',
+    fontWeight: 400,
   };
 
   const responsiveStyles = `
@@ -177,15 +196,22 @@ export default function LoginPage() {
         max-width: 100%;
         width: 100%;
       }
+      .login-page .auth-hero h1 {
+        padding-top: 50px !important;
+      }
+    .login-page .auth-logo {
+        margin-bottom: -100px !important;
+      }
+      .login-page .auth-logo h1,
+      .login-page .auth-logo p {
+        text-align: center !important;
+      }
       .login-page .auth-panel {
         margin-left: 0 !important;
         margin-right: 0 !important;
         margin: 0 auto !important;
         width: min(480px, 100%) !important;
         max-width: 480px;
-      }
-      .login-page .auth-logo {
-        margin-bottom: -100px !important;
       }
     }
     @media (max-width: 768px) {
@@ -196,6 +222,9 @@ export default function LoginPage() {
       .login-page .auth-hero {
         align-items: center;
         width: 100%;
+      }
+      .login-page .auth-hero h1 {
+        padding-top: 50px !important;
       }
       .login-page .auth-panel {
         width: min(420px, 100%) !important;
@@ -209,6 +238,9 @@ export default function LoginPage() {
       .login-page {
         padding: 24px 16px 32px !important;
         gap: 32px !important;
+      }
+      .login-page .auth-hero h1 {
+        padding-top: 50px !important;
       }
       .login-page .auth-panel {
         width: 100% !important;
@@ -225,6 +257,8 @@ export default function LoginPage() {
       <style>{responsiveStyles}</style>
       <div className="auth-logo" style={logoContainerStyle}>
         <img style={logoStyle} src="/final_thick_lines_cropped.jpeg" alt="Vet At Your Door logo" />
+        {/* <h1 style={logoTextStyle}>Vet At Your Door</h1>
+        <p style={taglineStyle}>The Best Veterinary Care, at Home</p> */}
       </div>
       <section className="auth-hero">
         <h1 style={headingStyle}>

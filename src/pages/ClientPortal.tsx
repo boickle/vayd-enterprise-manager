@@ -136,6 +136,11 @@ export default function ClientPortal() {
   const [pets, setPets] = useState<PetWithWellness[]>([]);
   const [appts, setAppts] = useState<ClientAppointment[]>([]);
   const [reminders, setReminders] = useState<ClientReminder[]>([]);
+  const [showReminderModal, setShowReminderModal] = useState(false);
+  const [selectedPetReminders, setSelectedPetReminders] = useState<{
+    pet: PetWithWellness;
+    reminders: ClientReminder[];
+  } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -265,20 +270,85 @@ export default function ClientPortal() {
       .reverse();
   }, [appts]);
 
-  const { upcomingReminders, overdueReminders } = useMemo(() => {
-    const now = Date.now();
-    const up: ClientReminder[] = [];
-    const over: ClientReminder[] = [];
-    for (const r of reminders) {
-      const t = r.dueIso ? Date.parse(r.dueIso) : NaN;
-      const done = (r.statusName || '').toLowerCase() === 'completed' || !!r.completedIso;
-      if (Number.isFinite(t) && t < now && !done) over.push(r);
-      else up.push(r);
-    }
-    over.sort((a, b) => Date.parse(a.dueIso!) - Date.parse(b.dueIso!));
-    up.sort((a, b) => Date.parse(a.dueIso!) - Date.parse(b.dueIso!));
-    return { upcomingReminders: up.slice(0, 12), overdueReminders: over.slice(-12) };
-  }, [reminders]);
+  // Get all reminders for a specific pet (not limited)
+  const getAllPetReminders = (pet: PetWithWellness): ClientReminder[] => {
+    const petId = pet.id;
+    const petDbId = (pet as any).dbId;
+
+    return reminders
+      .filter((r) => {
+        // Filter by patient ID
+        const matchesPatient =
+          r.patientId === petId ||
+          r.patientId === petDbId ||
+          String(r.patientId) === String(petId) ||
+          String(r.patientId) === String(petDbId);
+
+        if (!matchesPatient) return false;
+
+        // Filter out completed reminders
+        const done = (r.statusName || '').toLowerCase() === 'completed' || !!r.completedIso;
+        if (done) return false;
+
+        return true;
+      })
+      .sort((a, b) => {
+        const ta = a.dueIso ? Date.parse(a.dueIso) : Number.POSITIVE_INFINITY;
+        const tb = b.dueIso ? Date.parse(b.dueIso) : Number.POSITIVE_INFINITY;
+        return ta - tb;
+      });
+  };
+
+  // Get reminders for display (max 3)
+  const getPetReminders = (pet: PetWithWellness): ClientReminder[] => {
+    return getAllPetReminders(pet).slice(0, 3);
+  };
+
+  const isReminderOverdue = (r: ClientReminder): boolean => {
+    if (!r.dueIso) return false;
+    const t = Date.parse(r.dueIso);
+    return Number.isFinite(t) && t < Date.now();
+  };
+
+  const isReminderUpcoming = (r: ClientReminder): boolean => {
+    if (!r.dueIso) return false;
+    const t = Date.parse(r.dueIso);
+    return Number.isFinite(t) && t >= Date.now();
+  };
+
+  // Check if any pet has an active plan (subscription, membership, or wellness plan)
+  const hasAnyPetWithPlan = useMemo(() => {
+    return pets.some((p) => {
+      const hasSubscription = p.subscription?.status === 'active' || p.subscription?.status === 'pending';
+      const hasMembership = p.membershipStatus === 'active' || p.membershipStatus === 'pending';
+      const hasWellnessPlan = (p.wellnessPlans || []).length > 0;
+      return hasSubscription || hasMembership || hasWellnessPlan;
+    });
+  }, [pets]);
+
+  // Get primary provider name for email (format: first initial + last name, lowercase)
+  const getProviderEmail = (providerName?: string | null): string => {
+    if (!providerName) return 'support@vetatyourdoor.com';
+    const parts = providerName.trim().split(/\s+/);
+    if (parts.length === 0) return 'support@vetatyourdoor.com';
+    if (parts.length === 1) return `${parts[0].toLowerCase()}@vetatyourdoor.com`;
+    const firstName = parts[0];
+    const lastName = parts[parts.length - 1];
+    const emailName = `${firstName.charAt(0)}${lastName}`.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return `${emailName}@vetatyourdoor.com`;
+  };
+
+  // Get the most common primary provider from pets, or use first one
+  const primaryProviderEmail = useMemo(() => {
+    const providers = pets.map(p => p.primaryProviderName).filter(Boolean) as string[];
+    if (providers.length === 0) return 'support@vetatyourdoor.com';
+    // Get the most common provider, or first one
+    const providerCounts = new Map<string, number>();
+    providers.forEach(p => providerCounts.set(p, (providerCounts.get(p) || 0) + 1));
+    const sortedProviders = Array.from(providerCounts.entries()).sort((a, b) => b[1] - a[1]);
+    const mostCommonProvider = sortedProviders[0]?.[0] || providers[0];
+    return getProviderEmail(mostCommonProvider);
+  }, [pets]);
 
   function handleEnrollMembership(pet: PetWithWellness) {
     if (!pet.id) {
@@ -315,39 +385,6 @@ export default function ClientPortal() {
 
   return (
     <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px' }}>
-      {/* Header with logout */}
-      <header
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '24px',
-          paddingBottom: '16px',
-          borderBottom: '1px solid rgba(0,0,0,0.08)',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <img
-            src="/final_thick_lines_cropped.jpeg"
-            alt="VAYD Scout Logo"
-            style={{ height: '40px', width: 'auto' }}
-          />
-          <span style={{ fontWeight: 600, fontSize: '18px' }}>VAYD Scout</span>
-        </div>
-        <button
-          className="btn secondary"
-          onClick={() => {
-            logout();
-            navigate('/login');
-          }}
-          style={{
-            padding: '8px 16px',
-            fontSize: '14px',
-          }}
-        >
-          Log out
-        </button>
-      </header>
 
       {/* Scoped responsive styles */}
       <style>{`
@@ -446,6 +483,14 @@ export default function ClientPortal() {
         @media (max-width: 639px) {
           .cp-bottom-nav { display: block; }
           .cp-wrap { padding-bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + 12px); }
+          .cp-service-actions-mobile { display: block !important; }
+          .cp-service-actions-desktop { display: none !important; }
+        }
+
+        /* Show desktop buttons on larger screens */
+        @media (min-width: 640px) {
+          .cp-service-actions-mobile { display: none !important; }
+          .cp-service-actions-desktop { display: grid !important; }
         }
       `}</style>
 
@@ -512,6 +557,338 @@ export default function ClientPortal() {
 
       {!loading && !error && (
         <>
+          {/* SERVICE ACTION BUTTONS */}
+          <section className="cp-section" style={{ marginTop: 28 }}>
+            {/* Mobile View - Card with List */}
+            <div className="cp-service-actions-mobile" style={{ display: 'none' }}>
+              <div className="cp-card" style={{ padding: 20, borderRadius: 14 }}>
+                <div style={{ marginBottom: 16, textAlign: 'center' }}>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: '#10b981', marginBottom: 8 }}>
+                    Vet At Your Door
+                  </div>
+                  <div style={{ fontSize: 14, color: '#6b7280' }}>
+                    Open Now 8:00 AM – 5:00 PM
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                  <a
+                    href="https://form.jotform.com/221585880190157"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '14px 12px',
+                      textDecoration: 'none',
+                      color: '#111827',
+                      borderBottom: '1px solid #e5e7eb',
+                      gap: 12,
+                    }}
+                  >
+                    <div style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6' }}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20 }}>
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                      </svg>
+                    </div>
+                    <span style={{ flex: 1, fontSize: 15, fontWeight: 500 }}>Request An Appointment</span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20, color: '#9ca3af' }}>
+                      <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                  </a>
+                  <a
+                    href="tel:207-536-8387"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '14px 12px',
+                      textDecoration: 'none',
+                      color: '#111827',
+                      borderBottom: '1px solid #e5e7eb',
+                      gap: 12,
+                    }}
+                  >
+                    <div style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981' }}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20 }}>
+                        <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
+                      </svg>
+                    </div>
+                    <span style={{ flex: 1, fontSize: 15, fontWeight: 500 }}>Call us</span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20, color: '#9ca3af' }}>
+                      <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                  </a>
+                  <a
+                    href="sms:207-536-8387"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '14px 12px',
+                      textDecoration: 'none',
+                      color: '#111827',
+                      borderBottom: '1px solid #e5e7eb',
+                      gap: 12,
+                    }}
+                  >
+                    <div style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981' }}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20 }}>
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                      </svg>
+                    </div>
+                    <span style={{ flex: 1, fontSize: 15, fontWeight: 500 }}>Text us</span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20, color: '#9ca3af' }}>
+                      <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                  </a>
+                  <a
+                    href={`mailto:${primaryProviderEmail}`}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '14px 12px',
+                      textDecoration: 'none',
+                      color: '#111827',
+                      borderBottom: '1px solid #e5e7eb',
+                      gap: 12,
+                    }}
+                  >
+                    <div style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a855f7' }}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20 }}>
+                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                        <polyline points="22,6 12,13 2,6"></polyline>
+                      </svg>
+                    </div>
+                    <span style={{ flex: 1, fontSize: 15, fontWeight: 500 }}>Email Us</span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20, color: '#9ca3af' }}>
+                      <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                  </a>
+                  <a
+                    href="https://www.vetatyourdoor.com/online-pharmacy"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '14px 12px',
+                      textDecoration: 'none',
+                      color: '#111827',
+                      borderBottom: '1px solid #e5e7eb',
+                      gap: 12,
+                    }}
+                  >
+                    <div style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6' }}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20 }}>
+                        <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
+                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                        <path d="M16 10a4 4 0 0 1-8 0"></path>
+                      </svg>
+                    </div>
+                    <span style={{ flex: 1, fontSize: 15, fontWeight: 500 }}>Shop Our Online Pharmacy</span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20, color: '#9ca3af' }}>
+                      <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                  </a>
+                  {hasAnyPetWithPlan && (
+                    <a
+                      href="https://direct.lc.chat/19087357/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '14px 12px',
+                        textDecoration: 'none',
+                        color: '#111827',
+                        gap: 12,
+                      }}
+                    >
+                      <div style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6' }}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20 }}>
+                          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                      </div>
+                      <span style={{ flex: 1, fontSize: 15, fontWeight: 500 }}>Chat now</span>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20, color: '#9ca3af' }}>
+                        <polyline points="9 18 15 12 9 6"></polyline>
+                      </svg>
+                    </a>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Desktop View - Button Grid */}
+            <div className="cp-service-actions-desktop" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+              <a
+                href="https://form.jotform.com/221585880190157"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="cp-card"
+                style={{
+                  padding: '16px 20px',
+                  textDecoration: 'none',
+                  color: '#111827',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  borderRadius: 12,
+                  transition: 'transform 0.2s, box-shadow 0.2s',
+                  cursor: 'pointer',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '';
+                }}
+              >
+                <div style={{ fontSize: 20, color: '#3b82f6' }}>📅</div>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>Request An Appointment</span>
+              </a>
+              <a
+                href="tel:207-536-8387"
+                className="cp-card"
+                style={{
+                  padding: '16px 20px',
+                  textDecoration: 'none',
+                  color: '#111827',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  borderRadius: 12,
+                  transition: 'transform 0.2s, box-shadow 0.2s',
+                  cursor: 'pointer',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '';
+                }}
+              >
+                <div style={{ fontSize: 20, color: '#10b981' }}>📞</div>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>Call Us</span>
+              </a>
+              <a
+                href="sms:207-536-8387"
+                className="cp-card"
+                style={{
+                  padding: '16px 20px',
+                  textDecoration: 'none',
+                  color: '#111827',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  borderRadius: 12,
+                  transition: 'transform 0.2s, box-shadow 0.2s',
+                  cursor: 'pointer',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '';
+                }}
+              >
+                <div style={{ fontSize: 20, color: '#10b981' }}>💬</div>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>Text Us</span>
+              </a>
+              <a
+                href={`mailto:${primaryProviderEmail}`}
+                className="cp-card"
+                style={{
+                  padding: '16px 20px',
+                  textDecoration: 'none',
+                  color: '#111827',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  borderRadius: 12,
+                  transition: 'transform 0.2s, box-shadow 0.2s',
+                  cursor: 'pointer',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '';
+                }}
+              >
+                <div style={{ fontSize: 20, color: '#a855f7' }}>✉️</div>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>Email Us</span>
+              </a>
+              <a
+                href="https://www.vetatyourdoor.com/online-pharmacy"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="cp-card"
+                style={{
+                  padding: '16px 20px',
+                  textDecoration: 'none',
+                  color: '#111827',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  borderRadius: 12,
+                  transition: 'transform 0.2s, box-shadow 0.2s',
+                  cursor: 'pointer',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '';
+                }}
+              >
+                <div style={{ fontSize: 20, color: '#3b82f6' }}>💊</div>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>Shop Online Pharmacy</span>
+              </a>
+              {hasAnyPetWithPlan && (
+                <a
+                  href="https://direct.lc.chat/19087357/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="cp-card"
+                  style={{
+                    padding: '16px 20px',
+                    textDecoration: 'none',
+                    color: '#111827',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    borderRadius: 12,
+                    transition: 'transform 0.2s, box-shadow 0.2s',
+                    cursor: 'pointer',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = 'translateY(-2px)';
+                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'translateY(0)';
+                    e.currentTarget.style.boxShadow = '';
+                  }}
+                >
+                  <div style={{ fontSize: 20, color: '#3b82f6' }}>💬</div>
+                  <span style={{ fontSize: 14, fontWeight: 600 }}>Chat Now</span>
+                </a>
+              )}
+            </div>
+          </section>
+
           {/* PETS */}
           <section className="cp-section">
             <div
@@ -681,6 +1058,62 @@ export default function ClientPortal() {
                             </div>
                           )}
                         </div>
+
+                        {/* Reminders for this pet */}
+                        {(() => {
+                          const allPetReminders = getAllPetReminders(p);
+                          const displayedReminders = allPetReminders.slice(0, 3);
+                          const hasMore = allPetReminders.length > 3;
+
+                          if (allPetReminders.length === 0) return null;
+
+                          return (
+                            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb' }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: '#111827' }}>
+                                Reminders
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                {displayedReminders.map((r) => {
+                                  const overdue = isReminderOverdue(r);
+                                  const upcoming = isReminderUpcoming(r);
+                                  return (
+                                    <div
+                                      key={r.id}
+                                      style={{
+                                        fontSize: 12,
+                                        color: overdue ? '#dc2626' : '#374151',
+                                        fontWeight: upcoming ? 700 : 400,
+                                      }}
+                                    >
+                                      {fmtReminderDate(r)} — {r.description ?? r.kind ?? '—'}
+                                    </div>
+                                  );
+                                })}
+                                {hasMore && (
+                                  <button
+                                    onClick={() => {
+                                      setSelectedPetReminders({ pet: p, reminders: allPetReminders });
+                                      setShowReminderModal(true);
+                                    }}
+                                    style={{
+                                      marginTop: 4,
+                                      fontSize: 12,
+                                      color: '#10b981',
+                                      background: 'transparent',
+                                      border: 'none',
+                                      cursor: 'pointer',
+                                      padding: 0,
+                                      textAlign: 'left',
+                                      fontWeight: 600,
+                                    }}
+                                  >
+                                    More...
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       <div style={{ padding: '0 12px 12px' }}>
@@ -781,53 +1214,95 @@ export default function ClientPortal() {
             )}
           </section>
 
-          {/* UPCOMING REMINDERS */}
-          <section className="cp-section">
-            <h2 className="cp-h2">Upcoming Reminders</h2>
-            {upcomingReminders.length === 0 ? (
-              <div className="cp-muted">No upcoming reminders.</div>
-            ) : (
-              <div className="cp-grid-gap">
-                {upcomingReminders.map((r) => (
-                  <div key={r.id} className="cp-card">
-                    <div className="cp-rem-row">
-                      <div style={{ fontWeight: 600 }}>{fmtReminderDate(r)}</div>
-                      <div className="cp-muted">
-                        <strong>{r.patientName ?? '—'}</strong>
-                      </div>
+          {/* Reminder Modal */}
+          {showReminderModal && selectedPetReminders && (
+            <div
+              style={{
+                position: 'fixed',
+                inset: 0,
+                backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 1000,
+                padding: '20px',
+              }}
+              onClick={() => {
+                setShowReminderModal(false);
+                setSelectedPetReminders(null);
+              }}
+            >
+              <div
+                className="cp-card"
+                style={{
+                  maxWidth: '500px',
+                  width: '100%',
+                  maxHeight: '80vh',
+                  overflowY: 'auto',
+                  padding: '24px',
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                  <h2 className="cp-h2" style={{ margin: 0 }}>
+                    Reminders for {selectedPetReminders.pet.name}
+                  </h2>
+                  <button
+                    onClick={() => {
+                      setShowReminderModal(false);
+                      setSelectedPetReminders(null);
+                    }}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      fontSize: 24,
+                      cursor: 'pointer',
+                      color: '#6b7280',
+                      padding: '0 8px',
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {selectedPetReminders.reminders.map((r) => {
+                    const overdue = isReminderOverdue(r);
+                    const upcoming = isReminderUpcoming(r);
+                    return (
                       <div
-                        className="cp-muted cp-hide-xs"
-                        style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
+                        key={r.id}
+                        style={{
+                          padding: '12px',
+                          borderRadius: 8,
+                          border: '1px solid #e5e7eb',
+                          backgroundColor: '#fff',
+                        }}
                       >
-                        {r.description ?? r.kind ?? '—'}
+                        <div
+                          style={{
+                            fontSize: 14,
+                            color: overdue ? '#dc2626' : '#374151',
+                            fontWeight: upcoming ? 700 : 400,
+                            marginBottom: 4,
+                          }}
+                        >
+                          {fmtReminderDate(r)}
+                        </div>
+                        <div style={{ fontSize: 14, color: '#6b7280' }}>
+                          {r.description ?? r.kind ?? '—'}
+                        </div>
+                        {r.statusName && (
+                          <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
+                            Status: {r.statusName}
+                          </div>
+                        )}
                       </div>
-                      <div className="cp-muted cp-hide-xs" style={{ textAlign: 'right' }}>
-                        {r.statusName ?? 'pending'}
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                    );
+                  })}
+                </div>
               </div>
-            )}
-          </section>
-
-          {/* OVERDUE / RECENT REMINDERS */}
-          <section className="cp-section" style={{ marginBottom: 36 }}>
-            <h3 className="cp-h3">Overdue / Recent Reminders</h3>
-            {overdueReminders.length === 0 ? (
-              <div className="cp-muted">No overdue or recent reminders.</div>
-            ) : (
-              <ul style={{ paddingLeft: 18, margin: 0, lineHeight: 1.7 }}>
-                {overdueReminders.map((r) => (
-                  <li key={r.id} style={{ marginBottom: 4 }}>
-                    <strong>{r.patientName ?? '—'}</strong> — {r.description ?? r.kind ?? '—'} ·{' '}
-                    {fmtOnlyDate(r.dueIso ?? r.dueDate)}{' '}
-                    <span className="cp-muted">({r.statusName ?? 'pending'})</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+            </div>
+          )}
 
           {/* RECENT APPOINTMENTS */}
           <section className="cp-section" style={{ marginBottom: 36 }}>

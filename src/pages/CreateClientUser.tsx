@@ -173,6 +173,9 @@ export default function CreateClientUser() {
         max-width: 100%;
         width: 100%;
       }
+      .create-client-page .auth-hero h1 {
+        padding-top: 50px !important;
+      }
       .create-client-page .auth-panel {
         margin-left: 0 !important;
         margin-right: 0 !important;
@@ -193,6 +196,9 @@ export default function CreateClientUser() {
         align-items: center;
         width: 100%;
       }
+      .create-client-page .auth-hero h1 {
+        padding-top: 50px !important;
+      }
       .create-client-page .auth-panel {
         width: min(420px, 100%) !important;
         max-width: 420px;
@@ -205,6 +211,9 @@ export default function CreateClientUser() {
       .create-client-page {
         padding: 24px 16px 32px !important;
         gap: 32px !important;
+      }
+      .create-client-page .auth-hero h1 {
+        padding-top: 50px !important;
       }
       .create-client-page .auth-panel {
         width: 100% !important;
