@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useState, type CSSProperties } from 'react';
 import { useLocation, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Field } from '../components/Field';
 import { completePasswordReset, requestPasswordReset } from '../api/users';
@@ -64,9 +64,52 @@ export default function ResetPass() {
     }
   }
 
+  const layoutStyle: CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: '32px',
+    padding: 'min(8vh, 80px) min(8vw, 96px) min(12vh, 120px)',
+    minHeight: '100vh',
+    background: 'radial-gradient(1000px 600px at 20% -10%, #ecfff8 0%, transparent 60%), #f6fbf9',
+  };
+
+  const cardWrapperStyle: CSSProperties = {
+    width: 'min(480px, 100%)',
+  };
+
+  const logoContainerStyle: CSSProperties = {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: '-40px',
+    paddingTop: '20px',
+    padding: '20px',
+  };
+
+  const logoStyle: CSSProperties = {
+    width: 'min(320px, 60vw)',
+    maxWidth: 360,
+    height: 'auto',
+    mixBlendMode: 'multiply',
+    display: 'block',
+  };
+
   return (
-    <div style={{ maxWidth: 520, margin: '30px auto' }}>
-      <div className="card">
+    <div className="reset-page" style={layoutStyle}>
+      <div style={logoContainerStyle}>
+        <img 
+          style={logoStyle} 
+          src="/final_thick_lines_cropped.jpeg" 
+          alt="Vet At Your Door logo"
+          onError={(e) => {
+            console.error('Logo failed to load:', e);
+          }}
+        />
+      </div>
+      <div className="card" style={cardWrapperStyle}>
         <h2 style={{ marginTop: 0 }}>Reset Password</h2>
 
         {forwardedEmail && (
@@ -122,9 +165,15 @@ export default function ResetPass() {
 
         {!forwardedEmail && (
           <p className="muted" style={{ marginTop: 10 }}>
-            Don’t have a token? <Link to="/requestreset">Request a reset link</Link>.
+            Don't have a token? <Link to="/request-reset">Request a reset link</Link>.
           </p>
         )}
+
+        <div style={{ marginTop: 16, textAlign: 'center' }}>
+          <Link to="/login" style={{ color: '#10b981', textDecoration: 'none', fontSize: 14 }}>
+            ← Back to Login
+          </Link>
+        </div>
       </div>
     </div>
   );

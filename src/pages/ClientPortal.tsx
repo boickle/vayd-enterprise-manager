@@ -127,7 +127,7 @@ function titleCase(value: string): string {
    Page
 ---------------------------- */
 export default function ClientPortal() {
-  const { userEmail, userId } = useAuth() as any;
+  const { userEmail, userId, logout } = useAuth() as any;
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
@@ -315,6 +315,40 @@ export default function ClientPortal() {
 
   return (
     <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px' }}>
+      {/* Header with logout */}
+      <header
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '24px',
+          paddingBottom: '16px',
+          borderBottom: '1px solid rgba(0,0,0,0.08)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <img
+            src="/final_thick_lines_cropped.jpeg"
+            alt="VAYD Scout Logo"
+            style={{ height: '40px', width: 'auto' }}
+          />
+          <span style={{ fontWeight: 600, fontSize: '18px' }}>VAYD Scout</span>
+        </div>
+        <button
+          className="btn secondary"
+          onClick={() => {
+            logout();
+            navigate('/login');
+          }}
+          style={{
+            padding: '8px 16px',
+            fontSize: '14px',
+          }}
+        >
+          Log out
+        </button>
+      </header>
+
       {/* Scoped responsive styles */}
       <style>{`
         :root {

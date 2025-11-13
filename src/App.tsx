@@ -87,8 +87,12 @@ export default function App() {
 
   return (
     <div>
-      {/* Hide navbar on client portal */}
-      {!(isClient && location.pathname.startsWith('/client-portal')) && (
+      {/* Hide navbar on client portal, login page, create-client page, and reset password */}
+      {!(isClient && location.pathname.startsWith('/client-portal')) &&
+        location.pathname !== '/login' &&
+        location.pathname !== '/create-client' &&
+        location.pathname !== '/reset-password' &&
+        location.pathname !== '/request-reset' && (
         <header className="navbar">
           <div className="brand">
             <img
@@ -100,16 +104,10 @@ export default function App() {
           </div>
 
           {/* Tabs only for employees */}
-          {token ? (
-            !isClient && <AppTabs pages={pages} />
-          ) : (
-            <nav className="row" style={{ gap: 16 }}>
-              <NavLink to="/login">Login</NavLink>
-            </nav>
-          )}
+          {token && !isClient && <AppTabs pages={pages} />}
 
           <div className="spacer" />
-          {token ? (
+          {token && (
             <div className="row">
               <span className="muted">{userEmail ? `Signed in as ${userEmail}` : 'Signed in'}</span>
               <button
@@ -122,10 +120,6 @@ export default function App() {
                 Log out
               </button>
             </div>
-          ) : (
-            <NavLink to="/login" className="btn">
-              Log in
-            </NavLink>
           )}
         </header>
       )}
@@ -153,8 +147,11 @@ export default function App() {
           {/* Public auth */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/create-client" element={<CreateClientUser />} />
-          <Route path="/requestreset" element={<RequestReset />} />
-          <Route path="/resetpass" element={<ResetPass />} />
+          <Route path="/request-reset" element={<RequestReset />} />
+          <Route path="/auth/request-reset" element={<Navigate to="/request-reset" replace />} />
+          <Route path="/requestreset" element={<Navigate to="/request-reset" replace />} />
+          <Route path="/reset-password" element={<ResetPass />} />
+          <Route path="/resetpass" element={<Navigate to="/reset-password" replace />} />
 
           {/* Client portal (standalone) */}
           <Route
