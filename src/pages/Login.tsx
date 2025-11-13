@@ -64,9 +64,9 @@ export default function LoginPage() {
   const layoutStyle: CSSProperties = {
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1.1fr) minmax(0, 1fr)',
-    alignItems: 'center',
-    gap: 'min(8vw, 88px)',
-    padding: 'min(12vh, 120px) min(8vw, 96px)',
+    alignItems: 'flex-start',
+    gap: 0,
+    padding: 'min(4vh, 40px) min(8vw, 96px) min(4vh, 40px)',
     minHeight: '100vh',
     background: 'radial-gradient(1000px 600px at 20% -10%, #ecfff8 0%, transparent 60%), #f6fbf9',
   };
@@ -74,7 +74,7 @@ export default function LoginPage() {
   const headingStyle: CSSProperties = {
     margin: 0,
     fontFamily: '"Libre Baskerville", Georgia, serif',
-    fontSize: 'clamp(32px, 4.5vw, 64px)',
+    fontSize: 'clamp(24px, 3.5vw, 48px)',
     lineHeight: 1.08,
     color: '#0f172a',
   };
@@ -146,7 +146,7 @@ export default function LoginPage() {
     gridColumn: '1 / -1',
     display: 'flex',
     justifyContent: 'center',
-    marginBottom: '-20px',
+    marginBottom: '-120px',
   };
 
   const logoStyle: CSSProperties = {
@@ -168,8 +168,8 @@ export default function LoginPage() {
     @media (max-width: 1024px) {
       .login-page {
         grid-template-columns: 1fr !important;
-        padding: 96px 56px !important;
-        gap: 64px !important;
+        padding: 40px 56px 40px !important;
+        gap: 48px !important;
         text-align: center;
       }
       .login-page .auth-hero {
@@ -185,13 +185,13 @@ export default function LoginPage() {
         max-width: 480px;
       }
       .login-page .auth-logo {
-        margin-bottom: -28px !important;
+        margin-bottom: -100px !important;
       }
     }
     @media (max-width: 768px) {
       .login-page {
-        padding: 72px 24px !important;
-        gap: 52px !important;
+        padding: 32px 24px 32px !important;
+        gap: 40px !important;
       }
       .login-page .auth-hero {
         align-items: center;
@@ -202,20 +202,20 @@ export default function LoginPage() {
         max-width: 420px;
       }
       .login-page .auth-logo {
-        margin-bottom: -24px !important;
+        margin-bottom: -80px !important;
       }
     }
     @media (max-width: 480px) {
       .login-page {
-        padding: 56px 16px 72px !important;
-        gap: 44px !important;
+        padding: 24px 16px 32px !important;
+        gap: 32px !important;
       }
       .login-page .auth-panel {
         width: 100% !important;
         max-width: 100%;
       }
       .login-page .auth-logo {
-        margin-bottom: -16px !important;
+        margin-bottom: -60px !important;
       }
     }
   `;

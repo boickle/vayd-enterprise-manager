@@ -899,7 +899,7 @@ export default function Routing() {
       ...(allowOverflow
         ? {
             returnToDepot: 'afterHoursOk' as const,
-            tailOvertimeMinutes: 60 as const,
+            tailOvertimeMinutes: 120 as const,
           }
         : {}),
     };
