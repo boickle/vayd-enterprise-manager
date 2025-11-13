@@ -364,23 +364,21 @@ export default function ClientPortal() {
      Bottom Nav Handlers
   ---------------------------- */
   function handleBook() {
-    if (BOOKING_PATH) {
-      window.location.assign(BOOKING_PATH);
-    }
+    window.open('https://form.jotform.com/221585880190157', '_blank');
   }
   function handleContact() {
-    if (CONTACT_PATH) {
-      window.location.assign(CONTACT_PATH);
+    // If pet has plan, use chat; otherwise use email
+    if (hasAnyPetWithPlan) {
+      window.open('https://direct.lc.chat/19087357/', '_blank');
     } else {
-      window.location.assign(`mailto:${CONTACT_EMAIL}`);
+      window.location.assign(`mailto:${primaryProviderEmail}`);
     }
   }
   function handleCall() {
-    window.location.assign(`tel:${CONTACT_PHONE}`);
+    window.location.assign('tel:207-536-8387');
   }
   function handleMessages() {
-    // If you have a /messages route or in-app inbox, navigate there:
-    window.location.assign('/messages'); // TODO: update or remove if not used
+    window.location.assign('sms:207-536-8387');
   }
 
   return (
