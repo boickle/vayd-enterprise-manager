@@ -33,13 +33,16 @@ body,
 
 html {
   overflow: hidden; /* Prevent body scroll that can show browser UI */
+  /* Use safe area insets for devices with notches */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
 body {
   position: fixed;
   width: 100%;
   height: 100%;
-  height: 100dvh;
+  height: 100dvh; /* Dynamic viewport height - excludes browser UI */
+  min-height: -webkit-fill-available; /* iOS Safari fallback */
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   margin: 0;
@@ -55,6 +58,8 @@ body {
     sans-serif;
   color: var(--text);
   background: radial-gradient(1000px 600px at 20% -10%, #ecfff8 0%, transparent 60%), var(--bg);
+  /* Prevent pull-to-refresh that shows browser UI */
+  overscroll-behavior-y: contain;
 }
 
 h1,
