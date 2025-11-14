@@ -927,44 +927,6 @@ export default function Routing() {
     const rows: UnifiedOption[] = [];
     const requestIdFromResult = result?.routingRequestId ?? latestRoutingRequestId ?? undefined;
 
-    if (multiDoctor && result?.doctors) {
-      for (const d of result.doctors) {
-        const pid = d.pimsId;
-        const name = d.name || doctorNames[pid] || `Doctor ${pid}`;
-        for (const w of d.top || [])
-          rows.push({
-            ...w,
-            doctorPimsId: pid,
-            doctorName: name,
-            routingRequestId: w.routingRequestId ?? requestIdFromResult,
-          });
-      }
-    } else if (result) {
-      const pid = result.selectedDoctorPimsId || form.doctorId;
-      const name =
-        result.selectedDoctor?.name ||
-        doctorNames[pid] ||
-        [result.selectedDoctor?.firstName, result.selectedDoctor?.lastName]
-          .filter(Boolean)
-          .join(' ') ||
-        `Doctor ${pid}`;
-      if (result.winner)
-        rows.push({
-          ...result.winner,
-          doctorPimsId: pid,
-          doctorName: name,
-          routingRequestId: result.winner.routingRequestId ?? requestIdFromResult,
-        });
-      if (result.alternates)
-        for (const w of result.alternates)
-          rows.push({
-            ...w,
-            doctorPimsId: pid,
-            doctorName: name,
-            routingRequestId: w.routingRequestId ?? requestIdFromResult,
-          });
-    }
-
     // ---- NEW helpers + global condition ----
     const isEmptyDay = (x: any) =>
       Boolean(x?.dayIsEmpty || x?._emptyDay || x?.flags?.includes?.('EMPTY'));
@@ -972,18 +934,14 @@ export default function Routing() {
     const isLowDrive = (x: any) =>
       Number.isFinite(x?.addedDriveSeconds) && x.addedDriveSeconds / 60 <= 20;
 
-    // If there are NO non-empty results with <=20 added minutes, prioritize EMPTY
-    const hasNonEmptyUnder20 = rows.some((r) => !isEmptyDay(r) && isLowDrive(r));
-
     // ---- helpers for sorting rules ----
     const ADDED_CAP_MIN = 20;
 
     const addedMin = (x: any) =>
       Number.isFinite(x?.addedDriveSeconds) ? (x.addedDriveSeconds as number) / 60 : Infinity;
 
-    // NOTE: use the top-level isEmptyDay() helper you defined above
-
-    rows.sort((a, b) => {
+    // Sort function for options
+    const sortOptions = (a: UnifiedOption, b: UnifiedOption) => {
       const aEmpty = isEmptyDay(a);
       const bEmpty = isEmptyDay(b);
       const aAdded = addedMin(a);
@@ -1030,7 +988,66 @@ export default function Routing() {
       // 5) Stable tie-breaks
       if (a.insertionIndex !== b.insertionIndex) return a.insertionIndex - b.insertionIndex;
       return 0;
-    });
+    };
+
+    if (multiDoctor && result?.doctors) {
+      // Multi-doctor mode: no explicit winner, just sort all options
+      for (const d of result.doctors) {
+        const pid = d.pimsId;
+        const name = d.name || doctorNames[pid] || `Doctor ${pid}`;
+        for (const w of d.top || [])
+          rows.push({
+            ...w,
+            doctorPimsId: pid,
+            doctorName: name,
+            routingRequestId: w.routingRequestId ?? requestIdFromResult,
+          });
+      }
+      // Sort all options in multi-doctor mode
+      rows.sort(sortOptions);
+    } else if (result) {
+      // Single-doctor mode: winner should always be first, then sorted alternates
+      const pid = result.selectedDoctorPimsId || form.doctorId;
+      const name =
+        result.selectedDoctor?.name ||
+        doctorNames[pid] ||
+        [result.selectedDoctor?.firstName, result.selectedDoctor?.lastName]
+          .filter(Boolean)
+          .join(' ') ||
+        `Doctor ${pid}`;
+      
+      let winnerOption: UnifiedOption | null = null;
+      const alternateOptions: UnifiedOption[] = [];
+      
+      if (result.winner) {
+        winnerOption = {
+          ...result.winner,
+          doctorPimsId: pid,
+          doctorName: name,
+          routingRequestId: result.winner.routingRequestId ?? requestIdFromResult,
+        };
+      }
+      
+      if (result.alternates) {
+        for (const w of result.alternates) {
+          alternateOptions.push({
+            ...w,
+            doctorPimsId: pid,
+            doctorName: name,
+            routingRequestId: w.routingRequestId ?? requestIdFromResult,
+          });
+        }
+      }
+      
+      // Sort only the alternates, keep winner first
+      alternateOptions.sort(sortOptions);
+      
+      // Build final array: winner first (if exists), then sorted alternates
+      if (winnerOption) {
+        rows.push(winnerOption);
+      }
+      rows.push(...alternateOptions);
+    }
 
     return rows.map((r, idx) => {
       // Force index look nice for EMPTY day
