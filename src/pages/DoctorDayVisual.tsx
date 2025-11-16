@@ -915,9 +915,11 @@ export default function DoctorDayVisual({
               schedStartIso
             );
 
-            // Check if appointment type is "Fixed Time"
-            const apptType = str(h.primary, 'appointmentType') || h.primary?.appointmentType || '';
-            const isFixedTime = apptType.toLowerCase() === 'fixed time';
+            // Check if appointment type is "Fixed Time".
+            // We infer this from the first patient's badge.type, which is built from
+            // appointmentType / appointmentTypeName / serviceName in makePatientBadge().
+            const firstPatientType = (h.patients[0]?.type || '').toLowerCase();
+            const isFixedTime = firstPatientType === 'fixed time';
 
             const patientsPreview = h.patients
               .map((p) => p.name)
