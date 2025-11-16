@@ -249,6 +249,7 @@ export default function DoctorDayVisual({
     y: number;
     client: string;
     clientAlert?: string;
+    isFixedTime?: boolean;
     address: string;
     durMin: number;
     etaIso?: string | null;
@@ -914,6 +915,10 @@ export default function DoctorDayVisual({
               schedStartIso
             );
 
+            // Check if appointment type is "Fixed Time"
+            const apptType = str(h.primary, 'appointmentType') || h.primary?.appointmentType || '';
+            const isFixedTime = apptType.toLowerCase() === 'fixed time';
+
             const patientsPreview = h.patients
               .map((p) => p.name)
               .slice(0, 3)
@@ -940,6 +945,7 @@ export default function DoctorDayVisual({
                     eIso: h.endIso!,
                     patients: h.patients || [],
                     clientAlert: h?.clientAlert,
+                    isFixedTime,
                   });
                 }}
                 onMouseMove={(ev) => {
@@ -982,9 +988,13 @@ export default function DoctorDayVisual({
                   color: h.isPersonalBlock ? '#111827' : undefined,
                   opacity: h.isPersonalBlock ? 0.65 : 1,
                 }}
-                title={`Window: ${DateTime.fromISO(winStartIso).toLocaleString(
-                  DateTime.TIME_SIMPLE
-                )} – ${DateTime.fromISO(winEndIso).toLocaleString(DateTime.TIME_SIMPLE)}`}
+                title={
+                  !h.isPersonalBlock && isFixedTime
+                    ? 'FIXED TIME'
+                    : `Window: ${DateTime.fromISO(winStartIso).toLocaleString(
+                        DateTime.TIME_SIMPLE
+                      )} – ${DateTime.fromISO(winEndIso).toLocaleString(DateTime.TIME_SIMPLE)}`
+                }
               >
                 <div style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>
                   #{idx + 1} {h.client}
@@ -1261,8 +1271,14 @@ export default function DoctorDayVisual({
                   </span>
                   <span>
                     <b>Window:</b>{' '}
-                    {DateTime.fromISO(winStartIso).toLocaleString(DateTime.TIME_SIMPLE)} –{' '}
-                    {DateTime.fromISO(winEndIso).toLocaleString(DateTime.TIME_SIMPLE)}
+                    {hoverCard.isFixedTime ? (
+                      <strong style={{ color: '#dc2626' }}>FIXED TIME</strong>
+                    ) : (
+                      <>
+                        {DateTime.fromISO(winStartIso).toLocaleString(DateTime.TIME_SIMPLE)} –{' '}
+                        {DateTime.fromISO(winEndIso).toLocaleString(DateTime.TIME_SIMPLE)}
+                      </>
+                    )}
                   </span>
                   {backToDepotIso && (
                     <span>

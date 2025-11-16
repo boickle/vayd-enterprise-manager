@@ -1333,7 +1333,15 @@ export default function DoctorDay({
                             {!h.isPersonalBlock && (
                               <>
                                 {' '}
-                                <strong>Window:</strong> {windowTextFromStart(h.startIso)}
+                                {(str(a, 'appointmentType') || '').toLowerCase() === 'fixed time' ||
+                                (str(a, 'appointmentTypeName') || '').toLowerCase() === 'fixed time' ||
+                                (a.appointmentType || '').toLowerCase() === 'fixed time' ? (
+                                  <strong style={{ color: '#dc2626' }}>FIXED TIME</strong>
+                                ) : (
+                                  <>
+                                    <strong>Window:</strong> {windowTextFromStart(h.startIso)}
+                                  </>
+                                )}
                               </>
                             )}
                           </div>

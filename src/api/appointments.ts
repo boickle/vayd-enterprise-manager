@@ -33,6 +33,11 @@ export type DoctorDayAppt = {
   routingAvailable?: boolean;
   isNoLocation?: boolean;
 
+  // Fixed time appointment (no flexible window)
+  isFixed?: boolean;
+  fixedTime?: boolean;
+  isFlexible?: boolean;
+
   // Zones
   clientZone?: MiniZone;
   effectiveZone?: MiniZone;
@@ -104,6 +109,11 @@ export async function fetchDoctorDay(
       expectedArrivalIso: a?.expectedArrivalIso ?? undefined,
       routingAvailable: a?.routingAvailable,
       isNoLocation: backendNoLoc || !(typeof lat === 'number' && typeof lon === 'number'),
+
+      // Fixed time fields
+      isFixed: a?.isFixed ?? undefined,
+      fixedTime: a?.fixedTime ?? undefined,
+      isFlexible: a?.isFlexible ?? undefined,
 
       clientZone: toMiniZone(a?.clientZone),
       effectiveZone: toMiniZone(a?.effectiveZone),
