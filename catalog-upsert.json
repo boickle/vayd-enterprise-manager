@@ -1,5 +1,5 @@
 {
-  "idempotency_key": "membership-plans-20250209-variation-update",
+  "idempotency_key": "membership-plans-20250209-price-update",
   "batches": [
     {
       "objects": [
@@ -51,7 +51,7 @@
                       "pricing": {
                         "type": "STATIC",
                         "price_money": {
-                          "amount": 65900,
+                          "amount": 63900,
                           "currency": "USD"
                         }
                       }
@@ -111,7 +111,7 @@
                       "pricing": {
                         "type": "STATIC",
                         "price_money": {
-                          "amount": 118800,
+                          "amount": 116800,
                           "currency": "USD"
                         }
                       }
@@ -171,7 +171,7 @@
                       "pricing": {
                         "type": "STATIC",
                         "price_money": {
-                          "amount": 96800,
+                          "amount": 94800,
                           "currency": "USD"
                         }
                       }
@@ -231,7 +231,7 @@
                       "pricing": {
                         "type": "STATIC",
                         "price_money": {
-                          "amount": 149700,
+                          "amount": 147700,
                           "currency": "USD"
                         }
                       }
@@ -291,7 +291,7 @@
                       "pricing": {
                         "type": "STATIC",
                         "price_money": {
-                          "amount": 76900,
+                          "amount": 74900,
                           "currency": "USD"
                         }
                       }
@@ -351,7 +351,7 @@
                       "pricing": {
                         "type": "STATIC",
                         "price_money": {
-                          "amount": 129800,
+                          "amount": 127800,
                           "currency": "USD"
                         }
                       }
@@ -411,7 +411,7 @@
                       "pricing": {
                         "type": "STATIC",
                         "price_money": {
-                          "amount": 107800,
+                          "amount": 105800,
                           "currency": "USD"
                         }
                       }
@@ -471,7 +471,7 @@
                       "pricing": {
                         "type": "STATIC",
                         "price_money": {
-                          "amount": 160700,
+                          "amount": 158700,
                           "currency": "USD"
                         }
                       }
@@ -981,7 +981,7 @@
                       "pricing": {
                         "type": "STATIC",
                         "price_money": {
-                          "amount": 34900,
+                          "amount": 28900,
                           "currency": "USD"
                         }
                       }

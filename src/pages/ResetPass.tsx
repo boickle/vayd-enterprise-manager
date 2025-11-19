@@ -10,6 +10,7 @@ export default function ResetPass() {
 
   const [token, setToken] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [pending, setPending] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
@@ -31,10 +32,13 @@ export default function ResetPass() {
     setPending(true);
     try {
       if (!token.trim()) {
-        throw new Error('Reset token is required. Check your email link or paste the token.');
+        throw new Error('Invalid or missing reset link. Please use the link from your email or request a new one.');
       }
       if (password.length < 8) {
         throw new Error('Password must be at least 8 characters.');
+      }
+      if (password !== confirmPassword) {
+        throw new Error('Passwords do not match. Please try again.');
       }
 
       await completePasswordReset(token.trim(), password);
@@ -114,11 +118,11 @@ export default function ResetPass() {
 
         {forwardedEmail && (
           <div className="pill" style={{ marginBottom: 10 }}>
-            You’re resetting the password for <strong>{forwardedEmail}</strong>.
+            You're resetting the password for <strong>{forwardedEmail}</strong>.
             {!token && (
               <>
                 {' '}
-                No token?{' '}
+                Missing reset link?{' '}
                 <button
                   type="button"
                   className="link-strong"
@@ -133,27 +137,52 @@ export default function ResetPass() {
           </div>
         )}
 
-        <form onSubmit={onSubmit} className="grid" style={{ gap: 12 }}>
-          <Field label="Reset token (from your email link)">
-            <input
-              className="input"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="Paste token or open the link with ?token=..."
-              required
-            />
-          </Field>
+        {!token && !forwardedEmail && (
+          <div className="pill" style={{ marginBottom: 10, background: '#fef3c7', color: '#92400e' }}>
+            Please use the reset link from your email to access this page.
+          </div>
+        )}
 
+        <form onSubmit={onSubmit} className="grid" style={{ gap: 12 }}>
           <Field label="New password">
             <input
               className="input"
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                // Clear password mismatch error when user starts typing
+                if (error && error.includes('do not match')) {
+                  setError(null);
+                }
+              }}
               placeholder="At least 8 characters"
               required
             />
           </Field>
+
+          <Field label="Confirm password">
+            <input
+              className="input"
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => {
+                setConfirmPassword(e.target.value);
+                // Clear password mismatch error when user starts typing
+                if (error && error.includes('do not match')) {
+                  setError(null);
+                }
+              }}
+              placeholder="Re-enter your password"
+              required
+            />
+          </Field>
+
+          {password && confirmPassword && password !== confirmPassword && (
+            <div className="danger" style={{ fontSize: 14 }}>
+              Passwords do not match
+            </div>
+          )}
 
           {error && <div className="danger">{error}</div>}
           {msg && <div className="pill">{msg}</div>}
@@ -165,7 +194,7 @@ export default function ResetPass() {
 
         {!forwardedEmail && (
           <p className="muted" style={{ marginTop: 10 }}>
-            Don't have a token? <Link to="/request-reset">Request a reset link</Link>.
+            Need a reset link? <Link to="/request-reset">Request a new one</Link>.
           </p>
         )}
 

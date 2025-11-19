@@ -15,7 +15,7 @@ import {
 import { listMembershipTransactions } from '../api/membershipTransactions';
 
 type PetWithWellness = Pet & {
-  wellnessPlans?: Pick<WellnessPlan, 'id' | 'packageName' | 'name'>[];
+  wellnessPlans?: WellnessPlan[];
   membershipStatus?: string | null;
   membershipPlanName?: string | null;
   membershipPricingOption?: string | null;
@@ -65,6 +65,22 @@ function fmtReminderDate(r: ClientReminder): string {
 function planIsActive(plan: Pick<WellnessPlan, 'isActive' | 'status'> | null | undefined): boolean {
   if (!plan) return false;
 
+  // Check if plan is deleted - if so, it's not active
+  const isDeleted = (plan as any)?.isDeleted;
+  if (isDeleted === true || String(isDeleted).toLowerCase() === 'true') {
+    return false;
+  }
+
+  // Check expiration date - if expired, it's not active
+  const expirationDate = (plan as any)?.expirationDate;
+  if (expirationDate) {
+    const expDate = new Date(expirationDate);
+    if (!isNaN(expDate.getTime()) && expDate.getTime() < Date.now()) {
+      return false;
+    }
+  }
+
+  // Check isActive field
   const direct =
     plan.isActive === true ||
     String(plan.isActive).toLowerCase() === 'true' ||
@@ -123,6 +139,35 @@ function titleCase(value: string): string {
     .join(' ');
 }
 
+function cleanMembershipDisplayText(text: string): string {
+  if (!text) return text;
+  
+  // Check if text contains "Add-ons:" pattern
+  if (text.includes('Add-ons:')) {
+    // Match pattern like "Foundations (Add-ons: PLUS Add-on, Puppy / Kitten Add-on)"
+    const match = text.match(/^([^(]+)\s*\(Add-ons:\s*([^)]+)\)/);
+    if (match) {
+      const basePlan = match[1].trim();
+      const addOnsText = match[2].trim();
+      
+      // Split add-ons by comma and clean each one
+      const addOns = addOnsText
+        .split(',')
+        .map(addon => addon.trim().replace(/\s+Add-on$/i, '').trim())
+        .filter(Boolean);
+      
+      // Combine: base plan + cleaned add-ons
+      if (addOns.length > 0) {
+        return `${basePlan} ${addOns.join(', ')}`;
+      }
+      return basePlan;
+    }
+  }
+  
+  // If no pattern match, just remove any standalone " Add-on" suffixes
+  return text.replace(/\s+Add-on\b/gi, '');
+}
+
 /* ---------------------------
    Page
 ---------------------------- */
@@ -171,14 +216,8 @@ export default function ClientPortal() {
                 try {
                   if (!dbId) return null;
                   const plans = await fetchWellnessPlansForPatient(dbId);
-                  const activePlans = plans?.filter((pl) => planIsActive(pl)) ?? [];
-                  return (
-                    activePlans.map((pl) => ({
-                      id: pl.id,
-                      packageName: pl.package?.name ?? pl.packageName ?? null,
-                      name: pl.name ?? null,
-                    })) ?? []
-                  );
+                  // Keep full plan data so planIsActive can check all fields
+                  return plans ?? [];
                 } catch {
                   return null;
                 }
@@ -257,6 +296,22 @@ export default function ClientPortal() {
     };
   }, []);
 
+  const clientFirstName = useMemo(() => {
+    // Get client first name from first appointment, or fallback to email
+    const firstAppt = appts[0];
+    if (firstAppt?.clientName) {
+      // Extract first name from full name
+      const firstName = firstAppt.clientName.split(' ')[0];
+      return firstName;
+    }
+    // Fallback: use email username part if no client name found
+    if (userEmail) {
+      const emailPart = userEmail.split('@')[0];
+      return emailPart.charAt(0).toUpperCase() + emailPart.slice(1);
+    }
+    return null;
+  }, [appts, userEmail]);
+
   const upcomingAppts = useMemo(() => {
     const now = Date.now();
     return appts.filter((a) => new Date(a.startIso).getTime() >= now);
@@ -269,6 +324,65 @@ export default function ClientPortal() {
       .slice(-8)
       .reverse();
   }, [appts]);
+
+  // Enrich pets with provider names from appointments if missing
+  const petsWithProvider = useMemo(() => {
+    return pets.map((pet) => {
+      // If pet already has a provider name, keep it
+      if (pet.primaryProviderName) {
+        return pet;
+      }
+
+      // Try to find provider from appointments for this pet
+      const petAppts = appts.filter((a) => {
+        const apptPetId = a.patientPimsId ? String(a.patientPimsId) : null;
+        const petId = pet.id;
+        const petDbId = (pet as any).dbId;
+        return (
+          apptPetId === petId ||
+          apptPetId === petDbId ||
+          String(apptPetId) === String(petId) ||
+          String(apptPetId) === String(petDbId)
+        );
+      });
+
+      // Look for provider in appointment data - check multiple possible field structures
+      for (const appt of petAppts) {
+        const apptAny = appt as any;
+        // Try various nested structures
+        const providerName = 
+          apptAny?.doctor?.name ||
+          apptAny?.doctor?.fullName ||
+          apptAny?.doctor?.displayName ||
+          apptAny?.doctorName ||
+          apptAny?.provider?.name ||
+          apptAny?.provider?.fullName ||
+          apptAny?.providerName ||
+          apptAny?.primaryProvider?.name ||
+          apptAny?.primaryProvider?.fullName ||
+          apptAny?.primaryProviderName ||
+          apptAny?.primaryVet?.name ||
+          apptAny?.primaryVetName ||
+          apptAny?.primaryDoctor?.name ||
+          // Try constructing from first/last name
+          (apptAny?.doctor?.firstName && apptAny?.doctor?.lastName
+            ? `${apptAny.doctor.firstName} ${apptAny.doctor.lastName}`.trim()
+            : null) ||
+          (apptAny?.provider?.firstName && apptAny?.provider?.lastName
+            ? `${apptAny.provider.firstName} ${apptAny.provider.lastName}`.trim()
+            : null) ||
+          (apptAny?.primaryProvider?.firstName && apptAny?.primaryProvider?.lastName
+            ? `${apptAny.primaryProvider.firstName} ${apptAny.primaryProvider.lastName}`.trim()
+            : null);
+
+        if (providerName && typeof providerName === 'string' && providerName.trim()) {
+          return { ...pet, primaryProviderName: providerName.trim() };
+        }
+      }
+
+      return pet;
+    });
+  }, [pets, appts]);
 
   // Get all reminders for a specific pet (not limited)
   const getAllPetReminders = (pet: PetWithWellness): ClientReminder[] => {
@@ -340,7 +454,7 @@ export default function ClientPortal() {
 
   // Get the most common primary provider from pets, or use first one
   const primaryProviderEmail = useMemo(() => {
-    const providers = pets.map(p => p.primaryProviderName).filter(Boolean) as string[];
+    const providers = petsWithProvider.map(p => p.primaryProviderName).filter(Boolean) as string[];
     if (providers.length === 0) return 'support@vetatyourdoor.com';
     // Get the most common provider, or first one
     const providerCounts = new Map<string, number>();
@@ -481,6 +595,8 @@ export default function ClientPortal() {
         @media (max-width: 639px) {
           .cp-bottom-nav { display: block; }
           .cp-wrap { padding-bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + 12px); }
+          /* Hide top service action buttons when bottom nav is showing */
+          .cp-service-actions-section { display: none !important; }
           .cp-service-actions-mobile { display: block !important; }
           .cp-service-actions-desktop { display: none !important; }
         }
@@ -496,8 +612,8 @@ export default function ClientPortal() {
       <div
         style={{
           display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
+          flexDirection: 'column',
+          alignItems: 'flex-start',
           marginBottom: '32px',
           marginTop: '16px',
           background: 'radial-gradient(1000px 600px at 20% -10%, #ecfff8 0%, transparent 60%), #f6fbf9',
@@ -505,16 +621,30 @@ export default function ClientPortal() {
           borderRadius: '16px',
         }}
       >
-        <img
-          src="/final_thick_lines_cropped.jpeg"
-          alt="Vet At Your Door logo"
-          style={{
-            width: 'min(320px, 60vw)',
-            maxWidth: 360,
-            height: 'auto',
-            mixBlendMode: 'multiply',
-          }}
-        />
+        <div style={{ width: '100%', display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
+          <img
+            src="/final_thick_lines_cropped.jpeg"
+            alt="Vet At Your Door logo"
+            style={{
+              width: 'min(320px, 60vw)',
+              maxWidth: 360,
+              height: 'auto',
+              mixBlendMode: 'multiply',
+            }}
+          />
+        </div>
+        {clientFirstName && (
+          <h1 style={{ 
+            margin: 0, 
+            fontSize: '24px', 
+            fontWeight: 600, 
+            color: '#111827',
+            textAlign: 'center',
+            width: '100%'
+          }}>
+            Welcome, {clientFirstName} to your VAYD Client Portal!
+          </h1>
+        )}
       </div>
 
       {/* NOTICES */}
@@ -524,7 +654,7 @@ export default function ClientPortal() {
       {!loading && !error && (
         <>
           {/* SERVICE ACTION BUTTONS */}
-          <section className="cp-section" style={{ marginTop: 28 }}>
+          <section className="cp-section cp-service-actions-section" style={{ marginTop: 28 }}>
             {/* Mobile View - Card with List */}
             <div className="cp-service-actions-mobile" style={{ display: 'none' }}>
               <div className="cp-card" style={{ padding: 20, borderRadius: 14 }}>
@@ -657,31 +787,6 @@ export default function ClientPortal() {
                       <polyline points="9 18 15 12 9 6"></polyline>
                     </svg>
                   </a>
-                  {hasAnyPetWithPlan && (
-                    <a
-                      href="https://direct.lc.chat/19087357/"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        padding: '14px 12px',
-                        textDecoration: 'none',
-                        color: '#111827',
-                        gap: 12,
-                      }}
-                    >
-                      <div style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6' }}>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20 }}>
-                          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                        </svg>
-                      </div>
-                      <span style={{ flex: 1, fontSize: 15, fontWeight: 500 }}>Chat now</span>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20, color: '#9ca3af' }}>
-                        <polyline points="9 18 15 12 9 6"></polyline>
-                      </svg>
-                    </a>
-                  )}
                 </div>
               </div>
             </div>
@@ -822,36 +927,6 @@ export default function ClientPortal() {
                 <div style={{ fontSize: 20, color: '#3b82f6' }}>💊</div>
                 <span style={{ fontSize: 14, fontWeight: 600 }}>Shop Online Pharmacy</span>
               </a>
-              {hasAnyPetWithPlan && (
-                <a
-                  href="https://direct.lc.chat/19087357/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="cp-card"
-                  style={{
-                    padding: '16px 20px',
-                    textDecoration: 'none',
-                    color: '#111827',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 12,
-                    borderRadius: 12,
-                    transition: 'transform 0.2s, box-shadow 0.2s',
-                    cursor: 'pointer',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = 'translateY(-2px)';
-                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = 'translateY(0)';
-                    e.currentTarget.style.boxShadow = '';
-                  }}
-                >
-                  <div style={{ fontSize: 20, color: '#3b82f6' }}>💬</div>
-                  <span style={{ fontSize: 14, fontWeight: 600 }}>Chat Now</span>
-                </a>
-              )}
             </div>
           </section>
 
@@ -870,66 +945,118 @@ export default function ClientPortal() {
               </h2>
             </div>
 
-            {pets.length === 0 ? (
+            {petsWithProvider.length === 0 ? (
               <div className="cp-muted">No pets found yet.</div>
             ) : (
               <div className="cp-pets">
-                {pets.map((p) => {
+                {petsWithProvider.map((p) => {
                   const subStatus = p.subscription?.status;
                   const isActive = subStatus === 'active';
                   const isPending = subStatus === 'pending';
-                  const hasMembership = isActive || isPending;
+                  const hasSubscription = isActive || isPending;
 
+                  // Get active wellness plans - filter to only active ones
+                  const activeWellnessPlans = (p.wellnessPlans || []).filter((plan) =>
+                    planIsActive(plan)
+                  );
+                  const hasActiveWellnessPlan = activeWellnessPlans.length > 0;
+                  const hasWellnessPlans = (p.wellnessPlans || []).length > 0;
+                  
+                  // Get membership info
                   const membershipStatusRaw = p.membershipStatus ?? null;
                   const membershipStatusNormalized = membershipStatusRaw
                     ? String(membershipStatusRaw).toLowerCase()
                     : null;
                   const membershipIsActive = membershipStatusNormalized === 'active';
                   const membershipIsPending = membershipStatusNormalized === 'pending';
-                  const membershipPricingLabel = p.membershipPricingOption
-                    ? titleCase(
-                        String(p.membershipPricingOption)
-                          .replace(/[_-]+/g, ' ')
-                          .trim()
-                      )
-                    : null;
-                  const membershipDisplayText = (() => {
+                  const hasMembership = p.membershipPlanName != null;
+                  
+                  // Check if membership was created within last 7 days
+                  const membershipUpdatedAt = p.membershipUpdatedAt;
+                  const membershipIsRecent = membershipUpdatedAt
+                    ? (Date.now() - new Date(membershipUpdatedAt).getTime()) / (1000 * 60 * 60 * 24) <= 7
+                    : false;
+                  
+                  // Determine what to display for membership/wellness
+                  let membershipDisplayText: string | null = null;
+                  let showMembershipNotice = false;
+                  
+                  if (hasActiveWellnessPlan) {
+                    // Use the first active wellness plan and display its package name
+                    const firstActivePlan = activeWellnessPlans[0];
+                    // Prioritize packageName, fallback to name, then default text
+                    membershipDisplayText = 
+                      firstActivePlan.packageName || 
+                      firstActivePlan.name || 
+                      'Wellness Plan';
+                    showMembershipNotice = true;
+                  } else if (hasMembership && !hasWellnessPlans) {
+                    // No wellness plans but has membership - show with PROCESSING
+                    const membershipPricingLabel = p.membershipPricingOption
+                      ? titleCase(
+                          String(p.membershipPricingOption)
+                            .replace(/[_-]+/g, ' ')
+                            .trim()
+                        )
+                      : null;
                     const parts: string[] = [];
                     if (p.membershipPlanName) parts.push(p.membershipPlanName);
                     if (membershipPricingLabel) parts.push(membershipPricingLabel);
-                    return parts.join(' • ');
-                  })();
-                  const membershipStatusTitle = membershipStatusRaw
-                    ? titleCase(String(membershipStatusRaw))
-                    : null;
-                  const membershipInfoLine =
-                    membershipStatusTitle || membershipDisplayText
-                      ? [
-                          membershipDisplayText || 'Membership',
-                          membershipStatusTitle ? `Status: ${membershipStatusTitle}` : null,
-                        ]
-                          .filter(Boolean)
-                          .join(' • ')
-                      : null;
-                  const showMembershipNotice = membershipInfoLine != null;
+                    membershipDisplayText = parts.length > 0 ? parts.join(' • ') : 'Membership';
+                    showMembershipNotice = true;
+                  } else if (hasMembership && hasWellnessPlans && !hasActiveWellnessPlan) {
+                    // Has membership and wellness plans but none are active
+                    if (membershipIsRecent) {
+                      // Show membership with PROCESSING if created within 7 days
+                      const membershipPricingLabel = p.membershipPricingOption
+                        ? titleCase(
+                            String(p.membershipPricingOption)
+                              .replace(/[_-]+/g, ' ')
+                              .trim()
+                          )
+                        : null;
+                      const parts: string[] = [];
+                      if (p.membershipPlanName) parts.push(p.membershipPlanName);
+                      if (membershipPricingLabel) parts.push(membershipPricingLabel);
+                      membershipDisplayText = parts.length > 0 ? parts.join(' • ') : 'Membership';
+                      showMembershipNotice = true;
+                    } else {
+                      // Don't show anything if older than 7 days
+                      showMembershipNotice = false;
+                    }
+                  }
                   
-                  const hasWellnessPlans = (p.wellnessPlans || []).length > 0;
+                  // Show signup button if no active wellness plan and no membership (or membership is old)
                   const showMembershipButton =
-                    !hasMembership && !hasWellnessPlans && !membershipIsActive;
+                    !hasActiveWellnessPlan &&
+                    (!hasMembership || (hasMembership && hasWellnessPlans && !hasActiveWellnessPlan && !membershipIsRecent));
 
+                  // Determine if membership is processing (has membership but no active wellness plan)
+                  const isMembershipProcessing = hasMembership && !hasActiveWellnessPlan && showMembershipNotice;
+                  
                   const badgeLabel = isActive
                     ? 'Subscription Active'
                     : isPending
                     ? 'Subscription Pending'
+                    : hasActiveWellnessPlan
+                    ? 'Membership Active'
+                    : isMembershipProcessing
+                    ? 'Membership Processing'
                     : membershipIsActive
                     ? 'Membership Active'
                     : membershipIsPending
                     ? 'Membership Pending'
                     : null;
-                  const badgeColor =
-                    isActive || membershipIsActive
-                      ? brand
-                      : '#f97316';
+                  
+                  // Colors based on badge label: Membership Active = green, Membership Processing = orange
+                  let badgeColor = '#f97316'; // Default orange
+                  if (badgeLabel === 'Subscription Active' || badgeLabel === 'Membership Active') {
+                    badgeColor = '#4FB128'; // Green
+                  } else if (badgeLabel === 'Membership Processing') {
+                    badgeColor = '#f97316'; // Orange
+                  } else {
+                    badgeColor = '#f97316'; // Orange for pending
+                  }
 
                   return (
                     <article
@@ -958,11 +1085,16 @@ export default function ClientPortal() {
                               position: 'absolute',
                               top: 10,
                               left: 10,
-                              background: badgeColor,
-                              color: '#fff',
-                              fontSize: 12,
-                              padding: '4px 8px',
-                              borderRadius: 999,
+                              background: badgeColor === '#4FB128' 
+                                ? '#E8F5E9' 
+                                : '#FFF4E6',
+                              color: badgeColor,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              padding: '3px 10px',
+                              borderRadius: 4,
+                              border: `1px solid ${badgeColor}`,
+                              boxShadow: 'none',
                             }}
                           >
                             {badgeLabel}
@@ -989,12 +1121,6 @@ export default function ClientPortal() {
                           >
                             {p.name}
                           </strong>
-                          <span
-                            className="cp-muted"
-                            style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis' }}
-                          >
-                            {p.id}
-                          </span>
                         </div>
 
                         <div className="cp-muted" style={{ marginTop: 4, fontSize: 12 }}>
@@ -1006,16 +1132,14 @@ export default function ClientPortal() {
                             ? [p.species, p.breed].filter(Boolean).join(' • ')
                             : '—'}
                         </div>
-                        {p.dob && (
-                          <div className="cp-muted" style={{ marginTop: 4, fontSize: 12 }}>
-                            DOB: {new Date(p.dob).toLocaleDateString()}
-                          </div>
-                        )}
                         <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
-                          {showMembershipNotice && (
+                          {showMembershipNotice && membershipDisplayText && (
                             <div className="cp-muted" style={{ fontSize: 13 }}>
                               <strong style={{ fontWeight: 600 }}>Membership:</strong>{' '}
-                              {membershipInfoLine}
+                              {cleanMembershipDisplayText(membershipDisplayText)}
+                              {!hasActiveWellnessPlan && (
+                                <span style={{ color: '#fbbf24', fontWeight: 600 }}> - PROCESSING</span>
+                              )}
                             </div>
                           )}
                           {p.subscription?.name && (
@@ -1082,14 +1206,50 @@ export default function ClientPortal() {
                         })()}
                       </div>
 
-                      <div style={{ padding: '0 12px 12px' }}>
+                      <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {hasActiveWellnessPlan && (
+                          <a
+                            href="https://direct.lc.chat/19087357/"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              width: '100%',
+                              padding: '8px 12px',
+                              backgroundColor: '#3b82f6',
+                              color: '#fff',
+                              border: 'none',
+                              borderRadius: 8,
+                              fontSize: 14,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              textDecoration: 'none',
+                              textAlign: 'center',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 8,
+                              transition: 'opacity 0.2s',
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.opacity = '0.9';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.opacity = '1';
+                            }}
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
+                              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                            Chat Now
+                          </a>
+                        )}
                         {showMembershipButton && (
                           <button
                             onClick={() => handleEnrollMembership(p)}
                             style={{
                               width: '100%',
                               padding: '8px 12px',
-                              backgroundColor: brand,
+                              backgroundColor: '#4FB128',
                               color: '#fff',
                               border: 'none',
                               borderRadius: 8,
@@ -1270,28 +1430,65 @@ export default function ClientPortal() {
             </div>
           )}
 
-          {/* RECENT APPOINTMENTS */}
-          <section className="cp-section" style={{ marginBottom: 36 }}>
-            <h3 className="cp-h3">Recent Appointments</h3>
-            {pastAppts.length === 0 ? (
-              <div className="cp-muted">No recent appointments.</div>
-            ) : (
-              <ul style={{ paddingLeft: 18, margin: 0, lineHeight: 1.7 }}>
-                {pastAppts.map((a) => (
-                  <li key={a.id} style={{ marginBottom: 4 }}>
-                    <strong>{a.patientName ?? '—'}</strong> — {fmtDateTime(a.startIso)} ·{' '}
-                    {a.appointmentTypeName ??
-                      (typeof a.appointmentType === 'string'
-                        ? a.appointmentType
-                        : a.appointmentType?.name) ??
-                      '—'}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
         </>
       )}
+
+      {/* ---------------------------
+          Footer
+      ---------------------------- */}
+      <footer
+        style={{
+          marginTop: '48px',
+          padding: '32px 16px',
+          borderTop: '1px solid #e5e7eb',
+          backgroundColor: '#f9fafb',
+          textAlign: 'center',
+        }}
+      >
+        <div style={{ maxWidth: 1120, margin: '0 auto' }}>
+          <div style={{ marginBottom: '16px' }}>
+            <div style={{ fontSize: '18px', fontWeight: 600, color: '#111827', marginBottom: '8px' }}>
+              Vet At Your Door
+            </div>
+            <div style={{ fontSize: '14px', color: '#6b7280' }}>
+              Providing quality veterinary care at your doorstep
+            </div>
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'center',
+              gap: '24px',
+              marginBottom: '16px',
+            }}
+          >
+            <a
+              href="tel:207-536-8387"
+              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+            >
+              (207) 536-8387
+            </a>
+            <a
+              href="mailto:info@vetatyourdoor.com"
+              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+            >
+              info@vetatyourdoor.com
+            </a>
+            <a
+              href="https://www.vetatyourdoor.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+            >
+              www.vetatyourdoor.com
+            </a>
+          </div>
+          <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '16px' }}>
+            © {new Date().getFullYear()} Vet At Your Door. All rights reserved.
+          </div>
+        </div>
+      </footer>
 
       {/* ---------------------------
           Mobile Bottom Navigation

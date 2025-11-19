@@ -39,8 +39,8 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
     name: 'Foundations',
     tagLine: 'Annual Membership Plan',
     pricing: [
-      { species: 'dog', monthly: 79, annual: 849 },
-      { species: 'cat', monthly: 69, annual: 749 },
+      { species: 'dog', monthly: 79, annual: 749 },
+      { species: 'cat', monthly: 69, annual: 639 },
     ],
     includes: [
       'One Comprehensive Exam & Trip Fee',
@@ -77,7 +77,7 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
     id: 'comfort-care',
     name: 'Comfort Care',
     tagLine: 'Month-to-Month',
-    pricing: [{ monthly: 349 }],
+    pricing: [{ monthly: 289 }],
     includes: [
       'One Comprehensive Exam & Trip Fee per month',
       'One office-hours tele-health consult',
@@ -102,7 +102,7 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
   },
   {
     id: 'starter-addon',
-    name: 'Starter Wellness Add-On',
+    name: 'Puppy / Kitten Add-on',
     tagLine: 'For Puppies & Kittens',
     badge: 'New Pet Special!',
     badgeColor: '#a78bfa',
@@ -122,7 +122,7 @@ const ADD_ON_PRICING: Record<string, { label: string; monthly: number; annual?: 
     annual: 529,
   },
   'starter-addon': {
-    label: 'Starter Wellness Add-On',
+    label: 'Puppy / Kitten Add-on',
     monthly: 29,
     annual: 309,
   },
@@ -135,7 +135,7 @@ const MEMBERSHIP_AGREEMENT_TEXT = [
   'Golden: Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours telehealth. Requires a 12-month commitment.',
   'Comfort Care: A month-to-month plan that includes one visit with trip fee, one telehealth consult during business hours per month, after-hours telehealth, and a one hundred dollar credit toward euthanasia.',
   'Plus Add-On: Provides ten percent off all services and medications, fifty percent off exams, and a two-hour guaranteed response time by one of your One Team members during business hours if the need arises. The term matches the main plan. A store discount code is issued after sign-up.',
-  'Starter Wellness Add-On: Covers booster vaccine appointments during your pet’s first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.',
+  'Puppy / Kitten Add-on: Covers booster vaccine appointments during your pet\'s first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.',
   'After-Hours Telehealth',
   'Members may access our virtual triage chat after hours during these times: Monday through Friday from 5 pm to 9 pm, and Saturday through Sunday from 8 am to 5 pm. A Triage Technician will review your pet’s history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. Service is unavailable on listed holidays. Hours may change with 30 days of notice.',
   'VCPR Requirements and Limitations for New or Lapsed Patients',
@@ -506,7 +506,7 @@ export default function MembershipSignup() {
       items.push({ label: 'PLUS Add-on', monthly: 49, annual: selectedPlanExplicit === 'comfort-care' ? null : 529 });
     }
     if (starterExplicit) {
-      items.push({ label: 'Starter Wellness Add-On', monthly: 29, annual: selectedPlanExplicit === 'comfort-care' ? null : 309 });
+      items.push({ label: 'Puppy / Kitten Add-on', monthly: 29, annual: selectedPlanExplicit === 'comfort-care' ? null : 309 });
     }
 
     if (!items.length) return null;
@@ -1188,12 +1188,16 @@ export default function MembershipSignup() {
                   setPlusExplicit(false);
                   setBillingPreference('monthly');
                 }}
-                style={{ opacity: comfortAnswer === 'no' ? 1 : 0.6 }}
+                style={{
+                  background: comfortAnswer === 'no' ? '#4FB128' : undefined,
+                  color: comfortAnswer === 'no' ? '#fff' : undefined,
+                  opacity: comfortAnswer === 'no' ? 1 : 0.6,
+                }}
               >
                 No
               </button>
               <button
-                className="btn"
+                className="btn secondary"
                 type="button"
                 onClick={() => {
                   setComfortAnswer('yes');
@@ -1202,7 +1206,11 @@ export default function MembershipSignup() {
                   setPlusExplicit(false);
                   setBillingPreference('monthly');
                 }}
-                style={{ background: comfortAnswer === 'yes' ? brand : undefined, opacity: comfortAnswer === 'yes' ? 1 : 0.85 }}
+                style={{
+                  background: comfortAnswer === 'yes' ? '#4FB128' : undefined,
+                  color: comfortAnswer === 'yes' ? '#fff' : undefined,
+                  opacity: comfortAnswer === 'yes' ? 1 : 0.6,
+                }}
               >
                 Yes, show Comfort Care
               </button>
@@ -1223,18 +1231,26 @@ export default function MembershipSignup() {
                   setStarterAnswer('yes');
                   setStarterExplicit(false);
                 }}
-                style={{ opacity: starterAnswer === 'yes' ? 1 : 0.6 }}
+                style={{
+                  background: starterAnswer === 'yes' ? '#4FB128' : undefined,
+                  color: starterAnswer === 'yes' ? '#fff' : undefined,
+                  opacity: starterAnswer === 'yes' ? 1 : 0.6,
+                }}
               >
                 Yes
               </button>
               <button
-                className="btn"
+                className="btn secondary"
                 type="button"
                 onClick={() => {
                   setStarterAnswer('no');
                   setStarterExplicit(false);
                 }}
-                style={{ background: starterAnswer === 'no' ? brand : undefined, opacity: starterAnswer === 'no' ? 1 : 0.85 }}
+                style={{
+                  background: starterAnswer === 'no' ? '#4FB128' : undefined,
+                  color: starterAnswer === 'no' ? '#fff' : undefined,
+                  opacity: starterAnswer === 'no' ? 1 : 0.6,
+                }}
               >
                 No
               </button>
@@ -1259,14 +1275,32 @@ export default function MembershipSignup() {
           </div>
         )}
 
-        {comfortAnswer ? (
-          <div
-            style={{
-              display: 'grid',
-              gap: 16,
-              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-            }}
-          >
+        {(() => {
+          // Show membership options only if:
+          // - comfortAnswer is answered, AND
+          // - if shouldAskStarter is true, then starterAnswer must also be answered
+          const canShowPlans = comfortAnswer != null && (!shouldAskStarter || starterAnswer != null);
+          
+          if (!canShowPlans) {
+            return (
+              <div className="cp-card" style={{ padding: 20, textAlign: 'center' }}>
+                <p className="cp-muted">
+                  {shouldAskStarter && starterAnswer == null
+                    ? 'Please answer both questions above to see recommended membership options.'
+                    : 'Answer the comfort care question above to see recommended membership options.'}
+                </p>
+              </div>
+            );
+          }
+          
+          return (
+            <div
+              style={{
+                display: 'grid',
+                gap: 16,
+                gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+              }}
+            >
             {plans
               .filter((plan) => {
                 if (plan.id === 'comfort-care') return comfortAnswer === 'yes';
@@ -1439,7 +1473,7 @@ export default function MembershipSignup() {
                 {starterExplicit && <span className="cp-added-badge">Added to Cart</span>}
                 <div className="cp-card-upper">
                   <div className="cp-card-head">
-                    <h3>Starter Wellness Add-On</h3>
+                    <h3>Puppy / Kitten Add-on</h3>
                     <div className="cp-card-sub">Annual Membership Plan</div>
                   </div>
                   <div className="cp-card-price">
@@ -1484,14 +1518,9 @@ export default function MembershipSignup() {
                 </div>
               </article>
             )}
-          </div>
-        ) : (
-          <div className="cp-card" style={{ padding: 20 }}>
-            <p className="cp-muted" style={{ margin: 0 }}>
-              Answer the comfort care question above to see recommended membership options.
-            </p>
-          </div>
-        )}
+            </div>
+          );
+        })()}
       </section>
 
       {selectedPlanExplicit && costSummary && costSummary.items.length > 0 && (
@@ -1659,6 +1688,63 @@ export default function MembershipSignup() {
           )}
         </div>
       </section>
+
+      {/* ---------------------------
+          Footer
+      ---------------------------- */}
+      <footer
+        style={{
+          marginTop: '48px',
+          padding: '32px 16px',
+          borderTop: '1px solid #e5e7eb',
+          backgroundColor: '#f9fafb',
+          textAlign: 'center',
+        }}
+      >
+        <div style={{ maxWidth: 1120, margin: '0 auto' }}>
+          <div style={{ marginBottom: '16px' }}>
+            <div style={{ fontSize: '18px', fontWeight: 600, color: '#111827', marginBottom: '8px' }}>
+              Vet At Your Door
+            </div>
+            <div style={{ fontSize: '14px', color: '#6b7280' }}>
+              Providing quality veterinary care at your doorstep
+            </div>
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'center',
+              gap: '24px',
+              marginBottom: '16px',
+            }}
+          >
+            <a
+              href="tel:207-536-8387"
+              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+            >
+              (207) 536-8387
+            </a>
+            <a
+              href="mailto:info@vetatyourdoor.com"
+              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+            >
+              info@vetatyourdoor.com
+            </a>
+            <a
+              href="https://www.vetatyourdoor.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+            >
+              www.vetatyourdoor.com
+            </a>
+          </div>
+          <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '16px' }}>
+            © {new Date().getFullYear()} Vet At Your Door. All rights reserved.
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
@@ -1694,15 +1780,15 @@ function AgreementSection({
         >
           <p><strong>By enrolling your pet in a Vet At Your Door Membership Plan, you agree to the following terms and conditions.</strong></p>
           <p><strong>Membership Plans</strong></p>
-          <p><strong>Foundations:</strong> Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours telehealth. Requires a 12-month commitment.</p>
-          <p><strong>Golden:</strong> Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours telehealth. Requires a 12-month commitment.</p>
-          <p><strong>Comfort Care:</strong> A month-to-month plan that includes one visit with trip fee, one telehealth consult during business hours per month, after-hours telehealth, and a one hundred dollar credit toward euthanasia.</p>
-          <p><strong>Plus Add-On:</strong> Provides ten percent off all services and medications, fifty percent off exams, and a two-hour guaranteed response time by one of your One Team members during business hours if the need arises. The term matches the main plan. A store discount code is issued after sign-up.</p>
-          <p><strong>Starter Wellness Add-On:</strong> Covers booster vaccine appointments during your pet’s first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.</p>
+          <p><strong>Foundations:</strong> Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a 12-month commitment.</p>
+          <p><strong>Golden:</strong> Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a 12-month commitment.</p>
+          <p><strong>Comfort Care:</strong> A month-to-month plan that includes one visit with trip fee, one tele-chat consult during business hours per month, after-hours tele-chat, and a one hundred dollar credit toward euthanasia.</p>
+          <p><strong>Plus Add-On:</strong> Provides ten percent off all services and medications and fifty percent off exams. There is one free nail trim per year. The term matches the main plan. A store discount code is issued after sign-up.</p>
+          <p><strong>Starter Wellness Add-On:</strong> Covers booster vaccine appointments during your pet's first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.</p>
           <p><strong>After-Hours Telehealth</strong></p>
-          <p>Members may access our virtual triage chat after hours during these times: Monday through Friday from 5 pm to 9 pm, and Saturday through Sunday from 8 am to 5 pm. A Triage Technician will review your pet’s history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. Service is unavailable on listed holidays. Hours may change with 30 days of notice.</p>
+          <p>Members may access our virtual triage chat after hours during these times: Monday through Friday from 5 pm to 9 pm, and Saturday through Sunday from 8 am to 5 pm. A Triage Technician will review your pet's history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. Service is unavailable on listed holidays. Hours may change with 30 days of notice.</p>
           <p><strong>VCPR Requirements and Limitations for New or Lapsed Patients</strong></p>
-          <p>A valid Veterinarian-Client-Patient Relationship requires an in-person exam within the past 365 days. If more than 12 months have passed since your pet’s most recent in-person exam with us, the VCPR is considered expired.</p>
+          <p>A valid Veterinarian-Client-Patient Relationship requires an in-person exam within the past 365 days. If more than 12 months have passed since your pet's most recent in-person exam with us, the VCPR is considered expired.</p>
           <p>For pets we have not yet seen, or for pets whose VCPR has lapsed, the following services cannot be provided until a current VCPR is re-established through an in-person exam:</p>
           <ul style={{ paddingLeft: 20 }}>
             <li>After-hours telehealth</li>
@@ -1710,17 +1796,17 @@ function AgreementSection({
             <li>Prescription medications or refills of any kind</li>
           </ul>
           <p>Once the initial or renewal exam is completed, all membership benefits become fully active.</p>
-          <p>Memberships do not automatically cancel when the VCPR expires. It is the client’s responsibility to remain current.</p>
+          <p>Memberships do not automatically cancel when the VCPR expires. It is the client's responsibility to have their pet remain current.</p>
           <p><strong>Membership Rules</strong></p>
           <p>Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of discounts.</p>
           <p>Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight years of age for dogs or nine years of age for cats. We will email you twenty to thirty days before renewal with a recommendation. You may change your selection or cancel at that time.</p>
           <p>Foundations, Golden, Plus, and Starter Wellness plans require a twelve-month term. Comfort Care is month-to-month, as is Plus when selected with Comfort Care.</p>
           <p>If your pet passes away, moves, or transitions to Comfort Care, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.</p>
-          <p>If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client’s new lease or mortgage agreement.</p>
+          <p>If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client's new lease or mortgage agreement.</p>
           <p>A one-time registration fee, if charged, supports our Angel Fund for pets in need.</p>
           <p><strong>Scheduling and Availability</strong></p>
           <p>Visits should be scheduled in advance for best availability. Specific appointment times cannot be guaranteed. Services are available only within our service area and during our regular appointment hours.</p>
-          <p>We will make every reasonable effort for your pet’s care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.</p>
+          <p>We will make every reasonable effort for your pet's care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.</p>
           <p>If we cannot accommodate an urgent case, we may refer you to another facility or veterinary team.</p>
           <p><strong>Access and Technology Requirements</strong></p>
           <p>Internet access and a compatible device are required for virtual chat and use of our online store. Instructions will be provided in the Welcome Email.</p>
@@ -1737,7 +1823,7 @@ function AgreementSection({
             style={{ marginTop: 4 }}
           />
           <span style={{ fontSize: 14 }}>
-            I have read and agree to the Vet At Your Door Membership Plan terms and conditions.
+            I have read and agree to the Vet At Your Door Membership Plan terms and conditions. I understand that upon early termination of the agreement that I am responsible for services due if it is more than the monthly payments made.
           </span>
         </label>
 

@@ -4,7 +4,6 @@ import { http } from '../api/http';
 
 export default function RequestReset() {
   const [email, setEmail] = useState('');
-  const [serverToken, setServerToken] = useState<string | null>(null); // dev convenience
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -14,11 +13,9 @@ export default function RequestReset() {
     setMsg(null);
     setError(null);
     setPending(true);
-    setServerToken(null);
     try {
-      const { data } = await http.post('/auth/request-reset', { email });
+      await http.post('/auth/request-reset', { email });
       setMsg('If this user exists, a reset email has been sent.');
-      if (data?.token) setServerToken(String(data.token)); // show for dev/testing
     } catch (err: any) {
       setError(err?.response?.data?.message || err.message || 'Request failed');
     } finally {
@@ -116,12 +113,6 @@ export default function RequestReset() {
           </div>
           {error && <div className="danger" style={{ textAlign: 'center' }}>{error}</div>}
           {msg && <div className="pill" style={{ textAlign: 'center' }}>{msg}</div>}
-          {serverToken && (
-            <div className="card" style={{ marginTop: 8 }}>
-              <div className="label">Dev Token (from /auth/request-reset response)</div>
-              <code style={{ wordBreak: 'break-all' }}>{serverToken}</code>
-            </div>
-          )}
           <button style={submitButtonStyle} type="submit" disabled={pending}>
             {pending ? 'Sending…' : 'Send reset email'}
           </button>

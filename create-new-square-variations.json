@@ -1,0 +1,97 @@
+{
+  "idempotency_key": "membership-plans-20250209-new-variations",
+  "batches": [
+    {
+      "objects": [
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "VFXIWMFA7HQDAAIIBBMRBFWX",
+          "subscription_plan_data": {
+            "name": "Foundations Only - Cat, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Only - Cat, Yearly (Updated Price)",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 63900,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "VFXIWMFA7HQDAAIIBBMRBFWX"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "UT5KMJWVJS3L6GC2POVUCAGP",
+          "subscription_plan_data": {
+            "name": "Foundations Only - Dog, Yearly",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "subscription_plan_variation_data": {
+                  "name": "Foundations Only - Dog, Yearly (Updated Price)",
+                  "phases": [
+                    {
+                      "cadence": "ANNUAL",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 74900,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "UT5KMJWVJS3L6GC2POVUCAGP"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "SUBSCRIPTION_PLAN",
+          "id": "HUCHWCLTKGCJFM7GHAVJ7A6Q",
+          "subscription_plan_data": {
+            "name": "Comfort Care",
+            "subscription_plan_variations": [
+              {
+                "type": "SUBSCRIPTION_PLAN_VARIATION",
+                "subscription_plan_variation_data": {
+                  "name": "Comfort Care (Updated Price)",
+                  "phases": [
+                    {
+                      "cadence": "MONTHLY",
+                      "ordinal": 0,
+                      "pricing": {
+                        "type": "STATIC",
+                        "price_money": {
+                          "amount": 28900,
+                          "currency": "USD"
+                        }
+                      }
+                    }
+                  ],
+                  "subscription_plan_id": "HUCHWCLTKGCJFM7GHAVJ7A6Q"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
+

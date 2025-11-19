@@ -20,28 +20,55 @@ export type Pet = {
 };
 
 function normalizeProviderName(raw: any): string | undefined {
+  // Check direct string fields first
   const direct =
     typeof raw?.primaryProviderName === 'string' ? raw.primaryProviderName :
     typeof raw?.providerName === 'string' ? raw.providerName :
     typeof raw?.primaryVetName === 'string' ? raw.primaryVetName :
+    typeof raw?.doctorName === 'string' ? raw.doctorName :
+    typeof raw?.vetName === 'string' ? raw.vetName :
     undefined;
 
   if (direct && direct.trim()) return direct.trim();
 
+  // Check nested object structures
   const src =
-    raw?.primaryProvider ?? raw?.provider ?? raw?.primaryVet ?? raw?.primaryDoctor ?? raw?.doctor ?? null;
+    raw?.primaryProvider ?? 
+    raw?.provider ?? 
+    raw?.primaryVet ?? 
+    raw?.primaryDoctor ?? 
+    raw?.doctor ?? 
+    raw?.vet ??
+    raw?.assignedDoctor ??
+    raw?.assignedProvider ??
+    null;
 
   if (src) {
+    // Try name fields
     const nameLike =
       typeof src?.name === 'string' ? src.name :
       typeof src?.fullName === 'string' ? src.fullName :
       typeof src?.displayName === 'string' ? src.displayName :
+      typeof src?.full_name === 'string' ? src.full_name :
+      typeof src?.display_name === 'string' ? src.display_name :
       undefined;
     if (nameLike && nameLike.trim()) return nameLike.trim();
 
+    // Try constructing from first/last name
     const first =
-      src?.firstName ?? src?.first_name ?? src?.givenName ?? src?.given_name ?? undefined;
-    const last = src?.lastName ?? src?.last_name ?? src?.familyName ?? src?.family_name ?? undefined;
+      src?.firstName ?? 
+      src?.first_name ?? 
+      src?.givenName ?? 
+      src?.given_name ?? 
+      src?.first ??
+      undefined;
+    const last = 
+      src?.lastName ?? 
+      src?.last_name ?? 
+      src?.familyName ?? 
+      src?.family_name ?? 
+      src?.last ??
+      undefined;
     const combined = [first, last].filter(Boolean).join(' ').trim();
     if (combined) return combined;
   }

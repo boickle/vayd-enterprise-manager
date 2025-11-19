@@ -287,7 +287,7 @@ export default function MembershipPayment() {
             Payment Successful
           </h1>
           <p className="cp-muted" style={{ marginBottom: 20 }}>
-            {state.petName} is now enrolled in the {state.planName} membership. A confirmation email will arrive shortly.
+            {state.petName} is now enrolled in the {state.planName} membership. A confirmation email will arrive shortly. Please note that it may take up to 24-48 business hours for {state.petName}'s membership to be fully active in our system.
           </p>
           <div style={{ display: 'grid', gap: 8, fontSize: 15 }}>
             <div>
@@ -357,11 +357,96 @@ export default function MembershipPayment() {
           </section>
         )}
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 24 }}>
-          <button className="btn" onClick={() => navigate('/client-portal')}>
+        <div className="cp-card" style={{ marginTop: 24, padding: 20, background: '#f0f9ff', border: '1px solid #bae6fd' }}>
+          <p className="cp-muted" style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>
+            <strong>NOTE:</strong> If you want to sign-up another pet from your household or if you want to make an appointment for {state.petName}, please{' '}
+            <a 
+              href="/client-portal" 
+              onClick={(e) => {
+                e.preventDefault();
+                navigate('/client-portal');
+              }}
+              style={{ color: '#4FB128', textDecoration: 'underline', fontWeight: 600 }}
+            >
+              login to your client portal
+            </a>
+            .
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 24 }}>
+          <button 
+            className="btn" 
+            onClick={() => navigate('/client-portal')}
+            style={{ backgroundColor: '#4FB128', color: '#fff' }}
+          >
+            Sign up another pet
+          </button>
+          <button 
+            className="btn" 
+            onClick={() => navigate('/client-portal')}
+            style={{ backgroundColor: '#4FB128', color: '#fff' }}
+          >
             Return to Client Portal
           </button>
         </div>
+
+        {/* ---------------------------
+            Footer
+        ---------------------------- */}
+        <footer
+          style={{
+            marginTop: '48px',
+            padding: '32px 16px',
+            borderTop: '1px solid #e5e7eb',
+            backgroundColor: '#f9fafb',
+            textAlign: 'center',
+          }}
+        >
+          <div style={{ maxWidth: 1120, margin: '0 auto' }}>
+            <div style={{ marginBottom: '16px' }}>
+              <div style={{ fontSize: '18px', fontWeight: 600, color: '#111827', marginBottom: '8px' }}>
+                Vet At Your Door
+              </div>
+              <div style={{ fontSize: '14px', color: '#6b7280' }}>
+                Providing quality veterinary care at your doorstep
+              </div>
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                justifyContent: 'center',
+                gap: '24px',
+                marginBottom: '16px',
+              }}
+            >
+              <a
+                href="tel:207-536-8387"
+                style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+              >
+                (207) 536-8387
+              </a>
+              <a
+                href="mailto:info@vetatyourdoor.com"
+                style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+              >
+                info@vetatyourdoor.com
+              </a>
+              <a
+                href="https://www.vetatyourdoor.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+              >
+                www.vetatyourdoor.com
+              </a>
+            </div>
+            <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '16px' }}>
+              © {new Date().getFullYear()} Vet At Your Door. All rights reserved.
+            </div>
+          </div>
+        </footer>
       </div>
     );
   }
@@ -577,10 +662,67 @@ export default function MembershipPayment() {
         <div className="cp-card" style={{ marginTop: 16, padding: 20, background: '#ecfdf5', border: '1px solid #10b981' }}>
           <h3 style={{ marginTop: 0, color: '#047857' }}>Membership Activated!</h3>
           <p className="cp-muted" style={{ marginBottom: 0 }}>
-            Thank you! {state.petName} is now enrolled. You’ll be redirected to the client portal shortly.
+            Thank you! {state.petName} is now enrolled. You'll be redirected to the client portal shortly.
           </p>
         </div>
       )}
+
+      {/* ---------------------------
+          Footer
+      ---------------------------- */}
+      <footer
+        style={{
+          marginTop: '48px',
+          padding: '32px 16px',
+          borderTop: '1px solid #e5e7eb',
+          backgroundColor: '#f9fafb',
+          textAlign: 'center',
+        }}
+      >
+        <div style={{ maxWidth: 1120, margin: '0 auto' }}>
+          <div style={{ marginBottom: '16px' }}>
+            <div style={{ fontSize: '18px', fontWeight: 600, color: '#111827', marginBottom: '8px' }}>
+              Vet At Your Door
+            </div>
+            <div style={{ fontSize: '14px', color: '#6b7280' }}>
+              Providing quality veterinary care at your doorstep
+            </div>
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'center',
+              gap: '24px',
+              marginBottom: '16px',
+            }}
+          >
+            <a
+              href="tel:207-536-8387"
+              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+            >
+              (207) 536-8387
+            </a>
+            <a
+              href="mailto:info@vetatyourdoor.com"
+              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+            >
+              info@vetatyourdoor.com
+            </a>
+            <a
+              href="https://www.vetatyourdoor.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+            >
+              www.vetatyourdoor.com
+            </a>
+          </div>
+          <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '16px' }}>
+            © {new Date().getFullYear()} Vet At Your Door. All rights reserved.
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
