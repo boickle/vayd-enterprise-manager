@@ -811,6 +811,15 @@ export default function MembershipSignup() {
         .cp-section { margin-top: 28px; }
         h1.cp-title { margin: 12px 0 4px; font-size: 28px; }
         h2.cp-h2 { margin: 0 0 10px; font-size: 20px; }
+        .cp-plan-grid {
+          width: 100%;
+          overflow-x: auto;
+        }
+        @media (max-width: 640px) {
+          .cp-plan-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
         .cp-plan-card {
           border: 2px solid transparent;
           cursor: default;
@@ -822,6 +831,9 @@ export default function MembershipSignup() {
           position: relative;
           overflow: hidden;
           padding-bottom: 20px;
+          width: 100%;
+          box-sizing: border-box;
+          max-width: 100%;
         }
         .cp-plan-card:hover {
           border-color: ${brand};
@@ -832,6 +844,11 @@ export default function MembershipSignup() {
           background: ${brandSoft};
           transform: translateY(-6px) scale(1.01);
           box-shadow: 0 14px 32px rgba(15, 118, 110, 0.22);
+        }
+        @media (max-width: 768px) {
+          .cp-plan-card.selected {
+            transform: translateY(-4px) scale(1.005);
+          }
         }
         .cp-plan-card.selected::before,
         .cp-plan-card.selected::after {
@@ -1295,10 +1312,13 @@ export default function MembershipSignup() {
           
           return (
             <div
+              className="cp-plan-grid"
               style={{
                 display: 'grid',
                 gap: 16,
-                gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                width: '100%',
+                boxSizing: 'border-box',
               }}
             >
             {plans
