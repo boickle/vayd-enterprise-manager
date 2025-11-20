@@ -351,7 +351,15 @@ export default function DoctorDay({
           } as any;
 
           const idx = Math.max(0, Math.min(sorted.length, virtualAppt.insertionIndex));
-          return [...sorted.slice(0, idx), previewAppt, ...sorted.slice(idx)];
+          const withPreview = [...sorted.slice(0, idx), previewAppt, ...sorted.slice(idx)];
+          // Re-sort by time to ensure virtual appointment appears in correct chronological position
+          return withPreview.sort((a, b) => {
+            const sa = getStartISO(a);
+            const sb = getStartISO(b);
+            const ta = sa ? DateTime.fromISO(sa).toMillis() : 0;
+            const tb = sb ? DateTime.fromISO(sb).toMillis() : 0;
+            return ta - tb;
+          });
         })();
 
         setAppts(finalAppts);

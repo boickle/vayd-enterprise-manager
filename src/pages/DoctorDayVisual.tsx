@@ -335,7 +335,15 @@ export default function DoctorDayVisual({
             isPreview: true as any,
           } as any as DoctorDayAppt;
           const idx = Math.max(0, Math.min(sorted.length, virtualAppt.insertionIndex));
-          return [...sorted.slice(0, idx), prev, ...sorted.slice(idx)];
+          const withPreview = [...sorted.slice(0, idx), prev, ...sorted.slice(idx)];
+          // Re-sort by time to ensure virtual appointment appears in correct chronological position
+          return withPreview.sort((a, b) => {
+            const sa = getStartISO(a);
+            const sb = getStartISO(b);
+            return (
+              (sa ? DateTime.fromISO(sa).toMillis() : 0) - (sb ? DateTime.fromISO(sb).toMillis() : 0)
+            );
+          });
         })();
 
         setAppts(final);
