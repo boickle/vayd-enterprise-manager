@@ -826,8 +826,7 @@ export default function Routing() {
     return days + 1;
   }
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function submitRoutingRequest(endpoint: string) {
     setError(null);
     setResult(null);
     setAddressError(null);
@@ -881,7 +880,6 @@ export default function Routing() {
     }
 
     const numDays = Math.max(1, diffDaysInclusive(form.startDate, form.endDate));
-    const endpoint = multiDoctor ? '/routing/any-doctor' : '/routing';
 
     // If both edge boxes are selected, cancel the preference.
     const preferEdge: 'first' | 'last' | null =
@@ -917,6 +915,19 @@ export default function Routing() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    const endpoint = multiDoctor ? '/routing/any-doctor' : '/routing';
+    await submitRoutingRequest(endpoint);
+  }
+
+  async function onSubmitV2(e: FormEvent) {
+    e.preventDefault();
+    // v2 endpoint is only for single-doctor mode
+    const endpoint = '/routing/v2';
+    await submitRoutingRequest(endpoint);
   }
 
   // =========================
@@ -1514,9 +1525,20 @@ export default function Routing() {
           </div>
 
           {error && <div className="danger">{error}</div>}
-          <button className="btn" type="submit" disabled={loading}>
-            {loading ? 'Calculating…' : 'Get Best Route'}
-          </button>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <button className="btn" type="submit" disabled={loading}>
+              {loading ? 'Calculating…' : 'Get Best Route'}
+            </button>
+            <button 
+              className="btn" 
+              type="button" 
+              onClick={onSubmitV2}
+              disabled={loading || multiDoctor}
+              title={multiDoctor ? 'v2 endpoint is only available for single-doctor mode' : ''}
+            >
+              {loading ? 'Calculating…' : 'Get Best Route v2'}
+            </button>
+          </div>
         </form>
       </div>
 
