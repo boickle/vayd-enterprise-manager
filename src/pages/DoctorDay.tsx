@@ -306,17 +306,33 @@ export default function DoctorDay({
         const sorted = [...resp.appointments].sort((a, b) => {
           const sa = getStartISO(a);
           const sb = getStartISO(b);
-          const ta = sa ? DateTime.fromISO(sa).toMillis() : 0;
-          const tb = sb ? DateTime.fromISO(sb).toMillis() : 0;
+          if (!sa && !sb) return 0;
+          if (!sa) return 1; // Put appointments without start time at the end
+          if (!sb) return -1; // Put appointments without start time at the end
+          const da = DateTime.fromISO(sa);
+          const db = DateTime.fromISO(sb);
+          if (!da.isValid && !db.isValid) return 0;
+          if (!da.isValid) return 1; // Put invalid dates at the end
+          if (!db.isValid) return -1; // Put invalid dates at the end
+          const ta = da.toMillis();
+          const tb = db.toMillis();
           return ta - tb;
         });
 
         const finalAppts = (() => {
           if (!virtualAppt || virtualAppt.date !== date) return sorted;
           const start = DateTime.fromISO(virtualAppt.suggestedStartIso);
+          if (!start.isValid) {
+            console.warn('Invalid suggestedStartIso for virtual appointment:', virtualAppt.suggestedStartIso);
+            return sorted;
+          }
           const end = start.plus({ minutes: Math.max(0, virtualAppt.serviceMinutes || 0) });
           const startIso = start.toISO();
           const endIso = end.toISO();
+          if (!startIso || !endIso) {
+            console.warn('Failed to convert virtual appointment time to ISO:', { startIso, endIso });
+            return sorted;
+          }
 
           let lat = virtualAppt.lat;
           let lon = virtualAppt.lon;
@@ -353,13 +369,42 @@ export default function DoctorDay({
           const idx = Math.max(0, Math.min(sorted.length, virtualAppt.insertionIndex));
           const withPreview = [...sorted.slice(0, idx), previewAppt, ...sorted.slice(idx)];
           // Re-sort by time to ensure virtual appointment appears in correct chronological position
-          return withPreview.sort((a, b) => {
+          const finalSorted = withPreview.sort((a, b) => {
             const sa = getStartISO(a);
             const sb = getStartISO(b);
-            const ta = sa ? DateTime.fromISO(sa).toMillis() : 0;
-            const tb = sb ? DateTime.fromISO(sb).toMillis() : 0;
+            if (!sa && !sb) return 0;
+            if (!sa) return 1; // Put appointments without start time at the end
+            if (!sb) return -1; // Put appointments without start time at the end
+            const da = DateTime.fromISO(sa);
+            const db = DateTime.fromISO(sb);
+            if (!da.isValid && !db.isValid) return 0;
+            if (!da.isValid) return 1; // Put invalid dates at the end
+            if (!db.isValid) return -1; // Put invalid dates at the end
+            const ta = da.toMillis();
+            const tb = db.toMillis();
+            // Stable sort: if times are equal, preserve original order (preview appointments should maintain their position relative to same-time appointments)
+            if (ta === tb) {
+              // If one is preview and one isn't, put preview after regular appointments at same time
+              const aIsPreview = (a as any)?.isPreview === true;
+              const bIsPreview = (b as any)?.isPreview === true;
+              if (aIsPreview && !bIsPreview) return 1;
+              if (!aIsPreview && bIsPreview) return -1;
+              return 0;
+            }
             return ta - tb;
           });
+          
+          // Debug: Log the sorted order to verify virtual appointment position
+          if (import.meta.env.DEV) {
+            console.log('Virtual appointment sort order:', finalSorted.map((a, i) => ({
+              index: i,
+              client: (a as any)?.clientName || 'Unknown',
+              time: getStartISO(a),
+              isPreview: (a as any)?.isPreview,
+            })));
+          }
+          
+          return finalSorted;
         })();
 
         setAppts(finalAppts);
@@ -509,17 +554,51 @@ export default function DoctorDay({
 
         const hStart = h.startIso ? DateTime.fromISO(h.startIso) : null;
         const aStart = badge.startIso ? DateTime.fromISO(badge.startIso) : null;
-        if (aStart && (!hStart || aStart < hStart)) h.startIso = aStart.toISO();
+        // For preview appointments, always use their time (they represent the new appointment being inserted)
+        // For regular appointments, use the earliest time, but don't override if household already has a preview
+        if (aStart) {
+          if (apptIsPreview || h.isPreview) {
+            // Preview appointments always use their own time, and if household has a preview, use preview time
+            if (apptIsPreview) {
+              h.startIso = aStart.toISO();
+            }
+            // If household already has a preview but this is a regular appointment, don't change the preview time
+          } else if (!hStart || aStart < hStart) {
+            // Regular appointments: use earliest time (only if no preview exists)
+            h.startIso = aStart.toISO();
+          }
+        }
 
         const hEnd = h.endIso ? DateTime.fromISO(h.endIso) : null;
         const aEnd = badge.endIso ? DateTime.fromISO(badge.endIso) : null;
-        if (aEnd && (!hEnd || aEnd > hEnd)) h.endIso = aEnd.toISO();
+        // For preview appointments, always use their time
+        // For regular appointments, use the latest end time, but don't override if household already has a preview
+        if (aEnd) {
+          if (apptIsPreview || h.isPreview) {
+            // Preview appointments always use their own time, and if household has a preview, use preview time
+            if (apptIsPreview) {
+              h.endIso = aEnd.toISO();
+            }
+            // If household already has a preview but this is a regular appointment, don't change the preview time
+          } else if (!hEnd || aEnd > hEnd) {
+            // Regular appointments: use latest end time (only if no preview exists)
+            h.endIso = aEnd.toISO();
+          }
+        }
       }
     }
 
     return Array.from(map.values()).sort((a, b) => {
-      const ta = a.startIso ? DateTime.fromISO(a.startIso).toMillis() : 0;
-      const tb = b.startIso ? DateTime.fromISO(b.startIso).toMillis() : 0;
+      if (!a.startIso && !b.startIso) return 0;
+      if (!a.startIso) return 1; // Put households without start time at the end
+      if (!b.startIso) return -1; // Put households without start time at the end
+      const da = DateTime.fromISO(a.startIso);
+      const db = DateTime.fromISO(b.startIso);
+      if (!da.isValid && !db.isValid) return 0;
+      if (!da.isValid) return 1; // Put invalid dates at the end
+      if (!db.isValid) return -1; // Put invalid dates at the end
+      const ta = da.toMillis();
+      const tb = db.toMillis();
       return ta - tb;
     });
   }, [appts]);
@@ -809,7 +888,7 @@ export default function DoctorDay({
     const points = appts.reduce((total, a) => {
       if ((a as any)?.isPersonalBlock) return total;
       const type = (a?.appointmentType || '').toLowerCase();
-      console.log(type, total);
+      // console.log(type, total);
       if (type === 'euthanasia') return total + 2;
       if (type.includes('tech appointment')) return total + 0.5;
       return total + 1;
@@ -1053,7 +1132,7 @@ export default function DoctorDay({
   const points = appts.reduce((total, a) => {
     if ((a as any)?.isPersonalBlock) return total;
     const type = (a?.appointmentType || '').toLowerCase();
-    console.log(type, total);
+    // console.log(type, total);
     if (type === 'euthanasia') return total + 2;
     if (type.includes('tech appointment')) return total + 0.5;
     return total + 1;
