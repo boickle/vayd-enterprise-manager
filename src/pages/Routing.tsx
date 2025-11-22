@@ -6,7 +6,7 @@ import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
 import { PreviewMyDayModal } from '../components/PreviewMyDayModal';
 import { validateAddress } from '../api/geo';
-import { fetchPrimaryProviders, type Provider } from '../api/employee';
+// Removed fetchPrimaryProviders import - now using /employees/veterinarians endpoint directly
 
 // =========================
 // Types
@@ -504,7 +504,7 @@ export default function Routing() {
 
   // -------- Doctor selection modal (for multi-doctor mode) --------
   const [showDoctorSelectionModal, setShowDoctorSelectionModal] = useState(false);
-  const [allProviders, setAllProviders] = useState<Array<Provider & { pimsId?: string; designation?: string }>>([]);
+  const [allProviders, setAllProviders] = useState<Array<{ id: string | number; name: string; email: string; pimsId: string }>>([]);
   const [selectedDoctorIds, setSelectedDoctorIds] = useState<string[]>([]);
   const [providersLoading, setProvidersLoading] = useState(false);
   const [pendingEndpoint, setPendingEndpoint] = useState<string | null>(null);
@@ -1028,27 +1028,6 @@ export default function Routing() {
       return;
     }
 
-    const endpoint = multiDoctor ? '/routing/any-doctor' : '/routing';
-    
-    // If multi-doctor is selected, show modal first
-    if (multiDoctor) {
-      setPendingEndpoint(endpoint);
-      setShowDoctorSelectionModal(true);
-    } else {
-      await submitRoutingRequest(endpoint);
-    }
-  }
-
-  async function onSubmitV2(e: FormEvent) {
-    e.preventDefault();
-    
-    // Validate form first
-    const validation = validateForm();
-    if (!validation.valid) {
-      setError(validation.error || 'Please fill in all required fields.');
-      return;
-    }
-
     const endpoint = '/routing/v2';
     
     // If multi-doctor is selected, show modal first
@@ -1068,43 +1047,29 @@ export default function Routing() {
     (async () => {
       setProvidersLoading(true);
       try {
-        // Fetch raw provider data to check if PIMS IDs are included
-        const { data } = await http.get('/employees/providers');
-        const rows: any[] = Array.isArray(data) ? data : (data?.items ?? []);
+        // Fetch veterinarians from the new endpoint
+        const { data } = await http.get('/employees/veterinarians');
+        const veterinarians: any[] = Array.isArray(data) ? data : [];
         
         if (!alive) return;
         
-        // Map providers and extract PIMS IDs if available
-        // Filter to only show D.V.M or V.M.D providers
-        const providersWithPims = rows
-          .map((r) => {
-            const pimsId = r.pimsId ?? r.employee?.pimsId;
-            const id = r.id ?? r.pimsId ?? r.employeeId;
+        // Map veterinarians to provider format
+        // The endpoint already returns veterinarians (D.V.M/V.M.D), so no need to filter
+        const providersWithPims = veterinarians
+          .filter((v) => v.isActive !== false) // Only include active veterinarians
+          .map((v) => {
+            const pimsId = v.pimsId ? String(v.pimsId) : null;
+            const id = v.id ?? v.pimsId;
             const name =
-              [r.firstName, r.lastName].filter(Boolean).join(' ').trim() ||
-              r.name ||
-              `Provider ${id ?? ''}`;
-            
-            // Check designation - could be in various fields
-            const designation = 
-              r.designation?.toUpperCase() ||
-              r.degree?.toUpperCase() ||
-              r.credentials?.toUpperCase() ||
-              r.title?.toUpperCase() ||
-              '';
+              [v.firstName, v.lastName].filter(Boolean).join(' ').trim() ||
+              `Veterinarian ${id ?? ''}`;
             
             return {
               id: id,
               name,
-              email: r?.email || '',
-              pimsId: pimsId ? String(pimsId) : String(id), // Use pimsId if available, otherwise use id
-              designation: designation,
+              email: v?.email || '',
+              pimsId: pimsId || String(id), // Use pimsId if available, otherwise use id
             };
-          })
-          .filter((p) => {
-            // Only include providers with D.V.M or V.M.D designation
-            const des = p.designation || '';
-            return des.includes('D.V.M') || des.includes('V.M.D') || des.includes('DVM') || des.includes('VMD');
           });
         
         setAllProviders(providersWithPims);
@@ -1823,14 +1788,6 @@ export default function Routing() {
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
             <button className="btn" type="submit" disabled={loading}>
               {loading ? 'Calculating…' : 'Get Best Route'}
-            </button>
-            <button 
-              className="btn" 
-              type="button" 
-              onClick={onSubmitV2}
-              disabled={loading}
-            >
-              {loading ? 'Calculating…' : 'Get Best Route v2'}
             </button>
           </div>
         </form>
