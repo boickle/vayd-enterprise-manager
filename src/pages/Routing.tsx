@@ -392,6 +392,7 @@ function endOfDayOverrunSeconds(
 }
 
 const ROUTING_REQUEST_STORAGE_KEY = 'routing:last-request-id';
+const SELECTED_DOCTORS_STORAGE_KEY = 'routing:selected-doctors';
 const NONE_SELECTION_KEY = '__routing-none__';
 
 function deriveRoutingRequestId(res: Result | null | undefined): string | undefined {
@@ -440,7 +441,8 @@ export default function Routing() {
   const [multiDoctor, setMultiDoctor] = useState(false);
   const [useTraffic, setUseTraffic] = useState(false);
   const [maxAddedDriveMinutes] = useState(20);
-  const [ignoreEmergencyBlocks, setIgnoreEmergencyBlocks] = useState(false);
+  // Reserve/Overflow option: 'reserve-only' | 'reserve-overflow' | null
+  const [reserveOption, setReserveOption] = useState<'reserve-only' | 'reserve-overflow' | null>(null);
 
   // -------- UX state --------
   const [loading, setLoading] = useState(false);
@@ -474,7 +476,6 @@ export default function Routing() {
   const [previewOpt, setPreviewOpt] = useState<UnifiedOption | null>(null);
   const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({});
   const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(null); // 👈 NEW
-  const [allowOverflow, setAllowOverflow] = useState(false);
   const [latestRoutingRequestId, setLatestRoutingRequestId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     try {
@@ -916,6 +917,10 @@ export default function Routing() {
     const preferEdge: 'first' | 'last' | null =
       edgeFirst && !edgeLast ? 'first' : edgeLast && !edgeFirst ? 'last' : null;
 
+    // Map reserveOption to ignoreEmergencyBlocks and allowOverflow
+    const ignoreEmergencyBlocks = reserveOption === 'reserve-only' || reserveOption === 'reserve-overflow';
+    const allowOverflow = reserveOption === 'reserve-overflow';
+
     const base = {
       startDate: form.startDate,
       numDays,
@@ -1103,9 +1108,29 @@ export default function Routing() {
           });
         
         setAllProviders(providersWithPims);
-        // Set all providers as selected by default, using PIMS IDs
-        const allIds = providersWithPims.map((p) => p.pimsId || String(p.id)).filter(Boolean);
-        setSelectedDoctorIds(allIds);
+        
+        // Load previously selected doctor IDs from localStorage, or select all by default
+        let defaultSelectedIds: string[] = [];
+        try {
+          const stored = localStorage.getItem(SELECTED_DOCTORS_STORAGE_KEY);
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              // Only use stored IDs that are still valid (exist in current providers)
+              const validPimsIds = providersWithPims.map((p) => p.pimsId || String(p.id)).filter(Boolean);
+              defaultSelectedIds = parsed.filter((id: string) => validPimsIds.includes(id));
+            }
+          }
+        } catch {
+          // If parsing fails, fall back to selecting all
+        }
+        
+        // If no stored selections or stored selections are invalid, select all providers by default
+        if (defaultSelectedIds.length === 0) {
+          defaultSelectedIds = providersWithPims.map((p) => p.pimsId || String(p.id)).filter(Boolean);
+        }
+        
+        setSelectedDoctorIds(defaultSelectedIds);
       } catch (err) {
         console.error('Failed to fetch providers:', err);
         if (!alive) return;
@@ -1136,6 +1161,13 @@ export default function Routing() {
     if (selectedDoctorIds.length === 0) {
       setError('Please select at least one doctor.');
       return;
+    }
+
+    // Save selected doctor IDs to localStorage
+    try {
+      localStorage.setItem(SELECTED_DOCTORS_STORAGE_KEY, JSON.stringify(selectedDoctorIds));
+    } catch {
+      // If localStorage fails, continue anyway
     }
 
     setShowDoctorSelectionModal(false);
@@ -1650,42 +1682,61 @@ export default function Routing() {
 
             {/* Toggles */}
             <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <Field label="Emergency booking">
-                <label
-                  style={{
-                    display: 'flex',
-                    gap: 8,
-                    alignItems: 'center',
-                    padding: '4px 8px',
-                    borderRadius: 6,
-                  }}
-                  className={ignoreEmergencyBlocks ? 'field-red' : ''}
-                >
-                  <input
-                    type="checkbox"
-                    checked={ignoreEmergencyBlocks}
-                    onChange={(e) => setIgnoreEmergencyBlocks(e.target.checked)}
-                  />
-                  <span>Ignore reserve blocks</span>
-                </label>
-                <label
-                  style={{
-                    display: 'flex',
-                    gap: 8,
-                    alignItems: 'center',
-                    padding: '4px 8px',
-                    borderRadius: 6,
-                    marginTop: 6, // small vertical spacing under the first checkbox
-                  }}
-                  className={allowOverflow ? 'field-red' : ''}
-                >
-                  <input
-                    type="checkbox"
-                    checked={allowOverflow}
-                    onChange={(e) => setAllowOverflow(e.target.checked)}
-                  />
-                  <span>Overflow Booking</span>
-                </label>
+              <Field label="Reserve/Overflow">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <label
+                    style={{
+                      display: 'flex',
+                      gap: 8,
+                      alignItems: 'center',
+                      padding: '4px 8px',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                    }}
+                    className={reserveOption === 'reserve-only' ? 'field-red' : ''}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={reserveOption === 'reserve-only'}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          // Check this one, uncheck the other
+                          setReserveOption('reserve-only');
+                        } else {
+                          // Uncheck this one
+                          setReserveOption(null);
+                        }
+                      }}
+                    />
+                    <span>Use Reserve Time (no overflow)</span>
+                  </label>
+                  <label
+                    style={{
+                      display: 'flex',
+                      gap: 8,
+                      alignItems: 'center',
+                      padding: '4px 8px',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                    }}
+                    className={reserveOption === 'reserve-overflow' ? 'field-red' : ''}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={reserveOption === 'reserve-overflow'}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          // Check this one, uncheck the other
+                          setReserveOption('reserve-overflow');
+                        } else {
+                          // Uncheck this one
+                          setReserveOption(null);
+                        }
+                      }}
+                    />
+                    <span>Use Reserve + Allow Overflow</span>
+                  </label>
+                </div>
               </Field>
 
               <Field label="Multi-doctor">
