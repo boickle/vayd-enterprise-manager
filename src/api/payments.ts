@@ -129,3 +129,41 @@ export async function listPaymentProviders(): Promise<string[]> {
   const { data } = await http.get('/payment-processing/providers');
   return data;
 }
+
+// =========================
+// Formatted Subscription Plans (from Square)
+// =========================
+
+export type SubscriptionPlanPhase = {
+  cadence: 'MONTHLY' | 'ANNUAL';
+  periods?: number | null;
+  pricing?: {
+    type: string;
+    amount?: number;
+    currency?: string;
+  };
+};
+
+export type SubscriptionPlanVariation = {
+  variationId: string;
+  name: string;
+  price?: {
+    amount: number; // in cents
+    currency: string;
+  };
+  phases?: SubscriptionPlanPhase[];
+};
+
+export type FormattedSubscriptionPlan = {
+  planId: string;
+  planName: string;
+  variations: SubscriptionPlanVariation[];
+};
+
+export async function fetchFormattedSubscriptionPlans(): Promise<FormattedSubscriptionPlan[]> {
+  const { data } = await http.get('/payment-processing/subscription-plans/formatted');
+  if (Array.isArray(data)) {
+    return data;
+  }
+  return [];
+}

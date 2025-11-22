@@ -6,6 +6,7 @@ import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
 import { PreviewMyDayModal } from '../components/PreviewMyDayModal';
 import { validateAddress } from '../api/geo';
+import { fetchPrimaryProviders, type Provider } from '../api/employee';
 
 // =========================
 // Types
@@ -60,6 +61,8 @@ type Winner = {
   candidateId?: string;
   candidateIndex?: number;
   appointmentId?: number;
+  // v2 multi-doctor support
+  doctorId?: string; // PIMS ID of the doctor this candidate belongs to
 };
 
 type UnifiedOption = Winner & {
@@ -498,6 +501,13 @@ export default function Routing() {
   const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
   const [feedbackSuccessKey, setFeedbackSuccessKey] = useState<string | null>(null);
 
+  // -------- Doctor selection modal (for multi-doctor mode) --------
+  const [showDoctorSelectionModal, setShowDoctorSelectionModal] = useState(false);
+  const [allProviders, setAllProviders] = useState<Array<Provider & { pimsId?: string; designation?: string }>>([]);
+  const [selectedDoctorIds, setSelectedDoctorIds] = useState<string[]>([]);
+  const [providersLoading, setProvidersLoading] = useState(false);
+  const [pendingEndpoint, setPendingEndpoint] = useState<string | null>(null);
+
   async function openMyDay(opt: UnifiedOption) {
     // 👇 allow undefined here
     let internalId: string | undefined = doctorIdByPims[opt.doctorPimsId];
@@ -611,34 +621,55 @@ export default function Routing() {
   }
 
   useEffect(() => {
-    const pid = result?.selectedDoctorPimsId || result?.doctorPimsId;
-    if (!pid || doctorNames[pid]) return;
-    if (!doctorNameReqs.current[pid]) {
-      doctorNameReqs.current[pid] = (async () => {
-        try {
-          const { data } = await http.get(`/employees/pims/${encodeURIComponent(pid)}`);
-          const emp = Array.isArray(data) ? data[0] : data;
-
-          const name =
-            [emp?.firstName, emp?.lastName].filter(Boolean).join(' ') ||
-            [emp?.employee?.firstName, emp?.employee?.lastName].filter(Boolean).join(' ') ||
-            `Doctor ${pid}`;
-
-          const internalId =
-            (emp?.id != null ? String(emp.id) : undefined) ??
-            (emp?.employee?.id != null ? String(emp.employee.id) : undefined);
-
-          setDoctorNames((m) => ({ ...m, [pid]: name }));
-          if (internalId) setDoctorIdByPims((m) => ({ ...m, [pid]: internalId })); // <—
-          return name;
-        } catch {
-          const fallback = `Doctor ${pid}`;
-          setDoctorNames((m) => ({ ...m, [pid]: fallback }));
-          return fallback;
-        } finally {
-          delete doctorNameReqs.current[pid];
+    // Collect all doctor IDs that need names fetched
+    const doctorIdsToFetch = new Set<string>();
+    
+    // Add primary doctor from result header
+    const primaryPid = result?.selectedDoctorPimsId || result?.doctorPimsId;
+    if (primaryPid) doctorIdsToFetch.add(primaryPid);
+    
+    // For v2 multi-doctor mode, collect doctorIds from candidates
+    if (result?.winner?.doctorId) {
+      doctorIdsToFetch.add(result.winner.doctorId);
+    }
+    if (result?.alternates) {
+      for (const alt of result.alternates) {
+        if (alt.doctorId) {
+          doctorIdsToFetch.add(alt.doctorId);
         }
-      })();
+      }
+    }
+    
+    // Fetch names for all doctor IDs that don't already have names
+    for (const pid of doctorIdsToFetch) {
+      if (!pid || doctorNames[pid]) continue;
+      if (!doctorNameReqs.current[pid]) {
+        doctorNameReqs.current[pid] = (async () => {
+          try {
+            const { data } = await http.get(`/employees/pims/${encodeURIComponent(pid)}`);
+            const emp = Array.isArray(data) ? data[0] : data;
+
+            const name =
+              [emp?.firstName, emp?.lastName].filter(Boolean).join(' ') ||
+              [emp?.employee?.firstName, emp?.employee?.lastName].filter(Boolean).join(' ') ||
+              `Doctor ${pid}`;
+
+            const internalId =
+              (emp?.id != null ? String(emp.id) : undefined) ??
+              (emp?.employee?.id != null ? String(emp.employee.id) : undefined);
+
+            setDoctorNames((m) => ({ ...m, [pid]: name }));
+            if (internalId) setDoctorIdByPims((m) => ({ ...m, [pid]: internalId }));
+            return name;
+          } catch {
+            const fallback = `Doctor ${pid}`;
+            setDoctorNames((m) => ({ ...m, [pid]: fallback }));
+            return fallback;
+          } finally {
+            delete doctorNameReqs.current[pid];
+          }
+        })();
+      }
     }
   }, [result, doctorNames]);
 
@@ -826,7 +857,7 @@ export default function Routing() {
     return days + 1;
   }
 
-  async function submitRoutingRequest(endpoint: string) {
+  async function submitRoutingRequest(endpoint: string, doctorIdsArray?: string[]) {
     setError(null);
     setResult(null);
     setAddressError(null);
@@ -902,9 +933,40 @@ export default function Routing() {
         : {}),
     };
 
-    const payload = multiDoctor
-      ? { primaryDoctorPimsId: form.doctorId, ...base, maxAddedDriveMinutes }
-      : { doctorId: form.doctorId, ...base };
+    // Determine if this is a v2 endpoint
+    const isV2 = endpoint.includes('/v2');
+
+    let payload: any;
+    if (isV2) {
+      // v2 endpoint supports new multi-doctor format
+      if (multiDoctor && doctorIdsArray && doctorIdsArray.length > 0) {
+        // Use doctorIds array when provided (from modal selection)
+        payload = {
+          doctorIds: doctorIdsArray,
+          ...base,
+          maxAddedDriveMinutes,
+        };
+      } else if (multiDoctor) {
+        // Fallback to allowOtherDoctors if no doctorIds provided
+        payload = {
+          doctorId: form.doctorId, // Primary doctor (preferred in tie-breakers)
+          allowOtherDoctors: true, // Search all available doctors
+          ...base,
+          maxAddedDriveMinutes,
+        };
+      } else {
+        // Single doctor mode for v2
+        payload = {
+          doctorId: form.doctorId,
+          ...base,
+        };
+      }
+    } else {
+      // Legacy endpoints (v1)
+      payload = multiDoctor
+        ? { primaryDoctorPimsId: form.doctorId, ...base, maxAddedDriveMinutes }
+        : { doctorId: form.doctorId, ...base };
+    }
 
     setLoading(true);
     try {
@@ -917,17 +979,183 @@ export default function Routing() {
     }
   }
 
+  // Validate form before submission
+  function validateForm(): { valid: boolean; error?: string } {
+    if (!form.doctorId || !form.doctorId.trim()) {
+      return { valid: false, error: 'Please select a doctor.' };
+    }
+
+    if (!form.startDate) {
+      return { valid: false, error: 'Please select a start date.' };
+    }
+
+    if (!form.endDate) {
+      return { valid: false, error: 'Please select an end date.' };
+    }
+
+    if (new Date(form.endDate) < new Date(form.startDate)) {
+      return { valid: false, error: 'End date must be on or after the start date.' };
+    }
+
+    const hasCoords =
+      Number.isFinite(form.newAppt.lat as number) &&
+      Number.isFinite(form.newAppt.lon as number);
+    const hasAddress = (form.newAppt.address ?? '').trim().length > 0;
+
+    if (!hasCoords && !hasAddress) {
+      return { valid: false, error: 'Please select a client or enter a valid street address.' };
+    }
+
+    if (!form.newAppt.serviceMinutes || form.newAppt.serviceMinutes <= 0) {
+      return { valid: false, error: 'Please enter a valid service duration.' };
+    }
+
+    return { valid: true };
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    
+    // Validate form first
+    const validation = validateForm();
+    if (!validation.valid) {
+      setError(validation.error || 'Please fill in all required fields.');
+      return;
+    }
+
     const endpoint = multiDoctor ? '/routing/any-doctor' : '/routing';
-    await submitRoutingRequest(endpoint);
+    
+    // If multi-doctor is selected, show modal first
+    if (multiDoctor) {
+      setPendingEndpoint(endpoint);
+      setShowDoctorSelectionModal(true);
+    } else {
+      await submitRoutingRequest(endpoint);
+    }
   }
 
   async function onSubmitV2(e: FormEvent) {
     e.preventDefault();
-    // v2 endpoint is only for single-doctor mode
+    
+    // Validate form first
+    const validation = validateForm();
+    if (!validation.valid) {
+      setError(validation.error || 'Please fill in all required fields.');
+      return;
+    }
+
     const endpoint = '/routing/v2';
-    await submitRoutingRequest(endpoint);
+    
+    // If multi-doctor is selected, show modal first
+    if (multiDoctor) {
+      setPendingEndpoint(endpoint);
+      setShowDoctorSelectionModal(true);
+    } else {
+      await submitRoutingRequest(endpoint);
+    }
+  }
+
+  // Fetch providers when modal opens
+  useEffect(() => {
+    if (!showDoctorSelectionModal) return;
+
+    let alive = true;
+    (async () => {
+      setProvidersLoading(true);
+      try {
+        // Fetch raw provider data to check if PIMS IDs are included
+        const { data } = await http.get('/employees/providers');
+        const rows: any[] = Array.isArray(data) ? data : (data?.items ?? []);
+        
+        if (!alive) return;
+        
+        // Map providers and extract PIMS IDs if available
+        // Filter to only show D.V.M or V.M.D providers
+        const providersWithPims = rows
+          .map((r) => {
+            const pimsId = r.pimsId ?? r.employee?.pimsId;
+            const id = r.id ?? r.pimsId ?? r.employeeId;
+            const name =
+              [r.firstName, r.lastName].filter(Boolean).join(' ').trim() ||
+              r.name ||
+              `Provider ${id ?? ''}`;
+            
+            // Check designation - could be in various fields
+            const designation = 
+              r.designation?.toUpperCase() ||
+              r.degree?.toUpperCase() ||
+              r.credentials?.toUpperCase() ||
+              r.title?.toUpperCase() ||
+              '';
+            
+            return {
+              id: id,
+              name,
+              email: r?.email || '',
+              pimsId: pimsId ? String(pimsId) : String(id), // Use pimsId if available, otherwise use id
+              designation: designation,
+            };
+          })
+          .filter((p) => {
+            // Only include providers with D.V.M or V.M.D designation
+            const des = p.designation || '';
+            return des.includes('D.V.M') || des.includes('V.M.D') || des.includes('DVM') || des.includes('VMD');
+          });
+        
+        setAllProviders(providersWithPims);
+        // Set all providers as selected by default, using PIMS IDs
+        const allIds = providersWithPims.map((p) => p.pimsId || String(p.id)).filter(Boolean);
+        setSelectedDoctorIds(allIds);
+      } catch (err) {
+        console.error('Failed to fetch providers:', err);
+        if (!alive) return;
+        setError('Failed to load doctors. Please try again.');
+      } finally {
+        if (alive) setProvidersLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [showDoctorSelectionModal]);
+
+  // Handle doctor selection checkbox toggle
+  function toggleDoctorSelection(doctorId: string) {
+    setSelectedDoctorIds((prev) => {
+      if (prev.includes(doctorId)) {
+        return prev.filter((id) => id !== doctorId);
+      } else {
+        return [...prev, doctorId];
+      }
+    });
+  }
+
+  // Handle modal confirm
+  async function handleConfirmDoctorSelection() {
+    if (selectedDoctorIds.length === 0) {
+      setError('Please select at least one doctor.');
+      return;
+    }
+
+    setShowDoctorSelectionModal(false);
+    const endpoint = pendingEndpoint || (multiDoctor ? '/routing/any-doctor' : '/routing');
+    setPendingEndpoint(null);
+    
+    // For v2 endpoint, use doctorIds array
+    if (endpoint.includes('/v2')) {
+      await submitRoutingRequest(endpoint, selectedDoctorIds);
+    } else {
+      // For v1 endpoint, still use the old format
+      await submitRoutingRequest(endpoint);
+    }
+  }
+
+  // Handle modal cancel
+  function handleCancelDoctorSelection() {
+    setShowDoctorSelectionModal(false);
+    setPendingEndpoint(null);
+    setSelectedDoctorIds([]);
   }
 
   // =========================
@@ -1017,34 +1245,50 @@ export default function Routing() {
       // Sort all options in multi-doctor mode
       rows.sort(sortOptions);
     } else if (result) {
-      // Single-doctor mode: winner should always be first, then sorted alternates
-      const pid = result.selectedDoctorPimsId || form.doctorId;
-      const name =
+      // Single-doctor mode or v2 multi-doctor mode: winner should always be first, then sorted alternates
+      // For v2, each candidate has its own doctorId
+      const defaultPid = result.selectedDoctorPimsId || result.doctorPimsId || form.doctorId;
+      const defaultName =
         result.selectedDoctor?.name ||
-        doctorNames[pid] ||
+        result.selectedDoctorDisplayName ||
+        doctorNames[defaultPid] ||
         [result.selectedDoctor?.firstName, result.selectedDoctor?.lastName]
           .filter(Boolean)
           .join(' ') ||
-        `Doctor ${pid}`;
+        `Doctor ${defaultPid}`;
+      
+      // Helper to get doctor info for a candidate (supports v2 doctorId field)
+      const getDoctorInfo = (candidate: Winner): { pid: string; name: string } => {
+        if (candidate.doctorId) {
+          // v2 multi-doctor mode: candidate has its own doctorId
+          const pid = candidate.doctorId;
+          const name = doctorNames[pid] || `Doctor ${pid}`;
+          return { pid, name };
+        }
+        // Legacy mode: use default doctor
+        return { pid: defaultPid, name: defaultName };
+      };
       
       let winnerOption: UnifiedOption | null = null;
       const alternateOptions: UnifiedOption[] = [];
       
       if (result.winner) {
+        const docInfo = getDoctorInfo(result.winner);
         winnerOption = {
           ...result.winner,
-          doctorPimsId: pid,
-          doctorName: name,
+          doctorPimsId: docInfo.pid,
+          doctorName: docInfo.name,
           routingRequestId: result.winner.routingRequestId ?? requestIdFromResult,
         };
       }
       
       if (result.alternates) {
         for (const w of result.alternates) {
+          const docInfo = getDoctorInfo(w);
           alternateOptions.push({
             ...w,
-            doctorPimsId: pid,
-            doctorName: name,
+            doctorPimsId: docInfo.pid,
+            doctorName: docInfo.name,
             routingRequestId: w.routingRequestId ?? requestIdFromResult,
           });
         }
@@ -1533,8 +1777,7 @@ export default function Routing() {
               className="btn" 
               type="button" 
               onClick={onSubmitV2}
-              disabled={loading || multiDoctor}
-              title={multiDoctor ? 'v2 endpoint is only available for single-doctor mode' : ''}
+              disabled={loading}
             >
               {loading ? 'Calculating…' : 'Get Best Route v2'}
             </button>
@@ -1788,6 +2031,132 @@ export default function Routing() {
             lon: form.newAppt.lon,
           }}
         />
+      )}
+
+      {/* Doctor Selection Modal for Multi-Doctor Mode */}
+      {showDoctorSelectionModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+          }}
+          onClick={handleCancelDoctorSelection}
+        >
+          <div
+            style={{
+              backgroundColor: 'white',
+              borderRadius: 8,
+              padding: 24,
+              maxWidth: 600,
+              width: '90%',
+              maxHeight: '80vh',
+              overflow: 'auto',
+              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ marginTop: 0, marginBottom: 16 }}>Select Doctors</h2>
+            <p style={{ marginTop: 0, marginBottom: 20, color: '#666' }}>
+              Select the doctors to include in the routing search. All doctors are selected by default.
+            </p>
+
+            {providersLoading ? (
+              <div style={{ textAlign: 'center', padding: 40 }}>
+                <p>Loading doctors...</p>
+              </div>
+            ) : allProviders.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 40 }}>
+                <p>No doctors found.</p>
+              </div>
+            ) : (
+              <div style={{ marginBottom: 24 }}>
+                {allProviders.map((provider) => {
+                  const doctorId = provider.pimsId || String(provider.id);
+                  const isSelected = selectedDoctorIds.includes(doctorId);
+                  return (
+                    <label
+                      key={doctorId}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '12px 8px',
+                        cursor: 'pointer',
+                        borderRadius: 4,
+                        marginBottom: 4,
+                        backgroundColor: isSelected ? '#f0f9ff' : 'transparent',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isSelected) {
+                          e.currentTarget.style.backgroundColor = '#f9fafb';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isSelected) {
+                          e.currentTarget.style.backgroundColor = 'transparent';
+                        }
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleDoctorSelection(doctorId)}
+                        style={{
+                          marginRight: 12,
+                          width: 18,
+                          height: 18,
+                          cursor: 'pointer',
+                        }}
+                      />
+                      <span style={{ fontSize: 16 }}>{provider.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={handleCancelDoctorSelection}
+                style={{
+                  padding: '10px 20px',
+                  borderRadius: 6,
+                  border: '1px solid #ccc',
+                  backgroundColor: 'white',
+                  cursor: 'pointer',
+                  fontSize: 14,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDoctorSelection}
+                disabled={selectedDoctorIds.length === 0 || providersLoading}
+                style={{
+                  padding: '10px 20px',
+                  borderRadius: 6,
+                  border: 'none',
+                  backgroundColor: selectedDoctorIds.length === 0 || providersLoading ? '#ccc' : '#4FB128',
+                  color: 'white',
+                  cursor: selectedDoctorIds.length === 0 || providersLoading ? 'not-allowed' : 'pointer',
+                  fontSize: 14,
+                  fontWeight: 600,
+                }}
+              >
+                Confirm ({selectedDoctorIds.length} selected)
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

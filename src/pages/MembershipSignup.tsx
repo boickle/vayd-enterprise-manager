@@ -12,6 +12,8 @@ import {
   type MembershipTransactionAddOn,
   fetchSubscriptionPlanCatalog,
   type SubscriptionPlanCatalog,
+  fetchFormattedSubscriptionPlans,
+  type FormattedSubscriptionPlan,
 } from '../api/payments';
 import { useAuth } from '../auth/useAuth';
 
@@ -301,11 +303,105 @@ export default function MembershipSignup() {
   const [planCatalog, setPlanCatalog] = useState<SubscriptionPlanCatalog | null>(null);
   const [planCatalogError, setPlanCatalogError] = useState<string | null>(null);
   const [planCatalogLoading, setPlanCatalogLoading] = useState(true);
+  const [formattedPlans, setFormattedPlans] = useState<FormattedSubscriptionPlan[]>([]);
+  const [formattedPlansLoading, setFormattedPlansLoading] = useState(true);
+  const [formattedPlansError, setFormattedPlansError] = useState<string | null>(null);
 
   const brand = 'var(--brand, #0f766e)';
   const brandSoft = 'var(--brand-soft, #e6f7f5)';
 
-  const plans = useMemo(() => MEMBERSHIP_PLANS, []);
+  // Build plans with dynamic pricing from API
+  const plans = useMemo(() => {
+    if (!planCatalog || !formattedPlans.length) {
+      return MEMBERSHIP_PLANS;
+    }
+
+    // Helper to get price from formatted plans using catalog IDs
+    const getPriceFromCatalogIds = (
+      planKey: string,
+      species: 'cat' | 'dog' | null,
+      cadence: 'monthly' | 'annual',
+      combination: 'base' | 'plus' | 'starter' | 'plusStarter' = 'base',
+    ): { monthly?: number; annual?: number } | null => {
+      // Get catalog entry
+      const catalogEntry = lookupCatalogEntry(
+        planCatalog,
+        planKey,
+        species,
+        cadence,
+        combination,
+        false,
+      );
+
+      if (!catalogEntry?.planId || !catalogEntry?.planVariationId) return null;
+
+      // Find the plan in formatted plans
+      const plan = formattedPlans.find((p) => p.planId === catalogEntry.planId);
+      if (!plan) return null;
+
+      // Find the variation
+      const variation = plan.variations?.find(
+        (v) => v.variationId === catalogEntry.planVariationId,
+      );
+      if (!variation) return null;
+
+      // Extract price from phases or price field
+      let monthly: number | undefined;
+      let annual: number | undefined;
+
+      if (variation.phases && variation.phases.length > 0) {
+        for (const phase of variation.phases) {
+          if (!phase) continue;
+          const phaseCadence = (phase.cadence || '').toLowerCase();
+          const amount = phase.pricing?.amount ?? variation.price?.amount;
+          if (amount && amount > 0) {
+            if (phaseCadence === 'monthly') {
+              monthly = Math.round(amount / 100);
+            } else if (phaseCadence === 'annual') {
+              annual = Math.round(amount / 100);
+            }
+          }
+        }
+      } else if (variation.price?.amount) {
+        const amount = variation.price.amount;
+        const varName = (variation.name || '').toLowerCase();
+        if (varName.includes('monthly') || !varName.includes('annual')) {
+          monthly = Math.round(amount / 100);
+        }
+        if (varName.includes('annual')) {
+          annual = Math.round(amount / 100);
+        }
+      }
+
+      return monthly !== undefined || annual !== undefined ? { monthly, annual } : null;
+    };
+
+    // Map each plan with API prices
+    return MEMBERSHIP_PLANS.map((plan) => {
+      const updatedPricing = plan.pricing.map((tier) => {
+        const species = tier.species || null;
+
+        // Get monthly price
+        const monthlyPrice = getPriceFromCatalogIds(plan.id, species, 'monthly', 'base');
+        const monthly = monthlyPrice?.monthly ?? tier.monthly;
+
+        // Get annual price
+        const annualPrice = getPriceFromCatalogIds(plan.id, species, 'annual', 'base');
+        const annual = annualPrice?.annual ?? tier.annual;
+
+        return {
+          ...tier,
+          monthly,
+          annual,
+        };
+      });
+
+      return {
+        ...plan,
+        pricing: updatedPricing,
+      };
+    });
+  }, [planCatalog, formattedPlans]);
 
   useEffect(() => {
     if (!petId) {
@@ -381,6 +477,28 @@ export default function MembershipSignup() {
         }
       } finally {
         if (alive) setPlanCatalogLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Fetch formatted subscription plans from Square
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setFormattedPlansLoading(true);
+      setFormattedPlansError(null);
+      try {
+        const plans = await fetchFormattedSubscriptionPlans();
+        if (alive) setFormattedPlans(plans);
+      } catch (e: any) {
+        if (alive) {
+          setFormattedPlansError(e?.message || 'Unable to load subscription plans.');
+        }
+      } finally {
+        if (alive) setFormattedPlansLoading(false);
       }
     })();
     return () => {
@@ -620,18 +738,62 @@ export default function MembershipSignup() {
 
     const addOnDetails: MembershipTransactionAddOn[] = addOns
       .map((slug) => {
+        // Get price from API using catalog IDs
+        let price: number | null = null;
+        if (planCatalog && formattedPlans.length > 0) {
+          const catalogEntry = lookupCatalogEntry(
+            planCatalog,
+            slug,
+            null,
+            billingKey,
+            'base',
+            false,
+          );
+          if (catalogEntry?.planId && catalogEntry?.planVariationId) {
+            const apiPlan = formattedPlans.find((p) => p.planId === catalogEntry.planId);
+            if (apiPlan) {
+              const variation = apiPlan.variations?.find(
+                (v) => v.variationId === catalogEntry.planVariationId,
+              );
+              if (variation) {
+                if (variation.phases && variation.phases.length > 0) {
+                  for (const phase of variation.phases) {
+                    if (!phase) continue;
+                    const phaseCadence = (phase.cadence || '').toLowerCase();
+                    const amount = phase.pricing?.amount ?? variation.price?.amount;
+                    if (amount && amount > 0) {
+                      if ((billingKey === 'monthly' && phaseCadence === 'monthly') ||
+                          (billingKey === 'annual' && phaseCadence === 'annual')) {
+                        price = Math.round(amount / 100);
+                        break;
+                      }
+                    }
+                  }
+                } else if (variation.price?.amount) {
+                  price = Math.round(variation.price.amount / 100);
+                }
+              }
+            }
+          }
+        }
+        
+        // Fallback to hardcoded pricing
+        if (price == null) {
+          const config = ADD_ON_PRICING[slug];
+          if (!config) return null;
+          price =
+            billingKey === 'annual' &&
+            config.annual != null &&
+            selectedPlanExplicit !== 'comfort-care'
+              ? config.annual
+              : config.monthly;
+        }
+
         const config = ADD_ON_PRICING[slug];
-        if (!config) return null;
-        const price =
-          billingKey === 'annual' &&
-          config.annual != null &&
-          selectedPlanExplicit !== 'comfort-care'
-            ? config.annual
-            : config.monthly;
         return {
           id: slug,
-          name: config.label,
-          price,
+          name: config?.label || slug,
+          price: price ?? 0,
           pricingOption: billingKey,
         };
       })
@@ -732,7 +894,7 @@ export default function MembershipSignup() {
     navigate('/client-portal/membership-payment', { state: paymentState });
   }
 
-  if (loading || planCatalogLoading) {
+  if (loading || planCatalogLoading || formattedPlansLoading) {
     return (
       <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px' }}>
         <div style={{ textAlign: 'center', padding: '40px 0' }}>
@@ -1669,7 +1831,9 @@ export default function MembershipSignup() {
                 !agreementAccepted ||
                 !agreementSignature.trim() ||
                 planCatalogLoading ||
-                !planCatalog
+                formattedPlansLoading ||
+                !planCatalog ||
+                formattedPlans.length === 0
                   ? 0.5
                   : 1,
               cursor:
@@ -1677,7 +1841,9 @@ export default function MembershipSignup() {
                 !agreementAccepted ||
                 !agreementSignature.trim() ||
                 planCatalogLoading ||
-                !planCatalog
+                formattedPlansLoading ||
+                !planCatalog ||
+                formattedPlans.length === 0
                   ? 'not-allowed'
                   : 'pointer',
             }}
@@ -1691,14 +1857,14 @@ export default function MembershipSignup() {
               Please select a plan above
             </p>
           )}
-          {planCatalogLoading && (
+          {(planCatalogLoading || formattedPlansLoading) && (
             <p className="cp-muted" style={{ color: '#b91c1c' }}>
-              Loading membership catalog…
+              Loading membership plans…
             </p>
           )}
-          {!planCatalogLoading && !planCatalog && (
+          {!planCatalogLoading && !formattedPlansLoading && (!planCatalog || formattedPlans.length === 0) && (
             <p className="cp-muted" style={{ color: '#b91c1c' }}>
-              Membership catalog unavailable. Please try again later.
+              Membership plans unavailable. Please try again later.
             </p>
           )}
           {selectedPlanExplicit && (!agreementAccepted || !agreementSignature.trim()) && (
