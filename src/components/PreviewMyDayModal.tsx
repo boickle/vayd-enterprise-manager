@@ -1,6 +1,8 @@
 // src/components/PreviewMyDayModal.tsx
+import { useState } from 'react';
 import { DateTime } from 'luxon';
 import DoctorDay from '../pages/DoctorDay';
+import DoctorDayVisual from '../pages/DoctorDayVisual';
 
 export type PreviewMyDayOption = {
   date: string; // YYYY-MM-DD
@@ -40,7 +42,10 @@ function splitAddress(addr?: string) {
     : { address1: addr };
 }
 
+type ViewMode = 'list' | 'visual';
+
 export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose }: Props) {
+  const [mode, setMode] = useState<ViewMode>('visual');
   const parts = splitAddress(newApptMeta?.address);
 
   const virtualAppt = {
@@ -57,7 +62,7 @@ export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose
     city: parts.city ?? newApptMeta?.city,
     state: parts.state ?? newApptMeta?.state,
     zip: parts.zip ?? newApptMeta?.zip,
-    // --- Authoritative “winner” facts (what DoctorDay prefers) ---
+    // --- Authoritative "winner" facts (what DoctorDay prefers) ---
     projectedDriveSeconds: option.projectedDriveSeconds,
     currentDriveSeconds: option.currentDriveSeconds, // fallback only
     workStartLocal: option.workStartLocal, // "HH:mm" or "HH:mm:ss"
@@ -67,7 +72,14 @@ export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose
     whitespaceAfterBookingSeconds: (option as any).whitespaceAfterBookingSeconds,
   };
 
-  console.log(virtualAppt);
+  const commonProps = {
+    readOnly: true,
+    initialDate: option.date,
+    initialDoctorId: option.doctorPimsId, // INTERNAL id (already resolved)
+    virtualAppt: virtualAppt,
+  };
+
+  const componentKey = `${option.doctorPimsId}-${option.date}-${option.insertionIndex}-${option.suggestedStartIso}`;
 
   return (
     <div
@@ -101,23 +113,71 @@ export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose
           <h3 style={{ margin: 0 }}>
             {option.doctorName} — {DateTime.fromISO(option.date).toFormat('cccc, LLL dd, yyyy')}
           </h3>
-          <div className="muted" style={{ marginLeft: 'auto' }}>
-            Insert at index {option.insertionIndex}
+          <div className="muted" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 12 }}>View:</span>
+            <div
+              role="tablist"
+              aria-label="View toggle"
+              style={{
+                display: 'flex',
+                border: '1px solid #e5e7eb',
+                borderRadius: 8,
+                overflow: 'hidden',
+              }}
+            >
+              <button
+                role="tab"
+                aria-selected={mode === 'list'}
+                onClick={() => setMode('list')}
+                style={{
+                  borderRadius: 0,
+                  padding: '6px 10px',
+                  border: 'none',
+                  background: mode === 'list' ? '#4FB128' : 'transparent',
+                  color: mode === 'list' ? '#fff' : '#333',
+                  cursor: 'pointer',
+                  fontSize: 14,
+                }}
+              >
+                List
+              </button>
+              <button
+                role="tab"
+                aria-selected={mode === 'visual'}
+                onClick={() => setMode('visual')}
+                style={{
+                  borderRadius: 0,
+                  padding: '6px 10px',
+                  border: 'none',
+                  background: mode === 'visual' ? '#4FB128' : 'transparent',
+                  color: mode === 'visual' ? '#fff' : '#333',
+                  cursor: 'pointer',
+                  fontSize: 14,
+                }}
+              >
+                Visual
+              </button>
+            </div>
+            <div className="muted" style={{ fontSize: 12 }}>
+              Insert at index {option.insertionIndex}
+            </div>
+            <button className="btn" onClick={onClose}>
+              Close
+            </button>
           </div>
-          <button className="btn" onClick={onClose}>
-            Close
-          </button>
         </div>
 
-        <DoctorDay
-          // ⬇️ force a remount per click so new props always apply
-          key={`${option.doctorPimsId}-${option.date}-${option.insertionIndex}-${option.suggestedStartIso}`}
-          readOnly
-          initialDate={option.date}
-          initialDoctorId={option.doctorPimsId} // INTERNAL id (already resolved)
-          // virtualAppt={newApptMeta?.address ? virtualAppt : undefined}
-          virtualAppt={virtualAppt}
-        />
+        {mode === 'list' ? (
+          <DoctorDay
+            key={`list-${componentKey}`}
+            {...commonProps}
+          />
+        ) : (
+          <DoctorDayVisual
+            key={`visual-${componentKey}`}
+            {...commonProps}
+          />
+        )}
       </div>
     </div>
   );

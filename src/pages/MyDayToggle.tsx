@@ -6,7 +6,7 @@ import DoctorDayVisual from './DoctorDayVisual';
 type Mode = 'list' | 'visual';
 
 export default function MyDayToggle(props: DoctorDayProps) {
-  const [mode, setMode] = useState<Mode>('list');
+  const [mode, setMode] = useState<Mode>('visual');
 
   return (
     <div className="dd-section">
