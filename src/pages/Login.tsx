@@ -115,7 +115,7 @@ export default function LoginPage() {
 
   const loginButtonStyle: CSSProperties = {
     width: '100%',
-    background: '#10b981',
+    background: '#4FB128',
     color: '#fff',
     borderRadius: 999,
     padding: '14px 24px',
@@ -123,7 +123,7 @@ export default function LoginPage() {
     fontWeight: 700,
     border: 'none',
     cursor: submitting ? 'progress' : 'pointer',
-    boxShadow: '0 10px 25px -15px rgba(16, 185, 129, 0.5)',
+    boxShadow: '0 10px 25px -15px rgba(79, 177, 40, 0.5)',
   };
 
   const secondaryButtonStyle: CSSProperties = {
@@ -132,9 +132,9 @@ export default function LoginPage() {
     justifyContent: 'center',
     gap: 12,
     borderRadius: 999,
-    border: '2px solid #10b981',
+    border: '2px solid #4FB128',
     background: '#ffffff',
-    color: '#10b981',
+    color: '#4FB128',
     fontWeight: 700,
     fontSize: 24,
     padding: '12px 32px',
@@ -163,7 +163,7 @@ export default function LoginPage() {
   const logoTextStyle: CSSProperties = {
     fontSize: 'clamp(28px, 5vw, 36px)',
     fontWeight: 700,
-    color: '#10b981',
+    color: '#4FB128',
     margin: 0,
     textAlign: 'center',
   };
@@ -184,6 +184,20 @@ export default function LoginPage() {
     }
     .login-page .auth-panel form {
       width: 100%;
+    }
+    .login-page button[type="submit"],
+    .login-page .auth-panel a {
+      transition: background-color 0.2s ease, color 0.2s ease, border 0.2s ease !important;
+    }
+    .login-page button[type="submit"]:hover:not(:disabled) {
+      background: #ffffff !important;
+      color: #4FB128 !important;
+      border: 2px solid #4FB128 !important;
+    }
+    .login-page .auth-panel a:hover {
+      background: #4FB128 !important;
+      color: #ffffff !important;
+      border: 2px solid #4FB128 !important;
     }
     @media (max-height: 860px) {
       .login-page {

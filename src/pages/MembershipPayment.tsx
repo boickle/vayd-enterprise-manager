@@ -370,10 +370,10 @@ export default function MembershipPayment() {
               <h3 style={{ marginTop: 0, marginBottom: 12 }}>Breakdown</h3>
               <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
                 {costSummaryItems.map((item) => {
-                  const monthly =
-                    item.monthly != null ? `${formatMoney(item.monthly * 100, state.currency)}/mo` : null;
-                  const annual =
-                    item.annual != null ? `${formatMoney(item.annual * 100, state.currency)} annually (10% discount!)` : null;
+                  // Only show the price for the selected billing preference
+                  const showPrice = state.billingPreference === 'annual' 
+                    ? (item.annual != null ? `${formatMoney(item.annual * 100, state.currency)} annually (10% discount!)` : null)
+                    : (item.monthly != null ? `${formatMoney(item.monthly * 100, state.currency)}/mo` : null);
                   return (
                     <li
                       key={item.label}
@@ -387,7 +387,7 @@ export default function MembershipPayment() {
                       }}
                     >
                       <span>{item.label}</span>
-                      <span className="cp-muted">{[monthly, annual].filter(Boolean).join(' • ')}</span>
+                      <span className="cp-muted">{showPrice || '—'}</span>
                     </li>
                   );
                 })}
@@ -461,7 +461,7 @@ export default function MembershipPayment() {
                 Vet At Your Door
               </div>
               <div style={{ fontSize: '14px', color: '#6b7280' }}>
-                Providing quality veterinary care at your doorstep
+                Providing quality veterinary care at your doorstep.
               </div>
             </div>
             <div
@@ -583,10 +583,10 @@ export default function MembershipPayment() {
               )}
               <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
                 {costSummaryItems.map((item) => {
-                  const monthly =
-                    item.monthly != null ? `${formatMoney(item.monthly * 100, state.currency)}/mo` : null;
-                  const annual =
-                    item.annual != null ? `${formatMoney(item.annual * 100, state.currency)} annually` : null;
+                  // Only show the price for the selected billing preference
+                  const showPrice = state.billingPreference === 'annual' 
+                    ? (item.annual != null ? `${formatMoney(item.annual * 100, state.currency)} annually` : null)
+                    : (item.monthly != null ? `${formatMoney(item.monthly * 100, state.currency)}/mo` : null);
                   return (
                     <li
                       key={item.label}
@@ -601,7 +601,7 @@ export default function MembershipPayment() {
                     >
                       <span>{item.label}</span>
                       <span className="cp-muted">
-                        {[monthly, annual].filter(Boolean).join(' • ')}
+                        {showPrice || '—'}
                       </span>
                     </li>
                   );
@@ -779,7 +779,7 @@ export default function MembershipPayment() {
               Vet At Your Door
             </div>
             <div style={{ fontSize: '14px', color: '#6b7280' }}>
-              Providing quality veterinary care at your doorstep
+              Providing quality veterinary care at your doorstep.
             </div>
           </div>
           <div

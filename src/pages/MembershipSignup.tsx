@@ -873,11 +873,25 @@ export default function MembershipSignup() {
       return meta;
     })();
 
+    // Construct full plan name with add-ons and billing preference
+    const basePlanName = chosenPlan?.name ?? selectedPlanExplicit;
+    const addOnLabels = addOns
+      .map((slug) => {
+        if (slug === 'plus-addon') return 'Plus';
+        if (slug === 'starter-addon') return 'Puppy / Kitten';
+        return slug;
+      })
+      .filter(Boolean);
+    const billingLabel = effectiveBillingPreference === 'annual' ? 'ANNUALLY' : 'MONTHLY';
+    const fullPlanName = addOnLabels.length > 0
+      ? `${basePlanName} ${addOnLabels.join(', ')} - ${billingLabel}`
+      : `${basePlanName} - ${billingLabel}`;
+
     const paymentState = {
       petId: pet.id,
       petName: pet.name,
       selectedPlanId: selectedPlanExplicit,
-      planName: chosenPlan?.name ?? selectedPlanExplicit,
+      planName: fullPlanName,
       billingPreference: effectiveBillingPreference,
       amountCents,
       currency: 'USD' as const,
@@ -1329,9 +1343,6 @@ export default function MembershipSignup() {
               </div>
               <div style={{ flex: 1 }}>
                 <h3 style={{ margin: '0 0 8px', fontSize: 20 }}>{pet.name}</h3>
-                <div className="cp-muted" style={{ marginBottom: 4 }}>
-                  <strong>ID:</strong> {pet.id}
-                </div>
                 <div className="cp-muted" style={{ marginBottom: 4 }}>
                   <strong>Primary Provider:</strong> {pet.primaryProviderName || '—'}
                 </div>
@@ -1886,7 +1897,7 @@ export default function MembershipSignup() {
               Vet At Your Door
             </div>
             <div style={{ fontSize: '14px', color: '#6b7280' }}>
-              Providing quality veterinary care at your doorstep
+              Providing quality veterinary care at your doorstep.
             </div>
           </div>
           <div

@@ -111,7 +111,7 @@ export default function CreateClientUser() {
 
   const submitButtonStyle: CSSProperties = {
     width: '100%',
-    background: '#10b981',
+    background: '#4FB128',
     color: '#fff',
     borderRadius: 999,
     padding: '14px 24px',
@@ -119,7 +119,11 @@ export default function CreateClientUser() {
     fontWeight: 700,
     border: 'none',
     cursor: pending ? 'progress' : 'pointer',
-    boxShadow: '0 10px 25px -15px rgba(16, 185, 129, 0.5)',
+    boxShadow: '0 10px 25px -15px rgba(79, 177, 40, 0.5)',
+    textAlign: 'center',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   };
 
   const secondaryButtonStyle: CSSProperties = {
@@ -128,9 +132,9 @@ export default function CreateClientUser() {
     justifyContent: 'center',
     gap: 12,
     borderRadius: 999,
-    border: '2px solid #10b981',
+    border: '2px solid #4FB128',
     background: '#ffffff',
-    color: '#10b981',
+    color: '#4FB128',
     fontWeight: 700,
     fontSize: 24,
     padding: '12px 32px',
@@ -142,7 +146,7 @@ export default function CreateClientUser() {
     gridColumn: '1 / -1',
     display: 'flex',
     justifyContent: 'center',
-    marginBottom: '-160px',
+    marginBottom: '-120px',
   };
 
   const logoStyle: CSSProperties = {
@@ -150,6 +154,7 @@ export default function CreateClientUser() {
     maxWidth: 360,
     height: 'auto',
     mixBlendMode: 'multiply',
+    objectFit: 'contain',
   };
 
   const responsiveStyles = `
@@ -160,6 +165,54 @@ export default function CreateClientUser() {
     }
     .create-client-page .auth-panel form {
       width: 100%;
+    }
+    .create-client-page button[type="submit"],
+    .create-client-page .auth-panel a {
+      transition: background-color 0.2s ease, color 0.2s ease, border 0.2s ease !important;
+    }
+    .create-client-page button[type="submit"]:hover:not(:disabled) {
+      background: #ffffff !important;
+      color: #4FB128 !important;
+      border: 2px solid #4FB128 !important;
+    }
+    .create-client-page .auth-panel a:hover {
+      background: #4FB128 !important;
+      color: #ffffff !important;
+      border: 2px solid #4FB128 !important;
+    }
+    @media (max-height: 860px) {
+      .create-client-page {
+        grid-template-columns: 1fr !important;
+        padding: 40px 56px 40px !important;
+        gap: 48px !important;
+        text-align: center;
+      }
+      .create-client-page .auth-hero {
+        align-items: center;
+        max-width: 100%;
+        width: 100%;
+      }
+      .create-client-page .auth-hero h1 {
+        padding-top: 50px !important;
+      }
+      .create-client-page .auth-logo {
+        margin-bottom: -60px !important;
+      }
+      .create-client-page .auth-logo img {
+        width: min(280px, 50vw) !important;
+        max-width: 320px !important;
+      }
+      .create-client-page .auth-logo h1,
+      .create-client-page .auth-logo p {
+        text-align: center !important;
+      }
+      .create-client-page .auth-panel {
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        margin: 0 auto !important;
+        width: min(480px, 100%) !important;
+        max-width: 480px;
+      }
     }
     @media (max-width: 1024px) {
       .create-client-page {
@@ -176,15 +229,23 @@ export default function CreateClientUser() {
       .create-client-page .auth-hero h1 {
         padding-top: 50px !important;
       }
+      .create-client-page .auth-logo {
+        margin-bottom: -60px !important;
+      }
+      .create-client-page .auth-logo img {
+        width: min(280px, 50vw) !important;
+        max-width: 320px !important;
+      }
+      .create-client-page .auth-logo h1,
+      .create-client-page .auth-logo p {
+        text-align: center !important;
+      }
       .create-client-page .auth-panel {
         margin-left: 0 !important;
         margin-right: 0 !important;
         margin: 0 auto !important;
         width: min(480px, 100%) !important;
         max-width: 480px;
-      }
-      .create-client-page .auth-logo {
-        margin-bottom: -140px !important;
       }
     }
     @media (max-width: 768px) {
@@ -204,7 +265,11 @@ export default function CreateClientUser() {
         max-width: 420px;
       }
       .create-client-page .auth-logo {
-        margin-bottom: -120px !important;
+        margin-bottom: -40px !important;
+      }
+      .create-client-page .auth-logo img {
+        width: min(240px, 45vw) !important;
+        max-width: 280px !important;
       }
     }
     @media (max-width: 480px) {
@@ -220,7 +285,11 @@ export default function CreateClientUser() {
         max-width: 100%;
       }
       .create-client-page .auth-logo {
-        margin-bottom: -100px !important;
+        margin-bottom: -20px !important;
+      }
+      .create-client-page .auth-logo img {
+        width: min(200px, 40vw) !important;
+        max-width: 240px !important;
       }
     }
   `;

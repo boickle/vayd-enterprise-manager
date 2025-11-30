@@ -14,6 +14,7 @@ import {
   fetchPracticeInfo,
 } from '../api/clientPortal';
 import { listMembershipTransactions } from '../api/membershipTransactions';
+import { http } from '../api/http';
 
 type PetWithWellness = Pet & {
   wellnessPlans?: WellnessPlan[];
@@ -181,6 +182,7 @@ export default function ClientPortal() {
 
   const [pets, setPets] = useState<PetWithWellness[]>([]);
   const [appts, setAppts] = useState<ClientAppointment[]>([]);
+  const [rawApptsData, setRawApptsData] = useState<any[]>([]); // Store raw appointment data for client info
   const [reminders, setReminders] = useState<ClientReminder[]>([]);
   const [showReminderModal, setShowReminderModal] = useState(false);
   const [selectedPetReminders, setSelectedPetReminders] = useState<{
@@ -201,6 +203,16 @@ export default function ClientPortal() {
           fetchClientReminders(),
           fetchPracticeInfo(),
         ]);
+        
+        // Store raw appointment data for client info lookup
+        // We need to fetch the raw data separately to get full client object with secondEmail
+        try {
+          const { data: rawApptsResponse } = await http.get('/appointments/client');
+          const rawAppts = Array.isArray(rawApptsResponse) ? rawApptsResponse : (rawApptsResponse?.appointments ?? rawApptsResponse ?? []);
+          if (alive) setRawApptsData(rawAppts);
+        } catch (err) {
+          console.warn('Failed to fetch raw appointment data for client info:', err);
+        }
         
         if (practiceInfo?.chatHoursOfOperation) {
           setChatHours(practiceInfo.chatHoursOfOperation);
@@ -266,8 +278,14 @@ export default function ClientPortal() {
               membershipInfo?.planName ??
               membershipInfo?.metadata?.planName ??
               null;
+            // Extract pricingOption from plansSelected if available
+            const plansSelected = (membershipInfo as any)?.plansSelected;
+            const pricingFromPlansSelected = Array.isArray(plansSelected) && plansSelected.length > 0
+              ? plansSelected[0]?.pricingOption
+              : null;
             const membershipPricingOption =
               membershipInfo?.pricingOption ??
+              pricingFromPlansSelected ??
               membershipInfo?.metadata?.billingPreference ??
               null;
             const membershipUpdatedAt =
@@ -304,20 +322,49 @@ export default function ClientPortal() {
   }, []);
 
   const clientFirstName = useMemo(() => {
-    // Get client first name from first appointment, or fallback to email
+    if (!userEmail) return null;
+    
+    // Check if userEmail matches secondEmail in raw appointment data
+    // The raw appointment data has the full client object with secondEmail, secondFirstName, etc.
+    for (const rawAppt of rawApptsData) {
+      const client = rawAppt?.client;
+      
+      // Check if secondEmail matches the logged-in user's email
+      if (client?.secondEmail && client.secondEmail.toLowerCase() === userEmail.toLowerCase()) {
+        // Use secondFirstName if secondEmail matches
+        if (client.secondFirstName) {
+          return client.secondFirstName;
+        }
+      }
+    }
+    
+    // Also check pets for client information (pets might have client data)
+    for (const pet of pets) {
+      const rawPet = pet as any;
+      const client = rawPet?.client || rawPet?.clientData || rawPet?.owner;
+      
+      if (client?.secondEmail && client.secondEmail.toLowerCase() === userEmail.toLowerCase()) {
+        if (client.secondFirstName) {
+          return client.secondFirstName;
+        }
+      }
+    }
+    
+    // Get client first name from first appointment's clientName
+    // This comes from: a?.clientName ?? [a.client.firstName, a.client.lastName].join(' ')
+    // So it's the PRIMARY client's name (firstName + lastName)
+    // Currently showing "Deirdre" because it extracts the first word from "Deirdre Frey"
     const firstAppt = appts[0];
     if (firstAppt?.clientName) {
       // Extract first name from full name
       const firstName = firstAppt.clientName.split(' ')[0];
       return firstName;
     }
+    
     // Fallback: use email username part if no client name found
-    if (userEmail) {
-      const emailPart = userEmail.split('@')[0];
-      return emailPart.charAt(0).toUpperCase() + emailPart.slice(1);
-    }
-    return null;
-  }, [appts, userEmail]);
+    const emailPart = userEmail.split('@')[0];
+    return emailPart.charAt(0).toUpperCase() + emailPart.slice(1);
+  }, [appts, userEmail, pets, rawApptsData]);
 
   const upcomingAppts = useMemo(() => {
     const now = Date.now();
@@ -1274,6 +1321,7 @@ export default function ClientPortal() {
                   
                   if (hasActiveWellnessPlan) {
                     // Use the first active wellness plan and display its package name
+                    // Don't show billing preference for active plans - only show in processing state
                     const firstActivePlan = activeWellnessPlans[0];
                     // Prioritize packageName, fallback to name, then default text
                     membershipDisplayText = 
@@ -1283,33 +1331,79 @@ export default function ClientPortal() {
                     showMembershipNotice = true;
                   } else if (hasMembership && !hasWellnessPlans) {
                     // No wellness plans but has membership - show with PROCESSING
-                    const membershipPricingLabel = p.membershipPricingOption
-                      ? titleCase(
-                          String(p.membershipPricingOption)
-                            .replace(/[_-]+/g, ' ')
-                            .trim()
-                        )
+                    let planName = p.membershipPlanName || 'Membership';
+                    // Clean the plan name first (removes "Add-ons:" pattern)
+                    planName = cleanMembershipDisplayText(planName);
+                    // Check if planName already includes billing preference
+                    const planNameLower = planName.toLowerCase();
+                    const alreadyHasMonthly = planNameLower.includes('monthly');
+                    const alreadyHasAnnually = planNameLower.includes('annually') || planNameLower.includes('annual');
+                    
+                    // Format billing preference as "Annual" or "Monthly" (title case)
+                    const membershipPricingLabel = !alreadyHasMonthly && !alreadyHasAnnually && p.membershipPricingOption
+                      ? String(p.membershipPricingOption).toLowerCase() === 'annual'
+                        ? 'Annual'
+                        : String(p.membershipPricingOption).toLowerCase() === 'monthly'
+                        ? 'Monthly'
+                        : titleCase(
+                            String(p.membershipPricingOption)
+                              .replace(/[_-]+/g, ' ')
+                              .trim()
+                          )
                       : null;
-                    const parts: string[] = [];
-                    if (p.membershipPlanName) parts.push(p.membershipPlanName);
-                    if (membershipPricingLabel) parts.push(membershipPricingLabel);
-                    membershipDisplayText = parts.length > 0 ? parts.join(' • ') : 'Membership';
+                    
+                    // Debug logging
+                    console.log('[ClientPortal] Processing membership display:', {
+                      membershipPlanName: p.membershipPlanName,
+                      cleanedPlanName: planName,
+                      membershipPricingOption: p.membershipPricingOption,
+                      membershipPricingLabel,
+                      alreadyHasMonthly,
+                      alreadyHasAnnually,
+                    });
+                    
+                    membershipDisplayText = membershipPricingLabel
+                      ? `${planName} ${membershipPricingLabel}`
+                      : planName;
                     showMembershipNotice = true;
                   } else if (hasMembership && hasWellnessPlans && !hasActiveWellnessPlan) {
                     // Has membership and wellness plans but none are active
                     if (membershipIsRecent) {
                       // Show membership with PROCESSING if created within 7 days
-                      const membershipPricingLabel = p.membershipPricingOption
-                        ? titleCase(
-                            String(p.membershipPricingOption)
-                              .replace(/[_-]+/g, ' ')
-                              .trim()
-                          )
+                      let planName = p.membershipPlanName || 'Membership';
+                      // Clean the plan name first (removes "Add-ons:" pattern)
+                      planName = cleanMembershipDisplayText(planName);
+                      // Check if planName already includes billing preference
+                      const planNameLower = planName.toLowerCase();
+                      const alreadyHasMonthly = planNameLower.includes('monthly');
+                      const alreadyHasAnnually = planNameLower.includes('annually') || planNameLower.includes('annual');
+                      
+                      // Format billing preference as "Annual" or "Monthly" (title case)
+                      const membershipPricingLabel = !alreadyHasMonthly && !alreadyHasAnnually && p.membershipPricingOption
+                        ? String(p.membershipPricingOption).toLowerCase() === 'annual'
+                          ? 'Annual'
+                          : String(p.membershipPricingOption).toLowerCase() === 'monthly'
+                          ? 'Monthly'
+                          : titleCase(
+                              String(p.membershipPricingOption)
+                                .replace(/[_-]+/g, ' ')
+                                .trim()
+                            )
                         : null;
-                      const parts: string[] = [];
-                      if (p.membershipPlanName) parts.push(p.membershipPlanName);
-                      if (membershipPricingLabel) parts.push(membershipPricingLabel);
-                      membershipDisplayText = parts.length > 0 ? parts.join(' • ') : 'Membership';
+                      
+                      // Debug logging
+                      console.log('[ClientPortal] Processing membership display (recent):', {
+                        membershipPlanName: p.membershipPlanName,
+                        cleanedPlanName: planName,
+                        membershipPricingOption: p.membershipPricingOption,
+                        membershipPricingLabel,
+                        alreadyHasMonthly,
+                        alreadyHasAnnually,
+                      });
+                      
+                      membershipDisplayText = membershipPricingLabel
+                        ? `${planName} ${membershipPricingLabel}`
+                        : planName;
                       showMembershipNotice = true;
                     } else {
                       // Don't show anything if older than 7 days
@@ -1427,7 +1521,7 @@ export default function ClientPortal() {
                           {showMembershipNotice && membershipDisplayText && (
                             <div className="cp-muted" style={{ fontSize: 13 }}>
                               <strong style={{ fontWeight: 600 }}>Membership:</strong>{' '}
-                              {cleanMembershipDisplayText(membershipDisplayText)}
+                              {membershipDisplayText}
                               {!hasActiveWellnessPlan && (
                                 <span style={{ color: '#fbbf24', fontWeight: 600 }}> - PROCESSING</span>
                               )}
@@ -1878,7 +1972,7 @@ export default function ClientPortal() {
               Vet At Your Door
             </div>
             <div style={{ fontSize: '14px', color: '#6b7280' }}>
-              Providing quality veterinary care at your doorstep
+              Providing quality veterinary care at your doorstep.
             </div>
           </div>
           <div
