@@ -246,8 +246,8 @@ export default function MembershipUpgrade() {
             let priceAmount: number | null = null;
             if (phase.pricing?.amount) {
               priceAmount = phase.pricing.amount;
-            } else if (phase.pricing?.price_money?.amount) {
-              priceAmount = phase.pricing.price_money.amount;
+            } else if ((phase.pricing as any)?.price_money?.amount) {
+              priceAmount = (phase.pricing as any).price_money.amount;
             } else if (typeof phase.pricing === 'number') {
               priceAmount = phase.pricing;
             }

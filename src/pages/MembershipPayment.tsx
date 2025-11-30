@@ -333,7 +333,7 @@ export default function MembershipPayment() {
             <div>
               <strong>Total paid today:</strong> {formatMoney(state.amountCents, state.currency)}
             </div>
-            {state.addOns.length > 0 && (
+            {state.addOns && state.addOns.length > 0 && (
               <div>
                 <strong>Add-ons:</strong> {state.addOns.join(', ')}
               </div>
