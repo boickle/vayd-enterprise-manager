@@ -5,6 +5,8 @@ import {
   type PaymentResponse,
   PaymentIntent,
   type MembershipTransactionPayload,
+  upgradeMembership,
+  type MembershipUpgradeRequest,
 } from '../api/payments';
 import { useAuth } from '../auth/useAuth';
 
@@ -65,22 +67,31 @@ type CostSummary = {
 type PaymentNavigationState = {
   petId: string;
   petName: string;
-  selectedPlanId: string;
-  planName: string;
-  billingPreference: 'monthly' | 'annual';
+  selectedPlanId?: string;
+  planName?: string;
+  billingPreference?: 'monthly' | 'annual';
   amountCents: number;
   currency: string;
-  costSummary: CostSummary;
-  addOns: string[];
-  enrollmentPayload: Record<string, any>;
+  costSummary?: CostSummary;
+  addOns?: string[];
+  enrollmentPayload?: Record<string, any>;
   note?: string;
   agreementSignature?: string;
-  intent: PaymentIntent;
+  intent?: PaymentIntent;
   subscriptionPlanId?: string;
   subscriptionPlanVariationId?: string;
   subscriptionStartDate?: string;
   metadata?: Record<string, any>;
   membershipTransaction?: MembershipTransactionPayload;
+  // Upgrade-specific fields
+  isUpgrade?: boolean;
+  patientId?: number | string;
+  selectedUpgrades?: Array<{
+    planId: string;
+    planName: string;
+    pricingOption: 'monthly' | 'annual';
+    price: number;
+  }>;
 };
 
 export default function MembershipPayment() {
@@ -211,6 +222,26 @@ export default function MembershipPayment() {
         throw new Error(tokenResult.errors?.[0]?.message || 'Unable to tokenize card.');
       }
 
+      // Handle upgrade flow
+      if (state.isUpgrade && state.patientId && state.selectedUpgrades) {
+        const upgradeRequest: MembershipUpgradeRequest = {
+          patientId: state.patientId,
+          newPlansSelected: state.selectedUpgrades,
+          sourceId: tokenResult.token,
+          customerEmail: userEmail ?? '',
+        };
+
+        const upgradeResponse = await upgradeMembership(upgradeRequest);
+        
+        if (!upgradeResponse.success) {
+          throw new Error(upgradeResponse.message || 'Upgrade was not successful.');
+        }
+
+        setEnrollmentComplete(true);
+        return;
+      }
+
+      // Regular payment flow
       const idempotencyKey =
         typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
           ? crypto.randomUUID()
@@ -274,20 +305,23 @@ export default function MembershipPayment() {
     return null;
   }
 
-  if (enrollmentComplete && paymentResponse?.success) {
+  if (enrollmentComplete && (paymentResponse?.success || state.isUpgrade)) {
     const providerPaymentId =
-      paymentResponse.providerPaymentId ??
-      paymentResponse.providerResponse?.payment?.id ??
-      paymentResponse.providerResponse?.id ??
+      paymentResponse?.providerPaymentId ??
+      paymentResponse?.providerResponse?.payment?.id ??
+      paymentResponse?.providerResponse?.id ??
       null;
     return (
       <div className="cp-wrap" style={{ maxWidth: 720, margin: '32px auto', padding: '0 16px' }}>
         <div className="cp-card" style={{ padding: 24, borderLeft: '4px solid var(--brand, #0f766e)' }}>
           <h1 className="cp-title" style={{ margin: '0 0 12px' }}>
-            Payment Successful
+            {state.isUpgrade ? 'Upgrade Successful' : 'Payment Successful'}
           </h1>
           <p className="cp-muted" style={{ marginBottom: 20 }}>
-            {state.petName} is now enrolled in the {state.planName} membership. A confirmation email will arrive shortly. Please note that it may take up to 24-48 business hours for {state.petName}'s membership to be fully active in our system.
+            {state.isUpgrade 
+              ? `${state.petName}'s membership has been successfully upgraded. A confirmation email will arrive shortly.`
+              : `${state.petName} is now enrolled in the ${state.planName || 'membership'} membership. A confirmation email will arrive shortly. Please note that it may take up to 24-48 business hours for ${state.petName}'s membership to be fully active in our system.`
+            }
           </p>
           <div style={{ display: 'grid', gap: 8, fontSize: 15 }}>
             <div>
@@ -470,51 +504,93 @@ export default function MembershipPayment() {
           ← Back
         </button>
         <h1 className="cp-title" style={{ margin: '12px 0 4px' }}>
-          Complete Membership Payment
+          {state.isUpgrade ? 'Complete Membership Upgrade' : 'Complete Membership Payment'}
         </h1>
-        <p className="cp-muted">Securely submit your payment to finish enrolling {state.petName}.</p>
+        <p className="cp-muted">
+          {state.isUpgrade 
+            ? `Securely submit your payment to complete ${state.petName}'s membership upgrade.`
+            : `Securely submit your payment to finish enrolling ${state.petName}.`
+          }
+        </p>
       </div>
 
       <section className="cp-section">
         <div className="cp-card" style={{ padding: 20 }}>
-          <h3 style={{ marginTop: 0, marginBottom: 12 }}>Summary</h3>
-          <div style={{ marginBottom: 16 }}>
-            <strong>Plan:</strong> {state.planName}
-          </div>
-          <div style={{ marginBottom: 16 }}>
-            <strong>Billing preference:</strong> {state.billingPreference === 'annual' ? 'Annual' : 'Monthly'}
-          </div>
-          {state.agreementSignature && (
-            <div style={{ marginBottom: 16 }}>
-              <strong>Signature:</strong> {state.agreementSignature}
-            </div>
+          <h3 style={{ marginTop: 0, marginBottom: 12 }}>
+            {state.isUpgrade ? 'Upgrade Summary' : 'Summary'}
+          </h3>
+          {state.isUpgrade && state.selectedUpgrades ? (
+            <>
+              <div style={{ marginBottom: 16 }}>
+                <strong>Pet:</strong> {state.petName}
+              </div>
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
+                {state.selectedUpgrades.map((upgrade, idx) => (
+                  <li
+                    key={idx}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      fontSize: 14,
+                      borderBottom: '1px solid rgba(0,0,0,0.06)',
+                      paddingBottom: 6,
+                    }}
+                  >
+                    <span>{upgrade.planName} ({upgrade.pricingOption === 'monthly' ? 'Monthly' : 'Annual'})</span>
+                    <span className="cp-muted">
+                      {formatMoney(upgrade.price * 100, state.currency)}
+                      {upgrade.pricingOption === 'monthly' ? '/mo' : '/year'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <>
+              {state.planName && (
+                <div style={{ marginBottom: 16 }}>
+                  <strong>Plan:</strong> {state.planName}
+                </div>
+              )}
+              {state.billingPreference && (
+                <div style={{ marginBottom: 16 }}>
+                  <strong>Billing preference:</strong> {state.billingPreference === 'annual' ? 'Annual' : 'Monthly'}
+                </div>
+              )}
+              {state.agreementSignature && (
+                <div style={{ marginBottom: 16 }}>
+                  <strong>Signature:</strong> {state.agreementSignature}
+                </div>
+              )}
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
+                {costSummaryItems.map((item) => {
+                  const monthly =
+                    item.monthly != null ? `${formatMoney(item.monthly * 100, state.currency)}/mo` : null;
+                  const annual =
+                    item.annual != null ? `${formatMoney(item.annual * 100, state.currency)} annually` : null;
+                  return (
+                    <li
+                      key={item.label}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        fontSize: 14,
+                        borderBottom: '1px solid rgba(0,0,0,0.06)',
+                        paddingBottom: 6,
+                      }}
+                    >
+                      <span>{item.label}</span>
+                      <span className="cp-muted">
+                        {[monthly, annual].filter(Boolean).join(' • ')}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
           )}
-          <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
-            {costSummaryItems.map((item) => {
-              const monthly =
-                item.monthly != null ? `${formatMoney(item.monthly * 100, state.currency)}/mo` : null;
-              const annual =
-                item.annual != null ? `${formatMoney(item.annual * 100, state.currency)} annually` : null;
-              return (
-                <li
-                  key={item.label}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    fontSize: 14,
-                    borderBottom: '1px solid rgba(0,0,0,0.06)',
-                    paddingBottom: 6,
-                  }}
-                >
-                  <span>{item.label}</span>
-                  <span className="cp-muted">
-                    {[monthly, annual].filter(Boolean).join(' • ')}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
           <div
             style={{
               display: 'flex',
@@ -625,7 +701,7 @@ export default function MembershipPayment() {
                     cursor: processing || initializingPaymentForm || !card ? 'not-allowed' : 'pointer',
                   }}
                 >
-                  {processing ? 'Processing…' : 'Pay & Enroll'}
+                  {processing ? 'Processing…' : state.isUpgrade ? 'Complete Upgrade' : 'Pay & Enroll'}
                 </button>
               </>
             )}

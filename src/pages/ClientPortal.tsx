@@ -471,6 +471,81 @@ export default function ClientPortal() {
     navigate('/client-portal/membership-signup', { state: { petId: pet.id } });
   }
 
+  function handleUpgradeMembership(pet: PetWithWellness) {
+    if (!pet.id || !pet.dbId) {
+      return;
+    }
+    navigate('/client-portal/membership-upgrade', { 
+      state: { 
+        petId: pet.id,
+        patientId: pet.dbId,
+        petName: pet.name,
+        currentPlanName: pet.membershipPlanName,
+        petSpecies: pet.species,
+      } 
+    });
+  }
+
+  function canUpgradeMembership(pet: PetWithWellness): boolean {
+    // Only show upgrade button if they have a base plan that can be upgraded
+    // Don't show if they already have Plus or Puppy/Kitten add-ons
+    // Check BOTH membership transactions AND wellness plans
+    
+    const membershipPlanName = (pet.membershipPlanName || '').toLowerCase();
+    
+    // Get all wellness plans (both active and inactive) to check for upgrades
+    const allWellnessPlans = pet.wellnessPlans || [];
+    const activeWellnessPlans = allWellnessPlans.filter((plan) => planIsActive(plan));
+    
+    // Check if they already have Plus in membership transaction
+    if (membershipPlanName.includes('plus')) {
+      return false; // Already has Plus upgrade
+    }
+    
+    // Check if they already have Puppy/Kitten in membership transaction
+    if (membershipPlanName.includes('puppy') || membershipPlanName.includes('kitten')) {
+      return false; // Already has Puppy/Kitten upgrade
+    }
+    
+    // Check ALL wellness plans (active and inactive) for Plus/Puppy/Kitten
+    for (const plan of allWellnessPlans) {
+      const packageName = (plan.packageName || '').toLowerCase();
+      const planName = (plan.name || '').toLowerCase();
+      
+      // Check if any wellness plan has Plus
+      if (packageName.includes('plus') || planName.includes('plus')) {
+        return false; // Already has Plus upgrade in wellness plan
+      }
+      
+      // Check if any wellness plan has Puppy/Kitten
+      if (packageName.includes('puppy') || packageName.includes('kitten') ||
+          planName.includes('puppy') || planName.includes('kitten')) {
+        return false; // Already has Puppy/Kitten upgrade in wellness plan
+      }
+    }
+    
+    // Base plans that can be upgraded: Foundations, Golden, Comfort Care
+    const basePlans = ['foundations', 'golden', 'comfort', 'comfort-care'];
+    
+    // Check if membership transaction has a base plan
+    const hasBasePlanInMembership = basePlans.some((basePlan) => membershipPlanName.includes(basePlan));
+    
+    // Check if any wellness plan has a base plan
+    let hasBasePlanInWellness = false;
+    for (const plan of allWellnessPlans) {
+      const packageName = (plan.packageName || '').toLowerCase();
+      const planName = (plan.name || '').toLowerCase();
+      if (basePlans.some((basePlan) => packageName.includes(basePlan) || planName.includes(basePlan))) {
+        hasBasePlanInWellness = true;
+        break;
+      }
+    }
+    
+    // Show upgrade button if they have a base plan in EITHER membership transaction OR wellness plans
+    // AND they don't already have Plus or Puppy/Kitten in either
+    return hasBasePlanInMembership || hasBasePlanInWellness;
+  }
+
   const brand = 'var(--brand, #0f766e)';
   const brandSoft = 'var(--brand-soft, #e6f7f5)';
 
@@ -1240,8 +1315,33 @@ export default function ClientPortal() {
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
                               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                             </svg>
-                            Chat Now
+                            Chat After Hours
                           </a>
+                        )}
+                        {false && canUpgradeMembership(p) && hasMembership && (
+                          <button
+                            onClick={() => handleUpgradeMembership(p)}
+                            style={{
+                              width: '100%',
+                              padding: '8px 12px',
+                              backgroundColor: '#0f766e',
+                              color: '#fff',
+                              border: 'none',
+                              borderRadius: 8,
+                              fontSize: 14,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              transition: 'opacity 0.2s',
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.opacity = '0.9';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.opacity = '1';
+                            }}
+                          >
+                            Upgrade My Plan
+                          </button>
                         )}
                         {showMembershipButton && (
                           <button

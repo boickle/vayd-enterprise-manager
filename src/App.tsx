@@ -21,6 +21,7 @@ import CreateClientUser from './pages/CreateClientUser';
 import ClientPortal from './pages/ClientPortal';
 import MembershipSignup from './pages/MembershipSignup';
 import MembershipPayment from './pages/MembershipPayment';
+import MembershipUpgrade from './pages/MembershipUpgrade';
 
 /** ------------------------------------------------------------------
  * KeepAliveOutlet
@@ -151,7 +152,7 @@ export default function App() {
           <Route path="/auth/request-reset" element={<Navigate to="/request-reset" replace />} />
           <Route path="/requestreset" element={<Navigate to="/request-reset" replace />} />
           <Route path="/reset-password" element={<ResetPass />} />
-          <Route path="/resetpass" element={<Navigate to="/reset-password" replace />} />
+          <Route path="/resetpass" element={<ResetPass />} />
 
           {/* Client portal (standalone) */}
           <Route
@@ -175,6 +176,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <MembershipPayment />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/client-portal/membership-upgrade"
+            element={
+              <ProtectedRoute>
+                <MembershipUpgrade />
               </ProtectedRoute>
             }
           />

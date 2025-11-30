@@ -21,9 +21,68 @@ export default function ResetPass() {
   const forwardedToken: string | undefined = location?.state?.token;
 
   useEffect(() => {
-    const t = (search.get('token') || forwardedToken || '').trim();
+    // Debug: Log the full URL and all query parameters
+    console.log('ResetPass - Full URL:', window.location.href);
+    console.log('ResetPass - Pathname:', location.pathname);
+    console.log('ResetPass - Search:', location.search);
+    console.log('ResetPass - Hash:', location.hash);
+    console.log('ResetPass - All query params:', Object.fromEntries(search.entries()));
+    
+    // Check for token in multiple possible query parameter names
+    // Different endpoints might use different parameter names
+    let t = (
+      search.get('token') || 
+      search.get('resetToken') || 
+      search.get('code') || 
+      search.get('reset_code') ||
+      search.get('resetCode') ||
+      search.get('t') ||
+      forwardedToken || 
+      ''
+    ).trim();
+    
+    // Also check if token is in the URL path (e.g., /reset-password/abc123)
+    if (!t && location.pathname) {
+      const pathParts = location.pathname.split('/');
+      const lastPart = pathParts[pathParts.length - 1];
+      // If the last part of the path looks like a token (not 'reset-password'), use it
+      if (lastPart && lastPart !== 'reset-password' && lastPart.length > 10) {
+        t = lastPart.trim();
+        console.log('ResetPass - Found token in path:', t);
+      }
+    }
+    
+    // Also check URL hash fragment (e.g., #token=abc123)
+    if (!t && location.hash) {
+      const hashParams = new URLSearchParams(location.hash.substring(1));
+      t = (
+        hashParams.get('token') || 
+        hashParams.get('resetToken') || 
+        hashParams.get('code') || 
+        hashParams.get('reset_code') ||
+        hashParams.get('resetCode') ||
+        ''
+      ).trim();
+      if (t) console.log('ResetPass - Found token in hash:', t);
+    }
+    
+    // If still no token, try to get ANY query parameter (in case it's named something unexpected)
+    if (!t) {
+      const allParams = Object.fromEntries(search.entries());
+      const paramKeys = Object.keys(allParams);
+      if (paramKeys.length > 0) {
+        // Use the first parameter value as a fallback
+        const firstParamValue = allParams[paramKeys[0]];
+        if (firstParamValue && firstParamValue.length > 10) {
+          t = firstParamValue.trim();
+          console.log('ResetPass - Using first query param as token:', paramKeys[0], t);
+        }
+      }
+    }
+    
+    console.log('ResetPass - Final token value:', t || '(empty)');
     if (t) setToken(t);
-  }, [search, forwardedToken]);
+  }, [search, forwardedToken, location.pathname, location.hash]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -32,7 +91,13 @@ export default function ResetPass() {
     setPending(true);
     try {
       if (!token.trim()) {
-        throw new Error('Invalid or missing reset link. Please use the link from your email or request a new one.');
+        // Provide more helpful error message with debug info
+        const allParams = Object.fromEntries(search.entries());
+        const paramInfo = Object.keys(allParams).length > 0 
+          ? ` Found query parameters: ${Object.keys(allParams).join(', ')}`
+          : ' No query parameters found in URL.';
+        console.error('ResetPass - No token found. URL:', window.location.href, paramInfo);
+        throw new Error(`Invalid or missing reset link. Please use the link from your email or request a new one.${paramInfo}`);
       }
       if (password.length < 8) {
         throw new Error('Password must be at least 8 characters.');

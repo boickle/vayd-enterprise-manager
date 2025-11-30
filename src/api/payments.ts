@@ -167,3 +167,26 @@ export async function fetchFormattedSubscriptionPlans(): Promise<FormattedSubscr
   }
   return [];
 }
+
+export interface MembershipUpgradeRequest {
+  patientId: number | string;
+  newPlansSelected: Array<{
+    planId: string;
+    planName: string;
+    pricingOption: 'monthly' | 'annual';
+    price: number;
+  }>;
+  sourceId: string;
+  customerEmail: string;
+}
+
+export interface MembershipUpgradeResponse {
+  success: boolean;
+  message?: string;
+  [key: string]: any;
+}
+
+export async function upgradeMembership(payload: MembershipUpgradeRequest): Promise<MembershipUpgradeResponse> {
+  const { data } = await http.post('/payment-processing/membership/upgrade', payload);
+  return data;
+}
