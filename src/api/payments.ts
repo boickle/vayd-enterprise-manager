@@ -178,6 +178,12 @@ export interface MembershipUpgradeRequest {
   }>;
   sourceId: string;
   customerEmail: string;
+  // Prorated calculation fields
+  proratedRefundAmount?: number; // in dollars
+  proratedChargeAmount?: number; // in dollars
+  upgradeDate?: string; // ISO date string
+  nextBillingDate?: string; // ISO date string
+  currentMembershipId?: number; // ID of the membership being upgraded
 }
 
 export interface MembershipUpgradeResponse {

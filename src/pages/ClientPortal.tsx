@@ -104,9 +104,9 @@ function encodeSvgData(svg: string): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-const DOG_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}dog.png`;
+const DOG_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}doggy.png`;
 
-const CAT_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}cat.jpg`;
+const CAT_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}catty.png`;
 
 function petImg(p: Pet) {
   const s = (p.species || p.breed || '').toLowerCase();
@@ -498,36 +498,139 @@ export default function ClientPortal() {
     // Don't show if they already have Plus or Puppy/Kitten add-ons
     // Check BOTH membership transactions AND wellness plans
     
-    const membershipPlanName = (pet.membershipPlanName || '').toLowerCase();
+    // Don't show upgrade button if membership is processing/pending
+    const membershipStatus = (pet.membershipStatus || '').toLowerCase();
+    if (membershipStatus === 'pending' || membershipStatus === 'processing') {
+      console.log('[canUpgradeMembership] Membership is processing/pending, hiding upgrade button:', pet.name, membershipStatus);
+      return false;
+    }
     
-    // Get all wellness plans (both active and inactive) to check for upgrades
+    // Also check if they have membership but no active wellness plan (processing state)
     const allWellnessPlans = pet.wellnessPlans || [];
     const activeWellnessPlans = allWellnessPlans.filter((plan) => planIsActive(plan));
-    
-    // Check if they already have Plus in membership transaction
-    if (membershipPlanName.includes('plus')) {
-      return false; // Already has Plus upgrade
+    const hasMembership = pet.membershipPlanName != null;
+    if (hasMembership && activeWellnessPlans.length === 0) {
+      console.log('[canUpgradeMembership] Membership is processing (no active wellness plan), hiding upgrade button:', pet.name);
+      return false;
     }
     
-    // Check if they already have Puppy/Kitten in membership transaction
-    if (membershipPlanName.includes('puppy') || membershipPlanName.includes('kitten')) {
-      return false; // Already has Puppy/Kitten upgrade
-    }
+    const membershipPlanName = (pet.membershipPlanName || '').toLowerCase();
     
-    // Check ALL wellness plans (active and inactive) for Plus/Puppy/Kitten
+    // Check if they have Puppy/Kitten plan
+    const hasPuppyKittenInMembership = membershipPlanName.includes('puppy') || membershipPlanName.includes('kitten');
+    let hasPuppyKittenInWellness = false;
     for (const plan of allWellnessPlans) {
       const packageName = (plan.packageName || '').toLowerCase();
       const planName = (plan.name || '').toLowerCase();
-      
-      // Check if any wellness plan has Plus
-      if (packageName.includes('plus') || planName.includes('plus')) {
-        return false; // Already has Plus upgrade in wellness plan
-      }
-      
-      // Check if any wellness plan has Puppy/Kitten
       if (packageName.includes('puppy') || packageName.includes('kitten') ||
           planName.includes('puppy') || planName.includes('kitten')) {
-        return false; // Already has Puppy/Kitten upgrade in wellness plan
+        hasPuppyKittenInWellness = true;
+        break;
+      }
+    }
+    
+    const hasPuppyKitten = hasPuppyKittenInMembership || hasPuppyKittenInWellness;
+    
+    // Helper function to check if pet is eligible for Puppy/Kitten upgrade
+    const isEligibleForPuppyKittenUpgrade = (): boolean => {
+      // Check if pet is less than 1 year old
+      let isLessThanOneYear = false;
+      if (pet.dob) {
+        const birthDate = new Date(pet.dob);
+        const today = new Date();
+        const oneYearAgo = new Date(today);
+        oneYearAgo.setFullYear(today.getFullYear() - 1);
+        isLessThanOneYear = birthDate > oneYearAgo;
+      }
+      
+      // Check if patient has had any appointments yesterday or before
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      yesterday.setHours(23, 59, 59, 999); // End of yesterday
+      
+      const hasPastAppointments = appts.some((apt) => {
+        // Check if appointment is for this pet
+        // Match by PIMS ID or name
+        const matchesPet = 
+          apt.patientPimsId === pet.id ||
+          String(apt.patientPimsId) === String(pet.id) ||
+          apt.patientName?.toLowerCase() === pet.name?.toLowerCase();
+        
+        if (!matchesPet) return false;
+        
+        // Check if appointment is yesterday or before
+        if (apt.startIso) {
+          const aptDate = new Date(apt.startIso);
+          return aptDate <= yesterday;
+        }
+        return false;
+      });
+      
+      return isLessThanOneYear && !hasPastAppointments;
+    };
+    
+    // If they have Puppy/Kitten, check if they can upgrade to Foundations/Foundations Plus
+    if (hasPuppyKitten) {
+      const eligible = isEligibleForPuppyKittenUpgrade();
+      if (eligible) {
+        console.log('[canUpgradeMembership] Puppy/Kitten can upgrade to Foundations:', pet.name, {
+          dob: pet.dob,
+        });
+        return true;
+      } else {
+        console.log('[canUpgradeMembership] Puppy/Kitten cannot upgrade:', pet.name, {
+          dob: pet.dob,
+        });
+        return false;
+      }
+    }
+    
+    // Check if they have Foundations/Foundations Plus (but not Puppy/Kitten)
+    const hasFoundations = membershipPlanName.includes('foundations') || membershipPlanName.includes('foundation');
+    let hasFoundationsInWellness = false;
+    for (const plan of allWellnessPlans) {
+      const packageName = (plan.packageName || '').toLowerCase();
+      const planName = (plan.name || '').toLowerCase();
+      if (packageName.includes('foundations') || packageName.includes('foundation') ||
+          planName.includes('foundations') || planName.includes('foundation')) {
+        hasFoundationsInWellness = true;
+        break;
+      }
+    }
+    
+    const hasFoundationsPlan = hasFoundations || hasFoundationsInWellness;
+    
+    // If they have Foundations/Foundations Plus (but not Puppy/Kitten), check if they can upgrade to Puppy/Kitten
+    if (hasFoundationsPlan && !hasPuppyKitten) {
+      const eligible = isEligibleForPuppyKittenUpgrade();
+      if (eligible) {
+        console.log('[canUpgradeMembership] Foundations/Foundations Plus can upgrade to Puppy/Kitten:', pet.name, {
+          membershipPlanName,
+          dob: pet.dob,
+        });
+        return true;
+      }
+    }
+    
+    // Check if they already have Plus in membership transaction (but only if they don't have Foundations)
+    if (membershipPlanName.includes('plus') && !hasFoundationsPlan) {
+      console.log('[canUpgradeMembership] Pet has Plus in membership (non-Foundations):', pet.name, membershipPlanName);
+      return false; // Already has Plus upgrade (and it's not Foundations Plus)
+    }
+    
+    // Check ALL wellness plans (active and inactive) for Plus (but only if they don't have Foundations)
+    if (!hasFoundationsPlan) {
+      for (const plan of allWellnessPlans) {
+        const packageName = (plan.packageName || '').toLowerCase();
+        const planName = (plan.name || '').toLowerCase();
+        
+        // Check if any wellness plan has Plus (but not Foundations)
+        if ((packageName.includes('plus') || planName.includes('plus')) &&
+            !packageName.includes('foundations') && !planName.includes('foundations') &&
+            !packageName.includes('foundation') && !planName.includes('foundation')) {
+          console.log('[canUpgradeMembership] Pet has Plus in wellness plan (non-Foundations):', pet.name, packageName, planName);
+          return false; // Already has Plus upgrade (and it's not Foundations Plus)
+        }
       }
     }
     
@@ -544,13 +647,23 @@ export default function ClientPortal() {
       const planName = (plan.name || '').toLowerCase();
       if (basePlans.some((basePlan) => packageName.includes(basePlan) || planName.includes(basePlan))) {
         hasBasePlanInWellness = true;
+        console.log('[canUpgradeMembership] Found base plan in wellness:', pet.name, packageName, planName);
         break;
       }
     }
     
+    const canUpgrade = hasBasePlanInMembership || hasBasePlanInWellness;
+    console.log('[canUpgradeMembership]', pet.name, {
+      membershipPlanName,
+      hasBasePlanInMembership,
+      hasBasePlanInWellness,
+      canUpgrade,
+      wellnessPlansCount: allWellnessPlans.length,
+    });
+    
     // Show upgrade button if they have a base plan in EITHER membership transaction OR wellness plans
     // AND they don't already have Plus or Puppy/Kitten in either
-    return hasBasePlanInMembership || hasBasePlanInWellness;
+    return canUpgrade;
   }
 
   const brand = 'var(--brand, #0f766e)';
@@ -566,6 +679,26 @@ export default function ClientPortal() {
       return hours * 60 + minutes;
     }
     return 0;
+  }
+
+  // Helper function to convert 24-hour time (HH:MM) to 12-hour time (h:MM AM/PM)
+  function formatTo12Hour(timeStr: string): string {
+    if (!timeStr) return timeStr;
+    const match = timeStr.match(/(\d{1,2}):(\d{2})/);
+    if (!match) return timeStr;
+    
+    let hours = parseInt(match[1]);
+    const minutes = match[2];
+    
+    // Handle times past midnight (e.g., "27:00" = 3:00 AM)
+    if (hours >= 24) {
+      hours = hours - 24;
+    }
+    
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const hours12 = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    
+    return `${hours12}:${minutes} ${period}`;
   }
 
   // Check if chat hours are currently open based on chatHoursOfOperation
@@ -617,18 +750,11 @@ export default function ClientPortal() {
         return { day: dayLabels[index], hours: 'Closed' };
       }
       
-      // Format time (handle times past midnight like "27:00")
-      let closeTime = hours.close;
-      if (closeTime.startsWith('2')) {
-        const hours24 = parseInt(closeTime.split(':')[0]);
-        if (hours24 >= 24) {
-          const nextDayHours = hours24 - 24;
-          const minutes = closeTime.split(':')[1];
-          closeTime = `${nextDayHours.toString().padStart(2, '0')}:${minutes}`;
-        }
-      }
+      // Convert to 12-hour format
+      const openTime12 = formatTo12Hour(hours.open);
+      const closeTime12 = formatTo12Hour(hours.close);
       
-      return { day: dayLabels[index], hours: `${hours.open} - ${closeTime}` };
+      return { day: dayLabels[index], hours: `${openTime12} - ${closeTime12}` };
     });
   }, [chatHours]);
 
@@ -1483,7 +1609,20 @@ export default function ClientPortal() {
                             )}
                           </div>
                         )}
-                        {false && canUpgradeMembership(p) && hasMembership && (
+                        {false && (() => {
+                          const canUpgrade = canUpgradeMembership(p);
+                          // canUpgradeMembership already checks for base plans in both membership and wellness plans
+                          // So if it returns true, we know they have a base plan somewhere
+                          if (canUpgrade) {
+                            console.log('[Upgrade Button] Showing upgrade button for:', p.name, {
+                              membershipPlanName: p.membershipPlanName,
+                              wellnessPlansCount: (p.wellnessPlans || []).length,
+                              hasMembership,
+                              hasActiveWellnessPlan,
+                            });
+                          }
+                          return canUpgrade;
+                        })() && (
                           <button
                             onClick={() => handleUpgradeMembership(p)}
                             style={{
@@ -1682,14 +1821,37 @@ export default function ClientPortal() {
                         <div style={{ fontSize: 14, color: '#6b7280' }}>
                           {r.description ?? r.kind ?? '—'}
                         </div>
-                        {r.statusName && (
-                          <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
-                            Status: {r.statusName}
-                          </div>
-                        )}
                       </div>
                     );
                   })}
+                </div>
+                <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid #e5e7eb' }}>
+                  <a
+                    href="/routing"
+                    className="cp-card"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 12,
+                      padding: '14px 16px',
+                      textDecoration: 'none',
+                      color: '#111827',
+                      borderRadius: 8,
+                      transition: 'transform 0.2s, box-shadow 0.2s',
+                      cursor: 'pointer',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = 'translateY(0)';
+                      e.currentTarget.style.boxShadow = '';
+                    }}
+                  >
+                    <div style={{ fontSize: 20, color: '#3b82f6' }}>📅</div>
+                    <span style={{ fontSize: 14, fontWeight: 600 }}>Request An Appointment</span>
+                  </a>
                 </div>
               </div>
             </div>

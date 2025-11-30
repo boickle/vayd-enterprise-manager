@@ -9,6 +9,7 @@ import {
   upgradeMembership,
   type MembershipUpgradeRequest,
 } from '../api/payments';
+import { listMembershipTransactions, type MembershipTransaction } from '../api/membershipTransactions';
 import { useAuth } from '../auth/useAuth';
 
 type UpgradeOption = {
@@ -27,6 +28,15 @@ type UpgradeNavigationState = {
   petSpecies?: string | null;
 };
 
+type ProratedCalculation = {
+  refundAmount: number; // in dollars
+  chargeAmount: number; // in dollars
+  refundDescription: string;
+  chargeDescription: string;
+  nextBillingDate: string; // ISO date string
+  upgradeDate: string; // ISO date string
+};
+
 export default function MembershipUpgrade() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -39,6 +49,7 @@ export default function MembershipUpgrade() {
   const [formattedPlans, setFormattedPlans] = useState<FormattedSubscriptionPlan[]>([]);
   const [selectedUpgrades, setSelectedUpgrades] = useState<UpgradeOption[]>([]);
   const [processing, setProcessing] = useState(false);
+  const [currentMembership, setCurrentMembership] = useState<MembershipTransaction | null>(null);
 
   useEffect(() => {
     if (!state) {
@@ -51,13 +62,28 @@ export default function MembershipUpgrade() {
       setLoading(true);
       setError(null);
       try {
-        const [catalog, plans] = await Promise.all([
+        // Fetch current membership transaction to get enrollment date and billing info
+        const [catalog, plans, transactions] = await Promise.all([
           fetchSubscriptionPlanCatalog(),
           fetchFormattedSubscriptionPlans(),
+          listMembershipTransactions({ patientId: state.patientId }),
         ]);
         if (!alive) return;
         setPlanCatalog(catalog);
         setFormattedPlans(plans);
+        
+        // Get the most recent active/pending membership transaction
+        const sortedTransactions = transactions
+          .filter(t => t.status === 'active' || t.status === 'pending')
+          .sort((a, b) => {
+            const aTime = Date.parse(a.createdAt || a.updatedAt || '');
+            const bTime = Date.parse(b.createdAt || b.updatedAt || '');
+            return bTime - aTime; // Most recent first
+          });
+        
+        if (sortedTransactions.length > 0) {
+          setCurrentMembership(sortedTransactions[0]);
+        }
       } catch (err: any) {
         if (!alive) return;
         setError(err?.message || 'Failed to load upgrade options.');
@@ -91,15 +117,14 @@ export default function MembershipUpgrade() {
 
     const upgrades: UpgradeOption[] = [];
 
-    // Don't show upgrades if they already have Plus
-    if (currentPlan.includes('plus')) {
-      console.log('MembershipUpgrade: Already has Plus, no upgrades available');
-      return [];
-    }
-
-    // Don't show upgrades if they already have Puppy/Kitten
-    if (currentPlan.includes('puppy') || currentPlan.includes('kitten')) {
-      console.log('MembershipUpgrade: Already has Puppy/Kitten, no upgrades available');
+    // Check if they already have Plus
+    const hasPlus = currentPlan.includes('plus');
+    const isFoundationsPlanCheck = currentPlan.includes('foundations') || currentPlan.includes('foundation');
+    const isFoundationsPlusCheck = isFoundationsPlanCheck && hasPlus;
+    
+    // If they have Plus (and it's not Foundations Plus), no upgrades available
+    if (hasPlus && !isFoundationsPlusCheck) {
+      console.log('MembershipUpgrade: Already has Plus (non-Foundations), no upgrades available');
       return [];
     }
 
@@ -120,6 +145,210 @@ export default function MembershipUpgrade() {
       original: state.petSpecies,
       normalized: species,
     });
+
+    // Check if current plan is Puppy/Kitten - no upgrades available (Puppy/Kitten is an add-on, not a base plan to upgrade from)
+    const isPuppyKittenPlan = currentPlan.includes('puppy') || currentPlan.includes('kitten');
+    
+    if (isPuppyKittenPlan) {
+      console.log('MembershipUpgrade: Puppy/Kitten plan detected, no upgrade options available');
+      return []; // Puppy/Kitten is an add-on, not a base plan that can be upgraded
+    }
+
+    // Check if current plan is Foundations/Foundations Plus
+    const isFoundationsPlan = currentPlan.includes('foundations') || currentPlan.includes('foundation');
+    const hasFoundationsPlus = isFoundationsPlan && currentPlan.includes('plus');
+    
+    if (isFoundationsPlan) {
+      console.log('MembershipUpgrade: Foundations/Foundations Plus plan detected', {
+        hasFoundationsPlus,
+        currentPlan,
+      });
+      
+      // 1. Show Plus upgrade ONLY if they have Foundations base (NOT Plus)
+      // If they already have Plus, skip this section entirely
+      if (!hasFoundationsPlus) {
+        // Find Foundations Plus plans
+        formattedPlans.forEach((plan) => {
+          const planNameLower = plan.planName.toLowerCase();
+          
+          const isFoundations = planNameLower.includes('foundations') || planNameLower.includes('foundation');
+          const hasPlus = planNameLower.includes('plus');
+          
+          // Exclude Starter Plus plans (we only want base Foundations Plus)
+          const hasStarter = planNameLower.includes('starter') || 
+                            planNameLower.includes('puppy') || 
+                            planNameLower.includes('kitten');
+          
+          if (isFoundations && hasPlus && !hasStarter) {
+            // Check if species matches
+            let speciesMatches = true;
+            if (species) {
+              const hasCat = planNameLower.includes('cat') || planNameLower.includes('feline');
+              const hasDog = planNameLower.includes('dog') || planNameLower.includes('canine');
+              const isCat = species === 'cat' || species === 'feline';
+              const isDog = species === 'dog' || species === 'canine';
+              speciesMatches = 
+                (isCat && hasCat) ||
+                (isDog && hasDog) ||
+                (!hasCat && !hasDog);
+            }
+            
+            if (speciesMatches) {
+              // Add all variations of this Plus plan
+              plan.variations.forEach((variation) => {
+                if (variation.price?.amount) {
+                  const price = variation.price.amount / 100;
+                  const varNameLower = variation.name.toLowerCase();
+                  const isMonthly = varNameLower.includes('monthly') || varNameLower.includes('month');
+                  const cadence = isMonthly ? 'monthly' : 'annual';
+                  
+                  const exists = upgrades.some(
+                    (u) => u.planId === plan.planId && u.pricingOption === cadence
+                  );
+                  
+                  if (!exists) {
+                    upgrades.push({
+                      planId: plan.planId,
+                      planName: plan.planName,
+                      pricingOption: cadence,
+                      price,
+                      description: `Upgrade to ${plan.planName}`,
+                    });
+                  }
+                }
+                
+                variation.phases?.forEach((phase) => {
+                  let priceAmount: number | null = null;
+                  if (phase.pricing?.amount) {
+                    priceAmount = phase.pricing.amount;
+                  } else if ((phase.pricing as any)?.price_money?.amount) {
+                    priceAmount = (phase.pricing as any).price_money.amount;
+                  } else if (typeof phase.pricing === 'number') {
+                    priceAmount = phase.pricing;
+                  }
+                  
+                  if (priceAmount) {
+                    const price = priceAmount / 100;
+                    const isMonthly = phase.cadence === 'MONTHLY';
+                    const cadence = isMonthly ? 'monthly' : 'annual';
+                    
+                    const exists = upgrades.some(
+                      (u) => u.planId === plan.planId && u.pricingOption === cadence
+                    );
+                    
+                    if (!exists) {
+                      upgrades.push({
+                        planId: plan.planId,
+                        planName: plan.planName,
+                        pricingOption: cadence,
+                        price,
+                        description: `Upgrade to ${plan.planName}`,
+                      });
+                    }
+                  }
+                });
+              });
+            }
+          }
+        });
+      }
+      
+      // 2. Show Puppy/Kitten options if criteria is met (pet < 1 year old, no past appointments)
+      // Note: The eligibility check is done in canUpgradeMembership, so if we're here, criteria is met
+      // If they have Foundations Plus, ONLY show Puppy/Kitten (no Plus options)
+      // If they have Foundations base, show both Plus and Puppy/Kitten options
+      console.log('MembershipUpgrade: Processing upgrades for Foundations plan', {
+        hasFoundationsPlus,
+        willShowPlus: !hasFoundationsPlus,
+        willShowPuppyKitten: true,
+      });
+      
+      formattedPlans.forEach((plan) => {
+        const planNameLower = plan.planName.toLowerCase();
+        
+        // Look for Starter Wellness plans (Puppy/Kitten)
+        // Exclude plans that have "plus" in them (we want only the base Starter plans, not Starter Plus)
+        const isStarter = (planNameLower.includes('starter') || 
+                          planNameLower.includes('puppy') || 
+                          planNameLower.includes('kitten')) &&
+                          !planNameLower.includes('plus'); // Exclude "Starter Plus" plans
+        
+        if (isStarter) {
+          // Check if species matches
+          let speciesMatches = true;
+          if (species) {
+            const hasCat = planNameLower.includes('cat') || planNameLower.includes('feline');
+            const hasDog = planNameLower.includes('dog') || planNameLower.includes('canine');
+            const isCat = species === 'cat' || species === 'feline';
+            const isDog = species === 'dog' || species === 'canine';
+            speciesMatches = 
+              (isCat && hasCat) ||
+              (isDog && hasDog) ||
+              (!hasCat && !hasDog);
+          }
+          
+          if (speciesMatches) {
+            // Add all variations of this Starter plan
+            plan.variations.forEach((variation) => {
+              if (variation.price?.amount) {
+                const price = variation.price.amount / 100;
+                const varNameLower = variation.name.toLowerCase();
+                const isMonthly = varNameLower.includes('monthly') || varNameLower.includes('month');
+                const cadence = isMonthly ? 'monthly' : 'annual';
+                
+                const exists = upgrades.some(
+                  (u) => u.planId === plan.planId && u.pricingOption === cadence
+                );
+                
+                if (!exists) {
+                  upgrades.push({
+                    planId: plan.planId,
+                    planName: plan.planName,
+                    pricingOption: cadence,
+                    price,
+                    description: `Add ${plan.planName}`,
+                  });
+                }
+              }
+              
+              variation.phases?.forEach((phase) => {
+                let priceAmount: number | null = null;
+                if (phase.pricing?.amount) {
+                  priceAmount = phase.pricing.amount;
+                } else if ((phase.pricing as any)?.price_money?.amount) {
+                  priceAmount = (phase.pricing as any).price_money.amount;
+                } else if (typeof phase.pricing === 'number') {
+                  priceAmount = phase.pricing;
+                }
+                
+                if (priceAmount) {
+                  const price = priceAmount / 100;
+                  const isMonthly = phase.cadence === 'MONTHLY';
+                  const cadence = isMonthly ? 'monthly' : 'annual';
+                  
+                  const exists = upgrades.some(
+                    (u) => u.planId === plan.planId && u.pricingOption === cadence
+                  );
+                  
+                  if (!exists) {
+                    upgrades.push({
+                      planId: plan.planId,
+                      planName: plan.planName,
+                      pricingOption: cadence,
+                      price,
+                      description: `Add ${plan.planName}`,
+                    });
+                  }
+                }
+              });
+            });
+          }
+        }
+      });
+      
+      console.log('MembershipUpgrade: Final upgrades for Foundations/Foundations Plus', upgrades);
+      return upgrades;
+    }
 
     // Determine current base plan type - be more flexible with matching
     let basePlanType: string | null = null;
@@ -142,40 +371,65 @@ export default function MembershipUpgrade() {
       return []; // Can't determine base plan type
     }
 
-    // Find Plus upgrade options for the base plan
+    // Find Plus upgrade options ONLY for the specific base plan (no other modifiers)
     formattedPlans.forEach((plan) => {
       const planNameLower = plan.planName.toLowerCase();
       
       // Look for Plus plans matching the base plan type
+      // Must contain base plan type AND "plus" (in that order, or at least both present)
       const hasBasePlan = planNameLower.includes(basePlanType);
       const hasPlus = planNameLower.includes('plus');
       
-      console.log('MembershipUpgrade: Checking plan', {
+      // Exclude plans with other modifiers (starter, puppy, kitten, etc.)
+      const hasStarter = planNameLower.includes('starter') || 
+                        planNameLower.includes('puppy') || 
+                        planNameLower.includes('kitten');
+      
+      // Ensure it's the Plus version of the base plan (e.g., "Foundations Plus", "Golden Plus", "Comfort Care Plus")
+      // Pattern should be: [basePlanType] + "plus" (with possible words in between like "care")
+      const basePlanPlusPattern = basePlanType === 'comfort' 
+        ? /comfort.*care.*plus|comfort.*plus/  // "Comfort Care Plus" or "Comfort Plus"
+        : new RegExp(`${basePlanType}.*plus`, 'i'); // "Foundations Plus" or "Golden Plus"
+      
+      const matchesBasePlanPlusPattern = basePlanPlusPattern.test(planNameLower);
+      
+      console.log('MembershipUpgrade: Checking plan for Plus upgrade', {
         planName: plan.planName,
+        basePlanType,
         hasBasePlan,
         hasPlus,
-        basePlanType,
+        hasStarter,
+        matchesBasePlanPlusPattern,
       });
       
-      if (hasBasePlan && hasPlus) {
+      // Only show Plus plans that:
+      // 1. Match the base plan type (foundations, golden, or comfort)
+      // 2. Have "plus" in the name
+      // 3. Don't have starter/puppy/kitten modifiers
+      // 4. Match the base plan + plus pattern
+      // 5. Match the species (if species is known)
+      if (hasBasePlan && hasPlus && !hasStarter && matchesBasePlanPlusPattern) {
         // Check if species matches (if we have species info)
+        // For Plus upgrades, we MUST match the species - no wildcards
         let speciesMatches = true;
         if (species) {
           const hasCat = planNameLower.includes('cat') || planNameLower.includes('feline');
           const hasDog = planNameLower.includes('dog') || planNameLower.includes('canine');
           
-          // Match species: check both normalized and original values
-          // cat/feline matches cat/feline plans, dog/canine matches dog/canine plans
-          // Also allow plans that don't specify species
           const isCat = species === 'cat' || species === 'feline';
           const isDog = species === 'dog' || species === 'canine';
           
-          speciesMatches = 
-            (isCat && hasCat) ||
-            (isDog && hasDog) ||
-            (!hasCat && !hasDog); // If plan doesn't specify species, allow it
+          // Strict species matching: must match exactly
+          // If plan specifies cat, pet must be cat. If plan specifies dog, pet must be dog.
+          // Only allow plans without species if pet species is unknown
+          if (hasCat || hasDog) {
+            speciesMatches = (isCat && hasCat) || (isDog && hasDog);
+          } else {
+            // Plan doesn't specify species - only allow if pet species is also unknown
+            speciesMatches = false; // Don't allow plans without species if we know the pet's species
+          }
           
-          console.log('MembershipUpgrade: Species check', {
+          console.log('MembershipUpgrade: Species check (strict)', {
             species,
             isCat,
             isDog,
@@ -185,12 +439,17 @@ export default function MembershipUpgrade() {
             planName: plan.planName,
           });
         } else {
-          // No species info, allow all plans
-          speciesMatches = true;
+          // No species info - only allow plans that don't specify species
+          const hasCat = planNameLower.includes('cat') || planNameLower.includes('feline');
+          const hasDog = planNameLower.includes('dog') || planNameLower.includes('canine');
+          speciesMatches = !hasCat && !hasDog; // Only allow plans without species specification
         }
 
         if (!speciesMatches) {
-          console.log('MembershipUpgrade: Species mismatch, skipping');
+          console.log('MembershipUpgrade: Species mismatch, skipping', {
+            planName: plan.planName,
+            species,
+          });
           return; // Skip if species doesn't match
         }
 
@@ -291,6 +550,140 @@ export default function MembershipUpgrade() {
     return selectedUpgrades.reduce((sum, upgrade) => sum + upgrade.price, 0);
   }, [selectedUpgrades]);
 
+  // Calculate prorated refunds and charges
+  const proratedCalculation = useMemo((): ProratedCalculation | null => {
+    if (!currentMembership || selectedUpgrades.length === 0) {
+      return null;
+    }
+
+    const upgradeDate = new Date(); // Today's date
+    const signupDateStr = currentMembership.createdAt || currentMembership.updatedAt;
+    if (!signupDateStr) return null;
+
+    const signupDate = new Date(signupDateStr);
+    const oldPricingOption = (currentMembership.pricingOption || 'monthly').toLowerCase();
+    const oldAmount = currentMembership.amount || 0; // in cents
+    const oldAmountDollars = oldAmount / 100;
+
+    // Get the first selected upgrade (assuming single upgrade for now)
+    const newUpgrade = selectedUpgrades[0];
+    const newPricingOption = newUpgrade.pricingOption;
+    const newPrice = newUpgrade.price; // in dollars
+
+    // Determine if it's month-to-month (Comfort Care)
+    const isMonthToMonth = (currentMembership.planName || '').toLowerCase().includes('comfort');
+
+    let refundAmount = 0;
+    let chargeAmount = 0;
+    let refundDescription = '';
+    let chargeDescription = '';
+    let nextBillingDate = '';
+
+    if (oldPricingOption === 'annual') {
+      // Annual plan upgrade
+      const signupYear = signupDate.getFullYear();
+      const signupMonth = signupDate.getMonth();
+      const signupDay = signupDate.getDate();
+
+      // Calculate end of annual period (1 year from signup date)
+      const annualEndDate = new Date(signupYear + 1, signupMonth, signupDay);
+      
+      // Calculate days remaining from upgrade date to annual end date
+      const daysRemaining = Math.max(0, Math.ceil((annualEndDate.getTime() - upgradeDate.getTime()) / (1000 * 60 * 60 * 24)));
+      const daysInYear = 365;
+      const monthsRemaining = daysRemaining / (daysInYear / 12);
+
+      // Refund: prorated amount for remaining period
+      refundAmount = (oldAmountDollars * monthsRemaining) / 12;
+      refundDescription = `Prorated refund for ${monthsRemaining.toFixed(1)} months remaining (${daysRemaining} days)`;
+
+      if (newPricingOption === 'annual') {
+        // New annual plan: prorate from upgrade date to end of year (based on signup date)
+        const currentYear = upgradeDate.getFullYear();
+        const nextRenewalDate = new Date(signupYear + 1, signupMonth, signupDay);
+        
+        // If upgrade is after signup date in current year, next renewal is next year
+        if (upgradeDate > new Date(signupYear, signupMonth, signupDay)) {
+          const daysUntilRenewal = Math.ceil((nextRenewalDate.getTime() - upgradeDate.getTime()) / (1000 * 60 * 60 * 24));
+          const monthsUntilRenewal = daysUntilRenewal / (daysInYear / 12);
+          chargeAmount = (newPrice * monthsUntilRenewal) / 12;
+          chargeDescription = `Prorated charge for ${monthsUntilRenewal.toFixed(1)} months until renewal`;
+          nextBillingDate = nextRenewalDate.toISOString().split('T')[0];
+        } else {
+          // Upgrade before signup date this year
+          const daysUntilRenewal = Math.ceil((nextRenewalDate.getTime() - upgradeDate.getTime()) / (1000 * 60 * 60 * 24));
+          const monthsUntilRenewal = daysUntilRenewal / (daysInYear / 12);
+          chargeAmount = (newPrice * monthsUntilRenewal) / 12;
+          chargeDescription = `Prorated charge for ${monthsUntilRenewal.toFixed(1)} months until renewal`;
+          nextBillingDate = nextRenewalDate.toISOString().split('T')[0];
+        }
+      } else {
+        // New monthly plan: charge from upgrade date, then monthly on signup day
+        chargeAmount = newPrice; // Full month charge
+        chargeDescription = `Charge for new plan starting ${upgradeDate.toISOString().split('T')[0]}`;
+        
+        // Next billing date is signup day of next month
+        const nextBilling = new Date(upgradeDate);
+        nextBilling.setMonth(nextBilling.getMonth() + 1);
+        nextBilling.setDate(signupDay);
+        nextBillingDate = nextBilling.toISOString().split('T')[0];
+      }
+    } else if (isMonthToMonth) {
+      // Month-to-month (Comfort Care) upgrade
+      // Refund: current month's charge
+      refundAmount = oldAmountDollars;
+      refundDescription = `Refund for current month's charge`;
+
+      // Charge: new plan from upgrade date, then monthly
+      chargeAmount = newPrice;
+      chargeDescription = `Charge for new plan starting ${upgradeDate.toISOString().split('T')[0]}`;
+      
+      // Next billing date is signup day of next month
+      const nextBilling = new Date(upgradeDate);
+      nextBilling.setMonth(nextBilling.getMonth() + 1);
+      nextBilling.setDate(signupDate.getDate());
+      nextBillingDate = nextBilling.toISOString().split('T')[0];
+    } else {
+      // Monthly 12-month commitment upgrade
+      // Refund: current month's charge
+      refundAmount = oldAmountDollars;
+      refundDescription = `Refund for current month's charge`;
+
+      if (newPricingOption === 'annual') {
+        // New annual plan: prorate from upgrade date to end of year (based on signup date)
+        const signupYear = signupDate.getFullYear();
+        const signupMonth = signupDate.getMonth();
+        const signupDay = signupDate.getDate();
+        const nextRenewalDate = new Date(signupYear + 1, signupMonth, signupDay);
+        
+        const daysUntilRenewal = Math.ceil((nextRenewalDate.getTime() - upgradeDate.getTime()) / (1000 * 60 * 60 * 24));
+        const monthsUntilRenewal = daysUntilRenewal / (365 / 12);
+        chargeAmount = (newPrice * monthsUntilRenewal) / 12;
+        chargeDescription = `Prorated charge for ${monthsUntilRenewal.toFixed(1)} months until renewal`;
+        nextBillingDate = nextRenewalDate.toISOString().split('T')[0];
+      } else {
+        // New monthly plan: charge from upgrade date, then monthly on signup day
+        chargeAmount = newPrice;
+        chargeDescription = `Charge for new plan starting ${upgradeDate.toISOString().split('T')[0]}`;
+        
+        // Next billing date is signup day of next month
+        const nextBilling = new Date(upgradeDate);
+        nextBilling.setMonth(nextBilling.getMonth() + 1);
+        nextBilling.setDate(signupDate.getDate());
+        nextBillingDate = nextBilling.toISOString().split('T')[0];
+      }
+    }
+
+    return {
+      refundAmount: Math.max(0, refundAmount),
+      chargeAmount: Math.max(0, chargeAmount),
+      refundDescription,
+      chargeDescription,
+      nextBillingDate,
+      upgradeDate: upgradeDate.toISOString().split('T')[0],
+    };
+  }, [currentMembership, selectedUpgrades]);
+
   function toggleUpgrade(upgrade: UpgradeOption) {
     setSelectedUpgrades((prev) => {
       const exists = prev.find(
@@ -313,6 +706,11 @@ export default function MembershipUpgrade() {
     setError(null);
 
     try {
+      // Calculate net amount (charge - refund)
+      const netAmount = proratedCalculation 
+        ? proratedCalculation.chargeAmount - proratedCalculation.refundAmount
+        : totalPrice;
+
       // Navigate to payment page with upgrade information
       navigate('/client-portal/membership-payment', {
         state: {
@@ -321,8 +719,10 @@ export default function MembershipUpgrade() {
           isUpgrade: true,
           patientId: state.patientId,
           selectedUpgrades,
-          amountCents: totalPrice * 100,
+          amountCents: Math.max(0, Math.round(netAmount * 100)), // Net amount after refund
           currency: 'USD',
+          proratedCalculation, // Include prorated calculation details
+          currentMembership, // Include current membership for backend processing
         },
       });
     } catch (err: any) {
@@ -494,6 +894,26 @@ export default function MembershipUpgrade() {
                     <div style={{ fontWeight: 600 }}>${upgrade.price.toFixed(2)}</div>
                   </div>
                 ))}
+                {proratedCalculation && (
+                  <div style={{ padding: '16px', borderTop: '1px solid #e5e7eb', background: '#f9fafb', marginTop: 8 }}>
+                    <div style={{ marginBottom: 12, fontSize: 14, color: '#6b7280' }}>
+                      <strong>Prorated Calculation:</strong>
+                    </div>
+                    {proratedCalculation.refundAmount > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, color: '#059669' }}>
+                        <span>Refund ({proratedCalculation.refundDescription}):</span>
+                        <span>-${proratedCalculation.refundAmount.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <span>Charge ({proratedCalculation.chargeDescription}):</span>
+                      <span>${proratedCalculation.chargeAmount.toFixed(2)}</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: '#6b7280', marginTop: 8 }}>
+                      Next billing date: {new Date(proratedCalculation.nextBillingDate).toLocaleDateString()}
+                    </div>
+                  </div>
+                )}
                 <div
                   style={{
                     display: 'flex',
@@ -505,8 +925,13 @@ export default function MembershipUpgrade() {
                     fontWeight: 700,
                   }}
                 >
-                  <span>Total</span>
-                  <span>${totalPrice.toFixed(2)}</span>
+                  <span>Net Amount Due</span>
+                  <span>
+                    {proratedCalculation 
+                      ? `$${(proratedCalculation.chargeAmount - proratedCalculation.refundAmount).toFixed(2)}`
+                      : `$${totalPrice.toFixed(2)}`
+                    }
+                  </span>
                 </div>
               </div>
             </div>

@@ -157,6 +157,7 @@ export default function LoginPage() {
     height: 'auto',
     mixBlendMode: 'multiply',
     marginBottom: '16px',
+    objectFit: 'contain',
   };
 
   const logoTextStyle: CSSProperties = {
@@ -184,6 +185,40 @@ export default function LoginPage() {
     .login-page .auth-panel form {
       width: 100%;
     }
+    @media (max-height: 860px) {
+      .login-page {
+        grid-template-columns: 1fr !important;
+        padding: 40px 56px 40px !important;
+        gap: 48px !important;
+        text-align: center;
+      }
+      .login-page .auth-hero {
+        align-items: center;
+        max-width: 100%;
+        width: 100%;
+      }
+      .login-page .auth-hero h1 {
+        padding-top: 50px !important;
+      }
+    .login-page .auth-logo {
+        margin-bottom: -100px !important;
+      }
+      .login-page .auth-logo img {
+        width: min(280px, 50vw) !important;
+        max-width: 320px !important;
+      }
+      .login-page .auth-logo h1,
+      .login-page .auth-logo p {
+        text-align: center !important;
+      }
+      .login-page .auth-panel {
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        margin: 0 auto !important;
+        width: min(480px, 100%) !important;
+        max-width: 480px;
+      }
+    }
     @media (max-width: 1024px) {
       .login-page {
         grid-template-columns: 1fr !important;
@@ -201,6 +236,10 @@ export default function LoginPage() {
       }
     .login-page .auth-logo {
         margin-bottom: -100px !important;
+      }
+      .login-page .auth-logo img {
+        width: min(280px, 50vw) !important;
+        max-width: 320px !important;
       }
       .login-page .auth-logo h1,
       .login-page .auth-logo p {
@@ -233,6 +272,10 @@ export default function LoginPage() {
       .login-page .auth-logo {
         margin-bottom: -80px !important;
       }
+      .login-page .auth-logo img {
+        width: min(240px, 45vw) !important;
+        max-width: 280px !important;
+      }
     }
     @media (max-width: 480px) {
       .login-page {
@@ -248,6 +291,10 @@ export default function LoginPage() {
       }
       .login-page .auth-logo {
         margin-bottom: -60px !important;
+      }
+      .login-page .auth-logo img {
+        width: min(200px, 40vw) !important;
+        max-width: 240px !important;
       }
     }
   `;

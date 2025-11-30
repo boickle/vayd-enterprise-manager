@@ -45,11 +45,12 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
       { species: 'cat', monthly: 69, annual: 639 },
     ],
     includes: [
-      'One Comprehensive Exam & Trip Fee',
-      'One Office-Hours Tele-health Consult',
-      'Annual Core Vaccinations',
-      'Annual "Basic" Lab Panel (CBC, Chemistry)',
+      'One Comprehensive Wellness Exam & Trip Fee',
+      'Annual Vaccinations Recommended for Age and Lifestyle',
+      'Annual "Basic" Lab Panel (CBC, Abbreviated Chemistry)',
       'Annual Fecal Test',
+      'Heartworm/Tick Test (Dogs)',
+      'FIV / FeLV / Heartworm test (Cats)',
       'After-hours Tele-chat Support',
     ],
   },
@@ -64,9 +65,8 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
       { species: 'cat', monthly: 99, annual: 1069 },
     ],
     includes: [
-      'Two Comprehensive Exams & Trip Fees',
-      'Two Office-Hours Tele-health Consults',
-      'Annual Core Vaccinations',
+      'Two Comprehensive Wellness Exams & Trip Fees',
+      'Annual Vaccinations Recommended for Age and Lifestyle',
       'Annual "Advanced" Lab Panel (CBC, Chemistry, Thyroid, Urinalysis)',
       'Annual Fecal Test',
       'FeLV/FIV/Heartworm test (Cats)',
@@ -84,7 +84,7 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
       'One Comprehensive Exam & Trip Fee per month',
       'One office-hours tele-health consult',
       'After-hours Tele-chat Support',
-      '$100 Credit towards euthanasia',
+      'Take 15% off total euthanasia and after-care cost',
     ],
   },
   {
@@ -95,9 +95,9 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
     badgeColor: '#f9b938',
     pricing: [{ monthly: 49, annual: 529, suffix: 'additional' }],
     includes: [
-      'Guaranteed two-hour response time during business hours from your Dedicated One Team',
       '50% off all Additional Exams',
       '10% off Everything We Offer (e.g. Lab Work, Services, Medications)',
+      'One Free Nail Trim Per Year',
     ],
     billingNote:
       '* Examples include chronic kidney disease, hyperthyroidism, allergic skin disease, arthritis, cancer.',
@@ -133,28 +133,31 @@ const ADD_ON_PRICING: Record<string, { label: string; monthly: number; annual?: 
 const MEMBERSHIP_AGREEMENT_TEXT = [
   'By enrolling your pet in a Vet At Your Door Membership Plan, you agree to the following terms and conditions.',
   'Membership Plans',
-  'Foundations: Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours telehealth. Requires a 12-month commitment.',
-  'Golden: Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours telehealth. Requires a 12-month commitment.',
-  'Comfort Care: A month-to-month plan that includes one visit with trip fee, one telehealth consult during business hours per month, after-hours telehealth, and a one hundred dollar credit toward euthanasia.',
-  'Plus Add-On: Provides ten percent off all services and medications, fifty percent off exams, and a two-hour guaranteed response time by one of your One Team members during business hours if the need arises. The term matches the main plan. A store discount code is issued after sign-up.',
-  'Puppy / Kitten Add-on: Covers booster vaccine appointments during your pet\'s first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.',
+  'Foundations: Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a 12-month commitment.',
+  'Golden: Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a 12-month commitment.',
+  'Comfort Care: A month-to-month plan that includes one visit with trip fee, one tele-health consult during business hours per month, after-hours tele-chat, and 15% off your pet\'s total euthanasia and after-care (if elected) bill.',
+  'Plus Add-On: Provides ten percent off all services and medications and fifty percent off exams. There is one free nail trim per year. The term matches the main plan. A store discount code is issued after sign-up.',
+  'Puppy / Kitten Add-On: Covers booster vaccine appointments during your pet\'s first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.',
   'After-Hours Telehealth',
-  'Members may access our virtual triage chat after hours during these times: Monday through Friday from 5 pm to 9 pm, and Saturday through Sunday from 8 am to 5 pm. A Triage Technician will review your pet’s history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. Service is unavailable on listed holidays. Hours may change with 30 days of notice.',
+  'Members may access our virtual triage chat after hours during these times: Monday through Friday from 5 pm to 9 pm, and Saturday through Sunday from 8 am to 5 pm. A Triage Technician will review your pet\'s history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. Service is unavailable on listed holidays. Hours may change with 30 days of notice.',
   'VCPR Requirements and Limitations for New or Lapsed Patients',
-  'A valid Veterinarian-Client-Patient Relationship requires an in-person exam within the past 365 days. If more than 12 months have passed since your pet’s most recent in-person exam with us, the VCPR is considered expired.',
-  'For pets we have not yet seen, or for pets whose VCPR has lapsed, the following services cannot be provided until a current VCPR is re-established through an in-person exam: After-hours telehealth; Medical advice, triage guidance, or care recommendations from your One Team; Prescription medications or refills of any kind.',
-  'Once the initial or renewal exam is completed, all membership benefits become fully active. Memberships do not automatically cancel when the VCPR expires. It is the client’s responsibility to remain current.',
+  'A valid Veterinarian-Client-Patient Relationship requires an in-person exam within the past 365 days. If more than 12 months have passed since your pet\'s most recent in-person exam with us, the VCPR is considered expired.',
+  'For pets we have not yet seen, or for pets whose VCPR has lapsed, the following services cannot be provided until a current VCPR is re-established through an in-person exam:',
+  'Medical advice, tele-health consultation, triage guidance, or care recommendations from your One Team or other VAYD team member',
+  'Prescription medications or refills of any kind',
+  'Once the initial or renewal exam is completed, all membership benefits become fully active.',
+  'Memberships do not automatically cancel when the VCPR expires. It is the client\'s responsibility to have their pet remain current.',
   'Membership Rules',
   'Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of discounts.',
   'Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight years of age for dogs or nine years of age for cats. We will email you twenty to thirty days before renewal with a recommendation. You may change your selection or cancel at that time.',
   'Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve-month term. Comfort Care is month-to-month, as is Plus when selected with Comfort Care.',
   'If your pet passes away, moves, or transitions to Comfort Care, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.',
-  'If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client’s new lease or mortgage agreement.',
+  'If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client\'s new lease or mortgage agreement.',
   'A one-time registration fee, if charged, supports our Angel Fund for pets in need.',
   'Scheduling and Availability',
   'Visits should be scheduled in advance for best availability. Specific appointment times cannot be guaranteed. Services are available only within our service area and during our regular appointment hours.',
-  'We will make every reasonable effort for your pet’s care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.',
-  'If we cannot accommodate an urgent case, we may refer you to another facility or veterinary team.',
+  'We will make every reasonable effort for your pet\'s care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.',
+  'If we cannot accommodate an urgent case or a case that merits more than we can offer, we may refer you to another facility or veterinary team.',
   'Access and Technology Requirements',
   'Internet access and a compatible device are required for virtual chat and use of our online store. Instructions will be provided in the Welcome Email.',
   'Client Conduct',
@@ -183,9 +186,9 @@ function encodeSvgData(svg: string): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-const DOG_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}dog.png`;
+const DOG_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}doggy.png`;
 
-const CAT_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}cat.jpg`;
+const CAT_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}catty.png`;
 
 function petImg(pet: Pet | null): string {
   if (!pet) return DOG_PLACEHOLDER;
@@ -1615,24 +1618,14 @@ export default function MembershipSignup() {
                   <div className="cp-card-includes">
                     <strong style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>Includes:</strong>
                     <ul>
-                      <li className="cp-muted" style={{ marginBottom: 4 }}>
-                        <span role="img" aria-label="star" style={{ marginRight: 6 }}>
-                          ⭐
-                        </span>
-                        Guaranteed two-hour response time during business hours from your Dedicated One Team
-                      </li>
-                      <li className="cp-muted" style={{ marginBottom: 4 }}>
-                        <span role="img" aria-label="star" style={{ marginRight: 6 }}>
-                          ⭐
-                        </span>
-                        50% off all additional exams
-                      </li>
-                      <li className="cp-muted" style={{ marginBottom: 4 }}>
-                        <span role="img" aria-label="star" style={{ marginRight: 6 }}>
-                          ⭐
-                        </span>
-                        10% off everything we offer (e.g., labs, services, medications)
-                      </li>
+                      {MEMBERSHIP_PLANS.find(p => p.id === 'plus-addon')?.includes.map((item, idx) => (
+                        <li key={idx} className="cp-muted" style={{ marginBottom: 4 }}>
+                          <span role="img" aria-label="star" style={{ marginRight: 6 }}>
+                            ⭐
+                          </span>
+                          {item}
+                        </li>
+                      ))}
                     </ul>
                   </div>
                   <button

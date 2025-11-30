@@ -92,6 +92,18 @@ type PaymentNavigationState = {
     pricingOption: 'monthly' | 'annual';
     price: number;
   }>;
+  proratedCalculation?: {
+    refundAmount: number;
+    chargeAmount: number;
+    refundDescription: string;
+    chargeDescription: string;
+    nextBillingDate: string;
+    upgradeDate: string;
+  };
+  currentMembership?: {
+    id: number;
+    [key: string]: any;
+  };
 };
 
 export default function MembershipPayment() {
@@ -229,6 +241,12 @@ export default function MembershipPayment() {
           newPlansSelected: state.selectedUpgrades,
           sourceId: tokenResult.token,
           customerEmail: userEmail ?? '',
+          // Include prorated calculation if available
+          proratedRefundAmount: state.proratedCalculation?.refundAmount,
+          proratedChargeAmount: state.proratedCalculation?.chargeAmount,
+          upgradeDate: state.proratedCalculation?.upgradeDate,
+          nextBillingDate: state.proratedCalculation?.nextBillingDate,
+          currentMembershipId: state.currentMembership?.id,
         };
 
         const upgradeResponse = await upgradeMembership(upgradeRequest);
