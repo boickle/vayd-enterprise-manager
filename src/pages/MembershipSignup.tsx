@@ -147,7 +147,7 @@ const MEMBERSHIP_AGREEMENT_TEXT = [
   'Membership Rules',
   'Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of discounts.',
   'Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight years of age for dogs or nine years of age for cats. We will email you twenty to thirty days before renewal with a recommendation. You may change your selection or cancel at that time.',
-  'Foundations, Golden, Plus, and Starter Wellness plans require a twelve-month term. Comfort Care is month-to-month, as is Plus when selected with Comfort Care.',
+  'Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve-month term. Comfort Care is month-to-month, as is Plus when selected with Comfort Care.',
   'If your pet passes away, moves, or transitions to Comfort Care, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.',
   'If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client’s new lease or mortgage agreement.',
   'A one-time registration fee, if charged, supports our Angel Fund for pets in need.',
@@ -1970,7 +1970,7 @@ function AgreementSection({
           <p><strong>Golden:</strong> Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a 12-month commitment.</p>
           <p><strong>Comfort Care:</strong> A month-to-month plan that includes one visit with trip fee, one tele-chat consult during business hours per month, after-hours tele-chat, and a one hundred dollar credit toward euthanasia.</p>
           <p><strong>Plus Add-On:</strong> Provides ten percent off all services and medications and fifty percent off exams. There is one free nail trim per year. The term matches the main plan. A store discount code is issued after sign-up.</p>
-          <p><strong>Starter Wellness Add-On:</strong> Covers booster vaccine appointments during your pet's first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.</p>
+          <p><strong>Puppy / Kitten Add-On:</strong> Covers booster vaccine appointments during your pet's first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.</p>
           <p><strong>After-Hours Telehealth</strong></p>
           <p>Members may access our virtual triage chat after hours during these times: Monday through Friday from 5 pm to 9 pm, and Saturday through Sunday from 8 am to 5 pm. A Triage Technician will review your pet's history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. Service is unavailable on listed holidays. Hours may change with 30 days of notice.</p>
           <p><strong>VCPR Requirements and Limitations for New or Lapsed Patients</strong></p>
@@ -1986,7 +1986,7 @@ function AgreementSection({
           <p><strong>Membership Rules</strong></p>
           <p>Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of discounts.</p>
           <p>Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight years of age for dogs or nine years of age for cats. We will email you twenty to thirty days before renewal with a recommendation. You may change your selection or cancel at that time.</p>
-          <p>Foundations, Golden, Plus, and Starter Wellness plans require a twelve-month term. Comfort Care is month-to-month, as is Plus when selected with Comfort Care.</p>
+          <p>Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve-month term. Comfort Care is month-to-month, as is Plus when selected with Comfort Care.</p>
           <p>If your pet passes away, moves, or transitions to Comfort Care, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.</p>
           <p>If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client's new lease or mortgage agreement.</p>
           <p>A one-time registration fee, if charged, supports our Angel Fund for pets in need.</p>

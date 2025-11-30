@@ -441,6 +441,16 @@ export async function fetchWellnessPlansForPractice(practiceId: string): Promise
   return rows.map(normalizeWellnessPlan);
 }
 
+/** Fetch practice information */
+export async function fetchPracticeInfo(): Promise<{ chatHoursOfOperation?: any } | null> {
+  try {
+    const { data } = await http.get('/practice/info');
+    return data || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Fetch a single wellness plan by id. */
 export async function fetchWellnessPlanById(id: string): Promise<WellnessPlan | null> {
   const { data } = await http.get(`/wellness-plans/${encodeURIComponent(id)}`);

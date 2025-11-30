@@ -11,6 +11,7 @@ import {
   type WellnessPlan,
   fetchClientReminders,
   type ClientReminder,
+  fetchPracticeInfo,
 } from '../api/clientPortal';
 import { listMembershipTransactions } from '../api/membershipTransactions';
 
@@ -186,6 +187,7 @@ export default function ClientPortal() {
     pet: PetWithWellness;
     reminders: ClientReminder[];
   } | null>(null);
+  const [chatHours, setChatHours] = useState<any>(null);
 
   useEffect(() => {
     let alive = true;
@@ -193,11 +195,16 @@ export default function ClientPortal() {
       setLoading(true);
       setError(null);
       try {
-        const [pBase, a, r] = await Promise.all([
+        const [pBase, a, r, practiceInfo] = await Promise.all([
           fetchClientPets(),
           fetchClientAppointments(),
           fetchClientReminders(),
+          fetchPracticeInfo(),
         ]);
+        
+        if (practiceInfo?.chatHoursOfOperation) {
+          setChatHours(practiceInfo.chatHoursOfOperation);
+        }
         if (!alive) return;
 
         const clientIdForTransactions =
@@ -549,6 +556,82 @@ export default function ClientPortal() {
   const brand = 'var(--brand, #0f766e)';
   const brandSoft = 'var(--brand-soft, #e6f7f5)';
 
+  // Helper function to parse time string (HH:MM format) to minutes since midnight
+  function parseTimeToMinutes(timeStr: string): number {
+    if (!timeStr) return 0;
+    const match = timeStr.match(/(\d{1,2}):(\d{2})/);
+    if (match) {
+      const hours = parseInt(match[1]);
+      const minutes = parseInt(match[2]);
+      return hours * 60 + minutes;
+    }
+    return 0;
+  }
+
+  // Check if chat hours are currently open based on chatHoursOfOperation
+  const isChatHoursOpen = useMemo(() => {
+    if (!chatHours) {
+      // If no chat hours data, default to hiding the button (assume closed)
+      return false;
+    }
+
+    const now = new Date();
+    const currentDay = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
+    const currentTimeMinutes = now.getHours() * 60 + now.getMinutes(); // Minutes since midnight
+
+    // Map day index to lowercase day name
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const todayName = dayNames[currentDay];
+    
+    // Get today's chat hours
+    const todayChatHours = chatHours[todayName];
+
+    if (!todayChatHours || !todayChatHours.open || !todayChatHours.close) {
+      return false; // Closed if no chat hours for today
+    }
+
+    const openMinutes = parseTimeToMinutes(todayChatHours.open);
+    let closeMinutes = parseTimeToMinutes(todayChatHours.close);
+    
+    // Handle case where close time is after midnight (e.g., "27:00" = 3:00 AM next day)
+    if (closeMinutes < openMinutes) {
+      closeMinutes += 24 * 60; // Add 24 hours
+    }
+
+    // Check if current time is within chat hours
+    const isOpen = currentTimeMinutes >= openMinutes && currentTimeMinutes < closeMinutes;
+    
+    return isOpen;
+  }, [chatHours]);
+
+  // Format chat hours for display in tooltip
+  const formattedChatHours = useMemo(() => {
+    if (!chatHours) return null;
+
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const dayLabels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    
+    return dayNames.map((dayName, index) => {
+      const hours = chatHours[dayName];
+      if (!hours || !hours.open || !hours.close) {
+        return { day: dayLabels[index], hours: 'Closed' };
+      }
+      
+      // Format time (handle times past midnight like "27:00")
+      let closeTime = hours.close;
+      if (closeTime.startsWith('2')) {
+        const hours24 = parseInt(closeTime.split(':')[0]);
+        if (hours24 >= 24) {
+          const nextDayHours = hours24 - 24;
+          const minutes = closeTime.split(':')[1];
+          closeTime = `${nextDayHours.toString().padStart(2, '0')}:${minutes}`;
+        }
+      }
+      
+      return { day: dayLabels[index], hours: `${hours.open} - ${closeTime}` };
+    });
+  }, [chatHours]);
+
   /* ---------------------------
      Bottom Nav Handlers
   ---------------------------- */
@@ -672,15 +755,22 @@ export default function ClientPortal() {
           .cp-wrap { padding-bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + 12px); }
           /* Hide top service action buttons when bottom nav is showing */
           .cp-service-actions-section { display: none !important; }
-          .cp-service-actions-mobile { display: block !important; }
-          .cp-service-actions-desktop { display: none !important; }
-        }
+        .cp-service-actions-mobile { display: block !important; }
+        .cp-service-actions-desktop { display: none !important; }
+      }
 
-        /* Show desktop buttons on larger screens */
-        @media (min-width: 640px) {
-          .cp-service-actions-mobile { display: none !important; }
-          .cp-service-actions-desktop { display: grid !important; }
-        }
+      /* Show desktop buttons on larger screens */
+      @media (min-width: 640px) {
+        .cp-service-actions-mobile { display: none !important; }
+        .cp-service-actions-desktop { display: grid !important; }
+      }
+
+      /* Chat hours tooltip */
+      .chat-hours-tooltip {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s;
+      }
       `}</style>
 
       {/* HERO - Logo */}
@@ -1283,40 +1373,115 @@ export default function ClientPortal() {
 
                       <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                         {hasActiveWellnessPlan && (
-                          <a
-                            href="https://direct.lc.chat/19087357/"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{
-                              width: '100%',
-                              padding: '8px 12px',
-                              backgroundColor: '#3b82f6',
-                              color: '#fff',
-                              border: 'none',
-                              borderRadius: 8,
-                              fontSize: 14,
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                              textDecoration: 'none',
-                              textAlign: 'center',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: 8,
-                              transition: 'opacity 0.2s',
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.opacity = '0.9';
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.opacity = '1';
-                            }}
-                          >
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
-                              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                            </svg>
-                            Chat After Hours
-                          </a>
+                          <div style={{ position: 'relative', width: '100%' }}>
+                            {isChatHoursOpen ? (
+                              <a
+                                href="https://direct.lc.chat/19087357/"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  width: '100%',
+                                  padding: '8px 12px',
+                                  backgroundColor: '#3b82f6',
+                                  color: '#fff',
+                                  border: 'none',
+                                  borderRadius: 8,
+                                  fontSize: 14,
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  textDecoration: 'none',
+                                  textAlign: 'center',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 8,
+                                  transition: 'opacity 0.2s',
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.opacity = '0.9';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.opacity = '1';
+                                }}
+                              >
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
+                                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                                </svg>
+                                After-hours Chat
+                              </a>
+                            ) : (
+                              <div
+                                style={{
+                                  width: '100%',
+                                  padding: '8px 12px',
+                                  backgroundColor: '#9ca3af',
+                                  color: '#fff',
+                                  border: 'none',
+                                  borderRadius: 8,
+                                  fontSize: 14,
+                                  fontWeight: 600,
+                                  cursor: 'not-allowed',
+                                  textAlign: 'center',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 8,
+                                  position: 'relative',
+                                }}
+                                onMouseEnter={(e) => {
+                                  const tooltip = e.currentTarget.querySelector('.chat-hours-tooltip') as HTMLElement;
+                                  if (tooltip) tooltip.style.opacity = '1';
+                                }}
+                                onMouseLeave={(e) => {
+                                  const tooltip = e.currentTarget.querySelector('.chat-hours-tooltip') as HTMLElement;
+                                  if (tooltip) tooltip.style.opacity = '0';
+                                }}
+                              >
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
+                                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                                </svg>
+                                After-hours Chat
+                                {formattedChatHours && (
+                                  <div
+                                    style={{
+                                      position: 'absolute',
+                                      bottom: '100%',
+                                      left: '50%',
+                                      transform: 'translateX(-50%)',
+                                      marginBottom: '8px',
+                                      padding: '12px 16px',
+                                      backgroundColor: '#1f2937',
+                                      color: '#fff',
+                                      borderRadius: 8,
+                                      fontSize: 13,
+                                      lineHeight: 1.6,
+                                      whiteSpace: 'pre-line',
+                                      textAlign: 'left',
+                                      minWidth: '240px',
+                                      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                                      opacity: 0,
+                                      pointerEvents: 'none',
+                                      transition: 'opacity 0.2s',
+                                      zIndex: 1000,
+                                    }}
+                                    className="chat-hours-tooltip"
+                                  >
+                                    <div style={{ fontWeight: 600, marginBottom: '8px' }}>
+                                      Chat is only available during the hours the practice allows:
+                                    </div>
+                                    <div style={{ display: 'grid', gap: '4px' }}>
+                                      {formattedChatHours.map((f) => (
+                                        <div key={f.day} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                          <span style={{ fontWeight: 500 }}>{f.day}:</span>
+                                          <span style={{ marginLeft: '12px' }}>{f.hours}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         )}
                         {false && canUpgradeMembership(p) && hasMembership && (
                           <button
