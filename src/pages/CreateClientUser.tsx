@@ -381,8 +381,8 @@ export default function CreateClientUser() {
         </h1>
         <p style={introStyle}>
           Get started by entering the email address we have on file for your account. We'll send you
-          a secure link to complete your setup and access your pet's information and membership
-          plans.
+          a secure link to complete your setup and access your pet's information and Membership
+          Plans.
         </p>
       </section>
 

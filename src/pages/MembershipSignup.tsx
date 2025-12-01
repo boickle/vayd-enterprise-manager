@@ -51,7 +51,7 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
       'Annual Fecal Test',
       'Heartworm/Tick Test (Dogs)',
       'FIV / FeLV / Heartworm test (Cats)',
-      'After-hours Tele-chat Support',
+      'After-hours Online Chat Support via VAYD Client Portal',
     ],
   },
   {
@@ -72,7 +72,7 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
       'FeLV/FIV/Heartworm test (Cats)',
       'Pancreatitis Screening (Cats)',
       '"4dx" Heartworm/Tick test (Dogs)',
-      'After-hours Tele-chat Support',
+      'After-hours Online Chat Support via VAYD Client Portal',
     ],
   },
   {
@@ -82,9 +82,9 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
     pricing: [{ monthly: 289 }],
     includes: [
       'One Comprehensive Exam & Trip Fee per month',
-      'One office-hours tele-health consult',
-      'After-hours Tele-chat Support',
-      'Take 15% off total euthanasia and after-care cost',
+      'One office-hours tele-health consult via phone or video',
+      'After-hours Online Chat Support via VAYD Client Portal',
+      '15% off total euthanasia and after-care cost',
     ],
   },
   {
@@ -182,6 +182,74 @@ function fmtDate(iso?: string) {
   return d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
+function formatIncludesText(text: string): string {
+  // Preserve special terms (case-insensitive matching) - order matters, longer terms first
+  const specialTerms = ['Client Portal', 'VAYD', 'CBC', 'FeLV', 'FIV'];
+  
+  // Replace special terms with placeholders first (longest first to avoid partial matches)
+  // Use a unique marker that won't be split
+  const placeholders: Map<string, string> = new Map();
+  let protectedText = text;
+  let placeholderCounter = 0;
+  
+  specialTerms.forEach((term) => {
+    const regex = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    protectedText = protectedText.replace(regex, (match) => {
+      const placeholder = `__PLACEHOLDER_${placeholderCounter}__`;
+      placeholders.set(placeholder, term);
+      placeholderCounter++;
+      return placeholder;
+    });
+  });
+  
+  // Now process the protected text word by word
+  const words = protectedText.split(/(\s+)/);
+  let result = '';
+  let isFirstWord = true;
+  
+  for (let i = 0; i < words.length; i++) {
+    let word = words[i];
+    
+    // Skip whitespace
+    if (/^\s+$/.test(word)) {
+      result += word;
+      continue;
+    }
+    
+    // Check if this word contains any placeholder(s) and replace all of them
+    let foundPlaceholder = false;
+    let processedWord = word;
+    
+    for (const [placeholder, term] of placeholders.entries()) {
+      if (processedWord.includes(placeholder)) {
+        // Replace all occurrences of this placeholder with the special term
+        processedWord = processedWord.replace(new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), term);
+        foundPlaceholder = true;
+      }
+    }
+    
+    if (foundPlaceholder) {
+      result += processedWord;
+      isFirstWord = false;
+      continue;
+    }
+    
+    // Process regular words
+    if (isFirstWord) {
+      // Capitalize first letter of first word, lowercase rest
+      word = word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+      isFirstWord = false;
+    } else {
+      // Lowercase all other words
+      word = word.toLowerCase();
+    }
+    
+    result += word;
+  }
+  
+  return result;
+}
+
 function encodeSvgData(svg: string): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
@@ -192,10 +260,14 @@ const CAT_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}catty.png`;
 
 function petImg(pet: Pet | null): string {
   if (!pet) return DOG_PLACEHOLDER;
+  // Check for uploaded photo first
+  if (pet.photoUrl) {
+    return pet.photoUrl;
+  }
+  // Fallback to species-based placeholders
   const species = (pet.species ?? pet.breed ?? '').toLowerCase();
   if (species.includes('dog') || species.includes('canine')) return DOG_PLACEHOLDER;
   if (species.includes('cat') || species.includes('feline')) return CAT_PLACEHOLDER;
-  if ('photoUrl' in pet && (pet as any).photoUrl) return (pet as any).photoUrl as string;
   return CAT_PLACEHOLDER;
 }
 
@@ -549,19 +621,19 @@ export default function MembershipSignup() {
         className="cp-card"
         style={{
           padding: 20,
-          borderLeft: `4px solid ${brand}`,
+          borderLeft: '4px solid #4FB128',
           background: brandSoft,
           marginBottom: 16,
         }}
       >
         <strong style={{ display: 'block', fontSize: 16, marginBottom: 8 }}>
-          We recommend the Golden Membership Plan for {name}.
+          We recommend the Golden Plan for {name}.
         </strong>
         <p className="cp-muted" style={{ margin: '0 0 8px' }}>
-          It’s built for senior pets and includes two visits plus advanced labs to catch issues early.
+          It's designed for seniors and includes two visits plus advanced labs. If you prefer something lighter, Foundations includes one visit with an abbreviated lab panel.
         </p>
         <p className="cp-muted" style={{ margin: 0 }}>
-          If you’d prefer a lighter option, Foundations offers one visit with an abbreviated lab panel.
+          For added support with chronic conditions or closer monitoring, you can add PLUS to either plan. Please note: Upgrading to Plus later isn't available, so choose it now if {name} may need the extra support.
         </p>
       </div>
     );
@@ -927,7 +999,7 @@ export default function MembershipSignup() {
         <div className="card" style={{ maxWidth: 600, margin: '30px auto' }}>
           <h2 style={{ marginTop: 0, color: '#e11d48' }}>Error</h2>
           <p className="muted">{combinedError}</p>
-          <button className="btn" onClick={() => navigate('/client-portal')} style={{ marginTop: 16 }}>
+          <button className="btn" onClick={() => navigate('/client-portal')} style={{ marginTop: 16, background: '#4FB128', color: '#fff' }}>
             Back to Portal
           </button>
         </div>
@@ -943,7 +1015,7 @@ export default function MembershipSignup() {
           style={{
             background: 'transparent',
             border: 'none',
-            color: brand,
+            color: '#4FB128',
             cursor: 'pointer',
             fontSize: 14,
             fontWeight: 600,
@@ -953,13 +1025,13 @@ export default function MembershipSignup() {
         >
           ← Back to Portal
         </button>
-        <div className="cp-card" style={{ padding: 24, borderLeft: `4px solid ${brand}`, background: brandSoft }}>
+        <div className="cp-card" style={{ padding: 24, borderLeft: '4px solid #4FB128', background: brandSoft }}>
           <h2 style={{ margin: '0 0 12px' }}>Schedule an Appointment First</h2>
           <p className="cp-muted" style={{ lineHeight: 1.6 }}>
             Since we haven't booked an appointment for {pet.name} yet, we advise contacting us first by calling
             {' '}
-            <a href="tel:12075368387" style={{ color: brand, fontWeight: 600 }}>(207) 536-8387</a>, emailing
-            {' '}<a href="mailto:info@vetatyourdoor.com" style={{ color: brand, fontWeight: 600 }}>info@vetatyourdoor.com</a>,
+            <a href="tel:12075368387" style={{ color: '#4FB128', fontWeight: 600 }}>(207) 536-8387</a>, emailing
+            {' '}<a href="mailto:info@vetatyourdoor.com" style={{ color: '#4FB128', fontWeight: 600 }}>info@vetatyourdoor.com</a>,
             {' '}or filling out our appointment request form online. Once your appointment is scheduled, you will be able to
             begin your membership with timing that coincides with your start date with us. We can’t wait to meet you!
           </p>
@@ -972,7 +1044,7 @@ export default function MembershipSignup() {
               href="https://form.jotform.com/221585880190157"
               target="_blank"
               rel="noopener noreferrer"
-              style={{ textDecoration: 'none' }}
+              style={{ textDecoration: 'none', background: '#4FB128', color: '#fff' }}
             >
               Request an Appointment
             </a>
@@ -1127,7 +1199,8 @@ export default function MembershipSignup() {
         }
         .cp-card-includes ul {
           margin: 0;
-          padding-left: 20px;
+          padding-left: 0;
+          list-style: none;
           font-size: 14px;
           line-height: 1.6;
         }
@@ -1185,13 +1258,13 @@ export default function MembershipSignup() {
           left: 18px;
           padding: 6px 16px;
           border-radius: 999px;
-          background: ${brand};
+          background: #4FB128;
           color: #fff;
           font-size: 12px;
           font-weight: 700;
           text-transform: uppercase;
           letter-spacing: 0.6px;
-          box-shadow: 0 4px 12px rgba(15, 118, 110, 0.25);
+          box-shadow: 0 4px 12px rgba(79, 177, 40, 0.25);
           pointer-events: none;
           z-index: 3;
         }
@@ -1284,7 +1357,7 @@ export default function MembershipSignup() {
           style={{
             background: 'transparent',
             border: 'none',
-            color: brand,
+            color: '#4FB128',
             cursor: 'pointer',
             fontSize: 14,
             fontWeight: 600,
@@ -1305,17 +1378,14 @@ export default function MembershipSignup() {
               className="cp-card"
               style={{
                 padding: 20,
-                borderLeft: `4px solid ${brand}`,
+                borderLeft: '4px solid #4FB128',
                 background: brandSoft,
                 marginBottom: 16,
               }}
             >
               <strong style={{ display: 'block', marginBottom: 8 }}>Welcome!</strong>
               <p className="cp-muted" style={{ margin: 0, lineHeight: 1.6 }}>
-                We’re excited to have you sign up! Before your first visit, we just want to share an important note: we
-                aren’t able to dispense medications, offer after-hours telehealth, or provide medical advice until we meet
-                {` ${pet.name}`} and establish a VCPR. Once we’ve done that at your appointment, your One Team will be able to
-                support you fully.
+                We're so excited to have you sign up. Our membership plans are one of the best ways to get proactive, personalized care from your One Team, and we're thrilled you're joining the community. Before your first visit, just a quick note: we aren't able to dispense medications, offer after-hours online chat support, or provide medical advice until we meet {pet.name} and establish a Veterinary Client Patient Relationship (VCPR). Once we've done that at your appointment, your One Team will be able to support you fully.
               </p>
             </div>
           )}
@@ -1382,9 +1452,10 @@ export default function MembershipSignup() {
                   setBillingPreference('monthly');
                 }}
                 style={{
-                  background: comfortAnswer === 'no' ? '#4FB128' : undefined,
-                  color: comfortAnswer === 'no' ? '#fff' : undefined,
-                  opacity: comfortAnswer === 'no' ? 1 : 0.6,
+                  background: comfortAnswer === 'no' ? '#4FB128' : '#4FB128',
+                  color: '#fff',
+                  opacity: comfortAnswer === 'no' ? 1 : 0.5,
+                  border: 'none',
                 }}
               >
                 No
@@ -1400,9 +1471,10 @@ export default function MembershipSignup() {
                   setBillingPreference('monthly');
                 }}
                 style={{
-                  background: comfortAnswer === 'yes' ? '#4FB128' : undefined,
-                  color: comfortAnswer === 'yes' ? '#fff' : undefined,
-                  opacity: comfortAnswer === 'yes' ? 1 : 0.6,
+                  background: comfortAnswer === 'yes' ? '#4FB128' : '#4FB128',
+                  color: '#fff',
+                  opacity: comfortAnswer === 'yes' ? 1 : 0.5,
+                  border: 'none',
                 }}
               >
                 Yes, show Comfort Care
@@ -1411,7 +1483,7 @@ export default function MembershipSignup() {
           </div>
         )}
 
-        {shouldAskStarter && pet && (
+        {shouldAskStarter && pet && comfortAnswer !== 'yes' && (
           <div className="cp-card" style={{ padding: 20, marginBottom: 16 }}>
             <p className="cp-muted" style={{ margin: '0 0 12px' }}>
               Has {pet.name} received more than one round of their core vaccines (like distemper)?
@@ -1425,9 +1497,10 @@ export default function MembershipSignup() {
                   setStarterExplicit(false);
                 }}
                 style={{
-                  background: starterAnswer === 'yes' ? '#4FB128' : undefined,
-                  color: starterAnswer === 'yes' ? '#fff' : undefined,
-                  opacity: starterAnswer === 'yes' ? 1 : 0.6,
+                  background: starterAnswer === 'yes' ? '#4FB128' : '#4FB128',
+                  color: '#fff',
+                  opacity: starterAnswer === 'yes' ? 1 : 0.5,
+                  border: 'none',
                 }}
               >
                 Yes
@@ -1440,9 +1513,10 @@ export default function MembershipSignup() {
                   setStarterExplicit(false);
                 }}
                 style={{
-                  background: starterAnswer === 'no' ? '#4FB128' : undefined,
-                  color: starterAnswer === 'no' ? '#fff' : undefined,
-                  opacity: starterAnswer === 'no' ? 1 : 0.6,
+                  background: starterAnswer === 'no' ? '#4FB128' : '#4FB128',
+                  color: '#fff',
+                  opacity: starterAnswer === 'no' ? 1 : 0.5,
+                  border: 'none',
                 }}
               >
                 No
@@ -1451,7 +1525,51 @@ export default function MembershipSignup() {
           </div>
         )}
 
-        {comfortAnswer === 'no' && recommendationCopy}
+        {comfortAnswer === 'no' && meetsGolden && recommendationCopy}
+
+        {comfortAnswer === 'no' && !meetsGolden && pet && (
+          <div
+            className="cp-card"
+            style={{
+              padding: 20,
+              borderLeft: '4px solid #4FB128',
+              background: brandSoft,
+              marginBottom: 16,
+            }}
+          >
+            <strong style={{ display: 'block', fontSize: 16, marginBottom: 8 }}>
+              We recommend the Foundations Membership Plan for {pet.name}.
+            </strong>
+            <p className="cp-muted" style={{ margin: '0 0 8px' }}>
+              It includes one annual visit and an abbreviated early detection lab panel, which is great for young, healthy pets who don't need intensive monitoring.
+            </p>
+            <p className="cp-muted" style={{ margin: 0 }}>
+              If {pet.name} has any chronic conditions, needs more frequent check-ins, or would benefit from additional support, you can add PLUS to Foundations. Please note: Upgrading to Plus later isn't available, so choose it now if {pet.name} may need the extra support.
+            </p>
+          </div>
+        )}
+
+        {comfortAnswer === 'yes' && pet && (
+          <div
+            className="cp-card"
+            style={{
+              padding: 20,
+              borderLeft: '4px solid #4FB128',
+              background: brandSoft,
+              marginBottom: 16,
+            }}
+          >
+            <strong style={{ display: 'block', fontSize: 16, marginBottom: 8 }}>
+              We recommend the Comfort Care Plan for {pet.name}.
+            </strong>
+            <p className="cp-muted" style={{ margin: '0 0 8px' }}>
+              It's a month-to-month hospice plan designed to support pets in their final stage of life with one in-person visit per month and compassionate, ongoing guidance.
+            </p>
+            <p className="cp-muted" style={{ margin: 0 }}>
+              You can also add PLUS if you'd like additional support or anticipate needing more frequent touch-points. Please note: PLUS can't be added later, so choose it at sign-up if you think {pet.name} may benefit.
+            </p>
+          </div>
+        )}
 
         {combinedError && (
           <div
@@ -1506,13 +1624,20 @@ export default function MembershipSignup() {
               })
               .sort((a, b) => {
                 if (comfortAnswer === 'no' && meetsGolden) {
-                  if (a.id === 'golden') return -1;
-                  if (b.id === 'golden') return 1;
+                  if (a.id === 'foundations') return -1;
+                  if (b.id === 'foundations') return 1;
+                  if (a.id === 'golden') return 1;
+                  if (b.id === 'golden') return -1;
                 }
                 return 0;
               })
               .map((plan) => {
-                const isRecommended = comfortAnswer === 'no' && plan.id === recommendedPlanId;
+                const isRecommended = 
+                  (comfortAnswer === 'no' && (
+                    plan.id === recommendedPlanId || 
+                    (!meetsGolden && plan.id === 'foundations')
+                  )) ||
+                  (comfortAnswer === 'yes' && plan.id === 'comfort-care');
                 const tiers = (() => {
                   if (!petDetails.kind) return plan.pricing;
                   const filtered = plan.pricing.filter((tier) => !tier.species || tier.species === petDetails.kind);
@@ -1526,7 +1651,7 @@ export default function MembershipSignup() {
                     style={{ padding: 24, position: 'relative' }}
                   >
                     {isSelected && <span className="cp-added-badge">Added to Cart</span>}
-                    {isRecommended && plan.id === 'golden' && <span className="cp-recommended-badge">Recommended</span>}
+                    {isRecommended && <span className="cp-recommended-badge">Recommended</span>}
 
                     <div className="cp-card-upper">
                       <div className="cp-card-head">
@@ -1540,11 +1665,11 @@ export default function MembershipSignup() {
                             <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                               <div className="cp-card-price-main">
                                 ${tier.monthly}
-                                <span>/mo</span>
+                                <span>/month</span>
                               </div>
                               {tier.annual ? (
                                 <div className="cp-card-price-note">
-                                  or ${tier.annual} annually {tier.suffix ? `(${tier.suffix})` : ''}
+                                  or ${tier.annual} annually (10% discount!) {tier.suffix ? `(${tier.suffix})` : ''}
                                 </div>
                               ) : tier.suffix ? (
                                 <div className="cp-card-price-note">{tier.suffix}</div>
@@ -1574,7 +1699,7 @@ export default function MembershipSignup() {
                               <span role="img" aria-label="star" style={{ marginRight: 6 }}>
                                 ⭐
                               </span>
-                              <span className="cp-muted">{item}</span>
+                              <span className="cp-muted">{formatIncludesText(item)}</span>
                             </li>
                           ))}
                         </ul>
@@ -1598,7 +1723,7 @@ export default function MembershipSignup() {
                             return next;
                           });
                         }}
-                        style={{ alignSelf: 'flex-end', marginTop: 'auto' }}
+                        style={{ alignSelf: 'flex-end', marginTop: 'auto', background: '#4FB128', color: '#fff' }}
                       >
                         {isSelected ? 'Remove from Cart' : 'Add to Cart'}
                       </button>
@@ -1620,9 +1745,11 @@ export default function MembershipSignup() {
                   </div>
                   <div className="cp-card-price">
                     <div className="cp-card-price-main">
-                      $49<span>/mo</span>
+                      $49<span>/month</span>
                     </div>
-                    <div className="cp-card-price-note">or $529 annually (10% discount!)</div>
+                    {comfortAnswer !== 'yes' && (
+                      <div className="cp-card-price-note">or $529 annually (10% discount!)</div>
+                    )}
                   </div>
                 </div>
                 <div className="cp-card-body">
@@ -1634,7 +1761,7 @@ export default function MembershipSignup() {
                           <span role="img" aria-label="star" style={{ marginRight: 6 }}>
                             ⭐
                           </span>
-                          {item}
+                          {formatIncludesText(item)}
                         </li>
                       ))}
                     </ul>
@@ -1643,7 +1770,7 @@ export default function MembershipSignup() {
                     className="btn"
                     type="button"
                     onClick={() => setPlusExplicit((prev) => !prev)}
-                    style={{ alignSelf: 'flex-end', marginTop: 'auto' }}
+                    style={{ alignSelf: 'flex-end', marginTop: 'auto', background: '#4FB128', color: '#fff' }}
                   >
                     {plusExplicit ? 'Remove from Cart' : 'Add to Cart'}
                   </button>
@@ -1651,7 +1778,7 @@ export default function MembershipSignup() {
               </article>
             )}
 
-            {starterAnswer === 'no' && (
+            {starterAnswer === 'no' && comfortAnswer !== 'yes' && (
               <article
                 className={`cp-card cp-plan-card ${starterExplicit ? 'selected' : ''}`}
                 style={{ padding: 24, position: 'relative' }}
@@ -1664,7 +1791,7 @@ export default function MembershipSignup() {
                   </div>
                   <div className="cp-card-price">
                     <div className="cp-card-price-main">
-                      $29<span>/mo</span>
+                      $29<span>/month</span>
                     </div>
                     <div className="cp-card-price-note">or {formatMoney(309)} annually (10% discount!)</div>
                   </div>
@@ -1673,31 +1800,21 @@ export default function MembershipSignup() {
                   <div className="cp-card-includes">
                     <strong style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>Includes:</strong>
                     <ul>
-                      <li className="cp-muted" style={{ marginBottom: 4 }}>
-                        <span role="img" aria-label="star" style={{ marginRight: 6 }}>
-                          ⭐
-                        </span>
-                        Two additional exams (one doctor, one technician) and trip fees to complete the vaccine series.
-                      </li>
-                      <li className="cp-muted" style={{ marginBottom: 4 }}>
-                        <span role="img" aria-label="star" style={{ marginRight: 6 }}>
-                          ⭐
-                        </span>
-                        All boosters for full protection.
-                      </li>
-                      <li className="cp-muted" style={{ marginBottom: 4 }}>
-                        <span role="img" aria-label="star" style={{ marginRight: 6 }}>
-                          ⭐
-                        </span>
-                        Microchip scan & placement if needed.
-                      </li>
+                      {MEMBERSHIP_PLANS.find(p => p.id === 'starter-addon')?.includes.map((item, idx) => (
+                        <li key={idx} className="cp-muted" style={{ marginBottom: 4 }}>
+                          <span role="img" aria-label="star" style={{ marginRight: 6 }}>
+                            ⭐
+                          </span>
+                          {formatIncludesText(item)}
+                        </li>
+                      ))}
                     </ul>
                   </div>
                   <button
                     className="btn"
                     type="button"
                     onClick={() => setStarterExplicit((prev) => !prev)}
-                    style={{ alignSelf: 'flex-end', marginTop: 'auto' }}
+                    style={{ alignSelf: 'flex-end', marginTop: 'auto', background: '#4FB128', color: '#fff' }}
                   >
                     {starterExplicit ? 'Remove from Cart' : 'Add to Cart'}
                   </button>
@@ -1756,7 +1873,7 @@ export default function MembershipSignup() {
                   {(() => {
                     const annualText =
                       row.annual != null ? `${formatMoney(row.annual)} annually (10% discount!)` : null;
-                    const monthlyText = row.monthly != null ? `${formatMoney(row.monthly)}/mo` : null;
+                    const monthlyText = row.monthly != null ? `${formatMoney(row.monthly)}/month` : null;
                     const preferAnnual = billingPreference === 'annual' && annualText !== null;
                     const primary = preferAnnual ? annualText! : monthlyText ?? annualText ?? '$0';
                     const secondary = preferAnnual ? monthlyText : annualText;
@@ -1787,7 +1904,7 @@ export default function MembershipSignup() {
                   costSummary.totalAnnual != null
                     ? `${formatMoney(costSummary.totalAnnual)} annually (10% discount!)`
                     : null;
-                const monthlyText = `${formatMoney(costSummary.totalMonthly)}/mo`;
+                const monthlyText = `${formatMoney(costSummary.totalMonthly)}/month`;
                 const preferAnnual = billingPreference === 'annual' && annualText !== null;
                 const primary = preferAnnual ? annualText! : monthlyText;
                 const secondary = preferAnnual ? monthlyText : annualText;
@@ -1815,7 +1932,7 @@ export default function MembershipSignup() {
 
       <section className="cp-section" style={{ marginTop: 32, marginBottom: 48 }}>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', alignItems: 'center' }}>
-          <button className="btn secondary" onClick={() => navigate('/client-portal')}>
+          <button className="btn secondary" onClick={() => navigate('/client-portal')} style={{ background: '#4FB128', color: '#fff', border: 'none' }}>
             Cancel
           </button>
           <button
@@ -1830,6 +1947,8 @@ export default function MembershipSignup() {
             }
             style={{
               minWidth: 200,
+              background: '#4FB128',
+              color: '#fff',
               opacity:
                 !selectedPlanExplicit ||
                 !agreementAccepted ||
@@ -1911,13 +2030,13 @@ export default function MembershipSignup() {
           >
             <a
               href="tel:207-536-8387"
-              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+              style={{ fontSize: '14px', color: '#4FB128', textDecoration: 'none' }}
             >
               (207) 536-8387
             </a>
             <a
               href="mailto:info@vetatyourdoor.com"
-              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+              style={{ fontSize: '14px', color: '#4FB128', textDecoration: 'none' }}
             >
               info@vetatyourdoor.com
             </a>
@@ -1925,7 +2044,7 @@ export default function MembershipSignup() {
               href="https://www.vetatyourdoor.com"
               target="_blank"
               rel="noopener noreferrer"
-              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+              style={{ fontSize: '14px', color: '#4FB128', textDecoration: 'none' }}
             >
               www.vetatyourdoor.com
             </a>

@@ -66,3 +66,32 @@ export async function getZonePercentagesForProvider(
     params: options,
   });
 }
+
+// ---------------------------
+// Pet Image Upload
+// ---------------------------
+
+// Upload a pet image
+export async function uploadPetImage(
+  patientId: string | number,
+  file: File
+): Promise<{ success: boolean; imageUrl: string; s3Key: string }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  
+  const response = await http.post(`/patients/${patientId}/image`, formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  
+  return response.data;
+}
+
+// Get pet image URL (signed URL, valid for 1 hour)
+export async function getPetImageUrl(
+  patientId: string | number
+): Promise<{ imageUrl: string }> {
+  const response = await http.get(`/patients/${patientId}/image`);
+  return response.data;
+}

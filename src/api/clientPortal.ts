@@ -14,6 +14,8 @@ export type Pet = {
   dob?: string; // ISO
   subscription?: { id?: string; name?: string; status: 'active' | 'pending' | 'canceled' };
   primaryProviderName?: string | null;
+  /** Pet image URL (uploaded by user) */
+  photoUrl?: string | null;
 
   /** Optional: attached from /wellness-plans?patientId=<DB id> */
   wellnessPlans?: WellnessPlan[];
@@ -312,6 +314,7 @@ export async function fetchClientPets(): Promise<Pet[]> {
             }
           : undefined,
         primaryProviderName: normalizeProviderName(p) ?? null,
+        photoUrl: p?.photoUrl ?? p?.imageUrl ?? p?.image_url ?? null,
       })) as Pet[];
     }
   } catch {
@@ -384,6 +387,7 @@ export async function fetchClientPets(): Promise<Pet[]> {
           dbId, // <- capture real DB id
           clientId: clientId ?? p.clientId ?? null,
           primaryProviderName: normalizeProviderName(data) ?? normalizeProviderName(p) ?? null,
+          photoUrl: data?.photoUrl ?? data?.imageUrl ?? data?.image_url ?? p.photoUrl ?? null,
         });
       } catch {
         return stripPrivate({

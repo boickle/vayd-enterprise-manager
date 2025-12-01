@@ -80,7 +80,7 @@ export default function LoginPage() {
   };
 
   const introStyle: CSSProperties = {
-    marginTop: '32px',
+    marginTop: '0px',
     fontSize: 'clamp(18px, 2.1vw, 28px)',
     lineHeight: 1.4,
     maxWidth: 560,
@@ -330,14 +330,14 @@ export default function LoginPage() {
           Care, at Home
         </h1>
         <p style={introStyle}>
-          Welcome to the start of your Vet At Your Door Membership experience where proactive care
+          Welcome to your Vet At Your Door Membership experience where proactive care
           means the best care for your furry loved one. The simplicity of a plan with the benefits
           of membership.
         </p>
       </section>
 
       <section className="auth-panel" style={panelStyle}>
-        <div>
+        <div style={{ marginTop: '-16px' }}>
           <div style={labelStyle}>Already a member? Login.</div>
           <form
             onSubmit={onSubmit}

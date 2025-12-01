@@ -15,6 +15,7 @@ import {
 } from '../api/clientPortal';
 import { listMembershipTransactions } from '../api/membershipTransactions';
 import { http } from '../api/http';
+import { uploadPetImage } from '../api/patients';
 
 type PetWithWellness = Pet & {
   wellnessPlans?: WellnessPlan[];
@@ -110,15 +111,17 @@ const DOG_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}doggy.png`;
 const CAT_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}catty.png`;
 
 function petImg(p: Pet) {
+  // Check for uploaded photo first
+  if (p.photoUrl) {
+    return p.photoUrl;
+  }
+  // Fallback to species-based placeholders
   const s = (p.species || p.breed || '').toLowerCase();
   if (s.includes('canine') || s.includes('dog')) {
     return DOG_PLACEHOLDER;
   }
   if (s.includes('feline') || s.includes('cat')) {
     return CAT_PLACEHOLDER;
-  }
-  if ('photoUrl' in p && (p as any).photoUrl) {
-    return (p as any).photoUrl as string;
   }
   return CAT_PLACEHOLDER;
 }
@@ -190,6 +193,7 @@ export default function ClientPortal() {
     reminders: ClientReminder[];
   } | null>(null);
   const [chatHours, setChatHours] = useState<any>(null);
+  const [uploadingPetId, setUploadingPetId] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -518,6 +522,46 @@ export default function ClientPortal() {
     return getProviderEmail(mostCommonProvider);
   }, [pets]);
 
+  async function handlePetImageUpload(pet: PetWithWellness, file: File) {
+    if (!pet.dbId) {
+      setError('Unable to upload image: Pet ID not found.');
+      return;
+    }
+
+    // Validate file type
+    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    if (!validTypes.includes(file.type)) {
+      setError('Please select a valid image file (JPEG, PNG, GIF, or WebP).');
+      return;
+    }
+
+    // Validate file size (5MB max)
+    const maxSize = 5 * 1024 * 1024; // 5MB in bytes
+    if (file.size > maxSize) {
+      setError('Image file is too large. Maximum size is 5MB.');
+      return;
+    }
+
+    setUploadingPetId(pet.id);
+    setError(null);
+
+    try {
+      const result = await uploadPetImage(pet.dbId, file);
+      
+      // Update the pet's photoUrl in the pets array
+      setPets((prevPets) =>
+        prevPets.map((p) =>
+          p.id === pet.id ? { ...p, photoUrl: result.imageUrl } : p
+        )
+      );
+    } catch (err: any) {
+      const errorMessage = err?.response?.data?.message || err?.message || 'Failed to upload image.';
+      setError(errorMessage);
+    } finally {
+      setUploadingPetId(null);
+    }
+  }
+
   function handleEnrollMembership(pet: PetWithWellness) {
     if (!pet.id) {
       return;
@@ -843,7 +887,7 @@ export default function ClientPortal() {
         .cp-stat { padding: 10px 14px; min-width: 140px; }
         .cp-pets { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
         .cp-pet-card { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
-        .cp-pet-img { height: 120px; }
+        .cp-pet-img { height: 120px; border-radius: 16px; border: 1px solid rgba(0, 0, 0, 0.06); }
         .cp-appt-row, .cp-rem-row {
           display: grid;
           grid-template-columns: 1fr 1fr;
@@ -900,7 +944,7 @@ export default function ClientPortal() {
         @media (min-width: 480px) {
           .cp-hero-inner { padding: 28px 24px; }
           .cp-pets { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
-          .cp-pet-img { height: 130px; }
+          .cp-pet-img { height: 130px; border-radius: 16px; border: 1px solid rgba(0, 0, 0, 0.06); }
         }
 
         /* >= 640px (sm) */
@@ -914,7 +958,7 @@ export default function ClientPortal() {
             grid-template-columns: 140px 1fr 1fr 120px; /* date | pet | desc | status */
           }
           .cp-hide-xs { display: initial; }
-          .cp-pet-img { height: 140px; }
+          .cp-pet-img { height: 140px; border-radius: 16px; border: 1px solid rgba(0, 0, 0, 0.06); }
         }
 
         /* >= 900px */
@@ -1460,6 +1504,8 @@ export default function ClientPortal() {
                           backgroundRepeat: 'no-repeat',
                           backgroundPosition: 'center',
                           backgroundSize: 'contain',
+                          borderRadius: '16px',
+                          border: '1px solid rgba(0, 0, 0, 0.06)',
                         }}
                       >
                         {badgeLabel && (
@@ -1482,6 +1528,57 @@ export default function ClientPortal() {
                           >
                             {badgeLabel}
                           </span>
+                        )}
+                        {p.dbId && (
+                          <label
+                            style={{
+                              position: 'absolute',
+                              top: 10,
+                              right: 10,
+                              background: 'rgba(255, 255, 255, 0.9)',
+                              border: '1px solid rgba(0, 0, 0, 0.1)',
+                              borderRadius: '50%',
+                              width: 32,
+                              height: 32,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              cursor: uploadingPetId === p.id ? 'wait' : 'pointer',
+                              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
+                              transition: 'all 0.2s ease',
+                            }}
+                            title="Upload pet image"
+                            onMouseEnter={(e) => {
+                              if (uploadingPetId !== p.id) {
+                                e.currentTarget.style.background = 'rgba(255, 255, 255, 1)';
+                                e.currentTarget.style.transform = 'scale(1.1)';
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.9)';
+                              e.currentTarget.style.transform = 'scale(1)';
+                            }}
+                          >
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+                              style={{ display: 'none' }}
+                              disabled={uploadingPetId === p.id}
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  handlePetImageUpload(p, file);
+                                }
+                                // Reset input so same file can be selected again
+                                e.target.value = '';
+                              }}
+                            />
+                            {uploadingPetId === p.id ? (
+                              <span style={{ fontSize: 14, color: '#666' }}>⏳</span>
+                            ) : (
+                              <span style={{ fontSize: 16 }}>📷</span>
+                            )}
+                          </label>
                         )}
                       </div>
 
