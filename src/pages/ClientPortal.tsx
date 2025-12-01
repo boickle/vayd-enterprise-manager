@@ -1427,8 +1427,6 @@ export default function ClientPortal() {
                     ? 'Membership Active'
                     : isMembershipProcessing
                     ? 'Membership Processing'
-                    : membershipIsActive
-                    ? 'Membership Active'
                     : membershipIsPending
                     ? 'Membership Pending'
                     : null;
