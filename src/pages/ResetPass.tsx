@@ -179,7 +179,7 @@ export default function ResetPass() {
         />
       </div>
       <div className="card" style={cardWrapperStyle}>
-        <h2 style={{ marginTop: 0 }}>Reset Password</h2>
+        <h2 style={{ marginTop: 0 }}>Create New Password</h2>
 
         {forwardedEmail && (
           <div className="pill" style={{ marginBottom: 10 }}>
@@ -252,16 +252,18 @@ export default function ResetPass() {
           {error && <div className="danger">{error}</div>}
           {msg && <div className="pill">{msg}</div>}
 
-          <button className="btn" type="submit" disabled={pending}>
+          <button 
+            className="btn" 
+            type="submit" 
+            disabled={pending}
+            style={{
+              background: '#4FB128',
+              color: '#fff',
+            }}
+          >
             {pending ? 'Saving…' : 'Update Password'}
           </button>
         </form>
-
-        {!forwardedEmail && (
-          <p className="muted" style={{ marginTop: 10 }}>
-            Need a reset link? <Link to="/request-reset">Request a new one</Link>.
-          </p>
-        )}
 
         <div style={{ marginTop: 16, textAlign: 'center' }}>
           <Link to="/login" style={{ color: '#10b981', textDecoration: 'none', fontSize: 14 }}>
