@@ -194,6 +194,8 @@ export default function ClientPortal() {
   } | null>(null);
   const [chatHours, setChatHours] = useState<any>(null);
   const [uploadingPetId, setUploadingPetId] = useState<string | null>(null);
+  const [showErrorModal, setShowErrorModal] = useState(false);
+  const [errorModalMessage, setErrorModalMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -524,21 +526,24 @@ export default function ClientPortal() {
 
   async function handlePetImageUpload(pet: PetWithWellness, file: File) {
     if (!pet.dbId) {
-      setError('Unable to upload image: Pet ID not found.');
+      setErrorModalMessage('Unable to upload image: Pet ID not found.');
+      setShowErrorModal(true);
       return;
     }
 
     // Validate file type
     const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
     if (!validTypes.includes(file.type)) {
-      setError('Please select a valid image file (JPEG, PNG, GIF, or WebP).');
+      setErrorModalMessage('Please select a valid image file (JPEG, PNG, GIF, or WebP).');
+      setShowErrorModal(true);
       return;
     }
 
     // Validate file size (5MB max)
     const maxSize = 5 * 1024 * 1024; // 5MB in bytes
     if (file.size > maxSize) {
-      setError('Image file is too large. Maximum size is 5MB.');
+      setErrorModalMessage('Image file is too large. Maximum size is 5MB.');
+      setShowErrorModal(true);
       return;
     }
 
@@ -555,8 +560,38 @@ export default function ClientPortal() {
         )
       );
     } catch (err: any) {
-      const errorMessage = err?.response?.data?.message || err?.message || 'Failed to upload image.';
-      setError(errorMessage);
+      let errorMessage = 'Failed to upload image. Please try again.';
+      
+      // Handle different types of errors more gracefully
+      if (err?.response) {
+        const status = err.response.status;
+        const serverMessage = err.response.data?.message || err.response.data?.error;
+        
+        if (status === 413) {
+          errorMessage = 'Image file is too large. Please choose a smaller image (max 5MB).';
+        } else if (status === 400) {
+          errorMessage = serverMessage || 'Invalid image file. Please choose a valid image format (JPEG, PNG, GIF, or WebP).';
+        } else if (status === 401 || status === 403) {
+          errorMessage = 'You do not have permission to upload images. Please contact support if this issue persists.';
+        } else if (status === 500) {
+          errorMessage = 'Server error occurred. Please try again in a few moments.';
+        } else if (serverMessage) {
+          errorMessage = serverMessage;
+        } else {
+          errorMessage = `Upload failed (${status}). Please try again.`;
+        }
+      } else if (err?.message) {
+        if (err.message.includes('Network') || err.message.includes('network')) {
+          errorMessage = 'Network error. Please check your connection and try again.';
+        } else if (err.message.includes('timeout')) {
+          errorMessage = 'Upload timed out. Please try again with a smaller image.';
+        } else {
+          errorMessage = err.message;
+        }
+      }
+      
+      setErrorModalMessage(errorMessage);
+      setShowErrorModal(true);
     } finally {
       setUploadingPetId(null);
     }
@@ -1932,6 +1967,81 @@ export default function ClientPortal() {
               </div>
             )}
           </section>
+
+          {/* Error Modal */}
+          {showErrorModal && errorModalMessage && (
+            <div
+              style={{
+                position: 'fixed',
+                inset: 0,
+                backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 10000,
+                padding: '20px',
+              }}
+              onClick={() => {
+                setShowErrorModal(false);
+                setErrorModalMessage(null);
+              }}
+            >
+              <div
+                className="cp-card"
+                style={{
+                  maxWidth: '500px',
+                  width: '100%',
+                  padding: '24px',
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                  <h2 className="cp-h2" style={{ margin: 0, color: '#b00020' }}>
+                    Upload Error
+                  </h2>
+                  <button
+                    onClick={() => {
+                      setShowErrorModal(false);
+                      setErrorModalMessage(null);
+                    }}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      fontSize: 24,
+                      cursor: 'pointer',
+                      color: '#6b7280',
+                      padding: '0 8px',
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div style={{ color: '#374151', lineHeight: 1.6, marginBottom: 24 }}>
+                  {errorModalMessage}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    onClick={() => {
+                      setShowErrorModal(false);
+                      setErrorModalMessage(null);
+                    }}
+                    style={{
+                      background: '#4FB128',
+                      color: '#fff',
+                      border: 'none',
+                      padding: '10px 24px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontSize: 14,
+                      fontWeight: 600,
+                    }}
+                  >
+                    OK
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Reminder Modal */}
           {showReminderModal && selectedPetReminders && (
