@@ -296,6 +296,18 @@ function catalogHasCadence(
   const planNode = catalog[planKey];
   if (!planNode) return false;
   const nodes: any[] = [];
+  
+  // Comfort-care has a "general" wrapper in the catalog structure
+  if (planKey === 'comfort-care') {
+    const generalNode = (planNode as any)['general'] || planNode;
+    if (generalNode && generalNode[cadence]) {
+      nodes.push(generalNode[cadence]);
+    }
+    return nodes.some(
+      (node) => node && Object.values(node as Record<string, any>).some(Boolean),
+    );
+  }
+  
   if (species && (planNode as any)[species]) {
     const speciesNode = (planNode as any)[species];
     if (speciesNode && speciesNode[cadence]) nodes.push(speciesNode[cadence]);
@@ -316,9 +328,18 @@ function lookupCatalogEntry(
   combination: PlanCombination,
   comfortPlus: boolean,
 ): PlanEntry | undefined {
-  if (!catalog) return undefined;
+  if (!catalog) {
+    console.error('Catalog lookup: catalog is null');
+    return undefined;
+  }
   const planNode = catalog[planKey];
-  if (!planNode) return undefined;
+  if (!planNode) {
+    console.error('Catalog lookup: plan node not found', {
+      planKey,
+      availablePlans: Object.keys(catalog),
+    });
+    return undefined;
+  }
 
   const extractEntry = (target: any, combo: PlanCombination): PlanEntry | undefined => {
     if (!target) return undefined;
@@ -330,10 +351,31 @@ function lookupCatalogEntry(
   };
 
   if (planKey === 'comfort-care') {
-    const cadenceNode = (planNode as any)[cadence];
-    if (!cadenceNode) return undefined;
+    // Comfort-care has a "general" wrapper in the catalog structure
+    const generalNode = (planNode as any)['general'] || planNode;
+    const cadenceNode = generalNode[cadence];
+    if (!cadenceNode) {
+      console.error('Comfort-care lookup: cadence node not found', {
+        planKey,
+        cadence,
+        planNode,
+        generalNode,
+        availableCadences: generalNode ? Object.keys(generalNode) : [],
+      });
+      return undefined;
+    }
     const combo = comfortPlus ? 'plus' : 'base';
-    return extractEntry(cadenceNode, combo as PlanCombination);
+    const entry = extractEntry(cadenceNode, combo as PlanCombination);
+    if (!entry) {
+      console.error('Comfort-care lookup: entry not found', {
+        planKey,
+        cadence,
+        combo,
+        cadenceNode,
+        availableCombos: cadenceNode ? Object.keys(cadenceNode) : [],
+      });
+    }
+    return entry;
   }
 
   if (species && (planNode as any)[species]) {
@@ -784,6 +826,16 @@ export default function MembershipSignup() {
     const subscriptionPlanVariationId = catalogEntry?.planVariationId;
 
     if (!subscriptionPlanId || !subscriptionPlanVariationId) {
+      // Debug logging to help identify the issue
+      console.error('Catalog lookup failed:', {
+        selectedPlanExplicit,
+        speciesKey,
+        billingKey,
+        combination,
+        plusExplicit,
+        catalogEntry,
+        comfortCareNode: selectedPlanExplicit === 'comfort-care' ? planCatalog?.['comfort-care'] : undefined,
+      });
       setError('This membership combination is not yet configured for automated billing. Please contact support.');
       return;
     }
@@ -1232,9 +1284,9 @@ export default function MembershipSignup() {
           cursor: not-allowed;
         }
         .cp-billing-toggle button.active {
-          background: ${brand};
+          background: #4FB128;
           color: #fff;
-          box-shadow: 0 4px 12px rgba(15, 118, 110, 0.25);
+          box-shadow: 0 4px 12px rgba(79, 177, 40, 0.25);
         }
         .cp-cost-wrapper {
           display: flex;
@@ -1590,7 +1642,8 @@ export default function MembershipSignup() {
           // Show membership options only if:
           // - comfortAnswer is answered, AND
           // - if shouldAskStarter is true, then starterAnswer must also be answered
-          const canShowPlans = comfortAnswer != null && (!shouldAskStarter || starterAnswer != null);
+          //   (unless comfortAnswer is 'yes', in which case the starter question is hidden)
+          const canShowPlans = comfortAnswer != null && (comfortAnswer === 'yes' || !shouldAskStarter || starterAnswer != null);
           
           if (!canShowPlans) {
             return (
@@ -1615,23 +1668,28 @@ export default function MembershipSignup() {
                 boxSizing: 'border-box',
               }}
             >
-            {plans
-              .filter((plan) => {
-                if (plan.id === 'comfort-care') return comfortAnswer === 'yes';
-                if (plan.id === 'golden') return comfortAnswer === 'no' && meetsGolden;
-                if (plan.id === 'foundations') return comfortAnswer === 'no';
-                return false;
-              })
-              .sort((a, b) => {
-                if (comfortAnswer === 'no' && meetsGolden) {
-                  if (a.id === 'foundations') return -1;
-                  if (b.id === 'foundations') return 1;
-                  if (a.id === 'golden') return 1;
-                  if (b.id === 'golden') return -1;
-                }
-                return 0;
-              })
-              .map((plan) => {
+            {(() => {
+              const filteredPlans = plans
+                .filter((plan) => {
+                  if (plan.id === 'comfort-care') return comfortAnswer === 'yes';
+                  if (plan.id === 'golden') return comfortAnswer === 'no' && meetsGolden;
+                  if (plan.id === 'foundations') return comfortAnswer === 'no';
+                  return false;
+                })
+                .sort((a, b) => {
+                  if (comfortAnswer === 'no' && meetsGolden) {
+                    if (a.id === 'foundations') return -1;
+                    if (b.id === 'foundations') return 1;
+                    if (a.id === 'golden') return 1;
+                    if (b.id === 'golden') return -1;
+                  }
+                  return 0;
+                });
+
+              const shouldShowStarterAddon = starterAnswer === 'no' && comfortAnswer !== 'yes';
+              
+              return filteredPlans.flatMap((plan, index) => {
+                const planElements = [];
                 const isRecommended = 
                   (comfortAnswer === 'no' && (
                     plan.id === recommendedPlanId || 
@@ -1644,7 +1702,9 @@ export default function MembershipSignup() {
                   return filtered.length > 0 ? filtered : plan.pricing;
                 })();
                 const isSelected = selectedPlanExplicit === plan.id;
-                return (
+                
+                // Add the plan element
+                planElements.push(
                   <article
                     key={plan.id}
                     className={`cp-card cp-plan-card ${isSelected ? 'selected' : ''}`}
@@ -1686,7 +1746,7 @@ export default function MembershipSignup() {
                           className="cp-muted"
                           style={{ fontSize: 13, borderTop: '1px solid rgba(15,118,110,0.12)', paddingTop: 12 }}
                         >
-                          Foundations is still available if you’d prefer a lighter option—one visit with an abbreviated lab
+                          Foundations is still available if you'd prefer a lighter option—one visit with an abbreviated lab
                           panel.
                         </div>
                       )}
@@ -1730,7 +1790,59 @@ export default function MembershipSignup() {
                     </div>
                   </article>
                 );
-              })}
+
+                // Insert puppy/kitten add-on after the first plan
+                if (index === 0 && shouldShowStarterAddon) {
+                  planElements.push(
+                    <article
+                      key="starter-addon"
+                      className={`cp-card cp-plan-card ${starterExplicit ? 'selected' : ''}`}
+                      style={{ padding: 24, position: 'relative' }}
+                    >
+                      {starterExplicit && <span className="cp-added-badge">Added to Cart</span>}
+                      <span className="cp-recommended-badge">Recommended</span>
+                      <div className="cp-card-upper">
+                        <div className="cp-card-head">
+                          <h3>Puppy / Kitten Add-on</h3>
+                          <div className="cp-card-sub">Annual Membership Plan</div>
+                        </div>
+                        <div className="cp-card-price">
+                          <div className="cp-card-price-main">
+                            $29<span>/month</span>
+                          </div>
+                          <div className="cp-card-price-note">or {formatMoney(309)} annually (10% discount!)</div>
+                        </div>
+                      </div>
+                      <div className="cp-card-body">
+                        <div className="cp-card-includes">
+                          <strong style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>Includes:</strong>
+                          <ul>
+                            {MEMBERSHIP_PLANS.find(p => p.id === 'starter-addon')?.includes.map((item, idx) => (
+                              <li key={idx} className="cp-muted" style={{ marginBottom: 4 }}>
+                                <span role="img" aria-label="star" style={{ marginRight: 6 }}>
+                                  ⭐
+                                </span>
+                                {formatIncludesText(item)}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                        <button
+                          className="btn"
+                          type="button"
+                          onClick={() => setStarterExplicit((prev) => !prev)}
+                          style={{ alignSelf: 'flex-end', marginTop: 'auto', background: '#4FB128', color: '#fff' }}
+                        >
+                          {starterExplicit ? 'Remove from Cart' : 'Add to Cart'}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                }
+
+                return planElements;
+              });
+            })()}
 
             {comfortAnswer && (
               <article
@@ -1773,50 +1885,6 @@ export default function MembershipSignup() {
                     style={{ alignSelf: 'flex-end', marginTop: 'auto', background: '#4FB128', color: '#fff' }}
                   >
                     {plusExplicit ? 'Remove from Cart' : 'Add to Cart'}
-                  </button>
-                </div>
-              </article>
-            )}
-
-            {starterAnswer === 'no' && comfortAnswer !== 'yes' && (
-              <article
-                className={`cp-card cp-plan-card ${starterExplicit ? 'selected' : ''}`}
-                style={{ padding: 24, position: 'relative' }}
-              >
-                {starterExplicit && <span className="cp-added-badge">Added to Cart</span>}
-                <div className="cp-card-upper">
-                  <div className="cp-card-head">
-                    <h3>Puppy / Kitten Add-on</h3>
-                    <div className="cp-card-sub">Annual Membership Plan</div>
-                  </div>
-                  <div className="cp-card-price">
-                    <div className="cp-card-price-main">
-                      $29<span>/month</span>
-                    </div>
-                    <div className="cp-card-price-note">or {formatMoney(309)} annually (10% discount!)</div>
-                  </div>
-                </div>
-                <div className="cp-card-body">
-                  <div className="cp-card-includes">
-                    <strong style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>Includes:</strong>
-                    <ul>
-                      {MEMBERSHIP_PLANS.find(p => p.id === 'starter-addon')?.includes.map((item, idx) => (
-                        <li key={idx} className="cp-muted" style={{ marginBottom: 4 }}>
-                          <span role="img" aria-label="star" style={{ marginRight: 6 }}>
-                            ⭐
-                          </span>
-                          {formatIncludesText(item)}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <button
-                    className="btn"
-                    type="button"
-                    onClick={() => setStarterExplicit((prev) => !prev)}
-                    style={{ alignSelf: 'flex-end', marginTop: 'auto', background: '#4FB128', color: '#fff' }}
-                  >
-                    {starterExplicit ? 'Remove from Cart' : 'Add to Cart'}
                   </button>
                 </div>
               </article>

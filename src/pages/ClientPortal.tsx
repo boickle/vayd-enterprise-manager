@@ -2191,13 +2191,13 @@ export default function ClientPortal() {
           >
             <a
               href="tel:207-536-8387"
-              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+              style={{ fontSize: '14px', color: '#4FB128', textDecoration: 'none' }}
             >
               (207) 536-8387
             </a>
             <a
               href="mailto:info@vetatyourdoor.com"
-              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+              style={{ fontSize: '14px', color: '#4FB128', textDecoration: 'none' }}
             >
               info@vetatyourdoor.com
             </a>
@@ -2205,7 +2205,7 @@ export default function ClientPortal() {
               href="https://www.vetatyourdoor.com"
               target="_blank"
               rel="noopener noreferrer"
-              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+              style={{ fontSize: '14px', color: '#4FB128', textDecoration: 'none' }}
             >
               www.vetatyourdoor.com
             </a>

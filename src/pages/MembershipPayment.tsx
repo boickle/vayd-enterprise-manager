@@ -212,7 +212,6 @@ export default function MembershipPayment() {
   const [locality, setLocality] = useState('');
   const [administrativeDistrictLevel1, setAdministrativeDistrictLevel1] = useState('');
   const [postalCode, setPostalCode] = useState('');
-  const [country, setCountry] = useState('US');
 
   async function handlePaymentSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -299,7 +298,7 @@ export default function MembershipPayment() {
             locality: locality.trim(),
             administrativeDistrictLevel1: administrativeDistrictLevel1.trim(),
             postalCode: postalCode.trim(),
-            country: country.trim() || 'US',
+            country: 'US',
           },
         },
         membershipTransaction: membershipTransactionPayload,
@@ -475,13 +474,13 @@ export default function MembershipPayment() {
             >
               <a
                 href="tel:207-536-8387"
-                style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+                style={{ fontSize: '14px', color: '#4FB128', textDecoration: 'none' }}
               >
                 (207) 536-8387
               </a>
               <a
                 href="mailto:info@vetatyourdoor.com"
-                style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+                style={{ fontSize: '14px', color: '#4FB128', textDecoration: 'none' }}
               >
                 info@vetatyourdoor.com
               </a>
@@ -489,7 +488,7 @@ export default function MembershipPayment() {
                 href="https://www.vetatyourdoor.com"
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+                style={{ fontSize: '14px', color: '#4FB128', textDecoration: 'none' }}
               >
                 www.vetatyourdoor.com
               </a>
@@ -511,7 +510,7 @@ export default function MembershipPayment() {
           style={{
             background: 'transparent',
             border: 'none',
-            color: 'var(--brand, #0f766e)',
+            color: '#4FB128',
             cursor: 'pointer',
             fontSize: 14,
             fontWeight: 600,
@@ -689,15 +688,6 @@ export default function MembershipPayment() {
                     style={{ flex: '0 0 140px' }}
                     required
                   />
-                  <input
-                    type="text"
-                    value={country}
-                    onChange={(e) => setCountry(e.target.value.toUpperCase())}
-                    placeholder="Country"
-                    className="input"
-                    style={{ flex: '0 0 100px' }}
-                    required
-                  />
                 </div>
               </div>
             </div>
@@ -715,6 +705,8 @@ export default function MembershipPayment() {
                   disabled={processing || initializingPaymentForm || !card}
                   style={{
                     minWidth: 200,
+                    background: '#4FB128',
+                    color: '#fff',
                     opacity: processing || initializingPaymentForm || !card ? 0.6 : 1,
                     cursor: processing || initializingPaymentForm || !card ? 'not-allowed' : 'pointer',
                   }}
@@ -793,13 +785,13 @@ export default function MembershipPayment() {
           >
             <a
               href="tel:207-536-8387"
-              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+              style={{ fontSize: '14px', color: '#4FB128', textDecoration: 'none' }}
             >
               (207) 536-8387
             </a>
             <a
               href="mailto:info@vetatyourdoor.com"
-              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+              style={{ fontSize: '14px', color: '#4FB128', textDecoration: 'none' }}
             >
               info@vetatyourdoor.com
             </a>
@@ -807,7 +799,7 @@ export default function MembershipPayment() {
               href="https://www.vetatyourdoor.com"
               target="_blank"
               rel="noopener noreferrer"
-              style={{ fontSize: '14px', color: '#10b981', textDecoration: 'none' }}
+              style={{ fontSize: '14px', color: '#4FB128', textDecoration: 'none' }}
             >
               www.vetatyourdoor.com
             </a>
