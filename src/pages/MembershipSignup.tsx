@@ -403,6 +403,7 @@ export default function MembershipSignup() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const [pet, setPet] = useState<Pet | null>(null);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [selectedPlanExplicit, setSelectedPlanExplicit] = useState<string | null>(null);
@@ -651,6 +652,26 @@ export default function MembershipSignup() {
 
   const recommendedPlanId = meetsGolden ? 'golden' : null;
   const isNewPatient = !hasPastAppointment;
+
+  // Get the primary plan name that should be selected
+  const primaryPlanName = useMemo(() => {
+    if (comfortAnswer === 'yes') return 'Comfort Care';
+    if (comfortAnswer === 'no' && meetsGolden) {
+      // User is eligible for Golden (recommended) or Foundations
+      return 'Golden'; // Recommend Golden since they meet the criteria
+    }
+    if (comfortAnswer === 'no') return 'Foundations';
+    // If comfortAnswer is null, default to Foundations
+    return 'Foundations';
+  }, [comfortAnswer, meetsGolden]);
+
+  // Auto-dismiss toast after 4 seconds
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
   const shouldAskStarter =
     isNewPatient && petDetails.ageYears != null && petDetails.ageYears <= 1.5 && !!petDetails.kind;
   const showPreVisitNote = hasUpcomingAppointment && !hasPastAppointment;
@@ -1638,6 +1659,30 @@ export default function MembershipSignup() {
           </div>
         )}
 
+        {toast && (
+          <div
+            style={{
+              position: 'fixed',
+              top: '80px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              padding: '16px 24px',
+              border: '1px solid #4FB128',
+              borderRadius: 8,
+              color: '#fff',
+              background: '#4FB128',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              zIndex: 1000,
+              fontSize: '14px',
+              fontWeight: 600,
+              maxWidth: '90%',
+              textAlign: 'center',
+            }}
+          >
+            {toast}
+          </div>
+        )}
+
         {(() => {
           // Show membership options only if:
           // - comfortAnswer is answered, AND
@@ -1830,7 +1875,13 @@ export default function MembershipSignup() {
                         <button
                           className="btn"
                           type="button"
-                          onClick={() => setStarterExplicit((prev) => !prev)}
+                          onClick={() => {
+                            if (!selectedPlanExplicit) {
+                              setToast(`Please select ${primaryPlanName} first`);
+                              return;
+                            }
+                            setStarterExplicit((prev) => !prev);
+                          }}
                           style={{ alignSelf: 'flex-end', marginTop: 'auto', background: '#4FB128', color: '#fff' }}
                         >
                           {starterExplicit ? 'Remove from Cart' : 'Add to Cart'}
@@ -1881,7 +1932,13 @@ export default function MembershipSignup() {
                   <button
                     className="btn"
                     type="button"
-                    onClick={() => setPlusExplicit((prev) => !prev)}
+                    onClick={() => {
+                      if (!selectedPlanExplicit) {
+                        setToast(`Please select ${primaryPlanName} first`);
+                        return;
+                      }
+                      setPlusExplicit((prev) => !prev);
+                    }}
                     style={{ alignSelf: 'flex-end', marginTop: 'auto', background: '#4FB128', color: '#fff' }}
                   >
                     {plusExplicit ? 'Remove from Cart' : 'Add to Cart'}
