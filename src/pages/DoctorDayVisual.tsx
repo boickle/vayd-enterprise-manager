@@ -12,6 +12,10 @@ import {
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { fetchEtas } from '../api/routing';
 import { useAuth } from '../auth/useAuth';
+import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
+import { reverseGeocode } from '../api/geo';
+import { formatHM, colorForWhitespace, colorForHDRatio, colorForDrive } from '../utils/statsFormat';
+import './DoctorDay.css';
 
 // ===== Vertical scale (pixels per minute). Tweak to taste. =====
 const PPM = 2.2;
@@ -242,6 +246,10 @@ export default function DoctorDayVisual({
   const [schedStartIso, setSchedStartIso] = useState<string | null>(null);
   const [schedEndIso, setSchedEndIso] = useState<string | null>(null);
 
+  // pretty depot addresses
+  const [startDepotAddr, setStartDepotAddr] = useState<string | null>(null);
+  const [endDepotAddr, setEndDepotAddr] = useState<string | null>(null);
+
   // hover card (global, mouse-anchored)
   const [hoverCard, setHoverCard] = useState<{
     key: string;
@@ -297,6 +305,30 @@ export default function DoctorDayVisual({
       didInitDoctor.current = true;
     }
   }, [providers, userEmail, initialDoctorId]);
+
+  /* ---------- Depot reverse geocode ---------- */
+  useEffect(() => {
+    let on = true;
+    (async () => {
+      setStartDepotAddr(null);
+      setEndDepotAddr(null);
+      try {
+        if (startDepot) {
+          const addr = await reverseGeocode(startDepot.lat, startDepot.lon);
+          if (on) setStartDepotAddr(addr);
+        }
+        if (endDepot) {
+          const addr = await reverseGeocode(endDepot.lat, endDepot.lon);
+          if (on) setEndDepotAddr(addr);
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      on = false;
+    };
+  }, [startDepot, endDepot]);
 
   /* ------------ load day (with optional preview injection) ------------ */
   useEffect(() => {
@@ -806,6 +838,294 @@ export default function DoctorDayVisual({
     return null;
   }, [driveSecondsArr, backToDepotSec, households]);
 
+  /* ---------- Maps links ---------- */
+  const stops: Stop[] = useMemo(
+    () =>
+      households
+        .filter((h) => !h.isNoLocation)
+        .map((h) => ({
+          lat: h.lat,
+          lon: h.lon,
+          label: h.client,
+          address: h.address,
+        })),
+    [households]
+  );
+  const links = useMemo(
+    () =>
+      buildGoogleMapsLinksForDay(stops, {
+        start:
+          startDepot && startDepotAddr
+            ? { lat: startDepot.lat, lon: startDepot.lon, address: startDepotAddr }
+            : startDepot ?? undefined,
+        end:
+          endDepot && endDepotAddr
+            ? { lat: endDepot.lat, lon: endDepot.lon, address: endDepotAddr }
+            : endDepot ?? undefined,
+      }),
+    [stops, startDepot, endDepot, startDepotAddr, endDepotAddr]
+  );
+
+  /* ---------- Stats (uses server times if present) ---------- */
+  const stats = useMemo(() => {
+    if (!households.length) {
+      return {
+        driveMin: 0,
+        householdMin: 0,
+        ratioText: '—',
+        whiteMin: 0,
+        whitePctText: '—',
+        shiftMin: 0,
+        points: 0,
+        backToDepotIso: null as string | null,
+      };
+    }
+
+    // ----- helpers -----
+    const durSec = (startIso?: string | null, endIso?: string | null) =>
+      startIso && endIso
+        ? Math.max(0, DateTime.fromISO(endIso).diff(DateTime.fromISO(startIso), 'seconds').seconds)
+        : 0;
+
+    const hmsToSec = (hms?: string) => {
+      if (!hms) return undefined;
+      const [hh = 0, mm = 0, ss = 0] = hms.split(':').map(Number);
+      if ([hh, mm, ss].some((n) => Number.isNaN(n))) return undefined;
+      return hh * 3600 + mm * 60 + ss;
+    };
+
+    const isPreviewDay = Boolean(virtualAppt && virtualAppt.date === date);
+    const previewServiceSec =
+      isPreviewDay && Number.isFinite(virtualAppt?.serviceMinutes)
+        ? Math.max(0, Math.floor((virtualAppt!.serviceMinutes as number) * 60))
+        : 0;
+
+    // Fallback booked-service (excludes preview & blocks)
+    const bookedServiceSecFallback = households.reduce((sum, h) => {
+      if ((h as any)?.isPersonalBlock === true) return sum;
+      if ((h as any)?.isPreview === true) return sum;
+      return sum + durSec(h.startIso, h.endIso);
+    }, 0);
+
+    // Points
+    const points = appts.reduce((total, a) => {
+      if ((a as any)?.isPersonalBlock) return total;
+      const type = (a?.appointmentType || '').toLowerCase();
+      if (type === 'euthanasia') return total + 2;
+      if (type.includes('tech appointment')) return total + 0.5;
+      return total + 1;
+    }, 0);
+
+    // ---------- Prefer authoritative fields from Routing winner ----------
+    const winnerDriveSec = Number.isFinite(virtualAppt?.projectedDriveSeconds as number)
+      ? Math.floor(virtualAppt!.projectedDriveSeconds as number)
+      : undefined;
+
+    const winWs = hmsToSec(virtualAppt?.workStartLocal);
+    const winEe = hmsToSec(virtualAppt?.effectiveEndLocal);
+    const winnerWindowSec =
+      winWs != null && winEe != null && winEe >= winWs ? winEe - winWs : undefined;
+
+    const winnerBookedSec = Number.isFinite(virtualAppt?.bookedServiceSeconds as number)
+      ? Math.floor(virtualAppt!.bookedServiceSeconds as number)
+      : undefined;
+
+    const winnerWhitespaceAfterBookingSec = Number.isFinite(
+      virtualAppt?.whitespaceAfterBookingSeconds as number
+    )
+      ? Math.max(0, Math.floor(virtualAppt!.whitespaceAfterBookingSeconds as number))
+      : undefined;
+
+    // ---------- If we have the full winner quartet, use it exactly ----------
+    if (winnerDriveSec != null && winnerWindowSec != null && winnerBookedSec != null) {
+      const whiteSec =
+        winnerWhitespaceAfterBookingSec != null
+          ? winnerWhitespaceAfterBookingSec
+          : Math.max(0, winnerWindowSec - winnerDriveSec - winnerBookedSec - previewServiceSec);
+
+      const driveMin = Math.round(winnerDriveSec / 60);
+      const householdMin = Math.round(winnerBookedSec / 60);
+      const whiteMin = Math.round(whiteSec / 60);
+      const shiftMin = Math.round(winnerWindowSec / 60);
+
+      const ratioText = driveMin > 0 ? (householdMin / driveMin).toFixed(2) : '—';
+      const whitePctText =
+        shiftMin > 0 ? `${Math.round((whiteSec / (shiftMin * 60)) * 100)}%` : '—';
+
+      const backToDepotIsoFinal = backToDepotIso ?? null;
+
+      return {
+        driveMin,
+        householdMin,
+        ratioText,
+        whiteMin,
+        whitePctText,
+        shiftMin,
+        points,
+        backToDepotIso: backToDepotIsoFinal,
+      };
+    }
+
+    // ---------- Fallback to derivation ----------
+    const first = households[0];
+    const last = households[households.length - 1];
+
+    const firstArriveMs =
+      (timeline[0]?.eta ? DateTime.fromISO(timeline[0].eta!).toMillis() : null) ??
+      (first?.startIso ? DateTime.fromISO(first.startIso).toMillis() : 0);
+
+    const lastDur = durSec(last?.startIso ?? null, last?.endIso ?? null);
+    const lastEndMs =
+      timeline[timeline.length - 1]?.etd != null
+        ? DateTime.fromISO(timeline[timeline.length - 1].etd!).toMillis()
+        : timeline[timeline.length - 1]?.eta != null
+          ? DateTime.fromISO(timeline[timeline.length - 1].eta!).toMillis() + lastDur * 1000
+          : last?.endIso
+            ? DateTime.fromISO(last.endIso).toMillis()
+            : 0;
+
+    const N = households.length;
+    let apiToFirstSec: number | null = null;
+    let apiBetweenSecs: number[] = [];
+    let apiBackSec: number | null = null;
+
+    if (Array.isArray(driveSecondsArr)) {
+      if (driveSecondsArr.length === N - 1) {
+        apiBetweenSecs = driveSecondsArr;
+      } else if (driveSecondsArr.length === N + 1) {
+        apiToFirstSec = driveSecondsArr[0] ?? null;
+        apiBetweenSecs = driveSecondsArr.slice(1, N) ?? [];
+        apiBackSec = driveSecondsArr[N] ?? null;
+      } else if (driveSecondsArr.length === N) {
+        if (startDepot) {
+          apiToFirstSec = driveSecondsArr[0] ?? null;
+          apiBetweenSecs = driveSecondsArr.slice(1) ?? [];
+        } else if (endDepot) {
+          apiBetweenSecs = driveSecondsArr.slice(0, N - 1) ?? [];
+          apiBackSec = driveSecondsArr[N - 1] ?? null;
+        } else {
+          apiBetweenSecs = driveSecondsArr;
+        }
+      }
+    }
+
+    const haversineMeters = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
+      const R = 6371000;
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      const dLat = toRad(b.lat - a.lat);
+      const dLon = toRad(b.lon - a.lon);
+      const sLat = toRad(a.lat);
+      const sLat2 = toRad(b.lat);
+      const h =
+        Math.sin(dLat / 2) ** 2 + Math.cos(sLat) * Math.cos(sLat2) * Math.sin(dLon / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(h));
+    };
+    const fallbackDriveSec = (
+      from: { lat: number; lon: number },
+      to: { lat: number; lon: number }
+    ) => Math.round(haversineMeters(from, to) / 11.65);
+
+    const startPt = startDepot ?? endDepot ?? null;
+    const endPt = endDepot ?? startDepot ?? null;
+
+    const driveToFirstSec =
+      (typeof apiToFirstSec === 'number' ? apiToFirstSec : undefined) ??
+      (startPt && first ? fallbackDriveSec(startPt, { lat: first.lat, lon: first.lon }) : 0);
+
+    const interDriveSec =
+      apiBetweenSecs.length === Math.max(0, N - 1)
+        ? apiBetweenSecs.reduce((s, v) => s + Math.max(0, v || 0), 0)
+        : households.slice(1).reduce((s, curr, i) => {
+            const prev = households[i];
+            return (
+              s +
+              fallbackDriveSec({ lat: prev.lat, lon: prev.lon }, { lat: curr.lat, lon: curr.lon })
+            );
+          }, 0);
+
+    const driveBackSecFinal =
+      (typeof backToDepotSec === 'number' ? backToDepotSec : undefined) ??
+      (typeof apiBackSec === 'number' ? apiBackSec : undefined) ??
+      (endPt && last ? fallbackDriveSec({ lat: last.lat, lon: last.lon }, endPt) : 0);
+
+    const driveSec =
+      Math.max(0, driveToFirstSec) + Math.max(0, interDriveSec) + Math.max(0, driveBackSecFinal);
+
+    const shiftStartMs = Math.max(0, firstArriveMs - Math.max(0, driveToFirstSec) * 1000);
+    const shiftEndMs = Math.max(shiftStartMs, lastEndMs + Math.max(0, driveBackSecFinal) * 1000);
+
+    const backToDepotIsoFinal =
+      backToDepotIso ?? (shiftEndMs > 0 ? DateTime.fromMillis(shiftEndMs).toISO() : null);
+
+    const scheduleSec =
+      schedStartIso && schedEndIso
+        ? Math.max(
+            0,
+            DateTime.fromISO(schedEndIso).diff(DateTime.fromISO(schedStartIso), 'seconds').seconds
+          )
+        : null;
+
+    const derivedShiftSec = Math.max(0, (shiftEndMs - shiftStartMs) / 1000);
+    const effectiveShiftSec = scheduleSec ?? derivedShiftSec;
+
+    const bookedServiceSeconds = Math.floor(bookedServiceSecFallback);
+
+    // match Routing: whitespace = shift − (drive + booked + preview)
+    const whiteSec = Math.max(
+      0,
+      effectiveShiftSec - driveSec - Math.max(0, bookedServiceSeconds) - previewServiceSec
+    );
+
+    const driveMin = Math.round(driveSec / 60);
+    const householdMin = Math.round(bookedServiceSeconds / 60);
+    const whiteMin = Math.round(whiteSec / 60);
+    const shiftMin = Math.round(effectiveShiftSec / 60);
+
+    const ratioText = driveMin > 0 ? (householdMin / driveMin).toFixed(2) : '—';
+    const whitePctText =
+      effectiveShiftSec > 0 ? `${Math.round((whiteSec / effectiveShiftSec) * 100)}%` : '—';
+
+    return {
+      driveMin,
+      householdMin,
+      ratioText,
+      whiteMin,
+      whitePctText,
+      shiftMin,
+      points,
+      backToDepotIso: backToDepotIsoFinal,
+    };
+  }, [
+    households,
+    appts,
+    timeline,
+    startDepot,
+    endDepot,
+    driveSecondsArr,
+    backToDepotSec,
+    backToDepotIso,
+    schedStartIso,
+    schedEndIso,
+    virtualAppt,
+    date,
+  ]);
+
+  /* ---------- UI helpers ---------- */
+  function fmtTime(iso?: string | null) {
+    if (!iso) return '';
+    return DateTime.fromISO(iso).toLocaleString(DateTime.TIME_SIMPLE);
+  }
+
+  const driveColor = colorForDrive(stats.driveMin);
+  const whitePct =
+    Number.isFinite(stats.shiftMin) && stats.shiftMin > 0
+      ? (stats.whiteMin / stats.shiftMin) * 100
+      : 0;
+  const whiteColor = colorForWhitespace(whitePct);
+
+  const ratioNum = stats.driveMin > 0 ? stats.householdMin / stats.driveMin : Infinity;
+  const hdColor = colorForHDRatio(ratioNum);
+
   return (
     <div className="card" style={{ paddingBottom: 16 }}>
       <h2>My Day — Visual</h2>
@@ -846,6 +1166,69 @@ export default function DoctorDayVisual({
             {providersErr}
           </div>
         )}
+      </div>
+
+      {/* Grid with stats and navigation */}
+      <div className="dd-grid" style={{ marginTop: 16 }}>
+        {/* Navigate */}
+        <div className="card dd-nav">
+          <h3>Navigate</h3>
+          {links.length === 0 ? (
+            <p className="muted">Add at least two stops to generate a route.</p>
+          ) : links.length === 1 ? (
+            <a className="btn" href={links[0]} target="_blank" rel="noreferrer">
+              Open Full Day in Google Maps
+            </a>
+          ) : (
+            <>
+              <p className="muted">
+                Your route has many stops. We split it into {links.length} segments (Google Maps
+                allows up to 25 points per link).
+              </p>
+              <div className="dd-links">
+                {links.map((u, idx) => (
+                  <a key={idx} className="btn" href={u} target="_blank" rel="noreferrer">
+                    Open Segment {idx + 1}
+                  </a>
+                ))}
+              </div>
+            </>
+          )}
+          <p className="muted" style={{ marginTop: 8 }}>
+            Tip: On iOS/Android, this opens the Google Maps app if installed; otherwise it opens in
+            the browser.
+          </p>
+        </div>
+
+        {/* Day stats */}
+        <div className="card">
+          <h3>Day Metrics</h3>
+          <div
+            className="dd-meta muted"
+            style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}
+          >
+            <span>
+              <strong>Points:</strong> {stats.points}
+            </span>
+            <span style={{ color: driveColor }}>
+              <strong>Drive:</strong> {formatHM(stats.driveMin)}
+            </span>
+            <span>
+              <strong>Households:</strong> {formatHM(stats.householdMin)}
+            </span>
+            <span style={{ color: hdColor }}>
+              <strong>H:D ratio:</strong> {stats.ratioText}
+            </span>
+            <span style={{ color: whiteColor }}>
+              <strong>Whitespace:</strong> {formatHM(stats.whiteMin)}
+              {stats.shiftMin > 0 && <> ({stats.whitePctText})</>}
+            </span>
+            <span className="muted">Shift: {formatHM(stats.shiftMin)}</span>
+            <span>
+              <strong>Back to depot:</strong> {fmtTime(stats.backToDepotIso) || '—'}
+            </span>
+          </div>
+        </div>
       </div>
 
       {loading && <p>Loading…</p>}

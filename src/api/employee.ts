@@ -10,6 +10,22 @@ export type Provider = {
   weeklyPointGoal?: number | null;
 };
 
+function buildProviderName(r: any): string {
+  const parts: string[] = [];
+  if (r.firstName) parts.push(r.firstName);
+  if (r.middleInitial || r.middleName) {
+    const middle = r.middleInitial || (r.middleName ? r.middleName.charAt(0).toUpperCase() : '');
+    if (middle) parts.push(middle);
+  }
+  if (r.lastName) parts.push(r.lastName);
+  
+  if (parts.length > 0) {
+    return parts.join(' ').trim();
+  }
+  
+  return r.name || `Provider ${r.id ?? ''}`;
+}
+
 export async function fetchPrimaryProviders(): Promise<Provider[]> {
   const { data } = await http.get('/employees/providers');
   const rows: any[] = Array.isArray(data) ? data : (data?.items ?? []);
@@ -17,10 +33,7 @@ export async function fetchPrimaryProviders(): Promise<Provider[]> {
   return rows.map((r) => ({
     id: r.id ?? r.pimsId ?? r.employeeId,
     email: r?.email,
-    name:
-      [r.firstName, r.lastName].filter(Boolean).join(' ').trim() ||
-      r.name ||
-      `Provider ${r.id ?? ''}`,
+    name: buildProviderName(r),
     dailyRevenueGoal: r?.dailyRevenueGoal ?? null,
     bonusRevenueGoal: r?.bonusRevenueGoal ?? null,
     dailyPointGoal: r?.dailyPointGoal ?? null,

@@ -830,16 +830,27 @@ export default function DoctorDay({
     () =>
       households
         .filter((h) => !h.isNoLocation)
-        .map((h) => ({ lat: h.lat, lon: h.lon, label: h.primary.clientName })),
+        .map((h) => ({
+          lat: h.lat,
+          lon: h.lon,
+          label: h.primary.clientName,
+          address: h.addressDisplay,
+        })),
     [households]
   );
   const links = useMemo(
     () =>
       buildGoogleMapsLinksForDay(stops, {
-        start: startDepot ?? undefined,
-        end: endDepot ?? undefined,
+        start:
+          startDepot && startDepotAddr
+            ? { lat: startDepot.lat, lon: startDepot.lon, address: startDepotAddr }
+            : startDepot ?? undefined,
+        end:
+          endDepot && endDepotAddr
+            ? { lat: endDepot.lat, lon: endDepot.lon, address: endDepotAddr }
+            : endDepot ?? undefined,
       }),
-    [stops, startDepot, endDepot]
+    [stops, startDepot, endDepot, startDepotAddr, endDepotAddr]
   );
 
   /* ---------- Stats (uses server times if present) ---------- */

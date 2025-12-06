@@ -74,19 +74,30 @@ const toNum = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-const normalizeProvider = (p: any): ProviderWithGoals => ({
-  id: p?.id ?? p?.pimsId ?? p?.employeeId,
-  name:
-    [p?.firstName, p?.lastName].filter(Boolean).join(' ').trim() ||
-    p?.name ||
-    `Provider ${p?.id ?? ''}`,
-  email: p?.email ?? '',
+const normalizeProvider = (p: any): ProviderWithGoals => {
+  const parts: string[] = [];
+  if (p?.firstName) parts.push(p.firstName);
+  if (p?.middleInitial || p?.middleName) {
+    const middle = p.middleInitial || (p.middleName ? p.middleName.charAt(0).toUpperCase() : '');
+    if (middle) parts.push(middle);
+  }
+  if (p?.lastName) parts.push(p.lastName);
+  
+  const name = parts.length > 0 
+    ? parts.join(' ').trim()
+    : p?.name || `Provider ${p?.id ?? ''}`;
+  
+  return {
+    id: p?.id ?? p?.pimsId ?? p?.employeeId,
+    name,
+    email: p?.email ?? '',
 
-  dailyRevenueGoal: toNum(p?.dailyRevenueGoal),
-  bonusRevenueGoal: toNum(p?.bonusRevenueGoal),
-  dailyPointGoal: toNum(p?.dailyPointGoal),
-  weeklyPointGoal: toNum(p?.weeklyPointGoal),
-});
+    dailyRevenueGoal: toNum(p?.dailyRevenueGoal),
+    bonusRevenueGoal: toNum(p?.bonusRevenueGoal),
+    dailyPointGoal: toNum(p?.dailyPointGoal),
+    weeklyPointGoal: toNum(p?.weeklyPointGoal),
+  };
+};
 
 // Bonus period helpers: 4/1–9/30 and 10/1–3/31
 function startOfBonusPeriod(d: Dayjs) {

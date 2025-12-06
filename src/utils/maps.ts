@@ -1,7 +1,11 @@
 // src/utils/maps.ts
-export type Stop = { lat: number; lon: number; label?: string };
+export type Stop = { lat: number; lon: number; label?: string; address?: string };
 
-function toLatLng(s: Stop) {
+function toLocationString(s: Stop): string {
+  // Prefer address if available, otherwise fall back to lat/lon
+  if (s.address && s.address.trim()) {
+    return s.address.trim();
+  }
   return `${s.lat},${s.lon}`;
 }
 
@@ -28,13 +32,13 @@ export function buildGoogleMapsLinksForDay(
 
     const waypoints = chunk
       .filter((p) => p !== origin && p !== destination)
-      .map(toLatLng)
+      .map(toLocationString)
       .join('|');
 
     const params = new URLSearchParams();
     params.set('api', '1');
-    params.set('origin', toLatLng(origin));
-    params.set('destination', toLatLng(destination));
+    params.set('origin', toLocationString(origin));
+    params.set('destination', toLocationString(destination));
     if (waypoints) params.set('waypoints', waypoints);
     params.set('travelmode', 'driving');
 

@@ -133,6 +133,8 @@ type Doctor = {
   id?: string | number;
   pimsId?: string;
   firstName?: string;
+  middleInitial?: string;
+  middleName?: string;
   lastName?: string;
   name?: string;
   employeeId?: string | number;
@@ -140,6 +142,8 @@ type Doctor = {
     id?: string | number;
     pimsId?: string;
     firstName?: string;
+    middleInitial?: string;
+    middleName?: string;
     lastName?: string;
   };
 };
@@ -150,10 +154,24 @@ type Doctor = {
 
 const DOCTORS_SEARCH_URL = '/employees/search';
 
+function buildDoctorName(emp: any, fallback?: string): string {
+  const parts: string[] = [];
+  const fn = emp?.firstName ?? emp?.employee?.firstName;
+  const mi = emp?.middleInitial ?? emp?.employee?.middleInitial ?? 
+             (emp?.middleName ? emp.middleName.charAt(0).toUpperCase() : null) ??
+             (emp?.employee?.middleName ? emp.employee.middleName.charAt(0).toUpperCase() : null);
+  const ln = emp?.lastName ?? emp?.employee?.lastName;
+  
+  if (fn) parts.push(fn);
+  if (mi) parts.push(mi);
+  if (ln) parts.push(ln);
+  
+  return parts.length > 0 ? parts.join(' ') : (fallback || 'Unknown');
+}
+
 function localDoctorDisplayName(d: Doctor) {
-  const fn = d.employee?.firstName ?? d.firstName;
-  const ln = d.employee?.lastName ?? d.lastName;
-  return d.name || [fn, ln].filter(Boolean).join(' ') || 'Unknown';
+  if (d.name) return d.name;
+  return buildDoctorName(d, 'Unknown');
 }
 
 function doctorPimsIdOf(d: Doctor): string {
@@ -650,10 +668,7 @@ export default function Routing() {
             const { data } = await http.get(`/employees/pims/${encodeURIComponent(pid)}`);
             const emp = Array.isArray(data) ? data[0] : data;
 
-            const name =
-              [emp?.firstName, emp?.lastName].filter(Boolean).join(' ') ||
-              [emp?.employee?.firstName, emp?.employee?.lastName].filter(Boolean).join(' ') ||
-              `Doctor ${pid}`;
+            const name = buildDoctorName(emp, `Doctor ${pid}`);
 
             const internalId =
               (emp?.id != null ? String(emp.id) : undefined) ??
@@ -769,10 +784,7 @@ export default function Routing() {
         try {
           const { data } = await http.get(`/employees/pims/${encodeURIComponent(pid)}`);
           const emp = Array.isArray(data) ? data[0] : data;
-          const name =
-            [emp?.firstName, emp?.lastName].filter(Boolean).join(' ') ||
-            [emp?.employee?.firstName, emp?.employee?.lastName].filter(Boolean).join(' ') ||
-            `Doctor ${pid}`;
+          const name = buildDoctorName(emp, `Doctor ${pid}`);
           setDoctorNames((m) => ({ ...m, [pid]: name }));
           return name;
         } catch {
@@ -1060,9 +1072,7 @@ export default function Routing() {
           .map((v) => {
             const pimsId = v.pimsId ? String(v.pimsId) : null;
             const id = v.id ?? v.pimsId;
-            const name =
-              [v.firstName, v.lastName].filter(Boolean).join(' ').trim() ||
-              `Veterinarian ${id ?? ''}`;
+            const name = buildDoctorName(v, `Veterinarian ${id ?? ''}`).trim();
             
             return {
               id: id,
@@ -1249,10 +1259,7 @@ export default function Routing() {
         result.selectedDoctor?.name ||
         result.selectedDoctorDisplayName ||
         doctorNames[defaultPid] ||
-        [result.selectedDoctor?.firstName, result.selectedDoctor?.lastName]
-          .filter(Boolean)
-          .join(' ') ||
-        `Doctor ${defaultPid}`;
+        buildDoctorName(result.selectedDoctor, `Doctor ${defaultPid}`);
       
       // Helper to get doctor info for a candidate (supports v2 doctorId field)
       const getDoctorInfo = (candidate: Winner): { pid: string; name: string } => {

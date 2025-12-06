@@ -6,7 +6,7 @@ import DoctorDayVisual from './DoctorDayVisual';
 type Mode = 'list' | 'visual';
 
 export default function MyDayToggle(props: DoctorDayProps) {
-  const [mode, setMode] = useState<Mode>('visual');
+  const [mode, setMode] = useState<Mode>('list');
   // Track the selected doctor ID from each view
   const listDoctorIdRef = useRef<string>(props.initialDoctorId || '');
   const visualDoctorIdRef = useRef<string>(props.initialDoctorId || '');

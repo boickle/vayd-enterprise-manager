@@ -21,6 +21,8 @@ type Doctor = {
   id?: string | number;
   pimsId?: string;
   firstName?: string;
+  middleInitial?: string;
+  middleName?: string;
   lastName?: string;
   name?: string;
   employeeId?: string | number;
@@ -28,6 +30,8 @@ type Doctor = {
     id?: string | number;
     pimsId?: string;
     firstName?: string;
+    middleInitial?: string;
+    middleName?: string;
     lastName?: string;
   };
 };
@@ -43,9 +47,20 @@ const DOCTORS_SEARCH_URL = '/employees/search';
 
 // ---- helpers ----
 function localDoctorDisplayName(d: Doctor) {
+  if (d.name) return d.name;
+  
   const fn = d.employee?.firstName ?? d.firstName;
+  const mi = d.employee?.middleInitial ?? d.middleInitial ?? 
+             (d.employee?.middleName ? d.employee.middleName.charAt(0).toUpperCase() : null) ??
+             (d.middleName ? d.middleName.charAt(0).toUpperCase() : null);
   const ln = d.employee?.lastName ?? d.lastName;
-  return d.name || [fn, ln].filter(Boolean).join(' ') || 'Unknown';
+  
+  const parts: string[] = [];
+  if (fn) parts.push(fn);
+  if (mi) parts.push(mi);
+  if (ln) parts.push(ln);
+  
+  return parts.length > 0 ? parts.join(' ') : 'Unknown';
 }
 function doctorPimsIdOf(d: Doctor): string {
   const pid = d.employee?.pimsId ?? d.pimsId;
