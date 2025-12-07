@@ -343,14 +343,15 @@ export default function LoginPage() {
         <div style={{ fontSize: 18, color: '#475569', maxWidth: 560 }}>
           <div><strong>New to Vet At Your Door</strong>?</div>
           <div style={{ marginTop: '8px' }}>
-            To become a client and unlock membership options,{' '}
+            Request your first appointment to become a client and unlock membership options.
+          </div>
+          <div style={{ marginTop: '8px' }}>
             <a 
               href="https://form.jotform.com/221585880190157" 
               style={{ color: '#052940', textDecoration: 'underline', cursor: 'pointer' }}
             >
-              click here
-            </a>{' '}
-            to request your first appointment.
+              Click here to get started.
+            </a>
           </div>
         </div>
       </section>
@@ -408,10 +409,10 @@ export default function LoginPage() {
         <div style={{ fontSize: 20, lineHeight: 1.4 }}>
           <div><strong>Existing Vet At Your Door client</strong>?</div>
           <div style={{ marginTop: '8px' }}>
-            If you&apos;ve already had an appointment with us or have one scheduled, create your portal account here using the email we have on file.
+            If you&apos;ve had a past or upcoming appointment, create your portal account using the email we have on file.
           </div>
-          <div style={{ marginTop: '8px' }}>
-            Your client portal is the first step to enrolling in a membership.
+          <div style={{ marginTop: '8px', fontStyle: 'italic' }}>
+            The client portal is required for membership.
           </div>
         </div>
 
