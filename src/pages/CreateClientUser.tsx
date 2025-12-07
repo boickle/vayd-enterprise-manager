@@ -151,7 +151,8 @@ export default function CreateClientUser() {
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: '-120px',
+    marginBottom: '0',
+    paddingBottom: '0',
   };
 
   const logoStyle: CSSProperties = {
@@ -167,6 +168,11 @@ export default function CreateClientUser() {
       display: flex;
       flex-direction: column;
       gap: 32px;
+      margin-top: 0 !important;
+      padding-top: 0 !important;
+    }
+    .create-client-page .auth-hero > div:first-child {
+      margin-top: 24px !important;
     }
     .create-client-page .auth-panel form {
       width: 100%;
@@ -196,12 +202,18 @@ export default function CreateClientUser() {
         align-items: center;
         max-width: 100%;
         width: 100%;
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+      }
+      .create-client-page .auth-hero > div:first-child {
+        margin-top: 24px !important;
       }
       .create-client-page .auth-hero h1 {
         padding-top: 50px !important;
       }
       .create-client-page .auth-logo {
-        margin-bottom: -60px !important;
+        margin-bottom: 0 !important;
+        padding-bottom: 0 !important;
       }
       .create-client-page .auth-logo img {
         width: min(280px, 50vw) !important;
@@ -230,12 +242,18 @@ export default function CreateClientUser() {
         align-items: center;
         max-width: 100%;
         width: 100%;
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+      }
+      .create-client-page .auth-hero > div:first-child {
+        margin-top: 24px !important;
       }
       .create-client-page .auth-hero h1 {
         padding-top: 50px !important;
       }
       .create-client-page .auth-logo {
-        margin-bottom: -60px !important;
+        margin-bottom: 0 !important;
+        padding-bottom: 0 !important;
       }
       .create-client-page .auth-logo img {
         width: min(280px, 50vw) !important;
@@ -270,7 +288,8 @@ export default function CreateClientUser() {
         max-width: 420px;
       }
       .create-client-page .auth-logo {
-        margin-bottom: -40px !important;
+        margin-bottom: 0 !important;
+        padding-bottom: 0 !important;
       }
       .create-client-page .auth-logo img {
         width: min(240px, 45vw) !important;
@@ -290,7 +309,8 @@ export default function CreateClientUser() {
         max-width: 100%;
       }
       .create-client-page .auth-logo {
-        margin-bottom: -20px !important;
+        margin-bottom: 0 !important;
+        padding-bottom: 0 !important;
       }
       .create-client-page .auth-logo img {
         width: min(200px, 40vw) !important;
@@ -381,28 +401,30 @@ export default function CreateClientUser() {
         </h1>
         <hr style={{ width: '80%', border: 'none', borderTop: '1px solid #0f172a', margin: '24px 0 0 0' }} />
       </div>
-      <section className="auth-hero">
-        <div style={{ ...introStyle, fontSize: 'clamp(16px, 1.8vw, 22px)' }}>
-          <p style={{ margin: '0 0 16px 0' }}>
-            This portal is for <strong>current Vet At Your Door clients only</strong>—those who have seen us before or who have an upcoming appointment scheduled.
+      <section className="auth-hero" style={{ marginTop: '0', paddingTop: '0' }}>
+        <div style={{ ...introStyle, fontSize: 'clamp(16px, 1.8vw, 22px)', marginTop: '24px' }}>
+          <p style={{ margin: '0 0 0 0' }}>
+            <strong>For current Vet At Your Door clients only</strong>
+          </p>
+          <p style={{ margin: '0 0 16px 0', fontStyle: 'italic' }}>
+            (If you&apos;ve had a past visit or have an upcoming appointment.)
           </p>
           <p style={{ margin: '0 0 16px 0' }}>
-            <strong>Get started by entering the email address we have on file for your account.</strong> We&apos;ll send you
-            a secure link to complete your setup and access your pet&apos;s information and Membership
-            Plans.
+            Enter the email we have on file and we&apos;ll send you a secure setup link to access your pet&apos;s information and membership options.
           </p>
           <p style={{ margin: '0 0 8px 0' }}>
             <strong>New to Vet At Your Door?</strong>
           </p>
+          <p style={{ margin: '0 0 8px 0' }}>
+            After your first appointment is booked, you&apos;ll be invited to create your Client Portal account and join a membership.
+          </p>
           <p style={{ margin: 0 }}>
-            Want to book your first appointment?{' '}
             <a 
               href="https://form.jotform.com/221585880190157" 
               style={{ color: '#052940', textDecoration: 'underline', cursor: 'pointer' }}
             >
-              Click here
-            </a>{' '}
-            to request an appointment.
+              Request your first appointment here.
+            </a>
           </p>
         </div>
       </section>

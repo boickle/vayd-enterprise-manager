@@ -131,37 +131,42 @@ const ADD_ON_PRICING: Record<string, { label: string; monthly: number; annual?: 
 };
 
 const MEMBERSHIP_AGREEMENT_TEXT = [
+  'Vet At Your Door Membership Agreement',
   'By enrolling your pet in a Vet At Your Door Membership Plan, you agree to the following terms and conditions.',
   'Membership Plans',
-  'Foundations: Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a 12-month commitment.',
-  'Golden: Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a 12-month commitment.',
-  'Comfort Care: A month-to-month plan that includes one visit with trip fee, one tele-health consult during business hours per month, after-hours tele-chat, and 15% off your pet\'s total euthanasia and after-care (if elected) bill.',
-  'Plus Add-On: Provides ten percent off all services and medications and fifty percent off exams. There is one free nail trim per year. The term matches the main plan. A store discount code is issued after sign-up.',
+  'Foundations: Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a twelve (12) month commitment.',
+  'Golden: Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a twelve (12) month commitment.',
+  'Comfort Care: A month-to-month plan that includes one visit with trip fee per month, one tele-chat consult during business hours per month, and after-hours tele-chat. Comfort Care members receive fifteen percent (15%) off the total cost of euthanasia and after-care services when the decision has been made to proceed.',
+  'Plus Add-On: Provides ten percent (10%) off all services and medications and fifty percent (50%) off exams. One free nail trim is included per year. The term of Plus matches the term of the primary plan. A store discount code is issued after sign-up.',
   'Puppy / Kitten Add-On: Covers booster vaccine appointments during your pet\'s first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.',
   'After-Hours Telehealth',
-  'Members may access our virtual triage chat after hours during these times: Monday through Friday from 5 pm to 9 pm, and Saturday through Sunday from 8 am to 5 pm. A Triage Technician will review your pet\'s history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. Service is unavailable on listed holidays. Hours may change with 30 days of notice.',
+  'Members may access our virtual triage chat after hours during the following times: Monday through Friday from 5:00 pm to 9:00 pm, and Saturday through Sunday from 8:00 am to 5:00 pm. A Triage Technician will review your pet\'s history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. This service is unavailable on holidays observed by Vet At Your Door. Hours may change with thirty (30) days of notice.',
   'VCPR Requirements and Limitations for New or Lapsed Patients',
-  'A valid Veterinarian-Client-Patient Relationship requires an in-person exam within the past 365 days. If more than 12 months have passed since your pet\'s most recent in-person exam with us, the VCPR is considered expired.',
+  'A valid Veterinarian-Client-Patient Relationship (VCPR) requires an in-person exam within the past 365 days. If more than twelve (12) months have passed since your pet\'s most recent in-person exam with us, the VCPR is considered expired.',
   'For pets we have not yet seen, or for pets whose VCPR has lapsed, the following services cannot be provided until a current VCPR is re-established through an in-person exam:',
-  'Medical advice, tele-health consultation, triage guidance, or care recommendations from your One Team or other VAYD team member',
+  'After-hours telehealth',
+  'Medical advice, triage guidance, or care recommendations from your One Team',
   'Prescription medications or refills of any kind',
   'Once the initial or renewal exam is completed, all membership benefits become fully active.',
-  'Memberships do not automatically cancel when the VCPR expires. It is the client\'s responsibility to have their pet remain current.',
+  'Memberships do not automatically cancel when the VCPR expires. It is the client\'s responsibility to ensure their pet remains current.',
   'Membership Rules',
-  'Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of discounts.',
-  'Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight years of age for dogs or nine years of age for cats. We will email you twenty to thirty days before renewal with a recommendation. You may change your selection or cancel at that time.',
-  'Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve-month term. Comfort Care is month-to-month, as is Plus when selected with Comfort Care.',
+  'Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of any discounts received.',
+  'Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight (8) years of age for dogs or nine (9) years of age for cats. We will email you twenty (20) to thirty (30) days before renewal with a recommendation. You may change your selection or cancel at that time.',
+  'Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve (12) month term. Comfort Care is month-to-month, as is Plus when selected with Comfort Care.',
   'If your pet passes away, moves, or transitions to Comfort Care, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.',
   'If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client\'s new lease or mortgage agreement.',
   'A one-time registration fee, if charged, supports our Angel Fund for pets in need.',
+  'Plan Change and Upgrade Limitations',
+  'Membership plans, including the Plus and Puppy / Kitten Add-Ons, must be selected at the time of initial enrollment and cannot be added or upgraded mid-term. The only permitted plan transition is from Golden to Comfort Care, when and if medically appropriate. No other plan upgrades, downgrades, or add-ons may be added after enrollment.',
   'Scheduling and Availability',
   'Visits should be scheduled in advance for best availability. Specific appointment times cannot be guaranteed. Services are available only within our service area and during our regular appointment hours.',
   'We will make every reasonable effort for your pet\'s care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.',
-  'If we cannot accommodate an urgent case or a case that merits more than we can offer, we may refer you to another facility or veterinary team.',
+  'If we cannot accommodate an urgent case or a requested appointment time, we may refer you to another facility or veterinary team.',
   'Access and Technology Requirements',
   'Internet access and a compatible device are required for virtual chat and use of our online store. Instructions will be provided in the Welcome Email.',
   'Client Conduct',
   'We strive to provide compassionate and high-quality care and expect respectful communication in return. Disrespectful behavior may result in termination of membership without refund.',
+  'Membership Scope',
   'Membership supports proactive and routine care. Membership does not guarantee emergency availability.',
 ].join('\n\n');
 
@@ -2199,7 +2204,7 @@ function AgreementSection({
   return (
     <section className="cp-section" style={{ marginTop: 16 }}>
       <div className="cp-card" style={{ padding: 20 }}>
-        <h3 style={{ marginTop: 0, marginBottom: 12 }}>Membership Agreement</h3>
+        <h3 style={{ marginTop: 0, marginBottom: 12 }}>Vet At Your Door Membership Agreement</h3>
         <div
           style={{
             maxHeight: 240,
@@ -2214,15 +2219,21 @@ function AgreementSection({
         >
           <p><strong>By enrolling your pet in a Vet At Your Door Membership Plan, you agree to the following terms and conditions.</strong></p>
           <p><strong>Membership Plans</strong></p>
-          <p><strong>Foundations:</strong> Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a 12-month commitment.</p>
-          <p><strong>Golden:</strong> Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a 12-month commitment.</p>
-          <p><strong>Comfort Care:</strong> A month-to-month plan that includes one visit with trip fee, one tele-chat consult during business hours per month, after-hours tele-chat, and a one hundred dollar credit toward euthanasia.</p>
-          <p><strong>Plus Add-On:</strong> Provides ten percent off all services and medications and fifty percent off exams. There is one free nail trim per year. The term matches the main plan. A store discount code is issued after sign-up.</p>
-          <p><strong>Puppy / Kitten Add-On:</strong> Covers booster vaccine appointments during your pet's first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.</p>
+          <p><em>Foundations</em></p>
+          <p style={{ marginLeft: '16px' }}>Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a twelve (12) month commitment.</p>
+          <p><em>Golden</em></p>
+          <p style={{ marginLeft: '16px' }}>Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a twelve (12) month commitment.</p>
+          <p><em>Comfort Care</em></p>
+          <p style={{ marginLeft: '16px' }}>A month-to-month plan that includes one visit with trip fee per month, one tele-chat consult during business hours per month, and after-hours tele-chat. Comfort Care members receive fifteen percent (15%) off the total cost of euthanasia and after-care services when the decision has been made to proceed.</p>
+          <p><em>Plus Add-On</em></p>
+          <p style={{ marginLeft: '16px' }}>Provides ten percent (10%) off all services and medications and fifty percent (50%) off exams. One free nail trim is included per year. The term of Plus matches the term of the primary plan. A store discount code is issued after sign-up.</p>
+          <p><em>Puppy / Kitten Add-On</em></p>
+          <p style={{ marginLeft: '16px' }}>Covers booster vaccine appointments during your pet&apos;s first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.</p>
           <p><strong>After-Hours Telehealth</strong></p>
-          <p>Members may access our virtual triage chat after hours during these times: Monday through Friday from 5 pm to 9 pm, and Saturday through Sunday from 8 am to 5 pm. A Triage Technician will review your pet's history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. Service is unavailable on listed holidays. Hours may change with 30 days of notice.</p>
+          <p>Members may access our virtual triage chat after hours during the following times:</p>
+          <p style={{ marginLeft: '16px' }}>Monday through Friday from 5:00 pm to 9:00 pm, and Saturday through Sunday from 8:00 am to 5:00 pm. A Triage Technician will review your pet&apos;s history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. This service is unavailable on holidays observed by Vet At Your Door. Hours may change with thirty (30) days of notice.</p>
           <p><strong>VCPR Requirements and Limitations for New or Lapsed Patients</strong></p>
-          <p>A valid Veterinarian-Client-Patient Relationship requires an in-person exam within the past 365 days. If more than 12 months have passed since your pet's most recent in-person exam with us, the VCPR is considered expired.</p>
+          <p>A valid Veterinarian-Client-Patient Relationship (VCPR) requires an in-person exam within the past 365 days. If more than twelve (12) months have passed since your pet&apos;s most recent in-person exam with us, the VCPR is considered expired.</p>
           <p>For pets we have not yet seen, or for pets whose VCPR has lapsed, the following services cannot be provided until a current VCPR is re-established through an in-person exam:</p>
           <ul style={{ paddingLeft: 20 }}>
             <li>After-hours telehealth</li>
@@ -2230,22 +2241,25 @@ function AgreementSection({
             <li>Prescription medications or refills of any kind</li>
           </ul>
           <p>Once the initial or renewal exam is completed, all membership benefits become fully active.</p>
-          <p>Memberships do not automatically cancel when the VCPR expires. It is the client's responsibility to have their pet remain current.</p>
+          <p>Memberships do not automatically cancel when the VCPR expires. It is the client&apos;s responsibility to ensure their pet remains current.</p>
           <p><strong>Membership Rules</strong></p>
-          <p>Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of discounts.</p>
-          <p>Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight years of age for dogs or nine years of age for cats. We will email you twenty to thirty days before renewal with a recommendation. You may change your selection or cancel at that time.</p>
-          <p>Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve-month term. Comfort Care is month-to-month, as is Plus when selected with Comfort Care.</p>
+          <p>Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of any discounts received.</p>
+          <p>Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight (8) years of age for dogs or nine (9) years of age for cats. We will email you twenty (20) to thirty (30) days before renewal with a recommendation. You may change your selection or cancel at that time.</p>
+          <p>Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve (12) month term. Comfort Care is month-to-month, as is Plus when selected with Comfort Care.</p>
           <p>If your pet passes away, moves, or transitions to Comfort Care, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.</p>
-          <p>If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client's new lease or mortgage agreement.</p>
+          <p>If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client&apos;s new lease or mortgage agreement.</p>
           <p>A one-time registration fee, if charged, supports our Angel Fund for pets in need.</p>
+          <p><strong>Plan Change and Upgrade Limitations</strong></p>
+          <p>Membership plans, including the Plus and Puppy / Kitten Add-Ons, must be selected at the time of initial enrollment and cannot be added or upgraded mid-term. The only permitted plan transition is from Golden to Comfort Care, when and if medically appropriate. No other plan upgrades, downgrades, or add-ons may be added after enrollment.</p>
           <p><strong>Scheduling and Availability</strong></p>
           <p>Visits should be scheduled in advance for best availability. Specific appointment times cannot be guaranteed. Services are available only within our service area and during our regular appointment hours.</p>
-          <p>We will make every reasonable effort for your pet's care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.</p>
-          <p>If we cannot accommodate an urgent case, we may refer you to another facility or veterinary team.</p>
+          <p>We will make every reasonable effort for your pet&apos;s care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.</p>
+          <p>If we cannot accommodate an urgent case or a requested appointment time, we may refer you to another facility or veterinary team.</p>
           <p><strong>Access and Technology Requirements</strong></p>
           <p>Internet access and a compatible device are required for virtual chat and use of our online store. Instructions will be provided in the Welcome Email.</p>
           <p><strong>Client Conduct</strong></p>
           <p>We strive to provide compassionate and high-quality care and expect respectful communication in return. Disrespectful behavior may result in termination of membership without refund.</p>
+          <p><strong>Membership Scope</strong></p>
           <p>Membership supports proactive and routine care. Membership does not guarantee emergency availability.</p>
         </div>
 
