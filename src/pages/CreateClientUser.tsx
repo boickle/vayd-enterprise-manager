@@ -68,11 +68,13 @@ export default function CreateClientUser() {
   };
 
   const headingStyle: CSSProperties = {
-    margin: 0,
+    margin: '16px 0 0 0',
     fontFamily: '"Libre Baskerville", Georgia, serif',
-    fontSize: 'clamp(24px, 3.5vw, 48px)',
+    fontSize: 'clamp(20px, 2.8vw, 36px)',
     lineHeight: 1.08,
     color: '#0f172a',
+    textAlign: 'center',
+    width: '80%',
   };
 
   const introStyle: CSSProperties = {
@@ -90,6 +92,7 @@ export default function CreateClientUser() {
     flexDirection: 'column',
     gap: '28px',
     color: '#0f172a',
+    marginTop: '32px',
   };
 
   const labelStyle: CSSProperties = {
@@ -145,6 +148,8 @@ export default function CreateClientUser() {
   const logoContainerStyle: CSSProperties = {
     gridColumn: '1 / -1',
     display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
     justifyContent: 'center',
     marginBottom: '-120px',
   };
@@ -370,20 +375,36 @@ export default function CreateClientUser() {
           src="/final_thick_lines_cropped.jpeg"
           alt="Vet At Your Door logo"
         />
+        <h1 style={headingStyle}>
+          <span style={{ display: 'block', marginBottom: '8px' }}>First step to membership:</span>
+          Create your Client Portal Account.
+        </h1>
+        <hr style={{ width: '80%', border: 'none', borderTop: '1px solid #0f172a', margin: '24px 0 0 0' }} />
       </div>
       <section className="auth-hero">
-        <h1 style={headingStyle}>
-          Create Your
-          <br />
-          Client Portal
-          <br />
-          Account
-        </h1>
-        <p style={introStyle}>
-          Get started by entering the email address we have on file for your account. We'll send you
-          a secure link to complete your setup and access your pet's information and Membership
-          Plans.
-        </p>
+        <div style={{ ...introStyle, fontSize: 'clamp(16px, 1.8vw, 22px)' }}>
+          <p style={{ margin: '0 0 16px 0' }}>
+            This portal is for <strong>current Vet At Your Door clients only</strong>—those who have seen us before or who have an upcoming appointment scheduled.
+          </p>
+          <p style={{ margin: '0 0 16px 0' }}>
+            <strong>Get started by entering the email address we have on file for your account.</strong> We&apos;ll send you
+            a secure link to complete your setup and access your pet&apos;s information and Membership
+            Plans.
+          </p>
+          <p style={{ margin: '0 0 8px 0' }}>
+            <strong>New to Vet At Your Door?</strong>
+          </p>
+          <p style={{ margin: 0 }}>
+            Want to book your first appointment?{' '}
+            <a 
+              href="https://form.jotform.com/221585880190157" 
+              style={{ color: '#052940', textDecoration: 'underline', cursor: 'pointer' }}
+            >
+              Click here
+            </a>{' '}
+            to request an appointment.
+          </p>
+        </div>
       </section>
 
       <section className="auth-panel" style={panelStyle}>

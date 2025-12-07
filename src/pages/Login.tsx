@@ -72,15 +72,17 @@ export default function LoginPage() {
   };
 
   const headingStyle: CSSProperties = {
-    margin: 0,
+    margin: '0',
     fontFamily: '"Libre Baskerville", Georgia, serif',
-    fontSize: 'clamp(24px, 3.5vw, 48px)',
-    lineHeight: 1.08,
+    fontSize: 'clamp(20px, 2.8vw, 36px)',
+    lineHeight: 1.4,
     color: '#0f172a',
+    textAlign: 'center',
+    whiteSpace: 'nowrap',
   };
 
   const introStyle: CSSProperties = {
-    marginTop: '0px',
+    marginTop: '0',
     fontSize: 'clamp(18px, 2.1vw, 28px)',
     lineHeight: 1.4,
     maxWidth: 560,
@@ -94,6 +96,7 @@ export default function LoginPage() {
     flexDirection: 'column',
     gap: '28px',
     color: '#0f172a',
+    marginTop: '0',
   };
 
   const labelStyle: CSSProperties = {
@@ -147,8 +150,10 @@ export default function LoginPage() {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    marginBottom: '-120px',
+    justifyContent: 'center',
+    marginBottom: '0',
     width: '100%',
+    paddingBottom: '32px',
   };
 
   const logoStyle: CSSProperties = {
@@ -156,7 +161,7 @@ export default function LoginPage() {
     maxWidth: 360,
     height: 'auto',
     mixBlendMode: 'multiply',
-    marginBottom: '16px',
+    marginBottom: '24px',
     objectFit: 'contain',
   };
 
@@ -210,6 +215,7 @@ export default function LoginPage() {
         align-items: center;
         max-width: 100%;
         width: 100%;
+        padding-top: 40px !important;
       }
       .login-page .auth-hero h1 {
         padding-top: 50px !important;
@@ -244,6 +250,7 @@ export default function LoginPage() {
         align-items: center;
         max-width: 100%;
         width: 100%;
+        padding-top: 40px !important;
       }
       .login-page .auth-hero h1 {
         padding-top: 50px !important;
@@ -275,6 +282,7 @@ export default function LoginPage() {
       .login-page .auth-hero {
         align-items: center;
         width: 100%;
+        padding-top: 40px !important;
       }
       .login-page .auth-hero h1 {
         padding-top: 50px !important;
@@ -295,6 +303,9 @@ export default function LoginPage() {
       .login-page {
         padding: 24px 16px 32px !important;
         gap: 32px !important;
+      }
+      .login-page .auth-hero {
+        padding-top: 40px !important;
       }
       .login-page .auth-hero h1 {
         padding-top: 50px !important;
@@ -318,27 +329,35 @@ export default function LoginPage() {
       <style>{responsiveStyles}</style>
       <div className="auth-logo" style={logoContainerStyle}>
         <img style={logoStyle} src="/final_thick_lines_cropped.jpeg" alt="Vet At Your Door logo" />
-        {/* <h1 style={logoTextStyle}>Vet At Your Door</h1>
-        <p style={taglineStyle}>The Best Veterinary Care, at Home</p> */}
+        <h1 style={headingStyle}>
+          The Best Veterinary Care, at Home
+        </h1>
+        <hr style={{ width: '80%', border: 'none', borderTop: '1px solid #0f172a', margin: '24px 0 0 0' }} />
       </div>
       <section className="auth-hero">
-        <h1 style={headingStyle}>
-          The Best
-          <br />
-          Veterinary
-          <br />
-          Care, at Home
-        </h1>
         <p style={introStyle}>
           Welcome to your Vet At Your Door Membership experience where proactive care
           means the best care for your furry loved one. The simplicity of a plan with the benefits
           of membership.
         </p>
+        <div style={{ fontSize: 18, color: '#475569', maxWidth: 560 }}>
+          <div><strong>New to Vet At Your Door</strong>?</div>
+          <div style={{ marginTop: '8px' }}>
+            To become a client and unlock membership options,{' '}
+            <a 
+              href="https://form.jotform.com/221585880190157" 
+              style={{ color: '#052940', textDecoration: 'underline', cursor: 'pointer' }}
+            >
+              click here
+            </a>{' '}
+            to request your first appointment.
+          </div>
+        </div>
       </section>
 
       <section className="auth-panel" style={panelStyle}>
-        <div style={{ marginTop: '-16px' }}>
-          <div style={labelStyle}>Already a member? Login.</div>
+        <div style={{ marginTop: '0' }}>
+          <div style={labelStyle}><strong>Log in to your portal.</strong></div>
           <form
             onSubmit={onSubmit}
             style={{ display: 'flex', flexDirection: 'column', gap: 16 }}
@@ -378,23 +397,27 @@ export default function LoginPage() {
             <button style={loginButtonStyle} type="submit" disabled={submitting}>
               {submitting ? 'Logging in…' : 'Login'}
             </button>
+            <div style={{ fontSize: 16, color: '#475569', textAlign: 'left', marginTop: '4px' }}>
+              <Link to="/request-reset" state={{ email }} style={{ color: '#052940' }}>
+                Forgot password?
+              </Link>
+            </div>
           </form>
         </div>
 
         <div style={{ fontSize: 20, lineHeight: 1.4 }}>
-          <div>First time? Quickly create an account to view your pets&apos; information and</div>
-          <div>select their membership plan:</div>
+          <div><strong>Existing Vet At Your Door client</strong>?</div>
+          <div style={{ marginTop: '8px' }}>
+            If you&apos;ve already had an appointment with us or have one scheduled, create your portal account here using the email we have on file.
+          </div>
+          <div style={{ marginTop: '8px' }}>
+            Your client portal is the first step to enrolling in a membership.
+          </div>
         </div>
 
         <Link to="/create-client" style={secondaryButtonStyle}>
           Create User
         </Link>
-
-        <div style={{ fontSize: 16, color: '#475569' }}>
-          <Link to="/request-reset" state={{ email }} style={{ color: '#052940' }}>
-            Forgot password?
-          </Link>
-        </div>
       </section>
     </div>
   );
