@@ -9,7 +9,7 @@ import AuditAdminPage from './pages/AuditAdmin';
 import SimResults from './pages/SimResults';
 import MyMonth from './pages/MyMonth.';
 import MyDayToggle from './pages/MyDayToggle';
-import SlotFillerPage from './pages/SlotFiller';
+import FillDayPage from './pages/FillDay';
 
 // src/app-pages.ts
 export type AppPage = {
@@ -96,8 +96,8 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
     },
     {
       path: '/slot-filler',
-      label: 'Fill Reminders',
-      element: <SlotFillerPage />,
+      label: 'Fill Day',
+      element: <FillDayPage />,
       role: ['admin', 'superadmin'],
     },
   ];

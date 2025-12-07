@@ -68,3 +68,80 @@ export async function fetchEtas(payload: EtaRequest): Promise<EtaResult> {
     workStartIso: data?.workStartIso,
   };
 }
+
+// ---- Fill Day API ----
+export type FillDayRequest = {
+  doctorId: string;
+  targetDate: string; // YYYY-MM-DD
+  useTraffic?: boolean;
+  ignoreEmergencyBlocks?: boolean;
+  returnToDepot?: 'required' | 'optional' | 'afterHoursOk' | string | null;
+  tailOvertimeMinutes?: number | string | null;
+};
+
+export type FillDayReminder = {
+  id: number;
+  description: string;
+};
+
+export type FillDayAddress = {
+  address1: string;
+  address2?: string;
+  address3?: string;
+  city: string;
+  state: string;
+  zipcode: string;
+  fullAddress: string;
+};
+
+export type FillDayCandidate = {
+  // Multiple patients/reminders (arrays)
+  patientIds: number[];
+  patientNames: string[];
+  petCount: number;
+  reminderIds: number[];
+  reminderDescriptions: string[];
+  reminders: FillDayReminder[];
+  // Primary patient/reminder (for backward compatibility)
+  patientId: number;
+  patientName: string;
+  reminderId: number;
+  reminderDescription: string;
+  // Client info
+  clientId: number;
+  clientName: string;
+  address: FillDayAddress;
+  // Scheduling info
+  proposedStartIso: string;
+  proposedStartSec: number;
+  arrivalWindow: {
+    start: string;
+    end: string;
+  };
+  addedDriveSeconds: number;
+  addedDriveMinutes: number;
+  requiredDuration: number;
+  finalScore: number;
+  holeIndex: number;
+  myDayPreviewLink: string;
+};
+
+export type FillDayStats = {
+  holesFound: number;
+  candidatesEvaluated: number;
+  shortlistSize: number;
+  finalResults: number;
+};
+
+export type FillDayResponse = {
+  date: string;
+  doctorId: string;
+  candidates: FillDayCandidate[];
+  stats: FillDayStats;
+  message?: string;
+};
+
+export async function fetchFillDayCandidates(payload: FillDayRequest): Promise<FillDayResponse> {
+  const { data } = await http.post('/routing/fill-day', payload);
+  return data as FillDayResponse;
+}

@@ -67,7 +67,6 @@ export default function LoginPage() {
     alignItems: 'flex-start',
     gap: 0,
     padding: 'min(4vh, 40px) min(8vw, 96px) min(4vh, 40px)',
-    minHeight: '100vh',
     background: 'radial-gradient(1000px 600px at 20% -10%, #ecfff8 0%, transparent 60%), #f6fbf9',
   };
 
@@ -203,41 +202,6 @@ export default function LoginPage() {
       background: #4FB128 !important;
       color: #ffffff !important;
       border: 2px solid #4FB128 !important;
-    }
-    @media (max-height: 860px) {
-      .login-page {
-        grid-template-columns: 1fr !important;
-        padding: 40px 56px 40px !important;
-        gap: 48px !important;
-        text-align: center;
-      }
-      .login-page .auth-hero {
-        align-items: center;
-        max-width: 100%;
-        width: 100%;
-        padding-top: 40px !important;
-      }
-      .login-page .auth-hero h1 {
-        padding-top: 50px !important;
-      }
-    .login-page .auth-logo {
-        margin-bottom: -100px !important;
-      }
-      .login-page .auth-logo img {
-        width: min(280px, 50vw) !important;
-        max-width: 320px !important;
-      }
-      .login-page .auth-logo h1,
-      .login-page .auth-logo p {
-        text-align: center !important;
-      }
-      .login-page .auth-panel {
-        margin-left: 0 !important;
-        margin-right: 0 !important;
-        margin: 0 auto !important;
-        width: min(480px, 100%) !important;
-        max-width: 480px;
-      }
     }
     @media (max-width: 1024px) {
       .login-page {
