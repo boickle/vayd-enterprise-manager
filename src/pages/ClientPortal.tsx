@@ -2126,7 +2126,9 @@ export default function ClientPortal() {
                 </div>
                 <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid #e5e7eb' }}>
                   <a
-                    href="/routing"
+                    href="https://form.jotform.com/221585880190157"
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="cp-card"
                     style={{
                       display: 'flex',
