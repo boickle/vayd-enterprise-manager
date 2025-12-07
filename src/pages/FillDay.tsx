@@ -940,7 +940,7 @@ Vet At Your Door`;
           onClose={closeMyDay}
           serviceMinutes={Math.max(1, Math.round(previewCandidate.requiredDuration / 60))}
           newApptMeta={{
-            clientId: previewCandidate.clientId,
+            clientId: String(previewCandidate.clientId),
             address: previewCandidate.address?.fullAddress || 
               [previewCandidate.address?.address1, previewCandidate.address?.city, previewCandidate.address?.state, previewCandidate.address?.zipcode]
                 .filter(Boolean)
