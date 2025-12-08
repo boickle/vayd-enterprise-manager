@@ -92,6 +92,8 @@ export type FillDayAddress = {
   state: string;
   zipcode: string;
   fullAddress: string;
+  lat?: number; // Optional coordinates for routing - prevents virtual appointment from borrowing coordinates
+  lon?: number; // Optional coordinates for routing - prevents virtual appointment from borrowing coordinates
 };
 
 export type FillDayCandidate = {
@@ -110,6 +112,11 @@ export type FillDayCandidate = {
   // Client info
   clientId: number;
   clientName: string;
+  client?: {
+    lat?: number;
+    lon?: number;
+    [key: string]: any; // Allow other client fields
+  };
   address: FillDayAddress;
   // Scheduling info
   proposedStartIso: string;

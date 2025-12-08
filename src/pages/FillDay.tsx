@@ -29,10 +29,8 @@ export default function FillDayPage() {
   );
 
   // Options
-  const [useTraffic, setUseTraffic] = useState(true);
   const [ignoreEmergencyBlocks, setIgnoreEmergencyBlocks] = useState(false);
-  const [returnToDepot, setReturnToDepot] = useState<'required' | 'optional' | 'afterHoursOk'>('optional');
-  const [tailOvertimeMinutes, setTailOvertimeMinutes] = useState<number>(0);
+  const [includeOvertime, setIncludeOvertime] = useState(true); // Default true (120 min, afterHoursOk)
 
   // Results
   const [loading, setLoading] = useState(false);
@@ -108,10 +106,14 @@ export default function FillDayPage() {
       const request: FillDayRequest = {
         doctorId: selectedDoctorId,
         targetDate,
-        useTraffic,
         ignoreEmergencyBlocks,
-        returnToDepot,
-        tailOvertimeMinutes: tailOvertimeMinutes || 0,
+        // When includeOvertime is true, use afterHoursOk and 120 minutes (like Routing page)
+        ...(includeOvertime
+          ? {
+              returnToDepot: 'afterHoursOk' as const,
+              tailOvertimeMinutes: 120 as const,
+            }
+          : {}),
       };
 
       const response = await fetchFillDayCandidates(request);
@@ -145,6 +147,8 @@ export default function FillDayPage() {
   function formatSmsMessage(candidate: FillDayCandidate): string {
     const proposedTime = formatTime(candidate.proposedStartIso);
     const proposedDate = formatDate(candidate.proposedStartIso);
+    const arrivalWindowStart = formatTime(candidate.arrivalWindow.start);
+    const arrivalWindowEnd = formatTime(candidate.arrivalWindow.end);
     
     // Build reminders list
     const remindersList = candidate.reminders
@@ -152,20 +156,22 @@ export default function FillDayPage() {
         const petName = candidate.patientNames[idx] || candidate.patientName;
         return `${petName}: ${r.description}`;
       })
-      .join('\n');
+      .join('\n\n');
 
-    return `Hi ${candidate.clientName.split(' ')[0]}, 
+    // Use first pet name for the booking reference
+    const firstPetName = candidate.patientNames[0] || candidate.patientName;
 
-We have availability to see ${candidate.patientNames.length === 1 ? 'your pet' : 'your pets'} for ${candidate.patientNames.length === 1 ? 'their' : 'their'} overdue reminder${candidate.reminders.length > 1 ? 's' : ''}:
+    return `Hi ${candidate.clientName.split(' ')[0]},
+
+We have availability to see your pet for their overdue reminders:
 
 ${remindersList}
 
-Available appointment time:
-${proposedDate} at ${proposedTime}
+We would arrive on
 
-Please reply to this message or call us at 207-536-8387 to schedule.
+${proposedDate} at ${proposedTime} with an arrival window between ${arrivalWindowStart} - ${arrivalWindowEnd}.
 
-Vet At Your Door`;
+This spot is also being offered to other clients. If you'd like to book it for ${firstPetName}, please let us know as soon as possible by texting us or call us back here. Thanks, Vet At Your Door`;
   }
 
   // Handle opening SMS confirmation modal
@@ -295,10 +301,8 @@ Vet At Your Door`;
     // Calculate service minutes from requiredDuration
     const serviceMinutes = Math.round(candidate.requiredDuration / 60);
 
-    // Set up preview option
-    // Use holeIndex as insertionIndex - it represents which scheduling hole this fills
-    // Note: holeIndex might be 1-based, but insertionIndex should be 0-based for array insertion
-    // However, since appointments are re-sorted by time, the exact index is less critical
+    // Set up preview option - match EXACTLY how Routing.tsx does it
+    // holeIndex is 1-based from backend (first hole = 1), convert to 0-based for array insertion
     const insertionIndex = candidate.holeIndex != null ? Math.max(0, candidate.holeIndex - 1) : 0;
     
     // Ensure date is in YYYY-MM-DD format (no time component)
@@ -311,25 +315,37 @@ Vet At Your Door`;
       return;
     }
     
-    const option: PreviewMyDayOption = {
+    // Create option EXACTLY like Routing.tsx does - match the Winner/UnifiedOption structure
+    // Routing spreads the entire Winner object, so we need to include all available fields
+    const option: PreviewMyDayOption & { clientName?: string; currentDriveSeconds?: number } = {
       date: normalizedDate,
       insertionIndex: insertionIndex,
       suggestedStartIso: candidate.proposedStartIso,
-      doctorPimsId: internalId, // Use internal ID
+      doctorPimsId: internalId, // INTERNAL id (already resolved, like Routing does)
       doctorName: doctorName,
       projectedDriveSeconds: candidate.addedDriveSeconds,
+      currentDriveSeconds: candidate.addedDriveSeconds, // FillDay uses addedDriveSeconds for both
+      clientName: candidate.clientName, // Pass client name so virtual appointment shows correct name
+      // Note: Optional fields like workStartLocal, effectiveEndLocal, bookedServiceSeconds
+      // are not available from FillDayCandidate, but DoctorDay will work without them
     };
 
-    // Debug logging
+    // Debug logging - compare with Routing.tsx structure
     if (import.meta.env.DEV) {
-      console.log('Fill Day Preview Options:', {
+      console.log('Fill Day Preview Options (matching Routing.tsx structure):', {
         date: normalizedDate,
-        dateType: typeof normalizedDate,
         insertionIndex,
         suggestedStartIso: candidate.proposedStartIso,
-        doctorPimsId: internalId,
-        serviceMinutes: Math.round(candidate.requiredDuration / 60),
-        virtualApptWillHaveDate: normalizedDate, // This should match initialDate
+        doctorPimsId: internalId, // INTERNAL id
+        doctorName: doctorName,
+        projectedDriveSeconds: candidate.addedDriveSeconds,
+        currentDriveSeconds: candidate.addedDriveSeconds,
+        clientName: candidate.clientName,
+        clientId: candidate.clientId,
+        address: candidate.address?.fullAddress || 
+          [candidate.address?.address1, candidate.address?.city, candidate.address?.state, candidate.address?.zipcode]
+            .filter(Boolean)
+            .join(', '),
       });
     }
 
@@ -484,60 +500,19 @@ Vet At Your Door`;
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <input
                 type="checkbox"
-                checked={useTraffic}
-                onChange={(e) => setUseTraffic(e.target.checked)}
-              />
-              <span>Use Traffic-Aware Routing</span>
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <input
-                type="checkbox"
                 checked={ignoreEmergencyBlocks}
                 onChange={(e) => setIgnoreEmergencyBlocks(e.target.checked)}
               />
               <span>Ignore Emergency Blocks</span>
             </label>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
-            <div>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600 }}>
-                Return to Depot
-              </label>
-              <select
-                value={returnToDepot}
-                onChange={(e) => setReturnToDepot(e.target.value as any)}
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  border: '1px solid #ccc',
-                  borderRadius: '8px',
-                  fontSize: '16px',
-                }}
-              >
-                <option value="optional">Optional</option>
-                <option value="required">Required</option>
-                <option value="afterHoursOk">After Hours OK</option>
-              </select>
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600 }}>
-                Tail Overtime (minutes)
-              </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <input
-                type="number"
-                value={tailOvertimeMinutes}
-                onChange={(e) => setTailOvertimeMinutes(Number(e.target.value) || 0)}
-                min="0"
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  border: '1px solid #ccc',
-                  borderRadius: '8px',
-                  fontSize: '16px',
-                }}
+                type="checkbox"
+                checked={includeOvertime}
+                onChange={(e) => setIncludeOvertime(e.target.checked)}
               />
-            </div>
+              <span>Include Overtime</span>
+            </label>
           </div>
 
           {/* Fetch Button */}
@@ -684,9 +659,27 @@ Vet At Your Door`;
                 <div style={{ display: 'grid', gap: '12px' }}>
                   {candidate.patientNames.map((petName, petIdx) => {
                     const patientId = candidate.patientIds[petIdx];
-                    // For each pet, try to show its specific reminder if arrays are aligned
-                    // Otherwise show all reminders for the household
-                    const showAllReminders = candidate.reminderIds.length !== candidate.patientIds.length;
+                    // Each pet should only show its own reminders
+                    // Arrays are aligned by index: patientIds[i] corresponds to reminderIds[i] and reminders[i]
+                    // Get the reminder ID for this pet
+                    const petReminderId = candidate.reminderIds[petIdx];
+                    
+                    // Find reminders that belong to this pet
+                    // If arrays are aligned (same length), use index-based matching
+                    // Otherwise, match by reminder ID
+                    const petReminders = candidate.reminders.filter((reminder, reminderIdx) => {
+                      // If arrays are aligned by length, match by index
+                      if (candidate.reminderIds.length === candidate.patientIds.length) {
+                        return reminderIdx === petIdx;
+                      }
+                      // Otherwise, match by reminder ID
+                      return petReminderId !== undefined && reminder.id === petReminderId;
+                    });
+                    
+                    // Fallback: if no reminders found by filtering but reminder exists at this index, use it
+                    const reminderToShow = petReminders.length > 0 
+                      ? petReminders 
+                      : (candidate.reminders[petIdx] ? [candidate.reminders[petIdx]] : []);
                     
                     return (
                       <div
@@ -701,21 +694,13 @@ Vet At Your Door`;
                         <div style={{ fontWeight: 600, marginBottom: '8px', fontSize: '16px', color: '#111827' }}>
                           {petName}
                         </div>
-                        {candidate.reminders.length > 0 && (
+                        {reminderToShow.length > 0 && (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            {showAllReminders
-                              ? // Show all reminders for multi-pet households
-                                candidate.reminders.map((reminder) => (
-                                  <div key={reminder.id} style={{ fontSize: '14px', color: '#6b7280', paddingLeft: '8px' }}>
-                                    • {reminder.description}
-                                  </div>
-                                ))
-                              : // Show reminder at same index as pet (1:1 mapping)
-                                candidate.reminders[petIdx] && (
-                                  <div key={candidate.reminders[petIdx].id} style={{ fontSize: '14px', color: '#6b7280', paddingLeft: '8px' }}>
-                                    • {candidate.reminders[petIdx].description}
-                                  </div>
-                                )}
+                            {reminderToShow.map((reminder) => (
+                              <div key={reminder.id} style={{ fontSize: '14px', color: '#6b7280', paddingLeft: '8px' }}>
+                                • {reminder.description}
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>
@@ -940,16 +925,17 @@ Vet At Your Door`;
           onClose={closeMyDay}
           serviceMinutes={Math.max(1, Math.round(previewCandidate.requiredDuration / 60))}
           newApptMeta={{
+            // Match EXACTLY what Routing.tsx passes - only these 4 fields
             clientId: String(previewCandidate.clientId),
             address: previewCandidate.address?.fullAddress || 
               [previewCandidate.address?.address1, previewCandidate.address?.city, previewCandidate.address?.state, previewCandidate.address?.zipcode]
                 .filter(Boolean)
                 .join(', '),
-            lat: undefined, // Could be added if API provides coordinates
-            lon: undefined,
-            city: previewCandidate.address?.city,
-            state: previewCandidate.address?.state,
-            zip: previewCandidate.address?.zipcode,
+            // Use coordinates from client object if available - this prevents borrowing coordinates
+            // from existing appointments and ensures the virtual appointment is unique
+            lat: previewCandidate.client?.lat != null && Number.isFinite(previewCandidate.client.lat) ? previewCandidate.client.lat : undefined,
+            lon: previewCandidate.client?.lon != null && Number.isFinite(previewCandidate.client.lon) ? previewCandidate.client.lon : undefined,
+            // Note: PreviewMyDayModal will split the address to extract city/state/zip
           }}
         />
       )}

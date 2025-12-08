@@ -53,7 +53,7 @@ export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose
     insertionIndex: option.insertionIndex,
     suggestedStartIso: option.suggestedStartIso,
     serviceMinutes: Math.max(1, Math.floor(serviceMinutes)),
-    clientName: 'New Appointment',
+    clientName: (option as any).clientName || 'New Appointment', // Use clientName from option if provided (FillDay passes this)
     // coordinates (optional; DoctorDay will borrow a midpoint if missing)
     lat: Number.isFinite(newApptMeta?.lat) ? Number(newApptMeta!.lat) : undefined,
     lon: Number.isFinite(newApptMeta?.lon) ? Number(newApptMeta!.lon) : undefined,
