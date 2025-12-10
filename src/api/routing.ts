@@ -82,6 +82,7 @@ export type FillDayRequest = {
 export type FillDayReminder = {
   id: number;
   description: string;
+  dueDate?: string;
 };
 
 export type FillDayAddress = {
@@ -96,8 +97,22 @@ export type FillDayAddress = {
   lon?: number; // Optional coordinates for routing - prevents virtual appointment from borrowing coordinates
 };
 
+export type FillDayPatient = {
+  id: number;
+  name: string;
+  color?: string;
+  weight?: string;
+  dob?: string;
+  breed?: string;
+  species?: string;
+  alerts?: string | null;
+  reminders?: FillDayReminder[]; // Reminders nested directly in patient object
+  [key: string]: any; // Allow other patient fields
+};
+
 export type FillDayCandidate = {
   // Multiple patients/reminders (arrays)
+  patients?: FillDayPatient[];
   patientIds: number[];
   patientNames: string[];
   petCount: number;
@@ -115,6 +130,7 @@ export type FillDayCandidate = {
   client?: {
     lat?: number;
     lon?: number;
+    alerts?: string | null;
     [key: string]: any; // Allow other client fields
   };
   address: FillDayAddress;
