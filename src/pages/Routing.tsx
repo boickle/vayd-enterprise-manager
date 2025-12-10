@@ -1968,6 +1968,27 @@ export default function Routing() {
                       </div>
                     )}
 
+                    {/* Score display in top right corner */}
+                    {typeof (opt as any).score === 'number' && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: 10,
+                          right: 10,
+                          background: 'rgba(255, 255, 255, 0.9)',
+                          color: '#111827',
+                          padding: '4px 10px',
+                          borderRadius: '6px',
+                          fontWeight: 700,
+                          fontSize: '14px',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                          zIndex: 10,
+                        }}
+                      >
+                        Score: {(opt as any).score.toFixed(1)}
+                      </div>
+                    )}
+
                     <h3 style={{ margin: '6px 0 8px 0' }}>
                       {DateTime.fromISO(opt.date).toFormat('cccc LL-dd-yyyy')} @{' '}
                       {isoToTime(opt.suggestedStartIso)}
