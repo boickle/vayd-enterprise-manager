@@ -50,9 +50,35 @@ export default function FillDayPage() {
   const [sendWithOverride, setSendWithOverride] = useState(false);
 
   // Check if we're in production
-  // Vite provides import.meta.env.PROD (boolean) and import.meta.env.MODE
-  // Also check for custom VITE_IS_PROD env variable
-  const isProd = import.meta.env.VITE_IS_PROD === 'true' || import.meta.env.PROD === true || import.meta.env.MODE === 'production';
+  // Vite provides:
+  // - import.meta.env.PROD (boolean) - true when building with 'vite build' (default mode=production)
+  // - import.meta.env.MODE (string) - 'development', 'production', or custom mode set via --mode flag
+  // - Custom VITE_IS_PROD env variable (must be set in .env file or build environment)
+  // 
+  // To show the "Send to Actual Client" button on QA/staging:
+  // - Build with: npm run build -- --mode qa (or --mode staging, --mode development)
+  // - Or set VITE_IS_PROD=false in .env file or build environment
+  const viteIsProd = import.meta.env.VITE_IS_PROD === 'true';
+  const viteProd = import.meta.env.PROD === true;
+  const viteMode = import.meta.env.MODE;
+  const isProductionMode = viteMode === 'production';
+  
+  // Consider it production if:
+  // 1. VITE_IS_PROD is explicitly set to 'true', OR
+  // 2. MODE is explicitly 'production' (most reliable check)
+  // Note: We don't check PROD boolean alone because it can be inconsistent with custom modes
+  const isProd = viteIsProd || isProductionMode;
+  
+  // Debug logging - always log to help debug QA issues
+  console.log('[FillDay] Environment check:', {
+    VITE_IS_PROD: import.meta.env.VITE_IS_PROD,
+    PROD: import.meta.env.PROD,
+    MODE: import.meta.env.MODE,
+    viteIsProd,
+    viteProd,
+    isProductionMode,
+    finalIsProd: isProd,
+  });
 
   // Preview My Day Modal
   const [myDayOpen, setMyDayOpen] = useState(false);
