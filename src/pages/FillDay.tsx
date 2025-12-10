@@ -872,6 +872,22 @@ This spot is also being offered to other clients. If you'd like to book it for $
                               ⚠️ {patient.alerts}
                             </div>
                           )}
+                          
+                          {/* Last Seen Date */}
+                          {patient?.lastSeenDate && (
+                            <div style={{
+                              fontSize: '14px',
+                              color: '#6b7280',
+                              marginTop: '8px',
+                            }}>
+                              Last Seen: {(() => {
+                                const dt = DateTime.fromISO(patient.lastSeenDate);
+                                const formattedDate = dt.isValid ? dt.toFormat('MMM dd, yyyy') : patient.lastSeenDate;
+                                const appointmentType = patient.lastSeenAppointmentType ? ` - ${patient.lastSeenAppointmentType}` : '';
+                                return `${formattedDate}${appointmentType}`;
+                              })()}
+                            </div>
+                          )}
                         </div>
                         
                         {/* Reminders */}
