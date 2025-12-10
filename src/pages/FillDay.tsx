@@ -480,7 +480,7 @@ This spot is also being offered to other clients. If you'd like to book it for $
     <div className="container" style={{ padding: '24px', maxWidth: 1400 }}>
       <div style={{ marginBottom: '32px' }}>
         <h1 style={{ margin: '0 0 8px', fontSize: '28px', fontWeight: 700 }}>
-          Reminders Loader
+          Schedule Loader
         </h1>
         <p className="muted" style={{ margin: 0 }}>
           Find patients with overdue reminders to fill scheduling holes

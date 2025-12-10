@@ -96,7 +96,7 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
     },
     {
       path: '/slot-filler',
-      label: 'Reminders Loader',
+      label: 'Schedule Loader',
       element: <FillDayPage />,
       role: ['employee', 'admin', 'superadmin'],
     },
