@@ -82,6 +82,7 @@ export type FillDayRequest = {
 export type FillDayReminder = {
   id: number;
   description: string;
+  dueDate?: string;
 };
 
 export type FillDayAddress = {

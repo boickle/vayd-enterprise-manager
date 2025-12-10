@@ -8,6 +8,7 @@ import { fetchFillDayCandidates, type FillDayCandidate, type FillDayRequest, typ
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { useAuth } from '../auth/useAuth';
 import { PreviewMyDayModal, type PreviewMyDayOption } from '../components/PreviewMyDayModal';
+import { evetClientLink, evetPatientLink } from '../utils/evet';
 
 export default function FillDayPage() {
   const { userEmail } = useAuth();
@@ -181,7 +182,7 @@ export default function FillDayPage() {
     return ageInYears >= 0 ? ageInYears : null;
   }
 
-  // Format patient info in compact format: "15 yo Burmese (Feline)"
+  // Format patient info in compact format: "15 yo Burmese (Feline) 25 lbs"
   function formatPatientInfo(patient: any): string {
     const parts: string[] = [];
     
@@ -198,6 +199,10 @@ export default function FillDayPage() {
     
     if (patient?.species) {
       parts.push(`(${patient.species})`);
+    }
+    
+    if (patient?.weight) {
+      parts.push(`${patient.weight} lbs`);
     }
     
     return parts.join(' ');
@@ -612,7 +617,7 @@ This spot is also being offered to other clients. If you'd like to book it for $
                 checked={ignoreEmergencyBlocks}
                 onChange={(e) => setIgnoreEmergencyBlocks(e.target.checked)}
               />
-              <span>Ignore Emergency Blocks</span>
+              <span>Ignore Reserve Blocks</span>
             </label>
           </div>
 
@@ -729,9 +734,28 @@ This spot is also being offered to other clients. If you'd like to book it for $
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid #e5e7eb' }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                    <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>
-                      {candidate.clientName}
-                    </h3>
+                    {(() => {
+                      const clientPimsId = (candidate.client as any)?.pimsId || (candidate as any)?.clientPimsId;
+                      const clientHref = clientPimsId ? evetClientLink(clientPimsId) : undefined;
+                      return clientHref ? (
+                        <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>
+                          <a
+                            href={clientHref}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{ color: 'inherit', textDecoration: 'none' }}
+                            onMouseEnter={(e) => (e.currentTarget.style.textDecoration = 'underline')}
+                            onMouseLeave={(e) => (e.currentTarget.style.textDecoration = 'none')}
+                          >
+                            {candidate.clientName}
+                          </a>
+                        </h3>
+                      ) : (
+                        <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>
+                          {candidate.clientName}
+                        </h3>
+                      );
+                    })()}
                     {candidate.client?.alerts && (
                       <div style={{
                         padding: '4px 8px',
@@ -804,9 +828,28 @@ This spot is also being offered to other clients. If you'd like to book it for $
                         {/* Patient Name and Info */}
                         <div style={{ marginBottom: '12px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                            <div style={{ fontWeight: 600, fontSize: '18px', color: '#111827' }}>
-                              {petName}
-                            </div>
+                            {(() => {
+                              const patientPimsId = patient?.pimsId || (patient as any)?.pimsId;
+                              const patientHref = patientPimsId ? evetPatientLink(patientPimsId) : undefined;
+                              return patientHref ? (
+                                <div style={{ fontWeight: 600, fontSize: '18px', color: '#111827' }}>
+                                  <a
+                                    href={patientHref}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    style={{ color: 'inherit', textDecoration: 'none' }}
+                                    onMouseEnter={(e) => (e.currentTarget.style.textDecoration = 'underline')}
+                                    onMouseLeave={(e) => (e.currentTarget.style.textDecoration = 'none')}
+                                  >
+                                    {petName}
+                                  </a>
+                                </div>
+                              ) : (
+                                <div style={{ fontWeight: 600, fontSize: '18px', color: '#111827' }}>
+                                  {petName}
+                                </div>
+                              );
+                            })()}
                             {patient && formatPatientInfo(patient) && (
                               <div style={{ fontSize: '14px', color: '#6b7280' }}>
                                 {formatPatientInfo(patient)}
@@ -838,11 +881,24 @@ This spot is also being offered to other clients. If you'd like to book it for $
                               Overdue Reminders:
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                              {reminderToShow.map((reminder) => (
-                                <div key={reminder.id} style={{ fontSize: '14px', color: '#111827', paddingLeft: '8px' }}>
-                                  • {reminder.description}
-                                </div>
-                              ))}
+                              {reminderToShow.map((reminder) => {
+                                const dueDateFormatted = reminder.dueDate
+                                  ? (() => {
+                                      const dt = DateTime.fromISO(reminder.dueDate);
+                                      return dt.isValid ? dt.toFormat('MMM dd, yyyy') : reminder.dueDate;
+                                    })()
+                                  : null;
+                                return (
+                                  <div key={reminder.id} style={{ fontSize: '14px', color: '#111827', paddingLeft: '8px' }}>
+                                    • {reminder.description}
+                                    {dueDateFormatted && (
+                                      <span style={{ color: '#6b7280', marginLeft: '8px' }}>
+                                        (Due: {dueDateFormatted})
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         )}
