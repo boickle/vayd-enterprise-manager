@@ -29,8 +29,7 @@ export default function FillDayPage() {
   );
 
   // Options
-  const [ignoreEmergencyBlocks, setIgnoreEmergencyBlocks] = useState(false);
-  const [includeOvertime, setIncludeOvertime] = useState(true); // Default true (120 min, afterHoursOk)
+  const [ignoreEmergencyBlocks, setIgnoreEmergencyBlocks] = useState(true);
 
   // Results
   const [loading, setLoading] = useState(false);
@@ -48,6 +47,12 @@ export default function FillDayPage() {
   const [smsModalOpen, setSmsModalOpen] = useState(false);
   const [pendingSmsCandidate, setPendingSmsCandidate] = useState<FillDayCandidate | null>(null);
   const [smsMessagePreview, setSmsMessagePreview] = useState<string>('');
+  const [sendWithOverride, setSendWithOverride] = useState(false);
+
+  // Check if we're in production
+  // Vite provides import.meta.env.PROD (boolean) and import.meta.env.MODE
+  // Also check for custom VITE_IS_PROD env variable
+  const isProd = import.meta.env.VITE_IS_PROD === 'true' || import.meta.env.PROD === true || import.meta.env.MODE === 'production';
 
   // Preview My Day Modal
   const [myDayOpen, setMyDayOpen] = useState(false);
@@ -107,13 +112,9 @@ export default function FillDayPage() {
         doctorId: selectedDoctorId,
         targetDate,
         ignoreEmergencyBlocks,
-        // When includeOvertime is true, use afterHoursOk and 120 minutes (like Routing page)
-        ...(includeOvertime
-          ? {
-              returnToDepot: 'afterHoursOk' as const,
-              tailOvertimeMinutes: 120 as const,
-            }
-          : {}),
+        // Always include overtime (120 min, afterHoursOk)
+        returnToDepot: 'afterHoursOk' as const,
+        tailOvertimeMinutes: 120 as const,
       };
 
       const response = await fetchFillDayCandidates(request);
@@ -143,6 +144,39 @@ export default function FillDayPage() {
     return dt.toFormat('EEE, MMM dd, yyyy');
   }
 
+  // Calculate age from DOB (returns just the number for compact display)
+  function calculateAge(dob: string): number | null {
+    const dobDate = DateTime.fromISO(dob);
+    if (!dobDate.isValid) {
+      return null;
+    }
+    const now = DateTime.now();
+    const ageInYears = Math.floor(now.diff(dobDate, 'years').years);
+    return ageInYears >= 0 ? ageInYears : null;
+  }
+
+  // Format patient info in compact format: "15 yo Burmese (Feline)"
+  function formatPatientInfo(patient: any): string {
+    const parts: string[] = [];
+    
+    if (patient?.dob) {
+      const age = calculateAge(patient.dob);
+      if (age !== null) {
+        parts.push(`${age} yo`);
+      }
+    }
+    
+    if (patient?.breed) {
+      parts.push(patient.breed);
+    }
+    
+    if (patient?.species) {
+      parts.push(`(${patient.species})`);
+    }
+    
+    return parts.join(' ');
+  }
+
   // Format SMS message
   function formatSmsMessage(candidate: FillDayCandidate): string {
     const proposedTime = formatTime(candidate.proposedStartIso);
@@ -150,11 +184,50 @@ export default function FillDayPage() {
     const arrivalWindowStart = formatTime(candidate.arrivalWindow.start);
     const arrivalWindowEnd = formatTime(candidate.arrivalWindow.end);
     
-    // Build reminders list
-    const remindersList = candidate.reminders
-      .map((r, idx) => {
-        const petName = candidate.patientNames[idx] || candidate.patientName;
-        return `${petName}: ${r.description}`;
+    // Group reminders by pet name using nested reminders structure
+    const remindersByPet = new Map<string, string[]>();
+    
+    // Use the new structure: each patient has its own reminders array
+    if (candidate.patients && candidate.patients.length > 0) {
+      candidate.patients.forEach((patient) => {
+        const petName = patient.name;
+        if (patient.reminders && patient.reminders.length > 0) {
+          const reminderDescriptions = patient.reminders.map(r => r.description);
+          remindersByPet.set(petName, reminderDescriptions);
+        }
+      });
+    } else {
+      // Fallback to old structure if patients array not available
+      candidate.patientNames.forEach((petName) => {
+        if (!remindersByPet.has(petName)) {
+          remindersByPet.set(petName, []);
+        }
+      });
+      
+      // Match reminders to pets using old logic
+      candidate.reminders.forEach((reminder) => {
+        const reminderIdx = candidate.reminderIds.findIndex(id => id === reminder.id);
+        
+        if (reminderIdx >= 0 && reminderIdx < candidate.patientIds.length) {
+          const petName = candidate.patientNames[reminderIdx] || candidate.patientName;
+          if (remindersByPet.has(petName)) {
+            remindersByPet.get(petName)!.push(reminder.description);
+          }
+        } else if (candidate.patientNames.length > 0) {
+          const firstPetName = candidate.patientNames[0] || candidate.patientName;
+          if (remindersByPet.has(firstPetName)) {
+            remindersByPet.get(firstPetName)!.push(reminder.description);
+          }
+        }
+      });
+    }
+    
+    // Build consolidated reminders list: "Pet:\n- reminder1\n- reminder2"
+    const remindersList = Array.from(remindersByPet.entries())
+      .filter(([_, reminders]) => reminders.length > 0) // Only include pets with reminders
+      .map(([petName, reminders]) => {
+        const reminderLines = reminders.map(reminder => `- ${reminder}`).join('\n');
+        return `${petName}:\n${reminderLines}`;
       })
       .join('\n\n');
 
@@ -175,13 +248,14 @@ This spot is also being offered to other clients. If you'd like to book it for $
   }
 
   // Handle opening SMS confirmation modal
-  function handleOpenSmsModal(candidate: FillDayCandidate) {
+  function handleOpenSmsModal(candidate: FillDayCandidate, withOverride: boolean = false) {
     try {
       console.log('Opening SMS modal for candidate:', candidate);
       const message = formatSmsMessage(candidate);
       console.log('Formatted message:', message);
       setSmsMessagePreview(message);
       setPendingSmsCandidate(candidate);
+      setSendWithOverride(withOverride);
       setSmsModalOpen(true);
       console.log('Modal state set to open, smsModalOpen should be true');
     } catch (error) {
@@ -195,21 +269,29 @@ This spot is also being offered to other clients. If you'd like to book it for $
     setSmsModalOpen(false);
     setPendingSmsCandidate(null);
     setSmsMessagePreview('');
+    setSendWithOverride(false);
   }
 
   // Handle sending SMS to client (after approval)
-  async function handleSendSms(candidate: FillDayCandidate) {
+  async function handleSendSms(candidate: FillDayCandidate, overrideNonProd: boolean = false, customMessage?: string) {
     const clientId = candidate.clientId;
     setSendingSms((prev) => ({ ...prev, [clientId]: true }));
     setSmsError((prev) => ({ ...prev, [clientId]: null }));
     setSmsSuccess((prev) => ({ ...prev, [clientId]: false }));
 
     try {
-      const smsMessage = formatSmsMessage(candidate);
+      // Use custom message if provided (from modal), otherwise use formatted message
+      const smsMessage = customMessage || formatSmsMessage(candidate);
 
-      await http.post(`/sms/client/${clientId}`, {
+      const payload: { message: string; overrideNonProd?: boolean } = {
         message: smsMessage,
-      });
+      };
+
+      if (overrideNonProd) {
+        payload.overrideNonProd = true;
+      }
+
+      await http.post(`/sms/client/${clientId}`, payload);
 
       setSmsSuccess((prev) => ({ ...prev, [clientId]: true }));
       handleCloseSmsModal();
@@ -237,7 +319,8 @@ This spot is also being offered to other clients. If you'd like to book it for $
   // Handle approve and send
   function handleApproveAndSend() {
     if (pendingSmsCandidate) {
-      handleSendSms(pendingSmsCandidate);
+      // Use the current message preview (which may have been edited)
+      handleSendSms(pendingSmsCandidate, sendWithOverride, smsMessagePreview);
     }
   }
 
@@ -371,7 +454,7 @@ This spot is also being offered to other clients. If you'd like to book it for $
     <div className="container" style={{ padding: '24px', maxWidth: 1400 }}>
       <div style={{ marginBottom: '32px' }}>
         <h1 style={{ margin: '0 0 8px', fontSize: '28px', fontWeight: 700 }}>
-          Fill Day
+          Reminders Loader
         </h1>
         <p className="muted" style={{ margin: 0 }}>
           Find patients with overdue reminders to fill scheduling holes
@@ -505,14 +588,6 @@ This spot is also being offered to other clients. If you'd like to book it for $
               />
               <span>Ignore Emergency Blocks</span>
             </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <input
-                type="checkbox"
-                checked={includeOvertime}
-                onChange={(e) => setIncludeOvertime(e.target.checked)}
-              />
-              <span>Include Overtime</span>
-            </label>
           </div>
 
           {/* Fetch Button */}
@@ -627,9 +702,24 @@ This spot is also being offered to other clients. If you'd like to book it for $
               {/* Client Header */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid #e5e7eb' }}>
                 <div style={{ flex: 1 }}>
-                  <h3 style={{ margin: '0 0 8px', fontSize: '20px', fontWeight: 600 }}>
-                    {candidate.clientName}
-                  </h3>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                    <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>
+                      {candidate.clientName}
+                    </h3>
+                    {candidate.client?.alerts && (
+                      <div style={{
+                        padding: '4px 8px',
+                        background: '#fef3c7',
+                        border: '1px solid #fbbf24',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        color: '#92400e',
+                        fontWeight: 600,
+                      }}>
+                        ⚠️ {candidate.client.alerts}
+                      </div>
+                    )}
+                  </div>
                   {candidate.address?.fullAddress && (
                     <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '4px' }}>
                       {candidate.address.fullAddress}
@@ -659,48 +749,75 @@ This spot is also being offered to other clients. If you'd like to book it for $
                 <div style={{ display: 'grid', gap: '12px' }}>
                   {candidate.patientNames.map((petName, petIdx) => {
                     const patientId = candidate.patientIds[petIdx];
-                    // Each pet should only show its own reminders
-                    // Arrays are aligned by index: patientIds[i] corresponds to reminderIds[i] and reminders[i]
-                    // Get the reminder ID for this pet
-                    const petReminderId = candidate.reminderIds[petIdx];
+                    // Get full patient object if available
+                    const patient = candidate.patients?.[petIdx];
                     
-                    // Find reminders that belong to this pet
-                    // If arrays are aligned (same length), use index-based matching
-                    // Otherwise, match by reminder ID
-                    const petReminders = candidate.reminders.filter((reminder, reminderIdx) => {
-                      // If arrays are aligned by length, match by index
-                      if (candidate.reminderIds.length === candidate.patientIds.length) {
-                        return reminderIdx === petIdx;
-                      }
-                      // Otherwise, match by reminder ID
-                      return petReminderId !== undefined && reminder.id === petReminderId;
-                    });
-                    
-                    // Fallback: if no reminders found by filtering but reminder exists at this index, use it
-                    const reminderToShow = petReminders.length > 0 
-                      ? petReminders 
-                      : (candidate.reminders[petIdx] ? [candidate.reminders[petIdx]] : []);
+                    // Get reminders directly from patient object (new structure)
+                    // Fallback to candidate.reminders if patient.reminders not available
+                    const reminderToShow = patient?.reminders && patient.reminders.length > 0
+                      ? patient.reminders
+                      : candidate.reminders.filter((reminder) => {
+                          // Fallback: try to match by reminderIds if patient.reminders not available
+                          const reminderIdx = candidate.reminderIds.findIndex(id => id === reminder.id);
+                          if (candidate.patientIds.length === 1) {
+                            return petIdx === 0;
+                          }
+                          return reminderIdx === petIdx || (reminderIdx < 0 && petIdx === 0);
+                        });
                     
                     return (
                       <div
                         key={`${patientId}-${petIdx}`}
                         style={{
-                          padding: '12px',
+                          padding: '16px',
                           background: '#fef2f2',
                           border: '1px solid #fecaca',
-                          borderRadius: '6px',
+                          borderRadius: '8px',
                         }}
                       >
-                        <div style={{ fontWeight: 600, marginBottom: '8px', fontSize: '16px', color: '#111827' }}>
-                          {petName}
-                        </div>
-                        {reminderToShow.length > 0 && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            {reminderToShow.map((reminder) => (
-                              <div key={reminder.id} style={{ fontSize: '14px', color: '#6b7280', paddingLeft: '8px' }}>
-                                • {reminder.description}
+                        {/* Patient Name and Info */}
+                        <div style={{ marginBottom: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                            <div style={{ fontWeight: 600, fontSize: '18px', color: '#111827' }}>
+                              {petName}
+                            </div>
+                            {patient && formatPatientInfo(patient) && (
+                              <div style={{ fontSize: '14px', color: '#6b7280' }}>
+                                {formatPatientInfo(patient)}
                               </div>
-                            ))}
+                            )}
+                          </div>
+                          
+                          {/* Patient Alerts */}
+                          {patient?.alerts && (
+                            <div style={{
+                              padding: '4px 8px',
+                              background: '#fef3c7',
+                              border: '1px solid #fbbf24',
+                              borderRadius: '4px',
+                              fontSize: '12px',
+                              color: '#92400e',
+                              fontWeight: 600,
+                              marginBottom: '8px',
+                            }}>
+                              ⚠️ {patient.alerts}
+                            </div>
+                          )}
+                        </div>
+                        
+                        {/* Reminders */}
+                        {reminderToShow.length > 0 && (
+                          <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #fecaca' }}>
+                            <div style={{ fontSize: '12px', fontWeight: 600, color: '#6b7280', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                              Overdue Reminders:
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              {reminderToShow.map((reminder) => (
+                                <div key={reminder.id} style={{ fontSize: '14px', color: '#111827', paddingLeft: '8px' }}>
+                                  • {reminder.description}
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -769,14 +886,14 @@ This spot is also being offered to other clients. If you'd like to book it for $
                 </div>
               )}
 
-              <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
+              <div style={{ display: 'flex', gap: '12px', marginTop: '16px', flexWrap: 'wrap' }}>
                 <button
                   type="button"
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     console.log('Button clicked for candidate:', candidate.clientId);
-                    handleOpenSmsModal(candidate);
+                    handleOpenSmsModal(candidate, false);
                   }}
                   disabled={sendingSms[candidate.clientId]}
                   style={{
@@ -792,6 +909,30 @@ This spot is also being offered to other clients. If you'd like to book it for $
                 >
                   {sendingSms[candidate.clientId] ? 'Sending...' : 'Send Text To Client'}
                 </button>
+                {!isProd && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      console.log('Button clicked for candidate (override):', candidate.clientId);
+                      handleOpenSmsModal(candidate, true);
+                    }}
+                    disabled={sendingSms[candidate.clientId]}
+                    style={{
+                      padding: '10px 20px',
+                      background: sendingSms[candidate.clientId] ? '#ccc' : '#f59e0b',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      cursor: sendingSms[candidate.clientId] ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {sendingSms[candidate.clientId] ? 'Sending...' : 'Send to Actual Client'}
+                  </button>
+                )}
                 <button
                   onClick={() => handlePreviewMyDay(candidate)}
                   style={{
@@ -852,30 +993,36 @@ This spot is also being offered to other clients. If you'd like to book it for $
               <p style={{ margin: 0, color: '#6b7280', fontSize: '14px' }}>
                 Review the message before sending to {pendingSmsCandidate.clientName}
               </p>
+              {sendWithOverride && (
+                <p style={{ margin: '8px 0 0', color: '#f59e0b', fontSize: '14px', fontWeight: 600 }}>
+                  ⚠️ This will send to the actual client (overrideNonProd: true)
+                </p>
+              )}
             </div>
 
-            <div
-              style={{
-                padding: '16px',
-                background: '#f9fafb',
-                border: '1px solid #e5e7eb',
-                borderRadius: '8px',
-                marginBottom: '20px',
-                maxHeight: '400px',
-                overflow: 'auto',
-              }}
-            >
-              <div
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 600, color: '#111827' }}>
+                Message:
+              </label>
+              <textarea
+                value={smsMessagePreview}
+                onChange={(e) => setSmsMessagePreview(e.target.value)}
                 style={{
-                  whiteSpace: 'pre-wrap',
+                  width: '100%',
+                  minHeight: '200px',
+                  padding: '12px',
+                  background: '#f9fafb',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '8px',
                   fontFamily: 'monospace',
                   fontSize: '14px',
                   lineHeight: 1.6,
                   color: '#111827',
+                  resize: 'vertical',
+                  whiteSpace: 'pre-wrap',
                 }}
-              >
-                {smsMessagePreview}
-              </div>
+                placeholder="Enter your message here..."
+              />
             </div>
 
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
