@@ -107,6 +107,8 @@ export type FillDayPatient = {
   species?: string;
   alerts?: string | null;
   reminders?: FillDayReminder[]; // Reminders nested directly in patient object
+  lastSeenDate?: string;
+  lastSeenAppointmentType?: string;
   [key: string]: any; // Allow other patient fields
 };
 
