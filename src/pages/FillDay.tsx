@@ -9,6 +9,7 @@ import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { useAuth } from '../auth/useAuth';
 import { PreviewMyDayModal, type PreviewMyDayOption } from '../components/PreviewMyDayModal';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
+import { fetchClientMessages, type ClientMessagesResponse } from '../api/clientPortal';
 
 export default function FillDayPage() {
   const { userEmail } = useAuth();
@@ -86,6 +87,14 @@ export default function FillDayPage() {
   const [previewOpt, setPreviewOpt] = useState<PreviewMyDayOption | null>(null);
   const [previewCandidate, setPreviewCandidate] = useState<FillDayCandidate | null>(null);
   const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({});
+
+  // Messages History Modal
+  const [messagesModalOpen, setMessagesModalOpen] = useState(false);
+  const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
+  const [messagesData, setMessagesData] = useState<ClientMessagesResponse | null>(null);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [messagesError, setMessagesError] = useState<string | null>(null);
+  const [messageCounts, setMessageCounts] = useState<Record<number, number>>({});
 
   // Load providers
   useEffect(() => {
@@ -474,6 +483,38 @@ This spot is also being offered to other clients. If you'd like to book it for $
     setPreviewCandidate(null);
   }
 
+  // Handle opening Messages History modal
+  async function handleOpenMessagesModal(clientId: number) {
+    setSelectedClientId(clientId);
+    setMessagesModalOpen(true);
+    setMessagesLoading(true);
+    setMessagesError(null);
+    setMessagesData(null);
+
+    try {
+      const data = await fetchClientMessages(clientId);
+      // Cache the total message count
+      setMessageCounts((prev) => ({ ...prev, [clientId]: data.totalMessages }));
+      // Limit to 50 messages as specified
+      const limitedMessages = {
+        ...data,
+        messages: data.messages.slice(0, 50),
+      };
+      setMessagesData(limitedMessages);
+    } catch (e: any) {
+      setMessagesError(e?.response?.data?.message || e?.message || 'Failed to load messages');
+    } finally {
+      setMessagesLoading(false);
+    }
+  }
+
+  function handleCloseMessagesModal() {
+    setMessagesModalOpen(false);
+    setSelectedClientId(null);
+    setMessagesData(null);
+    setMessagesError(null);
+  }
+
   // Debug: Log modal state changes
   useEffect(() => {
     if (import.meta.env.DEV) {
@@ -785,9 +826,39 @@ This spot is also being offered to other clients. If you'd like to book it for $
                   <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '4px' }}>
                     Hole #{candidate.holeIndex}
                   </div>
-                  <div style={{ fontSize: '18px', fontWeight: 700, color: '#4FB128' }}>
+                  <div style={{ fontSize: '18px', fontWeight: 700, color: '#4FB128', marginBottom: '8px' }}>
                     Score: {candidate.finalScore.toFixed(1)}
                   </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenMessagesModal(candidate.clientId);
+                    }}
+                    style={{
+                      fontSize: '14px',
+                      color: '#4FB128',
+                      background: 'transparent',
+                      border: '1px solid #4FB128',
+                      borderRadius: '6px',
+                      padding: '6px 12px',
+                      cursor: 'pointer',
+                      fontWeight: 500,
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = '#f0f7f4';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent';
+                    }}
+                  >
+                    Messages History
+                    {messageCounts[candidate.clientId] !== undefined && (
+                      <span style={{ marginLeft: '6px', fontWeight: 600 }}>
+                        ({messageCounts[candidate.clientId]})
+                      </span>
+                    )}
+                  </button>
                 </div>
               </div>
 
@@ -1183,6 +1254,142 @@ This spot is also being offered to other clients. If you'd like to book it for $
             // Note: PreviewMyDayModal will split the address to extract city/state/zip
           }}
         />
+      )}
+
+      {/* Messages History Modal */}
+      {messagesModalOpen && typeof document !== 'undefined' && document.body && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={handleCloseMessagesModal}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: 16,
+          }}
+        >
+          <div
+            className="card"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 'min(800px, 90vw)',
+              maxHeight: '90vh',
+              overflow: 'auto',
+              padding: '24px',
+              borderRadius: '12px',
+              background: '#fff',
+            }}
+          >
+            <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <h3 style={{ margin: '0 0 8px', fontSize: '20px', fontWeight: 600 }}>
+                  Messages History
+                </h3>
+                {messagesData && (
+                  <p style={{ margin: 0, color: '#6b7280', fontSize: '14px' }}>
+                    {messagesData.totalMessages} {messagesData.totalMessages === 1 ? 'message' : 'messages'} total
+                    {messagesData.totalMessages > 50 && ' (showing most recent 50)'}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={handleCloseMessagesModal}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  fontSize: '24px',
+                  cursor: 'pointer',
+                  color: '#6b7280',
+                  padding: '0',
+                  width: '32px',
+                  height: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            {messagesLoading && (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                Loading messages...
+              </div>
+            )}
+
+            {messagesError && (
+              <div
+                style={{
+                  padding: '16px',
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  borderRadius: '8px',
+                  color: '#dc2626',
+                  marginBottom: '16px',
+                }}
+              >
+                <strong>Error:</strong> {messagesError}
+              </div>
+            )}
+
+            {messagesData && !messagesLoading && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {messagesData.messages.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                    No messages found for this client.
+                  </div>
+                ) : (
+                  messagesData.messages.map((message) => {
+                    const isIncoming = message.direction === 'incoming';
+                    const createdAt = DateTime.fromISO(message.createdAt);
+                    const formattedDate = createdAt.isValid
+                      ? createdAt.toFormat('MMM dd, yyyy h:mm a')
+                      : message.createdAt;
+
+                    return (
+                      <div
+                        key={message.id}
+                        style={{
+                          padding: '16px',
+                          background: isIncoming ? '#f0f7f4' : '#f9fafb',
+                          border: `1px solid ${isIncoming ? '#4FB128' : '#e5e7eb'}`,
+                          borderRadius: '8px',
+                          borderLeft: `4px solid ${isIncoming ? '#4FB128' : '#6b7280'}`,
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                          <div style={{ fontSize: '12px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            {isIncoming ? '📥 Incoming' : '📤 Outgoing'}
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                            {formattedDate}
+                          </div>
+                        </div>
+                        <div style={{ fontSize: '14px', color: '#111827', marginBottom: '8px', whiteSpace: 'pre-wrap' }}>
+                          {message.content}
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#9ca3af' }}>
+                          {isIncoming ? `From: ${message.from}` : `To: ${Array.isArray(message.to) ? message.to.join(', ') : message.to}`}
+                          {message.status && ` · Status: ${message.status}`}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );
