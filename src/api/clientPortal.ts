@@ -537,3 +537,27 @@ export async function fetchClientReminders(): Promise<ClientReminder[]> {
     return ta - tb;
   });
 }
+
+// Message types
+export type Message = {
+  id: string;
+  content: string;
+  from: string;
+  to: string | string[]; // Can be a string or array of strings
+  direction: 'incoming' | 'outgoing';
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ClientMessagesResponse = {
+  clientId: number;
+  phoneNumber: string;
+  totalMessages: number;
+  messages: Message[];
+};
+
+export async function fetchClientMessages(clientId: number | string): Promise<ClientMessagesResponse> {
+  const { data } = await http.get(`/messages/client/${encodeURIComponent(clientId)}`);
+  return data;
+}
