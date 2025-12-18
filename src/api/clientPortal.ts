@@ -2,6 +2,22 @@
 import { http } from './http';
 
 /** ---------- Types ---------- **/
+export type Vaccination = {
+  id: number;
+  vaccineName: string;
+  dateVaccinated: string; // ISO date string
+  nextVaccinationDate?: string | null; // ISO date string
+  vaccineExpiration?: string | null; // ISO date string
+  tagNumber?: string | null;
+  lotNumber?: string | null;
+  manufacturer?: string | null;
+  veterinarianName?: string | null;
+  veterinarianLicense?: string | null;
+  practiceName?: string | null;
+  status: string; // e.g., "up to date", "expired"
+  isCurrent: boolean;
+};
+
 export type Pet = {
   /** External-facing identifier you already use in the UI (historically PIMS-first). */
   id: string; // prefer PIMS id when available
@@ -16,6 +32,8 @@ export type Pet = {
   primaryProviderName?: string | null;
   /** Pet image URL (uploaded by user) */
   photoUrl?: string | null;
+  /** Vaccinations for this pet */
+  vaccinations?: Vaccination[];
 
   /** Optional: attached from /wellness-plans?patientId=<DB id> */
   wellnessPlans?: WellnessPlan[];
@@ -315,6 +333,21 @@ export async function fetchClientPets(): Promise<Pet[]> {
           : undefined,
         primaryProviderName: normalizeProviderName(p) ?? null,
         photoUrl: p?.photoUrl ?? p?.imageUrl ?? p?.image_url ?? null,
+        vaccinations: Array.isArray(p?.vaccinations) ? p.vaccinations.map((v: any) => ({
+          id: v?.id ?? 0,
+          vaccineName: v?.vaccineName ?? '',
+          dateVaccinated: v?.dateVaccinated ?? '',
+          nextVaccinationDate: v?.nextVaccinationDate ?? null,
+          vaccineExpiration: v?.vaccineExpiration ?? null,
+          tagNumber: v?.tagNumber ?? null,
+          lotNumber: v?.lotNumber ?? null,
+          manufacturer: v?.manufacturer ?? null,
+          veterinarianName: v?.veterinarianName ?? null,
+          veterinarianLicense: v?.veterinarianLicense ?? null,
+          practiceName: v?.practiceName ?? null,
+          status: v?.status ?? '',
+          isCurrent: v?.isCurrent ?? false,
+        })) : undefined,
       })) as Pet[];
     }
   } catch {
