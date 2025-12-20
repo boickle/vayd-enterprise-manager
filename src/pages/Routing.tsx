@@ -43,6 +43,7 @@ type Winner = {
 
   // NEW — preference metadata from backend
   prefScore?: number;
+  score?: number;
   slot?: Slot | null;
   isFirstEdge?: boolean;
   isLastEdge?: boolean;
@@ -1805,11 +1806,16 @@ export default function Routing() {
         <h3 style={{ marginTop: 0 }}>Results</h3>
 
         {result && latestRoutingRequestId && (
-          <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-            Routing request ID:{' '}
-            <code style={{ fontFamily: 'monospace', fontSize: 12 }}>
-              {latestRoutingRequestId}
-            </code>
+          <div style={{ marginBottom: 8 }}>
+            <div className="muted" style={{ fontSize: 12 }}>
+              Routing request ID:{' '}
+              <code style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                {latestRoutingRequestId}
+              </code>
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 'bold', marginTop: 4 }}>
+              Lower score is better
+            </div>
           </div>
         )}
 
@@ -1965,6 +1971,27 @@ export default function Routing() {
                         }}
                       >
                         {`OVERFLOW +${Math.round((shiftOverrunSec ?? 0) / 60)}m`}
+                      </div>
+                    )}
+
+                    {typeof opt.score === 'number' && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: 50,
+                          right: 10,
+                          background: '#ffffff',
+                          border: '1px solid #e2e8f0',
+                          borderRadius: 6,
+                          padding: '6px 12px',
+                          fontWeight: 600,
+                          fontSize: 14,
+                          color: '#1e293b',
+                          zIndex: 10,
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        }}
+                      >
+                        Score: {Number.isInteger(opt.score) ? String(opt.score) : opt.score.toFixed(2)}
                       </div>
                     )}
 
