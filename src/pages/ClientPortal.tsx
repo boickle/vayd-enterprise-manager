@@ -888,7 +888,7 @@ export default function ClientPortal() {
      Bottom Nav Handlers
   ---------------------------- */
   function handleBook() {
-    window.open('https://form.jotform.com/221585880190157', '_blank');
+    navigate('/client-portal/request-appointment');
   }
   function handleContact() {
     // If pet has plan, use chat; otherwise use email
@@ -1085,9 +1085,11 @@ export default function ClientPortal() {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                   <a
-                    href="https://form.jotform.com/221585880190157"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    href="/client-portal/request-appointment"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigate('/client-portal/request-appointment');
+                    }}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -1211,9 +1213,11 @@ export default function ClientPortal() {
             {/* Desktop View - Button Grid */}
             <div className="cp-service-actions-desktop" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
               <a
-                href="https://form.jotform.com/221585880190157"
-                target="_blank"
-                rel="noopener noreferrer"
+                href="/client-portal/request-appointment"
+                onClick={(e) => {
+                  e.preventDefault();
+                  navigate('/client-portal/request-appointment');
+                }}
                 className="cp-card"
                 style={{
                   padding: '16px 20px',
@@ -2126,9 +2130,11 @@ export default function ClientPortal() {
                 </div>
                 <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid #e5e7eb' }}>
                   <a
-                    href="https://form.jotform.com/221585880190157"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    href="/client-portal/request-appointment"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigate('/client-portal/request-appointment');
+                    }}
                     className="cp-card"
                     style={{
                       display: 'flex',

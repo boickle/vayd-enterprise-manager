@@ -22,6 +22,7 @@ import ClientPortal from './pages/ClientPortal';
 import MembershipSignup from './pages/MembershipSignup';
 import MembershipPayment from './pages/MembershipPayment';
 import MembershipUpgrade from './pages/MembershipUpgrade';
+import AppointmentRequestForm from './pages/AppointmentRequestForm';
 
 /** ------------------------------------------------------------------
  * KeepAliveOutlet
@@ -186,6 +187,10 @@ export default function App() {
                 <MembershipUpgrade />
               </ProtectedRoute>
             }
+          />
+          <Route
+            path="/client-portal/request-appointment"
+            element={<AppointmentRequestForm />}
           />
 
           {/* Employees only: keep these pages alive across tab switches */}
