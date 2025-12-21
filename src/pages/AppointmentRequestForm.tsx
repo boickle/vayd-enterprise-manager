@@ -65,9 +65,11 @@ type FormData = {
     id: string; // Unique ID for this pet
     name: string;
     species?: string;
+    speciesId?: number; // ID of selected species for breed lookup
     age?: string;
     spayedNeutered?: string;
     breed?: string;
+    breedId?: number; // ID of selected breed
     color?: string;
     weight?: string;
     behaviorAtPreviousVisits?: string;
@@ -79,9 +81,11 @@ type FormData = {
     id: string; // Unique ID for this pet
     name: string;
     species?: string;
+    speciesId?: number; // ID of selected species for breed lookup
     age?: string;
     spayedNeutered?: string;
     breed?: string;
+    breedId?: number; // ID of selected breed
     color?: string;
     weight?: string;
     behaviorAtPreviousVisits?: string;
@@ -230,6 +234,12 @@ export default function AppointmentRequestForm() {
   const [showExistingClientModal, setShowExistingClientModal] = useState(false); // Modal for existing client notification
   const [emailCheckForModal, setEmailCheckForModal] = useState<{ exists: boolean; hasAccount: boolean } | null>(null); // Store email check result for modal
   const lastCheckedAddressRef = useRef<string>(''); // Track last checked address to avoid duplicate zone checks
+  const [speciesList, setSpeciesList] = useState<Array<{ id: number; name: string }>>([]); // List of available species
+  const [breedsBySpecies, setBreedsBySpecies] = useState<Record<number, Array<{ id: number; name: string }>>>({}); // Breeds keyed by species ID
+  const [loadingSpecies, setLoadingSpecies] = useState(false);
+  const [loadingBreeds, setLoadingBreeds] = useState<Record<number, boolean>>({}); // Loading state per species
+  const [breedSearchTerms, setBreedSearchTerms] = useState<Record<string, string>>({}); // Search terms for breed dropdowns, keyed by pet ID
+  const [breedDropdownOpen, setBreedDropdownOpen] = useState<Record<string, boolean>>({}); // Track which breed dropdowns are open, keyed by pet ID
 
   // Handle responsive layout
   useEffect(() => {
@@ -995,6 +1005,83 @@ export default function AppointmentRequestForm() {
     formData.newPhysicalAddress?.state,
     formData.newPhysicalAddress?.zip,
   ]);
+
+  // Fetch species list on mount
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoadingSpecies(true);
+      try {
+        const response = await http.get(`/public/species-breeds?practiceId=${practiceId}`);
+        if (!alive) return;
+        const species = Array.isArray(response.data?.species) ? response.data.species : [];
+        setSpeciesList(species.map((s: any) => ({ id: s.id, name: s.name })));
+      } catch (error) {
+        console.error('[AppointmentForm] Failed to load species:', error);
+        if (alive) {
+          setSpeciesList([]);
+        }
+      } finally {
+        if (alive) {
+          setLoadingSpecies(false);
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [practiceId]);
+
+  // Fetch breeds when species is selected for any pet
+  useEffect(() => {
+    // Check all pets (both newClientPets and existingClientNewPets) for selected species
+    const allPets = [
+      ...(formData.newClientPets || []),
+      ...(formData.existingClientNewPets || [])
+    ];
+    
+    const speciesToFetch = new Set<number>();
+    allPets.forEach(pet => {
+      if (pet.speciesId && !breedsBySpecies.hasOwnProperty(pet.speciesId) && !loadingBreeds[pet.speciesId]) {
+        speciesToFetch.add(pet.speciesId);
+      }
+    });
+
+    if (speciesToFetch.size === 0) return;
+
+    let alive = true;
+    (async () => {
+      // Fetch breeds for all species in parallel
+      const fetchPromises = Array.from(speciesToFetch).map(async (speciesId) => {
+        setLoadingBreeds(prev => ({ ...prev, [speciesId]: true }));
+        try {
+          const response = await http.get(`/public/species-breeds?practiceId=${practiceId}&speciesId=${speciesId}`);
+          if (!alive) return;
+          console.log(`[AppointmentForm] Breeds response for species ${speciesId}:`, response.data);
+          const breeds = Array.isArray(response.data?.breeds) ? response.data.breeds : [];
+          console.log(`[AppointmentForm] Processed breeds for species ${speciesId}:`, breeds.map((b: any) => ({ id: b.id, name: b.name })));
+          if (alive) {
+            setBreedsBySpecies(prev => ({
+              ...prev,
+              [speciesId]: breeds.map((b: any) => ({ id: b.id, name: b.name }))
+            }));
+          }
+        } catch (error) {
+          console.error(`[AppointmentForm] Failed to load breeds for species ${speciesId}:`, error);
+        } finally {
+          if (alive) {
+            setLoadingBreeds(prev => ({ ...prev, [speciesId]: false }));
+          }
+        }
+      });
+      
+      await Promise.all(fetchPromises);
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [practiceId, formData.newClientPets, formData.existingClientNewPets]);
 
   const updateFormData = (field: keyof FormData, value: any) => {
     setFormData(prev => {
@@ -2177,9 +2264,33 @@ export default function AppointmentRequestForm() {
         const updateNewClientPet = (petId: string, field: string, value: any) => {
           setFormData(prev => ({
             ...prev,
-            newClientPets: (prev.newClientPets || []).map(pet =>
-              pet.id === petId ? { ...pet, [field]: value } : pet
-            )
+            newClientPets: (prev.newClientPets || []).map(pet => {
+              if (pet.id !== petId) return pet;
+              
+              // If species is being changed, clear breed and breedId
+              if (field === 'speciesId') {
+                const selectedSpecies = speciesList.find(s => s.id === Number(value));
+                return {
+                  ...pet,
+                  speciesId: value ? Number(value) : undefined,
+                  species: selectedSpecies?.name || '',
+                  breed: undefined,
+                  breedId: undefined
+                };
+              }
+              
+              // If breed is being changed, update breed name
+              if (field === 'breedId') {
+                const selectedBreed = breedsBySpecies[pet.speciesId || 0]?.find(b => b.id === Number(value));
+                return {
+                  ...pet,
+                  breedId: value ? Number(value) : undefined,
+                  breed: selectedBreed?.name || ''
+                };
+              }
+              
+              return { ...pet, [field]: value };
+            })
           }));
         };
 
@@ -2267,19 +2378,29 @@ export default function AppointmentRequestForm() {
                             <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
                               Species <span style={{ color: '#ef4444' }}>*</span>
                             </label>
-                            <input
-                              type="text"
-                              value={pet.species || ''}
-                              onChange={(e) => updateNewClientPet(pet.id, 'species', e.target.value)}
-                              placeholder="e.g., Dog, Cat"
+                            <select
+                              value={pet.speciesId || ''}
+                              onChange={(e) => updateNewClientPet(pet.id, 'speciesId', e.target.value)}
                               style={{
                                 padding: '8px',
                                 border: `1px solid ${errors[`newClientPet.${pet.id}.species`] ? '#ef4444' : '#d1d5db'}`,
                                 borderRadius: '6px',
                                 fontSize: '14px',
                                 width: '100%',
+                                backgroundColor: '#fff',
                               }}
-                            />
+                            >
+                              <option value="">Select species...</option>
+                              {loadingSpecies ? (
+                                <option disabled>Loading species...</option>
+                              ) : (
+                                speciesList.map(species => (
+                                  <option key={species.id} value={species.id}>
+                                    {species.name}
+                                  </option>
+                                ))
+                              )}
+                            </select>
                           </div>
                           <div>
                             <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
@@ -2303,37 +2424,123 @@ export default function AppointmentRequestForm() {
                             <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
                               Spayed/Neutered <span style={{ color: '#ef4444' }}>*</span>
                             </label>
-                            <input
-                              type="text"
+                            <select
                               value={pet.spayedNeutered || ''}
                               onChange={(e) => updateNewClientPet(pet.id, 'spayedNeutered', e.target.value)}
-                              placeholder="Yes/No"
                               style={{
                                 padding: '8px',
                                 border: `1px solid ${errors[`newClientPet.${pet.id}.spayedNeutered`] ? '#ef4444' : '#d1d5db'}`,
                                 borderRadius: '6px',
                                 fontSize: '14px',
                                 width: '100%',
+                                backgroundColor: '#fff',
                               }}
-                            />
+                            >
+                              <option value="">Select...</option>
+                              <option value="Yes">Yes</option>
+                              <option value="No">No</option>
+                            </select>
                           </div>
-                          <div>
+                          <div style={{ position: 'relative' }}>
                             <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
                               Breed <span style={{ color: '#ef4444' }}>*</span>
                             </label>
                             <input
                               type="text"
-                              value={pet.breed || ''}
-                              onChange={(e) => updateNewClientPet(pet.id, 'breed', e.target.value)}
-                              placeholder="Breed"
+                              value={pet.breed || breedSearchTerms[pet.id] || ''}
+                              onChange={(e) => {
+                                const searchTerm = e.target.value;
+                                setBreedSearchTerms(prev => ({ ...prev, [pet.id]: searchTerm }));
+                                setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: true }));
+                                // Clear selection if user is typing
+                                if (searchTerm !== pet.breed) {
+                                  updateNewClientPet(pet.id, 'breedId', '');
+                                  updateNewClientPet(pet.id, 'breed', '');
+                                }
+                              }}
+                              onFocus={() => {
+                                if (pet.speciesId) {
+                                  setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: true }));
+                                }
+                              }}
+                              onBlur={() => {
+                                // Delay closing to allow click on dropdown item
+                                setTimeout(() => {
+                                  setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: false }));
+                                }, 200);
+                              }}
+                              disabled={!pet.speciesId}
+                              placeholder={!pet.speciesId 
+                                ? 'Select species first...' 
+                                : loadingBreeds[pet.speciesId]
+                                ? 'Loading breeds...'
+                                : 'Type to search breeds...'}
                               style={{
                                 padding: '8px',
                                 border: `1px solid ${errors[`newClientPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
                                 borderRadius: '6px',
                                 fontSize: '14px',
                                 width: '100%',
+                                backgroundColor: pet.speciesId ? '#fff' : '#f3f4f6',
+                                cursor: pet.speciesId ? 'text' : 'not-allowed',
                               }}
                             />
+                            {pet.speciesId && breedDropdownOpen[pet.id] && breedsBySpecies[pet.speciesId] && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  top: '100%',
+                                  left: 0,
+                                  right: 0,
+                                  zIndex: 1000,
+                                  backgroundColor: '#fff',
+                                  border: '1px solid #d1d5db',
+                                  borderRadius: '6px',
+                                  marginTop: '4px',
+                                  maxHeight: '200px',
+                                  overflowY: 'auto',
+                                  boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+                                }}
+                              >
+                                {breedsBySpecies[pet.speciesId]
+                                  .filter(breed => 
+                                    breed.name.toLowerCase().includes((breedSearchTerms[pet.id] || '').toLowerCase())
+                                  )
+                                  .slice(0, 50) // Limit to 50 results for performance
+                                  .map(breed => (
+                                    <div
+                                      key={breed.id}
+                                      onClick={() => {
+                                        updateNewClientPet(pet.id, 'breedId', breed.id.toString());
+                                        updateNewClientPet(pet.id, 'breed', breed.name);
+                                        setBreedSearchTerms(prev => ({ ...prev, [pet.id]: breed.name }));
+                                        setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: false }));
+                                      }}
+                                      style={{
+                                        padding: '8px 12px',
+                                        cursor: 'pointer',
+                                        borderBottom: '1px solid #f3f4f6',
+                                        backgroundColor: pet.breedId === breed.id ? '#f0fdf4' : '#fff',
+                                      }}
+                                      onMouseEnter={(e) => {
+                                        e.currentTarget.style.backgroundColor = '#f9fafb';
+                                      }}
+                                      onMouseLeave={(e) => {
+                                        e.currentTarget.style.backgroundColor = pet.breedId === breed.id ? '#f0fdf4' : '#fff';
+                                      }}
+                                    >
+                                      {breed.name}
+                                    </div>
+                                  ))}
+                                {breedsBySpecies[pet.speciesId].filter(breed => 
+                                  breed.name.toLowerCase().includes((breedSearchTerms[pet.id] || '').toLowerCase())
+                                ).length === 0 && (
+                                  <div style={{ padding: '8px 12px', color: '#6b7280', fontSize: '14px' }}>
+                                    No breeds found
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                           <div>
                             <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
@@ -2358,10 +2565,12 @@ export default function AppointmentRequestForm() {
                               Approximate Weight (lbs) <span style={{ color: '#ef4444' }}>*</span>
                             </label>
                             <input
-                              type="text"
+                              type="number"
                               value={pet.weight || ''}
                               onChange={(e) => updateNewClientPet(pet.id, 'weight', e.target.value)}
-                              placeholder="Weight"
+                              placeholder="e.g., 12"
+                              min="0"
+                              step="0.1"
                               style={{
                                 padding: '8px',
                                 border: `1px solid ${errors[`newClientPet.${pet.id}.weight`] ? '#ef4444' : '#d1d5db'}`,
@@ -3044,9 +3253,33 @@ export default function AppointmentRequestForm() {
         const updateExistingClientNewPet = (petId: string, field: string, value: any) => {
           setFormData(prev => ({
             ...prev,
-            existingClientNewPets: (prev.existingClientNewPets || []).map(pet =>
-              pet.id === petId ? { ...pet, [field]: value } : pet
-            )
+            existingClientNewPets: (prev.existingClientNewPets || []).map(pet => {
+              if (pet.id !== petId) return pet;
+              
+              // If species is being changed, clear breed and breedId
+              if (field === 'speciesId') {
+                const selectedSpecies = speciesList.find(s => s.id === Number(value));
+                return {
+                  ...pet,
+                  speciesId: value ? Number(value) : undefined,
+                  species: selectedSpecies?.name || '',
+                  breed: undefined,
+                  breedId: undefined
+                };
+              }
+              
+              // If breed is being changed, update breed name
+              if (field === 'breedId') {
+                const selectedBreed = breedsBySpecies[pet.speciesId || 0]?.find(b => b.id === Number(value));
+                return {
+                  ...pet,
+                  breedId: value ? Number(value) : undefined,
+                  breed: selectedBreed?.name || ''
+                };
+              }
+              
+              return { ...pet, [field]: value };
+            })
           }));
         };
 
@@ -3504,19 +3737,29 @@ export default function AppointmentRequestForm() {
                                 <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
                                   Species <span style={{ color: '#ef4444' }}>*</span>
                                 </label>
-                                <input
-                                  type="text"
-                                  value={pet.species || ''}
-                                  onChange={(e) => updateExistingClientNewPet(pet.id, 'species', e.target.value)}
-                                  placeholder="e.g., Dog, Cat"
+                                <select
+                                  value={pet.speciesId || ''}
+                                  onChange={(e) => updateExistingClientNewPet(pet.id, 'speciesId', e.target.value)}
                                   style={{
                                     padding: '8px',
                                     border: `1px solid ${errors[`existingClientNewPet.${pet.id}.species`] ? '#ef4444' : '#d1d5db'}`,
                                     borderRadius: '6px',
                                     fontSize: '14px',
                                     width: '100%',
+                                    backgroundColor: '#fff',
                                   }}
-                                />
+                                >
+                                  <option value="">Select species...</option>
+                                  {loadingSpecies ? (
+                                    <option disabled>Loading species...</option>
+                                  ) : (
+                                    speciesList.map(species => (
+                                      <option key={species.id} value={species.id}>
+                                        {species.name}
+                                      </option>
+                                    ))
+                                  )}
+                                </select>
                               </div>
                               <div>
                                 <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
@@ -3540,37 +3783,123 @@ export default function AppointmentRequestForm() {
                                 <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
                                   Spayed/Neutered <span style={{ color: '#ef4444' }}>*</span>
                                 </label>
-                                <input
-                                  type="text"
+                                <select
                                   value={pet.spayedNeutered || ''}
                                   onChange={(e) => updateExistingClientNewPet(pet.id, 'spayedNeutered', e.target.value)}
-                                  placeholder="Yes/No"
                                   style={{
                                     padding: '8px',
                                     border: `1px solid ${errors[`existingClientNewPet.${pet.id}.spayedNeutered`] ? '#ef4444' : '#d1d5db'}`,
                                     borderRadius: '6px',
                                     fontSize: '14px',
                                     width: '100%',
+                                    backgroundColor: '#fff',
                                   }}
-                                />
+                                >
+                                  <option value="">Select...</option>
+                                  <option value="Yes">Yes</option>
+                                  <option value="No">No</option>
+                                </select>
                               </div>
-                              <div>
+                              <div style={{ position: 'relative' }}>
                                 <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
                                   Breed <span style={{ color: '#ef4444' }}>*</span>
                                 </label>
                                 <input
                                   type="text"
-                                  value={pet.breed || ''}
-                                  onChange={(e) => updateExistingClientNewPet(pet.id, 'breed', e.target.value)}
-                                  placeholder="Breed"
+                                  value={pet.breed || breedSearchTerms[pet.id] || ''}
+                                  onChange={(e) => {
+                                    const searchTerm = e.target.value;
+                                    setBreedSearchTerms(prev => ({ ...prev, [pet.id]: searchTerm }));
+                                    setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: true }));
+                                    // Clear selection if user is typing
+                                    if (searchTerm !== pet.breed) {
+                                      updateExistingClientNewPet(pet.id, 'breedId', '');
+                                      updateExistingClientNewPet(pet.id, 'breed', '');
+                                    }
+                                  }}
+                                  onFocus={() => {
+                                    if (pet.speciesId) {
+                                      setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: true }));
+                                    }
+                                  }}
+                                  onBlur={() => {
+                                    // Delay closing to allow click on dropdown item
+                                    setTimeout(() => {
+                                      setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: false }));
+                                    }, 200);
+                                  }}
+                                  disabled={!pet.speciesId}
+                                  placeholder={!pet.speciesId 
+                                    ? 'Select species first...' 
+                                    : loadingBreeds[pet.speciesId]
+                                    ? 'Loading breeds...'
+                                    : 'Type to search breeds...'}
                                   style={{
                                     padding: '8px',
                                     border: `1px solid ${errors[`existingClientNewPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
                                     borderRadius: '6px',
                                     fontSize: '14px',
                                     width: '100%',
+                                    backgroundColor: pet.speciesId ? '#fff' : '#f3f4f6',
+                                    cursor: pet.speciesId ? 'text' : 'not-allowed',
                                   }}
                                 />
+                                {pet.speciesId && breedDropdownOpen[pet.id] && breedsBySpecies[pet.speciesId] && (
+                                  <div
+                                    style={{
+                                      position: 'absolute',
+                                      top: '100%',
+                                      left: 0,
+                                      right: 0,
+                                      zIndex: 1000,
+                                      backgroundColor: '#fff',
+                                      border: '1px solid #d1d5db',
+                                      borderRadius: '6px',
+                                      marginTop: '4px',
+                                      maxHeight: '200px',
+                                      overflowY: 'auto',
+                                      boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+                                    }}
+                                  >
+                                    {breedsBySpecies[pet.speciesId]
+                                      .filter(breed => 
+                                        breed.name.toLowerCase().includes((breedSearchTerms[pet.id] || '').toLowerCase())
+                                      )
+                                      .slice(0, 50) // Limit to 50 results for performance
+                                      .map(breed => (
+                                        <div
+                                          key={breed.id}
+                                          onClick={() => {
+                                            updateExistingClientNewPet(pet.id, 'breedId', breed.id.toString());
+                                            updateExistingClientNewPet(pet.id, 'breed', breed.name);
+                                            setBreedSearchTerms(prev => ({ ...prev, [pet.id]: breed.name }));
+                                            setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: false }));
+                                          }}
+                                          style={{
+                                            padding: '8px 12px',
+                                            cursor: 'pointer',
+                                            borderBottom: '1px solid #f3f4f6',
+                                            backgroundColor: pet.breedId === breed.id ? '#f0fdf4' : '#fff',
+                                          }}
+                                          onMouseEnter={(e) => {
+                                            e.currentTarget.style.backgroundColor = '#f9fafb';
+                                          }}
+                                          onMouseLeave={(e) => {
+                                            e.currentTarget.style.backgroundColor = pet.breedId === breed.id ? '#f0fdf4' : '#fff';
+                                          }}
+                                        >
+                                          {breed.name}
+                                        </div>
+                                      ))}
+                                    {breedsBySpecies[pet.speciesId].filter(breed => 
+                                      breed.name.toLowerCase().includes((breedSearchTerms[pet.id] || '').toLowerCase())
+                                    ).length === 0 && (
+                                      <div style={{ padding: '8px 12px', color: '#6b7280', fontSize: '14px' }}>
+                                        No breeds found
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                               <div>
                                 <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
@@ -3595,10 +3924,12 @@ export default function AppointmentRequestForm() {
                                   Approximate Weight (lbs) <span style={{ color: '#ef4444' }}>*</span>
                                 </label>
                                 <input
-                                  type="text"
+                                  type="number"
                                   value={pet.weight || ''}
                                   onChange={(e) => updateExistingClientNewPet(pet.id, 'weight', e.target.value)}
-                                  placeholder="Weight"
+                                  placeholder="e.g., 12"
+                                  min="0"
+                                  step="0.1"
                                   style={{
                                     padding: '8px',
                                     border: `1px solid ${errors[`existingClientNewPet.${pet.id}.weight`] ? '#ef4444' : '#d1d5db'}`,

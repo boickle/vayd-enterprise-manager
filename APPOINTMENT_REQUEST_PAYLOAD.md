@@ -2,6 +2,21 @@
 
 This document describes the payload structure for the appointment request form submission. The payload adapts based on whether the user is logged in, is a new/existing client, and whether they're requesting euthanasia or a regular visit.
 
+## API Endpoints Used
+
+The form uses the following API endpoints for species and breed selection:
+
+- **Species List**: `GET /public/species-breeds?practiceId=1`
+  - Returns a list of available species (e.g., Canine, Feline, Avian)
+  - Response includes `species` array with objects containing `id` and `name`
+  
+- **Breeds List**: `GET /public/species-breeds?practiceId=1&speciesId={speciesId}`
+  - Returns a list of breeds for the specified species
+  - Only called after a species is selected
+  - Response includes `breeds` array with objects containing `id`, `name`, and nested `species` object
+
+**Note**: The breed field in the form is implemented as a searchable type-ahead dropdown that filters breeds in real-time as the user types.
+
 ## Base Payload Structure
 
 ```json
@@ -114,18 +129,30 @@ For `newClientPets` field (used for new clients who add pets on the pet informat
 {
   "id": string, // Unique ID for this pet (e.g., "new-pet-1234567890-abc123")
   "name": string,
-  "species": string,
+  "species": string, // Species name (e.g., "Canine", "Feline") - populated from API dropdown
+  "speciesId": number, // ID of selected species from /public/species-breeds endpoint
   "age": string, // e.g., "5 years" or DOB (labeled as "Age/DOB" in the form)
-  "spayedNeutered": string, // "Yes" or "No"
-  "breed": string,
+  "spayedNeutered": "Yes" | "No" | "", // Selected from dropdown
+  "breed": string, // Breed name (e.g., "Golden Retriever") - populated from API searchable dropdown
+  "breedId": number, // ID of selected breed from /public/species-breeds endpoint
   "color": string,
-  "weight": string, // e.g., "12 lbs" (labeled as "Approximate Weight (lbs)" in the form)
+  "weight": number, // Numeric value in pounds (e.g., 12) - number input field
   "behaviorAtPreviousVisits": string, // Free-form text: "Tell us anything else you want us to know about {pet name}"
   "needsCalmingMedications": "Yes" | "No" | "",
   "hasCalmingMedications": "Yes" | "No" | "", // Only present if needsCalmingMedications is "Yes"
   "needsMuzzleOrSpecialHandling": "Yes" | "No" | ""
 }
 ```
+
+**Note**: 
+- Species and breed are selected from API endpoints:
+  - Species list: `GET /public/species-breeds?practiceId=1`
+  - Breeds list: `GET /public/species-breeds?practiceId=1&speciesId={speciesId}`
+- The breed field is a searchable type-ahead dropdown that filters breeds as the user types
+- Both `species` and `speciesId` are included (species name for display, speciesId for reference)
+- Both `breed` and `breedId` are included (breed name for display, breedId for reference)
+- `spayedNeutered` is selected from a Yes/No dropdown
+- `weight` is a numeric field (number type) representing pounds
 
 ## Existing Client New Pet Object Structure
 
@@ -135,12 +162,14 @@ For `existingClientNewPets` field (used for existing clients who add new pets on
 {
   "id": string, // Unique ID for this pet (e.g., "existing-new-pet-1234567890-abc123")
   "name": string,
-  "species": string,
+  "species": string, // Species name (e.g., "Canine", "Feline") - populated from API dropdown
+  "speciesId": number, // ID of selected species from /public/species-breeds endpoint
   "age": string, // e.g., "5 years" or DOB (labeled as "Age/DOB" in the form)
-  "spayedNeutered": string, // "Yes" or "No"
-  "breed": string,
+  "spayedNeutered": "Yes" | "No" | "", // Selected from dropdown
+  "breed": string, // Breed name (e.g., "Golden Retriever") - populated from API searchable dropdown
+  "breedId": number, // ID of selected breed from /public/species-breeds endpoint
   "color": string,
-  "weight": string, // e.g., "12 lbs" (labeled as "Approximate Weight (lbs)" in the form)
+  "weight": number, // Numeric value in pounds (e.g., 12) - number input field
   "behaviorAtPreviousVisits": string, // Free-form text: "Tell us anything else you want us to know about {pet name}"
   "needsCalmingMedications": "Yes" | "No" | "",
   "hasCalmingMedications": "Yes" | "No" | "", // Only present if needsCalmingMedications is "Yes"
@@ -148,7 +177,17 @@ For `existingClientNewPets` field (used for existing clients who add new pets on
 }
 ```
 
-**Note**: `existingClientNewPets` has the same structure as `newClientPets`. These pets are also included in `selectedPetIds` and have corresponding entries in `petSpecificData` when selected. They appear in the pet selection list alongside existing pets from the database.
+**Note**: 
+- `existingClientNewPets` has the same structure as `newClientPets` (see above for field descriptions)
+- Species and breed are selected from API endpoints:
+  - Species list: `GET /public/species-breeds?practiceId=1`
+  - Breeds list: `GET /public/species-breeds?practiceId=1&speciesId={speciesId}`
+- The breed field is a searchable type-ahead dropdown that filters breeds as the user types
+- Both `species` and `speciesId` are included (species name for display, speciesId for reference)
+- Both `breed` and `breedId` are included (breed name for display, breedId for reference)
+- `spayedNeutered` is selected from a Yes/No dropdown
+- `weight` is a numeric field (number type) representing pounds
+- These pets are also included in `selectedPetIds` and have corresponding entries in `petSpecificData` when selected. They appear in the pet selection list alongside existing pets from the database.
 
 ## Pet Specific Data Structure
 
@@ -281,12 +320,14 @@ Before fetching available veterinarians, the form performs a zone check using th
     {
       "id": "new-pet-1234567890-abc123",
       "name": "Fluffy",
-      "species": "Cat",
+      "species": "Feline",
+      "speciesId": 2,
       "age": "5 years",
       "spayedNeutered": "Yes",
       "breed": "Maine Coon",
+      "breedId": 123,
       "color": "Orange",
-      "weight": "12 lbs",
+      "weight": 12,
       "behaviorAtPreviousVisits": "Very friendly and calm",
       "needsCalmingMedications": "No",
       "needsMuzzleOrSpecialHandling": "No"
@@ -542,11 +583,13 @@ Before fetching available veterinarians, the form performs a zone check using th
       "id": "existing-new-pet-1234567890-abc123",
       "name": "Luna",
       "species": "Feline",
+      "speciesId": 2,
       "age": "2 years",
       "spayedNeutered": "Yes",
       "breed": "Siamese",
+      "breedId": 456,
       "color": "Seal Point",
-      "weight": "8 lbs",
+      "weight": 8,
       "behaviorAtPreviousVisits": "Very friendly, loves attention",
       "needsCalmingMedications": "No",
       "hasCalmingMedications": "",
@@ -590,11 +633,13 @@ Before fetching available veterinarians, the form performs a zone check using th
       "id": "existing-new-pet-1234567890-abc123",
       "name": "Luna",
       "species": "Feline",
+      "speciesId": 2,
       "age": "2 years",
       "spayedNeutered": "Yes",
       "breed": "Siamese",
+      "breedId": 456,
       "color": "Seal Point",
-      "weight": "8 lbs",
+      "weight": 8,
       "behaviorAtPreviousVisits": "Very friendly, loves attention",
       "needsCalmingMedications": "No",
       "hasCalmingMedications": "",
@@ -849,3 +894,14 @@ The search is always capped at a maximum of 6 weeks (42 days) in the future.
 - For logged-in (existing) clients, address geocoding is performed before the appointment search to obtain latitude/longitude coordinates for routing
 - For new clients, geocoding is skipped (address is passed as a string to the public availability API)
 - Zone checking (via `/public/appointments/find-zone-by-address`) is performed for both new and existing clients before veterinarian lookup
+
+### Species and Breed Selection
+
+- Species are selected from a dropdown populated from `GET /public/species-breeds?practiceId=1`
+- Breeds are selected from a searchable type-ahead dropdown populated from `GET /public/species-breeds?practiceId=1&speciesId={speciesId}`
+- Both `species` (name) and `speciesId` are included in the payload for reference
+- Both `breed` (name) and `breedId` are included in the payload for reference
+- The breed dropdown is disabled until a species is selected
+- The breed dropdown filters results in real-time as the user types (case-insensitive search)
+- `spayedNeutered` is selected from a Yes/No dropdown (not free-form text)
+- `weight` is a numeric field (number type) representing pounds, not a string

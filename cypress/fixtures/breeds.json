@@ -1,0 +1,86 @@
+{
+  "species": [
+    {
+      "id": 1,
+      "name": "Canine",
+      "practice": { "id": 1, "name": "Main Practice" },
+      "isActive": true,
+      "isDeleted": false,
+      "pimsId": "5254",
+      "pimsType": "EVET"
+    }
+  ],
+  "breeds": [
+    {
+      "id": 100,
+      "name": "Golden Retriever",
+      "practice": { "id": 1, "name": "Main Practice" },
+      "species": {
+        "id": 1,
+        "name": "Canine",
+        "practice": { "id": 1, "name": "Main Practice" }
+      },
+      "isActive": true,
+      "isDeleted": false,
+      "pimsId": "12345",
+      "pimsType": "EVET"
+    },
+    {
+      "id": 101,
+      "name": "Labrador Retriever",
+      "practice": { "id": 1, "name": "Main Practice" },
+      "species": {
+        "id": 1,
+        "name": "Canine",
+        "practice": { "id": 1, "name": "Main Practice" }
+      },
+      "isActive": true,
+      "isDeleted": false,
+      "pimsId": "12346",
+      "pimsType": "EVET"
+    },
+    {
+      "id": 102,
+      "name": "Mixed Breed",
+      "practice": { "id": 1, "name": "Main Practice" },
+      "species": {
+        "id": 1,
+        "name": "Canine",
+        "practice": { "id": 1, "name": "Main Practice" }
+      },
+      "isActive": true,
+      "isDeleted": false,
+      "pimsId": "12347",
+      "pimsType": "EVET"
+    },
+    {
+      "id": 200,
+      "name": "Maine Coon",
+      "practice": { "id": 1, "name": "Main Practice" },
+      "species": {
+        "id": 2,
+        "name": "Feline",
+        "practice": { "id": 1, "name": "Main Practice" }
+      },
+      "isActive": true,
+      "isDeleted": false,
+      "pimsId": "20001",
+      "pimsType": "EVET"
+    },
+    {
+      "id": 201,
+      "name": "Siamese",
+      "practice": { "id": 1, "name": "Main Practice" },
+      "species": {
+        "id": 2,
+        "name": "Feline",
+        "practice": { "id": 1, "name": "Main Practice" }
+      },
+      "isActive": true,
+      "isDeleted": false,
+      "pimsId": "20002",
+      "pimsType": "EVET"
+    }
+  ]
+}
+
