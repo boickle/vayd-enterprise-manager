@@ -1,5 +1,5 @@
 // src/pages/AppointmentRequestForm.tsx
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import { http } from '../api/http';
@@ -28,6 +28,16 @@ type FormData = {
   };
   haveUsedServicesBefore: 'Yes' | 'No' | '';
   selectedPetIds: string[]; // Array of selected pet IDs
+  petSpecificData?: Record<string, {
+    needsToday?: string; // Single selected need (wellness exam, not feeling well, etc.)
+    needsTodayDetails?: string; // Details/reason for the selected need
+    // Euthanasia-specific fields (for end-of-life option)
+    euthanasiaReason?: string;
+    beenToVetLastThreeMonths?: string;
+    interestedInOtherOptions?: 'Yes' | 'No' | '';
+    aftercarePreference?: string;
+  }>; // Per-pet data keyed by pet ID
+  howSoon?: 'Emergent – today' | 'Urgent – within 24–48 hours' | 'Soon – sometime this week' | 'Flexible – within the next month' | 'Routine – in about 3 months' | 'Planned – in about 6 months' | 'Future – in about 12 months' | ''; // How soon all pets need to be seen
   
   // New Client Info
   phoneNumbers: string;
@@ -50,15 +60,43 @@ type FormData = {
   };
   otherPersonsOnAccount?: string;
   condoApartmentInfo?: string;
-  petInfo: string; // Name, Species, Age, Spayed/Neutered, Breed, Color, Weight
+  petInfo: string; // Name, Species, Age, Spayed/Neutered, Breed, Color, Weight (legacy, kept for backward compatibility)
+  newClientPets?: Array<{
+    id: string; // Unique ID for this pet
+    name: string;
+    species?: string;
+    age?: string;
+    spayedNeutered?: string;
+    breed?: string;
+    color?: string;
+    weight?: string;
+    behaviorAtPreviousVisits?: string;
+    needsCalmingMedications?: 'Yes' | 'No' | '';
+    hasCalmingMedications?: 'Yes' | 'No' | '';
+    needsMuzzleOrSpecialHandling?: 'Yes' | 'No' | '';
+  }>;
+  existingClientNewPets?: Array<{
+    id: string; // Unique ID for this pet
+    name: string;
+    species?: string;
+    age?: string;
+    spayedNeutered?: string;
+    breed?: string;
+    color?: string;
+    weight?: string;
+    behaviorAtPreviousVisits?: string;
+    needsCalmingMedications?: 'Yes' | 'No' | '';
+    hasCalmingMedications?: 'Yes' | 'No' | '';
+    needsMuzzleOrSpecialHandling?: 'Yes' | 'No' | '';
+  }>;
   previousVeterinaryPractices?: string;
   okayToContactPreviousVets?: 'Yes' | 'No' | '';
-  petBehaviorAtPreviousVisits?: string;
+  petBehaviorAtPreviousVisits?: string; // Legacy field
   preferredDoctor?: string;
   lookingForEuthanasia?: 'Yes' | 'No' | '';
-  needsCalmingMedications?: 'Yes' | 'No' | '';
-  hasCalmingMedications?: 'Yes' | 'No' | '';
-  needsMuzzleOrSpecialHandling?: 'Yes' | 'No' | '';
+  needsCalmingMedications?: 'Yes' | 'No' | ''; // Legacy field
+  hasCalmingMedications?: 'Yes' | 'No' | ''; // Legacy field
+  needsMuzzleOrSpecialHandling?: 'Yes' | 'No' | ''; // Legacy field
   
   // Existing Client Info
   bestPhoneNumber?: string;
@@ -66,7 +104,7 @@ type FormData = {
   previousVeterinaryHospitals?: string;
   preferredDoctorExisting?: string;
   lookingForEuthanasiaExisting?: 'Yes' | 'No' | '';
-  movedSinceLastVisit?: 'Yes' | 'No' | '';
+  isThisTheAddressWhereWeWillCome?: 'Yes' | 'No' | '';
   newPhysicalAddress?: {
     line1: string;
     line2?: string;
@@ -120,7 +158,9 @@ type FormData = {
 type Page = 
   | 'intro'
   | 'new-client'
+  | 'new-client-pet-info'
   | 'existing-client'
+  | 'existing-client-pets'
   | 'euthanasia-intro'
   | 'euthanasia-service-area'
   | 'euthanasia-portland'
@@ -140,7 +180,9 @@ export default function AppointmentRequestForm() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [publicProviders, setPublicProviders] = useState<PublicProvider[]>([]);
   const [loadingClientData, setLoadingClientData] = useState(false);
+  const [loadingVeterinarians, setLoadingVeterinarians] = useState(false);
   const [primaryProviderName, setPrimaryProviderName] = useState<string | null>(null);
+  const [originalAddress, setOriginalAddress] = useState<FormData['physicalAddress'] | null>(null);
   const [emailCheckResult, setEmailCheckResult] = useState<{ exists: boolean; hasAccount: boolean } | null>(null);
   const [checkingEmail, setCheckingEmail] = useState(false);
   const [practiceId] = useState(1); // Default practice ID, could be made configurable
@@ -160,9 +202,11 @@ export default function AppointmentRequestForm() {
     },
     mailingAddressSame: '',
     petInfo: '',
+    newClientPets: [],
+    existingClientNewPets: [],
     lookingForEuthanasia: '',
     lookingForEuthanasiaExisting: '',
-    movedSinceLastVisit: '',
+    isThisTheAddressWhereWeWillCome: '',
     differentMailingAddress: '',
     hadVetCareElsewhere: '',
     mayWeAskForRecords: '',
@@ -185,6 +229,7 @@ export default function AppointmentRequestForm() {
   const [serviceMinutesUsed, setServiceMinutesUsed] = useState<number | null>(null); // Service minutes used for routing request
   const [showExistingClientModal, setShowExistingClientModal] = useState(false); // Modal for existing client notification
   const [emailCheckForModal, setEmailCheckForModal] = useState<{ exists: boolean; hasAccount: boolean } | null>(null); // Store email check result for modal
+  const lastCheckedAddressRef = useRef<string>(''); // Track last checked address to avoid duplicate zone checks
 
   // Handle responsive layout
   useEffect(() => {
@@ -247,12 +292,13 @@ export default function AppointmentRequestForm() {
       const addressParts = [address, city, state, zip].filter(Boolean);
       const fullAddress = addressParts.length > 0 ? addressParts.join(', ') : undefined;
       
-      // Get coordinates - try to validate address if we have one
+      // Get coordinates - try to validate address if we have one (only for logged-in clients)
       let lat: number | undefined;
       let lon: number | undefined;
       let validatedAddress: string | undefined = fullAddress;
       
-      if (fullAddress) {
+      // Only do geocoding for logged-in clients (skip for new clients)
+      if (fullAddress && isLoggedIn) {
         try {
           const validation = await validateAddress(fullAddress, { minLevel: 'street' });
           if (validation.ok) {
@@ -273,10 +319,41 @@ export default function AppointmentRequestForm() {
         console.warn('[AppointmentForm] No coordinates available, routing may not work optimally');
       }
 
-      // Calculate date range (next 6 weeks = 42 days)
+      // Calculate date range based on howSoon selection, capped at 6 weeks (42 days)
       const today = DateTime.now();
       const startDate = today.plus({ days: 1 }).toISODate(); // Start from tomorrow
-      const numDays = 42;
+      
+      // Calculate numDays based on howSoon selection
+      let numDays = 42; // Default to 6 weeks
+      if (formData.howSoon) {
+        switch (formData.howSoon) {
+          case 'Emergent – today':
+            numDays = 1; // Today only
+            break;
+          case 'Urgent – within 24–48 hours':
+            numDays = 2; // Next 2 days
+            break;
+          case 'Soon – sometime this week':
+            numDays = 7; // Next week
+            break;
+          case 'Flexible – within the next month':
+            numDays = 30; // Next month
+            break;
+          case 'Routine – in about 3 months':
+            numDays = 90; // But cap at 42 days
+            break;
+          case 'Planned – in about 6 months':
+            numDays = 180; // But cap at 42 days
+            break;
+          case 'Future – in about 12 months':
+            numDays = 365; // But cap at 42 days
+            break;
+          default:
+            numDays = 42;
+        }
+      }
+      // Cap at 6 weeks (42 days) maximum
+      numDays = Math.min(numDays, 42);
 
       if (!startDate) {
         console.error('[AppointmentForm] Failed to calculate start date');
@@ -288,7 +365,9 @@ export default function AppointmentRequestForm() {
       // First pet: 40 minutes, each additional pet: +20 minutes
       const numPets = isLoggedIn && formData.selectedPetIds.length > 0 
         ? formData.selectedPetIds.length 
-        : 1; // Default to 1 pet if not logged in or no pets selected
+        : (formData.newClientPets && formData.newClientPets.length > 0 
+          ? formData.newClientPets.length 
+          : 1); // Default to 1 pet if not logged in or no pets selected
       const serviceMinutes = 40 + (Math.max(0, numPets - 1) * 20);
       
       // Store the service minutes used for routing request
@@ -440,22 +519,22 @@ export default function AppointmentRequestForm() {
       needsUrgentScheduling: formData.needsUrgentScheduling,
     });
     
-    // For request-visit-continued, only do routing if explicitly answered "No" (needsUrgentScheduling === 'No')
+    // For request-visit-continued, do routing automatically if:
+    // - howSoon is NOT Emergent/Urgent (automatically search for slots)
+    // - For Emergent/Urgent, show banner (no routing needed, client liaison will contact)
     // For euthanasia-continued, always do routing
+    const isUrgentTimeframe = formData.howSoon === 'Emergent – today' || formData.howSoon === 'Urgent – within 24–48 hours';
+    const isNotUrgentTimeframe = formData.howSoon && formData.howSoon !== 'Emergent – today' && formData.howSoon !== 'Urgent – within 24–48 hours';
     const shouldDoRouting = 
       isDateTimePage && 
       hasDoctor && 
       providers.length > 0 &&
-      (currentPage === 'euthanasia-continued' || formData.needsUrgentScheduling === 'No');
+      (currentPage === 'euthanasia-continued' || 
+       (currentPage === 'request-visit-continued' && isNotUrgentTimeframe));
     
     if (shouldDoRouting) {
       console.log('[AppointmentForm] Calling findAvailableSlots');
       findAvailableSlots();
-    } else if (currentPage === 'request-visit-continued') {
-      // For request-visit-continued, clear slots if urgent, not answered, or not ready
-      if (formData.needsUrgentScheduling === 'Yes' || !formData.needsUrgentScheduling) {
-        setRecommendedSlots([]);
-      }
     } else if (!isDateTimePage || !hasDoctor) {
       // Don't clear slots if we're submitting (we need them for submission)
       // Only clear if we're going to a completely different flow
@@ -464,7 +543,7 @@ export default function AppointmentRequestForm() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, formData.preferredDoctorExisting, formData.preferredDoctor, providers.length, formData.selectedPetIds.length, formData.needsUrgentScheduling]);
+  }, [currentPage, formData.preferredDoctorExisting, formData.preferredDoctor, providers.length, formData.selectedPetIds.length, formData.howSoon]);
 
   // Check email when entered (for new clients)
   useEffect(() => {
@@ -523,42 +602,110 @@ export default function AppointmentRequestForm() {
     if (!hasValidAddress) {
       setPublicProviders([]);
       setProviders([]);
+      setLoadingVeterinarians(false);
+      setErrors(prev => {
+        const next = { ...prev };
+        delete next.zoneNotServiced;
+        return next;
+      });
+      lastCheckedAddressRef.current = ''; // Reset last checked address when address is incomplete
       return;
     }
 
-    let alive = true;
-    (async () => {
-      try {
-        // Build address string from form data
-        const addressParts = [
+    // Build address string from form data
+    const addressParts = [
+      formData.physicalAddress?.line1,
+      formData.physicalAddress?.city,
+      formData.physicalAddress?.state,
+      formData.physicalAddress?.zip,
+    ].filter(Boolean);
+    const address = addressParts.join(', ');
+
+    // Only proceed if address has changed from last check
+    if (lastCheckedAddressRef.current === address) {
+      return; // Address hasn't changed, skip
+    }
+
+    // Debounce: wait 500ms after user stops typing before checking zone
+    const timeoutId = setTimeout(() => {
+      let alive = true;
+      (async () => {
+        // Double-check address hasn't changed during debounce
+        const currentAddressParts = [
           formData.physicalAddress?.line1,
           formData.physicalAddress?.city,
           formData.physicalAddress?.state,
           formData.physicalAddress?.zip,
         ].filter(Boolean);
-        const address = addressParts.join(', ');
+        const currentAddress = currentAddressParts.join(', ');
         
-        const publicVeterinariansData = await fetchPublicVeterinarians(practiceId, address);
-        if (!alive) return;
-        
-        setPublicProviders(publicVeterinariansData);
-        
-        // Also set providers for compatibility with existing code
-        setProviders(publicVeterinariansData.map(v => ({
-          id: v.id,
-          name: v.name,
-          email: v.email || '',
-          pimsId: v.id,
-        })));
-      } catch (error) {
-        console.error('[AppointmentForm] Failed to load public veterinarians:', error);
-        setPublicProviders([]);
-        setProviders([]);
-      }
-    })();
+        if (lastCheckedAddressRef.current === currentAddress) {
+          return; // Address changed during debounce, skip
+        }
+
+        setLoadingVeterinarians(true);
+        try {
+          // Check zone before fetching veterinarians
+          try {
+            await http.get(`/public/appointments/find-zone-by-address?address=${encodeURIComponent(currentAddress)}`);
+            // Zone exists, clear any previous error
+            if (alive) {
+              setErrors(prev => {
+                const next = { ...prev };
+                delete next.zoneNotServiced;
+                return next;
+              });
+              lastCheckedAddressRef.current = currentAddress; // Update last checked address
+            }
+          } catch (zoneError: any) {
+            if (zoneError?.response?.status === 404) {
+              // Zone not serviced - set error and don't fetch veterinarians
+              if (alive) {
+                setErrors(prev => ({ ...prev, zoneNotServiced: 'We do not service your zone' }));
+                setPublicProviders([]);
+                setProviders([]);
+                setLoadingVeterinarians(false);
+                lastCheckedAddressRef.current = currentAddress; // Update last checked address even on error
+              }
+              return;
+            }
+            // For other errors, log but continue with veterinarian fetch
+            console.warn('[AppointmentForm] Zone check failed:', zoneError);
+            if (alive) {
+              lastCheckedAddressRef.current = currentAddress; // Update last checked address even on error
+            }
+          }
+          
+          if (!alive) return;
+          
+          const publicVeterinariansData = await fetchPublicVeterinarians(practiceId, currentAddress);
+          if (!alive) return;
+          
+          setPublicProviders(publicVeterinariansData);
+          
+          // Also set providers for compatibility with existing code
+          setProviders(publicVeterinariansData.map(v => ({
+            id: v.id,
+            name: v.name,
+            email: v.email || '',
+            pimsId: v.id,
+          })));
+        } catch (error) {
+          console.error('[AppointmentForm] Failed to load public veterinarians:', error);
+          if (alive) {
+            setPublicProviders([]);
+            setProviders([]);
+          }
+        } finally {
+          if (alive) {
+            setLoadingVeterinarians(false);
+          }
+        }
+      })();
+    }, 500); // 500ms debounce
 
     return () => {
-      alive = false;
+      clearTimeout(timeoutId);
     };
   }, [isLoggedIn, practiceId, formData.physicalAddress?.line1, formData.physicalAddress?.city, formData.physicalAddress?.state, formData.physicalAddress?.zip]);
 
@@ -569,34 +716,14 @@ export default function AppointmentRequestForm() {
     let alive = true;
     (async () => {
       setLoadingClientData(true);
+      
       try {
-        // Build address string from form data if available
-        // For existing clients, check if they moved and use new address, otherwise use existing address
-        const addressParts = formData.movedSinceLastVisit === 'Yes' && formData.newPhysicalAddress
-          ? [
-              formData.newPhysicalAddress.line1,
-              formData.newPhysicalAddress.city,
-              formData.newPhysicalAddress.state,
-              formData.newPhysicalAddress.zip,
-            ]
-          : [
-              formData.physicalAddress?.line1,
-              formData.physicalAddress?.city,
-              formData.physicalAddress?.state,
-              formData.physicalAddress?.zip,
-            ];
-        const address = addressParts.filter(Boolean).length > 0 ? addressParts.filter(Boolean).join(', ') : undefined;
-        
-        // Fetch pets and veterinarians in parallel
-        const [petsData, providersData] = await Promise.all([
-          fetchClientPets(),
-          fetchVeterinarians(address),
-        ]);
+        // Always fetch pets first
+        const petsData = await fetchClientPets();
 
         if (!alive) return;
 
         setPets(petsData);
-        setProviders(providersData);
 
         // Fetch patient alerts for each pet
         const alertsMap = new Map<string, string | null>();
@@ -633,25 +760,8 @@ export default function AppointmentRequestForm() {
         // Set haveUsedServicesBefore to Yes since they're logged in
         setFormData(prev => ({ ...prev, haveUsedServicesBefore: 'Yes' }));
 
-        // Set default doctor to primary provider if found
-        if (primaryProvider && providersData.length > 0) {
-          const providerMatch = providersData.find(p => 
-            p.name === primaryProvider || 
-            p.name.includes(primaryProvider) ||
-            primaryProvider.includes(p.name) ||
-            `Dr. ${p.name}` === primaryProvider ||
-            p.name.toLowerCase().includes(primaryProvider.toLowerCase()) ||
-            primaryProvider.toLowerCase().includes(p.name.toLowerCase())
-          );
-          if (providerMatch) {
-            setFormData(prev => ({ 
-              ...prev, 
-              preferredDoctorExisting: `Dr. ${providerMatch.name}` 
-            }));
-          }
-        }
-
         // Try to get client info from appointments
+        let clientAddress: string | undefined = undefined;
         try {
           const { data: apptsData } = await http.get('/appointments/client');
           const appts = Array.isArray(apptsData) ? apptsData : (apptsData?.appointments ?? apptsData ?? []);
@@ -661,6 +771,16 @@ export default function AppointmentRequestForm() {
             const client = firstAppt?.client || firstAppt?.Client;
             
             if (client) {
+              // Build address string from client data for veterinarian lookup
+              const addressParts = [
+                client.address1 || client.address_1,
+                client.city,
+                client.state,
+                client.zip ? String(client.zip) : undefined,
+              ].filter(Boolean);
+              if (addressParts.length >= 3) {
+                clientAddress = addressParts.join(', ');
+              }
               // Extract phone number from various possible fields
               const rawPhoneNumber = 
                 client.phone1 ||
@@ -680,43 +800,179 @@ export default function AppointmentRequestForm() {
                 : undefined;
               
               // Pre-populate name if available
-              setFormData(prev => ({
-                ...prev,
-                fullName: {
-                  ...prev.fullName,
-                  first: client.firstName || client.first_name || prev.fullName.first,
-                  last: client.lastName || client.last_name || prev.fullName.last,
-                },
-                bestPhoneNumber: phoneNumber || prev.bestPhoneNumber,
-                physicalAddress: {
-                  ...prev.physicalAddress,
+              setFormData(prev => {
+                // If user hasn't moved (or selected "No"), restore physicalAddress from client data
+                // If user has moved (selected "Yes"), don't overwrite the cleared address
+                const shouldRestoreAddress = prev.isThisTheAddressWhereWeWillCome !== 'No';
+                
+                // Build new address from client data
+                const newAddress = shouldRestoreAddress ? {
                   line1: client.address1 || client.address_1 || prev.physicalAddress?.line1 || '',
                   line2: client.address2 || client.address_2 || prev.physicalAddress?.line2 || undefined,
                   city: client.city || prev.physicalAddress?.city || '',
                   state: client.state || prev.physicalAddress?.state || '',
                   zip: client.zip ? String(client.zip) : (prev.physicalAddress?.zip || ''),
                   country: prev.physicalAddress?.country || 'United States',
-                },
-                newPhysicalAddress: {
-                  ...prev.newPhysicalAddress,
-                  line1: client.address1 || client.address_1 || prev.newPhysicalAddress?.line1 || '',
-                  line2: client.address2 || client.address_2 || prev.newPhysicalAddress?.line2 || undefined,
-                  city: client.city || prev.newPhysicalAddress?.city || '',
-                  state: client.state || prev.newPhysicalAddress?.state || '',
-                  zip: client.zip ? String(client.zip) : (prev.newPhysicalAddress?.zip || ''),
-                  country: prev.newPhysicalAddress?.country || 'United States',
-                },
-              }));
+                } : prev.physicalAddress;
+                
+                // Only update if address actually changed to avoid infinite loops
+                const addressChanged = shouldRestoreAddress && (
+                  newAddress.line1 !== prev.physicalAddress?.line1 ||
+                  newAddress.city !== prev.physicalAddress?.city ||
+                  newAddress.state !== prev.physicalAddress?.state ||
+                  newAddress.zip !== prev.physicalAddress?.zip
+                );
+                
+                // Only update if something actually changed
+                if (!addressChanged && 
+                    (client.firstName || client.first_name) === prev.fullName.first &&
+                    (client.lastName || client.last_name) === prev.fullName.last &&
+                    phoneNumber === prev.bestPhoneNumber) {
+                  return prev; // No changes needed
+                }
+                
+                // Store original address if we don't have it yet and we're setting it from client data
+                if (!originalAddress && shouldRestoreAddress && newAddress.line1) {
+                  setOriginalAddress(newAddress);
+                }
+                
+                return {
+                  ...prev,
+                  fullName: {
+                    ...prev.fullName,
+                    first: client.firstName || client.first_name || prev.fullName.first,
+                    last: client.lastName || client.last_name || prev.fullName.last,
+                  },
+                  bestPhoneNumber: phoneNumber || prev.bestPhoneNumber,
+                  physicalAddress: newAddress,
+                  // Only clear newPhysicalAddress if explicitly set to "No"
+                  newPhysicalAddress: prev.isThisTheAddressWhereWeWillCome === 'Yes' ? undefined : prev.newPhysicalAddress,
+                };
+              });
+              
             }
           }
         } catch (err) {
           console.warn('Failed to fetch client info from appointments:', err);
         }
 
+        // After loading client data, fetch veterinarians if we have an address
+        // Use the client address we extracted, or check formData for new address
+        if (!alive) return;
+        
+        // Determine which address to use for veterinarian lookup
+        let address: string | undefined = undefined;
+        
+        // If user has answered "No" and entered a new address, use that
+        if (formData.isThisTheAddressWhereWeWillCome === 'No' &&
+            formData.newPhysicalAddress?.line1?.trim() &&
+            formData.newPhysicalAddress?.city?.trim() &&
+            formData.newPhysicalAddress?.state?.trim() &&
+            formData.newPhysicalAddress?.zip?.trim()) {
+          const addressParts = [
+            formData.newPhysicalAddress.line1,
+            formData.newPhysicalAddress.city,
+            formData.newPhysicalAddress.state,
+            formData.newPhysicalAddress.zip,
+          ].filter(Boolean);
+          address = addressParts.join(', ');
+        } else if (clientAddress) {
+          // Otherwise, use the client address we extracted
+          address = clientAddress;
+        }
+        
+        // Fetch veterinarians if we have a valid address
+        if (address) {
+          setLoadingVeterinarians(true);
+          try {
+            // Only check zone if user is entering a new address (not using address on file)
+            const isNewAddress = formData.isThisTheAddressWhereWeWillCome === 'No' &&
+              formData.newPhysicalAddress?.line1?.trim() &&
+              formData.newPhysicalAddress?.city?.trim() &&
+              formData.newPhysicalAddress?.state?.trim() &&
+              formData.newPhysicalAddress?.zip?.trim();
+            
+            // Only check zone for new addresses, and only if address has changed from last check
+            if (isNewAddress && lastCheckedAddressRef.current !== address) {
+              try {
+                await http.get(`/public/appointments/find-zone-by-address?address=${encodeURIComponent(address)}`);
+                // Zone exists, clear any previous error
+                setErrors(prev => {
+                  const next = { ...prev };
+                  delete next.zoneNotServiced;
+                  return next;
+                });
+                lastCheckedAddressRef.current = address; // Update last checked address
+              } catch (zoneError: any) {
+                if (zoneError?.response?.status === 404) {
+                  // Zone not serviced - set error and don't fetch veterinarians
+                  if (alive) {
+                    setErrors(prev => ({ ...prev, zoneNotServiced: 'We do not service your zone' }));
+                    setProviders([]);
+                    setLoadingVeterinarians(false);
+                    lastCheckedAddressRef.current = address; // Update last checked address even on error
+                  }
+                  return;
+                }
+                // For other errors, log but continue with veterinarian fetch
+                console.warn('[AppointmentForm] Zone check failed:', zoneError);
+                lastCheckedAddressRef.current = address; // Update last checked address even on error
+              }
+            } else if (!isNewAddress) {
+              // Clear any zone error when using address on file
+              setErrors(prev => {
+                const next = { ...prev };
+                delete next.zoneNotServiced;
+                return next;
+              });
+            }
+            
+            if (!alive) return;
+            
+            const providersData = await fetchVeterinarians(address);
+            
+            if (!alive) return;
+            
+            setProviders(providersData);
+            setLoadingVeterinarians(false);
+            
+            // Set default doctor to primary provider if found
+            const primaryProvider = petsData.find(p => p.primaryProviderName)?.primaryProviderName || null;
+            if (primaryProvider && providersData.length > 0) {
+              const providerMatch = providersData.find(p => 
+                p.name === primaryProvider || 
+                p.name.includes(primaryProvider) ||
+                primaryProvider.includes(p.name) ||
+                `Dr. ${p.name}` === primaryProvider ||
+                p.name.toLowerCase().includes(primaryProvider.toLowerCase()) ||
+                primaryProvider.toLowerCase().includes(p.name.toLowerCase())
+              );
+              if (providerMatch) {
+                setFormData(prev => ({ 
+                  ...prev, 
+                  preferredDoctorExisting: `Dr. ${providerMatch.name}` 
+                }));
+              }
+            }
+          } catch (err) {
+            console.error('Failed to fetch veterinarians:', err);
+            if (alive) {
+              setProviders([]);
+              setLoadingVeterinarians(false);
+            }
+          }
+        } else {
+          setProviders([]);
+          setLoadingVeterinarians(false);
+        }
+
         // Skip intro page and go directly to existing client form
         setCurrentPage('existing-client');
       } catch (error: any) {
         console.error('Failed to load client data:', error);
+        if (alive) {
+          setLoadingVeterinarians(false);
+        }
       } finally {
         if (alive) setLoadingClientData(false);
       }
@@ -729,7 +985,7 @@ export default function AppointmentRequestForm() {
   }, [
     isLoggedIn, 
     userEmail,
-    formData.movedSinceLastVisit,
+    formData.isThisTheAddressWhereWeWillCome,
     formData.physicalAddress?.line1,
     formData.physicalAddress?.city,
     formData.physicalAddress?.state,
@@ -741,7 +997,42 @@ export default function AppointmentRequestForm() {
   ]);
 
   const updateFormData = (field: keyof FormData, value: any) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+    setFormData(prev => {
+      const updated = { ...prev, [field]: value };
+      
+      // When "No" is selected for isThisTheAddressWhereWeWillCome, clear physicalAddress and providers
+      // (Reversed logic: "No" means they need a new address)
+      if (field === 'isThisTheAddressWhereWeWillCome' && value === 'No') {
+        // Store the original address before clearing it (if not already stored)
+        if (!originalAddress && prev.physicalAddress && (prev.physicalAddress.line1 || prev.physicalAddress.city)) {
+          setOriginalAddress(prev.physicalAddress);
+        }
+        updated.physicalAddress = {
+          line1: '',
+          city: '',
+          state: '',
+          zip: '',
+          country: '',
+        };
+        // Clear providers since we need new address to fetch them
+        setProviders([]);
+        setPublicProviders([]);
+        // Clear preferred doctor selection
+        updated.preferredDoctorExisting = '';
+      }
+      
+      // When "Yes" is selected for isThisTheAddressWhereWeWillCome, restore original address and clear newPhysicalAddress
+      // (Reversed logic: "Yes" means they're using the existing address)
+      if (field === 'isThisTheAddressWhereWeWillCome' && value === 'Yes') {
+        // Restore the original address if we have it stored
+        if (originalAddress) {
+          updated.physicalAddress = originalAddress;
+        }
+        updated.newPhysicalAddress = undefined;
+      }
+      
+      return updated;
+    });
     // Clear error for this field
     if (errors[field]) {
       setErrors(prev => {
@@ -775,33 +1066,129 @@ export default function AppointmentRequestForm() {
           if (!formData.email.trim()) newErrors.email = 'Email is required';
           if (!formData.fullName.first.trim()) newErrors['fullName.first'] = 'First name is required';
           if (!formData.fullName.last.trim()) newErrors['fullName.last'] = 'Last name is required';
-          if (!formData.haveUsedServicesBefore) newErrors.haveUsedServicesBefore = 'Please select an option';
+          if (!formData.phoneNumbers.trim()) newErrors.phoneNumbers = 'Phone number is required';
+          if (!formData.canWeText) newErrors.canWeText = 'Please select whether we can text this number';
         }
         break;
       case 'new-client':
         // Only validate new client page if user is not logged in
         if (!isLoggedIn) {
-        if (!formData.phoneNumbers.trim()) newErrors.phoneNumbers = 'Phone numbers are required';
         if (!formData.physicalAddress.line1.trim()) newErrors['physicalAddress.line1'] = 'Street address is required';
         if (!formData.physicalAddress.city.trim()) newErrors['physicalAddress.city'] = 'City is required';
         if (!formData.physicalAddress.state.trim()) newErrors['physicalAddress.state'] = 'State is required';
         if (!formData.physicalAddress.zip.trim()) newErrors['physicalAddress.zip'] = 'Zip code is required';
-        if (!formData.petInfo.trim()) newErrors.petInfo = 'Pet information is required';
+        if (errors.zoneNotServiced) newErrors.zoneNotServiced = errors.zoneNotServiced;
         if (!formData.previousVeterinaryPractices?.trim()) newErrors.previousVeterinaryPractices = 'Previous veterinary practices are required';
-          if (!formData.petBehaviorAtPreviousVisits?.trim()) newErrors.petBehaviorAtPreviousVisits = 'Pet behavior information is required';
           if (!formData.preferredDoctor) newErrors.preferredDoctor = 'Please select a preferred doctor';
-          if (!formData.lookingForEuthanasia) newErrors.lookingForEuthanasia = 'Please select an option';
+        }
+        break;
+      case 'new-client-pet-info':
+        // Only validate new client pet info page if user is not logged in
+        if (!isLoggedIn) {
+          if (!formData.newClientPets || formData.newClientPets.length === 0) {
+            newErrors.newClientPets = 'Please add at least one pet';
+          } else {
+            formData.newClientPets.forEach((pet) => {
+              if (!pet.name?.trim()) {
+                newErrors[`newClientPet.${pet.id}.name`] = 'Pet name is required';
+              }
+              if (!pet.species?.trim() || !pet.age?.trim() || !pet.spayedNeutered?.trim() || !pet.breed?.trim() || !pet.color?.trim() || !pet.weight?.trim()) {
+                newErrors[`newClientPet.${pet.id}.details`] = 'Please provide all pet details (Species, Age, Spayed/Neutered, Breed, Color, Weight)';
+              }
+              if (!pet.behaviorAtPreviousVisits?.trim()) {
+                newErrors[`newClientPet.${pet.id}.behaviorAtPreviousVisits`] = 'Please tell us anything else you want us to know about this pet';
+              }
+            });
+          }
+        }
+        // Validate howSoon for all pets (single question)
+        if (!formData.howSoon) {
+          newErrors.howSoon = 'Please select how soon your pets need to be seen';
         }
         break;
       case 'existing-client':
         if (!formData.bestPhoneNumber?.trim()) newErrors.bestPhoneNumber = 'Phone number is required';
+        if (formData.physicalAddress && (formData.physicalAddress.line1 || formData.physicalAddress.city || formData.physicalAddress.state || formData.physicalAddress.zip)) {
+          if (!formData.isThisTheAddressWhereWeWillCome) newErrors.isThisTheAddressWhereWeWillCome = 'Please select an option';
+          // If they answered "No", validate new address fields
+          if (formData.isThisTheAddressWhereWeWillCome === 'No') {
+            if (!formData.newPhysicalAddress?.line1?.trim()) newErrors['newPhysicalAddress.line1'] = 'Street address is required';
+            if (!formData.newPhysicalAddress?.city?.trim()) newErrors['newPhysicalAddress.city'] = 'City is required';
+            if (!formData.newPhysicalAddress?.state?.trim()) newErrors['newPhysicalAddress.state'] = 'State is required';
+            if (!formData.newPhysicalAddress?.zip?.trim()) newErrors['newPhysicalAddress.zip'] = 'Zip code is required';
+            if (errors.zoneNotServiced) newErrors.zoneNotServiced = errors.zoneNotServiced;
+          }
+        }
+        if (!formData.preferredDoctorExisting) newErrors.preferredDoctorExisting = 'Please select a preferred doctor';
+        // Temporarily disabled - question is hidden but logic is preserved
+        // if (!formData.lookingForEuthanasiaExisting) newErrors.lookingForEuthanasiaExisting = 'Please select an option';
+        break;
+      case 'existing-client-pets':
         if (isLoggedIn) {
-          if (formData.selectedPetIds.length === 0) newErrors.selectedPetIds = 'Please select at least one pet';
+          if (formData.selectedPetIds.length === 0) {
+            newErrors.selectedPetIds = 'Please select at least one pet';
+          } else {
+            // Validate pet-specific questions for each selected pet
+            formData.selectedPetIds.forEach((petId) => {
+              const petData = formData.petSpecificData?.[petId];
+              if (!petData?.needsToday) {
+                newErrors[`needsToday.${petId}`] = 'Please select an option for what your pet needs today';
+              }
+              // Validate based on selected option
+              if (petData?.needsToday) {
+                if (petData.needsToday === 'End-of-life care / euthanasia') {
+                  // Validate euthanasia fields
+                  if (!petData.euthanasiaReason?.trim()) {
+                    newErrors[`euthanasiaReason.${petId}`] = 'Please let us know what is going on with your pet';
+                  }
+                  if (!petData.beenToVetLastThreeMonths?.trim()) {
+                    newErrors[`beenToVetLastThreeMonths.${petId}`] = 'Please let us know if your pet has been to the veterinarian in the last three months';
+                  }
+                  if (!petData.interestedInOtherOptions) {
+                    newErrors[`interestedInOtherOptions.${petId}`] = 'Please select an option';
+                  }
+                  if (!petData.aftercarePreference) {
+                    newErrors[`aftercarePreference.${petId}`] = 'Please select your preferences for aftercare';
+                  }
+                } else {
+                  // Require details for other options
+                  if (!petData.needsTodayDetails?.trim()) {
+                    newErrors[`needsTodayDetails.${petId}`] = 'Please provide details about the reason for this appointment';
+                  }
+                }
+              }
+            });
+          }
+          // Validate new pets added by existing client
+          if (formData.existingClientNewPets && formData.existingClientNewPets.length > 0) {
+            formData.existingClientNewPets.forEach((pet) => {
+              if (!pet.name?.trim()) {
+                newErrors[`existingClientNewPet.${pet.id}.name`] = 'Pet name is required';
+              }
+              if (!pet.species?.trim() || !pet.age?.trim() || !pet.spayedNeutered?.trim() || !pet.breed?.trim() || !pet.color?.trim() || !pet.weight?.trim()) {
+                newErrors[`existingClientNewPet.${pet.id}.details`] = 'Please provide all pet details (Species, Age, Spayed/Neutered, Breed, Color, Weight)';
+              }
+              if (!pet.behaviorAtPreviousVisits?.trim()) {
+                newErrors[`existingClientNewPet.${pet.id}.behaviorAtPreviousVisits`] = 'Please tell us anything else you want us to know about this pet';
+              }
+              if (!pet.needsCalmingMedications) {
+                newErrors[`existingClientNewPet.${pet.id}.needsCalmingMedications`] = 'Please answer whether your pet has needed calming medications';
+              }
+              if (pet.needsCalmingMedications === 'Yes' && !pet.hasCalmingMedications) {
+                newErrors[`existingClientNewPet.${pet.id}.hasCalmingMedications`] = 'Please answer whether you have these medications on hand';
+              }
+              if (!pet.needsMuzzleOrSpecialHandling) {
+                newErrors[`existingClientNewPet.${pet.id}.needsMuzzleOrSpecialHandling`] = 'Please answer whether your pet has needed a muzzle or special handling';
+              }
+            });
+          }
         } else {
           if (!formData.whatPets?.trim()) newErrors.whatPets = 'Pet information is required';
         }
-        if (!formData.preferredDoctorExisting) newErrors.preferredDoctorExisting = 'Please select a preferred doctor';
-        if (!formData.lookingForEuthanasiaExisting) newErrors.lookingForEuthanasiaExisting = 'Please select an option';
+        // Validate howSoon for all pets (single question)
+        if (!formData.howSoon) {
+          newErrors.howSoon = 'Please select how soon your pets need to be seen';
+        }
         break;
       case 'euthanasia-intro':
         if (!formData.euthanasiaReason?.trim()) newErrors.euthanasiaReason = 'Please let us know what is going on with your pet';
@@ -814,14 +1201,9 @@ export default function AppointmentRequestForm() {
         if (!formData.aftercarePreference) newErrors.aftercarePreference = 'Please select an aftercare preference';
         break;
       case 'request-visit-continued':
-        if (!formData.visitDetails?.trim()) {
-          newErrors.visitDetails = 'Please provide details about the services you need';
-        }
-        if (!formData.needsUrgentScheduling) {
-          newErrors.needsUrgentScheduling = 'Please select whether this is urgent';
-        }
-        // If not urgent and slots are available, require selections or "none work" option; otherwise allow manual entry
-        if (formData.needsUrgentScheduling === 'No') {
+        // If not urgent/emergent and slots are available, require selections or "none work" option; otherwise allow manual entry
+        const isNotUrgentTimeframe = formData.howSoon && formData.howSoon !== 'Emergent – today' && formData.howSoon !== 'Urgent – within 24–48 hours';
+        if (isNotUrgentTimeframe) {
           if (recommendedSlots.length > 0) {
             const selectedCount = Object.keys(formData.selectedDateTimeSlotsVisit || {}).length;
             if (selectedCount === 0 && !formData.noneOfWorkForMeVisit) {
@@ -851,40 +1233,40 @@ export default function AppointmentRequestForm() {
       case 'intro':
         // This should only happen if user is not logged in
         if (!isLoggedIn) {
-          if (formData.haveUsedServicesBefore === 'Yes') {
-            setCurrentPage('existing-client');
-          } else {
-            // For new clients, check if email already exists
-            if (formData.email.trim()) {
-              try {
-                setCheckingEmail(true);
-                const result = await checkEmail(formData.email.trim(), practiceId);
-                if (result.exists) {
-                  // Email exists (with or without account) - show modal
-                  setEmailCheckForModal(result);
-                  setShowExistingClientModal(true);
-                  setCheckingEmail(false);
-                  return;
-                }
-              } catch (err) {
-                console.error('Error checking email:', err);
-                // Continue with form if check fails
-              } finally {
+          // Always go to new-client page (question removed)
+          // For new clients, check if email already exists
+          if (formData.email.trim()) {
+            try {
+              setCheckingEmail(true);
+              const result = await checkEmail(formData.email.trim(), practiceId);
+              if (result.exists) {
+                // Email exists (with or without account) - show modal
+                setEmailCheckForModal(result);
+                setShowExistingClientModal(true);
                 setCheckingEmail(false);
+                return;
               }
+            } catch (err) {
+              console.error('Error checking email:', err);
+              // Continue with form if check fails
+            } finally {
+              setCheckingEmail(false);
             }
-            setCurrentPage('new-client');
           }
+          setCurrentPage('new-client');
         }
         break;
       case 'new-client':
-        if (formData.lookingForEuthanasia === 'Yes') {
-          setCurrentPage('euthanasia-intro');
-        } else {
-          setCurrentPage('request-visit-continued');
-        }
+        setCurrentPage('new-client-pet-info');
+        break;
+      case 'new-client-pet-info':
+        // Always go to request-visit-continued (euthanasia question removed)
+        setCurrentPage('request-visit-continued');
         break;
       case 'existing-client':
+        setCurrentPage('existing-client-pets');
+        break;
+      case 'existing-client-pets':
         if (formData.lookingForEuthanasiaExisting === 'Yes') {
           setCurrentPage('euthanasia-intro');
         } else {
@@ -920,9 +1302,15 @@ export default function AppointmentRequestForm() {
       case 'new-client':
         setCurrentPage('intro');
         break;
+      case 'new-client-pet-info':
+        setCurrentPage('new-client');
+        break;
+      case 'existing-client-pets':
+        setCurrentPage('existing-client');
+        break;
       case 'euthanasia-intro':
         if (formData.haveUsedServicesBefore === 'Yes') {
-          setCurrentPage('existing-client');
+          setCurrentPage('existing-client-pets');
         } else {
           setCurrentPage('new-client');
         }
@@ -942,10 +1330,12 @@ export default function AppointmentRequestForm() {
         }
         break;
       case 'request-visit-continued':
-        if (formData.haveUsedServicesBefore === 'Yes') {
-          setCurrentPage('existing-client');
+        // For existing clients (logged in or haveUsedServicesBefore), go back to pet selection
+        if (isLoggedIn || formData.haveUsedServicesBefore === 'Yes') {
+          setCurrentPage('existing-client-pets');
         } else {
-          setCurrentPage('new-client');
+          // For new clients, go back to pet information page
+          setCurrentPage('new-client-pet-info');
         }
         break;
     }
@@ -1019,7 +1409,7 @@ export default function AppointmentRequestForm() {
         // Address Information
         physicalAddress: (() => {
           // Existing client who moved - use new address
-          if (isExistingClient && formData.movedSinceLastVisit === 'Yes' && formData.newPhysicalAddress) {
+          if (isExistingClient && formData.isThisTheAddressWhereWeWillCome === 'No' && formData.newPhysicalAddress) {
             return {
               line1: formData.newPhysicalAddress.line1 || '',
               line2: formData.newPhysicalAddress.line2 || undefined,
@@ -1030,7 +1420,7 @@ export default function AppointmentRequestForm() {
             };
           }
           // Existing client who hasn't moved - use existing address from formData
-          if (isExistingClient && formData.movedSinceLastVisit !== 'Yes' && formData.physicalAddress) {
+          if (isExistingClient && formData.isThisTheAddressWhereWeWillCome !== 'No' && formData.physicalAddress) {
             return {
               line1: formData.physicalAddress.line1 || '',
               line2: formData.physicalAddress.line2 || undefined,
@@ -1076,43 +1466,84 @@ export default function AppointmentRequestForm() {
         
         // Pet/Patient Information
         pets: isLoggedIn && formData.selectedPetIds.length > 0
-          ? pets.filter(p => formData.selectedPetIds.includes(p.id)).map(p => ({
-              id: p.id,
-              dbId: p.dbId,
-              clientId: p.clientId,
-              name: p.name,
-              species: p.species,
-              breed: p.breed,
-              dob: p.dob,
-              subscription: p.subscription,
-              primaryProviderName: p.primaryProviderName,
-              photoUrl: p.photoUrl,
-              wellnessPlans: p.wellnessPlans,
-              alerts: petAlerts.get(p.id) ?? null,
-            }))
+          ? [
+              // Existing pets from database
+              ...pets.filter(p => formData.selectedPetIds.includes(p.id)).map(p => ({
+                id: p.id,
+                dbId: p.dbId,
+                clientId: p.clientId,
+                name: p.name,
+                species: p.species,
+                breed: p.breed,
+                dob: p.dob,
+                subscription: p.subscription,
+                primaryProviderName: p.primaryProviderName,
+                photoUrl: p.photoUrl,
+                wellnessPlans: p.wellnessPlans,
+                alerts: petAlerts.get(p.id) ?? null,
+              })),
+              // New pets added by existing client (only if selected)
+              ...(formData.existingClientNewPets || [])
+                .filter(p => formData.selectedPetIds.includes(p.id))
+                .map(p => ({
+                  id: p.id,
+                  name: p.name,
+                  species: p.species,
+                  age: p.age,
+                  spayedNeutered: p.spayedNeutered,
+                  breed: p.breed,
+                  color: p.color,
+                  weight: p.weight,
+                  behaviorAtPreviousVisits: p.behaviorAtPreviousVisits,
+                  needsCalmingMedications: p.needsCalmingMedications,
+                  hasCalmingMedications: p.hasCalmingMedications,
+                  needsMuzzleOrSpecialHandling: p.needsMuzzleOrSpecialHandling,
+                }))
+            ]
           : undefined,
         
         // Pet information for non-logged-in users
-        petInfoText: !isLoggedIn ? formData.whatPets || formData.petInfo : undefined,
+        petInfoText: !isLoggedIn && !formData.newClientPets?.length ? (formData.whatPets || formData.petInfo) : undefined,
+        newClientPets: formData.newClientPets && formData.newClientPets.length > 0 ? formData.newClientPets : undefined,
+        existingClientNewPets: formData.existingClientNewPets && formData.existingClientNewPets.length > 0 ? formData.existingClientNewPets : undefined,
         newPetInfo: formData.newPetInfo || undefined,
         
         // All pets data (for logged-in users, include all pets even if not selected)
-        allPets: isLoggedIn && pets.length > 0
-          ? pets.map(p => ({
-              id: p.id,
-              dbId: p.dbId,
-              clientId: p.clientId,
-              name: p.name,
-              species: p.species,
-              breed: p.breed,
-              dob: p.dob,
-              subscription: p.subscription,
-              primaryProviderName: p.primaryProviderName,
-              photoUrl: p.photoUrl,
-              wellnessPlans: p.wellnessPlans,
-              alerts: petAlerts.get(p.id) ?? null,
-              isSelected: formData.selectedPetIds.includes(p.id),
-            }))
+        allPets: isLoggedIn
+          ? [
+              // Existing pets from database
+              ...(pets.length > 0 ? pets.map(p => ({
+                id: p.id,
+                dbId: p.dbId,
+                clientId: p.clientId,
+                name: p.name,
+                species: p.species,
+                breed: p.breed,
+                dob: p.dob,
+                subscription: p.subscription,
+                primaryProviderName: p.primaryProviderName,
+                photoUrl: p.photoUrl,
+                wellnessPlans: p.wellnessPlans,
+                alerts: petAlerts.get(p.id) ?? null,
+                isSelected: formData.selectedPetIds.includes(p.id),
+              })) : []),
+              // New pets added by existing client
+              ...(formData.existingClientNewPets || []).map(p => ({
+                id: p.id,
+                name: p.name,
+                species: p.species,
+                age: p.age,
+                spayedNeutered: p.spayedNeutered,
+                breed: p.breed,
+                color: p.color,
+                weight: p.weight,
+                behaviorAtPreviousVisits: p.behaviorAtPreviousVisits,
+                needsCalmingMedications: p.needsCalmingMedications,
+                hasCalmingMedications: p.hasCalmingMedications,
+                needsMuzzleOrSpecialHandling: p.needsMuzzleOrSpecialHandling,
+                isSelected: formData.selectedPetIds.includes(p.id),
+              }))
+            ]
           : undefined,
         otherPersonsOnAccount: formData.otherPersonsOnAccount || undefined,
         condoApartmentInfo: formData.condoApartmentInfo || undefined,
@@ -1123,12 +1554,15 @@ export default function AppointmentRequestForm() {
         okayToContactPreviousVets: formData.okayToContactPreviousVets || formData.okayToContactPreviousVetsExisting || undefined,
         hadVetCareElsewhere: formData.hadVetCareElsewhere || undefined,
         mayWeAskForRecords: formData.mayWeAskForRecords || undefined,
-        petBehaviorAtPreviousVisits: formData.petBehaviorAtPreviousVisits || formData.petBehaviorAtPreviousVisitsExisting || undefined,
         
-        // Pet Behavior & Handling
+        // Pet Behavior & Handling - keep legacy fields for backward compatibility
+        petBehaviorAtPreviousVisits: formData.petBehaviorAtPreviousVisits || formData.petBehaviorAtPreviousVisitsExisting || undefined,
         needsCalmingMedications: formData.needsCalmingMedications || undefined,
         hasCalmingMedications: formData.hasCalmingMedications || undefined,
         needsMuzzleOrSpecialHandling: formData.needsMuzzleOrSpecialHandling || undefined,
+        
+        // Per-pet data - include in payload for API processing
+        petSpecificData: formData.petSpecificData || undefined,
         
         // Appointment Details
         appointmentType: isEuthanasia ? 'euthanasia' : 'regular_visit',
@@ -1173,6 +1607,7 @@ export default function AppointmentRequestForm() {
         } : {}),
         
         // Additional Information
+        howSoon: formData.howSoon || undefined,
         howDidYouHearAboutUs: formData.howDidYouHearAboutUs || undefined,
         anythingElse: formData.anythingElse || undefined,
         
@@ -1334,7 +1769,28 @@ export default function AppointmentRequestForm() {
 
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Have you used Vet At Your Door's services before? <span style={{ color: '#ef4444' }}>*</span>
+                What is your best phone number? <span style={{ color: '#ef4444' }}>*</span>
+              </label>
+              <input
+                type="tel"
+                value={formData.phoneNumbers || ''}
+                onChange={(e) => updateFormData('phoneNumbers', e.target.value)}
+                placeholder="207-555-1234"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: `1px solid ${errors.phoneNumbers ? '#ef4444' : '#d1d5db'}`,
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontFamily: 'inherit',
+                }}
+              />
+              {errors.phoneNumbers && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.phoneNumbers}</div>}
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                Can we text this number? <span style={{ color: '#ef4444' }}>*</span>
               </label>
               <div style={{ display: 'flex', gap: '16px' }}>
                 {['Yes', 'No'].map((option) => (
@@ -1346,26 +1802,30 @@ export default function AppointmentRequestForm() {
                       gap: '8px',
                       cursor: 'pointer',
                       padding: '12px',
-                      border: `1px solid ${formData.haveUsedServicesBefore === option ? '#10b981' : '#d1d5db'}`,
+                      border: `1px solid ${formData.canWeText === option ? '#10b981' : '#d1d5db'}`,
                       borderRadius: '8px',
-                      backgroundColor: formData.haveUsedServicesBefore === option ? '#f0fdf4' : '#fff',
-                      flex: 1,
+                      backgroundColor: formData.canWeText === option ? '#f0fdf4' : '#fff',
                     }}
                   >
                     <input
                       type="radio"
-                      name="haveUsedServicesBefore"
+                      name="canWeText"
                       value={option}
-                      checked={formData.haveUsedServicesBefore === option}
-                      onChange={(e) => updateFormData('haveUsedServicesBefore', e.target.value)}
+                      checked={formData.canWeText === option}
+                      onChange={(e) => updateFormData('canWeText', e.target.value)}
                       style={{ margin: 0 }}
                     />
-                    <span>{option}</span>
+                    <span style={{ fontSize: '14px' }}>{option}</span>
                   </label>
                 ))}
               </div>
-              {errors.haveUsedServicesBefore && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.haveUsedServicesBefore}</div>}
+              {errors.canWeText && (
+                <div style={{ fontSize: '12px', color: '#ef4444', marginTop: '4px' }}>
+                  {errors.canWeText}
+                </div>
+              )}
             </div>
+
           </div>
         );
 
@@ -1379,26 +1839,6 @@ export default function AppointmentRequestForm() {
               <p style={{ fontSize: '16px', color: '#6b7280' }}>
                 Please enter the fields below so we can gather everything we need to set you up in our system
               </p>
-            </div>
-
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                What is/are your best phone numbers? Please state if each number can receive texts. <span style={{ color: '#ef4444' }}>*</span>
-              </label>
-              <textarea
-                value={formData.phoneNumbers || ''}
-                onChange={(e) => updateFormData('phoneNumbers', e.target.value)}
-                rows={3}
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  border: `1px solid ${errors.phoneNumbers ? '#ef4444' : '#d1d5db'}`,
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  fontFamily: 'inherit',
-                }}
-              />
-              {errors.phoneNumbers && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.phoneNumbers}</div>}
             </div>
 
             <div style={{ marginBottom: '20px' }}>
@@ -1457,6 +1897,11 @@ export default function AppointmentRequestForm() {
                   }}
                 />
               </div>
+              {errors.zoneNotServiced && (
+                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
+                  {errors.zoneNotServiced}
+                </div>
+              )}
             </div>
 
             <div style={{ marginBottom: '20px' }}>
@@ -1576,27 +2021,6 @@ export default function AppointmentRequestForm() {
 
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                For EACH pet we are seeing, please give us the following information: Name, Species, Age, Spayed/Neutered, Breed, Color, Approximate Weight. <span style={{ color: '#ef4444' }}>*</span>
-              </label>
-              <textarea
-                value={formData.petInfo || ''}
-                onChange={(e) => updateFormData('petInfo', e.target.value)}
-                rows={5}
-                placeholder="Pet 1: Name, Species, Age..."
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  border: `1px solid ${errors.petInfo ? '#ef4444' : '#d1d5db'}`,
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  fontFamily: 'inherit',
-                }}
-              />
-              {errors.petInfo && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.petInfo}</div>}
-            </div>
-
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
                 What veterinary practice(s) did you use previously for your pet(s)? Include any specialists please. <span style={{ color: '#ef4444' }}>*</span>
               </label>
               <textarea
@@ -1651,130 +2075,6 @@ export default function AppointmentRequestForm() {
 
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                How did your pet behave at previous veterinary visits (if any)? <span style={{ color: '#ef4444' }}>*</span>
-              </label>
-              <textarea
-                value={formData.petBehaviorAtPreviousVisits || ''}
-                onChange={(e) => updateFormData('petBehaviorAtPreviousVisits', e.target.value)}
-                rows={4}
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  border: `1px solid ${errors.petBehaviorAtPreviousVisits ? '#ef4444' : '#d1d5db'}`,
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  fontFamily: 'inherit',
-                }}
-              />
-              {errors.petBehaviorAtPreviousVisits && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.petBehaviorAtPreviousVisits}</div>}
-            </div>
-
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Has any pet that we are seeing needed calming medications at a previous veterinary visit?
-              </label>
-              <div style={{ display: 'flex', gap: '16px' }}>
-                {['Yes', 'No'].map((option) => (
-                  <label
-                    key={option}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      cursor: 'pointer',
-                      padding: '12px',
-                      border: `1px solid ${formData.needsCalmingMedications === option ? '#10b981' : '#d1d5db'}`,
-                      borderRadius: '8px',
-                      backgroundColor: formData.needsCalmingMedications === option ? '#f0fdf4' : '#fff',
-                      flex: 1,
-                    }}
-                  >
-                    <input
-                      type="radio"
-                      name="needsCalmingMedications"
-                      value={option}
-                      checked={formData.needsCalmingMedications === option}
-                      onChange={(e) => updateFormData('needsCalmingMedications', e.target.value)}
-                      style={{ margin: 0 }}
-                    />
-                    <span>{option}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {formData.needsCalmingMedications === 'Yes' && (
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                  Do you have these medications on hand?
-                </label>
-                <div style={{ display: 'flex', gap: '16px' }}>
-                  {['Yes', 'No'].map((option) => (
-                    <label
-                      key={option}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        cursor: 'pointer',
-                        padding: '12px',
-                        border: `1px solid ${formData.hasCalmingMedications === option ? '#10b981' : '#d1d5db'}`,
-                        borderRadius: '8px',
-                        backgroundColor: formData.hasCalmingMedications === option ? '#f0fdf4' : '#fff',
-                        flex: 1,
-                      }}
-                    >
-                      <input
-                        type="radio"
-                        name="hasCalmingMedications"
-                        value={option}
-                        checked={formData.hasCalmingMedications === option}
-                        onChange={(e) => updateFormData('hasCalmingMedications', e.target.value)}
-                        style={{ margin: 0 }}
-                      />
-                      <span>{option}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Has any pet that we are seeing needed a muzzle or other special handling at a previous veterinary visit (please know this is not meant to judge - it is just so we can best prepare!)?
-              </label>
-              <div style={{ display: 'flex', gap: '16px' }}>
-                {['Yes', 'No'].map((option) => (
-                  <label
-                    key={option}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      cursor: 'pointer',
-                      padding: '12px',
-                      border: `1px solid ${formData.needsMuzzleOrSpecialHandling === option ? '#10b981' : '#d1d5db'}`,
-                      borderRadius: '8px',
-                      backgroundColor: formData.needsMuzzleOrSpecialHandling === option ? '#f0fdf4' : '#fff',
-                      flex: 1,
-                    }}
-                  >
-                    <input
-                      type="radio"
-                      name="needsMuzzleOrSpecialHandling"
-                      value={option}
-                      checked={formData.needsMuzzleOrSpecialHandling === option}
-                      onChange={(e) => updateFormData('needsMuzzleOrSpecialHandling', e.target.value)}
-                      style={{ margin: 0 }}
-                    />
-                    <span>{option}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
                 Do you have a preferred doctor? <span style={{ color: '#ef4444' }}>*</span>
               </label>
               {(() => {
@@ -1792,24 +2092,26 @@ export default function AppointmentRequestForm() {
                     <select
                       value={formData.preferredDoctor || ''}
                       onChange={(e) => updateFormData('preferredDoctor', e.target.value)}
-                      disabled={isDisabled}
+                      disabled={isDisabled || loadingVeterinarians}
                       style={{
                         width: '100%',
                         padding: '12px',
                         border: `1px solid ${errors.preferredDoctor ? '#ef4444' : '#d1d5db'}`,
                         borderRadius: '8px',
                         fontSize: '14px',
-                        backgroundColor: isDisabled ? '#f3f4f6' : '#fff',
-                        cursor: isDisabled ? 'not-allowed' : 'pointer',
-                        opacity: isDisabled ? 0.6 : 1,
+                        backgroundColor: (isDisabled || loadingVeterinarians) ? '#f3f4f6' : '#fff',
+                        cursor: (isDisabled || loadingVeterinarians) ? 'not-allowed' : 'pointer',
+                        opacity: (isDisabled || loadingVeterinarians) ? 0.6 : 1,
                       }}
                     >
                       <option value="">
                         {isDisabled 
                           ? 'Please enter your address above first...' 
+                          : loadingVeterinarians
+                          ? 'Loading doctors...'
                           : 'Select a doctor...'}
                       </option>
-                      {!isDisabled && (
+                      {!isDisabled && !loadingVeterinarians && (
                         <>
                           <option value="I have no preference">I have no preference</option>
                           {providers.map((provider) => {
@@ -1837,12 +2139,432 @@ export default function AppointmentRequestForm() {
               })()}
             </div>
 
+          </div>
+        );
+
+      case 'new-client-pet-info':
+        const addNewClientPet = () => {
+          const newPetId = `new-pet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          setFormData(prev => ({
+            ...prev,
+            newClientPets: [
+              ...(prev.newClientPets || []),
+              {
+                id: newPetId,
+                name: '',
+                species: '',
+                age: '',
+                spayedNeutered: '',
+                breed: '',
+                color: '',
+                weight: '',
+                behaviorAtPreviousVisits: '',
+                needsCalmingMedications: '',
+                hasCalmingMedications: '',
+                needsMuzzleOrSpecialHandling: '',
+              }
+            ]
+          }));
+        };
+
+        const removeNewClientPet = (petId: string) => {
+          setFormData(prev => ({
+            ...prev,
+            newClientPets: (prev.newClientPets || []).filter(p => p.id !== petId)
+          }));
+        };
+
+        const updateNewClientPet = (petId: string, field: string, value: any) => {
+          setFormData(prev => ({
+            ...prev,
+            newClientPets: (prev.newClientPets || []).map(pet =>
+              pet.id === petId ? { ...pet, [field]: value } : pet
+            )
+          }));
+        };
+
+        return (
+          <div>
+            <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+              <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
+                Pet Information
+              </h1>
+              <p style={{ fontSize: '16px', color: '#6b7280' }}>
+                Please provide information about your pet(s)
+              </p>
+            </div>
+
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Are you looking for euthanasia services for your pet? <span style={{ color: '#ef4444' }}>*</span>
+                Your Pet(s) <span style={{ color: '#ef4444' }}>*</span>
               </label>
-              <div style={{ display: 'flex', gap: '16px' }}>
-                {['Yes', 'No'].map((option) => (
+              <div style={{ 
+                border: `1px solid ${errors.newClientPets ? '#ef4444' : '#d1d5db'}`,
+                borderRadius: '8px',
+                padding: '8px',
+                backgroundColor: '#f9fafb',
+              }}>
+                {(formData.newClientPets || []).map((pet, index) => (
+                  <div key={pet.id} style={{ marginBottom: index < (formData.newClientPets?.length || 0) - 1 ? '16px' : '0' }}>
+                    <div style={{
+                      padding: '16px',
+                      backgroundColor: '#fff',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '8px',
+                      borderLeft: '3px solid #10b981',
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                        <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#111827', margin: 0 }}>
+                          {pet.name || `Pet ${index + 1}`}
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={() => removeNewClientPet(pet.id)}
+                          style={{
+                            padding: '6px 12px',
+                            backgroundColor: '#fee2e2',
+                            color: '#991b1b',
+                            border: '1px solid #fecaca',
+                            borderRadius: '6px',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+
+                      {/* Pet Name */}
+                      <div style={{ marginBottom: '16px' }}>
+                        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                          Pet Name <span style={{ color: '#ef4444' }}>*</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={pet.name || ''}
+                          onChange={(e) => updateNewClientPet(pet.id, 'name', e.target.value)}
+                          placeholder="Enter pet name"
+                          style={{
+                            width: '100%',
+                            padding: '8px',
+                            border: `1px solid ${errors[`newClientPet.${pet.id}.name`] ? '#ef4444' : '#d1d5db'}`,
+                            borderRadius: '6px',
+                            fontSize: '14px',
+                          }}
+                        />
+                        {errors[`newClientPet.${pet.id}.name`] && (
+                          <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                            {errors[`newClientPet.${pet.id}.name`]}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Species, Age, Spayed/Neutered, Breed, Color, Weight */}
+                      <div style={{ marginBottom: '16px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                          <div>
+                            <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                              Species <span style={{ color: '#ef4444' }}>*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={pet.species || ''}
+                              onChange={(e) => updateNewClientPet(pet.id, 'species', e.target.value)}
+                              placeholder="e.g., Dog, Cat"
+                              style={{
+                                padding: '8px',
+                                border: `1px solid ${errors[`newClientPet.${pet.id}.species`] ? '#ef4444' : '#d1d5db'}`,
+                                borderRadius: '6px',
+                                fontSize: '14px',
+                                width: '100%',
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                              Age/DOB <span style={{ color: '#ef4444' }}>*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={pet.age || ''}
+                              onChange={(e) => updateNewClientPet(pet.id, 'age', e.target.value)}
+                              placeholder="e.g., 5 years"
+                              style={{
+                                padding: '8px',
+                                border: `1px solid ${errors[`newClientPet.${pet.id}.age`] ? '#ef4444' : '#d1d5db'}`,
+                                borderRadius: '6px',
+                                fontSize: '14px',
+                                width: '100%',
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                              Spayed/Neutered <span style={{ color: '#ef4444' }}>*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={pet.spayedNeutered || ''}
+                              onChange={(e) => updateNewClientPet(pet.id, 'spayedNeutered', e.target.value)}
+                              placeholder="Yes/No"
+                              style={{
+                                padding: '8px',
+                                border: `1px solid ${errors[`newClientPet.${pet.id}.spayedNeutered`] ? '#ef4444' : '#d1d5db'}`,
+                                borderRadius: '6px',
+                                fontSize: '14px',
+                                width: '100%',
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                              Breed <span style={{ color: '#ef4444' }}>*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={pet.breed || ''}
+                              onChange={(e) => updateNewClientPet(pet.id, 'breed', e.target.value)}
+                              placeholder="Breed"
+                              style={{
+                                padding: '8px',
+                                border: `1px solid ${errors[`newClientPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
+                                borderRadius: '6px',
+                                fontSize: '14px',
+                                width: '100%',
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                              Color <span style={{ color: '#ef4444' }}>*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={pet.color || ''}
+                              onChange={(e) => updateNewClientPet(pet.id, 'color', e.target.value)}
+                              placeholder="Color"
+                              style={{
+                                padding: '8px',
+                                border: `1px solid ${errors[`newClientPet.${pet.id}.color`] ? '#ef4444' : '#d1d5db'}`,
+                                borderRadius: '6px',
+                                fontSize: '14px',
+                                width: '100%',
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                              Approximate Weight (lbs) <span style={{ color: '#ef4444' }}>*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={pet.weight || ''}
+                              onChange={(e) => updateNewClientPet(pet.id, 'weight', e.target.value)}
+                              placeholder="Weight"
+                              style={{
+                                padding: '8px',
+                                border: `1px solid ${errors[`newClientPet.${pet.id}.weight`] ? '#ef4444' : '#d1d5db'}`,
+                                borderRadius: '6px',
+                                fontSize: '14px',
+                                width: '100%',
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Pet Behavior */}
+                      <div style={{ marginBottom: '16px' }}>
+                        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                          Tell us anything else you want us to know about {pet.name || 'this pet'} <span style={{ color: '#ef4444' }}>*</span>
+                        </label>
+                        <textarea
+                          value={pet.behaviorAtPreviousVisits || ''}
+                          onChange={(e) => updateNewClientPet(pet.id, 'behaviorAtPreviousVisits', e.target.value)}
+                          rows={3}
+                          style={{
+                            width: '100%',
+                            padding: '8px',
+                            border: `1px solid ${errors[`newClientPet.${pet.id}.behaviorAtPreviousVisits`] ? '#ef4444' : '#d1d5db'}`,
+                            borderRadius: '6px',
+                            fontSize: '14px',
+                            fontFamily: 'inherit',
+                          }}
+                        />
+                        {errors[`newClientPet.${pet.id}.behaviorAtPreviousVisits`] && (
+                          <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                            {errors[`newClientPet.${pet.id}.behaviorAtPreviousVisits`]}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Needs Calming Medications */}
+                      <div style={{ marginBottom: '16px' }}>
+                        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                          Has {pet.name || 'this pet'} needed calming medications at a previous veterinary visit?
+                        </label>
+                        <div style={{ display: 'flex', gap: '12px' }}>
+                          {['Yes', 'No'].map((option) => (
+                            <label
+                              key={option}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                cursor: 'pointer',
+                                padding: '8px 12px',
+                                border: `1px solid ${pet.needsCalmingMedications === option ? '#10b981' : '#d1d5db'}`,
+                                borderRadius: '6px',
+                                backgroundColor: pet.needsCalmingMedications === option ? '#f0fdf4' : '#fff',
+                              }}
+                            >
+                              <input
+                                type="radio"
+                                name={`needsCalmingMedications-${pet.id}`}
+                                value={option}
+                                checked={pet.needsCalmingMedications === option}
+                                onChange={(e) => {
+                                  updateNewClientPet(pet.id, 'needsCalmingMedications', e.target.value);
+                                  if (e.target.value === 'No') {
+                                    updateNewClientPet(pet.id, 'hasCalmingMedications', '');
+                                  }
+                                }}
+                                style={{ margin: 0 }}
+                              />
+                              <span style={{ fontSize: '14px' }}>{option}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Has Calming Medications */}
+                      {pet.needsCalmingMedications === 'Yes' && (
+                        <div style={{ marginBottom: '16px' }}>
+                          <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                            Do you have these medications on hand?
+                          </label>
+                          <div style={{ display: 'flex', gap: '12px' }}>
+                            {['Yes', 'No'].map((option) => (
+                              <label
+                                key={option}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  cursor: 'pointer',
+                                  padding: '8px 12px',
+                                  border: `1px solid ${pet.hasCalmingMedications === option ? '#10b981' : '#d1d5db'}`,
+                                  borderRadius: '6px',
+                                  backgroundColor: pet.hasCalmingMedications === option ? '#f0fdf4' : '#fff',
+                                }}
+                              >
+                                <input
+                                  type="radio"
+                                  name={`hasCalmingMedications-${pet.id}`}
+                                  value={option}
+                                  checked={pet.hasCalmingMedications === option}
+                                  onChange={(e) => updateNewClientPet(pet.id, 'hasCalmingMedications', e.target.value)}
+                                  style={{ margin: 0 }}
+                                />
+                                <span style={{ fontSize: '14px' }}>{option}</span>
+                              </label>
+                            ))}
+                          </div>
+                          {pet.hasCalmingMedications === 'No' && (
+                            <div style={{ marginTop: '8px' }}>
+                              <span style={{ color: '#ef4444', fontSize: '12px', fontWeight: 500 }}>
+                                Unfortunately we cannot prescribe medications without having seen {pet.name || 'this pet'}. Please get the prescription from your previous vet.
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Needs Muzzle or Special Handling */}
+                      <div style={{ marginBottom: '16px' }}>
+                        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                          Has {pet.name || 'this pet'} needed a muzzle or other special handling at a previous veterinary visit (please know this is not meant to judge - it is just so we can best prepare!)?
+                        </label>
+                        <div style={{ display: 'flex', gap: '12px' }}>
+                          {['Yes', 'No'].map((option) => (
+                            <label
+                              key={option}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                cursor: 'pointer',
+                                padding: '8px 12px',
+                                border: `1px solid ${pet.needsMuzzleOrSpecialHandling === option ? '#10b981' : '#d1d5db'}`,
+                                borderRadius: '6px',
+                                backgroundColor: pet.needsMuzzleOrSpecialHandling === option ? '#f0fdf4' : '#fff',
+                              }}
+                            >
+                              <input
+                                type="radio"
+                                name={`needsMuzzleOrSpecialHandling-${pet.id}`}
+                                value={option}
+                                checked={pet.needsMuzzleOrSpecialHandling === option}
+                                onChange={(e) => updateNewClientPet(pet.id, 'needsMuzzleOrSpecialHandling', e.target.value)}
+                                style={{ margin: 0 }}
+                              />
+                              <span style={{ fontSize: '14px' }}>{option}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Add Pet Button */}
+                <button
+                  type="button"
+                  onClick={addNewClientPet}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    marginTop: '12px',
+                    backgroundColor: '#f0fdf4',
+                    color: '#10b981',
+                    border: '2px dashed #10b981',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                  }}
+                >
+                  <span>+</span>
+                  <span>Add Pet</span>
+                </button>
+              </div>
+              {errors.newClientPets && (
+                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
+                  {errors.newClientPets}
+                </div>
+              )}
+            </div>
+
+            {/* How soon do your pets need to be seen? - Single question for all pets */}
+            <div style={{ marginTop: '24px', marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
+                How soon do your pets need to be seen? <span style={{ color: '#ef4444' }}>*</span>
+              </label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                {[
+                  'Emergent – today',
+                  'Urgent – within 24–48 hours',
+                  'Soon – sometime this week',
+                  'Flexible – within the next month',
+                  'Routine – in about 3 months',
+                  'Planned – in about 6 months',
+                  'Future – in about 12 months',
+                ].map((option) => (
                   <label
                     key={option}
                     style={{
@@ -1850,26 +2572,28 @@ export default function AppointmentRequestForm() {
                       alignItems: 'center',
                       gap: '8px',
                       cursor: 'pointer',
-                      padding: '12px',
-                      border: `1px solid ${formData.lookingForEuthanasia === option ? '#10b981' : '#d1d5db'}`,
-                      borderRadius: '8px',
-                      backgroundColor: formData.lookingForEuthanasia === option ? '#f0fdf4' : '#fff',
-                      flex: 1,
+                      padding: '5px 0',
+                      backgroundColor: 'transparent',
+                      transition: 'all 0.2s ease',
                     }}
                   >
                     <input
                       type="radio"
-                      name="lookingForEuthanasia"
+                      name="howSoon"
                       value={option}
-                      checked={formData.lookingForEuthanasia === option}
-                      onChange={(e) => updateFormData('lookingForEuthanasia', e.target.value)}
-                      style={{ margin: 0 }}
+                      checked={formData.howSoon === option}
+                      onChange={(e) => updateFormData('howSoon', e.target.value)}
+                      style={{ margin: 0, width: '18px', height: '18px', cursor: 'pointer' }}
                     />
-                    <span>{option}</span>
+                    <span style={{ fontSize: '16px' }}>{option}</span>
                   </label>
                 ))}
               </div>
-              {errors.lookingForEuthanasia && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.lookingForEuthanasia}</div>}
+              {errors.howSoon && (
+                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>
+                  {errors.howSoon}
+                </div>
+              )}
             </div>
           </div>
         );
@@ -1944,113 +2668,87 @@ export default function AppointmentRequestForm() {
               </div>
             </div>
 
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                What pet(s) would you like the appointment for? <span style={{ color: '#ef4444' }}>*</span>
-              </label>
-              {isLoggedIn && pets.length > 0 ? (
-                <div style={{ 
-                  border: `1px solid ${errors.selectedPetIds ? '#ef4444' : '#d1d5db'}`,
-                  borderRadius: '8px',
-                  padding: '4px',
-                  backgroundColor: '#f9fafb',
-                }}>
-                  {pets.map((pet) => (
+            {/* Display address on file - show if we have address data or original address */}
+            {(() => {
+              const addressToShow = formData.physicalAddress && (formData.physicalAddress.line1 || formData.physicalAddress.city || formData.physicalAddress.state || formData.physicalAddress.zip)
+                ? formData.physicalAddress
+                : originalAddress;
+              
+              return addressToShow && (addressToShow.line1 || addressToShow.city || addressToShow.state || addressToShow.zip) ? (
+                <div style={{ marginBottom: '20px' }}>
+                  <div style={{
+                    padding: '12px',
+                    backgroundColor: '#f9fafb',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    color: '#374151',
+                    lineHeight: '1.5',
+                  }}>
+                    {addressToShow.line1 && <div>{addressToShow.line1}</div>}
+                    {addressToShow.line2 && <div>{addressToShow.line2}</div>}
+                    {(addressToShow.city || addressToShow.state || addressToShow.zip) && (
+                      <div>
+                        {[addressToShow.city, addressToShow.state, addressToShow.zip]
+                          .filter(Boolean)
+                          .join(', ')}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : null;
+            })()}
+
+            {/* Is this the address where we will come to see you? */}
+            {(() => {
+              const addressToCheck = formData.physicalAddress && (formData.physicalAddress.line1 || formData.physicalAddress.city || formData.physicalAddress.state || formData.physicalAddress.zip)
+                ? formData.physicalAddress
+                : originalAddress;
+              
+              return addressToCheck && (addressToCheck.line1 || addressToCheck.city || addressToCheck.state || addressToCheck.zip);
+            })() && (
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                  Is this the address where we will come to see you? <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <div style={{ display: 'flex', gap: '16px' }}>
+                  {['Yes', 'No'].map((option) => (
                     <label
-                      key={pet.id}
+                      key={option}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '10px',
-                        padding: '4px 6px',
+                        gap: '8px',
                         cursor: 'pointer',
-                        borderRadius: '6px',
-                        backgroundColor: formData.selectedPetIds.includes(pet.id) ? '#f0fdf4' : 'transparent',
-                        border: `1px solid ${formData.selectedPetIds.includes(pet.id) ? '#10b981' : 'transparent'}`,
-                        marginBottom: '2px',
+                        padding: '12px',
+                        border: `1px solid ${formData.isThisTheAddressWhereWeWillCome === option ? '#10b981' : '#d1d5db'}`,
+                        borderRadius: '8px',
+                        backgroundColor: formData.isThisTheAddressWhereWeWillCome === option ? '#f0fdf4' : '#fff',
+                        flex: 1,
                       }}
                     >
                       <input
-                        type="checkbox"
-                        checked={formData.selectedPetIds.includes(pet.id)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            updateFormData('selectedPetIds', [...formData.selectedPetIds, pet.id]);
-                          } else {
-                            updateFormData('selectedPetIds', formData.selectedPetIds.filter(id => id !== pet.id));
-                          }
-                        }}
-                        style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                        type="radio"
+                        name="isThisTheAddressWhereWeWillCome"
+                        value={option}
+                        checked={formData.isThisTheAddressWhereWeWillCome === option}
+                        onChange={(e) => updateFormData('isThisTheAddressWhereWeWillCome', e.target.value)}
+                        style={{ margin: 0 }}
                       />
-                      <div style={{ flex: 1, fontSize: '14px', fontWeight: 500, color: '#111827' }}>
-                        {pet.name}
-                      </div>
+                      <span>{option}</span>
                     </label>
                   ))}
-                  {formData.selectedPetIds.length === 0 && (
-                    <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
-                      Please select at least one pet
-                    </div>
-                  )}
                 </div>
-              ) : (
-                <input
-                  type="text"
-                  value={formData.whatPets || ''}
-                  onChange={(e) => updateFormData('whatPets', e.target.value)}
-                  placeholder="Enter pet name(s)"
-                  style={{
-                    width: '100%',
-                    padding: '12px',
-                    border: `1px solid ${errors.whatPets ? '#ef4444' : '#d1d5db'}`,
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                  }}
-                />
-              )}
-              {errors.whatPets && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.whatPets}</div>}
-              {errors.selectedPetIds && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.selectedPetIds}</div>}
-            </div>
-
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Have you moved since the last time we saw you?
-              </label>
-              <div style={{ display: 'flex', gap: '16px' }}>
-                {['Yes', 'No'].map((option) => (
-                  <label
-                    key={option}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      cursor: 'pointer',
-                      padding: '12px',
-                      border: `1px solid ${formData.movedSinceLastVisit === option ? '#10b981' : '#d1d5db'}`,
-                      borderRadius: '8px',
-                      backgroundColor: formData.movedSinceLastVisit === option ? '#f0fdf4' : '#fff',
-                      flex: 1,
-                    }}
-                  >
-                    <input
-                      type="radio"
-                      name="movedSinceLastVisit"
-                      value={option}
-                      checked={formData.movedSinceLastVisit === option}
-                      onChange={(e) => updateFormData('movedSinceLastVisit', e.target.value)}
-                      style={{ margin: 0 }}
-                    />
-                    <span>{option}</span>
-                  </label>
-                ))}
+                {errors.isThisTheAddressWhereWeWillCome && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.isThisTheAddressWhereWeWillCome}</div>}
               </div>
-            </div>
+            )}
 
-            {formData.movedSinceLastVisit === 'Yes' && (
+            {/* Show new address fields if they answered "No" to "Is this the address where we will come to see you?" */}
+            {formData.isThisTheAddressWhereWeWillCome === 'No' && (
               <>
                 <div style={{ marginBottom: '20px' }}>
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                    Please put your new PHYSICAL address here.
+                    Please let us know where we will meet you.
                   </label>
                   <input
                     type="text"
@@ -2060,115 +2758,62 @@ export default function AppointmentRequestForm() {
                     style={{
                       width: '100%',
                       padding: '12px',
-                      border: '1px solid #d1d5db',
+                      border: `1px solid ${errors['newPhysicalAddress.line1'] ? '#ef4444' : '#d1d5db'}`,
                       borderRadius: '8px',
                       fontSize: '14px',
                       marginBottom: '12px',
                     }}
                   />
+                  {errors['newPhysicalAddress.line1'] && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '-8px', marginBottom: '8px' }}>{errors['newPhysicalAddress.line1']}</div>}
                   <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
                     <input
                       type="text"
                       value={formData.newPhysicalAddress?.city || ''}
                       onChange={(e) => updateNestedFormData('newPhysicalAddress', 'city', e.target.value)}
                       placeholder="City"
-                      style={{ padding: '12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px' }}
+                      style={{ 
+                        padding: '12px', 
+                        border: `1px solid ${errors['newPhysicalAddress.city'] ? '#ef4444' : '#d1d5db'}`, 
+                        borderRadius: '8px', 
+                        fontSize: '14px' 
+                      }}
                     />
                     <input
                       type="text"
                       value={formData.newPhysicalAddress?.state || ''}
                       onChange={(e) => updateNestedFormData('newPhysicalAddress', 'state', e.target.value)}
                       placeholder="State"
-                      style={{ padding: '12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px' }}
+                      style={{ 
+                        padding: '12px', 
+                        border: `1px solid ${errors['newPhysicalAddress.state'] ? '#ef4444' : '#d1d5db'}`, 
+                        borderRadius: '8px', 
+                        fontSize: '14px' 
+                      }}
                     />
                     <input
                       type="text"
                       value={formData.newPhysicalAddress?.zip || ''}
                       onChange={(e) => updateNestedFormData('newPhysicalAddress', 'zip', e.target.value)}
                       placeholder="Zip"
-                      style={{ padding: '12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px' }}
-                    />
-                  </div>
-                </div>
-
-                <div style={{ marginBottom: '20px' }}>
-                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                    Do you have a different mailing address than your physical address above?
-                  </label>
-                  <div style={{ display: 'flex', gap: '16px' }}>
-                    {['Yes', 'No'].map((option) => (
-                      <label
-                        key={option}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          cursor: 'pointer',
-                          padding: '12px',
-                          border: `1px solid ${formData.differentMailingAddress === option ? '#10b981' : '#d1d5db'}`,
-                          borderRadius: '8px',
-                          backgroundColor: formData.differentMailingAddress === option ? '#f0fdf4' : '#fff',
-                          flex: 1,
-                        }}
-                      >
-                        <input
-                          type="radio"
-                          name="differentMailingAddress"
-                          value={option}
-                          checked={formData.differentMailingAddress === option}
-                          onChange={(e) => updateFormData('differentMailingAddress', e.target.value)}
-                          style={{ margin: 0 }}
-                        />
-                        <span>{option}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-
-                {formData.differentMailingAddress === 'Yes' && (
-                  <div style={{ marginBottom: '20px' }}>
-                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                      Please enter your new MAILING address
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.newMailingAddress?.line1 || ''}
-                      onChange={(e) => updateNestedFormData('newMailingAddress', 'line1', e.target.value)}
-                      placeholder="Street Address"
-                      style={{
-                        width: '100%',
-                        padding: '12px',
-                        border: '1px solid #d1d5db',
-                        borderRadius: '8px',
-                        fontSize: '14px',
-                        marginBottom: '12px',
+                      style={{ 
+                        padding: '12px', 
+                        border: `1px solid ${errors['newPhysicalAddress.zip'] ? '#ef4444' : '#d1d5db'}`, 
+                        borderRadius: '8px', 
+                        fontSize: '14px' 
                       }}
                     />
-                    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
-                      <input
-                        type="text"
-                        value={formData.newMailingAddress?.city || ''}
-                        onChange={(e) => updateNestedFormData('newMailingAddress', 'city', e.target.value)}
-                        placeholder="City"
-                        style={{ padding: '12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px' }}
-                      />
-                      <input
-                        type="text"
-                        value={formData.newMailingAddress?.state || ''}
-                        onChange={(e) => updateNestedFormData('newMailingAddress', 'state', e.target.value)}
-                        placeholder="State"
-                        style={{ padding: '12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px' }}
-                      />
-                      <input
-                        type="text"
-                        value={formData.newMailingAddress?.zip || ''}
-                        onChange={(e) => updateNestedFormData('newMailingAddress', 'zip', e.target.value)}
-                        placeholder="Zip"
-                        style={{ padding: '12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px' }}
-                      />
-                    </div>
                   </div>
-                )}
+                  {(errors['newPhysicalAddress.city'] || errors['newPhysicalAddress.state'] || errors['newPhysicalAddress.zip']) && (
+                    <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                      {errors['newPhysicalAddress.city'] || errors['newPhysicalAddress.state'] || errors['newPhysicalAddress.zip']}
+                    </div>
+                  )}
+                  {errors.zoneNotServiced && (
+                    <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
+                      {errors.zoneNotServiced}
+                    </div>
+                  )}
+                </div>
               </>
             )}
 
@@ -2270,33 +2915,43 @@ export default function AppointmentRequestForm() {
               <select
                 value={formData.preferredDoctorExisting || ''}
                 onChange={(e) => updateFormData('preferredDoctorExisting', e.target.value)}
+                disabled={loadingVeterinarians}
                 style={{
                   width: '100%',
                   padding: '12px',
                   border: `1px solid ${errors.preferredDoctorExisting ? '#ef4444' : '#d1d5db'}`,
                   borderRadius: '8px',
                   fontSize: '14px',
+                  backgroundColor: loadingVeterinarians ? '#f3f4f6' : '#fff',
+                  cursor: loadingVeterinarians ? 'not-allowed' : 'pointer',
+                  opacity: loadingVeterinarians ? 0.6 : 1,
                 }}
               >
-                <option value="">Select a doctor...</option>
-                <option value="I have no preference">I have no preference</option>
-                {providers.map((provider) => {
-                  const providerName = `Dr. ${provider.name}`;
-                  return (
-                    <option key={provider.id} value={providerName}>
-                      {providerName}
-                    </option>
-                  );
-                })}
-                <option value="Whomever I saw last time (I don't remember their name)">
-                  Whomever I saw last time (I don't remember their name)
+                <option value="">
+                  {loadingVeterinarians ? 'Loading doctors...' : 'Select a doctor...'}
                 </option>
+                {!loadingVeterinarians && (
+                  <>
+                    <option value="I have no preference">I have no preference</option>
+                    {providers.map((provider) => {
+                      const providerName = `Dr. ${provider.name}`;
+                      return (
+                        <option key={provider.id} value={providerName}>
+                          {providerName}
+                        </option>
+                      );
+                    })}
+                    <option value="Whomever I saw last time (I don't remember their name)">
+                      Whomever I saw last time (I don't remember their name)
+                    </option>
+                  </>
+                )}
               </select>
               {errors.preferredDoctorExisting && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.preferredDoctorExisting}</div>}
             </div>
             
-
-            <div style={{ marginBottom: '20px' }}>
+            {/* Temporarily hidden - will be moved elsewhere */}
+            {/* <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
                 Are you looking for euthanasia for your pet? <span style={{ color: '#ef4444' }}>*</span>
               </label>
@@ -2329,6 +2984,1062 @@ export default function AppointmentRequestForm() {
                 ))}
               </div>
               {errors.lookingForEuthanasiaExisting && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.lookingForEuthanasiaExisting}</div>}
+            </div> */}
+          </div>
+        );
+
+      case 'existing-client-pets':
+        const updatePetSpecificData = (petId: string, field: string, value: any) => {
+          setFormData(prev => {
+            const petData = prev.petSpecificData || {};
+            return {
+              ...prev,
+              petSpecificData: {
+                ...petData,
+                [petId]: {
+                  ...petData[petId],
+                  [field]: value,
+                },
+              },
+            };
+          });
+        };
+
+        const getPetData = (petId: string) => {
+          return formData.petSpecificData?.[petId] || {};
+        };
+
+        const addExistingClientNewPet = () => {
+          const newPetId = `existing-new-pet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          setFormData(prev => ({
+            ...prev,
+            existingClientNewPets: [
+              ...(prev.existingClientNewPets || []),
+              {
+                id: newPetId,
+                name: '',
+                species: '',
+                age: '',
+                spayedNeutered: '',
+                breed: '',
+                color: '',
+                weight: '',
+                behaviorAtPreviousVisits: '',
+                needsCalmingMedications: '',
+                hasCalmingMedications: '',
+                needsMuzzleOrSpecialHandling: '',
+              }
+            ]
+          }));
+        };
+
+        const removeExistingClientNewPet = (petId: string) => {
+          setFormData(prev => ({
+            ...prev,
+            existingClientNewPets: (prev.existingClientNewPets || []).filter(p => p.id !== petId),
+            selectedPetIds: prev.selectedPetIds.filter(id => id !== petId),
+          }));
+        };
+
+        const updateExistingClientNewPet = (petId: string, field: string, value: any) => {
+          setFormData(prev => ({
+            ...prev,
+            existingClientNewPets: (prev.existingClientNewPets || []).map(pet =>
+              pet.id === petId ? { ...pet, [field]: value } : pet
+            )
+          }));
+        };
+
+        return (
+          <div>
+            <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+              <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
+                Select Pet(s)
+              </h1>
+              <p style={{ fontSize: '16px', color: '#6b7280' }}>
+                Which pet(s) would you like the appointment for?
+              </p>
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                What pet(s) would you like the appointment for? <span style={{ color: '#ef4444' }}>*</span>
+              </label>
+              {isLoggedIn && pets.length > 0 ? (
+                <div style={{ 
+                  border: `1px solid ${errors.selectedPetIds ? '#ef4444' : '#d1d5db'}`,
+                  borderRadius: '8px',
+                  padding: '4px',
+                  backgroundColor: '#f9fafb',
+                }}>
+                  {pets.map((pet) => {
+                    const isSelected = formData.selectedPetIds.includes(pet.id);
+                    const petData = getPetData(pet.id);
+                    return (
+                      <div key={pet.id} style={{ marginBottom: isSelected ? '12px' : '2px' }}>
+                        <label
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            padding: '12px',
+                            cursor: 'pointer',
+                            borderRadius: '6px',
+                            backgroundColor: isSelected ? '#f0fdf4' : 'transparent',
+                            border: `1px solid ${isSelected ? '#10b981' : 'transparent'}`,
+                            transition: 'all 0.2s ease',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setFormData(prev => {
+                                  const petData = prev.petSpecificData || {};
+                                  // Initialize pet data if not exists
+                                  if (!petData[pet.id]) {
+                                    petData[pet.id] = {
+                                      needsToday: '',
+                                      needsTodayDetails: '',
+                                      euthanasiaReason: '',
+                                      beenToVetLastThreeMonths: '',
+                                      interestedInOtherOptions: '',
+                                      aftercarePreference: '',
+                                    };
+                                  }
+                                  return {
+                                    ...prev,
+                                    selectedPetIds: [...prev.selectedPetIds, pet.id],
+                                    petSpecificData: petData,
+                                  };
+                                });
+                              } else {
+                                updateFormData('selectedPetIds', formData.selectedPetIds.filter(id => id !== pet.id));
+                              }
+                            }}
+                            style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                          />
+                          <div style={{ flex: 1, fontSize: '14px', fontWeight: 500, color: '#111827' }}>
+                            {pet.name}
+                          </div>
+                        </label>
+                        
+                        {/* Expandable questions section for selected pets */}
+                        {isSelected && (
+                          <div style={{
+                            marginTop: '8px',
+                            marginLeft: '30px',
+                            padding: '16px',
+                            backgroundColor: '#fff',
+                            border: '1px solid #e5e7eb',
+                            borderRadius: '8px',
+                            borderLeft: '3px solid #10b981',
+                          }}>
+                            <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#111827', marginBottom: '12px' }}>
+                              Questions for {pet.name}
+                            </h3>
+                            
+                            {/* What does your pet need today? */}
+                            <div style={{ marginBottom: '4px' }}>
+                              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
+                                What does {pet.name} need today? <span style={{ color: '#ef4444' }}>*</span>
+                              </label>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                {[
+                                  'Wellness exam / check-up',
+                                  'My pet isn\'t feeling well (new concern or illness)',
+                                  'Recheck / follow-up with the doctor (for a condition we\'ve already seen — please briefly describe)',
+                                  'Technician visit (nail trim, anal glands, booster, blood draw, monthly injection, etc.)',
+                                  'End-of-life care / euthanasia',
+                                ].map((option) => (
+                                  <div key={option}>
+                                    <label
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'flex-start',
+                                        gap: '8px',
+                                        cursor: 'pointer',
+                                        padding: '5px 0',
+                                        backgroundColor: 'transparent',
+                                        transition: 'all 0.2s ease',
+                                      }}
+                                    >
+                                      <input
+                                        type="radio"
+                                        name={`needsToday-${pet.id}`}
+                                        value={option}
+                                        checked={petData.needsToday === option}
+                                        onChange={(e) => {
+                                          updatePetSpecificData(pet.id, 'needsToday', e.target.value);
+                                          // Clear details when changing selection
+                                          updatePetSpecificData(pet.id, 'needsTodayDetails', '');
+                                        }}
+                                        style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
+                                      />
+                                      <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option}</span>
+                                    </label>
+                                    {petData.needsToday === option && (
+                                      <div style={{ marginLeft: '26px', marginTop: '8px', marginBottom: '8px' }}>
+                                        {option === 'End-of-life care / euthanasia' ? (
+                                          // Euthanasia questions
+                                          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                            <div>
+                                              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                                                Let us know what is going on with {pet.name} that has brought you to this difficult decision. <span style={{ color: '#ef4444' }}>*</span>
+                                              </label>
+                                              <textarea
+                                                value={petData.euthanasiaReason || ''}
+                                                onChange={(e) => updatePetSpecificData(pet.id, 'euthanasiaReason', e.target.value)}
+                                                rows={5}
+                                                style={{
+                                                  width: '100%',
+                                                  padding: '8px',
+                                                  border: `1px solid ${errors[`euthanasiaReason.${pet.id}`] ? '#ef4444' : '#d1d5db'}`,
+                                                  borderRadius: '6px',
+                                                  fontSize: '14px',
+                                                  fontFamily: 'inherit',
+                                                }}
+                                              />
+                                              {errors[`euthanasiaReason.${pet.id}`] && (
+                                                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                                  {errors[`euthanasiaReason.${pet.id}`]}
+                                                </div>
+                                              )}
+                                            </div>
+                                            <div>
+                                              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                                                Has {pet.name} been to the veterinarian for these issues in the last three months (it's ok if not - this just helps us schedule correctly)? <span style={{ color: '#ef4444' }}>*</span>
+                                              </label>
+                                              <input
+                                                type="text"
+                                                value={petData.beenToVetLastThreeMonths || ''}
+                                                onChange={(e) => updatePetSpecificData(pet.id, 'beenToVetLastThreeMonths', e.target.value)}
+                                                style={{
+                                                  width: '100%',
+                                                  padding: '8px',
+                                                  border: `1px solid ${errors[`beenToVetLastThreeMonths.${pet.id}`] ? '#ef4444' : '#d1d5db'}`,
+                                                  borderRadius: '6px',
+                                                  fontSize: '14px',
+                                                }}
+                                              />
+                                              {errors[`beenToVetLastThreeMonths.${pet.id}`] && (
+                                                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                                  {errors[`beenToVetLastThreeMonths.${pet.id}`]}
+                                                </div>
+                                              )}
+                                            </div>
+                                            <div>
+                                              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                                                Are you interested in pursuing other options other than euthanasia? We absolutely do not judge your decision - we are here for you - we just want to be sure we schedule an appointment that addresses all of your and {pet.name}'s needs. <span style={{ color: '#ef4444' }}>*</span>
+                                              </label>
+                                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                {[
+                                                  'No. While this is very difficult, I have made my decision. I don\'t wish to pursue further discussion about my decision or investigate other options at this point.',
+                                                  'Yes. I am interested in speaking with the doctor about other options that may help.',
+                                                  'I\'m not sure.',
+                                                ].map((opt) => (
+                                                  <label
+                                                    key={opt}
+                                                    style={{
+                                                      display: 'flex',
+                                                      alignItems: 'flex-start',
+                                                      gap: '8px',
+                                                      cursor: 'pointer',
+                                                      padding: '8px 12px',
+                                                      border: `1px solid ${petData.interestedInOtherOptions === opt ? '#10b981' : '#d1d5db'}`,
+                                                      borderRadius: '6px',
+                                                      backgroundColor: petData.interestedInOtherOptions === opt ? '#f0fdf4' : '#fff',
+                                                    }}
+                                                  >
+                                                    <input
+                                                      type="radio"
+                                                      name={`interestedInOtherOptions-${pet.id}`}
+                                                      value={opt}
+                                                      checked={petData.interestedInOtherOptions === opt}
+                                                      onChange={(e) => updatePetSpecificData(pet.id, 'interestedInOtherOptions', e.target.value)}
+                                                      style={{ marginTop: '2px', flexShrink: 0 }}
+                                                    />
+                                                    <span style={{ fontSize: '14px' }}>{opt}</span>
+                                                  </label>
+                                                ))}
+                                              </div>
+                                              {errors[`interestedInOtherOptions.${pet.id}`] && (
+                                                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                                  {errors[`interestedInOtherOptions.${pet.id}`]}
+                                                </div>
+                                              )}
+                                            </div>
+                                            <div>
+                                              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                                                What are your preferences for aftercare? <span style={{ color: '#ef4444' }}>*</span>
+                                              </label>
+                                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                {[
+                                                  'I will handle my pet\'s remains (e.g. bury at home)',
+                                                  'Private Cremation (Cremation WITH return of ashes)',
+                                                  'Burial At Sea (Cremation WITHOUT return of ashes)',
+                                                  'I am not sure yet.',
+                                                ].map((opt) => (
+                                                  <label
+                                                    key={opt}
+                                                    style={{
+                                                      display: 'flex',
+                                                      alignItems: 'center',
+                                                      gap: '8px',
+                                                      cursor: 'pointer',
+                                                      padding: '8px 12px',
+                                                      border: `1px solid ${petData.aftercarePreference === opt ? '#10b981' : '#d1d5db'}`,
+                                                      borderRadius: '6px',
+                                                      backgroundColor: petData.aftercarePreference === opt ? '#f0fdf4' : '#fff',
+                                                    }}
+                                                  >
+                                                    <input
+                                                      type="radio"
+                                                      name={`aftercarePreference-${pet.id}`}
+                                                      value={opt}
+                                                      checked={petData.aftercarePreference === opt}
+                                                      onChange={(e) => updatePetSpecificData(pet.id, 'aftercarePreference', e.target.value)}
+                                                      style={{ margin: 0 }}
+                                                    />
+                                                    <span style={{ fontSize: '14px' }}>{opt}</span>
+                                                  </label>
+                                                ))}
+                                              </div>
+                                              {errors[`aftercarePreference.${pet.id}`] && (
+                                                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                                  {errors[`aftercarePreference.${pet.id}`]}
+                                                </div>
+                                              )}
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          // Regular text box with dynamic placeholder
+                                          <textarea
+                                            value={petData.needsTodayDetails || ''}
+                                            onChange={(e) => updatePetSpecificData(pet.id, 'needsTodayDetails', e.target.value)}
+                                            placeholder={
+                                              option === 'Wellness exam / check-up'
+                                                ? `Do you have any specific concerns you want to discuss at the visit?`
+                                                : option === 'My pet isn\'t feeling well (new concern or illness)'
+                                                ? `Describe what is going on with ${pet.name}`
+                                                : option === 'Recheck / follow-up with the doctor (for a condition we\'ve already seen — please briefly describe)'
+                                                ? `What are we checking on for ${pet.name}?`
+                                                : option === 'Technician visit (nail trim, anal glands, booster, blood draw, monthly injection, etc.)'
+                                                ? `What would you like done for ${pet.name}?`
+                                                : 'Please provide details about the reason for this appointment...'
+                                            }
+                                            rows={3}
+                                            style={{
+                                              width: '100%',
+                                              padding: '8px',
+                                              border: `1px solid ${errors[`needsTodayDetails.${pet.id}`] ? '#ef4444' : '#d1d5db'}`,
+                                              borderRadius: '6px',
+                                              fontSize: '14px',
+                                              fontFamily: 'inherit',
+                                            }}
+                                          />
+                                        )}
+                                        {errors[`needsTodayDetails.${pet.id}`] && (
+                                          <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                            {errors[`needsTodayDetails.${pet.id}`]}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                              {errors[`needsToday.${pet.id}`] && (
+                                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>
+                                  {errors[`needsToday.${pet.id}`]}
+                                </div>
+                              )}
+                            </div>
+
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {formData.selectedPetIds.length === 0 && errors.selectedPetIds && (
+                    <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px', padding: '0 6px' }}>
+                      Please select at least one pet
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  value={formData.whatPets || ''}
+                  onChange={(e) => updateFormData('whatPets', e.target.value)}
+                  placeholder="Enter pet name(s)"
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: `1px solid ${errors.whatPets ? '#ef4444' : '#d1d5db'}`,
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                  }}
+                />
+              )}
+              {errors.whatPets && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.whatPets}</div>}
+              {errors.selectedPetIds && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.selectedPetIds}</div>}
+            </div>
+
+            {/* New pets added by existing client */}
+            {isLoggedIn && formData.existingClientNewPets && formData.existingClientNewPets.length > 0 && (
+              <div style={{ marginTop: '24px', marginBottom: '20px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                  New Pet(s) <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <div style={{ 
+                  border: '1px solid #d1d5db',
+                  borderRadius: '8px',
+                  padding: '4px',
+                  backgroundColor: '#f9fafb',
+                }}>
+                  {formData.existingClientNewPets.map((pet, index) => {
+                    const isSelected = formData.selectedPetIds.includes(pet.id);
+                    const petData = getPetData(pet.id);
+                    return (
+                      <div key={pet.id} style={{ marginBottom: index < (formData.existingClientNewPets?.length || 0) - 1 ? '12px' : '2px' }}>
+                        <div style={{
+                          padding: '12px',
+                          backgroundColor: isSelected ? '#f0fdf4' : '#fff',
+                          border: `1px solid ${isSelected ? '#10b981' : '#e5e7eb'}`,
+                          borderRadius: '6px',
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                            <label
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '10px',
+                                cursor: 'pointer',
+                                flex: 1,
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setFormData(prev => {
+                                      const petData = prev.petSpecificData || {};
+                                      if (!petData[pet.id]) {
+                                        petData[pet.id] = {
+                                          needsToday: '',
+                                          needsTodayDetails: '',
+                                          euthanasiaReason: '',
+                                          beenToVetLastThreeMonths: '',
+                                          interestedInOtherOptions: '',
+                                          aftercarePreference: '',
+                                        };
+                                      }
+                                      return {
+                                        ...prev,
+                                        selectedPetIds: [...prev.selectedPetIds, pet.id],
+                                        petSpecificData: petData,
+                                      };
+                                    });
+                                  } else {
+                                    updateFormData('selectedPetIds', formData.selectedPetIds.filter(id => id !== pet.id));
+                                  }
+                                }}
+                                style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                              />
+                              <div style={{ flex: 1, fontSize: '14px', fontWeight: 500, color: '#111827' }}>
+                                {pet.name || `New Pet ${index + 1}`}
+                              </div>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => removeExistingClientNewPet(pet.id)}
+                              style={{
+                                padding: '6px 12px',
+                                backgroundColor: '#fee2e2',
+                                color: '#991b1b',
+                                border: '1px solid #fecaca',
+                                borderRadius: '6px',
+                                fontSize: '12px',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              Remove
+                            </button>
+                          </div>
+
+                          {/* Pet Information Fields */}
+                          <div style={{ marginLeft: '28px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            {/* Pet Name */}
+                            <div>
+                              <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                                Pet Name <span style={{ color: '#ef4444' }}>*</span>
+                              </label>
+                              <input
+                                type="text"
+                                value={pet.name || ''}
+                                onChange={(e) => updateExistingClientNewPet(pet.id, 'name', e.target.value)}
+                                placeholder="Enter pet name"
+                                style={{
+                                  width: '100%',
+                                  padding: '8px',
+                                  border: `1px solid ${errors[`existingClientNewPet.${pet.id}.name`] ? '#ef4444' : '#d1d5db'}`,
+                                  borderRadius: '6px',
+                                  fontSize: '14px',
+                                }}
+                              />
+                              {errors[`existingClientNewPet.${pet.id}.name`] && (
+                                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                  {errors[`existingClientNewPet.${pet.id}.name`]}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Species, Age/DOB, Spayed/Neutered, Breed, Color, Weight in a grid */}
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
+                              <div>
+                                <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                                  Species <span style={{ color: '#ef4444' }}>*</span>
+                                </label>
+                                <input
+                                  type="text"
+                                  value={pet.species || ''}
+                                  onChange={(e) => updateExistingClientNewPet(pet.id, 'species', e.target.value)}
+                                  placeholder="e.g., Dog, Cat"
+                                  style={{
+                                    padding: '8px',
+                                    border: `1px solid ${errors[`existingClientNewPet.${pet.id}.species`] ? '#ef4444' : '#d1d5db'}`,
+                                    borderRadius: '6px',
+                                    fontSize: '14px',
+                                    width: '100%',
+                                  }}
+                                />
+                              </div>
+                              <div>
+                                <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                                  Age/DOB <span style={{ color: '#ef4444' }}>*</span>
+                                </label>
+                                <input
+                                  type="text"
+                                  value={pet.age || ''}
+                                  onChange={(e) => updateExistingClientNewPet(pet.id, 'age', e.target.value)}
+                                  placeholder="e.g., 5 years"
+                                  style={{
+                                    padding: '8px',
+                                    border: `1px solid ${errors[`existingClientNewPet.${pet.id}.age`] ? '#ef4444' : '#d1d5db'}`,
+                                    borderRadius: '6px',
+                                    fontSize: '14px',
+                                    width: '100%',
+                                  }}
+                                />
+                              </div>
+                              <div>
+                                <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                                  Spayed/Neutered <span style={{ color: '#ef4444' }}>*</span>
+                                </label>
+                                <input
+                                  type="text"
+                                  value={pet.spayedNeutered || ''}
+                                  onChange={(e) => updateExistingClientNewPet(pet.id, 'spayedNeutered', e.target.value)}
+                                  placeholder="Yes/No"
+                                  style={{
+                                    padding: '8px',
+                                    border: `1px solid ${errors[`existingClientNewPet.${pet.id}.spayedNeutered`] ? '#ef4444' : '#d1d5db'}`,
+                                    borderRadius: '6px',
+                                    fontSize: '14px',
+                                    width: '100%',
+                                  }}
+                                />
+                              </div>
+                              <div>
+                                <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                                  Breed <span style={{ color: '#ef4444' }}>*</span>
+                                </label>
+                                <input
+                                  type="text"
+                                  value={pet.breed || ''}
+                                  onChange={(e) => updateExistingClientNewPet(pet.id, 'breed', e.target.value)}
+                                  placeholder="Breed"
+                                  style={{
+                                    padding: '8px',
+                                    border: `1px solid ${errors[`existingClientNewPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
+                                    borderRadius: '6px',
+                                    fontSize: '14px',
+                                    width: '100%',
+                                  }}
+                                />
+                              </div>
+                              <div>
+                                <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                                  Color <span style={{ color: '#ef4444' }}>*</span>
+                                </label>
+                                <input
+                                  type="text"
+                                  value={pet.color || ''}
+                                  onChange={(e) => updateExistingClientNewPet(pet.id, 'color', e.target.value)}
+                                  placeholder="Color"
+                                  style={{
+                                    padding: '8px',
+                                    border: `1px solid ${errors[`existingClientNewPet.${pet.id}.color`] ? '#ef4444' : '#d1d5db'}`,
+                                    borderRadius: '6px',
+                                    fontSize: '14px',
+                                    width: '100%',
+                                  }}
+                                />
+                              </div>
+                              <div>
+                                <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                                  Approximate Weight (lbs) <span style={{ color: '#ef4444' }}>*</span>
+                                </label>
+                                <input
+                                  type="text"
+                                  value={pet.weight || ''}
+                                  onChange={(e) => updateExistingClientNewPet(pet.id, 'weight', e.target.value)}
+                                  placeholder="Weight"
+                                  style={{
+                                    padding: '8px',
+                                    border: `1px solid ${errors[`existingClientNewPet.${pet.id}.weight`] ? '#ef4444' : '#d1d5db'}`,
+                                    borderRadius: '6px',
+                                    fontSize: '14px',
+                                    width: '100%',
+                                  }}
+                                />
+                              </div>
+                            </div>
+
+                            {/* Tell us anything else */}
+                            <div>
+                              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                                Tell us anything else you want us to know about {pet.name || 'this pet'} <span style={{ color: '#ef4444' }}>*</span>
+                              </label>
+                              <textarea
+                                value={pet.behaviorAtPreviousVisits || ''}
+                                onChange={(e) => updateExistingClientNewPet(pet.id, 'behaviorAtPreviousVisits', e.target.value)}
+                                rows={3}
+                                style={{
+                                  width: '100%',
+                                  padding: '8px',
+                                  border: `1px solid ${errors[`existingClientNewPet.${pet.id}.behaviorAtPreviousVisits`] ? '#ef4444' : '#d1d5db'}`,
+                                  borderRadius: '6px',
+                                  fontSize: '14px',
+                                  fontFamily: 'inherit',
+                                }}
+                              />
+                              {errors[`existingClientNewPet.${pet.id}.behaviorAtPreviousVisits`] && (
+                                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                  {errors[`existingClientNewPet.${pet.id}.behaviorAtPreviousVisits`]}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Has pet needed calming medications */}
+                            <div>
+                              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                                Has {pet.name || 'this pet'} needed calming medications at a previous veterinary visit? <span style={{ color: '#ef4444' }}>*</span>
+                              </label>
+                              <div style={{ display: 'flex', gap: '16px' }}>
+                                {['Yes', 'No'].map((option) => (
+                                  <label
+                                    key={option}
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '8px',
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    <input
+                                      type="radio"
+                                      name={`needsCalmingMedications-${pet.id}`}
+                                      value={option}
+                                      checked={pet.needsCalmingMedications === option}
+                                      onChange={(e) => {
+                                        updateExistingClientNewPet(pet.id, 'needsCalmingMedications', e.target.value);
+                                        if (e.target.value === 'No') {
+                                          updateExistingClientNewPet(pet.id, 'hasCalmingMedications', '');
+                                        }
+                                      }}
+                                      style={{ margin: 0 }}
+                                    />
+                                    <span style={{ fontSize: '14px' }}>{option}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Do you have these medications on hand? */}
+                            {pet.needsCalmingMedications === 'Yes' && (
+                              <div>
+                                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                                  Do you have these medications on hand? <span style={{ color: '#ef4444' }}>*</span>
+                                </label>
+                                <div style={{ display: 'flex', gap: '16px' }}>
+                                  {['Yes', 'No'].map((option) => (
+                                    <label
+                                      key={option}
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '8px',
+                                        cursor: 'pointer',
+                                      }}
+                                    >
+                                      <input
+                                        type="radio"
+                                        name={`hasCalmingMedications-${pet.id}`}
+                                        value={option}
+                                        checked={pet.hasCalmingMedications === option}
+                                        onChange={(e) => updateExistingClientNewPet(pet.id, 'hasCalmingMedications', e.target.value)}
+                                        style={{ margin: 0 }}
+                                      />
+                                      <span style={{ fontSize: '14px' }}>{option}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                                {pet.hasCalmingMedications === 'No' && (
+                                  <div style={{ marginTop: '8px' }}>
+                                    <span style={{ color: '#ef4444', fontSize: '12px', fontWeight: 500 }}>
+                                      Unfortunately we cannot prescribe medications without having seen {pet.name || 'this pet'}. Please get the prescription from your previous vet.
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Has pet needed muzzle */}
+                            <div>
+                              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                                Has {pet.name || 'this pet'} needed a muzzle or other special handling at a previous veterinary visit (please know this is not meant to judge - it is just so we can best prepare!)? <span style={{ color: '#ef4444' }}>*</span>
+                              </label>
+                              <div style={{ display: 'flex', gap: '16px' }}>
+                                {['Yes', 'No'].map((option) => (
+                                  <label
+                                    key={option}
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '8px',
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    <input
+                                      type="radio"
+                                      name={`needsMuzzleOrSpecialHandling-${pet.id}`}
+                                      value={option}
+                                      checked={pet.needsMuzzleOrSpecialHandling === option}
+                                      onChange={(e) => updateExistingClientNewPet(pet.id, 'needsMuzzleOrSpecialHandling', e.target.value)}
+                                      style={{ margin: 0 }}
+                                    />
+                                    <span style={{ fontSize: '14px' }}>{option}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Expandable questions section for selected pets */}
+                            {isSelected && (
+                              <div style={{
+                                marginTop: '8px',
+                                padding: '16px',
+                                backgroundColor: '#fff',
+                                border: '1px solid #e5e7eb',
+                                borderRadius: '8px',
+                                borderLeft: '3px solid #10b981',
+                              }}>
+                                <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#111827', marginBottom: '12px' }}>
+                                  Questions for {pet.name || 'this pet'}
+                                </h3>
+                                
+                                {/* What does your pet need today? */}
+                                <div style={{ marginBottom: '4px' }}>
+                                  <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
+                                    What does {pet.name || 'this pet'} need today? <span style={{ color: '#ef4444' }}>*</span>
+                                  </label>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                    {[
+                                      'Wellness exam / check-up',
+                                      'My pet isn\'t feeling well (new concern or illness)',
+                                      'Recheck / follow-up with the doctor (for a condition we\'ve already seen — please briefly describe)',
+                                      'Technician visit (nail trim, anal glands, booster, blood draw, monthly injection, etc.)',
+                                      'End-of-life care / euthanasia',
+                                    ].map((option) => (
+                                      <div key={option}>
+                                        <label
+                                          style={{
+                                            display: 'flex',
+                                            alignItems: 'flex-start',
+                                            gap: '8px',
+                                            cursor: 'pointer',
+                                            padding: '5px 0',
+                                            backgroundColor: 'transparent',
+                                            transition: 'all 0.2s ease',
+                                          }}
+                                        >
+                                          <input
+                                            type="radio"
+                                            name={`needsToday-${pet.id}`}
+                                            value={option}
+                                            checked={petData.needsToday === option}
+                                            onChange={(e) => {
+                                              updatePetSpecificData(pet.id, 'needsToday', e.target.value);
+                                              updatePetSpecificData(pet.id, 'needsTodayDetails', '');
+                                            }}
+                                            style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
+                                          />
+                                          <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option}</span>
+                                        </label>
+                                        {petData.needsToday === option && (
+                                          <div style={{ marginLeft: '26px', marginTop: '8px', marginBottom: '8px' }}>
+                                            {option === 'End-of-life care / euthanasia' ? (
+                                              // Euthanasia questions - same as existing pets
+                                              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                                <div>
+                                                  <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                                                    Let us know what is going on with {pet.name || 'this pet'} that has brought you to this difficult decision. <span style={{ color: '#ef4444' }}>*</span>
+                                                  </label>
+                                                  <textarea
+                                                    value={petData.euthanasiaReason || ''}
+                                                    onChange={(e) => updatePetSpecificData(pet.id, 'euthanasiaReason', e.target.value)}
+                                                    rows={5}
+                                                    style={{
+                                                      width: '100%',
+                                                      padding: '8px',
+                                                      border: `1px solid ${errors[`euthanasiaReason.${pet.id}`] ? '#ef4444' : '#d1d5db'}`,
+                                                      borderRadius: '6px',
+                                                      fontSize: '14px',
+                                                      fontFamily: 'inherit',
+                                                    }}
+                                                  />
+                                                  {errors[`euthanasiaReason.${pet.id}`] && (
+                                                    <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                                      {errors[`euthanasiaReason.${pet.id}`]}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                                <div>
+                                                  <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                                                    Has {pet.name || 'this pet'} been to the veterinarian for these issues in the last three months (it's ok if not - this just helps us schedule correctly)? <span style={{ color: '#ef4444' }}>*</span>
+                                                  </label>
+                                                  <input
+                                                    type="text"
+                                                    value={petData.beenToVetLastThreeMonths || ''}
+                                                    onChange={(e) => updatePetSpecificData(pet.id, 'beenToVetLastThreeMonths', e.target.value)}
+                                                    style={{
+                                                      width: '100%',
+                                                      padding: '8px',
+                                                      border: `1px solid ${errors[`beenToVetLastThreeMonths.${pet.id}`] ? '#ef4444' : '#d1d5db'}`,
+                                                      borderRadius: '6px',
+                                                      fontSize: '14px',
+                                                    }}
+                                                  />
+                                                  {errors[`beenToVetLastThreeMonths.${pet.id}`] && (
+                                                    <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                                      {errors[`beenToVetLastThreeMonths.${pet.id}`]}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                                <div>
+                                                  <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                                                    Are you interested in hearing about other options besides euthanasia? <span style={{ color: '#ef4444' }}>*</span>
+                                                  </label>
+                                                  <div style={{ display: 'flex', gap: '16px' }}>
+                                                    {['Yes', 'No'].map((option) => (
+                                                      <label
+                                                        key={option}
+                                                        style={{
+                                                          display: 'flex',
+                                                          alignItems: 'center',
+                                                          gap: '8px',
+                                                          cursor: 'pointer',
+                                                        }}
+                                                      >
+                                                        <input
+                                                          type="radio"
+                                                          name={`interestedInOtherOptions-${pet.id}`}
+                                                          value={option}
+                                                          checked={petData.interestedInOtherOptions === option}
+                                                          onChange={(e) => updatePetSpecificData(pet.id, 'interestedInOtherOptions', e.target.value)}
+                                                          style={{ margin: 0 }}
+                                                        />
+                                                        <span style={{ fontSize: '14px' }}>{option}</span>
+                                                      </label>
+                                                    ))}
+                                                  </div>
+                                                  {errors[`interestedInOtherOptions.${pet.id}`] && (
+                                                    <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                                      {errors[`interestedInOtherOptions.${pet.id}`]}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                                <div>
+                                                  <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                                                    What are your preferences for aftercare? <span style={{ color: '#ef4444' }}>*</span>
+                                                  </label>
+                                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                    {[
+                                                      'I will handle my pet\'s remains (e.g. bury at home)',
+                                                      'Private Cremation (Cremation WITH return of ashes)',
+                                                      'Burial At Sea (Cremation WITHOUT return of ashes)',
+                                                      'I am not sure yet.',
+                                                    ].map((option) => (
+                                                      <label
+                                                        key={option}
+                                                        style={{
+                                                          display: 'flex',
+                                                          alignItems: 'center',
+                                                          gap: '8px',
+                                                          cursor: 'pointer',
+                                                        }}
+                                                      >
+                                                        <input
+                                                          type="radio"
+                                                          name={`aftercarePreference-${pet.id}`}
+                                                          value={option}
+                                                          checked={petData.aftercarePreference === option}
+                                                          onChange={(e) => updatePetSpecificData(pet.id, 'aftercarePreference', e.target.value)}
+                                                          style={{ margin: 0 }}
+                                                        />
+                                                        <span style={{ fontSize: '14px' }}>{option}</span>
+                                                      </label>
+                                                    ))}
+                                                  </div>
+                                                  {errors[`aftercarePreference.${pet.id}`] && (
+                                                    <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                                      {errors[`aftercarePreference.${pet.id}`]}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            ) : (
+                                              <textarea
+                                                value={petData.needsTodayDetails || ''}
+                                                onChange={(e) => updatePetSpecificData(pet.id, 'needsTodayDetails', e.target.value)}
+                                                placeholder={
+                                                  option === 'Wellness exam / check-up'
+                                                    ? `Do you have any specific concerns you want to discuss at the visit?`
+                                                    : option === 'My pet isn\'t feeling well (new concern or illness)'
+                                                    ? `Describe what is going on with ${pet.name || 'this pet'}`
+                                                    : option === 'Recheck / follow-up with the doctor (for a condition we\'ve already seen — please briefly describe)'
+                                                    ? `What are we checking on for ${pet.name || 'this pet'}?`
+                                                    : option === 'Technician visit (nail trim, anal glands, booster, blood draw, monthly injection, etc.)'
+                                                    ? `What would you like done for ${pet.name || 'this pet'}?`
+                                                    : 'Please provide details about the reason for this appointment...'
+                                                }
+                                                rows={3}
+                                                style={{
+                                                  width: '100%',
+                                                  padding: '8px',
+                                                  border: `1px solid ${errors[`needsTodayDetails.${pet.id}`] ? '#ef4444' : '#d1d5db'}`,
+                                                  borderRadius: '6px',
+                                                  fontSize: '14px',
+                                                  fontFamily: 'inherit',
+                                                }}
+                                              />
+                                            )}
+                                            {errors[`needsTodayDetails.${pet.id}`] && (
+                                              <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                                {errors[`needsTodayDetails.${pet.id}`]}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                  {errors[`needsToday.${pet.id}`] && (
+                                    <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>
+                                      {errors[`needsToday.${pet.id}`]}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Add Pet Button */}
+            {isLoggedIn && (
+              <div style={{ marginTop: '16px', marginBottom: '20px' }}>
+                <button
+                  type="button"
+                  onClick={addExistingClientNewPet}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    backgroundColor: '#f0fdf4',
+                    color: '#10b981',
+                    border: '2px dashed #10b981',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#dcfce7';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = '#f0fdf4';
+                  }}
+                >
+                  + Add Pet
+                </button>
+              </div>
+            )}
+
+            {/* How soon do your pets need to be seen? - Single question for all pets */}
+            <div style={{ marginTop: '24px', marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
+                How soon do your pets need to be seen? <span style={{ color: '#ef4444' }}>*</span>
+              </label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                {[
+                  'Emergent – today',
+                  'Urgent – within 24–48 hours',
+                  'Soon – sometime this week',
+                  'Flexible – within the next month',
+                  'Routine – in about 3 months',
+                  'Planned – in about 6 months',
+                  'Future – in about 12 months',
+                ].map((option) => (
+                  <label
+                    key={option}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: 'pointer',
+                      padding: '5px 0',
+                      backgroundColor: 'transparent',
+                      transition: 'all 0.2s ease',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="howSoon"
+                      value={option}
+                      checked={formData.howSoon === option}
+                      onChange={(e) => updateFormData('howSoon', e.target.value)}
+                      style={{ margin: 0, width: '18px', height: '18px', cursor: 'pointer' }}
+                    />
+                    <span style={{ fontSize: '16px' }}>{option}</span>
+                  </label>
+                ))}
+              </div>
+              {errors.howSoon && (
+                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>
+                  {errors.howSoon}
+                </div>
+              )}
             </div>
           </div>
         );
@@ -2628,6 +4339,12 @@ export default function AppointmentRequestForm() {
         );
 
       case 'request-visit-continued':
+        // Check if any pet is selected for euthanasia
+        const hasEuthanasiaPet = formData.selectedPetIds?.some(petId => {
+          const petData = formData.petSpecificData?.[petId];
+          return petData?.needsToday === 'End-of-life care / euthanasia';
+        }) || false;
+
         return (
           <div>
             <div style={{ textAlign: 'center', marginBottom: '32px' }}>
@@ -2636,73 +4353,8 @@ export default function AppointmentRequestForm() {
               </h1>
             </div>
 
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Give us more details about the veterinary services you need. <span style={{ color: '#ef4444' }}>*</span>
-              </label>
-              <textarea
-                value={formData.visitDetails || ''}
-                onChange={(e) => updateFormData('visitDetails', e.target.value)}
-                rows={5}
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  border: errors.visitDetails ? '1px solid #ef4444' : '1px solid #d1d5db',
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  fontFamily: 'inherit',
-                }}
-              />
-              {errors.visitDetails && (
-                <div style={{ fontSize: '12px', color: '#ef4444', marginTop: '4px' }}>
-                  {errors.visitDetails}
-                </div>
-              )}
-            </div>
-
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Is this a patient that needs to be seen in the next 24-48 hours? <span style={{ color: '#ef4444' }}>*</span>
-              </label>
-              <div style={{ display: 'flex', gap: '16px' }}>
-                {['Yes', 'No'].map((option) => (
-                  <label
-                    key={option}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      cursor: 'pointer',
-                      padding: '12px',
-                      border: `1px solid ${formData.needsUrgentScheduling === option ? '#10b981' : '#d1d5db'}`,
-                      borderRadius: '8px',
-                      backgroundColor: formData.needsUrgentScheduling === option ? '#f0fdf4' : '#fff',
-                    }}
-                  >
-                    <input
-                      type="radio"
-                      name="needsUrgentScheduling"
-                      value={option}
-                      checked={formData.needsUrgentScheduling === option}
-                      onChange={(e) => {
-                        updateFormData('needsUrgentScheduling', e.target.value);
-                        // Clear slots when changing urgency status
-                        setRecommendedSlots([]);
-                      }}
-                      style={{ margin: 0 }}
-                    />
-                    <span style={{ fontSize: '14px' }}>{option}</span>
-                  </label>
-                ))}
-              </div>
-              {errors.needsUrgentScheduling && (
-                <div style={{ fontSize: '12px', color: '#ef4444', marginTop: '4px' }}>
-                  {errors.needsUrgentScheduling}
-                </div>
-              )}
-            </div>
-
-            {formData.needsUrgentScheduling === 'Yes' && (
+            {/* If any pet is selected for euthanasia, show message instead of time slots */}
+            {hasEuthanasiaPet ? (
               <div style={{ 
                 marginBottom: '20px', 
                 padding: '16px',
@@ -2712,14 +4364,39 @@ export default function AppointmentRequestForm() {
                 fontSize: '14px',
                 color: '#065f46',
               }}>
-                Once you submit the form, a Client Liaison will be in touch with you shortly about available times.
+                The practice will be in touch to schedule your appointment time.
               </div>
-            )}
-
-            {formData.needsUrgentScheduling === 'No' && (
+            ) : (
+              <>
+                {/* Show banner if Emergent or Urgent is selected */}
+                {(() => {
+                  const isUrgentTimeframe = formData.howSoon === 'Emergent – today' || formData.howSoon === 'Urgent – within 24–48 hours';
+                  if (isUrgentTimeframe) {
+                    return (
+                      <div style={{ 
+                        marginBottom: '20px', 
+                        padding: '16px',
+                        backgroundColor: '#f0fdf4',
+                        border: '1px solid #10b981',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        color: '#065f46',
+                      }}>
+                        Once you submit the form, a Client Liaison will be in touch with you shortly about available times.
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+                
+                {/* Show time slots if not urgent/emergent */}
+                {(() => {
+                  const isUrgentTimeframe = formData.howSoon === 'Emergent – today' || formData.howSoon === 'Urgent – within 24–48 hours';
+                  return !isUrgentTimeframe;
+                })() && (
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                What is your preferred date and time? <span style={{ color: '#ef4444' }}>*</span>
+                Here are some possible dates and times. <span style={{ color: '#ef4444' }}>*</span>
               </label>
               
               {recommendedSlots.length > 0 && (
@@ -2918,6 +4595,8 @@ export default function AppointmentRequestForm() {
               )}
             </div>
             )}
+              </>
+            )}
 
             {/* Only show "How did you hear about us" for new clients */}
             {(!isLoggedIn && formData.haveUsedServicesBefore === 'No') && (
@@ -3003,46 +4682,65 @@ export default function AppointmentRequestForm() {
     );
   }
 
-  // Determine progress steps based on flow
+  // Map page variations to main step IDs for progress tracking
+  const getMainStepId = (page: Page): Page => {
+    if (page === 'euthanasia-portland' || page === 'euthanasia-high-peaks') {
+      return 'euthanasia-service-area';
+    }
+    // existing-client-pets is a separate step, so return it as-is
+    return page;
+  };
+
+  // Determine progress steps based on flow - always show all steps for the user's flow
   const getProgressSteps = (): Array<{ id: Page; label: string }> => {
-    const steps: Array<{ id: Page; label: string }> = [];
+    const allSteps: Array<{ id: Page; label: string }> = [];
     
-    // Intro step (only for non-logged-in users who haven't completed it)
-    if (!isLoggedIn && (currentPage === 'intro' || !formData.haveUsedServicesBefore)) {
-      steps.push({ id: 'intro', label: 'Introduction' });
-    }
+    // Determine if user is existing client (logged in) or new client
+    const isExistingClient = isLoggedIn || formData.haveUsedServicesBefore === 'Yes' || 
+                            currentPage === 'existing-client' || currentPage === 'existing-client-pets';
     
-    // Client information step
-    if (isLoggedIn) {
-      steps.push({ id: 'existing-client', label: 'Request an Appointment' });
-    } else if (formData.haveUsedServicesBefore === 'Yes' || currentPage === 'existing-client') {
-      steps.push({ id: 'existing-client', label: 'Request an Appointment' });
-    } else if (formData.haveUsedServicesBefore === 'No' || currentPage === 'new-client') {
-      steps.push({ id: 'new-client', label: 'New Client Information' });
-    }
-    
-    // Determine which flow based on current page or form data
-    const isEuthanasia = 
+    // Determine if we're in euthanasia flow - check current page first, then form data
+    const isEuthanasia = currentPage.startsWith('euthanasia') ||
       formData.lookingForEuthanasia === 'Yes' || 
       formData.lookingForEuthanasiaExisting === 'Yes' ||
-      currentPage.startsWith('euthanasia');
+      (formData.selectedPetIds && formData.selectedPetIds.some(petId => 
+        formData.petSpecificData?.[petId]?.needsToday === 'End-of-life care / euthanasia'
+      ));
     
-    const isRequestVisit = 
-      currentPage.startsWith('request-visit') ||
-      (formData.lookingForEuthanasia === 'No' && formData.lookingForEuthanasiaExisting === 'No' && 
-       !currentPage.startsWith('euthanasia') && currentPage !== 'intro' && 
-       currentPage !== 'new-client' && currentPage !== 'existing-client');
-    
-    if (isEuthanasia) {
-      steps.push({ id: 'euthanasia-intro', label: 'Euthanasia Details' });
-      steps.push({ id: 'euthanasia-service-area', label: 'Service Area' });
-      steps.push({ id: 'euthanasia-continued', label: 'Euthanasia Preferences' });
-    } else if (isRequestVisit || (!isEuthanasia && currentPage.startsWith('request-visit'))) {
-      steps.push({ id: 'request-visit-continued', label: 'Visit Details' });
+    // Build steps based on client type - always show the same steps once determined
+    if (isExistingClient) {
+      // Existing client flow
+      allSteps.push({ id: 'existing-client', label: 'Request an Appointment' });
+      allSteps.push({ id: 'existing-client-pets', label: 'Select Pet(s)' });
+      
+      // Add final step based on flow type
+      if (isEuthanasia) {
+        allSteps.push({ id: 'euthanasia-intro', label: 'Euthanasia Details' });
+        allSteps.push({ id: 'euthanasia-service-area', label: 'Service Area' });
+        allSteps.push({ id: 'euthanasia-continued', label: 'Pick Your Appointment Time' });
+      } else {
+        // Default to visit flow
+        allSteps.push({ id: 'request-visit-continued', label: 'Pick Your Appointment Time' });
+      }
+    } else {
+      // New client flow
+      allSteps.push({ id: 'intro', label: 'Introduction' });
+      allSteps.push({ id: 'new-client', label: 'New Client Information' });
+      allSteps.push({ id: 'new-client-pet-info', label: 'Pet Information' });
+      
+      // Add final step based on flow type
+      if (isEuthanasia) {
+        allSteps.push({ id: 'euthanasia-intro', label: 'Euthanasia Details' });
+        allSteps.push({ id: 'euthanasia-service-area', label: 'Service Area' });
+        allSteps.push({ id: 'euthanasia-continued', label: 'Pick Your Appointment Time' });
+      } else {
+        // Default to visit flow
+        allSteps.push({ id: 'request-visit-continued', label: 'Pick Your Appointment Time' });
+      }
     }
     
-    
-    return steps;
+    // Always return all steps - getStepStatus will handle highlighting
+    return allSteps;
   };
 
   const progressSteps = getProgressSteps();
@@ -3056,14 +4754,6 @@ export default function AppointmentRequestForm() {
     if (stepIndex < currentIndex) return 'completed';
     if (stepIndex === currentIndex) return 'current';
     return 'upcoming';
-  };
-
-  // Map page variations to main step IDs for progress tracking
-  const getMainStepId = (page: Page): Page => {
-    if (page === 'euthanasia-portland' || page === 'euthanasia-high-peaks') {
-      return 'euthanasia-service-area';
-    }
-    return page;
   };
 
   const renderProgressIndicator = () => {
@@ -3150,21 +4840,7 @@ export default function AppointmentRequestForm() {
     );
   };
 
-  if (loadingClientData) {
-    return (
-      <div style={{ maxWidth: '1200px', margin: '40px auto', padding: '0 16px' }}>
-        <div style={{
-          background: '#fff',
-          borderRadius: '12px',
-          padding: '40px',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-          textAlign: 'center',
-        }}>
-          <div style={{ fontSize: '18px', color: '#6b7280' }}>Loading your information...</div>
-        </div>
-      </div>
-    );
-  }
+  // Removed blocking loadingClientData check - form now shows immediately while data loads in background
 
   return (
     <div style={{ maxWidth: '1200px', margin: '40px auto', padding: '0 16px' }}>
@@ -3210,7 +4886,7 @@ export default function AppointmentRequestForm() {
         )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '32px', gap: '12px' }}>
-          {currentPage !== 'intro' && (
+          {currentPage !== 'intro' && currentPage !== 'existing-client' && (
             <button
               type="button"
               onClick={handleBack}
