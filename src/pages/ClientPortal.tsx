@@ -939,20 +939,22 @@ export default function ClientPortal() {
         /* Bottom nav (hidden by default; shown on small screens) */
         .cp-bottom-nav {
           position: fixed;
-          left: 0; right: 0; 
+          left: 0;
+          right: 0;
           bottom: 0;
           display: none;
           background: rgba(255,255,255,0.98);
           backdrop-filter: saturate(150%) blur(8px);
           border-top: 1px solid rgba(0,0,0,0.08);
           z-index: 1000;
-          /* Extend into safe area, padding pushes content up */
-          padding-bottom: env(safe-area-inset-bottom);
-          /* Total height includes safe area padding */
-          height: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom));
+          margin: 0;
+          padding: 0;
+          /* Nav extends to bottom edge, safe area padding pushes content up */
+          padding-bottom: env(safe-area-inset-bottom, 0px);
+          height: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px));
         }
         .cp-bottom-inner {
-          /* Inner content uses just the nav height, safe area padding is handled by parent */
+          /* Inner content is the nav height, sits above the safe area padding */
           height: var(--bottom-nav-h);
           display: grid;
           grid-template-columns: repeat(4, 1fr);
