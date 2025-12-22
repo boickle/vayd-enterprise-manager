@@ -544,6 +544,16 @@ export default function AppointmentRequestForm() {
     const isDateTimePage = currentPage === 'request-visit-continued' || currentPage === 'euthanasia-continued';
     const hasDoctor = formData.preferredDoctorExisting || formData.preferredDoctor;
     
+    // Check if any pet is selected for euthanasia (existing or new client pets)
+    const hasEuthanasiaPet = 
+      (formData.selectedPetIds?.some(petId => {
+        const petData = formData.petSpecificData?.[petId];
+        return petData?.needsToday === 'End-of-life care / Euthanasia';
+      }) || false) ||
+      (formData.newClientPets?.some(pet => {
+        return pet.needsToday === 'End-of-life care / Euthanasia';
+      }) || false);
+    
     console.log('[AppointmentForm] useEffect check:', {
       isDateTimePage,
       hasDoctor,
@@ -553,20 +563,23 @@ export default function AppointmentRequestForm() {
       preferredDoctor: formData.preferredDoctor,
       selectedPetIds: formData.selectedPetIds,
       needsUrgentScheduling: formData.needsUrgentScheduling,
+      hasEuthanasiaPet,
     });
     
     // For request-visit-continued, do routing automatically if:
     // - howSoon is NOT Emergent/Urgent (automatically search for slots)
     // - For Emergent/Urgent, show banner (no routing needed, client liaison will contact)
-    // For euthanasia-continued, always do routing
+    // - Skip routing if euthanasia pet is selected (no slots shown)
+    // For euthanasia-continued, skip routing (no slots shown, just text field)
     const isUrgentTimeframe = formData.howSoon === 'Emergent – today' || formData.howSoon === 'Urgent – within 24–48 hours';
     const isNotUrgentTimeframe = formData.howSoon && formData.howSoon !== 'Emergent – today' && formData.howSoon !== 'Urgent – within 24–48 hours';
     const shouldDoRouting = 
       isDateTimePage && 
       hasDoctor && 
       providers.length > 0 &&
-      (currentPage === 'euthanasia-continued' || 
-       (currentPage === 'request-visit-continued' && isNotUrgentTimeframe));
+      !hasEuthanasiaPet && // Don't do routing if euthanasia pet is selected
+      currentPage === 'request-visit-continued' && // Only do routing on request-visit-continued (not euthanasia-continued)
+      isNotUrgentTimeframe; // Only if not urgent/emergent
     
     if (shouldDoRouting) {
       console.log('[AppointmentForm] Calling findAvailableSlots');
@@ -579,7 +592,7 @@ export default function AppointmentRequestForm() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, formData.preferredDoctorExisting, formData.preferredDoctor, providers.length, formData.selectedPetIds.length, formData.howSoon]);
+  }, [currentPage, formData.preferredDoctorExisting, formData.preferredDoctor, providers.length, formData.selectedPetIds.length, formData.howSoon, formData.petSpecificData, formData.newClientPets]);
 
   // Check email when entered (for new clients)
   useEffect(() => {
@@ -621,6 +634,73 @@ export default function AppointmentRequestForm() {
       clearTimeout(timeoutId);
     };
   }, [formData.email, isLoggedIn, practiceId]);
+
+  // Warn users when they try to use browser back button
+  useEffect(() => {
+    // Only show warning if not on intro page and not on success page
+    // Works for both new client and existing client flows
+    if (currentPage === 'intro' || currentPage === 'success') {
+      return;
+    }
+
+    let isHandlingPopState = false;
+
+    // Add a state to history so we can detect back button
+    // Always push a new state when page changes to ensure we can detect back navigation
+    // Initialize immediately and also set up after a brief delay to catch any navigation
+    const currentState = window.history.state;
+    if (!currentState?.formPage || currentState.formPage !== currentPage) {
+      window.history.pushState({ formPage: currentPage, preventBack: true }, '', window.location.href);
+    }
+    
+    // Also set up a delayed check to ensure state is set (handles rapid page changes)
+    const timeoutId = setTimeout(() => {
+      const state = window.history.state;
+      if (!state?.formPage || state.formPage !== currentPage) {
+        window.history.pushState({ formPage: currentPage, preventBack: true }, '', window.location.href);
+      }
+    }, 100);
+
+    const handlePopState = (event: PopStateEvent) => {
+      // Prevent infinite loops
+      if (isHandlingPopState) {
+        return;
+      }
+
+      // Check if this is a back navigation from our form
+      // Show warning for any back navigation when not on intro or success pages
+      const state = event.state;
+      const isFormPage = currentPage !== 'intro' && currentPage !== 'success';
+      const hasPreventBack = state?.preventBack === true;
+      const isNavigatingAway = !state || state.formPage !== currentPage;
+      
+      if (isFormPage && (hasPreventBack || isNavigatingAway)) {
+        isHandlingPopState = true;
+        
+        // Show warning dialog
+        const message = "You will lose your data if you go back using the browser's back button. Please use the 'Previous' button in the bottom left to go back to the previous page.";
+        const userWantsToLeave = window.confirm(message);
+        
+        if (!userWantsToLeave) {
+          // User cancelled - push the current state back to prevent navigation
+          // This effectively cancels the back button press
+          window.history.pushState({ formPage: currentPage, preventBack: true }, '', window.location.href);
+        }
+        // If user confirms, let the navigation proceed (it already happened)
+        
+        setTimeout(() => {
+          isHandlingPopState = false;
+        }, 100);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      clearTimeout(timeoutId);
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [currentPage]);
 
   // Load veterinarians for new clients (using public veterinarians endpoint)
   // Only fetch when address is valid (has line1, city, state, zip)
@@ -697,7 +777,7 @@ export default function AppointmentRequestForm() {
             if (zoneError?.response?.status === 404) {
               // Zone not serviced - set error and don't fetch veterinarians
               if (alive) {
-                setErrors(prev => ({ ...prev, zoneNotServiced: 'We do not service your zone' }));
+                setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry we don't serve your area at this time. Please check back with us periodically to see if we have changed our service area at www.vetatyourdoor.com/service-area." }));
                 setPublicProviders([]);
                 setProviders([]);
                 setLoadingVeterinarians(false);
@@ -1068,7 +1148,7 @@ export default function AppointmentRequestForm() {
             if (zoneError?.response?.status === 404) {
               // Zone not serviced - set error and don't fetch veterinarians
               if (alive) {
-                setErrors(prev => ({ ...prev, zoneNotServiced: 'We do not service your zone' }));
+                setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry we don't serve your area at this time. Please check back with us periodically to see if we have changed our service area at www.vetatyourdoor.com/service-area." }));
                 setProviders([]);
                 setLoadingVeterinarians(false);
                 lastCheckedAddressRef.current = currentAddress; // Update last checked address even on error
@@ -2295,7 +2375,22 @@ export default function AppointmentRequestForm() {
               </div>
               {errors.zoneNotServiced && (
                 <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
-                  {errors.zoneNotServiced}
+                  {errors.zoneNotServiced.includes('www.vetatyourdoor.com/service-area') ? (
+                    <>
+                      {errors.zoneNotServiced.split('www.vetatyourdoor.com/service-area')[0]}
+                      <a 
+                        href="https://www.vetatyourdoor.com/service-area" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        style={{ color: '#3b82f6', textDecoration: 'underline' }}
+                      >
+                        www.vetatyourdoor.com/service-area
+                      </a>
+                      {errors.zoneNotServiced.split('www.vetatyourdoor.com/service-area')[1]}
+                    </>
+                  ) : (
+                    errors.zoneNotServiced
+                  )}
                 </div>
               )}
             </div>
@@ -3100,7 +3195,7 @@ export default function AppointmentRequestForm() {
                           {pet.hasCalmingMedications === 'No' && (
                             <div style={{ marginTop: '8px' }}>
                               <span style={{ color: '#ef4444', fontSize: '12px', fontWeight: 500 }}>
-                                Unfortunately we cannot prescribe medications without having seen {pet.name || 'this pet'}. Please get the prescription from your previous vet.
+                                Unfortunately we cannot prescribe medications without having seen {pet.name || 'this pet'}. Please get the prescription from your previous vet so you can administer them prior to {pet.name || 'this pet'}'s first visit with us.
                               </span>
                             </div>
                           )}
@@ -3407,7 +3502,7 @@ export default function AppointmentRequestForm() {
                   }}
                 >
                   <span>+</span>
-                  <span>Add Pet</span>
+                  <span>Add Another Pet</span>
                 </button>
               </div>
               {errors.newClientPets && (
@@ -3420,7 +3515,7 @@ export default function AppointmentRequestForm() {
             {/* How soon do your pets need to be seen? - Single question for all pets */}
             <div style={{ marginTop: '24px', marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
-                How soon do your pets need to be seen? <span style={{ color: '#ef4444' }}>*</span>
+                How soon do you need to be seen? <span style={{ color: '#ef4444' }}>*</span>
               </label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                 {[
@@ -3680,7 +3775,22 @@ export default function AppointmentRequestForm() {
                   )}
                   {errors.zoneNotServiced && (
                     <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
-                      {errors.zoneNotServiced}
+                      {errors.zoneNotServiced.includes('www.vetatyourdoor.com/service-area') ? (
+                        <>
+                          {errors.zoneNotServiced.split('www.vetatyourdoor.com/service-area')[0]}
+                          <a 
+                            href="https://www.vetatyourdoor.com/service-area" 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            style={{ color: '#3b82f6', textDecoration: 'underline' }}
+                          >
+                            www.vetatyourdoor.com/service-area
+                          </a>
+                          {errors.zoneNotServiced.split('www.vetatyourdoor.com/service-area')[1]}
+                        </>
+                      ) : (
+                        errors.zoneNotServiced
+                      )}
                     </div>
                   )}
                 </div>
@@ -4770,7 +4880,7 @@ export default function AppointmentRequestForm() {
                                 {pet.hasCalmingMedications === 'No' && (
                                   <div style={{ marginTop: '8px' }}>
                                     <span style={{ color: '#ef4444', fontSize: '12px', fontWeight: 500 }}>
-                                      Unfortunately we cannot prescribe medications without having seen {pet.name || 'this pet'}. Please get the prescription from your previous vet.
+                                      Unfortunately we cannot prescribe medications without having seen {pet.name || 'this pet'}. Please get the prescription from your previous vet so you can administer them prior to {pet.name || 'this pet'}'s first visit with us.
                                     </span>
                                   </div>
                                 )}
@@ -5089,7 +5199,7 @@ export default function AppointmentRequestForm() {
             {/* How soon do your pets need to be seen? - Single question for all pets */}
             <div style={{ marginTop: '24px', marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
-                How soon do your pets need to be seen? <span style={{ color: '#ef4444' }}>*</span>
+                How soon do you need to be seen? <span style={{ color: '#ef4444' }}>*</span>
               </label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                 {[
@@ -5446,17 +5556,38 @@ export default function AppointmentRequestForm() {
 
             {/* If any pet is selected for euthanasia, show message instead of time slots */}
             {hasEuthanasiaPet ? (
-              <div style={{ 
-                marginBottom: '20px', 
-                padding: '16px',
-                backgroundColor: '#f0fdf4',
-                border: '1px solid #10b981',
-                borderRadius: '8px',
-                fontSize: '14px',
-                color: '#065f46',
-              }}>
-                The practice will be in touch to schedule your appointment time.
-              </div>
+              <>
+                <div style={{ 
+                  marginBottom: '20px', 
+                  padding: '16px',
+                  backgroundColor: '#f0fdf4',
+                  border: '1px solid #10b981',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  color: '#065f46',
+                }}>
+                  Once you submit the form, a Client Liaison will be in touch with you shortly about available times.
+                </div>
+                <div style={{ marginBottom: '20px' }}>
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                    Please enter any preferences for days/times for us to visit you.
+                  </label>
+                  <textarea
+                    value={formData.preferredDateTimeVisit || ''}
+                    onChange={(e) => updateFormData('preferredDateTimeVisit', e.target.value)}
+                    rows={3}
+                    placeholder="Enter any preferences for days/times here..."
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontFamily: 'inherit',
+                    }}
+                  />
+                </div>
+              </>
             ) : (
               <>
                 {/* Show banner and input field if Emergent or Urgent is selected */}
@@ -5541,7 +5672,7 @@ export default function AppointmentRequestForm() {
               {!loadingSlots && recommendedSlots.length > 0 && (
                 <>
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                    Here are some possible dates and times. <span style={{ color: '#ef4444' }}>*</span>
+                    Here are some possible dates and times. Our schedule is always changing, so these are not guaranteed, but we'll confirm availability with you as soon as we receive your request.
                   </label>
                   <div style={{ marginBottom: '20px' }}>
                     <div style={{ fontSize: '14px', fontWeight: 600, color: '#374151', marginBottom: '12px' }}>
@@ -5647,14 +5778,24 @@ export default function AppointmentRequestForm() {
                       </span>
                     </label>
                     {formData.noneOfWorkForMeVisit && (
-                      <div style={{ 
-                        marginTop: '8px', 
-                        marginLeft: '32px',
-                        fontSize: '13px', 
-                        color: '#6b7280', 
-                        fontStyle: 'italic' 
-                      }}>
-                        We will be in touch with some more times.
+                      <div style={{ marginTop: '20px', marginLeft: '0' }}>
+                        <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                          Please enter any preferences for days/times for us to visit you.
+                        </label>
+                        <textarea
+                          value={formData.preferredDateTimeVisit || ''}
+                          onChange={(e) => updateFormData('preferredDateTimeVisit', e.target.value)}
+                          rows={3}
+                          placeholder="Enter any preferences for days/times here..."
+                          style={{
+                            width: '100%',
+                            padding: '12px',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '8px',
+                            fontSize: '14px',
+                            fontFamily: 'inherit',
+                          }}
+                        />
                       </div>
                     )}
                   </div>

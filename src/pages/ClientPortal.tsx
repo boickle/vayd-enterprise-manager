@@ -888,7 +888,7 @@ export default function ClientPortal() {
      Bottom Nav Handlers
   ---------------------------- */
   function handleBook() {
-    navigate('/client-portal/request-appointment');
+    window.open('/client-portal/request-appointment', '_blank', 'noopener,noreferrer');
   }
   function handleContact() {
     // If pet has plan, use chat; otherwise use email
@@ -907,6 +907,44 @@ export default function ClientPortal() {
 
   return (
     <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px' }}>
+      {/* Logout Button - Top Right */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
+        <button
+          onClick={() => {
+            logout();
+            navigate('/login');
+          }}
+          style={{
+            padding: '8px 16px',
+            backgroundColor: '#f3f4f6',
+            color: '#374151',
+            border: '1px solid #d1d5db',
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: 500,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = '#e5e7eb';
+            e.currentTarget.style.borderColor = '#9ca3af';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = '#f3f4f6';
+            e.currentTarget.style.borderColor = '#d1d5db';
+          }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16 }}>
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+            <polyline points="16 17 21 12 16 7"></polyline>
+            <line x1="21" y1="12" x2="9" y2="12"></line>
+          </svg>
+          Log out
+        </button>
+      </div>
 
       {/* Scoped responsive styles */}
       <style>{`
@@ -940,16 +978,18 @@ export default function ClientPortal() {
         .cp-bottom-nav {
           position: fixed;
           left: 0; right: 0; bottom: 0;
-          height: var(--bottom-nav-h);
           display: none;
           background: rgba(255,255,255,0.98);
           backdrop-filter: saturate(150%) blur(8px);
           border-top: 1px solid rgba(0,0,0,0.08);
           z-index: 1000;
+          /* Add safe area inset as padding, not reducing height */
           padding-bottom: env(safe-area-inset-bottom);
+          /* Ensure nav is above safe area */
+          height: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom));
         }
         .cp-bottom-inner {
-          height: 100%;
+          height: var(--bottom-nav-h);
           display: grid;
           grid-template-columns: repeat(4, 1fr);
           align-items: center;
@@ -959,7 +999,8 @@ export default function ClientPortal() {
           padding: 0 8px;
         }
         .cp-tab {
-          height: calc(var(--bottom-nav-h) - 10px - env(safe-area-inset-bottom));
+          height: 100%;
+          min-height: 56px;
           border: none;
           background: transparent;
           display: flex;
@@ -973,7 +1014,7 @@ export default function ClientPortal() {
           text-decoration: none;
         }
         .cp-tab:active { background: rgba(15, 118, 110, 0.08); }
-        .cp-tab svg { width: 22px; height: 22px; }
+        .cp-tab svg { width: 24px; height: 24px; }
 
         /* >= 480px */
         @media (min-width: 480px) {
@@ -1004,7 +1045,7 @@ export default function ClientPortal() {
         /* Show bottom nav & add bottom padding on small screens only */
         @media (max-width: 639px) {
           .cp-bottom-nav { display: block; }
-          .cp-wrap { padding-bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + 12px); }
+          .cp-wrap { padding-bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + 16px); }
           /* Hide top service action buttons when bottom nav is showing */
           .cp-service-actions-section { display: none !important; }
         .cp-service-actions-mobile { display: block !important; }
@@ -1086,10 +1127,8 @@ export default function ClientPortal() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                   <a
                     href="/client-portal/request-appointment"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      navigate('/client-portal/request-appointment');
-                    }}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -1214,10 +1253,8 @@ export default function ClientPortal() {
             <div className="cp-service-actions-desktop" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
               <a
                 href="/client-portal/request-appointment"
-                onClick={(e) => {
-                  e.preventDefault();
-                  navigate('/client-portal/request-appointment');
-                }}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="cp-card"
                 style={{
                   padding: '16px 20px',
@@ -1897,7 +1934,7 @@ export default function ClientPortal() {
                               e.currentTarget.style.opacity = '1';
                             }}
                           >
-                            Sign up for Membership
+                            Explore membership options for {p.name}
                           </button>
                         )}
                       </div>
@@ -2131,10 +2168,8 @@ export default function ClientPortal() {
                 <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid #e5e7eb' }}>
                   <a
                     href="/client-portal/request-appointment"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      navigate('/client-portal/request-appointment');
-                    }}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="cp-card"
                     style={{
                       display: 'flex',

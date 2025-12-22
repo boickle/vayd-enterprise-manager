@@ -33,8 +33,7 @@ body,
 
 html {
   overflow: hidden; /* Prevent body scroll that can show browser UI */
-  /* Use safe area insets for devices with notches */
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  /* Safe area insets handled on body and specific elements, not html */
 }
 
 body {
