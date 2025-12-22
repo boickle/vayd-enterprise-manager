@@ -1047,7 +1047,7 @@ export default function ClientPortal() {
           .cp-bottom-nav { display: block; }
           .cp-wrap { 
             margin: 0 !important;
-            padding: 0 16px calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + 16px) 16px !important;
+            padding: 0 16px calc(var(--bottom-nav-h) + 8px) 16px !important;
             width: 100% !important;
             max-width: 100% !important;
           }
