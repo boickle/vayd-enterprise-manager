@@ -551,7 +551,8 @@ export default function AppointmentRequestForm() {
         return petData?.needsToday === 'End-of-life care / Euthanasia';
       }) || false) ||
       (formData.newClientPets?.some(pet => {
-        return pet.needsToday === 'End-of-life care / Euthanasia';
+        const petData = formData.petSpecificData?.[pet.id];
+        return petData?.needsToday === 'End-of-life care / Euthanasia';
       }) || false);
     
     console.log('[AppointmentForm] useEffect check:', {
@@ -670,7 +671,7 @@ export default function AppointmentRequestForm() {
       // Check if this is a back navigation from our form
       // Show warning for any back navigation when not on intro or success pages
       const state = event.state;
-      const isFormPage = currentPage !== 'intro' && currentPage !== 'success';
+      const isFormPage = (currentPage as Page) !== 'intro' && (currentPage as Page) !== 'success';
       const hasPreventBack = state?.preventBack === true;
       const isNavigatingAway = !state || state.formPage !== currentPage;
       
@@ -3502,7 +3503,7 @@ export default function AppointmentRequestForm() {
                   }}
                 >
                   <span>+</span>
-                  <span>Add Another Pet</span>
+                  <span>{formData.newClientPets && formData.newClientPets.length > 0 ? 'Add Another Pet' : 'Add Pet'}</span>
                 </button>
               </div>
               {errors.newClientPets && (
