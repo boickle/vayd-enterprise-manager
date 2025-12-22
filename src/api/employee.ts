@@ -47,10 +47,15 @@ export async function fetchPrimaryProviders(): Promise<Provider[]> {
  * Fetch veterinarians from /employees/veterinarians endpoint
  * This endpoint returns only veterinarians (D.V.M/V.M.D)
  * @param address Optional address to filter veterinarians by service area
+ * @param lat Optional latitude to filter veterinarians by service area
+ * @param lon Optional longitude to filter veterinarians by service area
  */
-export async function fetchVeterinarians(address?: string): Promise<Provider[]> {
+export async function fetchVeterinarians(address?: string, lat?: number, lon?: number): Promise<Provider[]> {
   const params: any = {};
-  if (address) {
+  if (lat != null && lon != null && Number.isFinite(lat) && Number.isFinite(lon)) {
+    params.lat = lat;
+    params.lon = lon;
+  } else if (address) {
     params.address = address;
   }
   

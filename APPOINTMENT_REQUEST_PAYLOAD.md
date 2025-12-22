@@ -56,7 +56,7 @@ The form uses the following API endpoints for species and breed selection:
   "appointmentType": "euthanasia" | "regular_visit",
   "preferredDoctor": string | undefined,
   "serviceArea": "Kennebunk / Greater Portland / Augusta Area" | "Maine High Peaks Area" | undefined,
-  "howSoon": "Emergent – today" | "Urgent – within 24–48 hours" | "Soon – sometime this week" | "Flexible – within the next month" | "Routine – in about 3 months" | "Planned – in about 6 months" | "Future – in about 12 months" | undefined,
+  "howSoon": "Emergent – today" | "Urgent – within 24–48 hours" | "Soon – sometime this week" | "In 3–4 weeks" | "Flexible – within the next month" | "Routine – in about 3 months" | "Planned – in about 6 months" | "Future – in about 12 months" | undefined,
   "howDidYouHearAboutUs": string | undefined,
   "anythingElse": string | undefined,
   "submittedAt": string (ISO 8601),
@@ -852,8 +852,8 @@ Before fetching available veterinarians, the form performs a zone check using th
 6. **`howSoon` Field**:
    - Indicates how soon all pets need to be seen (single question for all pets, asked once on the pet information/selection page)
    - Affects the date range used for searching available appointment slots
-   - Values: "Emergent – today", "Urgent – within 24–48 hours", "Soon – sometime this week", "Flexible – within the next month", "Routine – in about 3 months", "Planned – in about 6 months", "Future – in about 12 months"
-   - When "Emergent – today" or "Urgent – within 24–48 hours": No appointment search is performed, `selectedDateTimePreferences` is `null`, and Client Liaison will contact the client
+   - Values: "Emergent – today", "Urgent – within 24–48 hours", "Soon – sometime this week", "In 3–4 weeks", "Flexible – within the next month", "Routine – in about 3 months", "Planned – in about 6 months", "Future – in about 12 months"
+   - When "Emergent – today" or "Urgent – within 24–48 hours": No appointment search is performed, `selectedDateTimePreferences` is `null`, and Client Liaison will contact the client manually
    - When any other value: Appointment availability search automatically runs when user reaches the appointment time selection page
    - This field is now present for both new and existing clients
 
@@ -878,16 +878,22 @@ For routing API calls (not included in payload, but used internally):
 
 ### Appointment Search Timeframe
 
-The date range for searching available appointments is dynamically adjusted based on `howSoon`:
-- "Emergent – today": 1 day (today only) - **Note**: No search is performed, Client Liaison contacts client
-- "Urgent – within 24–48 hours": 2 days - **Note**: No search is performed, Client Liaison contacts client
-- "Soon – sometime this week": 7 days
-- "Flexible – within the next month": 30 days
-- "Routine – in about 3 months": 42 days (capped at 6 weeks)
-- "Planned – in about 6 months": 42 days (capped at 6 weeks)
-- "Future – in about 12 months": 42 days (capped at 6 weeks)
+The date range for searching available appointments is dynamically adjusted based on `howSoon` using day offsets from today (today = day 0). All ranges are inclusive:
 
-The search is always capped at a maximum of 6 weeks (42 days) in the future.
+- **"Emergent – today"**: Do not auto-search - Handled manually by Client Liaison for same-day coordination
+- **"Urgent – within 24–48 hours"**: Do not auto-search - Handled manually by Client Liaison
+- **"Soon – sometime this week"**: Search window: Start: +1 days, End: +7 days (7 days total)
+- **"In 3–4 weeks"**: Search window: Start: +21 days, End: +35 days (15 days total)
+- **"Flexible – within the next month"**: Search window: Start: +4 days, End: +42 days (about 6 weeks, 39 days total)
+- **"Routine – in about 3 months"**: Search window: Start: +75 days (2.5 months), End: +105 days (3.5 months, 31 days total)
+- **"Planned – in about 6 months"**: Search window: Start: +135 days (4.5 months), End: +165 days (5.5 months, 31 days total)
+- **"Future – in about 12 months"**: Search window: Start: +345 days (11.5 months), End: +365 days (12 months, 21 days total)
+
+**Developer Notes:**
+- Normalize everything to day offsets from today
+- Use `today + min_days` and `today + max_days` when querying availability
+- Skip searching for "Emergent" and "Urgent"; those go to Client Liaison workflow
+- Using days avoids month-length edge cases and keeps logic consistent
 
 ### Geocoding
 

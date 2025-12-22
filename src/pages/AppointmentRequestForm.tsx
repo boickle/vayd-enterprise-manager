@@ -37,7 +37,7 @@ type FormData = {
     interestedInOtherOptions?: 'Yes' | 'No' | '';
     aftercarePreference?: string;
   }>; // Per-pet data keyed by pet ID
-  howSoon?: 'Emergent – today' | 'Urgent – within 24–48 hours' | 'Soon – sometime this week' | 'Flexible – within the next month' | 'Routine – in about 3 months' | 'Planned – in about 6 months' | 'Future – in about 12 months' | ''; // How soon all pets need to be seen
+  howSoon?: 'Emergent – today' | 'Urgent – within 24–48 hours' | 'Soon – sometime this week' | 'In 3–4 weeks' | 'Flexible – within the next month' | 'Routine – in about 3 months' | 'Planned – in about 6 months' | 'Future – in about 12 months' | ''; // How soon all pets need to be seen
   
   // New Client Info
   phoneNumbers: string;
@@ -234,7 +234,8 @@ export default function AppointmentRequestForm() {
   const [showExistingClientModal, setShowExistingClientModal] = useState(false); // Modal for existing client notification
   const [emailCheckForModal, setEmailCheckForModal] = useState<{ exists: boolean; hasAccount: boolean } | null>(null); // Store email check result for modal
   const lastCheckedAddressRef = useRef<string>(''); // Track last checked address to avoid duplicate zone checks
-  const [speciesList, setSpeciesList] = useState<Array<{ id: number; name: string }>>([]); // List of available species
+  const clientLocationRef = useRef<{ lat?: number; lon?: number; address?: string }>({}); // Store client location for veterinarian lookup
+  const [speciesList, setSpeciesList] = useState<Array<{ id: number; name: string; prettyName?: string; showInUi?: boolean }>>([]); // List of available species
   const [breedsBySpecies, setBreedsBySpecies] = useState<Record<number, Array<{ id: number; name: string }>>>({}); // Breeds keyed by species ID
   const [loadingSpecies, setLoadingSpecies] = useState(false);
   const [loadingBreeds, setLoadingBreeds] = useState<Record<number, boolean>>({}); // Loading state per species
@@ -329,41 +330,64 @@ export default function AppointmentRequestForm() {
         console.warn('[AppointmentForm] No coordinates available, routing may not work optimally');
       }
 
-      // Calculate date range based on howSoon selection, capped at 6 weeks (42 days)
+      // Calculate date range based on howSoon selection using day offsets from today
+      // All ranges are inclusive and based on today = day 0
       const today = DateTime.now();
-      const startDate = today.plus({ days: 1 }).toISODate(); // Start from tomorrow
+      let startDate: string | null = null;
+      let numDays: number = 0;
       
-      // Calculate numDays based on howSoon selection
-      let numDays = 42; // Default to 6 weeks
       if (formData.howSoon) {
         switch (formData.howSoon) {
           case 'Emergent – today':
-            numDays = 1; // Today only
-            break;
+            // Do not auto-search - handled manually by CL
+            setRecommendedSlots([]);
+            setLoadingSlots(false);
+            return;
           case 'Urgent – within 24–48 hours':
-            numDays = 2; // Next 2 days
-            break;
+            // Do not auto-search - handled manually by CL
+            setRecommendedSlots([]);
+            setLoadingSlots(false);
+            return;
           case 'Soon – sometime this week':
-            numDays = 7; // Next week
+            // Search window: Start: +1 days, End: +7 days
+            startDate = today.plus({ days: 1 }).toISODate();
+            numDays = 7; // +1 to +7 inclusive = 7 days
+            break;
+          case 'In 3–4 weeks':
+            // Search window: Start: +21 days, End: +35 days
+            startDate = today.plus({ days: 21 }).toISODate();
+            numDays = 15; // +21 to +35 inclusive = 15 days
             break;
           case 'Flexible – within the next month':
-            numDays = 30; // Next month
+            // Search window: Start: +4 days, End: +42 days (about 6 weeks)
+            startDate = today.plus({ days: 4 }).toISODate();
+            numDays = 39; // +4 to +42 inclusive = 39 days
             break;
           case 'Routine – in about 3 months':
-            numDays = 90; // But cap at 42 days
+            // Search window: Start: +75 days (2.5 months), End: +105 days (3.5 months)
+            startDate = today.plus({ days: 75 }).toISODate();
+            numDays = 31; // +75 to +105 inclusive = 31 days
             break;
           case 'Planned – in about 6 months':
-            numDays = 180; // But cap at 42 days
+            // Search window: Start: +135 days (4.5 months), End: +165 days (5.5 months)
+            startDate = today.plus({ days: 135 }).toISODate();
+            numDays = 31; // +135 to +165 inclusive = 31 days
             break;
           case 'Future – in about 12 months':
-            numDays = 365; // But cap at 42 days
+            // Search window: Start: +345 days (11.5 months), End: +365 days (12 months)
+            startDate = today.plus({ days: 345 }).toISODate();
+            numDays = 21; // +345 to +365 inclusive = 21 days
             break;
           default:
+            // Default fallback
+            startDate = today.plus({ days: 1 }).toISODate();
             numDays = 42;
         }
+      } else {
+        // Default fallback if no selection
+        startDate = today.plus({ days: 1 }).toISODate();
+        numDays = 42;
       }
-      // Cap at 6 weeks (42 days) maximum
-      numDays = Math.min(numDays, 42);
 
       if (!startDate) {
         console.error('[AppointmentForm] Failed to calculate start date');
@@ -772,6 +796,8 @@ export default function AppointmentRequestForm() {
 
         // Try to get client info from appointments
         let clientAddress: string | undefined = undefined;
+        let clientLat: number | undefined = undefined;
+        let clientLon: number | undefined = undefined;
         try {
           const { data: apptsData } = await http.get('/appointments/client');
           const appts = Array.isArray(apptsData) ? apptsData : (apptsData?.appointments ?? apptsData ?? []);
@@ -781,15 +807,27 @@ export default function AppointmentRequestForm() {
             const client = firstAppt?.client || firstAppt?.Client;
             
             if (client) {
-              // Build address string from client data for veterinarian lookup
-              const addressParts = [
-                client.address1 || client.address_1,
-                client.city,
-                client.state,
-                client.zip ? String(client.zip) : undefined,
-              ].filter(Boolean);
-              if (addressParts.length >= 3) {
-                clientAddress = addressParts.join(', ');
+              // Extract lat/lon if available
+              if (client.lat != null && client.lon != null) {
+                const lat = typeof client.lat === 'string' ? parseFloat(client.lat) : client.lat;
+                const lon = typeof client.lon === 'string' ? parseFloat(client.lon) : client.lon;
+                if (Number.isFinite(lat) && Number.isFinite(lon)) {
+                  clientLat = lat;
+                  clientLon = lon;
+                }
+              }
+              
+              // Build address string from client data for veterinarian lookup (only if no lat/lon)
+              if (!clientLat || !clientLon) {
+                const addressParts = [
+                  client.address1 || client.address_1,
+                  client.city,
+                  client.state,
+                  client.zip ? String(client.zip) : undefined,
+                ].filter(Boolean);
+                if (addressParts.length >= 3) {
+                  clientAddress = addressParts.join(', ');
+                }
               }
               // Extract phone number from various possible fields
               const rawPhoneNumber = 
@@ -866,114 +904,69 @@ export default function AppointmentRequestForm() {
           console.warn('Failed to fetch client info from appointments:', err);
         }
 
-        // After loading client data, fetch veterinarians if we have an address
-        // Use the client address we extracted, or check formData for new address
+        // Store client location for later use in veterinarian lookup
         if (!alive) return;
+        clientLocationRef.current = {
+          lat: clientLat,
+          lon: clientLon,
+          address: clientAddress,
+        };
         
-        // Determine which address to use for veterinarian lookup
-        let address: string | undefined = undefined;
-        
-        // If user has answered "No" and entered a new address, use that
-        if (formData.isThisTheAddressWhereWeWillCome === 'No' &&
-            formData.newPhysicalAddress?.line1?.trim() &&
-            formData.newPhysicalAddress?.city?.trim() &&
-            formData.newPhysicalAddress?.state?.trim() &&
-            formData.newPhysicalAddress?.zip?.trim()) {
-          const addressParts = [
-            formData.newPhysicalAddress.line1,
-            formData.newPhysicalAddress.city,
-            formData.newPhysicalAddress.state,
-            formData.newPhysicalAddress.zip,
-          ].filter(Boolean);
-          address = addressParts.join(', ');
-        } else if (clientAddress) {
-          // Otherwise, use the client address we extracted
-          address = clientAddress;
-        }
-        
-        // Fetch veterinarians if we have a valid address
-        if (address) {
-          setLoadingVeterinarians(true);
-          try {
-            // Only check zone if user is entering a new address (not using address on file)
-            const isNewAddress = formData.isThisTheAddressWhereWeWillCome === 'No' &&
-              formData.newPhysicalAddress?.line1?.trim() &&
-              formData.newPhysicalAddress?.city?.trim() &&
-              formData.newPhysicalAddress?.state?.trim() &&
-              formData.newPhysicalAddress?.zip?.trim();
-            
-            // Only check zone for new addresses, and only if address has changed from last check
-            if (isNewAddress && lastCheckedAddressRef.current !== address) {
-              try {
-                await http.get(`/public/appointments/find-zone-by-address?address=${encodeURIComponent(address)}`);
-                // Zone exists, clear any previous error
-                setErrors(prev => {
-                  const next = { ...prev };
-                  delete next.zoneNotServiced;
-                  return next;
-                });
-                lastCheckedAddressRef.current = address; // Update last checked address
-              } catch (zoneError: any) {
-                if (zoneError?.response?.status === 404) {
-                  // Zone not serviced - set error and don't fetch veterinarians
-                  if (alive) {
-                    setErrors(prev => ({ ...prev, zoneNotServiced: 'We do not service your zone' }));
-                    setProviders([]);
-                    setLoadingVeterinarians(false);
-                    lastCheckedAddressRef.current = address; // Update last checked address even on error
-                  }
-                  return;
-                }
-                // For other errors, log but continue with veterinarian fetch
-                console.warn('[AppointmentForm] Zone check failed:', zoneError);
-                lastCheckedAddressRef.current = address; // Update last checked address even on error
-              }
-            } else if (!isNewAddress) {
+        // Fetch veterinarians using client location if available (only if not using new address)
+        if (formData.isThisTheAddressWhereWeWillCome !== 'No') {
+          const lat = clientLat;
+          const lon = clientLon;
+          const address = clientAddress;
+          
+          if ((lat != null && lon != null) || address) {
+            setLoadingVeterinarians(true);
+            try {
               // Clear any zone error when using address on file
               setErrors(prev => {
                 const next = { ...prev };
                 delete next.zoneNotServiced;
                 return next;
               });
-            }
-            
-            if (!alive) return;
-            
-            const providersData = await fetchVeterinarians(address);
-            
-            if (!alive) return;
-            
-            setProviders(providersData);
-            setLoadingVeterinarians(false);
-            
-            // Set default doctor to primary provider if found
-            const primaryProvider = petsData.find(p => p.primaryProviderName)?.primaryProviderName || null;
-            if (primaryProvider && providersData.length > 0) {
-              const providerMatch = providersData.find(p => 
-                p.name === primaryProvider || 
-                p.name.includes(primaryProvider) ||
-                primaryProvider.includes(p.name) ||
-                `Dr. ${p.name}` === primaryProvider ||
-                p.name.toLowerCase().includes(primaryProvider.toLowerCase()) ||
-                primaryProvider.toLowerCase().includes(p.name.toLowerCase())
-              );
-              if (providerMatch) {
-                setFormData(prev => ({ 
-                  ...prev, 
-                  preferredDoctorExisting: `Dr. ${providerMatch.name}` 
-                }));
+              
+              if (!alive) return;
+              
+              // Pass lat/lon if available, otherwise pass address
+              const providersData = await fetchVeterinarians(address, lat, lon);
+              
+              if (!alive) return;
+              
+              setProviders(providersData);
+              setLoadingVeterinarians(false);
+              
+              // Set default doctor to primary provider if found
+              const primaryProvider = petsData.find(p => p.primaryProviderName)?.primaryProviderName || null;
+              if (primaryProvider && providersData.length > 0) {
+                const providerMatch = providersData.find(p => 
+                  p.name === primaryProvider || 
+                  p.name.includes(primaryProvider) ||
+                  primaryProvider.includes(p.name) ||
+                  `Dr. ${p.name}` === primaryProvider ||
+                  p.name.toLowerCase().includes(primaryProvider.toLowerCase()) ||
+                  primaryProvider.toLowerCase().includes(p.name.toLowerCase())
+                );
+                if (providerMatch) {
+                  setFormData(prev => ({ 
+                    ...prev, 
+                    preferredDoctorExisting: `Dr. ${providerMatch.name}` 
+                  }));
+                }
+              }
+            } catch (err) {
+              console.error('Failed to fetch veterinarians:', err);
+              if (alive) {
+                setProviders([]);
+                setLoadingVeterinarians(false);
               }
             }
-          } catch (err) {
-            console.error('Failed to fetch veterinarians:', err);
-            if (alive) {
-              setProviders([]);
-              setLoadingVeterinarians(false);
-            }
+          } else {
+            setProviders([]);
+            setLoadingVeterinarians(false);
           }
-        } else {
-          setProviders([]);
-          setLoadingVeterinarians(false);
         }
 
         // Skip intro page and go directly to existing client form
@@ -995,15 +988,180 @@ export default function AppointmentRequestForm() {
   }, [
     isLoggedIn, 
     userEmail,
+  ]);
+
+  // Handle new address changes for existing clients with debouncing
+  useEffect(() => {
+    if (!isLoggedIn) return; // Only for logged-in users
+    if (formData.isThisTheAddressWhereWeWillCome !== 'No') return; // Only when entering new address
+
+    // Check if new address is complete (all required fields filled)
+    const hasValidNewAddress = 
+      formData.newPhysicalAddress?.line1?.trim() &&
+      formData.newPhysicalAddress?.city?.trim() &&
+      formData.newPhysicalAddress?.state?.trim() &&
+      formData.newPhysicalAddress?.zip?.trim();
+
+    // Don't fetch if address is not complete
+    if (!hasValidNewAddress) {
+      // Clear providers and errors if address is incomplete
+      setProviders([]);
+      setLoadingVeterinarians(false);
+      setErrors(prev => {
+        const next = { ...prev };
+        delete next.zoneNotServiced;
+        return next;
+      });
+      lastCheckedAddressRef.current = ''; // Reset last checked address when address is incomplete
+      return;
+    }
+
+    // Build address string from form data
+    const addressParts = [
+      formData.newPhysicalAddress.line1,
+      formData.newPhysicalAddress.city,
+      formData.newPhysicalAddress.state,
+      formData.newPhysicalAddress.zip,
+    ].filter(Boolean);
+    const address = addressParts.join(', ');
+
+    // Only proceed if address has changed from last check
+    if (lastCheckedAddressRef.current === address) {
+      return; // Address hasn't changed, skip
+    }
+
+    // Debounce: wait 500ms after user stops typing before making requests
+    const timeoutId = setTimeout(() => {
+      let alive = true;
+      (async () => {
+        // Double-check address hasn't changed during debounce
+        const currentAddressParts = [
+          formData.newPhysicalAddress?.line1,
+          formData.newPhysicalAddress?.city,
+          formData.newPhysicalAddress?.state,
+          formData.newPhysicalAddress?.zip,
+        ].filter(Boolean);
+        const currentAddress = currentAddressParts.join(', ');
+        
+        if (lastCheckedAddressRef.current === currentAddress) {
+          return; // Address changed during debounce, skip
+        }
+
+        setLoadingVeterinarians(true);
+        try {
+          // Check zone before fetching veterinarians
+          try {
+            await http.get(`/public/appointments/find-zone-by-address?address=${encodeURIComponent(currentAddress)}`);
+            // Zone exists, clear any previous error
+            if (alive) {
+              setErrors(prev => {
+                const next = { ...prev };
+                delete next.zoneNotServiced;
+                return next;
+              });
+              lastCheckedAddressRef.current = currentAddress; // Update last checked address
+            }
+          } catch (zoneError: any) {
+            if (zoneError?.response?.status === 404) {
+              // Zone not serviced - set error and don't fetch veterinarians
+              if (alive) {
+                setErrors(prev => ({ ...prev, zoneNotServiced: 'We do not service your zone' }));
+                setProviders([]);
+                setLoadingVeterinarians(false);
+                lastCheckedAddressRef.current = currentAddress; // Update last checked address even on error
+              }
+              return;
+            }
+            // For other errors, log but continue with veterinarian fetch
+            console.warn('[AppointmentForm] Zone check failed:', zoneError);
+            if (alive) {
+              lastCheckedAddressRef.current = currentAddress; // Update last checked address even on error
+            }
+          }
+          
+          if (!alive) return;
+          
+          // Fetch veterinarians using the new address
+          const providersData = await fetchVeterinarians(currentAddress, undefined, undefined);
+          
+          if (!alive) return;
+          
+          setProviders(providersData);
+          setLoadingVeterinarians(false);
+        } catch (err) {
+          console.error('Failed to fetch veterinarians:', err);
+          if (alive) {
+            setProviders([]);
+            setLoadingVeterinarians(false);
+          }
+        }
+      })();
+
+      return () => {
+        alive = false;
+      };
+    }, 500); // 500ms debounce
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [
+    isLoggedIn,
     formData.isThisTheAddressWhereWeWillCome,
-    formData.physicalAddress?.line1,
-    formData.physicalAddress?.city,
-    formData.physicalAddress?.state,
-    formData.physicalAddress?.zip,
     formData.newPhysicalAddress?.line1,
     formData.newPhysicalAddress?.city,
     formData.newPhysicalAddress?.state,
     formData.newPhysicalAddress?.zip,
+  ]);
+
+  // Handle switching back to original address for existing clients
+  useEffect(() => {
+    if (!isLoggedIn) return; // Only for logged-in users
+    if (formData.isThisTheAddressWhereWeWillCome !== 'Yes') return; // Only when using original address
+
+    const { lat, lon, address } = clientLocationRef.current;
+    
+    // Fetch veterinarians using client location if available
+    if ((lat != null && lon != null) || address) {
+      setLoadingVeterinarians(true);
+      let alive = true;
+      (async () => {
+        try {
+          // Clear any zone error when using address on file
+          setErrors(prev => {
+            const next = { ...prev };
+            delete next.zoneNotServiced;
+            return next;
+          });
+          
+          if (!alive) return;
+          
+          // Pass lat/lon if available, otherwise pass address
+          const providersData = await fetchVeterinarians(address, lat, lon);
+          
+          if (!alive) return;
+          
+          setProviders(providersData);
+          setLoadingVeterinarians(false);
+        } catch (err) {
+          console.error('Failed to fetch veterinarians:', err);
+          if (alive) {
+            setProviders([]);
+            setLoadingVeterinarians(false);
+          }
+        }
+      })();
+
+      return () => {
+        alive = false;
+      };
+    } else {
+      setProviders([]);
+      setLoadingVeterinarians(false);
+    }
+  }, [
+    isLoggedIn,
+    formData.isThisTheAddressWhereWeWillCome,
   ]);
 
   // Fetch species list on mount
@@ -1015,7 +1173,17 @@ export default function AppointmentRequestForm() {
         const response = await http.get(`/public/species-breeds?practiceId=${practiceId}`);
         if (!alive) return;
         const species = Array.isArray(response.data?.species) ? response.data.species : [];
-        setSpeciesList(species.map((s: any) => ({ id: s.id, name: s.name })));
+        // Filter to only show species with showInUi === true and include prettyName
+        setSpeciesList(
+          species
+            .filter((s: any) => s.showInUi !== false) // Only show species where showInUi is true (or undefined, defaulting to true)
+            .map((s: any) => ({ 
+              id: s.id, 
+              name: s.name,
+              prettyName: s.prettyName || s.name, // Use prettyName if available, fallback to name
+              showInUi: s.showInUi 
+            }))
+        );
       } catch (error) {
         console.error('[AppointmentForm] Failed to load species:', error);
         if (alive) {
@@ -1179,11 +1347,64 @@ export default function AppointmentRequestForm() {
               if (!pet.name?.trim()) {
                 newErrors[`newClientPet.${pet.id}.name`] = 'Pet name is required';
               }
-              if (!pet.species?.trim() || !pet.age?.trim() || !pet.spayedNeutered?.trim() || !pet.breed?.trim() || !pet.color?.trim() || !pet.weight?.trim()) {
-                newErrors[`newClientPet.${pet.id}.details`] = 'Please provide all pet details (Species, Age, Spayed/Neutered, Breed, Color, Weight)';
+              // Check species - either speciesId or otherSpecies (if "Other" is selected)
+              const selectedSpecies = speciesList.find(s => s.id === pet.speciesId);
+              if (!pet.speciesId) {
+                newErrors[`newClientPet.${pet.id}.species`] = 'Species is required';
+              } else if (selectedSpecies?.name === 'Other' && !pet.otherSpecies?.trim()) {
+                newErrors[`newClientPet.${pet.id}.otherSpecies`] = 'Please specify the species name';
               }
-              if (!pet.behaviorAtPreviousVisits?.trim()) {
-                newErrors[`newClientPet.${pet.id}.behaviorAtPreviousVisits`] = 'Please tell us anything else you want us to know about this pet';
+              if (!pet.age?.trim()) {
+                newErrors[`newClientPet.${pet.id}.age`] = 'Age/DOB is required';
+              }
+              if (!pet.spayedNeutered?.trim()) {
+                newErrors[`newClientPet.${pet.id}.spayedNeutered`] = 'Spayed/Neutered is required';
+              }
+              if (!pet.breed?.trim()) {
+                newErrors[`newClientPet.${pet.id}.breed`] = 'Breed is required';
+              }
+              if (!pet.color?.trim()) {
+                newErrors[`newClientPet.${pet.id}.color`] = 'Color is required';
+              }
+              if (!pet.weight?.trim()) {
+                newErrors[`newClientPet.${pet.id}.weight`] = 'Weight is required';
+              }
+              if (!pet.needsCalmingMedications) {
+                newErrors[`newClientPet.${pet.id}.needsCalmingMedications`] = 'Please answer whether your pet has needed calming medications';
+              }
+              if (pet.needsCalmingMedications === 'Yes' && !pet.hasCalmingMedications) {
+                newErrors[`newClientPet.${pet.id}.hasCalmingMedications`] = 'Please answer whether you have these medications on hand';
+              }
+              if (!pet.needsMuzzleOrSpecialHandling) {
+                newErrors[`newClientPet.${pet.id}.needsMuzzleOrSpecialHandling`] = 'Please answer whether your pet has needed a muzzle or special handling';
+              }
+              // Validate appointment type
+              const petData = formData.petSpecificData?.[pet.id];
+              if (!petData?.needsToday) {
+                newErrors[`needsToday.${pet.id}`] = 'Please select an option for what your pet needs today';
+              }
+              if (petData?.needsToday) {
+                if (petData.needsToday === 'End-of-life care / Euthanasia') {
+                  if (!petData.euthanasiaReason?.trim()) {
+                    newErrors[`euthanasiaReason.${pet.id}`] = 'Please provide details about the reason for this appointment';
+                  }
+                  if (!petData.beenToVetLastThreeMonths?.trim()) {
+                    newErrors[`beenToVetLastThreeMonths.${pet.id}`] = 'Please answer whether your pet has been to the vet in the last three months';
+                  }
+                  if (!petData.interestedInOtherOptions?.trim()) {
+                    newErrors[`interestedInOtherOptions.${pet.id}`] = 'Please select an option';
+                  }
+                  if (!petData.aftercarePreference?.trim()) {
+                    newErrors[`aftercarePreference.${pet.id}`] = 'Please select your preferences for aftercare';
+                  }
+                } else if (
+                  petData.needsToday === 'My pet isn\'t feeling well (new concern or illness)' ||
+                  petData.needsToday?.startsWith('Recheck / follow-up')
+                ) {
+                  if (!petData.needsTodayDetails?.trim()) {
+                    newErrors[`needsTodayDetails.${pet.id}`] = 'Please provide details about the reason for this appointment';
+                  }
+                }
               }
             });
           }
@@ -1223,7 +1444,7 @@ export default function AppointmentRequestForm() {
               }
               // Validate based on selected option
               if (petData?.needsToday) {
-                if (petData.needsToday === 'End-of-life care / euthanasia') {
+                if (petData.needsToday === 'End-of-life care / Euthanasia') {
                   // Validate euthanasia fields
                   if (!petData.euthanasiaReason?.trim()) {
                     newErrors[`euthanasiaReason.${petId}`] = 'Please let us know what is going on with your pet';
@@ -1252,11 +1473,27 @@ export default function AppointmentRequestForm() {
               if (!pet.name?.trim()) {
                 newErrors[`existingClientNewPet.${pet.id}.name`] = 'Pet name is required';
               }
-              if (!pet.species?.trim() || !pet.age?.trim() || !pet.spayedNeutered?.trim() || !pet.breed?.trim() || !pet.color?.trim() || !pet.weight?.trim()) {
-                newErrors[`existingClientNewPet.${pet.id}.details`] = 'Please provide all pet details (Species, Age, Spayed/Neutered, Breed, Color, Weight)';
+              // Check species - either speciesId or otherSpecies (if "Other" is selected)
+              const selectedSpecies = speciesList.find(s => s.id === pet.speciesId);
+              if (!pet.speciesId) {
+                newErrors[`existingClientNewPet.${pet.id}.species`] = 'Species is required';
+              } else if (selectedSpecies?.name === 'Other' && !pet.otherSpecies?.trim()) {
+                newErrors[`existingClientNewPet.${pet.id}.otherSpecies`] = 'Please specify the species name';
               }
-              if (!pet.behaviorAtPreviousVisits?.trim()) {
-                newErrors[`existingClientNewPet.${pet.id}.behaviorAtPreviousVisits`] = 'Please tell us anything else you want us to know about this pet';
+              if (!pet.age?.trim()) {
+                newErrors[`existingClientNewPet.${pet.id}.age`] = 'Age/DOB is required';
+              }
+              if (!pet.spayedNeutered?.trim()) {
+                newErrors[`existingClientNewPet.${pet.id}.spayedNeutered`] = 'Spayed/Neutered is required';
+              }
+              if (!pet.breed?.trim()) {
+                newErrors[`existingClientNewPet.${pet.id}.breed`] = 'Breed is required';
+              }
+              if (!pet.color?.trim()) {
+                newErrors[`existingClientNewPet.${pet.id}.color`] = 'Color is required';
+              }
+              if (!pet.weight?.trim()) {
+                newErrors[`existingClientNewPet.${pet.id}.weight`] = 'Weight is required';
               }
               if (!pet.needsCalmingMedications) {
                 newErrors[`existingClientNewPet.${pet.id}.needsCalmingMedications`] = 'Please answer whether your pet has needed calming medications';
@@ -1307,6 +1544,57 @@ export default function AppointmentRequestForm() {
     }
 
     setErrors(newErrors);
+    
+    // If there are errors, scroll to the first one
+    if (Object.keys(newErrors).length > 0) {
+      // Use setTimeout to ensure errors are rendered before scrolling
+      setTimeout(() => {
+        // Strategy: Find the first input/select/textarea with a red border (error state)
+        // The error border color is #ef4444 (rgb(239, 68, 68))
+        const allInputs = document.querySelectorAll('input, select, textarea');
+        
+        for (const input of allInputs) {
+          const style = window.getComputedStyle(input);
+          const borderColor = style.borderColor;
+          
+          // Check if border color indicates an error (red)
+          // #ef4444 = rgb(239, 68, 68)
+          if (borderColor.includes('239, 68, 68') || 
+              borderColor.includes('rgb(239, 68, 68)') ||
+              borderColor.includes('#ef4444')) {
+            // Found the first error field
+            input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            // Focus if it's a focusable element
+            if (input instanceof HTMLInputElement || 
+                input instanceof HTMLSelectElement || 
+                input instanceof HTMLTextAreaElement) {
+              input.focus();
+            }
+            return;
+          }
+        }
+        
+        // Fallback: If no input with error border found, find the first error message div
+        const errorMessages = document.querySelectorAll('[style*="color: rgb(239, 68, 68)"], [style*="color: #ef4444"]');
+        if (errorMessages.length > 0) {
+          const firstError = errorMessages[0] as HTMLElement;
+          firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          
+          // Try to find and focus the associated input
+          const parent = firstError.parentElement;
+          if (parent) {
+            const input = parent.querySelector('input, select, textarea') as HTMLElement;
+            if (input && (input instanceof HTMLInputElement || 
+                         input instanceof HTMLSelectElement || 
+                         input instanceof HTMLTextAreaElement)) {
+              input.focus();
+            }
+          }
+        }
+      }, 100);
+    }
+    
     return Object.keys(newErrors).length === 0;
   };
 
@@ -1749,14 +2037,32 @@ export default function AppointmentRequestForm() {
         return (
           <div>
             <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-              <img
-                src="https://www.jotform.com/uploads/vaydreception/form_files/55557353ac186960fd3022dfd922a80a.65cd143777c237.29151156.jpeg"
-                alt="Vet At Your Door"
-                style={{ maxWidth: '200px', height: 'auto', marginBottom: '20px' }}
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                }}
-              />
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginBottom: '20px' }}>
+                <img
+                  src="/final_thick_lines_cropped.jpeg"
+                  alt="VAYD Scout Logo"
+                  style={{
+                    height: '60px',
+                    width: 'auto',
+                    opacity: 0.9,
+                    mixBlendMode: 'multiply',
+                  }}
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+                <span style={{
+                  fontFamily: "'Libre Baskerville', 'Times New Roman', serif",
+                  fontWeight: 400,
+                  fontSize: '30px',
+                  color: '#2c1810',
+                  lineHeight: '60px',
+                  display: 'flex',
+                  alignItems: 'center',
+                }}>
+                  Scout<sup style={{ fontSize: '9px', verticalAlign: 'super', marginLeft: '2px', lineHeight: 0, position: 'relative', top: '-8px' }}>TM</sup>
+                </span>
+              </div>
               <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
                 Vet At Your Door Appointment Request
               </h1>
@@ -2229,29 +2535,61 @@ export default function AppointmentRequestForm() {
           </div>
         );
 
-      case 'new-client-pet-info':
+      case 'new-client-pet-info': {
+        const updatePetSpecificData = (petId: string, field: string, value: any) => {
+          setFormData(prev => {
+            const petData = prev.petSpecificData || {};
+            return {
+              ...prev,
+              petSpecificData: {
+                ...petData,
+                [petId]: {
+                  ...petData[petId],
+                  [field]: value,
+                },
+              },
+            };
+          });
+        };
+
+        const getPetData = (petId: string) => {
+          return formData.petSpecificData?.[petId] || {};
+        };
+
         const addNewClientPet = () => {
           const newPetId = `new-pet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-          setFormData(prev => ({
-            ...prev,
-            newClientPets: [
-              ...(prev.newClientPets || []),
-              {
-                id: newPetId,
-                name: '',
-                species: '',
-                age: '',
-                spayedNeutered: '',
-                breed: '',
-                color: '',
-                weight: '',
-                behaviorAtPreviousVisits: '',
-                needsCalmingMedications: '',
-                hasCalmingMedications: '',
-                needsMuzzleOrSpecialHandling: '',
-              }
-            ]
-          }));
+          setFormData(prev => {
+            const petData = prev.petSpecificData || {};
+            petData[newPetId] = {
+              needsToday: '',
+              needsTodayDetails: '',
+              euthanasiaReason: '',
+              beenToVetLastThreeMonths: '',
+              interestedInOtherOptions: '',
+              aftercarePreference: '',
+            };
+            return {
+              ...prev,
+              newClientPets: [
+                ...(prev.newClientPets || []),
+                {
+                  id: newPetId,
+                  name: '',
+                  species: '',
+                  age: '',
+                  spayedNeutered: '',
+                  breed: '',
+                  color: '',
+                  weight: '',
+                  behaviorAtPreviousVisits: '',
+                  needsCalmingMedications: '',
+                  hasCalmingMedications: '',
+                  needsMuzzleOrSpecialHandling: '',
+                }
+              ],
+              petSpecificData: petData,
+            };
+          });
         };
 
         const removeNewClientPet = (petId: string) => {
@@ -2319,7 +2657,7 @@ export default function AppointmentRequestForm() {
                   <div key={pet.id} style={{ marginBottom: index < (formData.newClientPets?.length || 0) - 1 ? '16px' : '0' }}>
                     <div style={{
                       padding: '16px',
-                      backgroundColor: '#fff',
+                      backgroundColor: '#f0fdf4',
                       border: '1px solid #e5e7eb',
                       borderRadius: '8px',
                       borderLeft: '3px solid #10b981',
@@ -2380,7 +2718,15 @@ export default function AppointmentRequestForm() {
                             </label>
                             <select
                               value={pet.speciesId || ''}
-                              onChange={(e) => updateNewClientPet(pet.id, 'speciesId', e.target.value)}
+                              onChange={(e) => {
+                                const newSpeciesId = e.target.value;
+                                updateNewClientPet(pet.id, 'speciesId', newSpeciesId);
+                                // Clear breed fields when species changes
+                                updateNewClientPet(pet.id, 'breed', '');
+                                updateNewClientPet(pet.id, 'breedId', '');
+                                setBreedSearchTerms(prev => ({ ...prev, [pet.id]: '' }));
+                                setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: false }));
+                              }}
                               style={{
                                 padding: '8px',
                                 border: `1px solid ${errors[`newClientPet.${pet.id}.species`] ? '#ef4444' : '#d1d5db'}`,
@@ -2396,11 +2742,16 @@ export default function AppointmentRequestForm() {
                               ) : (
                                 speciesList.map(species => (
                                   <option key={species.id} value={species.id}>
-                                    {species.name}
+                                    {species.prettyName || species.name}
                                   </option>
                                 ))
                               )}
                             </select>
+                            {errors[`newClientPet.${pet.id}.species`] && (
+                              <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                {errors[`newClientPet.${pet.id}.species`]}
+                              </div>
+                            )}
                           </div>
                           <div>
                             <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
@@ -2419,10 +2770,15 @@ export default function AppointmentRequestForm() {
                                 width: '100%',
                               }}
                             />
+                            {errors[`newClientPet.${pet.id}.age`] && (
+                              <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                {errors[`newClientPet.${pet.id}.age`]}
+                              </div>
+                            )}
                           </div>
                           <div>
                             <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
-                              Spayed/Neutered <span style={{ color: '#ef4444' }}>*</span>
+                              Spayed/Neutered? <span style={{ color: '#ef4444' }}>*</span>
                             </label>
                             <select
                               value={pet.spayedNeutered || ''}
@@ -2440,52 +2796,87 @@ export default function AppointmentRequestForm() {
                               <option value="Yes">Yes</option>
                               <option value="No">No</option>
                             </select>
+                            {errors[`newClientPet.${pet.id}.spayedNeutered`] && (
+                              <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                {errors[`newClientPet.${pet.id}.spayedNeutered`]}
+                              </div>
+                            )}
                           </div>
                           <div style={{ position: 'relative' }}>
                             <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
                               Breed <span style={{ color: '#ef4444' }}>*</span>
                             </label>
-                            <input
-                              type="text"
-                              value={pet.breed || breedSearchTerms[pet.id] || ''}
-                              onChange={(e) => {
-                                const searchTerm = e.target.value;
-                                setBreedSearchTerms(prev => ({ ...prev, [pet.id]: searchTerm }));
-                                setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: true }));
-                                // Clear selection if user is typing
-                                if (searchTerm !== pet.breed) {
-                                  updateNewClientPet(pet.id, 'breedId', '');
-                                  updateNewClientPet(pet.id, 'breed', '');
-                                }
-                              }}
-                              onFocus={() => {
-                                if (pet.speciesId) {
-                                  setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: true }));
-                                }
-                              }}
-                              onBlur={() => {
-                                // Delay closing to allow click on dropdown item
-                                setTimeout(() => {
-                                  setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: false }));
-                                }, 200);
-                              }}
-                              disabled={!pet.speciesId}
-                              placeholder={!pet.speciesId 
-                                ? 'Select species first...' 
-                                : loadingBreeds[pet.speciesId]
-                                ? 'Loading breeds...'
-                                : 'Type to search breeds...'}
-                              style={{
-                                padding: '8px',
-                                border: `1px solid ${errors[`newClientPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
-                                borderRadius: '6px',
-                                fontSize: '14px',
-                                width: '100%',
-                                backgroundColor: pet.speciesId ? '#fff' : '#f3f4f6',
-                                cursor: pet.speciesId ? 'text' : 'not-allowed',
-                              }}
-                            />
-                            {pet.speciesId && breedDropdownOpen[pet.id] && breedsBySpecies[pet.speciesId] && (
+                            {(() => {
+                              // Check if breeds exist for this species
+                              const hasBreeds = pet.speciesId && 
+                                breedsBySpecies[pet.speciesId] && 
+                                breedsBySpecies[pet.speciesId].length > 0;
+                              const isLoading = pet.speciesId && loadingBreeds[pet.speciesId];
+                              
+                              // If no breeds available (and not loading), show simple text input
+                              if (pet.speciesId && !isLoading && !hasBreeds) {
+                                return (
+                                  <input
+                                    type="text"
+                                    value={pet.breed || ''}
+                                    onChange={(e) => updateNewClientPet(pet.id, 'breed', e.target.value)}
+                                    placeholder="Enter breed"
+                                    style={{
+                                      padding: '8px',
+                                      border: `1px solid ${errors[`newClientPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
+                                      borderRadius: '6px',
+                                      fontSize: '14px',
+                                      width: '100%',
+                                      backgroundColor: '#fff',
+                                    }}
+                                  />
+                                );
+                              }
+                              
+                              // Otherwise, show autocomplete input
+                              return (
+                                <>
+                                  <input
+                                    type="text"
+                                    value={pet.breed || breedSearchTerms[pet.id] || ''}
+                                    onChange={(e) => {
+                                      const searchTerm = e.target.value;
+                                      setBreedSearchTerms(prev => ({ ...prev, [pet.id]: searchTerm }));
+                                      setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: true }));
+                                      // Clear selection if user is typing
+                                      if (searchTerm !== pet.breed) {
+                                        updateNewClientPet(pet.id, 'breedId', '');
+                                        updateNewClientPet(pet.id, 'breed', '');
+                                      }
+                                    }}
+                                    onFocus={() => {
+                                      if (pet.speciesId) {
+                                        setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: true }));
+                                      }
+                                    }}
+                                    onBlur={() => {
+                                      // Delay closing to allow click on dropdown item
+                                      setTimeout(() => {
+                                        setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: false }));
+                                      }, 200);
+                                    }}
+                                    disabled={!pet.speciesId}
+                                    placeholder={!pet.speciesId 
+                                      ? 'Select species first...' 
+                                      : loadingBreeds[pet.speciesId]
+                                      ? 'Loading breeds...'
+                                      : 'Type to search breeds...'}
+                                    style={{
+                                      padding: '8px',
+                                      border: `1px solid ${errors[`newClientPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
+                                      borderRadius: '6px',
+                                      fontSize: '14px',
+                                      width: '100%',
+                                      backgroundColor: pet.speciesId ? '#fff' : '#f3f4f6',
+                                      cursor: pet.speciesId ? 'text' : 'not-allowed',
+                                    }}
+                                  />
+                                  {pet.speciesId && breedDropdownOpen[pet.id] && breedsBySpecies[pet.speciesId] && (
                               <div
                                 style={{
                                   position: 'absolute',
@@ -2541,6 +2932,14 @@ export default function AppointmentRequestForm() {
                                 )}
                               </div>
                             )}
+                                </>
+                              );
+                            })()}
+                            {errors[`newClientPet.${pet.id}.breed`] && (
+                              <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                {errors[`newClientPet.${pet.id}.breed`]}
+                              </div>
+                            )}
                           </div>
                           <div>
                             <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
@@ -2559,6 +2958,11 @@ export default function AppointmentRequestForm() {
                                 width: '100%',
                               }}
                             />
+                            {errors[`newClientPet.${pet.id}.color`] && (
+                              <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                {errors[`newClientPet.${pet.id}.color`]}
+                              </div>
+                            )}
                           </div>
                           <div>
                             <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
@@ -2579,6 +2983,11 @@ export default function AppointmentRequestForm() {
                                 width: '100%',
                               }}
                             />
+                            {errors[`newClientPet.${pet.id}.weight`] && (
+                              <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                {errors[`newClientPet.${pet.id}.weight`]}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -2586,7 +2995,7 @@ export default function AppointmentRequestForm() {
                       {/* Pet Behavior */}
                       <div style={{ marginBottom: '16px' }}>
                         <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
-                          Tell us anything else you want us to know about {pet.name || 'this pet'} <span style={{ color: '#ef4444' }}>*</span>
+                          Tell us anything else you want us to know about {pet.name || 'this pet'}:
                         </label>
                         <textarea
                           value={pet.behaviorAtPreviousVisits || ''}
@@ -2611,7 +3020,7 @@ export default function AppointmentRequestForm() {
                       {/* Needs Calming Medications */}
                       <div style={{ marginBottom: '16px' }}>
                         <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
-                          Has {pet.name || 'this pet'} needed calming medications at a previous veterinary visit?
+                          Has {pet.name || 'this pet'} needed calming medications at a previous veterinary visit? <span style={{ color: '#ef4444' }}>*</span>
                         </label>
                         <div style={{ display: 'flex', gap: '12px' }}>
                           {['Yes', 'No'].map((option) => (
@@ -2645,6 +3054,11 @@ export default function AppointmentRequestForm() {
                             </label>
                           ))}
                         </div>
+                        {errors[`newClientPet.${pet.id}.needsCalmingMedications`] && (
+                          <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                            {errors[`newClientPet.${pet.id}.needsCalmingMedications`]}
+                          </div>
+                        )}
                       </div>
 
                       {/* Has Calming Medications */}
@@ -2687,13 +3101,18 @@ export default function AppointmentRequestForm() {
                               </span>
                             </div>
                           )}
+                          {errors[`newClientPet.${pet.id}.hasCalmingMedications`] && (
+                            <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                              {errors[`newClientPet.${pet.id}.hasCalmingMedications`]}
+                            </div>
+                          )}
                         </div>
                       )}
 
                       {/* Needs Muzzle or Special Handling */}
                       <div style={{ marginBottom: '16px' }}>
                         <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
-                          Has {pet.name || 'this pet'} needed a muzzle or other special handling at a previous veterinary visit (please know this is not meant to judge - it is just so we can best prepare!)?
+                          Has {pet.name || 'this pet'} needed a muzzle or other special handling at a previous veterinary visit (please know this is not meant to judge - it is just so we can best prepare)? <span style={{ color: '#ef4444' }}>*</span>
                         </label>
                         <div style={{ display: 'flex', gap: '12px' }}>
                           {['Yes', 'No'].map((option) => (
@@ -2721,6 +3140,242 @@ export default function AppointmentRequestForm() {
                               <span style={{ fontSize: '14px' }}>{option}</span>
                             </label>
                           ))}
+                        </div>
+                        {errors[`newClientPet.${pet.id}.needsMuzzleOrSpecialHandling`] && (
+                          <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                            {errors[`newClientPet.${pet.id}.needsMuzzleOrSpecialHandling`]}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Questions for this pet */}
+                      <div style={{
+                        marginTop: '8px',
+                        padding: '16px',
+                        backgroundColor: '#fff',
+                        border: '1px solid #e5e7eb',
+                        borderRadius: '8px',
+                        borderLeft: '3px solid #10b981',
+                      }}>
+                        <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#111827', marginBottom: '12px' }}>
+                          Questions for {pet.name || 'this pet'}
+                        </h3>
+                        
+                        {/* What does your pet need today? */}
+                        <div style={{ marginBottom: '4px' }}>
+                          <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
+                            What does {pet.name || 'this pet'} need today? <span style={{ color: '#ef4444' }}>*</span>
+                          </label>
+                          {(() => {
+                            const petData = getPetData(pet.id);
+                            return (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                {[
+                                  'Wellness exam / check-up',
+                                  'My pet isn\'t feeling well (new concern or illness)',
+                                  'Recheck / follow-up (for a condition that has already been diagnosed)',
+                                  'End-of-life care / Euthanasia',
+                                ].map((option) => (
+                                  <div key={option}>
+                                    <label
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'flex-start',
+                                        gap: '8px',
+                                        cursor: 'pointer',
+                                        padding: '5px 0',
+                                        backgroundColor: 'transparent',
+                                        transition: 'all 0.2s ease',
+                                      }}
+                                    >
+                                      <input
+                                        type="radio"
+                                        name={`needsToday-${pet.id}`}
+                                        value={option}
+                                        checked={petData.needsToday === option}
+                                        onChange={(e) => {
+                                          updatePetSpecificData(pet.id, 'needsToday', e.target.value);
+                                          updatePetSpecificData(pet.id, 'needsTodayDetails', '');
+                                        }}
+                                        style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
+                                      />
+                                      <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option}</span>
+                                    </label>
+                                    {petData.needsToday === option && (
+                                      <div style={{ marginLeft: '26px', marginTop: '8px', marginBottom: '8px' }}>
+                                        {option === 'End-of-life care / Euthanasia' ? (
+                                          // Euthanasia questions
+                                          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                            <div>
+                                              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                                                Let us know what is going on with {pet.name || 'this pet'} that has brought you to this difficult decision. <span style={{ color: '#ef4444' }}>*</span>
+                                              </label>
+                                              <textarea
+                                                value={petData.euthanasiaReason || ''}
+                                                onChange={(e) => updatePetSpecificData(pet.id, 'euthanasiaReason', e.target.value)}
+                                                rows={5}
+                                                style={{
+                                                  width: '100%',
+                                                  padding: '8px',
+                                                  border: `1px solid ${errors[`euthanasiaReason.${pet.id}`] ? '#ef4444' : '#d1d5db'}`,
+                                                  borderRadius: '6px',
+                                                  fontSize: '14px',
+                                                  fontFamily: 'inherit',
+                                                }}
+                                              />
+                                              {errors[`euthanasiaReason.${pet.id}`] && (
+                                                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                                  {errors[`euthanasiaReason.${pet.id}`]}
+                                                </div>
+                                              )}
+                                            </div>
+                                            <div>
+                                              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                                                Has {pet.name || 'this pet'} been to the veterinarian for these issues in the last three months (it's ok if not - this just helps us schedule correctly)? <span style={{ color: '#ef4444' }}>*</span>
+                                              </label>
+                                              <input
+                                                type="text"
+                                                value={petData.beenToVetLastThreeMonths || ''}
+                                                onChange={(e) => updatePetSpecificData(pet.id, 'beenToVetLastThreeMonths', e.target.value)}
+                                                style={{
+                                                  width: '100%',
+                                                  padding: '8px',
+                                                  border: `1px solid ${errors[`beenToVetLastThreeMonths.${pet.id}`] ? '#ef4444' : '#d1d5db'}`,
+                                                  borderRadius: '6px',
+                                                  fontSize: '14px',
+                                                }}
+                                              />
+                                              {errors[`beenToVetLastThreeMonths.${pet.id}`] && (
+                                                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                                  {errors[`beenToVetLastThreeMonths.${pet.id}`]}
+                                                </div>
+                                              )}
+                                            </div>
+                                            <div>
+                                              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                                                Are you interested in pursuing other options other than euthanasia? We absolutely do not judge your decision - we are here for you - we just want to be sure we schedule an appointment that addresses all of your and {pet.name || 'this pet'}'s needs. <span style={{ color: '#ef4444' }}>*</span>
+                                              </label>
+                                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                {[
+                                                  'No. While this is very difficult, I have made my decision. I don\'t wish to pursue further discussion about my decision or investigate other options at this point.',
+                                                  'Yes. I am interested in speaking with the doctor about other options that may help.',
+                                                  'I\'m not sure.',
+                                                ].map((opt) => (
+                                                  <label
+                                                    key={opt}
+                                                    style={{
+                                                      display: 'flex',
+                                                      alignItems: 'flex-start',
+                                                      gap: '8px',
+                                                      cursor: 'pointer',
+                                                      padding: '8px 12px',
+                                                      border: `1px solid ${petData.interestedInOtherOptions === opt ? '#10b981' : '#d1d5db'}`,
+                                                      borderRadius: '6px',
+                                                      backgroundColor: petData.interestedInOtherOptions === opt ? '#f0fdf4' : '#fff',
+                                                    }}
+                                                  >
+                                                    <input
+                                                      type="radio"
+                                                      name={`interestedInOtherOptions-${pet.id}`}
+                                                      value={opt}
+                                                      checked={petData.interestedInOtherOptions === opt}
+                                                      onChange={(e) => updatePetSpecificData(pet.id, 'interestedInOtherOptions', e.target.value)}
+                                                      style={{ marginTop: '2px', flexShrink: 0 }}
+                                                    />
+                                                    <span style={{ fontSize: '14px' }}>{opt}</span>
+                                                  </label>
+                                                ))}
+                                              </div>
+                                              {errors[`interestedInOtherOptions.${pet.id}`] && (
+                                                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                                  {errors[`interestedInOtherOptions.${pet.id}`]}
+                                                </div>
+                                              )}
+                                            </div>
+                                            <div>
+                                              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
+                                                What are your preferences for aftercare? <span style={{ color: '#ef4444' }}>*</span>
+                                              </label>
+                                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                {[
+                                                  'I will handle my pet\'s remains (e.g. bury at home)',
+                                                  'Private Cremation (Cremation WITH return of ashes)',
+                                                  'Burial At Sea (Cremation WITHOUT return of ashes)',
+                                                  'I am not sure yet.',
+                                                ].map((opt) => (
+                                                  <label
+                                                    key={opt}
+                                                    style={{
+                                                      display: 'flex',
+                                                      alignItems: 'flex-start',
+                                                      gap: '8px',
+                                                      cursor: 'pointer',
+                                                      padding: '8px 12px',
+                                                      border: `1px solid ${petData.aftercarePreference === opt ? '#10b981' : '#d1d5db'}`,
+                                                      borderRadius: '6px',
+                                                      backgroundColor: petData.aftercarePreference === opt ? '#f0fdf4' : '#fff',
+                                                    }}
+                                                  >
+                                                    <input
+                                                      type="radio"
+                                                      name={`aftercarePreference-${pet.id}`}
+                                                      value={opt}
+                                                      checked={petData.aftercarePreference === opt}
+                                                      onChange={(e) => updatePetSpecificData(pet.id, 'aftercarePreference', e.target.value)}
+                                                      style={{ marginTop: '2px', flexShrink: 0 }}
+                                                    />
+                                                    <span style={{ fontSize: '14px' }}>{opt}</span>
+                                                  </label>
+                                                ))}
+                                              </div>
+                                              {errors[`aftercarePreference.${pet.id}`] && (
+                                                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                                  {errors[`aftercarePreference.${pet.id}`]}
+                                                </div>
+                                              )}
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <textarea
+                                            value={petData.needsTodayDetails || ''}
+                                            onChange={(e) => updatePetSpecificData(pet.id, 'needsTodayDetails', e.target.value)}
+                                            placeholder={
+                                              option === 'Wellness exam / check-up'
+                                                ? `Do you have any specific concerns you want to discuss at the visit?`
+                                                : option === 'My pet isn\'t feeling well (new concern or illness)'
+                                                ? `Describe what is going on with ${pet.name || 'this pet'}`
+                                                : option === 'Recheck / follow-up (for a condition that has already been diagnosed)'
+                                                ? `What are we checking on for ${pet.name || 'this pet'}?`
+                                                : 'Please provide details about the reason for this appointment...'
+                                            }
+                                            rows={3}
+                                            style={{
+                                              width: '100%',
+                                              padding: '8px',
+                                              border: `1px solid ${errors[`needsTodayDetails.${pet.id}`] ? '#ef4444' : '#d1d5db'}`,
+                                              borderRadius: '6px',
+                                              fontSize: '14px',
+                                              fontFamily: 'inherit',
+                                            }}
+                                          />
+                                        )}
+                                        {errors[`needsTodayDetails.${pet.id}`] && (
+                                          <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                            {errors[`needsTodayDetails.${pet.id}`]}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                          {errors[`needsToday.${pet.id}`] && (
+                            <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>
+                              {errors[`needsToday.${pet.id}`]}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2769,6 +3424,7 @@ export default function AppointmentRequestForm() {
                   'Emergent – today',
                   'Urgent – within 24–48 hours',
                   'Soon – sometime this week',
+                  'In 3–4 weeks',
                   'Flexible – within the next month',
                   'Routine – in about 3 months',
                   'Planned – in about 6 months',
@@ -2806,6 +3462,8 @@ export default function AppointmentRequestForm() {
             </div>
           </div>
         );
+        break;
+      }
 
       case 'existing-client':
         return (
@@ -3382,9 +4040,9 @@ export default function AppointmentRequestForm() {
                                 {[
                                   'Wellness exam / check-up',
                                   'My pet isn\'t feeling well (new concern or illness)',
-                                  'Recheck / follow-up with the doctor (for a condition we\'ve already seen — please briefly describe)',
+                                  'Recheck / follow-up (for a condition that has already been diagnosed)',
                                   'Technician visit (nail trim, anal glands, booster, blood draw, monthly injection, etc.)',
-                                  'End-of-life care / euthanasia',
+                                  'End-of-life care / Euthanasia',
                                 ].map((option) => (
                                   <div key={option}>
                                     <label
@@ -3414,7 +4072,7 @@ export default function AppointmentRequestForm() {
                                     </label>
                                     {petData.needsToday === option && (
                                       <div style={{ marginLeft: '26px', marginTop: '8px', marginBottom: '8px' }}>
-                                        {option === 'End-of-life care / euthanasia' ? (
+                                        {option === 'End-of-life care / Euthanasia' ? (
                                           // Euthanasia questions
                                           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                                             <div>
@@ -3518,7 +4176,7 @@ export default function AppointmentRequestForm() {
                                                     key={opt}
                                                     style={{
                                                       display: 'flex',
-                                                      alignItems: 'center',
+                                                      alignItems: 'flex-start',
                                                       gap: '8px',
                                                       cursor: 'pointer',
                                                       padding: '8px 12px',
@@ -3533,7 +4191,7 @@ export default function AppointmentRequestForm() {
                                                       value={opt}
                                                       checked={petData.aftercarePreference === opt}
                                                       onChange={(e) => updatePetSpecificData(pet.id, 'aftercarePreference', e.target.value)}
-                                                      style={{ margin: 0 }}
+                                                      style={{ marginTop: '2px', flexShrink: 0 }}
                                                     />
                                                     <span style={{ fontSize: '14px' }}>{opt}</span>
                                                   </label>
@@ -3556,7 +4214,7 @@ export default function AppointmentRequestForm() {
                                                 ? `Do you have any specific concerns you want to discuss at the visit?`
                                                 : option === 'My pet isn\'t feeling well (new concern or illness)'
                                                 ? `Describe what is going on with ${pet.name}`
-                                                : option === 'Recheck / follow-up with the doctor (for a condition we\'ve already seen — please briefly describe)'
+                                                : option === 'Recheck / follow-up (for a condition that has already been diagnosed)'
                                                 ? `What are we checking on for ${pet.name}?`
                                                 : option === 'Technician visit (nail trim, anal glands, booster, blood draw, monthly injection, etc.)'
                                                 ? `What would you like done for ${pet.name}?`
@@ -3639,7 +4297,7 @@ export default function AppointmentRequestForm() {
                       <div key={pet.id} style={{ marginBottom: index < (formData.existingClientNewPets?.length || 0) - 1 ? '12px' : '2px' }}>
                         <div style={{
                           padding: '12px',
-                          backgroundColor: isSelected ? '#f0fdf4' : '#fff',
+                          backgroundColor: '#f0fdf4',
                           border: `1px solid ${isSelected ? '#10b981' : '#e5e7eb'}`,
                           borderRadius: '6px',
                         }}>
@@ -3739,7 +4397,15 @@ export default function AppointmentRequestForm() {
                                 </label>
                                 <select
                                   value={pet.speciesId || ''}
-                                  onChange={(e) => updateExistingClientNewPet(pet.id, 'speciesId', e.target.value)}
+                                  onChange={(e) => {
+                                    const newSpeciesId = e.target.value;
+                                    updateExistingClientNewPet(pet.id, 'speciesId', newSpeciesId);
+                                    // Clear breed fields when species changes
+                                    updateExistingClientNewPet(pet.id, 'breed', '');
+                                    updateExistingClientNewPet(pet.id, 'breedId', '');
+                                    setBreedSearchTerms(prev => ({ ...prev, [pet.id]: '' }));
+                                    setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: false }));
+                                  }}
                                   style={{
                                     padding: '8px',
                                     border: `1px solid ${errors[`existingClientNewPet.${pet.id}.species`] ? '#ef4444' : '#d1d5db'}`,
@@ -3755,11 +4421,16 @@ export default function AppointmentRequestForm() {
                                   ) : (
                                     speciesList.map(species => (
                                       <option key={species.id} value={species.id}>
-                                        {species.name}
+                                        {species.prettyName || species.name}
                                       </option>
                                     ))
                                   )}
                                 </select>
+                                {errors[`existingClientNewPet.${pet.id}.species`] && (
+                                  <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                    {errors[`existingClientNewPet.${pet.id}.species`]}
+                                  </div>
+                                )}
                               </div>
                               <div>
                                 <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
@@ -3778,10 +4449,15 @@ export default function AppointmentRequestForm() {
                                     width: '100%',
                                   }}
                                 />
+                                {errors[`existingClientNewPet.${pet.id}.age`] && (
+                                  <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                    {errors[`existingClientNewPet.${pet.id}.age`]}
+                                  </div>
+                                )}
                               </div>
                               <div>
                                 <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
-                                  Spayed/Neutered <span style={{ color: '#ef4444' }}>*</span>
+                                  Spayed/Neutered? <span style={{ color: '#ef4444' }}>*</span>
                                 </label>
                                 <select
                                   value={pet.spayedNeutered || ''}
@@ -3799,52 +4475,87 @@ export default function AppointmentRequestForm() {
                                   <option value="Yes">Yes</option>
                                   <option value="No">No</option>
                                 </select>
+                                {errors[`existingClientNewPet.${pet.id}.spayedNeutered`] && (
+                                  <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                    {errors[`existingClientNewPet.${pet.id}.spayedNeutered`]}
+                                  </div>
+                                )}
                               </div>
                               <div style={{ position: 'relative' }}>
                                 <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
                                   Breed <span style={{ color: '#ef4444' }}>*</span>
                                 </label>
-                                <input
-                                  type="text"
-                                  value={pet.breed || breedSearchTerms[pet.id] || ''}
-                                  onChange={(e) => {
-                                    const searchTerm = e.target.value;
-                                    setBreedSearchTerms(prev => ({ ...prev, [pet.id]: searchTerm }));
-                                    setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: true }));
-                                    // Clear selection if user is typing
-                                    if (searchTerm !== pet.breed) {
-                                      updateExistingClientNewPet(pet.id, 'breedId', '');
-                                      updateExistingClientNewPet(pet.id, 'breed', '');
-                                    }
-                                  }}
-                                  onFocus={() => {
-                                    if (pet.speciesId) {
-                                      setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: true }));
-                                    }
-                                  }}
-                                  onBlur={() => {
-                                    // Delay closing to allow click on dropdown item
-                                    setTimeout(() => {
-                                      setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: false }));
-                                    }, 200);
-                                  }}
-                                  disabled={!pet.speciesId}
-                                  placeholder={!pet.speciesId 
-                                    ? 'Select species first...' 
-                                    : loadingBreeds[pet.speciesId]
-                                    ? 'Loading breeds...'
-                                    : 'Type to search breeds...'}
-                                  style={{
-                                    padding: '8px',
-                                    border: `1px solid ${errors[`existingClientNewPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
-                                    borderRadius: '6px',
-                                    fontSize: '14px',
-                                    width: '100%',
-                                    backgroundColor: pet.speciesId ? '#fff' : '#f3f4f6',
-                                    cursor: pet.speciesId ? 'text' : 'not-allowed',
-                                  }}
-                                />
-                                {pet.speciesId && breedDropdownOpen[pet.id] && breedsBySpecies[pet.speciesId] && (
+                                {(() => {
+                                  // Check if breeds exist for this species
+                                  const hasBreeds = pet.speciesId && 
+                                    breedsBySpecies[pet.speciesId] && 
+                                    breedsBySpecies[pet.speciesId].length > 0;
+                                  const isLoading = pet.speciesId && loadingBreeds[pet.speciesId];
+                                  
+                                  // If no breeds available (and not loading), show simple text input
+                                  if (pet.speciesId && !isLoading && !hasBreeds) {
+                                    return (
+                                      <input
+                                        type="text"
+                                        value={pet.breed || ''}
+                                        onChange={(e) => updateExistingClientNewPet(pet.id, 'breed', e.target.value)}
+                                        placeholder="Enter breed"
+                                        style={{
+                                          padding: '8px',
+                                          border: `1px solid ${errors[`existingClientNewPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
+                                          borderRadius: '6px',
+                                          fontSize: '14px',
+                                          width: '100%',
+                                          backgroundColor: '#fff',
+                                        }}
+                                      />
+                                    );
+                                  }
+                                  
+                                  // Otherwise, show autocomplete input
+                                  return (
+                                    <>
+                                      <input
+                                        type="text"
+                                        value={pet.breed || breedSearchTerms[pet.id] || ''}
+                                        onChange={(e) => {
+                                          const searchTerm = e.target.value;
+                                          setBreedSearchTerms(prev => ({ ...prev, [pet.id]: searchTerm }));
+                                          setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: true }));
+                                          // Clear selection if user is typing
+                                          if (searchTerm !== pet.breed) {
+                                            updateExistingClientNewPet(pet.id, 'breedId', '');
+                                            updateExistingClientNewPet(pet.id, 'breed', '');
+                                          }
+                                        }}
+                                        onFocus={() => {
+                                          if (pet.speciesId) {
+                                            setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: true }));
+                                          }
+                                        }}
+                                        onBlur={() => {
+                                          // Delay closing to allow click on dropdown item
+                                          setTimeout(() => {
+                                            setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: false }));
+                                          }, 200);
+                                        }}
+                                        disabled={!pet.speciesId}
+                                        placeholder={!pet.speciesId 
+                                          ? 'Select species first...' 
+                                          : loadingBreeds[pet.speciesId]
+                                          ? 'Loading breeds...'
+                                          : 'Type to search breeds...'}
+                                        style={{
+                                          padding: '8px',
+                                          border: `1px solid ${errors[`existingClientNewPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
+                                          borderRadius: '6px',
+                                          fontSize: '14px',
+                                          width: '100%',
+                                          backgroundColor: pet.speciesId ? '#fff' : '#f3f4f6',
+                                          cursor: pet.speciesId ? 'text' : 'not-allowed',
+                                        }}
+                                      />
+                                      {pet.speciesId && breedDropdownOpen[pet.id] && breedsBySpecies[pet.speciesId] && (
                                   <div
                                     style={{
                                       position: 'absolute',
@@ -3900,6 +4611,14 @@ export default function AppointmentRequestForm() {
                                     )}
                                   </div>
                                 )}
+                                    </>
+                                  );
+                                })()}
+                                {errors[`existingClientNewPet.${pet.id}.breed`] && (
+                                  <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                    {errors[`existingClientNewPet.${pet.id}.breed`]}
+                                  </div>
+                                )}
                               </div>
                               <div>
                                 <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
@@ -3918,6 +4637,11 @@ export default function AppointmentRequestForm() {
                                     width: '100%',
                                   }}
                                 />
+                                {errors[`existingClientNewPet.${pet.id}.color`] && (
+                                  <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                    {errors[`existingClientNewPet.${pet.id}.color`]}
+                                  </div>
+                                )}
                               </div>
                               <div>
                                 <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
@@ -3938,13 +4662,18 @@ export default function AppointmentRequestForm() {
                                     width: '100%',
                                   }}
                                 />
+                                {errors[`existingClientNewPet.${pet.id}.weight`] && (
+                                  <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                    {errors[`existingClientNewPet.${pet.id}.weight`]}
+                                  </div>
+                                )}
                               </div>
                             </div>
 
                             {/* Tell us anything else */}
                             <div>
                               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
-                                Tell us anything else you want us to know about {pet.name || 'this pet'} <span style={{ color: '#ef4444' }}>*</span>
+                                Tell us anything else you want us to know about {pet.name || 'this pet'}:
                               </label>
                               <textarea
                                 value={pet.behaviorAtPreviousVisits || ''}
@@ -3999,6 +4728,11 @@ export default function AppointmentRequestForm() {
                                   </label>
                                 ))}
                               </div>
+                              {errors[`existingClientNewPet.${pet.id}.needsCalmingMedications`] && (
+                                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                  {errors[`existingClientNewPet.${pet.id}.needsCalmingMedications`]}
+                                </div>
+                              )}
                             </div>
 
                             {/* Do you have these medications on hand? */}
@@ -4037,13 +4771,18 @@ export default function AppointmentRequestForm() {
                                     </span>
                                   </div>
                                 )}
+                                {errors[`existingClientNewPet.${pet.id}.hasCalmingMedications`] && (
+                                  <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                    {errors[`existingClientNewPet.${pet.id}.hasCalmingMedications`]}
+                                  </div>
+                                )}
                               </div>
                             )}
 
                             {/* Has pet needed muzzle */}
                             <div>
                               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
-                                Has {pet.name || 'this pet'} needed a muzzle or other special handling at a previous veterinary visit (please know this is not meant to judge - it is just so we can best prepare!)? <span style={{ color: '#ef4444' }}>*</span>
+                                Has {pet.name || 'this pet'} needed a muzzle or other special handling at a previous veterinary visit (please know this is not meant to judge - it is just so we can best prepare)? <span style={{ color: '#ef4444' }}>*</span>
                               </label>
                               <div style={{ display: 'flex', gap: '16px' }}>
                                 {['Yes', 'No'].map((option) => (
@@ -4068,6 +4807,11 @@ export default function AppointmentRequestForm() {
                                   </label>
                                 ))}
                               </div>
+                              {errors[`existingClientNewPet.${pet.id}.needsMuzzleOrSpecialHandling`] && (
+                                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                  {errors[`existingClientNewPet.${pet.id}.needsMuzzleOrSpecialHandling`]}
+                                </div>
+                              )}
                             </div>
 
                             {/* Expandable questions section for selected pets */}
@@ -4093,9 +4837,9 @@ export default function AppointmentRequestForm() {
                                     {[
                                       'Wellness exam / check-up',
                                       'My pet isn\'t feeling well (new concern or illness)',
-                                      'Recheck / follow-up with the doctor (for a condition we\'ve already seen — please briefly describe)',
+                                      'Recheck / follow-up (for a condition that has already been diagnosed)',
                                       'Technician visit (nail trim, anal glands, booster, blood draw, monthly injection, etc.)',
-                                      'End-of-life care / euthanasia',
+                                      'End-of-life care / Euthanasia',
                                     ].map((option) => (
                                       <div key={option}>
                                         <label
@@ -4124,7 +4868,7 @@ export default function AppointmentRequestForm() {
                                         </label>
                                         {petData.needsToday === option && (
                                           <div style={{ marginLeft: '26px', marginTop: '8px', marginBottom: '8px' }}>
-                                            {option === 'End-of-life care / euthanasia' ? (
+                                            {option === 'End-of-life care / Euthanasia' ? (
                                               // Euthanasia questions - same as existing pets
                                               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                                                 <div>
@@ -4174,28 +4918,36 @@ export default function AppointmentRequestForm() {
                                                 </div>
                                                 <div>
                                                   <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '14px' }}>
-                                                    Are you interested in hearing about other options besides euthanasia? <span style={{ color: '#ef4444' }}>*</span>
+                                                    Are you interested in pursuing other options other than euthanasia? We absolutely do not judge your decision - we are here for you - we just want to be sure we schedule an appointment that addresses all of your and {pet.name || 'this pet'}'s needs. <span style={{ color: '#ef4444' }}>*</span>
                                                   </label>
-                                                  <div style={{ display: 'flex', gap: '16px' }}>
-                                                    {['Yes', 'No'].map((option) => (
+                                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                    {[
+                                                      'No. While this is very difficult, I have made my decision. I don\'t wish to pursue further discussion about my decision or investigate other options at this point.',
+                                                      'Yes. I am interested in speaking with the doctor about other options that may help.',
+                                                      'I\'m not sure.',
+                                                    ].map((opt) => (
                                                       <label
-                                                        key={option}
+                                                        key={opt}
                                                         style={{
                                                           display: 'flex',
-                                                          alignItems: 'center',
+                                                          alignItems: 'flex-start',
                                                           gap: '8px',
                                                           cursor: 'pointer',
+                                                          padding: '8px 12px',
+                                                          border: `1px solid ${petData.interestedInOtherOptions === opt ? '#10b981' : '#d1d5db'}`,
+                                                          borderRadius: '6px',
+                                                          backgroundColor: petData.interestedInOtherOptions === opt ? '#f0fdf4' : '#fff',
                                                         }}
                                                       >
                                                         <input
                                                           type="radio"
                                                           name={`interestedInOtherOptions-${pet.id}`}
-                                                          value={option}
-                                                          checked={petData.interestedInOtherOptions === option}
+                                                          value={opt}
+                                                          checked={petData.interestedInOtherOptions === opt}
                                                           onChange={(e) => updatePetSpecificData(pet.id, 'interestedInOtherOptions', e.target.value)}
-                                                          style={{ margin: 0 }}
+                                                          style={{ marginTop: '2px', flexShrink: 0 }}
                                                         />
-                                                        <span style={{ fontSize: '14px' }}>{option}</span>
+                                                        <span style={{ fontSize: '14px' }}>{opt}</span>
                                                       </label>
                                                     ))}
                                                   </div>
@@ -4220,9 +4972,13 @@ export default function AppointmentRequestForm() {
                                                         key={option}
                                                         style={{
                                                           display: 'flex',
-                                                          alignItems: 'center',
+                                                          alignItems: 'flex-start',
                                                           gap: '8px',
                                                           cursor: 'pointer',
+                                                          padding: '8px 12px',
+                                                          border: `1px solid ${petData.aftercarePreference === option ? '#10b981' : '#d1d5db'}`,
+                                                          borderRadius: '6px',
+                                                          backgroundColor: petData.aftercarePreference === option ? '#f0fdf4' : '#fff',
                                                         }}
                                                       >
                                                         <input
@@ -4231,7 +4987,7 @@ export default function AppointmentRequestForm() {
                                                           value={option}
                                                           checked={petData.aftercarePreference === option}
                                                           onChange={(e) => updatePetSpecificData(pet.id, 'aftercarePreference', e.target.value)}
-                                                          style={{ margin: 0 }}
+                                                          style={{ marginTop: '2px', flexShrink: 0 }}
                                                         />
                                                         <span style={{ fontSize: '14px' }}>{option}</span>
                                                       </label>
@@ -4253,7 +5009,7 @@ export default function AppointmentRequestForm() {
                                                     ? `Do you have any specific concerns you want to discuss at the visit?`
                                                     : option === 'My pet isn\'t feeling well (new concern or illness)'
                                                     ? `Describe what is going on with ${pet.name || 'this pet'}`
-                                                    : option === 'Recheck / follow-up with the doctor (for a condition we\'ve already seen — please briefly describe)'
+                                                    : option === 'Recheck / follow-up (for a condition that has already been diagnosed)'
                                                     ? `What are we checking on for ${pet.name || 'this pet'}?`
                                                     : option === 'Technician visit (nail trim, anal glands, booster, blood draw, monthly injection, etc.)'
                                                     ? `What would you like done for ${pet.name || 'this pet'}?`
@@ -4337,6 +5093,7 @@ export default function AppointmentRequestForm() {
                   'Emergent – today',
                   'Urgent – within 24–48 hours',
                   'Soon – sometime this week',
+                  'In 3–4 weeks',
                   'Flexible – within the next month',
                   'Routine – in about 3 months',
                   'Planned – in about 6 months',
@@ -4673,7 +5430,7 @@ export default function AppointmentRequestForm() {
         // Check if any pet is selected for euthanasia
         const hasEuthanasiaPet = formData.selectedPetIds?.some(petId => {
           const petData = formData.petSpecificData?.[petId];
-          return petData?.needsToday === 'End-of-life care / euthanasia';
+          return petData?.needsToday === 'End-of-life care / Euthanasia';
         }) || false;
 
         return (
@@ -4699,22 +5456,43 @@ export default function AppointmentRequestForm() {
               </div>
             ) : (
               <>
-                {/* Show banner if Emergent or Urgent is selected */}
+                {/* Show banner and input field if Emergent or Urgent is selected */}
                 {(() => {
                   const isUrgentTimeframe = formData.howSoon === 'Emergent – today' || formData.howSoon === 'Urgent – within 24–48 hours';
                   if (isUrgentTimeframe) {
                     return (
-                      <div style={{ 
-                        marginBottom: '20px', 
-                        padding: '16px',
-                        backgroundColor: '#f0fdf4',
-                        border: '1px solid #10b981',
-                        borderRadius: '8px',
-                        fontSize: '14px',
-                        color: '#065f46',
-                      }}>
-                        Once you submit the form, a Client Liaison will be in touch with you shortly about available times.
-                      </div>
+                      <>
+                        <div style={{ 
+                          marginBottom: '20px', 
+                          padding: '16px',
+                          backgroundColor: '#f0fdf4',
+                          border: '1px solid #10b981',
+                          borderRadius: '8px',
+                          fontSize: '14px',
+                          color: '#065f46',
+                        }}>
+                          Once you submit the form, a Client Liaison will be in touch with you shortly about available times.
+                        </div>
+                        <div style={{ marginBottom: '20px' }}>
+                          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                            Please enter any preferences for days/times for us to visit you.
+                          </label>
+                          <textarea
+                            value={formData.preferredDateTimeVisit || ''}
+                            onChange={(e) => updateFormData('preferredDateTimeVisit', e.target.value)}
+                            rows={3}
+                            placeholder="Enter any preferences for days/times here..."
+                            style={{
+                              width: '100%',
+                              padding: '12px',
+                              border: '1px solid #d1d5db',
+                              borderRadius: '8px',
+                              fontSize: '14px',
+                              fontFamily: 'inherit',
+                            }}
+                          />
+                        </div>
+                      </>
                     );
                   }
                   return null;
@@ -4726,15 +5504,46 @@ export default function AppointmentRequestForm() {
                   return !isUrgentTimeframe;
                 })() && (
             <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Here are some possible dates and times. <span style={{ color: '#ef4444' }}>*</span>
-              </label>
+              {loadingSlots && (
+                <div style={{ 
+                  marginBottom: '20px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '12px',
+                  padding: '16px',
+                  backgroundColor: '#f0fdf4',
+                  border: '1px solid #10b981',
+                  borderRadius: '8px',
+                }}>
+                  <div style={{
+                    width: '20px',
+                    height: '20px',
+                    border: '3px solid #d1fae5',
+                    borderTop: '3px solid #10b981',
+                    borderRadius: '50%',
+                    animation: 'spin 1s linear infinite',
+                  }} />
+                  <span style={{ fontSize: '14px', color: '#065f46', fontWeight: 500 }}>
+                    Finding available times for {formData.preferredDoctorExisting || formData.preferredDoctor}...
+                  </span>
+                  <style>{`
+                    @keyframes spin {
+                      0% { transform: rotate(0deg); }
+                      100% { transform: rotate(360deg); }
+                    }
+                  `}</style>
+                </div>
+              )}
               
-              {recommendedSlots.length > 0 && (
-                <div style={{ marginBottom: '20px' }}>
-                  <div style={{ fontSize: '14px', fontWeight: 600, color: '#374151', marginBottom: '12px' }}>
-                    Please select your preferred available times (in order of preference): <span style={{ color: '#ef4444' }}>*</span>
-                  </div>
+              {!loadingSlots && recommendedSlots.length > 0 && (
+                <>
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                    Here are some possible dates and times. <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  <div style={{ marginBottom: '20px' }}>
+                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#374151', marginBottom: '12px' }}>
+                      Please select your preferred available times (in order of preference): <span style={{ color: '#ef4444' }}>*</span>
+                    </div>
                   <div style={{ 
                     display: 'flex', 
                     flexDirection: 'column', 
@@ -4851,78 +5660,44 @@ export default function AppointmentRequestForm() {
                       {errors.selectedDateTimeSlotsVisit}
                     </div>
                   )}
-                </div>
-              )}
-              
-              {loadingSlots && (
-                <div style={{ 
-                  marginBottom: '20px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '12px',
-                  padding: '16px',
-                  backgroundColor: '#f0fdf4',
-                  border: '1px solid #10b981',
-                  borderRadius: '8px',
-                }}>
-                  <div style={{
-                    width: '20px',
-                    height: '20px',
-                    border: '3px solid #d1fae5',
-                    borderTop: '3px solid #10b981',
-                    borderRadius: '50%',
-                    animation: 'spin 1s linear infinite',
-                  }} />
-                  <span style={{ fontSize: '14px', color: '#065f46', fontWeight: 500 }}>
-                    Finding available times for {formData.preferredDoctorExisting || formData.preferredDoctor}...
-                  </span>
-                  <style>{`
-                    @keyframes spin {
-                      0% { transform: rotate(0deg); }
-                      100% { transform: rotate(360deg); }
-                    }
-                  `}</style>
-                </div>
+                  </div>
+                </>
               )}
               
               {!loadingSlots && recommendedSlots.length === 0 && (formData.preferredDoctorExisting || formData.preferredDoctor) && (
-                <div style={{ 
-                  marginBottom: '12px', 
-                  padding: '12px',
-                  backgroundColor: '#fef3c7',
-                  border: '1px solid #fbbf24',
-                  borderRadius: '8px',
-                  fontSize: '13px',
-                  color: '#92400e',
-                }}>
-                  No available time slots found in the next 6 weeks. Please contact us directly to schedule your appointment.
-                </div>
-              )}
-              
-              {recommendedSlots.length === 0 && !loadingSlots && (
-                <div style={{ marginBottom: '20px' }}>
-                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                    Please enter your preferred date and time: <span style={{ color: '#ef4444' }}>*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.preferredDateTimeVisit || ''}
-                    onChange={(e) => updateFormData('preferredDateTimeVisit', e.target.value)}
-                    placeholder="Enter your preferred date and time here..."
-                    style={{
-                      width: '100%',
-                      padding: '12px',
-                      border: errors.preferredDateTimeVisit ? '1px solid #ef4444' : '1px solid #d1d5db',
-                      borderRadius: '8px',
-                      fontSize: '14px',
-                    }}
-                  />
-                  {errors.preferredDateTimeVisit && (
-                    <div style={{ fontSize: '12px', color: '#ef4444', marginTop: '4px' }}>
-                      {errors.preferredDateTimeVisit}
-                    </div>
-                  )}
-                </div>
+                <>
+                  <div style={{ 
+                    marginBottom: '20px', 
+                    padding: '12px',
+                    backgroundColor: '#d1fae5',
+                    border: '1px solid #10b981',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    color: '#065f46',
+                    fontWeight: 500,
+                  }}>
+                    Once you submit the form, a Client Liaison will be in touch with you shortly about available times.
+                  </div>
+                  <div style={{ marginBottom: '20px' }}>
+                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                      Please enter any preferences for days/times for us to visit you.
+                    </label>
+                    <textarea
+                      value={formData.preferredDateTimeVisit || ''}
+                      onChange={(e) => updateFormData('preferredDateTimeVisit', e.target.value)}
+                      rows={3}
+                      placeholder="Enter any preferences for days/times here..."
+                      style={{
+                        width: '100%',
+                        padding: '12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontFamily: 'inherit',
+                      }}
+                    />
+                  </div>
+                </>
               )}
             </div>
             )}
@@ -4978,14 +5753,55 @@ export default function AppointmentRequestForm() {
 
   if (currentPage === 'success') {
     return (
-      <div style={{ maxWidth: '800px', margin: '40px auto', padding: '0 16px' }}>
-        <div style={{
-          background: '#fff',
-          borderRadius: '12px',
-          padding: '40px',
-          textAlign: 'center',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-        }}>
+      <div style={{ minHeight: '100vh', width: '100%' }}>
+        {/* Header - only show for logged-in users */}
+        {isLoggedIn && (
+          <header style={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 10,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            padding: '12px 16px',
+            background: '#f8fdfa',
+            borderBottom: '1px solid rgba(17, 163, 106, 0.1)',
+            backdropFilter: 'saturate(120%) blur(6px)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <img
+                src="/final_thick_lines_cropped.jpeg"
+                alt="VAYD Scout Logo"
+                style={{
+                  height: '60px',
+                  width: 'auto',
+                  opacity: 0.9,
+                  mixBlendMode: 'multiply',
+                }}
+              />
+              <span style={{
+                fontFamily: "'Libre Baskerville', 'Times New Roman', serif",
+                fontWeight: 400,
+                fontSize: '30px',
+                color: '#2c1810',
+                lineHeight: '60px',
+                display: 'flex',
+                alignItems: 'center',
+              }}>
+                Scout<sup style={{ fontSize: '9px', verticalAlign: 'super', marginLeft: '2px', lineHeight: 0, position: 'relative', top: '-8px' }}>TM</sup>
+              </span>
+            </div>
+          </header>
+        )}
+
+        <div style={{ maxWidth: '800px', margin: '40px auto', padding: '0 16px' }}>
+          <div style={{
+            background: '#fff',
+            borderRadius: '12px',
+            padding: '40px',
+            textAlign: 'center',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+          }}>
           <div style={{ fontSize: '48px', marginBottom: '20px' }}>✓</div>
           <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#111827', marginBottom: '12px' }}>
             Thank You!
@@ -5009,6 +5825,22 @@ export default function AppointmentRequestForm() {
             Return to Portal
           </button>
         </div>
+        </div>
+
+        {/* Footer */}
+        <footer
+          style={{
+            marginTop: '40px',
+            padding: '24px 16px',
+            borderTop: '1px solid #e5e7eb',
+            backgroundColor: '#f9fafb',
+            textAlign: 'center',
+          }}
+        >
+          <div style={{ fontSize: '12px', color: '#6b7280' }}>
+            © 2026. All rights reserved.
+          </div>
+        </footer>
       </div>
     );
   }
@@ -5035,7 +5867,7 @@ export default function AppointmentRequestForm() {
       formData.lookingForEuthanasia === 'Yes' || 
       formData.lookingForEuthanasiaExisting === 'Yes' ||
       (formData.selectedPetIds && formData.selectedPetIds.some(petId => 
-        formData.petSpecificData?.[petId]?.needsToday === 'End-of-life care / euthanasia'
+        formData.petSpecificData?.[petId]?.needsToday === 'End-of-life care / Euthanasia'
       ));
     
     // Build steps based on client type - always show the same steps once determined
@@ -5174,16 +6006,57 @@ export default function AppointmentRequestForm() {
   // Removed blocking loadingClientData check - form now shows immediately while data loads in background
 
   return (
-    <div style={{ maxWidth: '1200px', margin: '40px auto', padding: '0 16px' }}>
-      {/* Mobile Progress Indicator - Top */}
-      {isMobile && (
-        <div style={{ marginBottom: '24px' }}>
-          {renderProgressIndicator()}
-        </div>
+    <div style={{ minHeight: '100vh', width: '100%' }}>
+      {/* Header - only show for logged-in users */}
+      {isLoggedIn && (
+        <header style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          padding: '12px 16px',
+          background: '#f8fdfa',
+          borderBottom: '1px solid rgba(17, 163, 106, 0.1)',
+          backdropFilter: 'saturate(120%) blur(6px)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <img
+              src="/final_thick_lines_cropped.jpeg"
+              alt="VAYD Scout Logo"
+              style={{
+                height: '60px',
+                width: 'auto',
+                opacity: 0.9,
+                mixBlendMode: 'multiply',
+              }}
+            />
+            <span style={{
+              fontFamily: "'Libre Baskerville', 'Times New Roman', serif",
+              fontWeight: 400,
+              fontSize: '30px',
+              color: '#2c1810',
+              lineHeight: '60px',
+              display: 'flex',
+              alignItems: 'center',
+            }}>
+              Scout<sup style={{ fontSize: '9px', verticalAlign: 'super', marginLeft: '2px', lineHeight: 0, position: 'relative', top: '-8px' }}>TM</sup>
+            </span>
+          </div>
+        </header>
       )}
+
+      <div style={{ maxWidth: '1200px', margin: '40px auto', padding: '0 16px' }}>
+        {/* Mobile Progress Indicator - Top */}
+        {isMobile && (
+          <div style={{ marginBottom: '24px' }}>
+            {renderProgressIndicator()}
+          </div>
+        )}
       
       <div style={{
-        display: 'flex',
+        display: isMobile ? 'block' : 'flex',
         gap: '24px',
         alignItems: 'flex-start',
         flexDirection: isMobile ? 'column' : 'row',
@@ -5363,6 +6236,22 @@ export default function AppointmentRequestForm() {
           </div>
         </div>
       )}
+      </div>
+
+      {/* Footer */}
+      <footer
+        style={{
+          marginTop: 'auto',
+          padding: '24px 16px',
+          borderTop: '1px solid #e5e7eb',
+          backgroundColor: '#f9fafb',
+          textAlign: 'center',
+        }}
+      >
+        <div style={{ fontSize: '12px', color: '#6b7280' }}>
+          © 2026. All rights reserved.
+        </div>
+      </footer>
     </div>
   );
 }
