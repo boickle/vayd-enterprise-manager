@@ -907,44 +907,6 @@ export default function ClientPortal() {
 
   return (
     <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px', width: '100%' }}>
-      {/* Logout Button - Top Right */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
-        <button
-          onClick={() => {
-            logout();
-            navigate('/login');
-          }}
-          style={{
-            padding: '8px 16px',
-            backgroundColor: '#f3f4f6',
-            color: '#374151',
-            border: '1px solid #d1d5db',
-            borderRadius: '8px',
-            fontSize: '14px',
-            fontWeight: 500,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            transition: 'all 0.2s',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = '#e5e7eb';
-            e.currentTarget.style.borderColor = '#9ca3af';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = '#f3f4f6';
-            e.currentTarget.style.borderColor = '#d1d5db';
-          }}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16 }}>
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-            <polyline points="16 17 21 12 16 7"></polyline>
-            <line x1="21" y1="12" x2="9" y2="12"></line>
-          </svg>
-          Log out
-        </button>
-      </div>
 
       {/* Scoped responsive styles */}
       <style>{`
@@ -977,19 +939,17 @@ export default function ClientPortal() {
         /* Bottom nav (hidden by default; shown on small screens) */
         .cp-bottom-nav {
           position: fixed;
-          left: 0; right: 0; bottom: 0;
+          left: 0; right: 0; 
+          bottom: env(safe-area-inset-bottom);
           display: none;
           background: rgba(255,255,255,0.98);
           backdrop-filter: saturate(150%) blur(8px);
           border-top: 1px solid rgba(0,0,0,0.08);
           z-index: 1000;
-          /* Add safe area inset as padding, not reducing height */
-          padding-bottom: env(safe-area-inset-bottom);
-          /* Ensure nav is above safe area */
-          height: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom));
+          height: var(--bottom-nav-h);
         }
         .cp-bottom-inner {
-          height: var(--bottom-nav-h);
+          height: 100%;
           display: grid;
           grid-template-columns: repeat(4, 1fr);
           align-items: center;
@@ -2263,6 +2223,53 @@ export default function ClientPortal() {
           </div>
         </div>
       </footer>
+
+      {/* ---------------------------
+          Logout Button - Bottom
+      ---------------------------- */}
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        marginTop: '32px',
+        marginBottom: '16px',
+        paddingBottom: '16px'
+      }}>
+        <button
+          onClick={() => {
+            logout();
+            navigate('/login');
+          }}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: '#f3f4f6',
+            color: '#374151',
+            border: '1px solid #d1d5db',
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: 500,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = '#e5e7eb';
+            e.currentTarget.style.borderColor = '#9ca3af';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = '#f3f4f6';
+            e.currentTarget.style.borderColor = '#d1d5db';
+          }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16 }}>
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+            <polyline points="16 17 21 12 16 7"></polyline>
+            <line x1="21" y1="12" x2="9" y2="12"></line>
+          </svg>
+          Log out
+        </button>
+      </div>
 
       {/* ---------------------------
           Mobile Bottom Navigation
