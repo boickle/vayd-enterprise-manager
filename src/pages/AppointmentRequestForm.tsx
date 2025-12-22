@@ -66,6 +66,7 @@ type FormData = {
     name: string;
     species?: string;
     speciesId?: number; // ID of selected species for breed lookup
+    otherSpecies?: string; // Custom species name when "Other" is selected
     age?: string;
     spayedNeutered?: string;
     breed?: string;
@@ -82,6 +83,7 @@ type FormData = {
     name: string;
     species?: string;
     speciesId?: number; // ID of selected species for breed lookup
+    otherSpecies?: string; // Custom species name when "Other" is selected
     age?: string;
     spayedNeutered?: string;
     breed?: string;
@@ -1003,7 +1005,7 @@ export default function AppointmentRequestForm() {
       formData.newPhysicalAddress?.zip?.trim();
 
     // Don't fetch if address is not complete
-    if (!hasValidNewAddress) {
+    if (!hasValidNewAddress || !formData.newPhysicalAddress) {
       // Clear providers and errors if address is incomplete
       setProviders([]);
       setLoadingVeterinarians(false);
@@ -1017,6 +1019,7 @@ export default function AppointmentRequestForm() {
     }
 
     // Build address string from form data
+    // At this point, we know newPhysicalAddress is defined due to the check above
     const addressParts = [
       formData.newPhysicalAddress.line1,
       formData.newPhysicalAddress.city,
