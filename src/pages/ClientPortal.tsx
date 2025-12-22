@@ -906,7 +906,7 @@ export default function ClientPortal() {
   }
 
   return (
-    <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px' }}>
+    <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px', width: '100%' }}>
       {/* Logout Button - Top Right */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
         <button
@@ -1045,7 +1045,12 @@ export default function ClientPortal() {
         /* Show bottom nav & add bottom padding on small screens only */
         @media (max-width: 639px) {
           .cp-bottom-nav { display: block; }
-          .cp-wrap { padding-bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + 16px); }
+          .cp-wrap { 
+            margin: 0 !important;
+            padding: 0 16px calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + 16px) 16px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+          }
           /* Hide top service action buttons when bottom nav is showing */
           .cp-service-actions-section { display: none !important; }
         .cp-service-actions-mobile { display: block !important; }
