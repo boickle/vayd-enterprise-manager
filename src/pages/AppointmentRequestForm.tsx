@@ -159,6 +159,7 @@ type FormData = {
   // Other Info
   howDidYouHearAboutUs?: string;
   anythingElse?: string;
+  membershipInterest?: 'Pay as you go' | 'Membership' | "I'm not sure yet";
 };
 
 type Page = 
@@ -2071,6 +2072,7 @@ export default function AppointmentRequestForm() {
         howSoon: formData.howSoon || undefined,
         howDidYouHearAboutUs: formData.howDidYouHearAboutUs || undefined,
         anythingElse: formData.anythingElse || undefined,
+        membershipInterest: formData.membershipInterest || undefined,
         
         // Metadata
         submittedAt: new Date().toISOString(),
@@ -5539,6 +5541,43 @@ export default function AppointmentRequestForm() {
                 ))}
               </div>
             </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                Are you interested in membership or pay as you go?
+              </label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {[
+                  'Pay as you go',
+                  'Membership',
+                  "I'm not sure yet",
+                ].map((option) => (
+                  <label
+                    key={option}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: 'pointer',
+                      padding: '12px',
+                      border: `1px solid ${formData.membershipInterest === option ? '#10b981' : '#d1d5db'}`,
+                      borderRadius: '8px',
+                      backgroundColor: formData.membershipInterest === option ? '#f0fdf4' : '#fff',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="membershipInterest"
+                      value={option}
+                      checked={formData.membershipInterest === option}
+                      onChange={(e) => updateFormData('membershipInterest', e.target.value as 'Pay as you go' | 'Membership' | "I'm not sure yet")}
+                      style={{ margin: 0 }}
+                    />
+                    <span style={{ fontSize: '14px' }}>{option}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
         );
 
@@ -5889,6 +5928,43 @@ export default function AppointmentRequestForm() {
                   fontFamily: 'inherit',
                 }}
               />
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                Are you interested in membership or pay as you go?
+              </label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {[
+                  'Pay as you go',
+                  'Membership',
+                  "I'm not sure yet",
+                ].map((option) => (
+                  <label
+                    key={option}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: 'pointer',
+                      padding: '12px',
+                      border: `1px solid ${formData.membershipInterest === option ? '#10b981' : '#d1d5db'}`,
+                      borderRadius: '8px',
+                      backgroundColor: formData.membershipInterest === option ? '#f0fdf4' : '#fff',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="membershipInterest"
+                      value={option}
+                      checked={formData.membershipInterest === option}
+                      onChange={(e) => updateFormData('membershipInterest', e.target.value as 'Pay as you go' | 'Membership' | "I'm not sure yet")}
+                      style={{ margin: 0 }}
+                    />
+                    <span style={{ fontSize: '14px' }}>{option}</span>
+                  </label>
+                ))}
+              </div>
             </div>
           </div>
         );

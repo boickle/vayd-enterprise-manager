@@ -59,6 +59,7 @@ The form uses the following API endpoints for species and breed selection:
   "howSoon": "Emergent – today" | "Urgent – within 24–48 hours" | "Soon – sometime this week" | "In 3–4 weeks" | "Flexible – within the next month" | "Routine – in about 3 months" | "Planned – in about 6 months" | "Future – in about 12 months" | undefined,
   "howDidYouHearAboutUs": string | undefined,
   "anythingElse": string | undefined,
+  "membershipInterest": "Pay as you go" | "Membership" | "I'm not sure yet" | undefined,
   "submittedAt": string (ISO 8601),
   "formFlow": {
     "startedAsLoggedIn": boolean,
@@ -359,6 +360,7 @@ Before fetching available veterinarians, the form performs a zone check using th
   "noneOfWorkForMe": false,
   "serviceMinutes": 40,
   "howDidYouHearAboutUs": "Google search",
+  "membershipInterest": "Membership",
   "submittedAt": "2024-01-10T10:30:00Z",
   "formFlow": {
     "startedAsLoggedIn": false,
@@ -468,6 +470,7 @@ Before fetching available veterinarians, the form performs a zone check using th
   ],
   "noneOfWorkForMe": false,
   "serviceMinutes": 60,
+  "membershipInterest": "Pay as you go",
   "submittedAt": "2024-01-10T14:20:00Z",
   "formFlow": {
     "startedAsLoggedIn": true,
@@ -534,6 +537,7 @@ Before fetching available veterinarians, the form performs a zone check using th
   "serviceArea": "Kennebunk / Greater Portland / Augusta Area",
   "howSoon": "Urgent – within 24–48 hours",
   "selectedDateTimePreferences": null,
+  "membershipInterest": "I'm not sure yet",
   "submittedAt": "2024-01-10T14:20:00Z",
   "formFlow": {
     "startedAsLoggedIn": true,
@@ -863,6 +867,12 @@ Before fetching available veterinarians, the form performs a zone check using th
    - `selectedDateTimePreferences` will be `null` in this case
    - Euthanasia-specific fields (`euthanasiaReason`, `beenToVetLastThreeMonths`, `interestedInOtherOptions`, `aftercarePreference`) are stored in `petSpecificData` for that pet
    - No appointment availability search is performed when any pet is selected for euthanasia
+
+8. **`membershipInterest` Field**:
+   - Asked at the end of the form, before submission, on both `request-visit-continued` and `euthanasia-continued` pages
+   - Available for both new and existing clients
+   - Values: "Pay as you go", "Membership", or "I'm not sure yet"
+   - Optional field - may be `undefined` if not answered
 
 ### Undefined Values
 
