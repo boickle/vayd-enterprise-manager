@@ -1957,6 +1957,7 @@ export default function AppointmentRequestForm() {
                   needsCalmingMedications: p.needsCalmingMedications,
                   hasCalmingMedications: p.hasCalmingMedications,
                   needsMuzzleOrSpecialHandling: p.needsMuzzleOrSpecialHandling,
+                  new: true, // Mark as new pet for existing client
                 }))
             ]
           : undefined,
@@ -2001,6 +2002,7 @@ export default function AppointmentRequestForm() {
                 hasCalmingMedications: p.hasCalmingMedications,
                 needsMuzzleOrSpecialHandling: p.needsMuzzleOrSpecialHandling,
                 isSelected: formData.selectedPetIds.includes(p.id),
+                new: true, // Mark as new pet for existing client
               }))
             ]
           : undefined,
