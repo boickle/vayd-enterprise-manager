@@ -1,5 +1,5 @@
 // src/components/VaccinationCertificateModal.tsx
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 import type { Pet, Vaccination } from '../api/clientPortal';
 import { fetchPracticeInfo } from '../api/clientPortal';
 
@@ -51,6 +51,45 @@ function formatShortDate(iso?: string | null): string {
   }
 }
 
+function formatVaccineName(name: string): string {
+  if (!name) return name;
+  if (name.startsWith('CV-')) {
+    return name.substring(3); // Remove 'CV-' prefix (3 characters)
+  }
+  return name;
+}
+
+function deduplicateVaccinations(vaccinations: Vaccination[]): Vaccination[] {
+  // Group by formatted vaccine name (after removing CV- prefix)
+  const byFormattedName = new Map<string, Vaccination[]>();
+  
+  for (const vax of vaccinations) {
+    const formattedName = formatVaccineName(vax.vaccineName).toLowerCase().trim();
+    if (!byFormattedName.has(formattedName)) {
+      byFormattedName.set(formattedName, []);
+    }
+    byFormattedName.get(formattedName)!.push(vax);
+  }
+  
+  // For each group, keep only the most recent one (by dateVaccinated)
+  const result: Vaccination[] = [];
+  
+  for (const group of byFormattedName.values()) {
+    if (group.length === 0) continue;
+    
+    // Sort by dateVaccinated (most recent first), then pick the first one
+    const sorted = [...group].sort((a, b) => {
+      const dateA = a.dateVaccinated ? new Date(a.dateVaccinated).getTime() : 0;
+      const dateB = b.dateVaccinated ? new Date(b.dateVaccinated).getTime() : 0;
+      return dateB - dateA; // Descending order (most recent first)
+    });
+    
+    result.push(sorted[0]);
+  }
+  
+  return result;
+}
+
 export default function VaccinationCertificateModal({
   pet,
   vaccinations,
@@ -85,6 +124,12 @@ export default function VaccinationCertificateModal({
       }
     })();
   }, []);
+
+  // Deduplicate vaccinations to show only the most recent one for each vaccine name
+  const deduplicatedVaccinations = useMemo(
+    () => deduplicateVaccinations(vaccinations),
+    [vaccinations]
+  );
 
   const handlePrint = () => {
     if (!printRef.current) return;
@@ -702,7 +747,7 @@ export default function VaccinationCertificateModal({
               }}>
                 Vaccination Details
               </div>
-              {vaccinations.length === 0 ? (
+              {deduplicatedVaccinations.length === 0 ? (
                 <div style={{ padding: '30px', textAlign: 'center', color: '#6b7280', fontSize: '14px' }}>
                   No vaccination records available.
                 </div>
@@ -759,7 +804,7 @@ export default function VaccinationCertificateModal({
                     </tr>
                   </thead>
                   <tbody>
-                    {vaccinations.map((vaccination, idx) => {
+                    {deduplicatedVaccinations.map((vaccination, idx) => {
                       const isValid = vaccination.isCurrent;
                       const practiceName = vaccination.practiceName || 'Vet At Your Door';
                       
@@ -778,7 +823,7 @@ export default function VaccinationCertificateModal({
                             color: '#111827',
                           }}>
                             <div style={{ marginBottom: '2px' }}>
-                              {vaccination.vaccineName}
+                              {formatVaccineName(vaccination.vaccineName)}
                             </div>
                             {vaccination.nextVaccinationDate && (
                               <div style={{
