@@ -43,6 +43,7 @@ type Winner = {
 
   // NEW — preference metadata from backend
   prefScore?: number;
+  score?: number;
   slot?: Slot | null;
   isFirstEdge?: boolean;
   isLastEdge?: boolean;
@@ -1173,71 +1174,19 @@ export default function Routing() {
     const rows: UnifiedOption[] = [];
     const requestIdFromResult = result?.routingRequestId ?? latestRoutingRequestId ?? undefined;
 
-    // ---- NEW helpers + global condition ----
+    // Helper for displayInsertionIndex calculation
     const isEmptyDay = (x: any) =>
       Boolean(x?.dayIsEmpty || x?._emptyDay || x?.flags?.includes?.('EMPTY'));
 
-    const isLowDrive = (x: any) =>
-      Number.isFinite(x?.addedDriveSeconds) && x.addedDriveSeconds / 60 <= 20;
-
-    // ---- helpers for sorting rules ----
-    const ADDED_CAP_MIN = 20;
-
-    const addedMin = (x: any) =>
-      Number.isFinite(x?.addedDriveSeconds) ? (x.addedDriveSeconds as number) / 60 : Infinity;
-
-    // Sort function for options
-    const sortOptions = (a: UnifiedOption, b: UnifiedOption) => {
-      const aEmpty = isEmptyDay(a);
-      const bEmpty = isEmptyDay(b);
-      const aAdded = addedMin(a);
-      const bAdded = addedMin(b);
-
-      // 1) EMPTY should be shown above any driving times > 20 minutes
-      if (aEmpty !== bEmpty) {
-        // If the *other* candidate is over the 20-min threshold, put EMPTY first
-        if (aEmpty && bAdded > ADDED_CAP_MIN) return -1;
-        if (bEmpty && aAdded > ADDED_CAP_MIN) return 1;
-        // Otherwise (<=20 min), don't special-case EMPTY; fall through to drive-first
-      }
-
-      // 2) Drive time first (lowest addedDriveSeconds wins)
-      if (a.addedDriveSeconds !== b.addedDriveSeconds) {
-        const aVal = Number.isFinite(a.addedDriveSeconds)
-          ? a.addedDriveSeconds!
-          : Number.POSITIVE_INFINITY;
-        const bVal = Number.isFinite(b.addedDriveSeconds)
-          ? b.addedDriveSeconds!
-          : Number.POSITIVE_INFINITY;
-        if (aVal !== bVal) return aVal - bVal;
-      }
-
-      // 3) Then "soonest available in the lot":
-      //    earlier date, then earlier suggestedStartSec
-      if (a.date !== b.date) return a.date.localeCompare(b.date);
-
-      if (a.suggestedStartSec !== b.suggestedStartSec) {
-        const aStart = Number.isFinite(a.suggestedStartSec)
-          ? a.suggestedStartSec!
-          : Number.POSITIVE_INFINITY;
-        const bStart = Number.isFinite(b.suggestedStartSec)
-          ? b.suggestedStartSec!
-          : Number.POSITIVE_INFINITY;
-        if (aStart !== bStart) return aStart - bStart;
-      }
-
-      // 4) Soft nudge: higher preference score next (does NOT override drive/time)
-      const ap = a.prefScore ?? 0;
-      const bp = b.prefScore ?? 0;
-      if (bp !== ap) return bp - ap;
-
-      // 5) Stable tie-breaks
-      if (a.insertionIndex !== b.insertionIndex) return a.insertionIndex - b.insertionIndex;
-      return 0;
+    // Sort function: by score (lowest first)
+    const sortByScore = (a: UnifiedOption, b: UnifiedOption) => {
+      const aScore = typeof a.score === 'number' ? a.score : Number.POSITIVE_INFINITY;
+      const bScore = typeof b.score === 'number' ? b.score : Number.POSITIVE_INFINITY;
+      return aScore - bScore;
     };
 
     if (multiDoctor && result?.doctors) {
-      // Multi-doctor mode: no explicit winner, just sort all options
+      // Multi-doctor mode: no explicit winner, just sort all options by score
       for (const d of result.doctors) {
         const pid = d.pimsId;
         const name = d.name || doctorNames[pid] || `Doctor ${pid}`;
@@ -1249,8 +1198,8 @@ export default function Routing() {
             routingRequestId: w.routingRequestId ?? requestIdFromResult,
           });
       }
-      // Sort all options in multi-doctor mode
-      rows.sort(sortOptions);
+      // Sort all options by score (lowest first)
+      rows.sort(sortByScore);
     } else if (result) {
       // Single-doctor mode or v2 multi-doctor mode: winner should always be first, then sorted alternates
       // For v2, each candidate has its own doctorId
@@ -1298,14 +1247,12 @@ export default function Routing() {
         }
       }
       
-      // Sort only the alternates, keep winner first
-      alternateOptions.sort(sortOptions);
-      
-      // Build final array: winner first (if exists), then sorted alternates
+      // Combine winner and alternates, then sort all by score (lowest first)
       if (winnerOption) {
         rows.push(winnerOption);
       }
       rows.push(...alternateOptions);
+      rows.sort(sortByScore);
     }
 
     return rows.map((r, idx) => {
@@ -1805,11 +1752,16 @@ export default function Routing() {
         <h3 style={{ marginTop: 0 }}>Results</h3>
 
         {result && latestRoutingRequestId && (
-          <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-            Routing request ID:{' '}
-            <code style={{ fontFamily: 'monospace', fontSize: 12 }}>
-              {latestRoutingRequestId}
-            </code>
+          <div style={{ marginBottom: 8 }}>
+            <div className="muted" style={{ fontSize: 12 }}>
+              Routing request ID:{' '}
+              <code style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                {latestRoutingRequestId}
+              </code>
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 'bold', marginTop: 4 }}>
+              Lower score is better
+            </div>
           </div>
         )}
 
@@ -1920,6 +1872,11 @@ export default function Routing() {
                       >
                         {opt.doctorName}
                       </span>
+                      {typeof opt.score === 'number' && (
+                        <span style={{ fontWeight: 600, opacity: 0.9, whiteSpace: 'nowrap' }}>
+                          (Score: {Number.isInteger(opt.score) ? String(opt.score) : opt.score.toFixed(2)})
+                        </span>
+                      )}
                       <span style={{ marginLeft: 'auto' }}>
                         <DoctorIcon />
                       </span>
