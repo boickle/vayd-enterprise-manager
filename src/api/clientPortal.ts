@@ -478,8 +478,21 @@ export async function fetchWellnessPlansForPractice(practiceId: string): Promise
   return rows.map(normalizeWellnessPlan);
 }
 
+export type PracticeInfo = {
+  name?: string;
+  address?: string;
+  address1?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  phone?: string;
+  email?: string;
+  website?: string;
+  chatHoursOfOperation?: any;
+};
+
 /** Fetch practice information */
-export async function fetchPracticeInfo(): Promise<{ chatHoursOfOperation?: any } | null> {
+export async function fetchPracticeInfo(): Promise<PracticeInfo | null> {
   try {
     const { data } = await http.get('/practice/info');
     return data || null;
