@@ -1,24 +1,12 @@
 // src/components/VaccinationCertificateModal.tsx
 import React, { useRef, useEffect, useState, useMemo } from 'react';
-import type { Pet, Vaccination } from '../api/clientPortal';
+import type { Pet, Vaccination, PracticeInfo } from '../api/clientPortal';
 import { fetchPracticeInfo } from '../api/clientPortal';
 
 type VaccinationCertificateModalProps = {
   pet: Pet;
   vaccinations: Vaccination[];
   onClose: () => void;
-};
-
-type PracticeInfo = {
-  name?: string;
-  address?: string;
-  address1?: string;
-  city?: string;
-  state?: string;
-  zip?: string;
-  phone?: string;
-  email?: string;
-  website?: string;
 };
 
 function formatDate(iso?: string | null): string {
