@@ -12,10 +12,12 @@ import {
   fetchClientReminders,
   type ClientReminder,
   fetchPracticeInfo,
+  type Vaccination,
 } from '../api/clientPortal';
 import { listMembershipTransactions } from '../api/membershipTransactions';
 import { http } from '../api/http';
 import { uploadPetImage } from '../api/patients';
+import VaccinationCertificateModal from '../components/VaccinationCertificateModal';
 
 type PetWithWellness = Pet & {
   wellnessPlans?: WellnessPlan[];
@@ -196,6 +198,8 @@ export default function ClientPortal() {
   const [uploadingPetId, setUploadingPetId] = useState<string | null>(null);
   const [showErrorModal, setShowErrorModal] = useState(false);
   const [errorModalMessage, setErrorModalMessage] = useState<string | null>(null);
+  const [showVaccinationModal, setShowVaccinationModal] = useState(false);
+  const [selectedPetForVaccination, setSelectedPetForVaccination] = useState<PetWithWellness | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -1731,6 +1735,55 @@ export default function ClientPortal() {
                             </div>
                           );
                         })()}
+
+                        {/* Vaccination Certificate Link */}
+                        {p.vaccinations && p.vaccinations.length > 0 && (
+                          <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb' }}>
+                            <button
+                              onClick={() => {
+                                setSelectedPetForVaccination(p);
+                                setShowVaccinationModal(true);
+                              }}
+                              style={{
+                                width: '100%',
+                                padding: '8px 12px',
+                                backgroundColor: 'transparent',
+                                color: '#0f766e',
+                                border: '1px solid #0f766e',
+                                borderRadius: 8,
+                                fontSize: 13,
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 8,
+                                transition: 'all 0.2s',
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.backgroundColor = '#f0fdfa';
+                                e.currentTarget.style.borderColor = '#0d9488';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.backgroundColor = 'transparent';
+                                e.currentTarget.style.borderColor = '#0f766e';
+                              }}
+                            >
+                              <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                style={{ width: 16, height: 16 }}
+                              >
+                                <polyline points="6 9 6 2 18 2 18 9"></polyline>
+                                <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+                                <rect x="6" y="14" width="12" height="8"></rect>
+                              </svg>
+                              Print Vaccination Certificate
+                            </button>
+                          </div>
+                        )}
                       </div>
 
                       <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -2168,6 +2221,18 @@ export default function ClientPortal() {
                 </div>
               </div>
             </div>
+          )}
+
+          {/* Vaccination Certificate Modal */}
+          {showVaccinationModal && selectedPetForVaccination && selectedPetForVaccination.vaccinations && (
+            <VaccinationCertificateModal
+              pet={selectedPetForVaccination}
+              vaccinations={selectedPetForVaccination.vaccinations}
+              onClose={() => {
+                setShowVaccinationModal(false);
+                setSelectedPetForVaccination(null);
+              }}
+            />
           )}
 
         </>
