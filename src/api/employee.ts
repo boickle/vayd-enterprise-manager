@@ -42,3 +42,41 @@ export async function fetchPrimaryProviders(): Promise<Provider[]> {
     weeklyPointGoal: r?.weeklyPointGoal ?? null,
   }));
 }
+
+/**
+ * Fetch veterinarians from /employees/veterinarians endpoint
+ * This endpoint returns only veterinarians (D.V.M/V.M.D)
+ * @param address Optional address to filter veterinarians by service area
+ * @param lat Optional latitude to filter veterinarians by service area
+ * @param lon Optional longitude to filter veterinarians by service area
+ */
+export async function fetchVeterinarians(address?: string, lat?: number, lon?: number): Promise<Provider[]> {
+  const params: any = {};
+  if (lat != null && lon != null && Number.isFinite(lat) && Number.isFinite(lon)) {
+    params.lat = lat;
+    params.lon = lon;
+  } else if (address) {
+    params.address = address;
+  }
+  
+  const { data } = await http.get('/employees/veterinarians', { params });
+  const veterinarians: any[] = Array.isArray(data) ? data : [];
+
+  return veterinarians
+    .filter((v) => v.isActive !== false) // Only include active veterinarians
+    .map((v) => {
+      const pimsId = v.pimsId ? String(v.pimsId) : null;
+      const id = v.id ?? v.pimsId;
+      
+      return {
+        id: id,
+        pimsId: pimsId || String(id), // Use pimsId if available, otherwise use id
+        email: v?.email || '',
+        name: buildProviderName(v),
+        dailyRevenueGoal: v?.dailyRevenueGoal ?? null,
+        bonusRevenueGoal: v?.bonusRevenueGoal ?? null,
+        dailyPointGoal: v?.dailyPointGoal ?? null,
+        weeklyPointGoal: v?.weeklyPointGoal ?? null,
+      };
+    });
+}

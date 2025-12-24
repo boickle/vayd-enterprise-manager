@@ -892,7 +892,7 @@ export default function ClientPortal() {
      Bottom Nav Handlers
   ---------------------------- */
   function handleBook() {
-    window.open('https://form.jotform.com/221585880190157', '_blank');
+    window.open('/client-portal/request-appointment', '_blank', 'noopener,noreferrer');
   }
   function handleContact() {
     // If pet has plan, use chat; otherwise use email
@@ -910,7 +910,7 @@ export default function ClientPortal() {
   }
 
   return (
-    <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px' }}>
+    <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px', width: '100%' }}>
 
       {/* Scoped responsive styles */}
       <style>{`
@@ -943,17 +943,23 @@ export default function ClientPortal() {
         /* Bottom nav (hidden by default; shown on small screens) */
         .cp-bottom-nav {
           position: fixed;
-          left: 0; right: 0; bottom: 0;
-          height: var(--bottom-nav-h);
+          left: 0;
+          right: 0;
+          bottom: 0;
           display: none;
           background: rgba(255,255,255,0.98);
           backdrop-filter: saturate(150%) blur(8px);
           border-top: 1px solid rgba(0,0,0,0.08);
           z-index: 1000;
-          padding-bottom: env(safe-area-inset-bottom);
+          margin: 0;
+          padding: 0;
+          /* Nav extends to bottom edge, safe area padding pushes content up */
+          padding-bottom: env(safe-area-inset-bottom, 0px);
+          height: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px));
         }
         .cp-bottom-inner {
-          height: 100%;
+          /* Inner content is the nav height, sits above the safe area padding */
+          height: var(--bottom-nav-h);
           display: grid;
           grid-template-columns: repeat(4, 1fr);
           align-items: center;
@@ -963,7 +969,8 @@ export default function ClientPortal() {
           padding: 0 8px;
         }
         .cp-tab {
-          height: calc(var(--bottom-nav-h) - 10px - env(safe-area-inset-bottom));
+          height: 100%;
+          min-height: 56px;
           border: none;
           background: transparent;
           display: flex;
@@ -977,7 +984,7 @@ export default function ClientPortal() {
           text-decoration: none;
         }
         .cp-tab:active { background: rgba(15, 118, 110, 0.08); }
-        .cp-tab svg { width: 22px; height: 22px; }
+        .cp-tab svg { width: 24px; height: 24px; }
 
         /* >= 480px */
         @media (min-width: 480px) {
@@ -1008,7 +1015,12 @@ export default function ClientPortal() {
         /* Show bottom nav & add bottom padding on small screens only */
         @media (max-width: 639px) {
           .cp-bottom-nav { display: block; }
-          .cp-wrap { padding-bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + 12px); }
+          .cp-wrap { 
+            margin: 0 !important;
+            padding: 0 16px calc(var(--bottom-nav-h) + 8px) 16px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+          }
           /* Hide top service action buttons when bottom nav is showing */
           .cp-service-actions-section { display: none !important; }
         .cp-service-actions-mobile { display: block !important; }
@@ -1089,7 +1101,7 @@ export default function ClientPortal() {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                   <a
-                    href="https://form.jotform.com/221585880190157"
+                    href="/client-portal/request-appointment"
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{
@@ -1215,7 +1227,7 @@ export default function ClientPortal() {
             {/* Desktop View - Button Grid */}
             <div className="cp-service-actions-desktop" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
               <a
-                href="https://form.jotform.com/221585880190157"
+                href="/client-portal/request-appointment"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="cp-card"
@@ -1946,7 +1958,7 @@ export default function ClientPortal() {
                               e.currentTarget.style.opacity = '1';
                             }}
                           >
-                            Sign up for Membership
+                            Explore membership options for {p.name}
                           </button>
                         )}
                       </div>
@@ -2179,7 +2191,7 @@ export default function ClientPortal() {
                 </div>
                 <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid #e5e7eb' }}>
                   <a
-                    href="https://form.jotform.com/221585880190157"
+                    href="/client-portal/request-appointment"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="cp-card"
@@ -2282,6 +2294,53 @@ export default function ClientPortal() {
           </div>
         </div>
       </footer>
+
+      {/* ---------------------------
+          Logout Button - Bottom
+      ---------------------------- */}
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        marginTop: '32px',
+        marginBottom: '16px',
+        paddingBottom: '16px'
+      }}>
+        <button
+          onClick={() => {
+            logout();
+            navigate('/login');
+          }}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: '#f3f4f6',
+            color: '#374151',
+            border: '1px solid #d1d5db',
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: 500,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = '#e5e7eb';
+            e.currentTarget.style.borderColor = '#9ca3af';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = '#f3f4f6';
+            e.currentTarget.style.borderColor = '#d1d5db';
+          }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16 }}>
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+            <polyline points="16 17 21 12 16 7"></polyline>
+            <line x1="21" y1="12" x2="9" y2="12"></line>
+          </svg>
+          Log out
+        </button>
+      </div>
 
       {/* ---------------------------
           Mobile Bottom Navigation

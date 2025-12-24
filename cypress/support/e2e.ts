@@ -29,8 +29,8 @@ declare global {
        */
       loginAs(
         userType: 'client' | 'employee',
-        email: string,
-        password: string
+        email?: string,
+        password?: string
       ): Chainable<void>;
 
       /**

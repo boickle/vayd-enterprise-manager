@@ -1,0 +1,34 @@
+{
+  "species": [
+    {
+      "id": 1,
+      "name": "Canine",
+      "practice": { "id": 1, "name": "Main Practice" },
+      "isActive": true,
+      "isDeleted": false,
+      "pimsId": "5254",
+      "pimsType": "EVET"
+    },
+    {
+      "id": 2,
+      "name": "Feline",
+      "practice": { "id": 1, "name": "Main Practice" },
+      "isActive": true,
+      "isDeleted": false,
+      "pimsId": "4940",
+      "pimsType": "EVET"
+    },
+    {
+      "id": 56,
+      "name": "Avian",
+      "practice": { "id": 1, "name": "Main Practice" },
+      "isActive": true,
+      "isDeleted": false,
+      "pimsId": "5571",
+      "pimsType": "EVET"
+    }
+  ],
+  "breeds": []
+}
+
+
