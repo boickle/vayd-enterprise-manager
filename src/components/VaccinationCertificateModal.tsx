@@ -84,6 +84,7 @@ export default function VaccinationCertificateModal({
   onClose,
 }: VaccinationCertificateModalProps) {
   const printRef = useRef<HTMLDivElement>(null);
+  const tableWrapperRef = useRef<HTMLDivElement>(null);
   const [practiceInfo, setPracticeInfo] = useState<PracticeInfo>({
     name: 'Vet At Your Door',
     phone: '(207) 536-8387',
@@ -118,6 +119,39 @@ export default function VaccinationCertificateModal({
     () => deduplicateVaccinations(vaccinations),
     [vaccinations]
   );
+
+  // Prevent iOS Safari scroll freeze by handling touch events properly
+  useEffect(() => {
+    const tableWrapper = tableWrapperRef.current;
+    if (!tableWrapper) return;
+
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let isScrolling = false;
+
+    const handleTouchStart = (e: TouchEvent) => {
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+      isScrolling = false;
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (!isScrolling) {
+        const deltaX = Math.abs(e.touches[0].clientX - touchStartX);
+        const deltaY = Math.abs(e.touches[0].clientY - touchStartY);
+        // Determine if this is primarily horizontal or vertical scrolling
+        isScrolling = deltaX > 5 || deltaY > 5;
+      }
+    };
+
+    tableWrapper.addEventListener('touchstart', handleTouchStart, { passive: true });
+    tableWrapper.addEventListener('touchmove', handleTouchMove, { passive: true });
+
+    return () => {
+      tableWrapper.removeEventListener('touchstart', handleTouchStart);
+      tableWrapper.removeEventListener('touchmove', handleTouchMove);
+    };
+  }, []);
 
   const handlePrint = () => {
     if (!printRef.current) return;
@@ -442,6 +476,11 @@ export default function VaccinationCertificateModal({
             padding: 8px !important;
             align-items: flex-start !important;
             padding-top: 8px !important;
+            overflow: hidden !important;
+            touch-action: none !important;
+          }
+          .vacc-cert-modal-container > * {
+            touch-action: auto !important;
           }
           .vacc-cert-modal-content {
             padding: 12px !important;
@@ -449,6 +488,10 @@ export default function VaccinationCertificateModal({
             width: 100% !important;
             max-width: 100% !important;
             margin: 0 !important;
+            overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            overscroll-behavior-y: contain !important;
+            touch-action: pan-y !important;
           }
           .vacc-cert-modal-header h2 {
             font-size: 16px !important;
@@ -506,6 +549,9 @@ export default function VaccinationCertificateModal({
             margin-right: -12px !important;
             padding-left: 12px !important;
             padding-right: 12px !important;
+            touch-action: pan-x !important;
+            overscroll-behavior-x: contain !important;
+            will-change: scroll-position !important;
           }
           .vacc-cert-table {
             min-width: 550px !important;
@@ -571,6 +617,8 @@ export default function VaccinationCertificateModal({
             margin-right: -8px !important;
             padding-left: 8px !important;
             padding-right: 8px !important;
+            touch-action: pan-x !important;
+            overscroll-behavior-x: contain !important;
           }
           .vacc-cert-table {
             min-width: 450px !important;
@@ -615,6 +663,9 @@ export default function VaccinationCertificateModal({
             width: '100%',
             maxHeight: '90vh',
             overflowY: 'auto',
+            WebkitOverflowScrolling: 'touch',
+            overscrollBehaviorY: 'contain',
+            touchAction: 'pan-y',
             padding: '32px',
             backgroundColor: '#f6fbf9',
             borderRadius: '12px',
@@ -902,11 +953,17 @@ export default function VaccinationCertificateModal({
                   No vaccination records available.
                 </div>
               ) : (
-                <div className="vacc-cert-table-wrapper" style={{
-                  overflowX: 'auto',
-                  WebkitOverflowScrolling: 'touch',
-                  width: '100%',
-                }}>
+                <div 
+                  ref={tableWrapperRef}
+                  className="vacc-cert-table-wrapper" 
+                  style={{
+                    overflowX: 'auto',
+                    WebkitOverflowScrolling: 'touch',
+                    width: '100%',
+                    touchAction: 'pan-x',
+                    overscrollBehaviorX: 'contain',
+                  }}
+                >
                 <table className="vacc-table vacc-cert-table" style={{
                   width: '100%',
                   borderCollapse: 'collapse',
