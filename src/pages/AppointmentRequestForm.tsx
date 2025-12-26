@@ -2571,7 +2571,15 @@ export default function AppointmentRequestForm() {
 
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Do you have a preferred doctor? <span style={{ color: '#ef4444' }}>*</span>
+                Do you have a preferred doctor? <span style={{ color: '#ef4444' }}>*</span>{' '}
+                <a 
+                  href="https://www.vetatyourdoor.com/#team" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={{ color: '#3b82f6', textDecoration: 'underline', fontWeight: 400, fontSize: '14px' }}
+                >
+                  (View Our Team)
+                </a>
               </label>
               {(() => {
                 // Check if address is valid for new clients
@@ -3895,7 +3903,15 @@ export default function AppointmentRequestForm() {
 
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Do you have a preferred doctor? <span style={{ color: '#ef4444' }}>*</span>
+                Do you have a preferred doctor? <span style={{ color: '#ef4444' }}>*</span>{' '}
+                <a 
+                  href="https://www.vetatyourdoor.com/#team" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={{ color: '#3b82f6', textDecoration: 'underline', fontWeight: 400, fontSize: '14px' }}
+                >
+                  (View Our Team)
+                </a>
               </label>
               <select
                 value={formData.preferredDoctorExisting || ''}
