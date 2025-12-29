@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import './styles.css';
 import { AuthProvider } from './auth/AuthProvider';
+import { initGA } from './utils/analytics';
 
 // Prevent iOS Safari address bar from showing on scroll
 if (typeof window !== 'undefined') {
@@ -26,6 +27,21 @@ if (typeof window !== 'undefined') {
     }
     lastTouchEnd = now;
   }, false);
+
+  // Initialize Google Analytics
+  const gaMeasurementId = import.meta.env.VITE_GA_MEASUREMENT_ID;
+  if (gaMeasurementId) {
+    // Load Google Analytics script
+    const script = document.createElement('script');
+    script.async = true;
+    script.src = `https://www.googletagmanager.com/gtag/js?id=${gaMeasurementId}`;
+    document.head.appendChild(script);
+
+    // Initialize GA after script loads
+    script.onload = () => {
+      initGA(gaMeasurementId);
+    };
+  }
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

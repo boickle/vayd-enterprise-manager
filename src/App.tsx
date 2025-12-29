@@ -23,6 +23,7 @@ import MembershipSignup from './pages/MembershipSignup';
 import MembershipPayment from './pages/MembershipPayment';
 import MembershipUpgrade from './pages/MembershipUpgrade';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
+import { usePageTracking } from './hooks/usePageTracking';
 
 /** ------------------------------------------------------------------
  * KeepAliveOutlet
@@ -61,6 +62,9 @@ export default function App() {
   const { token, logout, userEmail, abilities, role } = useAuth() as any;
   const nav = useNavigate();
   const location = useLocation();
+
+  // Track page views on route changes
+  usePageTracking();
 
   // Normalize roles
   const roles = useMemo<string[]>(
