@@ -12,7 +12,7 @@ export const usePageTracking = (): void => {
 
   useEffect(() => {
     // Only track if GA is initialized
-    if (typeof window !== 'undefined' && window.gtag) {
+    if (typeof window !== 'undefined' && typeof window.gtag === 'function') {
       trackPageView(location.pathname + location.search);
     }
   }, [location]);
