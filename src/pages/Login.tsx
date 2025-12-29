@@ -2,6 +2,7 @@
 import { FormEvent, useState, type CSSProperties } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
+import { trackEvent } from '../utils/analytics';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -56,6 +57,10 @@ export default function LoginPage() {
       // --------------------------------------
     } catch (err: any) {
       setError(err?.response?.data?.message || err.message || 'Login failed');
+      // Track failed login attempt
+      trackEvent('login_error', {
+        error_message: err?.response?.data?.message || err.message || 'Login failed',
+      });
     } finally {
       setSubmitting(false);
     }
