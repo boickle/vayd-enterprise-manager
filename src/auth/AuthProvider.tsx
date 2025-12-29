@@ -2,6 +2,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { http, setToken } from '../api/http';
 import { setLogoutHandler } from '../api/http';
+import { trackLogin, trackLogout } from '../utils/analytics';
 
 const MOCK = import.meta.env.VITE_MOCK_AUTH === '1';
 
@@ -158,6 +159,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch {}
       setTokenState(token);
       setEmail(emailInput);
+      
+      // Track successful login
+      trackLogin('email');
     } else {
       // No token returned — ensure we don't have a stale token set
       try {
@@ -174,6 +178,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   function logout() {
+    // Track logout before clearing state
+    trackLogout();
+    
     try {
       sessionStorage.removeItem('vayd_token');
       sessionStorage.removeItem('vayd_email');
