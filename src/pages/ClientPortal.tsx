@@ -180,7 +180,7 @@ function cleanMembershipDisplayText(text: string): string {
    Page
 ---------------------------- */
 export default function ClientPortal() {
-  const { userEmail, userId, logout, clientInfo } = useAuth() as any;
+  const { userEmail, userId, logout, clientInfo, token } = useAuth() as any;
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
@@ -205,7 +205,8 @@ export default function ClientPortal() {
 
   // Fetch client info if not available in auth context
   useEffect(() => {
-    if (!clientInfo && userId) {
+    if (!clientInfo && userId && token) {
+      // Only fetch if we have a token
       fetchClientInfo(userId)
         .then((info) => {
           if (info) {
@@ -220,7 +221,7 @@ export default function ClientPortal() {
           console.warn('Failed to fetch client info:', err);
         });
     }
-  }, [clientInfo, userId]);
+  }, [clientInfo, userId, token]);
 
   useEffect(() => {
     let alive = true;

@@ -3,7 +3,14 @@ import axios, { AxiosError, AxiosHeaders, AxiosRequestHeaders } from 'axios';
 
 const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 
-let token: string | null = null;
+// Initialize token from localStorage on module load
+let token: string | null = (() => {
+  try {
+    return localStorage.getItem('vayd_token');
+  } catch {
+    return null;
+  }
+})();
 let logoutHandler: (() => void) | null = null;
 let logoutTimerId: number | null = null;
 

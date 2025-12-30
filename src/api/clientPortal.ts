@@ -614,10 +614,24 @@ export async function fetchClientMessages(clientId: number | string): Promise<Cl
  */
 export async function fetchClientInfo(clientId: string | number): Promise<any | null> {
   try {
+    // Import getToken to check if token exists before making request
+    const { getToken } = await import('./http');
+    const token = getToken();
+    
+    if (!token) {
+      console.warn('No token available for fetchClientInfo request');
+      return null;
+    }
+    
     const { data } = await http.get(`/clients/${encodeURIComponent(clientId)}`);
     return data;
-  } catch (err) {
-    console.warn('Failed to fetch client info:', err);
+  } catch (err: any) {
+    // Log more details about the error for debugging
+    if (err?.response?.status === 401) {
+      console.warn('Failed to fetch client info: Unauthorized (401). Token may be expired or invalid.');
+    } else {
+      console.warn('Failed to fetch client info:', err);
+    }
     return null;
   }
 }
