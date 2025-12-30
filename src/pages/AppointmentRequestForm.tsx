@@ -1809,7 +1809,21 @@ export default function AppointmentRequestForm() {
     setSubmitting(true);
     try {
       // Determine appointment type
-      const isEuthanasia = formData.lookingForEuthanasia === 'Yes' || formData.lookingForEuthanasiaExisting === 'Yes';
+      // Check old flow (lookingForEuthanasia fields) OR new flow (pet-specific needsToday)
+      const hasEuthanasiaPet = 
+        (formData.selectedPetIds?.some(petId => {
+          const petData = formData.petSpecificData?.[petId];
+          return petData?.needsToday === 'End-of-life care / Euthanasia';
+        }) || false) ||
+        (formData.newClientPets?.some(pet => {
+          const petData = formData.petSpecificData?.[pet.id];
+          return petData?.needsToday === 'End-of-life care / Euthanasia';
+        }) || false);
+      
+      const isEuthanasia = 
+        formData.lookingForEuthanasia === 'Yes' || 
+        formData.lookingForEuthanasiaExisting === 'Yes' ||
+        hasEuthanasiaPet;
       const isExistingClient = isLoggedIn || formData.haveUsedServicesBefore === 'Yes';
       
       // Build selected date/time preferences from slots
@@ -2037,7 +2051,12 @@ export default function AppointmentRequestForm() {
           beenToVetLastThreeMonths: formData.beenToVetLastThreeMonths || undefined,
           interestedInOtherOptions: formData.interestedInOtherOptions || undefined,
           urgency: formData.urgency || undefined,
-          preferredDateTime: formData.preferredDateTime || undefined,
+          preferredDateTime: (() => {
+            // Check preferredDateTimeVisit first (from request-visit-continued page), then preferredDateTime (from euthanasia-continued page)
+            const value = formData.preferredDateTimeVisit || formData.preferredDateTime;
+            const trimmed = value?.trim();
+            return trimmed && trimmed.length > 0 ? trimmed : undefined;
+          })(),
           selectedDateTimePreferences: (() => {
             const prefs = buildDateTimePreferences(formData.selectedDateTimeSlots || {});
             console.log('[AppointmentForm] Euthanasia selectedDateTimePreferences:', prefs);
@@ -2055,7 +2074,10 @@ export default function AppointmentRequestForm() {
         ...(!isEuthanasia ? {
           visitDetails: formData.visitDetails || undefined,
           needsUrgentScheduling: formData.needsUrgentScheduling || undefined,
-          preferredDateTime: formData.preferredDateTimeVisit || undefined,
+          preferredDateTime: (() => {
+            const trimmed = formData.preferredDateTimeVisit?.trim();
+            return trimmed && trimmed.length > 0 ? trimmed : undefined;
+          })(),
           selectedDateTimePreferences: (() => {
             const prefs = buildDateTimePreferences(formData.selectedDateTimeSlotsVisit || {});
             console.log('[AppointmentForm] Regular visit selectedDateTimePreferences:', prefs);
@@ -2099,9 +2121,24 @@ export default function AppointmentRequestForm() {
         return obj;
       };
       
+      // Debug log for preferredDateTime field
+      console.log('[AppointmentForm] DEBUG - isEuthanasia:', isEuthanasia);
+      console.log('[AppointmentForm] DEBUG - preferredDateTimeVisit raw value:', formData.preferredDateTimeVisit);
+      if (formData.preferredDateTimeVisit) {
+        const trimmed = formData.preferredDateTimeVisit.trim();
+        console.log('[AppointmentForm] DEBUG - preferredDateTimeVisit trimmed:', trimmed);
+        console.log('[AppointmentForm] DEBUG - trimmed length:', trimmed.length);
+        console.log('[AppointmentForm] DEBUG - Will be included:', trimmed && trimmed.length > 0 ? trimmed : undefined);
+      }
+      
+      // Log submissionData before cleaning to see if preferredDateTime is there
+      console.log('[AppointmentForm] DEBUG - submissionData.preferredDateTime:', submissionData.preferredDateTime);
+      console.log('[AppointmentForm] DEBUG - submissionData (before clean):', JSON.stringify(submissionData, null, 2));
+      
       const finalPayload = cleanPayload(submissionData);
       
       // Log the payload for debugging
+      console.log('[AppointmentForm] DEBUG - finalPayload.preferredDateTime:', finalPayload.preferredDateTime);
       console.log('Form submission payload:', JSON.stringify(finalPayload, null, 2));
       
       // Send to API endpoint
@@ -5481,6 +5518,17 @@ export default function AppointmentRequestForm() {
         );
 
       case 'euthanasia-continued':
+        // Check if any pet is selected for euthanasia (existing or new client pets)
+        const hasEuthanasiaPetEuthanasiaPage = 
+          (formData.selectedPetIds?.some(petId => {
+            const petData = formData.petSpecificData?.[petId];
+            return petData?.needsToday === 'End-of-life care / Euthanasia';
+          }) || false) ||
+          (formData.newClientPets?.some(pet => {
+            const petData = formData.petSpecificData?.[pet.id];
+            return petData?.needsToday === 'End-of-life care / Euthanasia';
+          }) || false);
+
         return (
           <div>
             <div style={{ textAlign: 'center', marginBottom: '32px' }}>
@@ -5558,51 +5606,58 @@ export default function AppointmentRequestForm() {
               </div>
             </div>
 
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Are you interested in membership or pay as you go?
-              </label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {[
-                  'Pay as you go',
-                  'Membership',
-                  "I'm not sure yet",
-                ].map((option) => (
-                  <label
-                    key={option}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      cursor: 'pointer',
-                      padding: '12px',
-                      border: `1px solid ${formData.membershipInterest === option ? '#10b981' : '#d1d5db'}`,
-                      borderRadius: '8px',
-                      backgroundColor: formData.membershipInterest === option ? '#f0fdf4' : '#fff',
-                    }}
-                  >
-                    <input
-                      type="radio"
-                      name="membershipInterest"
-                      value={option}
-                      checked={formData.membershipInterest === option}
-                      onChange={(e) => updateFormData('membershipInterest', e.target.value as 'Pay as you go' | 'Membership' | "I'm not sure yet")}
-                      style={{ margin: 0 }}
-                    />
-                    <span style={{ fontSize: '14px' }}>{option}</span>
-                  </label>
-                ))}
+            {!hasEuthanasiaPetEuthanasiaPage && (
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                  Are you interested in membership or pay as you go?
+                </label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {[
+                    'Pay as you go',
+                    'Membership',
+                    "I'm not sure yet",
+                  ].map((option) => (
+                    <label
+                      key={option}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        cursor: 'pointer',
+                        padding: '12px',
+                        border: `1px solid ${formData.membershipInterest === option ? '#10b981' : '#d1d5db'}`,
+                        borderRadius: '8px',
+                        backgroundColor: formData.membershipInterest === option ? '#f0fdf4' : '#fff',
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="membershipInterest"
+                        value={option}
+                        checked={formData.membershipInterest === option}
+                        onChange={(e) => updateFormData('membershipInterest', e.target.value as 'Pay as you go' | 'Membership' | "I'm not sure yet")}
+                        style={{ margin: 0 }}
+                      />
+                      <span style={{ fontSize: '14px' }}>{option}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         );
 
       case 'request-visit-continued':
-        // Check if any pet is selected for euthanasia
-        const hasEuthanasiaPet = formData.selectedPetIds?.some(petId => {
-          const petData = formData.petSpecificData?.[petId];
-          return petData?.needsToday === 'End-of-life care / Euthanasia';
-        }) || false;
+        // Check if any pet is selected for euthanasia (existing or new client pets)
+        const hasEuthanasiaPet = 
+          (formData.selectedPetIds?.some(petId => {
+            const petData = formData.petSpecificData?.[petId];
+            return petData?.needsToday === 'End-of-life care / Euthanasia';
+          }) || false) ||
+          (formData.newClientPets?.some(pet => {
+            const petData = formData.petSpecificData?.[pet.id];
+            return petData?.needsToday === 'End-of-life care / Euthanasia';
+          }) || false);
 
         return (
           <div>
@@ -5946,42 +6001,44 @@ export default function AppointmentRequestForm() {
               />
             </div>
 
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Are you interested in membership or pay as you go?
-              </label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {[
-                  'Pay as you go',
-                  'Membership',
-                  "I'm not sure yet",
-                ].map((option) => (
-                  <label
-                    key={option}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      cursor: 'pointer',
-                      padding: '12px',
-                      border: `1px solid ${formData.membershipInterest === option ? '#10b981' : '#d1d5db'}`,
-                      borderRadius: '8px',
-                      backgroundColor: formData.membershipInterest === option ? '#f0fdf4' : '#fff',
-                    }}
-                  >
-                    <input
-                      type="radio"
-                      name="membershipInterest"
-                      value={option}
-                      checked={formData.membershipInterest === option}
-                      onChange={(e) => updateFormData('membershipInterest', e.target.value as 'Pay as you go' | 'Membership' | "I'm not sure yet")}
-                      style={{ margin: 0 }}
-                    />
-                    <span style={{ fontSize: '14px' }}>{option}</span>
-                  </label>
-                ))}
+            {!hasEuthanasiaPet && (
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                  Are you interested in membership or pay as you go?
+                </label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {[
+                    'Pay as you go',
+                    'Membership',
+                    "I'm not sure yet",
+                  ].map((option) => (
+                    <label
+                      key={option}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        cursor: 'pointer',
+                        padding: '12px',
+                        border: `1px solid ${formData.membershipInterest === option ? '#10b981' : '#d1d5db'}`,
+                        borderRadius: '8px',
+                        backgroundColor: formData.membershipInterest === option ? '#f0fdf4' : '#fff',
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="membershipInterest"
+                        value={option}
+                        checked={formData.membershipInterest === option}
+                        onChange={(e) => updateFormData('membershipInterest', e.target.value as 'Pay as you go' | 'Membership' | "I'm not sure yet")}
+                        style={{ margin: 0 }}
+                      />
+                      <span style={{ fontSize: '14px' }}>{option}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         );
 
@@ -6102,12 +6159,20 @@ export default function AppointmentRequestForm() {
                             currentPage === 'existing-client' || currentPage === 'existing-client-pets';
     
     // Determine if we're in euthanasia flow - check current page first, then form data
+    const hasEuthanasiaPet = 
+      (formData.selectedPetIds?.some(petId => {
+        const petData = formData.petSpecificData?.[petId];
+        return petData?.needsToday === 'End-of-life care / Euthanasia';
+      }) || false) ||
+      (formData.newClientPets?.some(pet => {
+        const petData = formData.petSpecificData?.[pet.id];
+        return petData?.needsToday === 'End-of-life care / Euthanasia';
+      }) || false);
+    
     const isEuthanasia = currentPage.startsWith('euthanasia') ||
       formData.lookingForEuthanasia === 'Yes' || 
       formData.lookingForEuthanasiaExisting === 'Yes' ||
-      (formData.selectedPetIds && formData.selectedPetIds.some(petId => 
-        formData.petSpecificData?.[petId]?.needsToday === 'End-of-life care / Euthanasia'
-      ));
+      hasEuthanasiaPet;
     
     // Build steps based on client type - always show the same steps once determined
     if (isExistingClient) {
