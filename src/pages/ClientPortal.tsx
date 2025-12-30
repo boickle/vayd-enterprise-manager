@@ -13,6 +13,7 @@ import {
   type ClientReminder,
   fetchPracticeInfo,
   type Vaccination,
+  fetchClientInfo,
 } from '../api/clientPortal';
 import { listMembershipTransactions } from '../api/membershipTransactions';
 import { http } from '../api/http';
@@ -179,7 +180,7 @@ function cleanMembershipDisplayText(text: string): string {
    Page
 ---------------------------- */
 export default function ClientPortal() {
-  const { userEmail, userId, logout } = useAuth() as any;
+  const { userEmail, userId, logout, clientInfo } = useAuth() as any;
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
@@ -200,6 +201,26 @@ export default function ClientPortal() {
   const [errorModalMessage, setErrorModalMessage] = useState<string | null>(null);
   const [showVaccinationModal, setShowVaccinationModal] = useState(false);
   const [selectedPetForVaccination, setSelectedPetForVaccination] = useState<PetWithWellness | null>(null);
+  const [localClientInfo, setLocalClientInfo] = useState<any | null>(null);
+
+  // Fetch client info if not available in auth context
+  useEffect(() => {
+    if (!clientInfo && userId) {
+      fetchClientInfo(userId)
+        .then((info) => {
+          if (info) {
+            setLocalClientInfo(info);
+            // Also store it in localStorage for future use
+            try {
+              localStorage.setItem('vayd_clientInfo', JSON.stringify(info));
+            } catch {}
+          }
+        })
+        .catch((err) => {
+          console.warn('Failed to fetch client info:', err);
+        });
+    }
+  }, [clientInfo, userId]);
 
   useEffect(() => {
     let alive = true;
@@ -334,8 +355,38 @@ export default function ClientPortal() {
   const clientFirstName = useMemo(() => {
     if (!userEmail) return null;
     
-    // Check if userEmail matches secondEmail in raw appointment data
-    // The raw appointment data has the full client object with secondEmail, secondFirstName, etc.
+    // Use clientInfo from auth context or localClientInfo (fetched in ClientPortal)
+    const info = clientInfo || localClientInfo;
+    
+    // First priority: Use client info from auth context or local fetch
+    if (info) {
+      const emailLower = userEmail.toLowerCase();
+      
+      // Check if userEmail matches secondEmail - use secondFirstName and secondLastName
+      if (info.secondEmail && info.secondEmail.toLowerCase() === emailLower) {
+        if (info.secondFirstName) {
+          return info.secondFirstName;
+        }
+      }
+      
+      // Check if userEmail matches primary email - use firstName and lastName
+      const primaryEmail = info.email || info.primaryEmail;
+      if (primaryEmail && primaryEmail.toLowerCase() === emailLower) {
+        if (info.firstName) {
+          return info.firstName;
+        }
+      }
+      
+      // If we can't determine which email matches, try to get a name anyway
+      if (info.firstName) {
+        return info.firstName;
+      }
+      if (info.secondFirstName) {
+        return info.secondFirstName;
+      }
+    }
+    
+    // Second priority: Check if userEmail matches secondEmail in raw appointment data
     for (const rawAppt of rawApptsData) {
       const client = rawAppt?.client;
       
@@ -348,7 +399,7 @@ export default function ClientPortal() {
       }
     }
     
-    // Also check pets for client information (pets might have client data)
+    // Third priority: Also check pets for client information (pets might have client data)
     for (const pet of pets) {
       const rawPet = pet as any;
       const client = rawPet?.client || rawPet?.clientData || rawPet?.owner;
@@ -360,10 +411,7 @@ export default function ClientPortal() {
       }
     }
     
-    // Get client first name from first appointment's clientName
-    // This comes from: a?.clientName ?? [a.client.firstName, a.client.lastName].join(' ')
-    // So it's the PRIMARY client's name (firstName + lastName)
-    // Currently showing "Deirdre" because it extracts the first word from "Deirdre Frey"
+    // Fourth priority: Get client first name from first appointment's clientName
     const firstAppt = appts[0];
     if (firstAppt?.clientName) {
       // Extract first name from full name
@@ -374,7 +422,7 @@ export default function ClientPortal() {
     // Fallback: use email username part if no client name found
     const emailPart = userEmail.split('@')[0];
     return emailPart.charAt(0).toUpperCase() + emailPart.slice(1);
-  }, [appts, userEmail, pets, rawApptsData]);
+  }, [clientInfo, localClientInfo, appts, userEmail, pets, rawApptsData]);
 
   const upcomingAppts = useMemo(() => {
     const now = Date.now();

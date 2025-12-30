@@ -607,3 +607,17 @@ export async function fetchClientMessages(clientId: number | string): Promise<Cl
   const { data } = await http.get(`/messages/client/${encodeURIComponent(clientId)}`);
   return data;
 }
+
+/** ---------- Get current client information ----------
+ * Fetches the logged-in client's information by ID
+ * Endpoint: GET /clients/:id
+ */
+export async function fetchClientInfo(clientId: string | number): Promise<any | null> {
+  try {
+    const { data } = await http.get(`/clients/${encodeURIComponent(clientId)}`);
+    return data;
+  } catch (err) {
+    console.warn('Failed to fetch client info:', err);
+    return null;
+  }
+}

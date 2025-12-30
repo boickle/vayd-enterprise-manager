@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import { http } from '../api/http';
-import { fetchClientPets, type Pet } from '../api/clientPortal';
+import { fetchClientPets, type Pet, fetchClientInfo } from '../api/clientPortal';
 import { fetchPrimaryProviders, fetchVeterinarians, type Provider } from '../api/employee';
 import { validateAddress } from '../api/geo';
 import { DateTime } from 'luxon';
@@ -178,7 +178,7 @@ type Page =
 
 export default function AppointmentRequestForm() {
   const navigate = useNavigate();
-  const { token, userEmail } = useAuth() as any;
+  const { token, userEmail, userId } = useAuth() as any;
   const isLoggedIn = !!token;
   
   const [currentPage, setCurrentPage] = useState<Page>('intro');
@@ -499,31 +499,39 @@ export default function AppointmentRequestForm() {
         }
       } else {
         // Handle routing v2 format (winner + alternates)
+        // Combine winner and alternates, filter by score, then take top 3
+        const allOptions: any[] = [];
+        
         // Add winner if available
         if (winner?.suggestedStartIso || winner?.iso) {
-          const winnerIso = winner.suggestedStartIso || winner.iso;
-          const winnerDt = roundToNearest5Minutes(DateTime.fromISO(winnerIso));
-          slots.push({
-            date: winner.date || winnerDt.toISODate() || '',
-            time: winner.time || winnerDt.toFormat('HH:mm'),
-            display: winner.display || `${winnerDt.toFormat('EEE, MMM d')} at ${winnerDt.toFormat('h:mm a')}`,
-            iso: winnerIso,
-          });
+          allOptions.push(winner);
         }
         
-        // Add alternates (limit to 2 more to have max 3 total)
+        // Add all alternates
         if (Array.isArray(alternates)) {
-          for (const alt of alternates.slice(0, 2)) {
-            if (alt?.suggestedStartIso || alt?.iso) {
-              const altIso = alt.suggestedStartIso || alt.iso;
-              const altDt = roundToNearest5Minutes(DateTime.fromISO(altIso));
-              slots.push({
-                date: alt.date || altDt.toISODate() || '',
-                time: alt.time || altDt.toFormat('HH:mm'),
-                display: alt.display || `${altDt.toFormat('EEE, MMM d')} at ${altDt.toFormat('h:mm a')}`,
-                iso: altIso,
-              });
-            }
+          allOptions.push(...alternates);
+        }
+        
+        // Filter out items with score > 160, then take top 3
+        const filteredOptions = allOptions
+          .filter(opt => {
+            const score = opt?.score;
+            // Include if score is undefined, null, or <= 160
+            return score == null || score <= 160;
+          })
+          .slice(0, 3);
+        
+        // Process filtered options into slots
+        for (const opt of filteredOptions) {
+          if (opt?.suggestedStartIso || opt?.iso) {
+            const optIso = opt.suggestedStartIso || opt.iso;
+            const optDt = roundToNearest5Minutes(DateTime.fromISO(optIso));
+            slots.push({
+              date: opt.date || optDt.toISODate() || '',
+              time: opt.time || optDt.toFormat('HH:mm'),
+              display: opt.display || `${optDt.toFormat('EEE, MMM d')} at ${optDt.toFormat('h:mm a')}`,
+              iso: optIso,
+            });
           }
         }
       }
@@ -878,114 +886,125 @@ export default function AppointmentRequestForm() {
         // Set haveUsedServicesBefore to Yes since they're logged in
         setFormData(prev => ({ ...prev, haveUsedServicesBefore: 'Yes' }));
 
-        // Try to get client info from appointments
+        // Try to get client info from appointments first, then fallback to direct client fetch
         let clientAddress: string | undefined = undefined;
         let clientLat: number | undefined = undefined;
         let clientLon: number | undefined = undefined;
+        let client: any = null;
+        
         try {
           const { data: apptsData } = await http.get('/appointments/client');
           const appts = Array.isArray(apptsData) ? apptsData : (apptsData?.appointments ?? apptsData ?? []);
           
           if (appts.length > 0) {
             const firstAppt = appts[0];
-            const client = firstAppt?.client || firstAppt?.Client;
-            
-            if (client) {
-              // Extract lat/lon if available
-              if (client.lat != null && client.lon != null) {
-                const lat = typeof client.lat === 'string' ? parseFloat(client.lat) : client.lat;
-                const lon = typeof client.lon === 'string' ? parseFloat(client.lon) : client.lon;
-                if (Number.isFinite(lat) && Number.isFinite(lon)) {
-                  clientLat = lat;
-                  clientLon = lon;
-                }
-              }
-              
-              // Build address string from client data for veterinarian lookup (only if no lat/lon)
-              if (!clientLat || !clientLon) {
-                const addressParts = [
-                  client.address1 || client.address_1,
-                  client.city,
-                  client.state,
-                  client.zip ? String(client.zip) : undefined,
-                ].filter(Boolean);
-                if (addressParts.length >= 3) {
-                  clientAddress = addressParts.join(', ');
-                }
-              }
-              // Extract phone number from various possible fields
-              const rawPhoneNumber = 
-                client.phone1 ||
-                client.phone || 
-                client.secondPhone || 
-                client.phoneNumber || 
-                client.phone_number ||
-                client.primaryPhone ||
-                client.primary_phone ||
-                client.mobilePhone ||
-                client.mobile_phone ||
-                undefined;
-              
-              // Normalize phone number: remove +1 prefix if present
-              const phoneNumber = rawPhoneNumber 
-                ? String(rawPhoneNumber).replace(/^\+1\s*/, '').trim()
-                : undefined;
-              
-              // Pre-populate name if available
-              setFormData(prev => {
-                // If user hasn't moved (or selected "No"), restore physicalAddress from client data
-                // If user has moved (selected "Yes"), don't overwrite the cleared address
-                const shouldRestoreAddress = prev.isThisTheAddressWhereWeWillCome !== 'No';
-                
-                // Build new address from client data
-                const newAddress = shouldRestoreAddress ? {
-                  line1: client.address1 || client.address_1 || prev.physicalAddress?.line1 || '',
-                  line2: client.address2 || client.address_2 || prev.physicalAddress?.line2 || undefined,
-                  city: client.city || prev.physicalAddress?.city || '',
-                  state: client.state || prev.physicalAddress?.state || '',
-                  zip: client.zip ? String(client.zip) : (prev.physicalAddress?.zip || ''),
-                  country: prev.physicalAddress?.country || 'United States',
-                } : prev.physicalAddress;
-                
-                // Only update if address actually changed to avoid infinite loops
-                const addressChanged = shouldRestoreAddress && (
-                  newAddress.line1 !== prev.physicalAddress?.line1 ||
-                  newAddress.city !== prev.physicalAddress?.city ||
-                  newAddress.state !== prev.physicalAddress?.state ||
-                  newAddress.zip !== prev.physicalAddress?.zip
-                );
-                
-                // Only update if something actually changed
-                if (!addressChanged && 
-                    (client.firstName || client.first_name) === prev.fullName.first &&
-                    (client.lastName || client.last_name) === prev.fullName.last &&
-                    phoneNumber === prev.bestPhoneNumber) {
-                  return prev; // No changes needed
-                }
-                
-                // Store original address if we don't have it yet and we're setting it from client data
-                if (!originalAddress && shouldRestoreAddress && newAddress.line1) {
-                  setOriginalAddress(newAddress);
-                }
-                
-                return {
-                  ...prev,
-                  fullName: {
-                    ...prev.fullName,
-                    first: client.firstName || client.first_name || prev.fullName.first,
-                    last: client.lastName || client.last_name || prev.fullName.last,
-                  },
-                  bestPhoneNumber: phoneNumber || prev.bestPhoneNumber,
-                  physicalAddress: newAddress,
-                  // Only clear newPhysicalAddress if explicitly set to "No"
-                  newPhysicalAddress: prev.isThisTheAddressWhereWeWillCome === 'Yes' ? undefined : prev.newPhysicalAddress,
-                };
-              });
-              
-            }
+            client = firstAppt?.client || firstAppt?.Client;
           }
         } catch (err) {
           console.warn('Failed to fetch client info from appointments:', err);
+        }
+        
+        // If no client data from appointments, fetch directly from /clients/:id
+        if (!client && userId) {
+          try {
+            client = await fetchClientInfo(userId);
+          } catch (err) {
+            console.warn('Failed to fetch client info directly:', err);
+          }
+        }
+        
+        if (client) {
+          // Extract lat/lon if available
+          if (client.lat != null && client.lon != null) {
+            const lat = typeof client.lat === 'string' ? parseFloat(client.lat) : client.lat;
+            const lon = typeof client.lon === 'string' ? parseFloat(client.lon) : client.lon;
+            if (Number.isFinite(lat) && Number.isFinite(lon)) {
+              clientLat = lat;
+              clientLon = lon;
+            }
+          }
+          
+          // Build address string from client data for veterinarian lookup (only if no lat/lon)
+          if (!clientLat || !clientLon) {
+            const addressParts = [
+              client.address1 || client.address_1,
+              client.city,
+              client.state,
+              client.zip ? String(client.zip) : undefined,
+            ].filter(Boolean);
+            if (addressParts.length >= 3) {
+              clientAddress = addressParts.join(', ');
+            }
+          }
+          
+          // Extract phone number from various possible fields
+          const rawPhoneNumber = 
+            client.phone1 ||
+            client.phone || 
+            client.secondPhone || 
+            client.phoneNumber || 
+            client.phone_number ||
+            client.primaryPhone ||
+            client.primary_phone ||
+            client.mobilePhone ||
+            client.mobile_phone ||
+            undefined;
+          
+          // Normalize phone number: remove +1 prefix if present
+          const phoneNumber = rawPhoneNumber 
+            ? String(rawPhoneNumber).replace(/^\+1\s*/, '').trim()
+            : undefined;
+          
+          // Pre-populate name if available
+          setFormData(prev => {
+            // If user hasn't moved (or selected "No"), restore physicalAddress from client data
+            // If user has moved (selected "Yes"), don't overwrite the cleared address
+            const shouldRestoreAddress = prev.isThisTheAddressWhereWeWillCome !== 'No';
+            
+            // Build new address from client data
+            const newAddress = shouldRestoreAddress ? {
+              line1: client.address1 || client.address_1 || prev.physicalAddress?.line1 || '',
+              line2: client.address2 || client.address_2 || prev.physicalAddress?.line2 || undefined,
+              city: client.city || prev.physicalAddress?.city || '',
+              state: client.state || prev.physicalAddress?.state || '',
+              zip: client.zip ? String(client.zip) : (prev.physicalAddress?.zip || ''),
+              country: prev.physicalAddress?.country || 'United States',
+            } : prev.physicalAddress;
+            
+            // Only update if address actually changed to avoid infinite loops
+            const addressChanged = shouldRestoreAddress && (
+              newAddress.line1 !== prev.physicalAddress?.line1 ||
+              newAddress.city !== prev.physicalAddress?.city ||
+              newAddress.state !== prev.physicalAddress?.state ||
+              newAddress.zip !== prev.physicalAddress?.zip
+            );
+            
+            // Only update if something actually changed
+            if (!addressChanged && 
+                (client.firstName || client.first_name) === prev.fullName.first &&
+                (client.lastName || client.last_name) === prev.fullName.last &&
+                phoneNumber === prev.bestPhoneNumber) {
+              return prev; // No changes needed
+            }
+            
+            // Store original address if we don't have it yet and we're setting it from client data
+            if (!originalAddress && shouldRestoreAddress && newAddress.line1) {
+              setOriginalAddress(newAddress);
+            }
+            
+            return {
+              ...prev,
+              fullName: {
+                ...prev.fullName,
+                first: client.firstName || client.first_name || prev.fullName.first,
+                last: client.lastName || client.last_name || prev.fullName.last,
+              },
+              bestPhoneNumber: phoneNumber || prev.bestPhoneNumber,
+              physicalAddress: newAddress,
+              // Only clear newPhysicalAddress if explicitly set to "No"
+              newPhysicalAddress: prev.isThisTheAddressWhereWeWillCome === 'Yes' ? undefined : prev.newPhysicalAddress,
+            };
+          });
         }
 
         // Store client location for later use in veterinarian lookup
