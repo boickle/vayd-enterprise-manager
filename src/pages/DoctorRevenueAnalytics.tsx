@@ -135,6 +135,38 @@ function combineSeries(seriesArray: Array<{ date: string; total: number }[]>): C
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
+// Calculate linear regression trend line
+function calculateTrendLine(data: ChartDataPoint[], field: 'total' | 'payments' = 'total'): number[] {
+  if (data.length < 2) {
+    return data.map(() => 0);
+  }
+  
+  // Convert dates to numeric values (days since first date)
+  const numericData = data.map((point, index) => ({
+    x: index,
+    y: point[field] || 0,
+  }));
+  
+  const n = numericData.length;
+  const sumX = numericData.reduce((sum, p) => sum + p.x, 0);
+  const sumY = numericData.reduce((sum, p) => sum + p.y, 0);
+  const sumXY = numericData.reduce((sum, p) => sum + p.x * p.y, 0);
+  const sumXX = numericData.reduce((sum, p) => sum + p.x * p.x, 0);
+  
+  // Avoid division by zero
+  const denominator = n * sumXX - sumX * sumX;
+  if (denominator === 0) {
+    return data.map(() => sumY / n); // Return average if denominator is zero
+  }
+  
+  // Calculate slope (m) and intercept (b) for y = mx + b
+  const slope = (n * sumXY - sumX * sumY) / denominator;
+  const intercept = (sumY - slope * sumX) / n;
+  
+  // Calculate trend values for each point
+  return numericData.map((p) => slope * p.x + intercept);
+}
+
 // Count weekdays (Monday-Friday) in a date range
 function countWeekdays(from: Dayjs, to: Dayjs): number {
   let count = 0;
@@ -280,6 +312,26 @@ export default function DoctorRevenueAnalyticsPage() {
     if (weekdays === 0) return 0;
     return periodGoal / weekdays; // Daily goal per weekday
   }, [periodGoal, chartData.length, range.from, range.to]);
+
+  // Calculate trend line values and add to chart data
+  const chartDataWithTrend = useMemo(() => {
+    if (chartData.length < 2) {
+      return chartData.map((point) => ({ 
+        ...point, 
+        trend: point.total,
+        paymentsTrend: point.payments || 0,
+      }));
+    }
+    
+    const revenueTrendValues = calculateTrendLine(chartData, 'total');
+    const paymentsTrendValues = calculateTrendLine(chartData, 'payments');
+    
+    return chartData.map((point, index) => ({
+      ...point,
+      trend: revenueTrendValues[index] || point.total,
+      paymentsTrend: paymentsTrendValues[index] || point.payments || 0,
+    }));
+  }, [chartData]);
 
   // ---------- load providers ----------
   useEffect(() => {
@@ -712,7 +764,7 @@ export default function DoctorRevenueAnalyticsPage() {
     : null;
   const displayName = useMemo(() => {
     if (!isAdmin) {
-      return selectedDoctor?.name || 'Your Revenue';
+      return selectedDoctor?.name || 'Your VSD';
     }
     return selectedDoctorId === '' ? 'All Doctors' : selectedDoctor?.name || 'Unknown';
   }, [isAdmin, selectedDoctorId, selectedDoctor]);
@@ -732,10 +784,10 @@ export default function DoctorRevenueAnalyticsPage() {
         <Grid container spacing={2} alignItems="center">
           <Grid item xs={12} md={7}>
             <Typography variant="h5" fontWeight={600}>
-              Revenue by Doctor
+              VSD by Doctor
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              View revenue data for the practice or individual doctors.
+              View VSD data for the practice or individual doctors.
             </Typography>
           </Grid>
           <Grid item xs={12} md={5}>
@@ -884,13 +936,13 @@ export default function DoctorRevenueAnalyticsPage() {
         <Card variant="outlined">
           <CardHeader
             titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
-            title={`Total Revenue — ${displayName}`}
+            title={`Total VSD — ${displayName}`}
           />
           <CardContent>
             <Box display="flex" gap={3} flexWrap="wrap">
               <Box>
                 <Typography variant="body2" color="text.secondary" gutterBottom>
-                  Revenue
+                  VSD
                 </Typography>
                 <Typography variant="h4" fontWeight={800}>
                   {fmtUSD(totalRevenue)}
@@ -940,7 +992,7 @@ export default function DoctorRevenueAnalyticsPage() {
 
         {/* Chart */}
         <Card variant="outlined">
-          <CardHeader title="Revenue Trend" />
+          <CardHeader title="VSD Trend" />
           <CardContent>
             {chartData.length === 0 ? (
               <Box height={320} display="flex" alignItems="center" justifyContent="center">
@@ -951,7 +1003,7 @@ export default function DoctorRevenueAnalyticsPage() {
             ) : (
               <Box height={320}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
+                  <LineChart data={chartDataWithTrend} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis
                       dataKey="date"
@@ -962,7 +1014,9 @@ export default function DoctorRevenueAnalyticsPage() {
                     <Tooltip
                       formatter={(value: number, name: string) => {
                         if (name === 'payments' || name === 'Payments') return [fmtUSD(value), 'Payments'];
-                        return [fmtUSD(value), 'Revenue'];
+                        if (name === 'paymentsTrend' || name === 'Payments Trend') return [fmtUSD(value), 'Payments Trend'];
+                        if (name === 'trend' || name === 'Revenue Trend' || name === 'VSD Trend') return [fmtUSD(value), 'VSD Trend'];
+                        return [fmtUSD(value), 'VSD'];
                       }}
                       labelFormatter={(l) => dayjs(l).format('ddd, MMM D, YYYY')}
                     />
@@ -988,20 +1042,48 @@ export default function DoctorRevenueAnalyticsPage() {
                       strokeWidth={2}
                       dot={false}
                       isAnimationActive
-                      name="Revenue"
+                      name="VSD"
                     />
+                    {/* VSD trend line */}
+                    {chartDataWithTrend.length >= 2 && (
+                      <Line
+                        type="linear"
+                        dataKey="trend"
+                        stroke="#9c27b0"
+                        strokeWidth={2}
+                        strokeDasharray="5 5"
+                        dot={false}
+                        isAnimationActive={false}
+                        name="VSD Trend"
+                      />
+                    )}
                     {/* Only show payments line when viewing all doctors */}
                     {(selectedDoctorId === '' && isAdmin) && (
-                      <Line
-                        type="monotone"
-                        dataKey="payments"
-                        stroke="#388e3c"
-                        strokeWidth={2}
-                        dot={false}
-                        isAnimationActive
-                        name="Payments"
-                        connectNulls={false}
-                      />
+                      <>
+                        <Line
+                          type="monotone"
+                          dataKey="payments"
+                          stroke="#388e3c"
+                          strokeWidth={2}
+                          dot={false}
+                          isAnimationActive
+                          name="Payments"
+                          connectNulls={false}
+                        />
+                        {/* Payments trend line */}
+                        {chartDataWithTrend.length >= 2 && chartDataWithTrend.some(p => (p.payments || 0) > 0) && (
+                          <Line
+                            type="linear"
+                            dataKey="paymentsTrend"
+                            stroke="#f57c00"
+                            strokeWidth={2}
+                            strokeDasharray="5 5"
+                            dot={false}
+                            isAnimationActive={false}
+                            name="Payments Trend"
+                          />
+                        )}
+                      </>
                     )}
                   </LineChart>
                 </ResponsiveContainer>
@@ -1056,7 +1138,7 @@ export default function DoctorRevenueAnalyticsPage() {
             <Card variant="outlined">
               <CardHeader
                 titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
-                title={`Revenue per Point — ${displayName}`}
+                title={`VSD per Point — ${displayName}`}
               />
               <CardContent>
                 <Typography variant="h4" fontWeight={800}>
@@ -1064,7 +1146,7 @@ export default function DoctorRevenueAnalyticsPage() {
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   {totalPoints > 0 
-                    ? `${fmtUSD(totalRevenue)} revenue ÷ ${totalPoints.toFixed(1)} points`
+                    ? `${fmtUSD(totalRevenue)} VSD ÷ ${totalPoints.toFixed(1)} points`
                     : 'No points data available'}
                 </Typography>
               </CardContent>
@@ -1143,7 +1225,7 @@ export default function DoctorRevenueAnalyticsPage() {
 
         {/* Revenue per Point Chart */}
         <Card variant="outlined">
-          <CardHeader title="Revenue per Point Trend" />
+          <CardHeader title="VSD per Point Trend" />
           <CardContent>
             {revenuePerPointChartData.length === 0 ? (
               <Box height={320} display="flex" alignItems="center" justifyContent="center">
@@ -1166,8 +1248,8 @@ export default function DoctorRevenueAnalyticsPage() {
                     <YAxis tickFormatter={(v) => fmtUSD(v)} />
                     <Tooltip
                       formatter={(value: number) => {
-                        if (value === 0 || !Number.isFinite(value)) return ['$0.00', 'Revenue per Point'];
-                        return [fmtUSD(value), 'Revenue per Point'];
+                        if (value === 0 || !Number.isFinite(value)) return ['$0.00', 'VSD per Point'];
+                        return [fmtUSD(value), 'VSD per Point'];
                       }}
                       labelFormatter={(l) => dayjs(l).format('ddd, MMM D, YYYY')}
                     />
@@ -1178,7 +1260,7 @@ export default function DoctorRevenueAnalyticsPage() {
                       strokeWidth={2}
                       dot={false}
                       isAnimationActive
-                      name="Revenue per Point"
+                      name="VSD per Point"
                       connectNulls={false}
                     />
                   </LineChart>
