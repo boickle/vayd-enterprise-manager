@@ -69,6 +69,7 @@ type FormData = {
     otherSpecies?: string; // Custom species name when "Other" is selected
     age?: string;
     spayedNeutered?: string;
+    sex?: string;
     breed?: string;
     breedId?: number; // ID of selected breed
     color?: string;
@@ -86,6 +87,7 @@ type FormData = {
     otherSpecies?: string; // Custom species name when "Other" is selected
     age?: string;
     spayedNeutered?: string;
+    sex?: string;
     breed?: string;
     breedId?: number; // ID of selected breed
     color?: string;
@@ -1464,6 +1466,9 @@ export default function AppointmentRequestForm() {
               if (!pet.spayedNeutered?.trim()) {
                 newErrors[`newClientPet.${pet.id}.spayedNeutered`] = 'Spayed/Neutered is required';
               }
+              if (!pet.sex?.trim()) {
+                newErrors[`newClientPet.${pet.id}.sex`] = 'Sex is required';
+              }
               if (!pet.breed?.trim()) {
                 newErrors[`newClientPet.${pet.id}.breed`] = 'Breed is required';
               }
@@ -1590,6 +1595,9 @@ export default function AppointmentRequestForm() {
               if (!pet.spayedNeutered?.trim()) {
                 newErrors[`existingClientNewPet.${pet.id}.spayedNeutered`] = 'Spayed/Neutered is required';
               }
+              if (!pet.sex?.trim()) {
+                newErrors[`existingClientNewPet.${pet.id}.sex`] = 'Sex is required';
+              }
               if (!pet.breed?.trim()) {
                 newErrors[`existingClientNewPet.${pet.id}.breed`] = 'Breed is required';
               }
@@ -1629,17 +1637,33 @@ export default function AppointmentRequestForm() {
         if (!formData.aftercarePreference) newErrors.aftercarePreference = 'Please select an aftercare preference';
         break;
       case 'request-visit-continued':
-        // If not urgent/emergent and slots are available, require selections or "none work" option; otherwise allow manual entry
-        const isNotUrgentTimeframe = formData.howSoon && formData.howSoon !== 'Emergent – today' && formData.howSoon !== 'Urgent – within 24–48 hours';
+        // Check if any pet is selected for euthanasia
+        const hasEuthanasiaPet = 
+          (formData.selectedPetIds?.some(petId => {
+            const petData = formData.petSpecificData?.[petId];
+            return petData?.needsToday === 'End-of-life care / Euthanasia';
+          }) || false) ||
+          (formData.newClientPets?.some(pet => {
+            const petData = formData.petSpecificData?.[pet.id];
+            return petData?.needsToday === 'End-of-life care / Euthanasia';
+          }) || false);
+        
+        const isUrgentTimeframe = formData.howSoon === 'Emergent – today' || formData.howSoon === 'Urgent – within 24–48 hours';
+        const isNotUrgentTimeframe = formData.howSoon && !isUrgentTimeframe;
+        
+        // Validate preferredDateTimeVisit in all scenarios where it's displayed
+        if (hasEuthanasiaPet || isUrgentTimeframe || formData.noneOfWorkForMeVisit || (isNotUrgentTimeframe && !loadingSlots && recommendedSlots.length === 0)) {
+          if (!formData.preferredDateTimeVisit?.trim()) {
+            newErrors.preferredDateTimeVisit = 'Please enter any preferences for days/times for us to visit you';
+          }
+        }
+        
+        // If not urgent/emergent and slots are available, require selections or "none work" option
         if (isNotUrgentTimeframe) {
           if (recommendedSlots.length > 0) {
             const selectedCount = Object.keys(formData.selectedDateTimeSlotsVisit || {}).length;
             if (selectedCount === 0 && !formData.noneOfWorkForMeVisit) {
               newErrors.selectedDateTimeSlotsVisit = 'Please select your preferred times or indicate that none of these work for you';
-            }
-          } else if (!loadingSlots) {
-            if (!formData.preferredDateTimeVisit?.trim()) {
-              newErrors.preferredDateTimeVisit = 'Please enter your preferred date and time';
             }
           }
         }
@@ -1961,20 +1985,32 @@ export default function AppointmentRequestForm() {
         pets: isLoggedIn && formData.selectedPetIds.length > 0
           ? [
               // Existing pets from database
-              ...pets.filter(p => formData.selectedPetIds.includes(p.id)).map(p => ({
-                id: p.id,
-                dbId: p.dbId,
-                clientId: p.clientId,
-                name: p.name,
-                species: p.species,
-                breed: p.breed,
-                dob: p.dob,
-                subscription: p.subscription,
-                primaryProviderName: p.primaryProviderName,
-                photoUrl: p.photoUrl,
-                wellnessPlans: p.wellnessPlans,
-                alerts: petAlerts.get(p.id) ?? null,
-              })),
+              ...pets.filter(p => formData.selectedPetIds.includes(p.id)).map(p => {
+                // Normalize sex value from API format (e.g., "MaleNeutered", "FemaleSpayed") to simple format ("Male", "Female")
+                const normalizedSex = p.sex 
+                  ? (p.sex.startsWith('Male') ? 'Male' : p.sex.startsWith('Female') ? 'Female' : p.sex)
+                  : undefined;
+                
+                // Determine spayedNeutered based on whether the original sex value contains "Spayed" or "Neutered"
+                const spayedNeutered = p.sex && (p.sex.includes('Spayed') || p.sex.includes('Neutered')) ? 'Yes' : 'No';
+                
+                return {
+                  id: p.id,
+                  dbId: p.dbId,
+                  clientId: p.clientId,
+                  name: p.name,
+                  species: p.species,
+                  breed: p.breed,
+                  dob: p.dob,
+                  sex: normalizedSex,
+                  spayedNeutered: spayedNeutered,
+                  subscription: p.subscription,
+                  primaryProviderName: p.primaryProviderName,
+                  photoUrl: p.photoUrl,
+                  wellnessPlans: p.wellnessPlans,
+                  alerts: petAlerts.get(p.id) ?? null,
+                };
+              }),
               // New pets added by existing client (only if selected)
               ...(formData.existingClientNewPets || [])
                 .filter(p => formData.selectedPetIds.includes(p.id))
@@ -1984,6 +2020,7 @@ export default function AppointmentRequestForm() {
                   species: p.species,
                   age: p.age,
                   spayedNeutered: p.spayedNeutered,
+                  sex: p.sex,
                   breed: p.breed,
                   color: p.color,
                   weight: p.weight,
@@ -2006,21 +2043,33 @@ export default function AppointmentRequestForm() {
         allPets: isLoggedIn
           ? [
               // Existing pets from database
-              ...(pets.length > 0 ? pets.map(p => ({
-                id: p.id,
-                dbId: p.dbId,
-                clientId: p.clientId,
-                name: p.name,
-                species: p.species,
-                breed: p.breed,
-                dob: p.dob,
-                subscription: p.subscription,
-                primaryProviderName: p.primaryProviderName,
-                photoUrl: p.photoUrl,
-                wellnessPlans: p.wellnessPlans,
-                alerts: petAlerts.get(p.id) ?? null,
-                isSelected: formData.selectedPetIds.includes(p.id),
-              })) : []),
+              ...(pets.length > 0 ? pets.map(p => {
+                // Normalize sex value from API format (e.g., "MaleNeutered", "FemaleSpayed") to simple format ("Male", "Female")
+                const normalizedSex = p.sex 
+                  ? (p.sex.startsWith('Male') ? 'Male' : p.sex.startsWith('Female') ? 'Female' : p.sex)
+                  : undefined;
+                
+                // Determine spayedNeutered based on whether the original sex value contains "Spayed" or "Neutered"
+                const spayedNeutered = p.sex && (p.sex.includes('Spayed') || p.sex.includes('Neutered')) ? 'Yes' : 'No';
+                
+                return {
+                  id: p.id,
+                  dbId: p.dbId,
+                  clientId: p.clientId,
+                  name: p.name,
+                  species: p.species,
+                  breed: p.breed,
+                  dob: p.dob,
+                  sex: normalizedSex,
+                  spayedNeutered: spayedNeutered,
+                  subscription: p.subscription,
+                  primaryProviderName: p.primaryProviderName,
+                  photoUrl: p.photoUrl,
+                  wellnessPlans: p.wellnessPlans,
+                  alerts: petAlerts.get(p.id) ?? null,
+                  isSelected: formData.selectedPetIds.includes(p.id),
+                };
+              }) : []),
               // New pets added by existing client
               ...(formData.existingClientNewPets || []).map(p => ({
                 id: p.id,
@@ -2028,6 +2077,7 @@ export default function AppointmentRequestForm() {
                 species: p.species,
                 age: p.age,
                 spayedNeutered: p.spayedNeutered,
+                sex: p.sex,
                 breed: p.breed,
                 color: p.color,
                 weight: p.weight,
@@ -2745,6 +2795,7 @@ export default function AppointmentRequestForm() {
                   species: '',
                   age: '',
                   spayedNeutered: '',
+                  sex: '',
                   breed: '',
                   color: '',
                   weight: '',
@@ -2966,6 +3017,32 @@ export default function AppointmentRequestForm() {
                             {errors[`newClientPet.${pet.id}.spayedNeutered`] && (
                               <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
                                 {errors[`newClientPet.${pet.id}.spayedNeutered`]}
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                              Sex <span style={{ color: '#ef4444' }}>*</span>
+                            </label>
+                            <select
+                              value={pet.sex || ''}
+                              onChange={(e) => updateNewClientPet(pet.id, 'sex', e.target.value)}
+                              style={{
+                                padding: '8px',
+                                border: `1px solid ${errors[`newClientPet.${pet.id}.sex`] ? '#ef4444' : '#d1d5db'}`,
+                                borderRadius: '6px',
+                                fontSize: '14px',
+                                width: '100%',
+                                backgroundColor: '#fff',
+                              }}
+                            >
+                              <option value="">Select...</option>
+                              <option value="Male">Male</option>
+                              <option value="Female">Female</option>
+                            </select>
+                            {errors[`newClientPet.${pet.id}.sex`] && (
+                              <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                {errors[`newClientPet.${pet.id}.sex`]}
                               </div>
                             )}
                           </div>
@@ -4078,6 +4155,7 @@ export default function AppointmentRequestForm() {
                 species: '',
                 age: '',
                 spayedNeutered: '',
+                sex: '',
                 breed: '',
                 color: '',
                 weight: '',
@@ -4668,6 +4746,32 @@ export default function AppointmentRequestForm() {
                                 {errors[`existingClientNewPet.${pet.id}.spayedNeutered`] && (
                                   <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
                                     {errors[`existingClientNewPet.${pet.id}.spayedNeutered`]}
+                                  </div>
+                                )}
+                              </div>
+                              <div>
+                                <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                                  Sex <span style={{ color: '#ef4444' }}>*</span>
+                                </label>
+                                <select
+                                  value={pet.sex || ''}
+                                  onChange={(e) => updateExistingClientNewPet(pet.id, 'sex', e.target.value)}
+                                  style={{
+                                    padding: '8px',
+                                    border: `1px solid ${errors[`existingClientNewPet.${pet.id}.sex`] ? '#ef4444' : '#d1d5db'}`,
+                                    borderRadius: '6px',
+                                    fontSize: '14px',
+                                    width: '100%',
+                                    backgroundColor: '#fff',
+                                  }}
+                                >
+                                  <option value="">Select...</option>
+                                  <option value="Male">Male</option>
+                                  <option value="Female">Female</option>
+                                </select>
+                                {errors[`existingClientNewPet.${pet.id}.sex`] && (
+                                  <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                    {errors[`existingClientNewPet.${pet.id}.sex`]}
                                   </div>
                                 )}
                               </div>
@@ -5702,7 +5806,7 @@ export default function AppointmentRequestForm() {
                 </div>
                 <div style={{ marginBottom: '20px' }}>
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                    Please enter any preferences for days/times for us to visit you.
+                    Please enter any preferences for days/times for us to visit you. <span style={{ color: '#ef4444' }}>*</span>
                   </label>
                   <textarea
                     value={formData.preferredDateTimeVisit || ''}
@@ -5712,12 +5816,17 @@ export default function AppointmentRequestForm() {
                     style={{
                       width: '100%',
                       padding: '12px',
-                      border: '1px solid #d1d5db',
+                      border: errors.preferredDateTimeVisit ? '1px solid #ef4444' : '1px solid #d1d5db',
                       borderRadius: '8px',
                       fontSize: '14px',
                       fontFamily: 'inherit',
                     }}
                   />
+                  {errors.preferredDateTimeVisit && (
+                    <div style={{ fontSize: '12px', color: '#ef4444', marginTop: '4px' }}>
+                      {errors.preferredDateTimeVisit}
+                    </div>
+                  )}
                 </div>
               </>
             ) : (
@@ -5741,7 +5850,7 @@ export default function AppointmentRequestForm() {
                         </div>
                         <div style={{ marginBottom: '20px' }}>
                           <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                            Please enter any preferences for days/times for us to visit you.
+                            Please enter any preferences for days/times for us to visit you. <span style={{ color: '#ef4444' }}>*</span>
                           </label>
                           <textarea
                             value={formData.preferredDateTimeVisit || ''}
@@ -5751,12 +5860,17 @@ export default function AppointmentRequestForm() {
                             style={{
                               width: '100%',
                               padding: '12px',
-                              border: '1px solid #d1d5db',
+                              border: errors.preferredDateTimeVisit ? '1px solid #ef4444' : '1px solid #d1d5db',
                               borderRadius: '8px',
                               fontSize: '14px',
                               fontFamily: 'inherit',
                             }}
                           />
+                          {errors.preferredDateTimeVisit && (
+                            <div style={{ fontSize: '12px', color: '#ef4444', marginTop: '4px' }}>
+                              {errors.preferredDateTimeVisit}
+                            </div>
+                          )}
                         </div>
                       </>
                     );
@@ -5912,7 +6026,7 @@ export default function AppointmentRequestForm() {
                     {formData.noneOfWorkForMeVisit && (
                       <div style={{ marginTop: '20px', marginLeft: '0' }}>
                         <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                          Please enter any preferences for days/times for us to visit you.
+                          Please enter any preferences for days/times for us to visit you. <span style={{ color: '#ef4444' }}>*</span>
                         </label>
                         <textarea
                           value={formData.preferredDateTimeVisit || ''}
@@ -5922,12 +6036,17 @@ export default function AppointmentRequestForm() {
                           style={{
                             width: '100%',
                             padding: '12px',
-                            border: '1px solid #d1d5db',
+                            border: errors.preferredDateTimeVisit ? '1px solid #ef4444' : '1px solid #d1d5db',
                             borderRadius: '8px',
                             fontSize: '14px',
                             fontFamily: 'inherit',
                           }}
                         />
+                        {errors.preferredDateTimeVisit && (
+                          <div style={{ fontSize: '12px', color: '#ef4444', marginTop: '4px' }}>
+                            {errors.preferredDateTimeVisit}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -5956,7 +6075,7 @@ export default function AppointmentRequestForm() {
                   </div>
                   <div style={{ marginBottom: '20px' }}>
                     <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                      Please enter any preferences for days/times for us to visit you.
+                      Please enter any preferences for days/times for us to visit you. <span style={{ color: '#ef4444' }}>*</span>
                     </label>
                     <textarea
                       value={formData.preferredDateTimeVisit || ''}
@@ -5966,12 +6085,17 @@ export default function AppointmentRequestForm() {
                       style={{
                         width: '100%',
                         padding: '12px',
-                        border: '1px solid #d1d5db',
+                        border: errors.preferredDateTimeVisit ? '1px solid #ef4444' : '1px solid #d1d5db',
                         borderRadius: '8px',
                         fontSize: '14px',
                         fontFamily: 'inherit',
                       }}
                     />
+                    {errors.preferredDateTimeVisit && (
+                      <div style={{ fontSize: '12px', color: '#ef4444', marginTop: '4px' }}>
+                        {errors.preferredDateTimeVisit}
+                      </div>
+                    )}
                   </div>
                 </>
               )}

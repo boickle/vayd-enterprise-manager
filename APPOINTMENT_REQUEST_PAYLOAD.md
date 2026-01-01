@@ -134,6 +134,7 @@ For `newClientPets` field (used for new clients who add pets on the pet informat
   "speciesId": number, // ID of selected species from /public/species-breeds endpoint
   "age": string, // e.g., "5 years" or DOB (labeled as "Age/DOB" in the form)
   "spayedNeutered": "Yes" | "No" | "", // Selected from dropdown
+  "sex": "Male" | "Female" | "", // Selected from dropdown
   "breed": string, // Breed name (e.g., "Golden Retriever") - populated from API searchable dropdown
   "breedId": number, // ID of selected breed from /public/species-breeds endpoint
   "color": string,
@@ -153,6 +154,7 @@ For `newClientPets` field (used for new clients who add pets on the pet informat
 - Both `species` and `speciesId` are included (species name for display, speciesId for reference)
 - Both `breed` and `breedId` are included (breed name for display, breedId for reference)
 - `spayedNeutered` is selected from a Yes/No dropdown
+- `sex` is selected from a Male/Female dropdown
 - `weight` is a numeric field (number type) representing pounds
 
 ## Existing Client New Pet Object Structure
@@ -167,6 +169,7 @@ For `existingClientNewPets` field (used for existing clients who add new pets on
   "speciesId": number, // ID of selected species from /public/species-breeds endpoint
   "age": string, // e.g., "5 years" or DOB (labeled as "Age/DOB" in the form)
   "spayedNeutered": "Yes" | "No" | "", // Selected from dropdown
+  "sex": "Male" | "Female" | "", // Selected from dropdown
   "breed": string, // Breed name (e.g., "Golden Retriever") - populated from API searchable dropdown
   "breedId": number, // ID of selected breed from /public/species-breeds endpoint
   "color": string,
@@ -187,6 +190,7 @@ For `existingClientNewPets` field (used for existing clients who add new pets on
 - Both `species` and `speciesId` are included (species name for display, speciesId for reference)
 - Both `breed` and `breedId` are included (breed name for display, breedId for reference)
 - `spayedNeutered` is selected from a Yes/No dropdown
+- `sex` is selected from a Male/Female dropdown
 - `weight` is a numeric field (number type) representing pounds
 - These pets are also included in `selectedPetIds` and have corresponding entries in `petSpecificData` when selected. They appear in the pet selection list alongside existing pets from the database.
 
@@ -325,6 +329,7 @@ Before fetching available veterinarians, the form performs a zone check using th
       "speciesId": 2,
       "age": "5 years",
       "spayedNeutered": "Yes",
+      "sex": "Female",
       "breed": "Maine Coon",
       "breedId": 123,
       "color": "Orange",
@@ -590,6 +595,7 @@ Before fetching available veterinarians, the form performs a zone check using th
       "speciesId": 2,
       "age": "2 years",
       "spayedNeutered": "Yes",
+      "sex": "Female",
       "breed": "Siamese",
       "breedId": 456,
       "color": "Seal Point",
@@ -622,6 +628,7 @@ Before fetching available veterinarians, the form performs a zone check using th
       "species": "Feline",
       "age": "2 years",
       "spayedNeutered": "Yes",
+      "sex": "Female",
       "breed": "Siamese",
       "color": "Seal Point",
       "weight": "8 lbs",
@@ -640,6 +647,7 @@ Before fetching available veterinarians, the form performs a zone check using th
       "speciesId": 2,
       "age": "2 years",
       "spayedNeutered": "Yes",
+      "sex": "Female",
       "breed": "Siamese",
       "breedId": 456,
       "color": "Seal Point",

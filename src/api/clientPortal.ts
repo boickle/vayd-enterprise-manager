@@ -28,6 +28,7 @@ export type Pet = {
   species?: string;
   breed?: string;
   dob?: string; // ISO
+  sex?: string; // e.g., "MaleNeutered", "FemaleSpayed"
   subscription?: { id?: string; name?: string; status: 'active' | 'pending' | 'canceled' };
   primaryProviderName?: string | null;
   /** Pet image URL (uploaded by user) */
@@ -324,6 +325,7 @@ export async function fetchClientPets(): Promise<Pet[]> {
         breed: p?.breed ?? p?.breedName ?? undefined,
         dob:
           p?.dob ?? p?.dateOfBirth ?? (typeof p?.birthDate === 'string' ? p.birthDate : undefined),
+        sex: p?.sex ?? undefined,
         subscription: p?.subscription
           ? {
               id: p.subscription.id,
@@ -409,6 +411,7 @@ export async function fetchClientPets(): Promise<Pet[]> {
           data?.dob ??
           data?.dateOfBirth ??
           (typeof data?.birthDate === 'string' ? data.birthDate : undefined);
+        const sex = data?.sex ?? undefined;
         const dbId = data?.id != null ? String(data.id) : undefined;
         const clientId = data?.client?.id ?? data?.clientId ?? data?.ownerId ?? null;
 
@@ -417,6 +420,7 @@ export async function fetchClientPets(): Promise<Pet[]> {
           species,
           breed,
           dob,
+          sex,
           dbId, // <- capture real DB id
           clientId: clientId ?? p.clientId ?? null,
           primaryProviderName: normalizeProviderName(data) ?? normalizeProviderName(p) ?? null,
