@@ -2111,7 +2111,51 @@ export default function AppointmentRequestForm() {
         
         // Appointment Details
         appointmentType: isEuthanasia ? 'euthanasia' : 'regular_visit',
-        preferredDoctor: formData.preferredDoctorExisting || formData.preferredDoctor || undefined,
+        preferredDoctor: (() => {
+          const selectedDoctor = formData.preferredDoctorExisting || formData.preferredDoctor;
+          if (!selectedDoctor || selectedDoctor === 'I have no preference') {
+            return undefined;
+          }
+          return selectedDoctor;
+        })(),
+        preferredDoctorId: (() => {
+          const selectedDoctor = formData.preferredDoctorExisting || formData.preferredDoctor;
+          if (!selectedDoctor || selectedDoctor === 'I have no preference') {
+            return undefined;
+          }
+          
+          // Extract doctor ID from provider name
+          const doctorName = selectedDoctor.replace('Dr. ', '').trim();
+          // Use publicProviders for new clients, providers for logged-in clients
+          const providerList = isLoggedIn ? providers : (publicProviders.length > 0 ? publicProviders.map(p => ({
+            id: p.id,
+            name: p.name,
+            email: p.email || '',
+            pimsId: p.id, // PublicProvider uses id as pimsId
+          })) : providers);
+          
+          let doctor = providerList.find(p => p.name === doctorName || `Dr. ${p.name}` === selectedDoctor);
+          
+          // Try fuzzy matching if exact match fails
+          if (!doctor) {
+            doctor = providerList.find(p => 
+              p.name.toLowerCase().includes(doctorName.toLowerCase()) ||
+              doctorName.toLowerCase().includes(p.name.toLowerCase())
+            );
+          }
+          
+          if (doctor) {
+            // For existing clients: prefer id (database ID) over pimsId
+            // For new clients: publicProviders use id as pimsId, so we use id
+            if (doctor.id) {
+              return String(doctor.id);
+            }
+            // Fallback to pimsId only if id is not available
+            return doctor.pimsId ? String(doctor.pimsId) : undefined;
+          }
+          
+          return undefined;
+        })(),
         serviceArea: formData.serviceArea || formData.serviceAreaVisit || undefined,
         
         // Euthanasia Specific Fields
@@ -5732,7 +5776,27 @@ export default function AppointmentRequestForm() {
             {!hasEuthanasiaPetEuthanasiaPage && (
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                  Are you interested in membership or pay as you go?
+                  Are you interested in membership or pay as you go?{' '}
+                  <a
+                    href="https://www.vetatyourdoor.com/care-options"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      color: '#10b981',
+                      textDecoration: 'none',
+                      fontSize: '14px',
+                      fontWeight: 400,
+                      marginLeft: '4px',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.textDecoration = 'underline';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.textDecoration = 'none';
+                    }}
+                  >
+                    What's this?
+                  </a>
                 </label>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   {[
@@ -6147,7 +6211,27 @@ export default function AppointmentRequestForm() {
             {!hasEuthanasiaPet && (
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                  Are you interested in membership or pay as you go?
+                  Are you interested in membership or pay as you go?{' '}
+                  <a
+                    href="https://www.vetatyourdoor.com/care-options"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      color: '#10b981',
+                      textDecoration: 'none',
+                      fontSize: '14px',
+                      fontWeight: 400,
+                      marginLeft: '4px',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.textDecoration = 'underline';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.textDecoration = 'none';
+                    }}
+                  >
+                    What's this?
+                  </a>
                 </label>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   {[
