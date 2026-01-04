@@ -355,7 +355,7 @@ export default function CreateClientUser() {
           alt="Vet At Your Door logo"
         />
         <h1 style={headingStyle}>
-          <span style={{ display: 'block', marginBottom: '8px' }}>First step to membership:</span>
+          <span style={{ display: 'block', marginBottom: '8px' }}>First Step:</span>
           Create your Client Portal Account.
         </h1>
         <hr style={{ width: '80%', border: 'none', borderTop: '1px solid #0f172a', margin: '24px 0 0 0' }} />

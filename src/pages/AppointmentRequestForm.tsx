@@ -1981,6 +1981,9 @@ export default function AppointmentRequestForm() {
             }
           : undefined,
         
+        // Address changed flag - indicates if existing client changed their address
+        addressChanged: isExistingClient && formData.isThisTheAddressWhereWeWillCome === 'No' ? true : undefined,
+        
         // Pet/Patient Information
         pets: isLoggedIn && formData.selectedPetIds.length > 0
           ? [
@@ -2341,7 +2344,7 @@ export default function AppointmentRequestForm() {
                   fontSize: '14px',
                   color: '#92400e',
                 }}>
-                  <strong>This email already has an account.</strong> Please{' '}
+                  <strong>Looks like you're already one of our clients!</strong> Please{' '}
                   <a
                     href="/login"
                     onClick={(e) => {
@@ -2352,7 +2355,18 @@ export default function AppointmentRequestForm() {
                   >
                     log in
                   </a>
-                  {' '}to your account before creating an appointment.
+                  {' '}or quickly{' '}
+                  <a
+                    href="/create-client"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigate('/create-client');
+                    }}
+                    style={{ color: '#d97706', textDecoration: 'underline', fontWeight: 600 }}
+                  >
+                    create an account
+                  </a>
+                  {' '}using this email to access our Client Portal and request appointments.
                 </div>
               )}
               {errors.email && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.email}</div>}
