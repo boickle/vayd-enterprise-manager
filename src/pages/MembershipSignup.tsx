@@ -263,6 +263,8 @@ const DOG_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}doggy.png`;
 
 const CAT_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}catty.png`;
 
+const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
+
 function petImg(pet: Pet | null): string {
   if (!pet) return DOG_PLACEHOLDER;
   // Check for uploaded photo first
@@ -1119,7 +1121,7 @@ export default function MembershipSignup() {
             </button>
             <a
               className="btn"
-              href="https://form.jotform.com/221585880190157"
+              href={APPOINTMENT_REQUEST_URL}
               target="_blank"
               rel="noopener noreferrer"
               style={{ textDecoration: 'none', background: '#4FB128', color: '#fff' }}

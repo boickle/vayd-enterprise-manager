@@ -379,7 +379,7 @@ export default function CreateClientUser() {
           </p>
           <p style={{ margin: 0 }}>
             <a 
-              href="https://form.jotform.com/221585880190157" 
+              href={import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment'} 
               style={{ color: '#052940', textDecoration: 'underline', cursor: 'pointer' }}
             >
               Request your first appointment here.

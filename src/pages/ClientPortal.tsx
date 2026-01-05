@@ -113,6 +113,8 @@ const DOG_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}doggy.png`;
 
 const CAT_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}catty.png`;
 
+const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
+
 function petImg(p: Pet) {
   // Check for uploaded photo first
   if (p.photoUrl) {
@@ -941,7 +943,7 @@ export default function ClientPortal() {
      Bottom Nav Handlers
   ---------------------------- */
   function handleBook() {
-    window.open('/client-portal/request-appointment', '_blank', 'noopener,noreferrer');
+    window.open(APPOINTMENT_REQUEST_URL, '_blank', 'noopener,noreferrer');
   }
   function handleContact() {
     // If pet has plan, use chat; otherwise use email
@@ -1150,7 +1152,7 @@ export default function ClientPortal() {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                   <a
-                    href="/client-portal/request-appointment"
+                    href={APPOINTMENT_REQUEST_URL}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{
@@ -1276,7 +1278,7 @@ export default function ClientPortal() {
             {/* Desktop View - Button Grid */}
             <div className="cp-service-actions-desktop" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
               <a
-                href="/client-portal/request-appointment"
+                href={APPOINTMENT_REQUEST_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="cp-card"
@@ -2240,7 +2242,7 @@ export default function ClientPortal() {
                 </div>
                 <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid #e5e7eb' }}>
                   <a
-                    href="/client-portal/request-appointment"
+                    href={APPOINTMENT_REQUEST_URL}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="cp-card"

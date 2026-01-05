@@ -361,7 +361,7 @@ export default function LoginPage() {
           </div>
           <div style={{ marginTop: '8px' }}>
             <a 
-              href="https://form.jotform.com/221585880190157" 
+              href={import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment'} 
               style={{ color: '#052940', textDecoration: 'underline', cursor: 'pointer' }}
             >
               Click here to get started.
