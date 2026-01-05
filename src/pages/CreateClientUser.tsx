@@ -355,7 +355,7 @@ export default function CreateClientUser() {
           alt="Vet At Your Door logo"
         />
         <h1 style={headingStyle}>
-          <span style={{ display: 'block', marginBottom: '8px' }}>First step to membership:</span>
+          <span style={{ display: 'block', marginBottom: '8px' }}>First Step:</span>
           Create your Client Portal Account.
         </h1>
         <hr style={{ width: '80%', border: 'none', borderTop: '1px solid #0f172a', margin: '24px 0 0 0' }} />
@@ -379,7 +379,7 @@ export default function CreateClientUser() {
           </p>
           <p style={{ margin: 0 }}>
             <a 
-              href="https://form.jotform.com/221585880190157" 
+              href={import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment'} 
               style={{ color: '#052940', textDecoration: 'underline', cursor: 'pointer' }}
             >
               Request your first appointment here.

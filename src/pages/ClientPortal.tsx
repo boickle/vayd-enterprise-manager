@@ -13,6 +13,7 @@ import {
   type ClientReminder,
   fetchPracticeInfo,
   type Vaccination,
+  fetchClientInfo,
 } from '../api/clientPortal';
 import { listMembershipTransactions } from '../api/membershipTransactions';
 import { http } from '../api/http';
@@ -112,6 +113,8 @@ const DOG_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}doggy.png`;
 
 const CAT_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}catty.png`;
 
+const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
+
 function petImg(p: Pet) {
   // Check for uploaded photo first
   if (p.photoUrl) {
@@ -179,7 +182,7 @@ function cleanMembershipDisplayText(text: string): string {
    Page
 ---------------------------- */
 export default function ClientPortal() {
-  const { userEmail, userId, logout } = useAuth() as any;
+  const { userEmail, userId, logout, clientInfo, token } = useAuth() as any;
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
@@ -200,6 +203,27 @@ export default function ClientPortal() {
   const [errorModalMessage, setErrorModalMessage] = useState<string | null>(null);
   const [showVaccinationModal, setShowVaccinationModal] = useState(false);
   const [selectedPetForVaccination, setSelectedPetForVaccination] = useState<PetWithWellness | null>(null);
+  const [localClientInfo, setLocalClientInfo] = useState<any | null>(null);
+
+  // Fetch client info if not available in auth context
+  useEffect(() => {
+    if (!clientInfo && userId && token) {
+      // Only fetch if we have a token
+      fetchClientInfo(userId)
+        .then((info) => {
+          if (info) {
+            setLocalClientInfo(info);
+            // Also store it in localStorage for future use
+            try {
+              localStorage.setItem('vayd_clientInfo', JSON.stringify(info));
+            } catch {}
+          }
+        })
+        .catch((err) => {
+          console.warn('Failed to fetch client info:', err);
+        });
+    }
+  }, [clientInfo, userId, token]);
 
   useEffect(() => {
     let alive = true;
@@ -334,8 +358,38 @@ export default function ClientPortal() {
   const clientFirstName = useMemo(() => {
     if (!userEmail) return null;
     
-    // Check if userEmail matches secondEmail in raw appointment data
-    // The raw appointment data has the full client object with secondEmail, secondFirstName, etc.
+    // Use clientInfo from auth context or localClientInfo (fetched in ClientPortal)
+    const info = clientInfo || localClientInfo;
+    
+    // First priority: Use client info from auth context or local fetch
+    if (info) {
+      const emailLower = userEmail.toLowerCase();
+      
+      // Check if userEmail matches secondEmail - use secondFirstName and secondLastName
+      if (info.secondEmail && info.secondEmail.toLowerCase() === emailLower) {
+        if (info.secondFirstName) {
+          return info.secondFirstName;
+        }
+      }
+      
+      // Check if userEmail matches primary email - use firstName and lastName
+      const primaryEmail = info.email || info.primaryEmail;
+      if (primaryEmail && primaryEmail.toLowerCase() === emailLower) {
+        if (info.firstName) {
+          return info.firstName;
+        }
+      }
+      
+      // If we can't determine which email matches, try to get a name anyway
+      if (info.firstName) {
+        return info.firstName;
+      }
+      if (info.secondFirstName) {
+        return info.secondFirstName;
+      }
+    }
+    
+    // Second priority: Check if userEmail matches secondEmail in raw appointment data
     for (const rawAppt of rawApptsData) {
       const client = rawAppt?.client;
       
@@ -348,7 +402,7 @@ export default function ClientPortal() {
       }
     }
     
-    // Also check pets for client information (pets might have client data)
+    // Third priority: Also check pets for client information (pets might have client data)
     for (const pet of pets) {
       const rawPet = pet as any;
       const client = rawPet?.client || rawPet?.clientData || rawPet?.owner;
@@ -360,10 +414,7 @@ export default function ClientPortal() {
       }
     }
     
-    // Get client first name from first appointment's clientName
-    // This comes from: a?.clientName ?? [a.client.firstName, a.client.lastName].join(' ')
-    // So it's the PRIMARY client's name (firstName + lastName)
-    // Currently showing "Deirdre" because it extracts the first word from "Deirdre Frey"
+    // Fourth priority: Get client first name from first appointment's clientName
     const firstAppt = appts[0];
     if (firstAppt?.clientName) {
       // Extract first name from full name
@@ -374,7 +425,7 @@ export default function ClientPortal() {
     // Fallback: use email username part if no client name found
     const emailPart = userEmail.split('@')[0];
     return emailPart.charAt(0).toUpperCase() + emailPart.slice(1);
-  }, [appts, userEmail, pets, rawApptsData]);
+  }, [clientInfo, localClientInfo, appts, userEmail, pets, rawApptsData]);
 
   const upcomingAppts = useMemo(() => {
     const now = Date.now();
@@ -892,7 +943,11 @@ export default function ClientPortal() {
      Bottom Nav Handlers
   ---------------------------- */
   function handleBook() {
-    window.open('https://form.jotform.com/221585880190157', '_blank');
+    if (APPOINTMENT_REQUEST_URL.startsWith('/')) {
+      navigate(APPOINTMENT_REQUEST_URL);
+    } else {
+      window.location.href = APPOINTMENT_REQUEST_URL;
+    }
   }
   function handleContact() {
     // If pet has plan, use chat; otherwise use email
@@ -910,7 +965,7 @@ export default function ClientPortal() {
   }
 
   return (
-    <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px' }}>
+    <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px', width: '100%' }}>
 
       {/* Scoped responsive styles */}
       <style>{`
@@ -943,17 +998,23 @@ export default function ClientPortal() {
         /* Bottom nav (hidden by default; shown on small screens) */
         .cp-bottom-nav {
           position: fixed;
-          left: 0; right: 0; bottom: 0;
-          height: var(--bottom-nav-h);
+          left: 0;
+          right: 0;
+          bottom: 0;
           display: none;
           background: rgba(255,255,255,0.98);
           backdrop-filter: saturate(150%) blur(8px);
           border-top: 1px solid rgba(0,0,0,0.08);
           z-index: 1000;
-          padding-bottom: env(safe-area-inset-bottom);
+          margin: 0;
+          padding: 0;
+          /* Nav extends to bottom edge, safe area padding pushes content up */
+          padding-bottom: env(safe-area-inset-bottom, 0px);
+          height: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px));
         }
         .cp-bottom-inner {
-          height: 100%;
+          /* Inner content is the nav height, sits above the safe area padding */
+          height: var(--bottom-nav-h);
           display: grid;
           grid-template-columns: repeat(4, 1fr);
           align-items: center;
@@ -963,7 +1024,8 @@ export default function ClientPortal() {
           padding: 0 8px;
         }
         .cp-tab {
-          height: calc(var(--bottom-nav-h) - 10px - env(safe-area-inset-bottom));
+          height: 100%;
+          min-height: 56px;
           border: none;
           background: transparent;
           display: flex;
@@ -977,7 +1039,7 @@ export default function ClientPortal() {
           text-decoration: none;
         }
         .cp-tab:active { background: rgba(15, 118, 110, 0.08); }
-        .cp-tab svg { width: 22px; height: 22px; }
+        .cp-tab svg { width: 24px; height: 24px; }
 
         /* >= 480px */
         @media (min-width: 480px) {
@@ -1008,7 +1070,12 @@ export default function ClientPortal() {
         /* Show bottom nav & add bottom padding on small screens only */
         @media (max-width: 639px) {
           .cp-bottom-nav { display: block; }
-          .cp-wrap { padding-bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + 12px); }
+          .cp-wrap { 
+            margin: 0 !important;
+            padding: 0 16px calc(var(--bottom-nav-h) + 8px) 16px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+          }
           /* Hide top service action buttons when bottom nav is showing */
           .cp-service-actions-section { display: none !important; }
         .cp-service-actions-mobile { display: block !important; }
@@ -1089,9 +1156,7 @@ export default function ClientPortal() {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                   <a
-                    href="https://form.jotform.com/221585880190157"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    href={APPOINTMENT_REQUEST_URL}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -1215,9 +1280,7 @@ export default function ClientPortal() {
             {/* Desktop View - Button Grid */}
             <div className="cp-service-actions-desktop" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
               <a
-                href="https://form.jotform.com/221585880190157"
-                target="_blank"
-                rel="noopener noreferrer"
+                href={APPOINTMENT_REQUEST_URL}
                 className="cp-card"
                 style={{
                   padding: '16px 20px',
@@ -1946,7 +2009,7 @@ export default function ClientPortal() {
                               e.currentTarget.style.opacity = '1';
                             }}
                           >
-                            Sign up for Membership
+                            Explore membership options for {p.name}
                           </button>
                         )}
                       </div>
@@ -2179,9 +2242,7 @@ export default function ClientPortal() {
                 </div>
                 <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid #e5e7eb' }}>
                   <a
-                    href="https://form.jotform.com/221585880190157"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    href={APPOINTMENT_REQUEST_URL}
                     className="cp-card"
                     style={{
                       display: 'flex',
@@ -2282,6 +2343,53 @@ export default function ClientPortal() {
           </div>
         </div>
       </footer>
+
+      {/* ---------------------------
+          Logout Button - Bottom
+      ---------------------------- */}
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        marginTop: '32px',
+        marginBottom: '16px',
+        paddingBottom: '16px'
+      }}>
+        <button
+          onClick={() => {
+            logout();
+            navigate('/login');
+          }}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: '#f3f4f6',
+            color: '#374151',
+            border: '1px solid #d1d5db',
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: 500,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = '#e5e7eb';
+            e.currentTarget.style.borderColor = '#9ca3af';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = '#f3f4f6';
+            e.currentTarget.style.borderColor = '#d1d5db';
+          }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16 }}>
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+            <polyline points="16 17 21 12 16 7"></polyline>
+            <line x1="21" y1="12" x2="9" y2="12"></line>
+          </svg>
+          Log out
+        </button>
+      </div>
 
       {/* ---------------------------
           Mobile Bottom Navigation

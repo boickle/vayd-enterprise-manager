@@ -28,6 +28,7 @@ export type Pet = {
   species?: string;
   breed?: string;
   dob?: string; // ISO
+  sex?: string; // e.g., "MaleNeutered", "FemaleSpayed"
   subscription?: { id?: string; name?: string; status: 'active' | 'pending' | 'canceled' };
   primaryProviderName?: string | null;
   /** Pet image URL (uploaded by user) */
@@ -324,6 +325,7 @@ export async function fetchClientPets(): Promise<Pet[]> {
         breed: p?.breed ?? p?.breedName ?? undefined,
         dob:
           p?.dob ?? p?.dateOfBirth ?? (typeof p?.birthDate === 'string' ? p.birthDate : undefined),
+        sex: p?.sex ?? undefined,
         subscription: p?.subscription
           ? {
               id: p.subscription.id,
@@ -409,6 +411,7 @@ export async function fetchClientPets(): Promise<Pet[]> {
           data?.dob ??
           data?.dateOfBirth ??
           (typeof data?.birthDate === 'string' ? data.birthDate : undefined);
+        const sex = data?.sex ?? undefined;
         const dbId = data?.id != null ? String(data.id) : undefined;
         const clientId = data?.client?.id ?? data?.clientId ?? data?.ownerId ?? null;
 
@@ -417,6 +420,7 @@ export async function fetchClientPets(): Promise<Pet[]> {
           species,
           breed,
           dob,
+          sex,
           dbId, // <- capture real DB id
           clientId: clientId ?? p.clientId ?? null,
           primaryProviderName: normalizeProviderName(data) ?? normalizeProviderName(p) ?? null,
@@ -606,4 +610,32 @@ export type ClientMessagesResponse = {
 export async function fetchClientMessages(clientId: number | string): Promise<ClientMessagesResponse> {
   const { data } = await http.get(`/messages/client/${encodeURIComponent(clientId)}`);
   return data;
+}
+
+/** ---------- Get current client information ----------
+ * Fetches the logged-in client's information by ID
+ * Endpoint: GET /clients/:id
+ */
+export async function fetchClientInfo(clientId: string | number): Promise<any | null> {
+  try {
+    // Import getToken to check if token exists before making request
+    const { getToken } = await import('./http');
+    const token = getToken();
+    
+    if (!token) {
+      console.warn('No token available for fetchClientInfo request');
+      return null;
+    }
+    
+    const { data } = await http.get(`/clients/${encodeURIComponent(clientId)}`);
+    return data;
+  } catch (err: any) {
+    // Log more details about the error for debugging
+    if (err?.response?.status === 401) {
+      console.warn('Failed to fetch client info: Unauthorized (401). Token may be expired or invalid.');
+    } else {
+      console.warn('Failed to fetch client info:', err);
+    }
+    return null;
+  }
 }

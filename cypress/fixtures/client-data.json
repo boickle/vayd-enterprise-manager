@@ -1,0 +1,15 @@
+{
+  "firstName": "Test",
+  "lastName": "Client",
+  "email": "deirdrevmd@gmail.com",
+  "phoneNumber": "207-555-1234",
+  "address": {
+    "line1": "123 Test St",
+    "city": "Portland",
+    "state": "ME",
+    "zip": "04101",
+    "country": "US"
+  }
+}
+
+

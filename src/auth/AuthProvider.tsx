@@ -24,6 +24,7 @@ type AuthContextType = {
   userEmail: string | null;
   userId: string | null;
   role: string[];
+  clientInfo: any | null; // Store client information for clients
   // ⬅️ now returns a LoginResult instead of void
   login: (email: string, password: string) => Promise<LoginResult>;
   logout: () => void;
@@ -34,14 +35,14 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [tokenState, setTokenState] = useState<string | null>(() => {
     try {
-      return sessionStorage.getItem('vayd_token');
+      return localStorage.getItem('vayd_token');
     } catch {
       return null;
     }
   });
   const [email, setEmail] = useState<string | null>(() => {
     try {
-      return sessionStorage.getItem('vayd_email');
+      return localStorage.getItem('vayd_email');
     } catch {
       return null;
     }
@@ -49,7 +50,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<string[]>([]);
   const [userId, setUserId] = useState<string | null>(() => {
     try {
-      return sessionStorage.getItem('vayd_clientId');
+      return localStorage.getItem('vayd_clientId');
+    } catch {
+      return null;
+    }
+  });
+  const [clientInfo, setClientInfo] = useState<any | null>(() => {
+    try {
+      const stored = localStorage.getItem('vayd_clientInfo');
+      return stored ? JSON.parse(stored) : null;
     } catch {
       return null;
     }
@@ -74,7 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (claimString !== userId) {
           setUserId(claimString);
           try {
-            sessionStorage.setItem('vayd_clientId', claimString);
+            localStorage.setItem('vayd_clientId', claimString);
           } catch {}
         }
       }
@@ -82,7 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setRole([]);
       setUserId(null);
       try {
-        sessionStorage.removeItem('vayd_clientId');
+        localStorage.removeItem('vayd_clientId');
       } catch {}
     }
   }, [tokenState, userId]);
@@ -91,17 +100,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(tokenState);
   }, [tokenState]);
 
+  // Listen for storage changes across tabs
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'vayd_token') {
+        setTokenState(e.newValue);
+      } else if (e.key === 'vayd_email') {
+        setEmail(e.newValue);
+      } else if (e.key === 'vayd_clientId') {
+        setUserId(e.newValue);
+      } else if (e.key === 'vayd_clientInfo') {
+        try {
+          setClientInfo(e.newValue ? JSON.parse(e.newValue) : null);
+        } catch {}
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
   useEffect(() => {
     if (typeof setLogoutHandler === 'function') {
       setLogoutHandler(() => {
         try {
-          sessionStorage.removeItem('vayd_token');
-          sessionStorage.removeItem('vayd_email');
-          sessionStorage.removeItem('vayd_clientId');
+          localStorage.removeItem('vayd_token');
+          localStorage.removeItem('vayd_email');
+          localStorage.removeItem('vayd_clientId');
+          localStorage.removeItem('vayd_clientInfo');
         } catch {}
         setTokenState(null);
         setEmail(null);
         setUserId(null);
+        setClientInfo(null);
         setToken(null);
       });
     }
@@ -115,9 +145,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!emailInput || !password) throw new Error('Missing credentials');
       const fakeToken = 'mock.' + Math.random().toString(36).slice(2);
       try {
-        sessionStorage.setItem('vayd_token', fakeToken);
-        sessionStorage.setItem('vayd_email', emailInput);
-        sessionStorage.setItem('vayd_clientId', 'mock-client');
+        localStorage.setItem('vayd_token', fakeToken);
+        localStorage.setItem('vayd_email', emailInput);
+        localStorage.setItem('vayd_clientId', 'mock-client');
       } catch {}
       setTokenState(fakeToken);
       setEmail(emailInput);
@@ -141,8 +171,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Persist token/email if token is present (even if reset is required)
     if (token) {
       try {
-        sessionStorage.setItem('vayd_token', token);
-        sessionStorage.setItem('vayd_email', emailInput);
+        localStorage.setItem('vayd_token', token);
+        localStorage.setItem('vayd_email', emailInput);
         const inferredClientId =
           (user as any)?.clientId ??
           (user as any)?.client?.id ??
@@ -150,11 +180,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           null;
         if (inferredClientId != null) {
           const inferredStr = String(inferredClientId);
-          sessionStorage.setItem('vayd_clientId', inferredStr);
+          localStorage.setItem('vayd_clientId', inferredStr);
           setUserId(inferredStr);
         } else {
-          sessionStorage.removeItem('vayd_clientId');
+          localStorage.removeItem('vayd_clientId');
           setUserId(null);
+        }
+        
+        // Fetch and store client info if user is a client
+        const roles: string[] = Array.isArray((user as any)?.role)
+          ? (user as any).role
+          : (user as any)?.role
+            ? [String((user as any).role)]
+            : Array.isArray((user as any)?.roles)
+              ? (user as any).roles
+              : [];
+        const isClient = roles.includes('client') || roles.includes('Client');
+        
+        if (isClient && inferredClientId != null) {
+          // Import fetchClientInfo dynamically to avoid circular dependency
+          import('../api/clientPortal').then(({ fetchClientInfo }) => {
+            fetchClientInfo(inferredClientId)
+              .then((info) => {
+                if (info) {
+                  try {
+                    localStorage.setItem('vayd_clientInfo', JSON.stringify(info));
+                    setClientInfo(info);
+                  } catch {}
+                }
+              })
+              .catch((err) => {
+                console.warn('Failed to fetch client info after login:', err);
+              });
+          });
         }
       } catch {}
       setTokenState(token);
@@ -165,13 +223,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } else {
       // No token returned — ensure we don't have a stale token set
       try {
-        sessionStorage.removeItem('vayd_token');
-        sessionStorage.removeItem('vayd_email');
-        sessionStorage.removeItem('vayd_clientId');
+        localStorage.removeItem('vayd_token');
+        localStorage.removeItem('vayd_email');
+        localStorage.removeItem('vayd_clientId');
+        localStorage.removeItem('vayd_clientInfo');
       } catch {}
       setTokenState(null);
       setEmail(null);
       setUserId(null);
+      setClientInfo(null);
     }
 
     return { token, user, resetRequired, resetCode };
@@ -182,14 +242,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     trackLogout();
     
     try {
-      sessionStorage.removeItem('vayd_token');
-      sessionStorage.removeItem('vayd_email');
-      sessionStorage.removeItem('vayd_clientId');
+      localStorage.removeItem('vayd_token');
+      localStorage.removeItem('vayd_email');
+      localStorage.removeItem('vayd_clientId');
+      localStorage.removeItem('vayd_clientInfo');
     } catch {}
     setTokenState(null);
     setEmail(null);
     setToken(null);
     setUserId(null);
+    setClientInfo(null);
   }
 
   const value = useMemo<AuthContextType>(
@@ -198,10 +260,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       userEmail: email,
       userId,
       role,
+      clientInfo,
       login,
       logout,
     }),
-    [tokenState, email, userId, role]
+    [tokenState, email, userId, role, clientInfo]
   );
 
   function decodeJwt(token: string): any | null {
