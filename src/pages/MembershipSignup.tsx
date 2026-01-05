@@ -1122,8 +1122,6 @@ export default function MembershipSignup() {
             <a
               className="btn"
               href={APPOINTMENT_REQUEST_URL}
-              target="_blank"
-              rel="noopener noreferrer"
               style={{ textDecoration: 'none', background: '#4FB128', color: '#fff' }}
             >
               Request an Appointment

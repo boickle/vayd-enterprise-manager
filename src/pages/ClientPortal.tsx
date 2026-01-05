@@ -943,7 +943,11 @@ export default function ClientPortal() {
      Bottom Nav Handlers
   ---------------------------- */
   function handleBook() {
-    window.open(APPOINTMENT_REQUEST_URL, '_blank', 'noopener,noreferrer');
+    if (APPOINTMENT_REQUEST_URL.startsWith('/')) {
+      navigate(APPOINTMENT_REQUEST_URL);
+    } else {
+      window.location.href = APPOINTMENT_REQUEST_URL;
+    }
   }
   function handleContact() {
     // If pet has plan, use chat; otherwise use email
@@ -1153,8 +1157,6 @@ export default function ClientPortal() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                   <a
                     href={APPOINTMENT_REQUEST_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -1279,8 +1281,6 @@ export default function ClientPortal() {
             <div className="cp-service-actions-desktop" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
               <a
                 href={APPOINTMENT_REQUEST_URL}
-                target="_blank"
-                rel="noopener noreferrer"
                 className="cp-card"
                 style={{
                   padding: '16px 20px',
@@ -2243,8 +2243,6 @@ export default function ClientPortal() {
                 <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid #e5e7eb' }}>
                   <a
                     href={APPOINTMENT_REQUEST_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
                     className="cp-card"
                     style={{
                       display: 'flex',

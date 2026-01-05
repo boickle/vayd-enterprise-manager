@@ -697,8 +697,11 @@ export default function AppointmentRequestForm() {
           // User cancelled - push the current state back to prevent navigation
           // This effectively cancels the back button press
           window.history.pushState({ formPage: currentPage, preventBack: true }, '', window.location.href);
+        } else {
+          // User confirmed - navigate back one more step since the browser already navigated
+          // to our pushed state (same URL), we need to go back further to the actual previous route
+          window.history.back();
         }
-        // If user confirms, let the navigation proceed (it already happened)
         
         setTimeout(() => {
           isHandlingPopState = false;
