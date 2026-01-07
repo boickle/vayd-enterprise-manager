@@ -15,6 +15,7 @@ import {
   type PublicProvider,
   type AvailabilityResponse,
 } from '../api/publicAppointments';
+import { trackEvent } from '../utils/analytics';
 
 type FormData = {
   // Intro page
@@ -646,6 +647,51 @@ export default function AppointmentRequestForm() {
       clearTimeout(timeoutId);
     };
   }, [formData.email, isLoggedIn, practiceId]);
+
+  // Track page views for analytics
+  useEffect(() => {
+    const isExistingClient = isLoggedIn || formData.haveUsedServicesBefore === 'Yes';
+    const clientType = isExistingClient ? 'existing' : 'new';
+    
+    // Map page names to user-friendly step names
+    const getStepName = (page: Page): string => {
+      switch (page) {
+        case 'intro':
+          return 'Introduction';
+        case 'new-client':
+          return 'New Client Information';
+        case 'new-client-pet-info':
+          return 'Pet Information';
+        case 'existing-client':
+          return 'Existing Client Information';
+        case 'existing-client-pets':
+          return 'Select Pet(s)';
+        case 'euthanasia-intro':
+          return 'Euthanasia Details';
+        case 'euthanasia-service-area':
+          return 'Service Area Selection';
+        case 'euthanasia-portland':
+          return 'Euthanasia Scheduling (Portland)';
+        case 'euthanasia-high-peaks':
+          return 'Euthanasia Scheduling (High Peaks)';
+        case 'euthanasia-continued':
+          return 'Euthanasia Appointment Time';
+        case 'request-visit-continued':
+          return 'Appointment Time Selection';
+        case 'success':
+          return 'Success';
+        default:
+          return page;
+      }
+    };
+
+    trackEvent('appointment_form_step_viewed', {
+      step: currentPage,
+      step_name: getStepName(currentPage),
+      client_type: clientType,
+      is_logged_in: isLoggedIn,
+    });
+  }, [currentPage, isLoggedIn, formData.haveUsedServicesBefore]);
 
   // Warn users when they try to use browser back button
   useEffect(() => {
@@ -1734,6 +1780,9 @@ export default function AppointmentRequestForm() {
       return;
     }
 
+    const isExistingClient = isLoggedIn || formData.haveUsedServicesBefore === 'Yes';
+    const clientType = isExistingClient ? 'existing' : 'new';
+
     // Determine next page based on current page and form data
     switch (currentPage) {
       case 'intro':
@@ -1760,38 +1809,119 @@ export default function AppointmentRequestForm() {
             }
           }
           setCurrentPage('new-client');
+          trackEvent('appointment_form_step_completed', {
+            step: 'intro',
+            step_name: 'Introduction',
+            next_step: 'new-client',
+            client_type: 'new',
+            is_logged_in: false,
+          });
         }
         break;
       case 'new-client':
         setCurrentPage('new-client-pet-info');
+        trackEvent('appointment_form_step_completed', {
+          step: 'new-client',
+          step_name: 'New Client Information',
+          next_step: 'new-client-pet-info',
+          client_type: 'new',
+          is_logged_in: false,
+        });
         break;
       case 'new-client-pet-info':
         // Always go to request-visit-continued (euthanasia question removed)
         setCurrentPage('request-visit-continued');
+        trackEvent('appointment_form_step_completed', {
+          step: 'new-client-pet-info',
+          step_name: 'Pet Information',
+          next_step: 'request-visit-continued',
+          client_type: 'new',
+          is_logged_in: false,
+          pet_count: formData.newClientPets?.length || 0,
+        });
         break;
       case 'existing-client':
         setCurrentPage('existing-client-pets');
+        trackEvent('appointment_form_step_completed', {
+          step: 'existing-client',
+          step_name: 'Existing Client Information',
+          next_step: 'existing-client-pets',
+          client_type: 'existing',
+          is_logged_in: isLoggedIn,
+        });
         break;
       case 'existing-client-pets':
         if (formData.lookingForEuthanasiaExisting === 'Yes') {
           setCurrentPage('euthanasia-intro');
+          trackEvent('appointment_form_step_completed', {
+            step: 'existing-client-pets',
+            step_name: 'Select Pet(s)',
+            next_step: 'euthanasia-intro',
+            client_type: 'existing',
+            is_logged_in: isLoggedIn,
+            appointment_type: 'euthanasia',
+            pet_count: formData.selectedPetIds?.length || 0,
+          });
         } else {
           setCurrentPage('request-visit-continued');
+          trackEvent('appointment_form_step_completed', {
+            step: 'existing-client-pets',
+            step_name: 'Select Pet(s)',
+            next_step: 'request-visit-continued',
+            client_type: 'existing',
+            is_logged_in: isLoggedIn,
+            appointment_type: 'regular_visit',
+            pet_count: formData.selectedPetIds?.length || 0,
+          });
         }
         break;
       case 'euthanasia-intro':
         setCurrentPage('euthanasia-service-area');
+        trackEvent('appointment_form_step_completed', {
+          step: 'euthanasia-intro',
+          step_name: 'Euthanasia Details',
+          next_step: 'euthanasia-service-area',
+          client_type: clientType,
+          is_logged_in: isLoggedIn,
+          appointment_type: 'euthanasia',
+        });
         break;
       case 'euthanasia-service-area':
         if (formData.serviceArea === 'Kennebunk / Greater Portland / Augusta Area') {
           setCurrentPage('euthanasia-portland');
+          trackEvent('appointment_form_step_completed', {
+            step: 'euthanasia-service-area',
+            step_name: 'Service Area Selection',
+            next_step: 'euthanasia-portland',
+            client_type: clientType,
+            is_logged_in: isLoggedIn,
+            appointment_type: 'euthanasia',
+            service_area: 'Kennebunk / Greater Portland / Augusta Area',
+          });
         } else if (formData.serviceArea === 'Maine High Peaks Area') {
           setCurrentPage('euthanasia-high-peaks');
+          trackEvent('appointment_form_step_completed', {
+            step: 'euthanasia-service-area',
+            step_name: 'Service Area Selection',
+            next_step: 'euthanasia-high-peaks',
+            client_type: clientType,
+            is_logged_in: isLoggedIn,
+            appointment_type: 'euthanasia',
+            service_area: 'Maine High Peaks Area',
+          });
         }
         break;
       case 'euthanasia-portland':
       case 'euthanasia-high-peaks':
         setCurrentPage('euthanasia-continued');
+        trackEvent('appointment_form_step_completed', {
+          step: currentPage,
+          step_name: currentPage === 'euthanasia-portland' ? 'Euthanasia Scheduling (Portland)' : 'Euthanasia Scheduling (High Peaks)',
+          next_step: 'euthanasia-continued',
+          client_type: clientType,
+          is_logged_in: isLoggedIn,
+          appointment_type: 'euthanasia',
+        });
         break;
       case 'euthanasia-continued':
         handleSubmit();
@@ -2262,6 +2392,24 @@ export default function AppointmentRequestForm() {
       
       // Send to API endpoint
       await http.post('/public/appointments/form', finalPayload);
+      
+      // Track successful form submission
+      const petCount = isLoggedIn 
+        ? (formData.selectedPetIds?.length || 0)
+        : (formData.newClientPets?.length || 0);
+      
+      trackEvent('appointment_form_submitted', {
+        client_type: isExistingClient ? 'existing' : 'new',
+        is_logged_in: isLoggedIn,
+        appointment_type: isEuthanasia ? 'euthanasia' : 'regular_visit',
+        pet_count: petCount,
+        has_preferred_doctor: !!submissionData.preferredDoctor,
+        service_area: formData.serviceArea || formData.serviceAreaVisit || undefined,
+        has_time_preferences: !!(formData.selectedDateTimeSlots && Object.keys(formData.selectedDateTimeSlots).length > 0) || 
+                              !!(formData.selectedDateTimeSlotsVisit && Object.keys(formData.selectedDateTimeSlotsVisit).length > 0),
+        how_soon: formData.howSoon || undefined,
+        membership_interest: formData.membershipInterest || undefined,
+      });
       
       setCurrentPage('success');
     } catch (error: any) {
