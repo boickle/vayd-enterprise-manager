@@ -1,0 +1,32 @@
+[
+  {
+    "id": "pet-1",
+    "dbId": "db-1",
+    "clientId": "client-1",
+    "name": "Buddy",
+    "species": "Canine",
+    "breed": "Golden Retriever",
+    "dob": "2020-01-15",
+    "subscription": null,
+    "primaryProviderName": "Dr. Heather Crispell",
+    "photoUrl": null,
+    "wellnessPlans": [],
+    "alerts": null
+  },
+  {
+    "id": "pet-2",
+    "dbId": "db-2",
+    "clientId": "client-1",
+    "name": "Max",
+    "species": "Canine",
+    "breed": "Labrador Retriever",
+    "dob": "2021-03-20",
+    "subscription": null,
+    "primaryProviderName": null,
+    "photoUrl": null,
+    "wellnessPlans": [],
+    "alerts": null
+  }
+]
+
+

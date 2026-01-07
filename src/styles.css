@@ -29,12 +29,14 @@ body,
 #root {
   height: 100%;
   height: 100dvh; /* Use dynamic viewport height for mobile */
+  width: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 html {
   overflow: hidden; /* Prevent body scroll that can show browser UI */
-  /* Use safe area insets for devices with notches */
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  /* Safe area insets handled on body and specific elements, not html */
 }
 
 body {
@@ -46,6 +48,7 @@ body {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   margin: 0;
+  padding: 0;
   font-family:
     'Open Sans',
     ui-sans-serif,
@@ -86,6 +89,15 @@ a:hover {
   max-width: 1100px;
   margin: 0 auto;
   padding: 24px;
+}
+
+/* Ensure main element fills screen for client portal */
+main:not(.container) {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
 }
 
 .navbar {

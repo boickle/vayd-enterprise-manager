@@ -22,6 +22,7 @@ import ClientPortal from './pages/ClientPortal';
 import MembershipSignup from './pages/MembershipSignup';
 import MembershipPayment from './pages/MembershipPayment';
 import MembershipUpgrade from './pages/MembershipUpgrade';
+import AppointmentRequestForm from './pages/AppointmentRequestForm';
 import { usePageTracking } from './hooks/usePageTracking';
 
 /** ------------------------------------------------------------------
@@ -99,13 +100,28 @@ export default function App() {
         location.pathname !== '/reset-password' &&
         location.pathname !== '/request-reset' && (
         <header className="navbar">
-          <div className="brand">
+          <div className="brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <img
               src="/final_thick_lines_cropped.jpeg"
               alt="VAYD Scout Logo"
-              style={{ height: '40px', width: 'auto' }}
+              style={{
+                height: '60px',
+                width: 'auto',
+                opacity: 0.9,
+                mixBlendMode: 'multiply',
+              }}
             />
-            <span style={{ marginLeft: '8px', fontWeight: 600 }}>VAYD Scout</span>
+            <span style={{
+              fontFamily: "'Libre Baskerville', 'Times New Roman', serif",
+              fontWeight: 400,
+              fontSize: '30px',
+              color: '#2c1810',
+              lineHeight: '60px',
+              display: 'flex',
+              alignItems: 'center',
+            }}>
+              Scout<sup style={{ fontSize: '9px', verticalAlign: 'super', marginLeft: '2px', lineHeight: 0, position: 'relative', top: '-8px' }}>TM</sup>
+            </span>
           </div>
 
           {/* Tabs only for employees */}
@@ -190,6 +206,10 @@ export default function App() {
                 <MembershipUpgrade />
               </ProtectedRoute>
             }
+          />
+          <Route
+            path="/client-portal/request-appointment"
+            element={<AppointmentRequestForm />}
           />
 
           {/* Employees only: keep these pages alive across tab switches */}

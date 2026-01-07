@@ -1,0 +1,24 @@
+{
+  "candidates": [
+    {
+      "suggestedStartIso": "2024-01-15T14:00:00-05:00",
+      "date": "2024-01-15",
+      "doctorId": 1,
+      "doctorName": "Dr. Abigail Messina"
+    },
+    {
+      "suggestedStartIso": "2024-01-16T10:00:00-05:00",
+      "date": "2024-01-16",
+      "doctorId": 1,
+      "doctorName": "Dr. Abigail Messina"
+    },
+    {
+      "suggestedStartIso": "2024-01-17T15:00:00-05:00",
+      "date": "2024-01-17",
+      "doctorId": 1,
+      "doctorName": "Dr. Abigail Messina"
+    }
+  ],
+  "status": "OK"
+}
+

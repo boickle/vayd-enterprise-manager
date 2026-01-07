@@ -78,8 +78,10 @@ export default function LoginPage() {
     gridTemplateColumns: 'minmax(0, 1.1fr) minmax(0, 1fr)',
     alignItems: 'flex-start',
     gap: 0,
-    padding: 'min(4vh, 40px) min(8vw, 96px) min(4vh, 40px)',
+    padding: 'min(4vh, 40px) min(8vw, 96px)',
     background: 'radial-gradient(1000px 600px at 20% -10%, #ecfff8 0%, transparent 60%), #f6fbf9',
+    overflowX: 'hidden',
+    boxSizing: 'border-box',
   };
 
   const headingStyle: CSSProperties = {
@@ -89,7 +91,8 @@ export default function LoginPage() {
     lineHeight: 1.4,
     color: '#0f172a',
     textAlign: 'center',
-    whiteSpace: 'nowrap',
+    wordWrap: 'break-word',
+    overflowWrap: 'break-word',
   };
 
   const introStyle: CSSProperties = {
@@ -98,6 +101,8 @@ export default function LoginPage() {
     lineHeight: 1.4,
     maxWidth: 560,
     color: '#1f2937',
+    wordWrap: 'break-word',
+    overflowWrap: 'break-word',
   };
 
   const panelStyle: CSSProperties = {
@@ -165,6 +170,8 @@ export default function LoginPage() {
     marginBottom: '0',
     width: '100%',
     paddingBottom: '32px',
+    boxSizing: 'border-box',
+    overflow: 'hidden',
   };
 
   const logoStyle: CSSProperties = {
@@ -193,10 +200,27 @@ export default function LoginPage() {
   };
 
   const responsiveStyles = `
+    .login-page {
+      box-sizing: border-box;
+      overflow-x: hidden;
+    }
+    .login-page * {
+      box-sizing: border-box;
+    }
     .login-page .auth-hero {
       display: flex;
       flex-direction: column;
       gap: 32px;
+      width: 100%;
+      max-width: 100%;
+      overflow-wrap: break-word;
+      word-wrap: break-word;
+    }
+    .login-page .auth-hero p,
+    .login-page .auth-hero div {
+      overflow-wrap: break-word;
+      word-wrap: break-word;
+      max-width: 100%;
     }
     .login-page .auth-panel form {
       width: 100%;
@@ -218,9 +242,14 @@ export default function LoginPage() {
     @media (max-width: 1024px) {
       .login-page {
         grid-template-columns: 1fr !important;
-        padding: 40px 56px 40px !important;
+        padding: 40px 56px !important;
         gap: 48px !important;
         text-align: center;
+      }
+      .login-page .auth-logo h1 {
+        white-space: normal !important;
+        overflow-wrap: break-word !important;
+        word-wrap: break-word !important;
       }
       .login-page .auth-hero {
         align-items: center;
@@ -252,8 +281,13 @@ export default function LoginPage() {
     }
     @media (max-width: 768px) {
       .login-page {
-        padding: 32px 24px 32px !important;
+        padding: 32px 24px !important;
         gap: 40px !important;
+      }
+      .login-page .auth-logo h1 {
+        white-space: normal !important;
+        overflow-wrap: break-word !important;
+        word-wrap: break-word !important;
       }
       .login-page .auth-hero {
         align-items: center;
@@ -277,8 +311,19 @@ export default function LoginPage() {
     }
     @media (max-width: 480px) {
       .login-page {
-        padding: 24px 16px 32px !important;
+        padding: 24px 16px !important;
         gap: 32px !important;
+      }
+      .login-page .auth-logo h1 {
+        white-space: normal !important;
+        overflow-wrap: break-word !important;
+        word-wrap: break-word !important;
+      }
+      .login-page .auth-hero p,
+      .login-page .auth-hero div,
+      .login-page .auth-panel > div {
+        overflow-wrap: break-word !important;
+        word-wrap: break-word !important;
       }
       .login-page .auth-hero {
         padding-top: 40px !important;
@@ -323,7 +368,7 @@ export default function LoginPage() {
           </div>
           <div style={{ marginTop: '8px' }}>
             <a 
-              href="https://form.jotform.com/221585880190157" 
+              href={import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment'} 
               style={{ color: '#052940', textDecoration: 'underline', cursor: 'pointer' }}
             >
               Click here to get started.
