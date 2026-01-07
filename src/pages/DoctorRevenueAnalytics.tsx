@@ -116,6 +116,8 @@ const normalizeProvider = (p: any): Provider => {
     bonusRevenueGoal: toNum(p?.bonusRevenueGoal),
     dailyPointGoal: toNum(p?.dailyPointGoal),
     weeklyPointGoal: toNum(p?.weeklyPointGoal),
+    isProvider: p?.isProvider ?? p?.is_provider ?? true,
+    isActive: p?.isActive ?? p?.is_active ?? p?.active ?? true,
   };
 };
 
@@ -202,10 +204,15 @@ export default function DoctorRevenueAnalyticsPage() {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [isSingleDay, setIsSingleDay] = useState(false);
 
-  // Providers
+  // Providers - store all providers for revenue calculations
   const [providers, setProviders] = useState<Provider[]>([]);
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>(''); // '' means all doctors
   const [providersLoading, setProvidersLoading] = useState(false);
+
+  // Filtered providers for dropdown - only show active providers with isProvider=true
+  const activeProviders = useMemo(() => {
+    return providers.filter((p) => p.isProvider === true && p.isActive === true);
+  }, [providers]);
 
   // Revenue data
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
@@ -339,7 +346,7 @@ export default function DoctorRevenueAnalyticsPage() {
     (async () => {
       try {
         setProvidersLoading(true);
-        const list = await fetchPrimaryProviders();
+        const list = await fetchPrimaryProviders({ includeInactive: true });
         if (!alive) return;
 
         const raw = Array.isArray(list)
@@ -921,7 +928,7 @@ export default function DoctorRevenueAnalyticsPage() {
                   onChange={(e) => setSelectedDoctorId(e.target.value)}
                 >
                   <MenuItem value="">All Doctors</MenuItem>
-                  {providers.map((p) => (
+                  {activeProviders.map((p) => (
                     <MenuItem key={String(p.id)} value={String(p.id)}>
                       {p.name}
                     </MenuItem>

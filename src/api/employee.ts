@@ -9,6 +9,8 @@ export type Provider = {
   bonusRevenueGoal?: number | null;
   dailyPointGoal?: number | null;
   weeklyPointGoal?: number | null;
+  isProvider?: boolean;
+  isActive?: boolean;
 };
 
 function buildProviderName(r: any): string {
@@ -27,8 +29,12 @@ function buildProviderName(r: any): string {
   return r.name || `Provider ${r.id ?? ''}`;
 }
 
-export async function fetchPrimaryProviders(): Promise<Provider[]> {
-  const { data } = await http.get('/employees/providers');
+export async function fetchPrimaryProviders(options?: { includeInactive?: boolean }): Promise<Provider[]> {
+  const params: Record<string, string> = {};
+  if (options?.includeInactive) {
+    params.includeInactive = 'true';
+  }
+  const { data } = await http.get('/employees/providers', { params });
   const rows: any[] = Array.isArray(data) ? data : (data?.items ?? []);
 
   return rows.map((r) => ({
@@ -40,6 +46,8 @@ export async function fetchPrimaryProviders(): Promise<Provider[]> {
     bonusRevenueGoal: r?.bonusRevenueGoal ?? null,
     dailyPointGoal: r?.dailyPointGoal ?? null,
     weeklyPointGoal: r?.weeklyPointGoal ?? null,
+    isProvider: r?.isProvider ?? r?.is_provider ?? true, // Default to true if not specified
+    isActive: r?.isActive ?? r?.is_active ?? r?.active ?? true, // Default to true if not specified
   }));
 }
 
