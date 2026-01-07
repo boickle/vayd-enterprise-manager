@@ -371,6 +371,16 @@ export default function CreateClientUser() {
           <p style={{ margin: '0 0 16px 0' }}>
             Enter the email we have on file and we&apos;ll send you a secure setup link to access your pet&apos;s information and membership options. The rest is easy.
           </p>
+          <p style={{ margin: '0 0 20px 0' }}>
+            <a 
+              href="https://www.vetatyourdoor.com/memberships" 
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#052940', textDecoration: 'underline', cursor: 'pointer' }}
+            >
+              Explore Memberships
+            </a>
+          </p>
           <p style={{ margin: '0 0 0px 0' }}>
             <strong>New to Vet At Your Door?</strong>
           </p>
@@ -421,7 +431,7 @@ export default function CreateClientUser() {
           </form>
         </div>
 
-        <div style={{ fontSize: 20, lineHeight: 1.4, marginTop: '38px' }}>
+        <div style={{ fontSize: 20, lineHeight: 1.4, marginTop: '42px' }}>
           <div>Already have an account? Sign in to access your portal:</div>
         </div>
 
