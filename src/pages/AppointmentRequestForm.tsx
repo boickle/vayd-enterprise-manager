@@ -265,10 +265,32 @@ export default function AppointmentRequestForm() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
+  // Get appointment type by name
+  const getAppointmentTypeByName = (name: string): AppointmentType | undefined => {
+    return appointmentTypes.find(type => type.name === name);
+  };
+
+  // Check if an appointment type is euthanasia by its name
+  const isEuthanasiaAppointmentType = (appointmentTypeName: string): boolean => {
+    return appointmentTypeName === 'Euthanasia';
+  };
+
+  // Helper to check if appointment type name matches common patterns (for placeholders)
+  const matchesAppointmentTypeName = (appointmentTypeName: string, patterns: string[]): boolean => {
+    const type = getAppointmentTypeByName(appointmentTypeName);
+    if (!type) return false;
+    const nameLower = type.name.toLowerCase();
+    const prettyNameLower = type.prettyName.toLowerCase();
+    return patterns.some(pattern => 
+      nameLower.includes(pattern.toLowerCase()) || 
+      prettyNameLower.includes(pattern.toLowerCase())
+    );
+  };
+
   // Get appointment type options for the form
-  // Returns array of pretty names, sorted to show euthanasia last if present
+  // Returns array of objects with name and prettyName, sorted to show euthanasia last if present
   // Filters by newPatientAllowed for new patients
-  const getAppointmentTypeOptions = (): string[] => {
+  const getAppointmentTypeOptions = (): Array<{ name: string; prettyName: string }> => {
     if (loadingAppointmentTypes || appointmentTypes.length === 0) {
       return []; // Return empty array while loading
     }
@@ -285,11 +307,12 @@ export default function AppointmentRequestForm() {
       filteredTypes = appointmentTypes.filter(type => type.newPatientAllowed === true);
     }
     
-    // Map to pretty names and sort so euthanasia appears last
-    const options = filteredTypes.map(type => type.prettyName);
-    const euthanasiaIndex = options.findIndex(opt => 
-      opt.toLowerCase().includes('euthanasia') || opt.toLowerCase().includes('end-of-life')
-    );
+    // Map to objects with name and prettyName, and sort so euthanasia appears last
+    const options = filteredTypes.map(type => ({
+      name: type.name,
+      prettyName: type.prettyName || type.name,
+    }));
+    const euthanasiaIndex = options.findIndex(opt => isEuthanasiaAppointmentType(opt.name));
     
     if (euthanasiaIndex !== -1) {
       // Move euthanasia to the end
@@ -301,8 +324,8 @@ export default function AppointmentRequestForm() {
     return options;
   };
 
-  // Get all selected appointment type prettyNames from the form
-  // Returns a Set of unique appointment type prettyNames selected across all pets
+  // Get all selected appointment type names from the form
+  // Returns a Set of unique appointment type names (not prettyNames) selected across all pets
   const getSelectedAppointmentTypes = (): Set<string> => {
     const selectedTypes = new Set<string>();
     
@@ -311,6 +334,7 @@ export default function AppointmentRequestForm() {
       formData.selectedPetIds.forEach(petId => {
         const petData = formData.petSpecificData?.[petId];
         if (petData?.needsToday) {
+          // needsToday now stores the appointment type name, not prettyName
           selectedTypes.add(petData.needsToday);
         }
       });
@@ -340,7 +364,7 @@ export default function AppointmentRequestForm() {
   };
 
   // Filter veterinarians to only include those who accept ALL selected appointment types
-  // Takes raw veterinarian data and filters based on appointment types
+  // Takes raw veterinarian data and filters based on appointment type names (not prettyNames)
   const filterVeterinariansByAppointmentTypes = (veterinarians: any[]): any[] => {
     const selectedTypes = getSelectedAppointmentTypes();
     
@@ -350,12 +374,13 @@ export default function AppointmentRequestForm() {
     }
     
     return veterinarians.filter((vet) => {
-      // Get all appointment type prettyNames that this veterinarian accepts
+      // Get all appointment type names that this veterinarian accepts
       const vetAppointmentTypes = new Set<string>();
       if (vet.appointmentTypes && Array.isArray(vet.appointmentTypes)) {
         vet.appointmentTypes.forEach((aptType: any) => {
-          if (aptType.prettyName) {
-            vetAppointmentTypes.add(aptType.prettyName);
+          // Use the name field, not prettyName (selectedTypes contains appointment type names)
+          if (aptType.name) {
+            vetAppointmentTypes.add(aptType.name);
           }
         });
       }
@@ -726,11 +751,11 @@ export default function AppointmentRequestForm() {
     const hasEuthanasiaPet = 
       (formData.selectedPetIds?.some(petId => {
         const petData = formData.petSpecificData?.[petId];
-        return petData?.needsToday?.toLowerCase().includes('euthanasia') || petData?.needsToday?.toLowerCase().includes('end-of-life') || false;
+        return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
       }) || false) ||
       (formData.newClientPets?.some(pet => {
         const petData = formData.petSpecificData?.[pet.id];
-        return petData?.needsToday?.toLowerCase().includes('euthanasia') || petData?.needsToday?.toLowerCase().includes('end-of-life') || false;
+        return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
       }) || false);
     
     console.log('[AppointmentForm] useEffect check:', {
@@ -1679,28 +1704,7 @@ export default function AppointmentRequestForm() {
     // Only re-filter if we have raw data already loaded
     // Re-filter public veterinarians for new clients
     if (rawPublicVeterinarians.length > 0 && !isLoggedIn) {
-      const selectedTypes = getSelectedAppointmentTypes();
-      
-      // If no appointment types selected, show all (after filtering by acceptingNewPatients)
-      const filteredByAppointmentTypes = selectedTypes.size === 0 
-        ? rawPublicVeterinarians
-        : rawPublicVeterinarians.filter((vet) => {
-            const vetAppointmentTypes = new Set<string>();
-            if (vet.appointmentTypes && Array.isArray(vet.appointmentTypes)) {
-              vet.appointmentTypes.forEach((aptType: any) => {
-                if (aptType.prettyName) {
-                  vetAppointmentTypes.add(aptType.prettyName);
-                }
-              });
-            }
-            
-            for (const selectedType of selectedTypes) {
-              if (!vetAppointmentTypes.has(selectedType)) {
-                return false;
-              }
-            }
-            return true;
-          });
+      const filteredByAppointmentTypes = filterVeterinariansByAppointmentTypes(rawPublicVeterinarians);
       
       const publicVeterinariansData = filteredByAppointmentTypes.map(mapRawVeterinarianToPublicProvider);
       
@@ -1715,28 +1719,7 @@ export default function AppointmentRequestForm() {
     
     // Re-filter veterinarians for logged-in clients
     if (rawVeterinarians.length > 0 && isLoggedIn) {
-      const selectedTypes = getSelectedAppointmentTypes();
-      
-      // If no appointment types selected, show all (after filtering by isActive)
-      const filteredByAppointmentTypes = selectedTypes.size === 0
-        ? rawVeterinarians
-        : rawVeterinarians.filter((vet) => {
-            const vetAppointmentTypes = new Set<string>();
-            if (vet.appointmentTypes && Array.isArray(vet.appointmentTypes)) {
-              vet.appointmentTypes.forEach((aptType: any) => {
-                if (aptType.prettyName) {
-                  vetAppointmentTypes.add(aptType.prettyName);
-                }
-              });
-            }
-            
-            for (const selectedType of selectedTypes) {
-              if (!vetAppointmentTypes.has(selectedType)) {
-                return false;
-              }
-            }
-            return true;
-          });
+      const filteredByAppointmentTypes = filterVeterinariansByAppointmentTypes(rawVeterinarians);
       
       const providersData = filteredByAppointmentTypes.map(mapRawVeterinarianToProvider);
       setProviders(providersData);
@@ -1939,7 +1922,7 @@ export default function AppointmentRequestForm() {
                 newErrors[`needsToday.${pet.id}`] = 'Please select an option for what your pet needs today';
               }
               if (petData?.needsToday) {
-                if (petData.needsToday.toLowerCase().includes('euthanasia') || petData.needsToday.toLowerCase().includes('end-of-life')) {
+                if (petData.needsToday && isEuthanasiaAppointmentType(petData.needsToday)) {
                   if (!petData.euthanasiaReason?.trim()) {
                     newErrors[`euthanasiaReason.${pet.id}`] = 'Please provide details about the reason for this appointment';
                   }
@@ -1953,8 +1936,8 @@ export default function AppointmentRequestForm() {
                     newErrors[`aftercarePreference.${pet.id}`] = 'Please select your preferences for aftercare';
                   }
                 } else if (
-                  petData.needsToday === 'My pet isn\'t feeling well (new concern or illness)' ||
-                  petData.needsToday?.startsWith('Recheck / follow-up')
+                                                  (petData.needsToday && matchesAppointmentTypeName(petData.needsToday, ['not feeling well', 'illness', 'Medical Visit'])) ||
+                                                  (petData.needsToday && matchesAppointmentTypeName(petData.needsToday, ['recheck', 'follow-up', 'Follow Up']))
                 ) {
                   if (!petData.needsTodayDetails?.trim()) {
                     newErrors[`needsTodayDetails.${pet.id}`] = 'Please provide details about the reason for this appointment';
@@ -1999,7 +1982,7 @@ export default function AppointmentRequestForm() {
               }
               // Validate based on selected option
               if (petData?.needsToday) {
-                if (petData.needsToday.toLowerCase().includes('euthanasia') || petData.needsToday.toLowerCase().includes('end-of-life')) {
+                if (petData.needsToday && isEuthanasiaAppointmentType(petData.needsToday)) {
                   // Validate euthanasia fields
                   if (!petData.euthanasiaReason?.trim()) {
                     newErrors[`euthanasiaReason.${petId}`] = 'Please let us know what is going on with your pet';
@@ -2092,11 +2075,11 @@ export default function AppointmentRequestForm() {
         const hasEuthanasiaPet = 
           (formData.selectedPetIds?.some(petId => {
             const petData = formData.petSpecificData?.[petId];
-            return petData?.needsToday?.toLowerCase().includes('euthanasia') || petData?.needsToday?.toLowerCase().includes('end-of-life') || false;
+            return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
           }) || false) ||
           (formData.newClientPets?.some(pet => {
             const petData = formData.petSpecificData?.[pet.id];
-            return petData?.needsToday?.toLowerCase().includes('euthanasia') || petData?.needsToday?.toLowerCase().includes('end-of-life') || false;
+            return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
           }) || false);
         
         const isUrgentTimeframe = formData.howSoon === 'Emergent – today' || formData.howSoon === 'Urgent – within 24–48 hours';
@@ -2391,11 +2374,11 @@ export default function AppointmentRequestForm() {
       const hasEuthanasiaPet = 
         (formData.selectedPetIds?.some(petId => {
           const petData = formData.petSpecificData?.[petId];
-          return petData?.needsToday?.toLowerCase().includes('euthanasia') || petData?.needsToday?.toLowerCase().includes('end-of-life') || false;
+          return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
         }) || false) ||
         (formData.newClientPets?.some(pet => {
           const petData = formData.petSpecificData?.[pet.id];
-          return petData?.needsToday?.toLowerCase().includes('euthanasia') || petData?.needsToday?.toLowerCase().includes('end-of-life') || false;
+          return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
         }) || false);
       
       const isEuthanasia = 
@@ -3972,7 +3955,7 @@ export default function AppointmentRequestForm() {
                             return (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                                 {appointmentTypeOptions.map((option) => (
-                                  <div key={option}>
+                                  <div key={option.name}>
                                     <label
                                       style={{
                                         display: 'flex',
@@ -3987,19 +3970,19 @@ export default function AppointmentRequestForm() {
                                       <input
                                         type="radio"
                                         name={`needsToday-${pet.id}`}
-                                        value={option}
-                                        checked={petData.needsToday === option}
+                                        value={option.name}
+                                        checked={petData.needsToday === option.name}
                                         onChange={(e) => {
                                           updatePetSpecificData(pet.id, 'needsToday', e.target.value);
                                           updatePetSpecificData(pet.id, 'needsTodayDetails', '');
                                         }}
                                         style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
                                       />
-                                      <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option}</span>
+                                      <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option.prettyName}</span>
                                     </label>
-                                    {petData.needsToday === option && (
+                                    {petData.needsToday === option.name && (
                                       <div style={{ marginLeft: '26px', marginTop: '8px', marginBottom: '8px' }}>
-                                        {option.toLowerCase().includes('euthanasia') || option.toLowerCase().includes('end-of-life') ? (
+                                        {isEuthanasiaAppointmentType(option.name) ? (
                                           // Euthanasia questions
                                           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                                             <div>
@@ -4136,11 +4119,11 @@ export default function AppointmentRequestForm() {
                                             value={petData.needsTodayDetails || ''}
                                             onChange={(e) => updatePetSpecificData(pet.id, 'needsTodayDetails', e.target.value)}
                                             placeholder={
-                                              option.toLowerCase().includes('wellness') || option.toLowerCase().includes('check-up')
+                                              matchesAppointmentTypeName(option.name, ['wellness', 'check-up'])
                                                 ? `Do you have any specific concerns you want to discuss at the visit?`
-                                                : option.toLowerCase().includes('not feeling well') || option.toLowerCase().includes('illness')
+                                                : matchesAppointmentTypeName(option.name, ['not feeling well', 'illness', 'Medical Visit'])
                                                 ? `Describe what is going on with ${pet.name || 'this pet'}`
-                                                : option.toLowerCase().includes('recheck') || option.toLowerCase().includes('follow-up')
+                                                : matchesAppointmentTypeName(option.name, ['recheck', 'follow-up', 'Follow Up'])
                                                 ? `What are we checking on for ${pet.name || 'this pet'}?`
                                                 : 'Please provide details about the reason for this appointment...'
                                             }
@@ -4829,7 +4812,7 @@ export default function AppointmentRequestForm() {
                                   }
                                   
                                   return appointmentTypeOptions.map((option) => (
-                                  <div key={option}>
+                                  <div key={option.name}>
                                     <label
                                       style={{
                                         display: 'flex',
@@ -4844,8 +4827,8 @@ export default function AppointmentRequestForm() {
                                       <input
                                         type="radio"
                                         name={`needsToday-${pet.id}`}
-                                        value={option}
-                                        checked={petData.needsToday === option}
+                                        value={option.name}
+                                        checked={petData.needsToday === option.name}
                                         onChange={(e) => {
                                           updatePetSpecificData(pet.id, 'needsToday', e.target.value);
                                           // Clear details when changing selection
@@ -4853,11 +4836,11 @@ export default function AppointmentRequestForm() {
                                         }}
                                         style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
                                       />
-                                      <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option}</span>
+                                      <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option.prettyName}</span>
                                     </label>
-                                    {petData.needsToday === option && (
+                                    {petData.needsToday === option.name && (
                                       <div style={{ marginLeft: '26px', marginTop: '8px', marginBottom: '8px' }}>
-                                        {option.toLowerCase().includes('euthanasia') || option.toLowerCase().includes('end-of-life') ? (
+                                        {isEuthanasiaAppointmentType(option.name) ? (
                                           // Euthanasia questions
                                           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                                             <div>
@@ -4995,13 +4978,13 @@ export default function AppointmentRequestForm() {
                                             value={petData.needsTodayDetails || ''}
                                             onChange={(e) => updatePetSpecificData(pet.id, 'needsTodayDetails', e.target.value)}
                                             placeholder={
-                                              option.toLowerCase().includes('wellness') || option.toLowerCase().includes('check-up')
+                                              matchesAppointmentTypeName(option.name, ['wellness', 'check-up'])
                                                 ? `Do you have any specific concerns you want to discuss at the visit?`
-                                                : option.toLowerCase().includes('not feeling well') || option.toLowerCase().includes('illness')
+                                                : matchesAppointmentTypeName(option.name, ['not feeling well', 'illness', 'Medical Visit'])
                                                 ? `Describe what is going on with ${pet.name}`
-                                                : option.toLowerCase().includes('recheck') || option.toLowerCase().includes('follow-up')
+                                                : matchesAppointmentTypeName(option.name, ['recheck', 'follow-up', 'Follow Up'])
                                                 ? `What are we checking on for ${pet.name}?`
-                                                : option.toLowerCase().includes('technician')
+                                                : matchesAppointmentTypeName(option.name, ['technician', 'Tech'])
                                                 ? `What would you like done for ${pet.name}?`
                                                 : 'Please provide details about the reason for this appointment...'
                                             }
@@ -5668,7 +5651,7 @@ export default function AppointmentRequestForm() {
                                       }
                                       
                                       return appointmentTypeOptions.map((option) => (
-                                      <div key={option}>
+                                      <div key={option.name}>
                                         <label
                                           style={{
                                             display: 'flex',
@@ -5683,19 +5666,19 @@ export default function AppointmentRequestForm() {
                                           <input
                                             type="radio"
                                             name={`needsToday-${pet.id}`}
-                                            value={option}
-                                            checked={petData.needsToday === option}
+                                            value={option.name}
+                                            checked={petData.needsToday === option.name}
                                             onChange={(e) => {
                                               updatePetSpecificData(pet.id, 'needsToday', e.target.value);
                                               updatePetSpecificData(pet.id, 'needsTodayDetails', '');
                                             }}
                                             style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
                                           />
-                                          <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option}</span>
+                                          <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option.prettyName}</span>
                                         </label>
-                                        {petData.needsToday === option && (
+                                        {petData.needsToday === option.name && (
                                           <div style={{ marginLeft: '26px', marginTop: '8px', marginBottom: '8px' }}>
-                                            {option.toLowerCase().includes('euthanasia') || option.toLowerCase().includes('end-of-life') ? (
+                                            {isEuthanasiaAppointmentType(option.name) ? (
                                               // Euthanasia questions - same as existing pets
                                               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                                                 <div>
@@ -5832,13 +5815,13 @@ export default function AppointmentRequestForm() {
                                                 value={petData.needsTodayDetails || ''}
                                                 onChange={(e) => updatePetSpecificData(pet.id, 'needsTodayDetails', e.target.value)}
                                                 placeholder={
-                                                  option.toLowerCase().includes('wellness') || option.toLowerCase().includes('check-up')
+                                                  matchesAppointmentTypeName(option.name, ['wellness', 'check-up'])
                                                     ? `Do you have any specific concerns you want to discuss at the visit?`
-                                                    : option.toLowerCase().includes('not feeling well') || option.toLowerCase().includes('illness')
+                                                    : matchesAppointmentTypeName(option.name, ['not feeling well', 'illness', 'Medical Visit'])
                                                     ? `Describe what is going on with ${pet.name || 'this pet'}`
-                                                    : option.toLowerCase().includes('recheck') || option.toLowerCase().includes('follow-up')
+                                                    : matchesAppointmentTypeName(option.name, ['recheck', 'follow-up', 'Follow Up'])
                                                     ? `What are we checking on for ${pet.name || 'this pet'}?`
-                                                    : option.toLowerCase().includes('technician')
+                                                    : matchesAppointmentTypeName(option.name, ['technician', 'Tech'])
                                                     ? `What would you like done for ${pet.name || 'this pet'}?`
                                                     : 'Please provide details about the reason for this appointment...'
                                                 }
@@ -6179,11 +6162,11 @@ export default function AppointmentRequestForm() {
         const hasEuthanasiaPetEuthanasiaPage = 
           (formData.selectedPetIds?.some(petId => {
             const petData = formData.petSpecificData?.[petId];
-            return petData?.needsToday?.toLowerCase().includes('euthanasia') || petData?.needsToday?.toLowerCase().includes('end-of-life') || false;
+            return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
           }) || false) ||
           (formData.newClientPets?.some(pet => {
             const petData = formData.petSpecificData?.[pet.id];
-            return petData?.needsToday?.toLowerCase().includes('euthanasia') || petData?.needsToday?.toLowerCase().includes('end-of-life') || false;
+            return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
           }) || false);
 
         return (
@@ -6329,11 +6312,11 @@ export default function AppointmentRequestForm() {
         const hasEuthanasiaPet = 
           (formData.selectedPetIds?.some(petId => {
             const petData = formData.petSpecificData?.[petId];
-            return petData?.needsToday?.toLowerCase().includes('euthanasia') || petData?.needsToday?.toLowerCase().includes('end-of-life') || false;
+            return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
           }) || false) ||
           (formData.newClientPets?.some(pet => {
             const petData = formData.petSpecificData?.[pet.id];
-            return petData?.needsToday?.toLowerCase().includes('euthanasia') || petData?.needsToday?.toLowerCase().includes('end-of-life') || false;
+            return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
           }) || false);
 
         return (
@@ -6980,11 +6963,11 @@ export default function AppointmentRequestForm() {
     const hasEuthanasiaPet = 
       (formData.selectedPetIds?.some(petId => {
         const petData = formData.petSpecificData?.[petId];
-        return petData?.needsToday?.toLowerCase().includes('euthanasia') || petData?.needsToday?.toLowerCase().includes('end-of-life') || false;
+        return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
       }) || false) ||
       (formData.newClientPets?.some(pet => {
         const petData = formData.petSpecificData?.[pet.id];
-        return petData?.needsToday?.toLowerCase().includes('euthanasia') || petData?.needsToday?.toLowerCase().includes('end-of-life') || false;
+        return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
       }) || false);
     
     const isEuthanasia = currentPage.startsWith('euthanasia') ||
