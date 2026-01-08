@@ -1121,13 +1121,15 @@ export default function AppointmentRequestForm() {
   useEffect(() => {
     if (!isLoggedIn) return;
 
+    // Defer execution to ensure it doesn't block initial render
     let alive = true;
-    (async () => {
-      setLoadingClientData(true);
-      
-      try {
-        // Always fetch pets first
-        const petsData = await fetchClientPets();
+    const timeoutId = setTimeout(() => {
+      (async () => {
+        setLoadingClientData(true);
+        
+        try {
+          // Always fetch pets first
+          const petsData = await fetchClientPets();
 
         if (!alive) return;
 
@@ -1385,10 +1387,12 @@ export default function AppointmentRequestForm() {
       } finally {
         if (alive) setLoadingClientData(false);
       }
-    })();
+      })();
+    }, 0); // Defer to next tick to avoid blocking initial render
 
     return () => {
       alive = false;
+      clearTimeout(timeoutId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -1625,77 +1629,87 @@ export default function AppointmentRequestForm() {
 
   // Fetch species list on mount
   useEffect(() => {
+    // Defer execution to ensure it doesn't block initial render
     let alive = true;
-    (async () => {
-      setLoadingSpecies(true);
-      try {
-        const response = await http.get(`/public/species-breeds?practiceId=${practiceId}`);
-        if (!alive) return;
-        const species = Array.isArray(response.data?.species) ? response.data.species : [];
-        // Filter to only show species with showInUi === true and include prettyName
-        setSpeciesList(
-          species
-            .filter((s: any) => s.showInUi !== false) // Only show species where showInUi is true (or undefined, defaulting to true)
-            .map((s: any) => ({ 
-              id: s.id, 
-              name: s.name,
-              prettyName: s.prettyName || s.name, // Use prettyName if available, fallback to name
-              showInUi: s.showInUi 
-            }))
-        );
-      } catch (error) {
-        console.error('[AppointmentForm] Failed to load species:', error);
-        if (alive) {
-          setSpeciesList([]);
+    const timeoutId = setTimeout(() => {
+      (async () => {
+        setLoadingSpecies(true);
+        try {
+          const response = await http.get(`/public/species-breeds?practiceId=${practiceId}`);
+          if (!alive) return;
+          const species = Array.isArray(response.data?.species) ? response.data.species : [];
+          // Filter to only show species with showInUi === true and include prettyName
+          setSpeciesList(
+            species
+              .filter((s: any) => s.showInUi !== false) // Only show species where showInUi is true (or undefined, defaulting to true)
+              .map((s: any) => ({ 
+                id: s.id, 
+                name: s.name,
+                prettyName: s.prettyName || s.name, // Use prettyName if available, fallback to name
+                showInUi: s.showInUi 
+              }))
+          );
+        } catch (error) {
+          console.error('[AppointmentForm] Failed to load species:', error);
+          if (alive) {
+            setSpeciesList([]);
+          }
+        } finally {
+          if (alive) {
+            setLoadingSpecies(false);
+          }
         }
-      } finally {
-        if (alive) {
-          setLoadingSpecies(false);
-        }
-      }
-    })();
+      })();
+    }, 0); // Defer to next tick to avoid blocking initial render
+
     return () => {
       alive = false;
+      clearTimeout(timeoutId);
     };
   }, [practiceId]);
 
   // Fetch appointment types on mount and when new patient status changes
   useEffect(() => {
+    // Defer execution to ensure it doesn't block initial render
     let alive = true;
-    (async () => {
-      setLoadingAppointmentTypes(true);
-      try {
-        // Determine if this is a new patient
-        // New patient = not logged in AND haven't used services before
-        const isNewPatient = !isLoggedIn && formData.haveUsedServicesBefore !== 'Yes';
-        
-        // Use authenticated endpoint for logged-in users, public endpoint for others
-        // Always filter to showInApptRequestForm=true since we only want types that appear in the form
-        // For new patients, also filter by newPatientAllowed=true
-        const types = await fetchAppointmentTypes(
-          practiceId,
-          true, // showInApptRequestForm
-          isNewPatient ? true : undefined, // newPatientAllowed for new patients only
-          isLoggedIn
-        );
-        if (!alive) return;
-        // The API already filters, but we ensure showInApptRequestForm is true as a safeguard
-        setAppointmentTypes(
-          types.filter((type) => type.showInApptRequestForm === true)
-        );
-      } catch (error) {
-        console.error('[AppointmentForm] Failed to load appointment types:', error);
-        if (alive) {
-          setAppointmentTypes([]);
+    const timeoutId = setTimeout(() => {
+      (async () => {
+        setLoadingAppointmentTypes(true);
+        try {
+          // Determine if this is a new patient
+          // New patient = not logged in AND haven't used services before
+          const isNewPatient = !isLoggedIn && formData.haveUsedServicesBefore !== 'Yes';
+          
+          // Use authenticated endpoint for logged-in users, public endpoint for others
+          // Always filter to showInApptRequestForm=true since we only want types that appear in the form
+          // For new patients, also filter by newPatientAllowed=true
+          const types = await fetchAppointmentTypes(
+            practiceId,
+            true, // showInApptRequestForm
+            isNewPatient ? true : undefined, // newPatientAllowed for new patients only
+            isLoggedIn
+          );
+          if (!alive) return;
+          // The API already filters, but we ensure showInApptRequestForm is true as a safeguard
+          setAppointmentTypes(
+            types.filter((type) => type.showInApptRequestForm === true)
+          );
+        } catch (error) {
+          console.error('[AppointmentForm] Failed to load appointment types:', error);
+          if (alive) {
+            setAppointmentTypes([]);
+          }
+        } finally {
+          if (alive) {
+            setLoadingAppointmentTypes(false);
+          }
         }
-      } finally {
-        if (alive) {
-          setLoadingAppointmentTypes(false);
-        }
-      }
-    })();
+      })();
+    }, 0); // Defer to next tick to avoid blocking initial render
+
     return () => {
       alive = false;
+      clearTimeout(timeoutId);
     };
   }, [practiceId, isLoggedIn, formData.haveUsedServicesBefore]);
 
