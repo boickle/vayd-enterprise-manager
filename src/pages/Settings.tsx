@@ -237,7 +237,28 @@ export default function Settings() {
         
         // Only update if schedule exists and has an id (required for API)
         if (schedule && schedule.id != null && Object.keys(updates).length > 0) {
-          updatePromises.push(updateWeeklySchedule(schedule.id, updates));
+          // Convert null values to undefined and filter them out to match API expectations
+          const cleanedUpdates: {
+            isWorkday?: boolean;
+            workStartLocal?: string;
+            workEndLocal?: string;
+            startDepotLat?: number;
+            startDepotLon?: number;
+            endDepotLat?: number;
+            endDepotLon?: number;
+          } = {};
+          
+          if (updates.isWorkday !== undefined) cleanedUpdates.isWorkday = updates.isWorkday;
+          if (updates.workStartLocal !== undefined && updates.workStartLocal !== null) cleanedUpdates.workStartLocal = updates.workStartLocal;
+          if (updates.workEndLocal !== undefined && updates.workEndLocal !== null) cleanedUpdates.workEndLocal = updates.workEndLocal;
+          if (updates.startDepotLat !== undefined && updates.startDepotLat !== null) cleanedUpdates.startDepotLat = updates.startDepotLat;
+          if (updates.startDepotLon !== undefined && updates.startDepotLon !== null) cleanedUpdates.startDepotLon = updates.startDepotLon;
+          if (updates.endDepotLat !== undefined && updates.endDepotLat !== null) cleanedUpdates.endDepotLat = updates.endDepotLat;
+          if (updates.endDepotLon !== undefined && updates.endDepotLon !== null) cleanedUpdates.endDepotLon = updates.endDepotLon;
+          
+          if (Object.keys(cleanedUpdates).length > 0) {
+            updatePromises.push(updateWeeklySchedule(schedule.id, cleanedUpdates));
+          }
         } else if (schedule && schedule.id == null) {
           // Schedule exists but has no id - this is a problem
           console.warn(`Schedule for day ${dayOfWeek} has no id, cannot update`);
@@ -708,12 +729,25 @@ export default function Settings() {
                       const key = `${selectedEmployeeForSchedule.id}-${dayOfWeek}`;
                       const updates = scheduleUpdates.get(key) || {};
                       const isWorkday = updates.isWorkday !== undefined ? updates.isWorkday : schedule.isWorkday;
-                      const workStartLocal = updates.workStartLocal !== undefined ? updates.workStartLocal : (schedule.workStartLocal || '');
-                      const workEndLocal = updates.workEndLocal !== undefined ? updates.workEndLocal : (schedule.workEndLocal || '');
-                      const startDepotLat = updates.startDepotLat !== undefined ? updates.startDepotLat : (schedule.startDepotLat || '');
-                      const startDepotLon = updates.startDepotLon !== undefined ? updates.startDepotLon : (schedule.startDepotLon || '');
-                      const endDepotLat = updates.endDepotLat !== undefined ? updates.endDepotLat : (schedule.endDepotLat || '');
-                      const endDepotLon = updates.endDepotLon !== undefined ? updates.endDepotLon : (schedule.endDepotLon || '');
+                      // Convert null to empty string for input fields (React inputs don't accept null)
+                      const workStartLocal = updates.workStartLocal !== undefined 
+                        ? (updates.workStartLocal ?? '') 
+                        : (schedule.workStartLocal ?? '');
+                      const workEndLocal = updates.workEndLocal !== undefined 
+                        ? (updates.workEndLocal ?? '') 
+                        : (schedule.workEndLocal ?? '');
+                      const startDepotLat = updates.startDepotLat !== undefined 
+                        ? (updates.startDepotLat ?? '') 
+                        : (schedule.startDepotLat ?? '');
+                      const startDepotLon = updates.startDepotLon !== undefined 
+                        ? (updates.startDepotLon ?? '') 
+                        : (schedule.startDepotLon ?? '');
+                      const endDepotLat = updates.endDepotLat !== undefined 
+                        ? (updates.endDepotLat ?? '') 
+                        : (schedule.endDepotLat ?? '');
+                      const endDepotLon = updates.endDepotLon !== undefined 
+                        ? (updates.endDepotLon ?? '') 
+                        : (schedule.endDepotLon ?? '');
 
                       return (
                         <div key={dayOfWeek} className="settings-schedule-item">
