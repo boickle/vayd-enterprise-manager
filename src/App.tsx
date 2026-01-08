@@ -16,6 +16,7 @@ import { ProtectedRoute } from './auth/ProtectedRoute';
 import { useAuth } from './auth/useAuth';
 import Home from './pages/Home';
 import AppTabs from './components/AppTabs';
+import UserMenu from './components/UserMenu';
 import { getAccessiblePages } from './app-pages';
 import CreateClientUser from './pages/CreateClientUser';
 import ClientPortal from './pages/ClientPortal';
@@ -128,20 +129,7 @@ export default function App() {
           {token && !isClient && <AppTabs pages={pages} />}
 
           <div className="spacer" />
-          {token && (
-            <div className="row">
-              <span className="muted">{userEmail ? `Signed in as ${userEmail}` : 'Signed in'}</span>
-              <button
-                className="btn secondary"
-                onClick={() => {
-                  logout();
-                  nav('/login');
-                }}
-              >
-                Log out
-              </button>
-            </div>
-          )}
+          {token && <UserMenu />}
         </header>
       )}
 

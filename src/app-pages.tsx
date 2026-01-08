@@ -10,6 +10,7 @@ import SimResults from './pages/SimResults';
 import MyMonth from './pages/MyMonth.';
 import MyDayToggle from './pages/MyDayToggle';
 import FillDayPage from './pages/FillDay';
+import Settings from './pages/Settings';
 
 // src/app-pages.ts
 export type AppPage = {
@@ -99,6 +100,12 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       label: 'Schedule Loader',
       element: <FillDayPage />,
       role: ['employee', 'admin', 'superadmin'],
+    },
+    {
+      path: '/settings',
+      label: 'Settings',
+      element: <Settings />,
+      role: ['admin', 'superadmin'],
     },
   ];
 
