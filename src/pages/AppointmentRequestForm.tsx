@@ -291,7 +291,8 @@ export default function AppointmentRequestForm() {
   // Get appointment type options for the form
   // Returns array of objects with name and prettyName, sorted to show euthanasia last if present
   // Filters by newPatientAllowed for new patients
-  const getAppointmentTypeOptions = (): Array<{ name: string; prettyName: string }> => {
+  // @param petId Optional pet ID to check if this specific pet is a new patient
+  const getAppointmentTypeOptions = (petId?: string): Array<{ name: string; prettyName: string }> => {
     if (loadingAppointmentTypes || appointmentTypes.length === 0) {
       return []; // Return empty array while loading
     }
@@ -300,11 +301,19 @@ export default function AppointmentRequestForm() {
     // New patient = not logged in AND haven't used services before
     const isNewPatient = !isLoggedIn && formData.haveUsedServicesBefore !== 'Yes';
     
+    // Check if the specific pet (if provided) is a new pet for an existing client
+    const isNewPetForExistingClient = petId && isLoggedIn && 
+      formData.existingClientNewPets?.some(pet => pet.id === petId);
+    
     // Filter appointment types based on newPatientAllowed for new patients
     // This is a safeguard in case the API didn't filter correctly
     let filteredTypes = appointmentTypes;
     if (isNewPatient) {
       // For new patients, only show appointment types where newPatientAllowed is true
+      filteredTypes = appointmentTypes.filter(type => type.newPatientAllowed === true);
+    } else if (isNewPetForExistingClient) {
+      // For existing clients with new patients, only show appointment types where newPatientAllowed is true
+      // (if the flag is false, new patients should NOT see that appointment type)
       filteredTypes = appointmentTypes.filter(type => type.newPatientAllowed === true);
     }
     
@@ -3877,7 +3886,7 @@ export default function AppointmentRequestForm() {
                           </label>
                           {(() => {
                             const petData = getPetData(pet.id);
-                            const appointmentTypeOptions = getAppointmentTypeOptions();
+                            const appointmentTypeOptions = getAppointmentTypeOptions(pet.id);
                             
                             // Show loading state if appointment types are still loading
                             if (loadingAppointmentTypes) {
@@ -4736,7 +4745,7 @@ export default function AppointmentRequestForm() {
                               </label>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                                 {(() => {
-                                  const appointmentTypeOptions = getAppointmentTypeOptions();
+                                  const appointmentTypeOptions = getAppointmentTypeOptions(pet.id);
                                   
                                   // Show loading state if appointment types are still loading
                                   if (loadingAppointmentTypes) {
@@ -5575,7 +5584,7 @@ export default function AppointmentRequestForm() {
                                   </label>
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                                     {(() => {
-                                      const appointmentTypeOptions = getAppointmentTypeOptions();
+                                      const appointmentTypeOptions = getAppointmentTypeOptions(pet.id);
                                       
                                       // Show loading state if appointment types are still loading
                                       if (loadingAppointmentTypes) {
