@@ -2,6 +2,8 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import type { Pet, Vaccination, PracticeInfo } from '../api/clientPortal';
 import { fetchPracticeInfo } from '../api/clientPortal';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 type VaccinationCertificateModalProps = {
   pet: Pet;
@@ -235,24 +237,26 @@ export default function VaccinationCertificateModal({
             }
             .pet-section {
               margin: 20px 0;
-              padding: 15px 20px;
+              padding: 12px 20px;
               background: #f9fafb;
               border-left: 4px solid #0f766e;
             }
             .pet-grid {
-              display: grid;
-              grid-template-columns: 1fr 1fr;
-              gap: 20px;
+              display: flex;
+              flex-wrap: wrap;
+              align-items: center;
+              gap: 16px;
+              font-size: 14px;
             }
             .pet-row {
-              margin-bottom: 6px;
+              margin-bottom: 0;
             }
             .pet-label {
               font-weight: 600;
               color: #374151;
-              font-size: 13px;
-              margin-bottom: 2px;
-              display: block;
+              font-size: 14px;
+              margin-bottom: 0;
+              display: inline;
             }
             .pet-value {
               color: #111827;
@@ -402,13 +406,17 @@ export default function VaccinationCertificateModal({
               }
               .pet-section {
                 margin: 15px 0;
-                padding: 12px 16px;
+                padding: 10px 16px;
+              }
+              .pet-grid {
+                gap: 12px;
+                font-size: 12px;
               }
               .pet-row {
-                margin-bottom: 4px;
+                margin-bottom: 0;
               }
               .pet-label {
-                font-size: 11px;
+                font-size: 12px;
               }
               .pet-value {
                 font-size: 12px;
@@ -468,14 +476,63 @@ export default function VaccinationCertificateModal({
     }, 250);
   };
 
+  const handleDownloadPDF = async () => {
+    if (!printRef.current) return;
+
+    try {
+      // Show loading state (optional - you could add a loading indicator)
+      const element = printRef.current;
+      
+      // Use html2canvas to capture the certificate as an image
+      const canvas = await html2canvas(element, {
+        scale: 2, // Higher quality
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        width: element.scrollWidth,
+        height: element.scrollHeight,
+      });
+
+      // Calculate PDF dimensions (letter size: 8.5 x 11 inches)
+      const imgWidth = 8.5;
+      const pageHeight = 11;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let heightLeft = imgHeight;
+
+      // Create PDF
+      const pdf = new jsPDF('portrait', 'in', 'letter');
+      let position = 0;
+
+      // Add image to PDF
+      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+
+      // Add additional pages if content is taller than one page
+      while (heightLeft >= 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+
+      // Generate filename
+      const filename = `Vaccination_Certificate_${pet.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+      
+      // Save the PDF
+      pdf.save(filename);
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('Failed to generate PDF. Please try again or use the print option.');
+    }
+  };
+
   return (
     <>
       <style>{`
         @media (max-width: 768px) {
           .vacc-cert-modal-container {
-            padding: 8px !important;
+            padding: 0 !important;
             align-items: flex-start !important;
-            padding-top: 8px !important;
             overflow: hidden !important;
             touch-action: none !important;
           }
@@ -483,122 +540,39 @@ export default function VaccinationCertificateModal({
             touch-action: auto !important;
           }
           .vacc-cert-modal-content {
-            padding: 12px !important;
-            max-height: 98vh !important;
+            padding: 8px !important;
+            max-height: 100vh !important;
+            height: 100vh !important;
             width: 100% !important;
             max-width: 100% !important;
             margin: 0 !important;
+            border-radius: 0 !important;
             overflow-y: auto !important;
             -webkit-overflow-scrolling: touch !important;
             overscroll-behavior-y: contain !important;
             touch-action: pan-y !important;
           }
+          .vacc-cert-modal-header {
+            margin-bottom: 12px !important;
+            padding-bottom: 8px !important;
+          }
           .vacc-cert-modal-header h2 {
-            font-size: 16px !important;
-            line-height: 1.4 !important;
+            font-size: 14px !important;
+            line-height: 1.3 !important;
             word-break: break-word;
+            flex: 1 !important;
+            padding-right: 8px !important;
+          }
+          .vacc-cert-modal-header button {
+            font-size: 20px !important;
+            padding: 2px 6px !important;
+            flex-shrink: 0 !important;
           }
           .vacc-cert-wrapper {
-            padding: 16px 12px !important;
+            padding: 12px 10px !important;
             border-width: 2px !important;
             max-width: 100% !important;
             margin: 0 !important;
-          }
-          .vacc-cert-inner-border {
-            top: 6px !important;
-            left: 6px !important;
-            right: 6px !important;
-            bottom: 6px !important;
-          }
-          .vacc-cert-header {
-            flex-direction: column !important;
-            align-items: center !important;
-            gap: 16px !important;
-            margin-bottom: 20px !important;
-            padding-bottom: 16px !important;
-          }
-          .vacc-cert-logo {
-            max-width: 150px !important;
-          }
-          .vacc-cert-practice-details-header {
-            text-align: center !important;
-            width: 100% !important;
-            font-size: 11px !important;
-          }
-          .vacc-cert-title {
-            font-size: 20px !important;
-            margin-bottom: 6px !important;
-          }
-          .vacc-cert-subtitle {
-            font-size: 13px !important;
-          }
-          .vacc-cert-pet-grid {
-            grid-template-columns: 1fr !important;
-            gap: 12px !important;
-          }
-          .vacc-cert-pet-section {
-            padding: 12px 14px !important;
-            margin: 14px 0 !important;
-          }
-          .vacc-cert-table-wrapper {
-            overflow-x: auto !important;
-            overflow-y: visible !important;
-            -webkit-overflow-scrolling: touch !important;
-            width: 100% !important;
-            margin-left: -12px !important;
-            margin-right: -12px !important;
-            padding-left: 12px !important;
-            padding-right: 12px !important;
-            touch-action: pan-x !important;
-            overscroll-behavior-x: contain !important;
-            will-change: scroll-position !important;
-          }
-          .vacc-cert-table {
-            min-width: 550px !important;
-            font-size: 11px !important;
-            width: 100% !important;
-          }
-          .vacc-cert-table th {
-            padding: 6px 8px !important;
-            font-size: 9px !important;
-            white-space: nowrap !important;
-          }
-          .vacc-cert-table td {
-            padding: 8px 8px !important;
-            font-size: 10px !important;
-            word-break: break-word !important;
-          }
-          .vacc-cert-section-heading {
-            font-size: 12px !important;
-            margin-bottom: 10px !important;
-          }
-          .vacc-cert-footer {
-            margin-top: 20px !important;
-            padding-top: 16px !important;
-            font-size: 10px !important;
-          }
-          .vacc-cert-footer strong {
-            font-size: 12px !important;
-          }
-          .vacc-cert-action-buttons {
-            flex-direction: column !important;
-            gap: 8px !important;
-          }
-          .vacc-cert-action-buttons button {
-            width: 100% !important;
-          }
-        }
-        @media (max-width: 480px) {
-          .vacc-cert-modal-container {
-            padding: 4px !important;
-          }
-          .vacc-cert-modal-content {
-            padding: 8px !important;
-            border-radius: 8px !important;
-          }
-          .vacc-cert-wrapper {
-            padding: 12px 8px !important;
-            border-width: 2px !important;
           }
           .vacc-cert-inner-border {
             top: 4px !important;
@@ -606,39 +580,215 @@ export default function VaccinationCertificateModal({
             right: 4px !important;
             bottom: 4px !important;
           }
+          .vacc-cert-header {
+            flex-direction: column !important;
+            align-items: center !important;
+            gap: 12px !important;
+            margin-bottom: 16px !important;
+            padding-bottom: 12px !important;
+          }
+          .vacc-cert-logo {
+            max-width: 120px !important;
+          }
+          .vacc-cert-practice-details-header {
+            text-align: center !important;
+            width: 100% !important;
+            font-size: 10px !important;
+            line-height: 1.5 !important;
+          }
+          .practice-row-header {
+            margin-bottom: 3px !important;
+          }
+          .practice-label-header {
+            font-size: 10px !important;
+            margin-right: 4px !important;
+          }
+          .vacc-cert-title-section {
+            margin-bottom: 20px !important;
+          }
+          .vacc-cert-title {
+            font-size: 18px !important;
+            margin-bottom: 4px !important;
+          }
+          .vacc-cert-subtitle {
+            font-size: 12px !important;
+          }
+          .vacc-cert-pet-grid {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 6px !important;
+            font-size: 12px !important;
+          }
+          .pet-separator {
+            display: none !important;
+          }
+          .vacc-cert-pet-section {
+            padding: 10px 12px !important;
+            margin: 12px 0 !important;
+          }
+          .vacc-cert-vacc-section {
+            margin-top: 16px !important;
+          }
+          .vacc-cert-section-heading {
+            font-size: 11px !important;
+            margin-bottom: 8px !important;
+            letter-spacing: 0.5px !important;
+          }
+          .vacc-cert-table-wrapper {
+            overflow-x: auto !important;
+            overflow-y: visible !important;
+            -webkit-overflow-scrolling: touch !important;
+            width: 100% !important;
+            margin-left: -10px !important;
+            margin-right: -10px !important;
+            padding-left: 10px !important;
+            padding-right: 10px !important;
+            touch-action: pan-x !important;
+            overscroll-behavior-x: contain !important;
+            will-change: scroll-position !important;
+          }
+          .vacc-cert-table {
+            min-width: 500px !important;
+            font-size: 10px !important;
+            width: 100% !important;
+          }
+          .vacc-cert-table th {
+            padding: 6px 8px !important;
+            font-size: 8px !important;
+            white-space: nowrap !important;
+            letter-spacing: 0.3px !important;
+          }
+          .vacc-cert-table td {
+            padding: 8px 8px !important;
+            font-size: 9px !important;
+            word-break: break-word !important;
+          }
+          .vacc-cert-footer {
+            margin-top: 16px !important;
+            padding-top: 12px !important;
+            font-size: 9px !important;
+          }
+          .vacc-cert-footer strong {
+            font-size: 11px !important;
+            margin-bottom: 4px !important;
+          }
+          .vacc-cert-action-buttons {
+            flex-direction: column !important;
+            gap: 8px !important;
+            margin-top: 16px !important;
+          }
+          .vacc-cert-action-buttons button {
+            width: 100% !important;
+            padding: 12px 20px !important;
+            font-size: 14px !important;
+          }
+        }
+        @media (max-width: 480px) {
+          .vacc-cert-modal-content {
+            padding: 4px !important;
+          }
+          .vacc-cert-modal-header h2 {
+            font-size: 13px !important;
+          }
+          .vacc-cert-wrapper {
+            padding: 10px 8px !important;
+            border-width: 2px !important;
+          }
+          .vacc-cert-inner-border {
+            top: 3px !important;
+            left: 3px !important;
+            right: 3px !important;
+            bottom: 3px !important;
+          }
+          .vacc-cert-header {
+            margin-bottom: 12px !important;
+            padding-bottom: 10px !important;
+            gap: 10px !important;
+          }
+          .pet-separator {
+            display: none !important;
+          }
+          .vacc-cert-logo {
+            max-width: 100px !important;
+          }
+          .vacc-cert-practice-details-header {
+            font-size: 9px !important;
+          }
+          .practice-row-header {
+            margin-bottom: 2px !important;
+          }
+          .vacc-cert-title-section {
+            margin-bottom: 16px !important;
+          }
           .vacc-cert-title {
             font-size: 16px !important;
+            margin-bottom: 3px !important;
           }
           .vacc-cert-subtitle {
             font-size: 11px !important;
+          }
+          .vacc-cert-pet-section {
+            padding: 8px 10px !important;
+            margin: 10px 0 !important;
+          }
+          .vacc-cert-pet-grid {
+            font-size: 11px !important;
+            gap: 5px !important;
+          }
+          .vacc-cert-vacc-section {
+            margin-top: 12px !important;
+          }
+          .vacc-cert-section-heading {
+            font-size: 10px !important;
+            margin-bottom: 6px !important;
           }
           .vacc-cert-table-wrapper {
             margin-left: -8px !important;
             margin-right: -8px !important;
             padding-left: 8px !important;
             padding-right: 8px !important;
-            touch-action: pan-x !important;
-            overscroll-behavior-x: contain !important;
           }
           .vacc-cert-table {
-            min-width: 450px !important;
-            font-size: 10px !important;
+            min-width: 420px !important;
+            font-size: 9px !important;
           }
           .vacc-cert-table th {
             padding: 5px 6px !important;
-            font-size: 8px !important;
+            font-size: 7px !important;
           }
           .vacc-cert-table td {
             padding: 6px 6px !important;
-            font-size: 9px !important;
+            font-size: 8px !important;
           }
-          .vacc-cert-pet-section {
-            padding: 10px 12px !important;
+          .vacc-cert-footer {
+            margin-top: 12px !important;
+            padding-top: 10px !important;
+            font-size: 8px !important;
+          }
+          .vacc-cert-footer strong {
+            font-size: 10px !important;
+          }
+          .vacc-cert-action-buttons {
+            margin-top: 12px !important;
+            gap: 6px !important;
+          }
+          .vacc-cert-action-buttons button {
+            padding: 10px 16px !important;
+            font-size: 13px !important;
           }
         }
         @media (max-width: 375px) {
           .vacc-cert-table {
-            min-width: 400px !important;
+            min-width: 380px !important;
+          }
+          .vacc-cert-modal-header h2 {
+            font-size: 12px !important;
+          }
+          .vacc-cert-title {
+            font-size: 14px !important;
+          }
+          .vacc-cert-subtitle {
+            font-size: 10px !important;
           }
         }
       `}</style>
@@ -823,7 +973,7 @@ export default function VaccinationCertificateModal({
             </div>
 
             {/* Certificate Title */}
-            <div style={{
+            <div className="vacc-cert-title-section" style={{
               textAlign: 'center',
               marginBottom: '40px',
             }}>
@@ -846,98 +996,53 @@ export default function VaccinationCertificateModal({
             {/* Pet Information */}
             <div className="pet-section vacc-cert-pet-section" style={{
               margin: '20px 0',
-              padding: '15px 20px',
+              padding: '12px 20px',
               background: '#f9fafb',
               borderLeft: '4px solid #0f766e',
             }}>
-              <div className="pet-grid vacc-cert-pet-grid" style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: '20px',
+              <div style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                gap: '16px',
+                fontSize: '14px',
               }}>
-                <div>
-                  <div className="pet-row" style={{ marginBottom: '6px' }}>
-                    <span className="pet-label" style={{
-                      fontWeight: 600,
-                      color: '#374151',
-                      fontSize: '13px',
-                      marginBottom: '2px',
-                      display: 'block',
-                    }}>
-                      Pet's Name:
+                <span>
+                  <span style={{ fontWeight: 600, color: '#374151' }}>Pet's Name:</span>{' '}
+                  <span style={{ color: '#111827' }}>{pet.name}</span>
+                </span>
+                {pet.species && (
+                  <>
+                    <span className="pet-separator" style={{ color: '#d1d5db' }}>|</span>
+                    <span>
+                      <span style={{ fontWeight: 600, color: '#374151' }}>Species:</span>{' '}
+                      <span style={{ color: '#111827' }}>{pet.species}</span>
                     </span>
-                    <span className="pet-value" style={{
-                      color: '#111827',
-                      fontSize: '14px',
-                    }}>
-                      {pet.name}
+                  </>
+                )}
+                {pet.breed && (
+                  <>
+                    <span className="pet-separator" style={{ color: '#d1d5db' }}>|</span>
+                    <span>
+                      <span style={{ fontWeight: 600, color: '#374151' }}>Breed:</span>{' '}
+                      <span style={{ color: '#111827' }}>{pet.breed}</span>
                     </span>
-                  </div>
-                  {pet.species && (
-                    <div className="pet-row" style={{ marginBottom: '6px' }}>
-                      <span className="pet-label" style={{
-                        fontWeight: 600,
-                        color: '#374151',
-                        fontSize: '13px',
-                        marginBottom: '2px',
-                        display: 'block',
-                      }}>
-                        Species:
-                      </span>
-                      <span className="pet-value" style={{
-                        color: '#111827',
-                        fontSize: '14px',
-                      }}>
-                        {pet.species}
-                      </span>
-                    </div>
-                  )}
-                </div>
-                <div>
-                  {pet.breed && (
-                    <div className="pet-row" style={{ marginBottom: '6px' }}>
-                      <span className="pet-label" style={{
-                        fontWeight: 600,
-                        color: '#374151',
-                        fontSize: '13px',
-                        marginBottom: '2px',
-                        display: 'block',
-                      }}>
-                        Breed:
-                      </span>
-                      <span className="pet-value" style={{
-                        color: '#111827',
-                        fontSize: '14px',
-                      }}>
-                        {pet.breed}
-                      </span>
-                    </div>
-                  )}
-                  {pet.dob && (
-                    <div className="pet-row" style={{ marginBottom: '6px' }}>
-                      <span className="pet-label" style={{
-                        fontWeight: 600,
-                        color: '#374151',
-                        fontSize: '13px',
-                        marginBottom: '2px',
-                        display: 'block',
-                      }}>
-                        Date of Birth:
-                      </span>
-                      <span className="pet-value" style={{
-                        color: '#111827',
-                        fontSize: '14px',
-                      }}>
-                        {formatDate(pet.dob)}
-                      </span>
-                    </div>
-                  )}
-                </div>
+                  </>
+                )}
+                {pet.dob && (
+                  <>
+                    <span className="pet-separator" style={{ color: '#d1d5db' }}>|</span>
+                    <span>
+                      <span style={{ fontWeight: 600, color: '#374151' }}>Date of Birth:</span>{' '}
+                      <span style={{ color: '#111827' }}>{formatDate(pet.dob)}</span>
+                    </span>
+                  </>
+                )}
               </div>
             </div>
 
             {/* Vaccinations Table */}
-            <div className="vacc-section" style={{ marginTop: '25px' }}>
+            <div className="vacc-section vacc-cert-vacc-section" style={{ marginTop: '25px' }}>
               <div className="section-heading vacc-cert-section-heading" style={{
                 fontSize: '16px',
                 fontWeight: 700,
@@ -1162,6 +1267,35 @@ export default function VaccinationCertificateModal({
               <rect x="6" y="14" width="12" height="8"></rect>
             </svg>
             Print Certificate
+          </button>
+          <button
+            onClick={handleDownloadPDF}
+            style={{
+              padding: '10px 24px',
+              backgroundColor: '#0f766e',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontSize: 14,
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+            }}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              style={{ width: 18, height: 18 }}
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            Download PDF
           </button>
         </div>
       </div>
