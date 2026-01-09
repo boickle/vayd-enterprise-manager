@@ -1,9 +1,10 @@
 // src/pages/Settings.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../auth/useAuth';
 import {
   fetchAllAppointmentTypes,
   fetchAllEmployees,
+  fetchAllZones,
   fetchEmployee,
   updateEmployeeAppointmentTypes,
   updateEmployeeScheduleZones,
@@ -12,8 +13,22 @@ import {
   type AppointmentType,
   type Employee,
   type EmployeeWeeklySchedule,
+  type Zone,
 } from '../api/appointmentSettings';
 import './Settings.css';
+
+// Helper function to format employee name with title and designation
+function formatEmployeeName(emp: Employee): string {
+  const nameParts: string[] = [];
+  if (emp.title) nameParts.push(emp.title);
+  if (emp.firstName) nameParts.push(emp.firstName);
+  if (emp.lastName) nameParts.push(emp.lastName);
+  if (emp.designation) nameParts.push(emp.designation);
+  
+  return nameParts.length > 0 
+    ? nameParts.join(' ')
+    : `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || `Employee ${emp.id}`;
+}
 
 export default function Settings() {
   const { role } = useAuth() as any;
@@ -33,9 +48,10 @@ export default function Settings() {
   const [selectedAppointmentTypeIds, setSelectedAppointmentTypeIds] = useState<number[]>([]);
 
   // Employee Zones state
+  const [allZones, setAllZones] = useState<Zone[]>([]);
   const [selectedEmployeeForZones, setSelectedEmployeeForZones] = useState<Employee | null>(null);
   const [selectedSchedule, setSelectedSchedule] = useState<EmployeeWeeklySchedule | null>(null);
-  const [zoneUpdates, setZoneUpdates] = useState<Array<{ zoneId: number; acceptingNewPatients: boolean }>>([]);
+  const [zoneUpdates, setZoneUpdates] = useState<Array<{ zoneId: number; isAssigned: boolean; acceptingNewPatients: boolean }>>([]);
 
   // Employee Schedule state
   const [selectedEmployeeForSchedule, setSelectedEmployeeForSchedule] = useState<Employee | null>(null);
@@ -46,6 +62,20 @@ export default function Settings() {
   const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
   const isAdmin = roles.some((r) => ['admin', 'superadmin'].includes(String(r).toLowerCase()));
 
+  // Sort employees: providers first, then by name
+  const sortedEmployees = useMemo(() => {
+    return [...employees].sort((a, b) => {
+      // First, sort by isProvider (providers first)
+      const aIsProvider = a.isProvider === true ? 0 : 1;
+      const bIsProvider = b.isProvider === true ? 0 : 1;
+      if (aIsProvider !== bIsProvider) {
+        return aIsProvider - bIsProvider;
+      }
+      // Then sort alphabetically by formatted name
+      return formatEmployeeName(a).localeCompare(formatEmployeeName(b));
+    });
+  }, [employees]);
+
   useEffect(() => {
     if (!isAdmin) return;
     loadData();
@@ -55,12 +85,14 @@ export default function Settings() {
     setLoading(true);
     setError(null);
     try {
-      const [types, emps] = await Promise.all([
+      const [types, emps, zones] = await Promise.all([
         fetchAllAppointmentTypes(),
         fetchAllEmployees(),
+        fetchAllZones(),
       ]);
       setAppointmentTypes(types);
       setEmployees(emps);
+      setAllZones(zones);
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Failed to load data');
     } finally {
@@ -96,19 +128,37 @@ export default function Settings() {
         // Find first workday schedule, or first schedule if no workdays
         const firstSchedule = employee.weeklySchedules.find((s) => s.isWorkday) || employee.weeklySchedules[0];
         setSelectedSchedule(firstSchedule);
+        
+        // Create a map of employee's current zones
+        const employeeZonesMap = new Map<number, boolean>();
         if (firstSchedule.zones) {
-          setZoneUpdates(
-            firstSchedule.zones.map((z) => ({
-              zoneId: z.zoneId,
-              acceptingNewPatients: z.acceptingNewPatients,
-            }))
-          );
-        } else {
-          setZoneUpdates([]);
+          firstSchedule.zones.forEach((z) => {
+            employeeZonesMap.set(z.zoneId, z.acceptingNewPatients);
+          });
         }
+        
+        // Merge all zones with employee's zones
+        // isAssigned: true if employee has this zone, false otherwise
+        // acceptingNewPatients: employee's setting if assigned, false otherwise
+        const allZoneUpdates = allZones.map((zone) => {
+          const isAssigned = employeeZonesMap.has(zone.id);
+          return {
+            zoneId: zone.id,
+            isAssigned,
+            acceptingNewPatients: isAssigned ? (employeeZonesMap.get(zone.id) ?? false) : false,
+          };
+        });
+        
+        setZoneUpdates(allZoneUpdates);
       } else {
+        // No schedules - show all zones as unassigned
+        const allZoneUpdates = allZones.map((zone) => ({
+          zoneId: zone.id,
+          isAssigned: false,
+          acceptingNewPatients: false,
+        }));
         setSelectedSchedule(null);
-        setZoneUpdates([]);
+        setZoneUpdates(allZoneUpdates);
       }
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Failed to load employee');
@@ -200,11 +250,66 @@ export default function Settings() {
     setError(null);
     setSuccess(null);
     try {
-      await updateEmployeeScheduleZones(selectedSchedule.id, zoneUpdates);
+      // Store the dayOfWeek of the currently selected schedule to preserve it after reload
+      const savedDayOfWeek = selectedSchedule.dayOfWeek;
+      
+      // Only send zones that are assigned (isAssigned: true)
+      // This allows adding new zones and removing existing ones
+      const zonesToSave = zoneUpdates
+        .filter((z) => z.isAssigned)
+        .map((z) => ({
+          zoneId: z.zoneId,
+          acceptingNewPatients: z.acceptingNewPatients,
+        }));
+      await updateEmployeeScheduleZones(selectedSchedule.id, zonesToSave);
       setSuccess('Employee zones updated successfully');
       setTimeout(() => setSuccess(null), 3000);
-      // Reload employee data
-      await handleLoadEmployeeForZones(selectedEmployeeForZones.id);
+      
+      // Reload employee data and preserve the selected schedule day
+      setLoading(true);
+      try {
+        const employee = await fetchEmployee(selectedEmployeeForZones.id);
+        setSelectedEmployeeForZones(employee);
+        if (employee.weeklySchedules && employee.weeklySchedules.length > 0) {
+          // Find the schedule with the same dayOfWeek that was just saved
+          const scheduleToSelect = employee.weeklySchedules.find((s) => s.dayOfWeek === savedDayOfWeek) 
+            || employee.weeklySchedules.find((s) => s.isWorkday) 
+            || employee.weeklySchedules[0];
+          setSelectedSchedule(scheduleToSelect);
+          
+          // Create a map of employee's current zones for the selected schedule
+          const employeeZonesMap = new Map<number, boolean>();
+          if (scheduleToSelect.zones) {
+            scheduleToSelect.zones.forEach((z) => {
+              employeeZonesMap.set(z.zoneId, z.acceptingNewPatients);
+            });
+          }
+          
+          // Merge all zones with employee's zones
+          const allZoneUpdates = allZones.map((zone) => {
+            const isAssigned = employeeZonesMap.has(zone.id);
+            return {
+              zoneId: zone.id,
+              isAssigned,
+              acceptingNewPatients: isAssigned ? (employeeZonesMap.get(zone.id) ?? false) : false,
+            };
+          });
+          
+          setZoneUpdates(allZoneUpdates);
+        } else {
+          setSelectedSchedule(null);
+          const allZoneUpdates = allZones.map((zone) => ({
+            zoneId: zone.id,
+            isAssigned: false,
+            acceptingNewPatients: false,
+          }));
+          setZoneUpdates(allZoneUpdates);
+        }
+      } catch (err: any) {
+        setError(err?.response?.data?.message || err?.message || 'Failed to reload employee');
+      } finally {
+        setLoading(false);
+      }
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Failed to update employee zones');
     } finally {
@@ -288,13 +393,28 @@ export default function Settings() {
     );
   };
 
+  const toggleZoneAssignment = (zoneId: number, isAssigned: boolean) => {
+    setZoneUpdates((prev) => {
+      const existing = prev.find((z) => z.zoneId === zoneId);
+      if (existing) {
+        return prev.map((z) => 
+          z.zoneId === zoneId 
+            ? { ...z, isAssigned, acceptingNewPatients: isAssigned ? z.acceptingNewPatients : false }
+            : z
+        );
+      } else {
+        return [...prev, { zoneId, isAssigned, acceptingNewPatients: false }];
+      }
+    });
+  };
+
   const updateZoneAcceptingNewPatients = (zoneId: number, accepting: boolean) => {
     setZoneUpdates((prev) => {
       const existing = prev.find((z) => z.zoneId === zoneId);
       if (existing) {
         return prev.map((z) => (z.zoneId === zoneId ? { ...z, acceptingNewPatients: accepting } : z));
       } else {
-        return [...prev, { zoneId, acceptingNewPatients: accepting }];
+        return [...prev, { zoneId, isAssigned: true, acceptingNewPatients: accepting }];
       }
     });
   };
@@ -477,7 +597,7 @@ export default function Settings() {
           <div className="settings-section">
             <h2 className="settings-section-title">Employee Appointment Types</h2>
             <p className="settings-section-description">
-              Configure which appointment types each employee (doctor) can see and handle.
+              Configure which appointment types each employee can see and handle.
             </p>
 
             <div className="settings-form-group">
@@ -496,9 +616,9 @@ export default function Settings() {
                 }}
               >
                 <option value="">-- Select an employee --</option>
-                {employees.map((emp) => (
+                {sortedEmployees.map((emp) => (
                   <option key={emp.id} value={emp.id}>
-                    {emp.firstName} {emp.lastName}
+                    {formatEmployeeName(emp)}
                   </option>
                 ))}
               </select>
@@ -507,7 +627,7 @@ export default function Settings() {
             {selectedEmployee && (
               <div className="settings-card">
                 <h3 className="settings-card-title">
-                  {selectedEmployee.firstName} {selectedEmployee.lastName}
+                  {formatEmployeeName(selectedEmployee)}
                 </h3>
                 <p className="settings-card-subtitle">Select appointment types this employee can handle:</p>
 
@@ -568,9 +688,9 @@ export default function Settings() {
                 }}
               >
                 <option value="">-- Select an employee --</option>
-                {employees.map((emp) => (
+                {sortedEmployees.map((emp) => (
                   <option key={emp.id} value={emp.id}>
-                    {emp.firstName} {emp.lastName}
+                    {formatEmployeeName(emp)}
                   </option>
                 ))}
               </select>
@@ -591,16 +711,28 @@ export default function Settings() {
                         );
                         if (schedule) {
                           setSelectedSchedule(schedule);
+                          
+                          // Create a map of employee's current zones for this schedule
+                          const employeeZonesMap = new Map<number, boolean>();
                           if (schedule.zones) {
-                            setZoneUpdates(
-                              schedule.zones.map((z) => ({
-                                zoneId: z.zoneId,
-                                acceptingNewPatients: z.acceptingNewPatients,
-                              }))
-                            );
-                          } else {
-                            setZoneUpdates([]);
+                            schedule.zones.forEach((z) => {
+                              employeeZonesMap.set(z.zoneId, z.acceptingNewPatients);
+                            });
                           }
+                          
+                          // Merge all zones with employee's zones
+                          // isAssigned: true if employee has this zone, false otherwise
+                          // acceptingNewPatients: employee's setting if assigned, false otherwise
+                          const allZoneUpdates = allZones.map((zone) => {
+                            const isAssigned = employeeZonesMap.has(zone.id);
+                            return {
+                              zoneId: zone.id,
+                              isAssigned,
+                              acceptingNewPatients: isAssigned ? (employeeZonesMap.get(zone.id) ?? false) : false,
+                            };
+                          });
+                          
+                          setZoneUpdates(allZoneUpdates);
                         }
                       }}
                     >
@@ -616,38 +748,50 @@ export default function Settings() {
                 {selectedSchedule && (
                   <div className="settings-card">
                     <h3 className="settings-card-title">
-                      {selectedEmployeeForZones.firstName} {selectedEmployeeForZones.lastName} -{' '}
+                      {formatEmployeeName(selectedEmployeeForZones)} -{' '}
                       {dayNames[selectedSchedule.dayOfWeek]}
                     </h3>
                     <p className="settings-card-subtitle">Configure zones and new patient acceptance:</p>
 
-                    {selectedSchedule.zones && selectedSchedule.zones.length > 0 ? (
+                    {zoneUpdates.length > 0 ? (
                       <div className="settings-zone-list">
-                        {selectedSchedule.zones.map((zone) => {
-                          const update = zoneUpdates.find((z) => z.zoneId === zone.zoneId);
-                          const accepting = update?.acceptingNewPatients ?? zone.acceptingNewPatients;
+                        {zoneUpdates.map((zoneUpdate) => {
+                          const zone = allZones.find((z) => z.id === zoneUpdate.zoneId);
                           return (
-                            <div key={zone.zoneId} className="settings-zone-item">
+                            <div key={zoneUpdate.zoneId} className="settings-zone-item">
                               <div className="settings-zone-info">
-                                <strong>Zone {zone.zoneId}</strong>
-                                {zone.zone?.name && <span className="settings-muted"> - {zone.zone.name}</span>}
+                                <strong>Zone {zoneUpdate.zoneId}</strong>
+                                {zone?.name && <span className="settings-muted"> - {zone.name}</span>}
                               </div>
-                              <label className="settings-checkbox-item">
-                                <input
-                                  type="checkbox"
-                                  checked={accepting}
-                                  onChange={(e) =>
-                                    updateZoneAcceptingNewPatients(zone.zoneId, e.target.checked)
-                                  }
-                                />
-                                <span>Accepting New Patients</span>
-                              </label>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                <label className="settings-checkbox-item">
+                                  <input
+                                    type="checkbox"
+                                    checked={zoneUpdate.isAssigned}
+                                    onChange={(e) =>
+                                      toggleZoneAssignment(zoneUpdate.zoneId, e.target.checked)
+                                    }
+                                  />
+                                  <span>Assign Zone</span>
+                                </label>
+                                <label className="settings-checkbox-item" style={{ opacity: zoneUpdate.isAssigned ? 1 : 0.5 }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={zoneUpdate.acceptingNewPatients}
+                                    disabled={!zoneUpdate.isAssigned}
+                                    onChange={(e) =>
+                                      updateZoneAcceptingNewPatients(zoneUpdate.zoneId, e.target.checked)
+                                    }
+                                  />
+                                  <span>Accepting New Patients</span>
+                                </label>
+                              </div>
                             </div>
                           );
                         })}
                       </div>
                     ) : (
-                      <p className="settings-muted">No zones configured for this schedule.</p>
+                      <p className="settings-muted">No zones available.</p>
                     )}
 
                     <div className="settings-action-bar">
@@ -662,9 +806,50 @@ export default function Settings() {
                   </div>
                 )}
 
-                {selectedEmployeeForZones.weeklySchedules?.length === 0 && (
-                  <div className="settings-message settings-info-message">
-                    This employee has no weekly schedules configured.
+                {!selectedSchedule && selectedEmployeeForZones.weeklySchedules?.length === 0 && (
+                  <div className="settings-card">
+                    <h3 className="settings-card-title">
+                      {formatEmployeeName(selectedEmployeeForZones)}
+                    </h3>
+                    <p className="settings-card-subtitle">Configure zones and new patient acceptance:</p>
+                    <div className="settings-message settings-info-message" style={{ marginBottom: '16px' }}>
+                      This employee has no weekly schedules configured. Please create a schedule first in the Employee Schedule tab.
+                    </div>
+                    {zoneUpdates.length > 0 ? (
+                      <div className="settings-zone-list">
+                        {zoneUpdates.map((zoneUpdate) => {
+                          const zone = allZones.find((z) => z.id === zoneUpdate.zoneId);
+                          return (
+                            <div key={zoneUpdate.zoneId} className="settings-zone-item">
+                              <div className="settings-zone-info">
+                                <strong>Zone {zoneUpdate.zoneId}</strong>
+                                {zone?.name && <span className="settings-muted"> - {zone.name}</span>}
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                <label className="settings-checkbox-item" style={{ opacity: 0.5, cursor: 'not-allowed' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={zoneUpdate.isAssigned}
+                                    disabled={true}
+                                  />
+                                  <span>Assign Zone</span>
+                                </label>
+                                <label className="settings-checkbox-item" style={{ opacity: 0.5, cursor: 'not-allowed' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={zoneUpdate.acceptingNewPatients}
+                                    disabled={true}
+                                  />
+                                  <span>Accepting New Patients</span>
+                                </label>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="settings-muted">No zones available.</p>
+                    )}
                   </div>
                 )}
               </>
@@ -696,9 +881,9 @@ export default function Settings() {
                 }}
               >
                 <option value="">-- Select an employee --</option>
-                {employees.map((emp) => (
+                {sortedEmployees.map((emp) => (
                   <option key={emp.id} value={emp.id}>
-                    {emp.firstName} {emp.lastName}
+                    {formatEmployeeName(emp)}
                   </option>
                 ))}
               </select>
@@ -707,7 +892,7 @@ export default function Settings() {
             {selectedEmployeeForSchedule && (
               <div className="settings-card">
                 <h3 className="settings-card-title">
-                  {selectedEmployeeForSchedule.firstName} {selectedEmployeeForSchedule.lastName} - Weekly Schedule
+                  {formatEmployeeName(selectedEmployeeForSchedule)} - Weekly Schedule
                 </h3>
 
                 {selectedEmployeeForSchedule.weeklySchedules && selectedEmployeeForSchedule.weeklySchedules.length > 0 ? (

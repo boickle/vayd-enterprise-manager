@@ -26,6 +26,9 @@ export type Employee = {
   firstName: string;
   lastName: string;
   email: string;
+  title?: string;
+  designation?: string;
+  isProvider?: boolean;
   appointmentTypes: AppointmentType[];
   weeklySchedules: EmployeeWeeklySchedule[];
   practice?: {
@@ -153,12 +156,21 @@ export async function fetchEmployee(employeeId: number): Promise<Employee> {
 }
 
 /**
- * Get all employees (veterinarians)
- * GET /employees/veterinarians
+ * Get all employees
+ * GET /employees
  */
 export async function fetchAllEmployees(): Promise<Employee[]> {
-  const { data } = await http.get('/employees/veterinarians');
-  return Array.isArray(data) ? data : [];
+  const { data } = await http.get('/employees');
+  return Array.isArray(data) ? data : (data?.items ?? []);
+}
+
+/**
+ * Get all available zones
+ * GET /zones
+ */
+export async function fetchAllZones(): Promise<Zone[]> {
+  const { data } = await http.get('/zones');
+  return Array.isArray(data) ? data : (data?.items ?? []);
 }
 
 
