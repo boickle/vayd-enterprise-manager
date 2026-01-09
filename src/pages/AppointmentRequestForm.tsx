@@ -195,7 +195,7 @@ export default function AppointmentRequestForm() {
   const [rawVeterinarians, setRawVeterinarians] = useState<any[]>([]);
   const [rawPublicVeterinarians, setRawPublicVeterinarians] = useState<any[]>([]);
   const [loadingClientData, setLoadingClientData] = useState(false);
-  const [loadingVeterinarians, setLoadingVeterinarians] = useState(false);
+  const [loadingVeterinarians, setLoadingVeterinarians] = useState(false); // Always false initially - never blocks render
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
   const [loadingAppointmentTypes, setLoadingAppointmentTypes] = useState(false);
   const [primaryProviderName, setPrimaryProviderName] = useState<string | null>(null);
@@ -254,6 +254,7 @@ export default function AppointmentRequestForm() {
   const [loadingBreeds, setLoadingBreeds] = useState<Record<number, boolean>>({}); // Loading state per species
   const [breedSearchTerms, setBreedSearchTerms] = useState<Record<string, string>>({}); // Search terms for breed dropdowns, keyed by pet ID
   const [breedDropdownOpen, setBreedDropdownOpen] = useState<Record<string, boolean>>({}); // Track which breed dropdowns are open, keyed by pet ID
+  const [clientLocationReady, setClientLocationReady] = useState(false); // Track when client location is available for veterinarian fetch
 
   // Handle responsive layout
   useEffect(() => {
@@ -1299,82 +1300,9 @@ export default function AppointmentRequestForm() {
           address: clientAddress,
         };
         
-        // Fetch veterinarians using client location if available (only if not using new address)
-        if (formData.isThisTheAddressWhereWeWillCome !== 'No') {
-          const lat = clientLat;
-          const lon = clientLon;
-          const address = clientAddress;
-          
-          if ((lat != null && lon != null) || address) {
-            setLoadingVeterinarians(true);
-            try {
-              // Clear any zone error when using address on file
-              setErrors(prev => {
-                const next = { ...prev };
-                delete next.zoneNotServiced;
-                return next;
-              });
-              
-              if (!alive) return;
-              
-              // Fetch raw veterinarian data directly from API to get appointmentTypes
-              const params: any = {};
-              if (lat != null && lon != null && Number.isFinite(lat) && Number.isFinite(lon)) {
-                params.lat = lat;
-                params.lon = lon;
-              } else if (address) {
-                params.address = address;
-              }
-              const { data } = await http.get('/employees/veterinarians', { params });
-              const rawVeterinarians: any[] = Array.isArray(data) ? data : [];
-              
-              if (!alive) return;
-              
-              // Filter by isActive
-              const filteredByActive = rawVeterinarians.filter((v) => v.isActive !== false);
-              
-              // Store raw data
-              setRawVeterinarians(filteredByActive);
-              
-              // Filter by appointment types
-              const filteredByAppointmentTypes = filterVeterinariansByAppointmentTypes(filteredByActive);
-              
-              // Convert to Provider format
-              const providersData = filteredByAppointmentTypes.map(mapRawVeterinarianToProvider);
-              
-              setProviders(providersData);
-              setLoadingVeterinarians(false);
-              
-              // Set default doctor to primary provider if found
-              const primaryProvider = petsData.find(p => p.primaryProviderName)?.primaryProviderName || null;
-              if (primaryProvider && providersData.length > 0) {
-                const providerMatch = providersData.find(p => 
-                  p.name === primaryProvider || 
-                  p.name.includes(primaryProvider) ||
-                  primaryProvider.includes(p.name) ||
-                  `Dr. ${p.name}` === primaryProvider ||
-                  p.name.toLowerCase().includes(primaryProvider.toLowerCase()) ||
-                  primaryProvider.toLowerCase().includes(p.name.toLowerCase())
-                );
-                if (providerMatch) {
-                  setFormData(prev => ({ 
-                    ...prev, 
-                    preferredDoctorExisting: `Dr. ${providerMatch.name}` 
-                  }));
-                }
-              }
-          } catch (err) {
-            console.error('Failed to fetch veterinarians:', err);
-            if (alive) {
-              setProviders([]);
-              setRawVeterinarians([]);
-              setLoadingVeterinarians(false);
-            }
-          }
-          } else {
-            setProviders([]);
-            setLoadingVeterinarians(false);
-          }
+        // Mark client location as ready (triggers separate veterinarian fetch)
+        if (clientLat || clientLon || clientAddress) {
+          setClientLocationReady(true);
         }
 
         // Skip intro page and go directly to existing client form
@@ -1551,28 +1479,32 @@ export default function AppointmentRequestForm() {
     formData.newPhysicalAddress?.zip,
   ]);
 
-  // Handle switching back to original address for existing clients
+  // Fetch veterinarians for logged-in users when client location becomes available
+  // This runs completely independently and non-blocking after client data is loaded
   useEffect(() => {
-    if (!isLoggedIn) return; // Only for logged-in users
-    if (formData.isThisTheAddressWhereWeWillCome !== 'Yes') return; // Only when using original address
-
-    // Defer execution to ensure it doesn't block render
+    if (!isLoggedIn) return;
+    if (!clientLocationReady) return;
+    // Only fetch if using original address (not a new address)
+    if (formData.isThisTheAddressWhereWeWillCome === 'No') return;
+    
+    const { lat, lon, address } = clientLocationRef.current;
+    // Don't fetch if no location available
+    if (!lat && !lon && !address) return;
+    
+    // Defer execution to ensure it doesn't block render - use longer delay to ensure everything is loaded first
     let alive = true;
     const timeoutId = setTimeout(() => {
-      const { lat, lon, address } = clientLocationRef.current;
-      
-      // Fetch veterinarians using client location if available
-      if ((lat != null && lon != null) || address) {
-        setLoadingVeterinarians(true);
-        (async () => {
-          try {
-            // Clear any zone error when using address on file
-            setErrors(prev => {
-              const next = { ...prev };
-              delete next.zoneNotServiced;
-              return next;
-            });
-            
+      // Fire and forget - completely async, non-blocking
+      (async () => {
+        try {
+          setLoadingVeterinarians(true);
+          // Clear any zone error when using address on file
+          setErrors(prev => {
+            const next = { ...prev };
+            delete next.zoneNotServiced;
+            return next;
+          });
+          
           if (!alive) return;
           
           // Fetch raw veterinarian data directly from API to get appointmentTypes
@@ -1583,6 +1515,7 @@ export default function AppointmentRequestForm() {
           } else if (address) {
             params.address = address;
           }
+          
           const { data } = await http.get('/employees/veterinarians', { params });
           const rawVeterinarians: any[] = Array.isArray(data) ? data : [];
           
@@ -1600,6 +1533,8 @@ export default function AppointmentRequestForm() {
           // Convert to Provider format
           const providersData = filteredByAppointmentTypes.map(mapRawVeterinarianToProvider);
           
+          if (!alive) return;
+          
           setProviders(providersData);
           setLoadingVeterinarians(false);
         } catch (err) {
@@ -1611,12 +1546,7 @@ export default function AppointmentRequestForm() {
           }
         }
       })();
-    } else {
-      setProviders([]);
-      setRawVeterinarians([]);
-      setLoadingVeterinarians(false);
-    }
-    }, 0);
+    }, 300); // Delay to ensure client data loading and page navigation complete first
 
     return () => {
       alive = false;
@@ -1624,6 +1554,7 @@ export default function AppointmentRequestForm() {
     };
   }, [
     isLoggedIn,
+    clientLocationReady,
     formData.isThisTheAddressWhereWeWillCome,
   ]);
 
