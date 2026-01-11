@@ -32,7 +32,7 @@ type FormData = {
   haveUsedServicesBefore: 'Yes' | 'No' | '';
   selectedPetIds: string[]; // Array of selected pet IDs
   petSpecificData?: Record<string, {
-    needsToday?: string; // Single selected need (wellness exam, not feeling well, etc.)
+    needsToday?: string; // Appointment type prettyName (e.g., "Standard Visit", "Wellness Exam", etc.)
     needsTodayDetails?: string; // Details/reason for the selected need
     // Euthanasia-specific fields (for end-of-life option)
     euthanasiaReason?: string;
@@ -271,14 +271,29 @@ export default function AppointmentRequestForm() {
     return appointmentTypes.find(type => type.name === name);
   };
 
-  // Check if an appointment type is euthanasia by its name
-  const isEuthanasiaAppointmentType = (appointmentTypeName: string): boolean => {
-    return appointmentTypeName === 'Euthanasia';
+  // Get appointment type by prettyName
+  const getAppointmentTypeByPrettyName = (prettyName: string): AppointmentType | undefined => {
+    return appointmentTypes.find(type => type.prettyName === prettyName);
+  };
+
+  // Get appointment type by either name or prettyName (for backward compatibility)
+  const getAppointmentType = (value: string): AppointmentType | undefined => {
+    return getAppointmentTypeByPrettyName(value) || getAppointmentTypeByName(value);
+  };
+
+  // Check if an appointment type is euthanasia by its name or prettyName
+  const isEuthanasiaAppointmentType = (appointmentTypeValue: string): boolean => {
+    const type = getAppointmentType(appointmentTypeValue);
+    if (type) {
+      return type.name === 'Euthanasia';
+    }
+    // Fallback for backward compatibility
+    return appointmentTypeValue === 'Euthanasia' || appointmentTypeValue.toLowerCase().includes('euthanasia');
   };
 
   // Helper to check if appointment type name matches common patterns (for placeholders)
-  const matchesAppointmentTypeName = (appointmentTypeName: string, patterns: string[]): boolean => {
-    const type = getAppointmentTypeByName(appointmentTypeName);
+  const matchesAppointmentTypeName = (appointmentTypeValue: string, patterns: string[]): boolean => {
+    const type = getAppointmentType(appointmentTypeValue);
     if (!type) return false;
     const nameLower = type.name.toLowerCase();
     const prettyNameLower = type.prettyName.toLowerCase();
@@ -335,17 +350,24 @@ export default function AppointmentRequestForm() {
   };
 
   // Get all selected appointment type names from the form
-  // Returns a Set of unique appointment type names (not prettyNames) selected across all pets
+  // Returns a Set of unique appointment type names (converted from prettyNames) selected across all pets
   const getSelectedAppointmentTypes = (): Set<string> => {
     const selectedTypes = new Set<string>();
+    
+    // Helper to convert prettyName to name for veterinarian matching
+    const convertPrettyNameToName = (prettyName: string): string => {
+      const type = getAppointmentTypeByPrettyName(prettyName);
+      return type?.name || prettyName; // Fallback to prettyName if not found
+    };
     
     // Check selectedPetIds (existing pets)
     if (formData.selectedPetIds && formData.petSpecificData) {
       formData.selectedPetIds.forEach(petId => {
         const petData = formData.petSpecificData?.[petId];
         if (petData?.needsToday) {
-          // needsToday now stores the appointment type name, not prettyName
-          selectedTypes.add(petData.needsToday);
+          // needsToday now stores prettyName, convert to name for veterinarian matching
+          const typeName = convertPrettyNameToName(petData.needsToday);
+          selectedTypes.add(typeName);
         }
       });
     }
@@ -355,7 +377,8 @@ export default function AppointmentRequestForm() {
       formData.newClientPets.forEach(pet => {
         const petData = formData.petSpecificData?.[pet.id];
         if (petData?.needsToday) {
-          selectedTypes.add(petData.needsToday);
+          const typeName = convertPrettyNameToName(petData.needsToday);
+          selectedTypes.add(typeName);
         }
       });
     }
@@ -365,7 +388,8 @@ export default function AppointmentRequestForm() {
       formData.existingClientNewPets.forEach(pet => {
         const petData = formData.petSpecificData?.[pet.id];
         if (petData?.needsToday) {
-          selectedTypes.add(petData.needsToday);
+          const typeName = convertPrettyNameToName(petData.needsToday);
+          selectedTypes.add(typeName);
         }
       });
     }
@@ -2316,6 +2340,23 @@ export default function AppointmentRequestForm() {
     }
   };
 
+  const handleBackToPortal = () => {
+    // If on intro or success page, navigate immediately without warning
+    if (currentPage === 'intro' || currentPage === 'success') {
+      navigate('/client-portal');
+      return;
+    }
+
+    // For other pages, show unsaved changes warning
+    const message = "You will lose your data if you leave this form. Are you sure you want to go back to the client portal?";
+    const userWantsToLeave = window.confirm(message);
+    
+    if (userWantsToLeave) {
+      // Navigate immediately after user clicks OK
+      navigate('/client-portal');
+    }
+  };
+
   const handleSubmit = async () => {
     if (!validatePage(currentPage)) {
       return;
@@ -2585,7 +2626,53 @@ export default function AppointmentRequestForm() {
         petSpecificData: formData.petSpecificData || undefined,
         
         // Appointment Details
-        appointmentType: isEuthanasia ? 'euthanasia' : 'regular_visit',
+        appointmentType: (() => {
+          // Find the appointment type name from the first pet that has one
+          let appointmentTypeName: string | undefined;
+          
+          // Check selectedPetIds (existing pets)
+          if (formData.selectedPetIds && formData.petSpecificData) {
+            for (const petId of formData.selectedPetIds) {
+              const petData = formData.petSpecificData[petId];
+              if (petData?.needsToday) {
+                appointmentTypeName = petData.needsToday;
+                break;
+              }
+            }
+          }
+          
+          // Check newClientPets if not found yet
+          if (!appointmentTypeName && formData.newClientPets && formData.petSpecificData) {
+            for (const pet of formData.newClientPets) {
+              const petData = formData.petSpecificData[pet.id];
+              if (petData?.needsToday) {
+                appointmentTypeName = petData.needsToday;
+                break;
+              }
+            }
+          }
+          
+          // Check existingClientNewPets if not found yet
+          if (!appointmentTypeName && formData.existingClientNewPets && formData.petSpecificData) {
+            for (const pet of formData.existingClientNewPets) {
+              const petData = formData.petSpecificData[pet.id];
+              if (petData?.needsToday) {
+                appointmentTypeName = petData.needsToday;
+                break;
+              }
+            }
+          }
+          
+          // If we found an appointment type (now stored as prettyName), return it directly
+          // The needsToday field now stores prettyName, so we can return it as-is
+          if (appointmentTypeName) {
+            // appointmentTypeName is now the prettyName since needsToday stores prettyName
+            return appointmentTypeName;
+          }
+          
+          // Fallback to old logic if no appointment type found
+          return isEuthanasia ? 'euthanasia' : 'regular_visit';
+        })(),
         preferredDoctor: (() => {
           const selectedDoctor = formData.preferredDoctorExisting || formData.preferredDoctor;
           if (!selectedDoctor || selectedDoctor === 'I have no preference') {
@@ -2768,7 +2855,17 @@ export default function AppointmentRequestForm() {
         return (
           <div>
             <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginBottom: '20px' }}>
+              <div 
+                onClick={handleBackToPortal}
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  gap: '12px', 
+                  marginBottom: '20px',
+                  cursor: 'pointer',
+                }}
+              >
                 <img
                   src="/final_thick_lines_cropped.jpeg"
                   alt="VAYD Scout Logo"
@@ -3925,16 +4022,17 @@ export default function AppointmentRequestForm() {
                                         type="radio"
                                         name={`needsToday-${pet.id}`}
                                         value={option.name}
-                                        checked={petData.needsToday === option.name}
+                                        checked={(petData.needsToday === option.prettyName) || (petData.needsToday === option.name)}
                                         onChange={(e) => {
-                                          updatePetSpecificData(pet.id, 'needsToday', e.target.value);
+                                          // Store prettyName instead of name
+                                          updatePetSpecificData(pet.id, 'needsToday', option.prettyName);
                                           updatePetSpecificData(pet.id, 'needsTodayDetails', '');
                                         }}
                                         style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
                                       />
                                       <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option.prettyName}</span>
                                     </label>
-                                    {petData.needsToday === option.name && (
+                                    {(petData.needsToday === option.prettyName || petData.needsToday === option.name) && (
                                       <div style={{ marginLeft: '26px', marginTop: '8px', marginBottom: '8px' }}>
                                         {isEuthanasiaAppointmentType(option.name) ? (
                                           // Euthanasia questions
@@ -4782,9 +4880,10 @@ export default function AppointmentRequestForm() {
                                         type="radio"
                                         name={`needsToday-${pet.id}`}
                                         value={option.name}
-                                        checked={petData.needsToday === option.name}
+                                        checked={(petData.needsToday === option.prettyName) || (petData.needsToday === option.name)}
                                         onChange={(e) => {
-                                          updatePetSpecificData(pet.id, 'needsToday', e.target.value);
+                                          // Store prettyName instead of name
+                                          updatePetSpecificData(pet.id, 'needsToday', option.prettyName);
                                           // Clear details when changing selection
                                           updatePetSpecificData(pet.id, 'needsTodayDetails', '');
                                         }}
@@ -4792,9 +4891,9 @@ export default function AppointmentRequestForm() {
                                       />
                                       <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option.prettyName}</span>
                                     </label>
-                                    {petData.needsToday === option.name && (
+                                    {(petData.needsToday === option.prettyName || petData.needsToday === option.name) && (
                                       <div style={{ marginLeft: '26px', marginTop: '8px', marginBottom: '8px' }}>
-                                        {isEuthanasiaAppointmentType(option.name) ? (
+                                        {isEuthanasiaAppointmentType(option.prettyName) ? (
                                           // Euthanasia questions
                                           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                                             <div>
@@ -5621,16 +5720,17 @@ export default function AppointmentRequestForm() {
                                             type="radio"
                                             name={`needsToday-${pet.id}`}
                                             value={option.name}
-                                            checked={petData.needsToday === option.name}
+                                            checked={(petData.needsToday === option.prettyName) || (petData.needsToday === option.name)}
                                             onChange={(e) => {
-                                              updatePetSpecificData(pet.id, 'needsToday', e.target.value);
+                                              // Store prettyName instead of name
+                                              updatePetSpecificData(pet.id, 'needsToday', option.prettyName);
                                               updatePetSpecificData(pet.id, 'needsTodayDetails', '');
                                             }}
                                             style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
                                           />
                                           <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option.prettyName}</span>
                                         </label>
-                                        {petData.needsToday === option.name && (
+                                        {(petData.needsToday === option.prettyName || petData.needsToday === option.name) && (
                                           <div style={{ marginLeft: '26px', marginTop: '8px', marginBottom: '8px' }}>
                                             {isEuthanasiaAppointmentType(option.name) ? (
                                               // Euthanasia questions - same as existing pets
@@ -7080,7 +7180,15 @@ export default function AppointmentRequestForm() {
           borderBottom: '1px solid rgba(17, 163, 106, 0.1)',
           backdropFilter: 'saturate(120%) blur(6px)',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div 
+            onClick={handleBackToPortal}
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '12px',
+              cursor: 'pointer',
+            }}
+          >
             <img
               src="/final_thick_lines_cropped.jpeg"
               alt="VAYD Scout Logo"
@@ -7133,6 +7241,29 @@ export default function AppointmentRequestForm() {
           minWidth: 0, // Prevent flex item from overflowing
           width: '100%',
         }}>
+          {/* Back to Client Portal Button - Show on all pages except intro (success page has early return) */}
+          {currentPage !== 'intro' && (
+            <button
+              type="button"
+              onClick={handleBackToPortal}
+              style={{
+                marginBottom: '24px',
+                padding: '8px 16px',
+                backgroundColor: 'transparent',
+                color: '#4FB128',
+                border: '1px solid #4FB128',
+                borderRadius: '8px',
+                fontSize: '14px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+              }}
+            >
+              ← Back to Client Portal
+            </button>
+          )}
           {renderPage()}
         
         {errors.submit && (
