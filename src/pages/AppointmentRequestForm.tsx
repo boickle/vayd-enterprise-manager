@@ -1752,6 +1752,13 @@ export default function AppointmentRequestForm() {
           }
         } catch (error) {
           console.error(`[AppointmentForm] Failed to load breeds for species ${speciesId}:`, error);
+          // On error, set empty array to indicate no breeds available
+          if (alive) {
+            setBreedsBySpecies(prev => ({
+              ...prev,
+              [speciesId]: []
+            }));
+          }
         } finally {
           if (alive) {
             setLoadingBreeds(prev => ({ ...prev, [speciesId]: false }));
@@ -1867,9 +1874,8 @@ export default function AppointmentRequestForm() {
               const selectedSpecies = speciesList.find(s => s.id === pet.speciesId);
               if (!pet.speciesId) {
                 newErrors[`newClientPet.${pet.id}.species`] = 'Species is required';
-              } else if (selectedSpecies?.name === 'Other' && !pet.otherSpecies?.trim()) {
-                newErrors[`newClientPet.${pet.id}.otherSpecies`] = 'Please specify the species name';
               }
+              // Note: otherSpecies is optional when "Other" is selected - user can leave it empty
               if (!pet.age?.trim()) {
                 newErrors[`newClientPet.${pet.id}.age`] = 'Age/DOB is required';
               }
@@ -1879,9 +1885,25 @@ export default function AppointmentRequestForm() {
               if (!pet.sex?.trim()) {
                 newErrors[`newClientPet.${pet.id}.sex`] = 'Sex is required';
               }
-              if (!pet.breed?.trim()) {
-                newErrors[`newClientPet.${pet.id}.breed`] = 'Breed is required';
+              // Breed validation: If "Other" is selected, breed is always optional (can be empty or free-form text)
+              // Check both selectedSpecies name and pet.otherSpecies to detect "Other" species
+              const isOtherSpecies = selectedSpecies?.name === 'Other' || !!pet.otherSpecies?.trim();
+              if (!isOtherSpecies && pet.speciesId) {
+                // For non-"Other" species, only require breed if we're certain breeds exist
+                const breedsHaveLoaded = breedsBySpecies.hasOwnProperty(pet.speciesId);
+                const breedsCurrentlyLoading = loadingBreeds[pet.speciesId] === true;
+                
+                // Only check breed requirement if breeds have finished loading (not loading, and have loaded)
+                if (!breedsCurrentlyLoading && breedsHaveLoaded) {
+                  const breedsArray = breedsBySpecies[pet.speciesId];
+                  // Only require breed if breeds array exists, is an array, and has at least one breed
+                  if (breedsArray && Array.isArray(breedsArray) && breedsArray.length > 0 && !pet.breed?.trim()) {
+                    newErrors[`newClientPet.${pet.id}.breed`] = 'Breed is required';
+                  }
+                }
+                // If breeds are loading or haven't loaded yet, don't require breed
               }
+              // If "Other" is selected, breed is optional (no validation needed)
               if (!pet.color?.trim()) {
                 newErrors[`newClientPet.${pet.id}.color`] = 'Color is required';
               }
@@ -1996,9 +2018,8 @@ export default function AppointmentRequestForm() {
               const selectedSpecies = speciesList.find(s => s.id === pet.speciesId);
               if (!pet.speciesId) {
                 newErrors[`existingClientNewPet.${pet.id}.species`] = 'Species is required';
-              } else if (selectedSpecies?.name === 'Other' && !pet.otherSpecies?.trim()) {
-                newErrors[`existingClientNewPet.${pet.id}.otherSpecies`] = 'Please specify the species name';
               }
+              // Note: otherSpecies is optional when "Other" is selected - user can leave it empty
               if (!pet.age?.trim()) {
                 newErrors[`existingClientNewPet.${pet.id}.age`] = 'Age/DOB is required';
               }
@@ -2008,9 +2029,25 @@ export default function AppointmentRequestForm() {
               if (!pet.sex?.trim()) {
                 newErrors[`existingClientNewPet.${pet.id}.sex`] = 'Sex is required';
               }
-              if (!pet.breed?.trim()) {
-                newErrors[`existingClientNewPet.${pet.id}.breed`] = 'Breed is required';
+              // Breed validation: If "Other" is selected, breed is always optional (can be empty or free-form text)
+              // Check both selectedSpecies name and pet.otherSpecies to detect "Other" species
+              const isOtherSpecies = selectedSpecies?.name === 'Other' || !!pet.otherSpecies?.trim();
+              if (!isOtherSpecies && pet.speciesId) {
+                // For non-"Other" species, only require breed if we're certain breeds exist
+                const breedsHaveLoaded = breedsBySpecies.hasOwnProperty(pet.speciesId);
+                const breedsCurrentlyLoading = loadingBreeds[pet.speciesId] === true;
+                
+                // Only check breed requirement if breeds have finished loading (not loading, and have loaded)
+                if (!breedsCurrentlyLoading && breedsHaveLoaded) {
+                  const breedsArray = breedsBySpecies[pet.speciesId];
+                  // Only require breed if breeds array exists, is an array, and has at least one breed
+                  if (breedsArray && Array.isArray(breedsArray) && breedsArray.length > 0 && !pet.breed?.trim()) {
+                    newErrors[`existingClientNewPet.${pet.id}.breed`] = 'Breed is required';
+                  }
+                }
+                // If breeds are loading or haven't loaded yet, don't require breed
               }
+              // If "Other" is selected, breed is optional (no validation needed)
               if (!pet.color?.trim()) {
                 newErrors[`existingClientNewPet.${pet.id}.color`] = 'Color is required';
               }
@@ -3621,38 +3658,35 @@ export default function AppointmentRequestForm() {
                             )}
                           </div>
                           <div style={{ position: 'relative' }}>
-                            <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
-                              Breed <span style={{ color: '#ef4444' }}>*</span>
-                            </label>
                             {(() => {
                               // Check if breeds exist for this species
                               const hasBreeds = pet.speciesId && 
                                 breedsBySpecies[pet.speciesId] && 
                                 breedsBySpecies[pet.speciesId].length > 0;
                               const isLoading = pet.speciesId && loadingBreeds[pet.speciesId];
-                              
-                              // If no breeds available (and not loading), show simple text input
-                              if (pet.speciesId && !isLoading && !hasBreeds) {
-                                return (
-                                  <input
-                                    type="text"
-                                    value={pet.breed || ''}
-                                    onChange={(e) => updateNewClientPet(pet.id, 'breed', e.target.value)}
-                                    placeholder="Enter breed"
-                                    style={{
-                                      padding: '8px',
-                                      border: `1px solid ${errors[`newClientPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
-                                      borderRadius: '6px',
-                                      fontSize: '14px',
-                                      width: '100%',
-                                      backgroundColor: '#fff',
-                                    }}
-                                  />
-                                );
-                              }
-                              
-                              // Otherwise, show autocomplete input
                               return (
+                                <>
+                                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                                    Breed {hasBreeds && !isLoading && <span style={{ color: '#ef4444' }}>*</span>}
+                                  </label>
+                                  {/* If no breeds available (and not loading), show simple text input */}
+                                  {pet.speciesId && !isLoading && !hasBreeds ? (
+                                    <input
+                                      type="text"
+                                      value={pet.breed || ''}
+                                      onChange={(e) => updateNewClientPet(pet.id, 'breed', e.target.value)}
+                                      placeholder="Enter breed"
+                                      style={{
+                                        padding: '8px',
+                                        border: `1px solid ${errors[`newClientPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
+                                        borderRadius: '6px',
+                                        fontSize: '14px',
+                                        width: '100%',
+                                        backgroundColor: '#fff',
+                                      }}
+                                    />
+                                  ) : (
+                                    /* Otherwise, show autocomplete input */
                                 <>
                                   <input
                                     type="text"
@@ -3750,9 +3784,12 @@ export default function AppointmentRequestForm() {
                                 )}
                               </div>
                             )}
-                                </>
-                              );
-                            })()}
+                                  </>
+                                  )
+                                }
+                              </>
+                            );
+                          })()}
                             {errors[`newClientPet.${pet.id}.breed`] && (
                               <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
                                 {errors[`newClientPet.${pet.id}.breed`]}
@@ -5337,38 +5374,35 @@ export default function AppointmentRequestForm() {
                                 )}
                               </div>
                               <div style={{ position: 'relative' }}>
-                                <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
-                                  Breed <span style={{ color: '#ef4444' }}>*</span>
-                                </label>
                                 {(() => {
                                   // Check if breeds exist for this species
                                   const hasBreeds = pet.speciesId && 
                                     breedsBySpecies[pet.speciesId] && 
                                     breedsBySpecies[pet.speciesId].length > 0;
                                   const isLoading = pet.speciesId && loadingBreeds[pet.speciesId];
-                                  
-                                  // If no breeds available (and not loading), show simple text input
-                                  if (pet.speciesId && !isLoading && !hasBreeds) {
-                                    return (
-                                      <input
-                                        type="text"
-                                        value={pet.breed || ''}
-                                        onChange={(e) => updateExistingClientNewPet(pet.id, 'breed', e.target.value)}
-                                        placeholder="Enter breed"
-                                        style={{
-                                          padding: '8px',
-                                          border: `1px solid ${errors[`existingClientNewPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
-                                          borderRadius: '6px',
-                                          fontSize: '14px',
-                                          width: '100%',
-                                          backgroundColor: '#fff',
-                                        }}
-                                      />
-                                    );
-                                  }
-                                  
-                                  // Otherwise, show autocomplete input
                                   return (
+                                    <>
+                                      <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                                        Breed {hasBreeds && !isLoading && <span style={{ color: '#ef4444' }}>*</span>}
+                                      </label>
+                                      {/* If no breeds available (and not loading), show simple text input */}
+                                      {pet.speciesId && !isLoading && !hasBreeds ? (
+                                        <input
+                                          type="text"
+                                          value={pet.breed || ''}
+                                          onChange={(e) => updateExistingClientNewPet(pet.id, 'breed', e.target.value)}
+                                          placeholder="Enter breed"
+                                          style={{
+                                            padding: '8px',
+                                            border: `1px solid ${errors[`existingClientNewPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
+                                            borderRadius: '6px',
+                                            fontSize: '14px',
+                                            width: '100%',
+                                            backgroundColor: '#fff',
+                                          }}
+                                        />
+                                      ) : (
+                                        /* Otherwise, show autocomplete input */
                                     <>
                                       <input
                                         type="text"
@@ -5466,9 +5500,12 @@ export default function AppointmentRequestForm() {
                                     )}
                                   </div>
                                 )}
-                                    </>
-                                  );
-                                })()}
+                                      </>
+                                      )
+                                    }
+                                  </>
+                                );
+                              })()}
                                 {errors[`existingClientNewPet.${pet.id}.breed`] && (
                                   <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
                                     {errors[`existingClientNewPet.${pet.id}.breed`]}
