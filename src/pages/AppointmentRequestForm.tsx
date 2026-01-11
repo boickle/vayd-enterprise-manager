@@ -12,8 +12,10 @@ import {
   fetchPublicProviders,
   fetchPublicVeterinarians,
   fetchAvailability,
+  fetchAppointmentTypes,
   type PublicProvider,
   type AvailabilityResponse,
+  type AppointmentType,
 } from '../api/publicAppointments';
 import { trackEvent } from '../utils/analytics';
 
@@ -30,7 +32,9 @@ type FormData = {
   haveUsedServicesBefore: 'Yes' | 'No' | '';
   selectedPetIds: string[]; // Array of selected pet IDs
   petSpecificData?: Record<string, {
-    needsToday?: string; // Single selected need (wellness exam, not feeling well, etc.)
+    needsToday?: string; // Appointment type prettyName (e.g., "Standard Visit", "Wellness Exam", etc.)
+    appointmentTypeId?: number; // Appointment type ID for backend lookup
+    appointmentTypeName?: string; // Appointment type name for backend lookup
     needsTodayDetails?: string; // Details/reason for the selected need
     // Euthanasia-specific fields (for end-of-life option)
     euthanasiaReason?: string;
@@ -189,8 +193,13 @@ export default function AppointmentRequestForm() {
   const [petAlerts, setPetAlerts] = useState<Map<string, string | null>>(new Map()); // Map of pet ID to alerts
   const [providers, setProviders] = useState<Provider[]>([]);
   const [publicProviders, setPublicProviders] = useState<PublicProvider[]>([]);
+  // Store raw veterinarian data (with appointmentTypes) for filtering
+  const [rawVeterinarians, setRawVeterinarians] = useState<any[]>([]);
+  const [rawPublicVeterinarians, setRawPublicVeterinarians] = useState<any[]>([]);
   const [loadingClientData, setLoadingClientData] = useState(false);
-  const [loadingVeterinarians, setLoadingVeterinarians] = useState(false);
+  const [loadingVeterinarians, setLoadingVeterinarians] = useState(false); // Always false initially - never blocks render
+  const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
+  const [loadingAppointmentTypes, setLoadingAppointmentTypes] = useState(false);
   const [primaryProviderName, setPrimaryProviderName] = useState<string | null>(null);
   const [originalAddress, setOriginalAddress] = useState<FormData['physicalAddress'] | null>(null);
   const [emailCheckResult, setEmailCheckResult] = useState<{ exists: boolean; hasAccount: boolean } | null>(null);
@@ -247,6 +256,7 @@ export default function AppointmentRequestForm() {
   const [loadingBreeds, setLoadingBreeds] = useState<Record<number, boolean>>({}); // Loading state per species
   const [breedSearchTerms, setBreedSearchTerms] = useState<Record<string, string>>({}); // Search terms for breed dropdowns, keyed by pet ID
   const [breedDropdownOpen, setBreedDropdownOpen] = useState<Record<string, boolean>>({}); // Track which breed dropdowns are open, keyed by pet ID
+  const [clientLocationReady, setClientLocationReady] = useState(false); // Track when client location is available for veterinarian fetch
 
   // Handle responsive layout
   useEffect(() => {
@@ -257,6 +267,224 @@ export default function AppointmentRequestForm() {
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
+
+  // Get appointment type by name
+  const getAppointmentTypeByName = (name: string): AppointmentType | undefined => {
+    return appointmentTypes.find(type => type.name === name);
+  };
+
+  // Get appointment type by prettyName
+  const getAppointmentTypeByPrettyName = (prettyName: string): AppointmentType | undefined => {
+    return appointmentTypes.find(type => type.prettyName === prettyName);
+  };
+
+  // Get appointment type by either name or prettyName (for backward compatibility)
+  const getAppointmentType = (value: string): AppointmentType | undefined => {
+    return getAppointmentTypeByPrettyName(value) || getAppointmentTypeByName(value);
+  };
+
+  // Check if an appointment type is euthanasia by its name or prettyName
+  const isEuthanasiaAppointmentType = (appointmentTypeValue: string): boolean => {
+    const type = getAppointmentType(appointmentTypeValue);
+    if (type) {
+      return type.name === 'Euthanasia';
+    }
+    // Fallback for backward compatibility
+    return appointmentTypeValue === 'Euthanasia' || appointmentTypeValue.toLowerCase().includes('euthanasia');
+  };
+
+  // Helper to check if appointment type name matches common patterns (for placeholders)
+  const matchesAppointmentTypeName = (appointmentTypeValue: string, patterns: string[]): boolean => {
+    const type = getAppointmentType(appointmentTypeValue);
+    if (!type) return false;
+    const nameLower = type.name.toLowerCase();
+    const prettyNameLower = type.prettyName.toLowerCase();
+    return patterns.some(pattern => 
+      nameLower.includes(pattern.toLowerCase()) || 
+      prettyNameLower.includes(pattern.toLowerCase())
+    );
+  };
+
+  // Get appointment type options for the form
+  // Returns array of objects with id, name and prettyName, sorted to show euthanasia last if present
+  // Filters by newPatientAllowed for new patients
+  // @param petId Optional pet ID to check if this specific pet is a new patient
+  const getAppointmentTypeOptions = (petId?: string): Array<{ id: number; name: string; prettyName: string }> => {
+    if (loadingAppointmentTypes || appointmentTypes.length === 0) {
+      return []; // Return empty array while loading
+    }
+    
+    // Determine if this is a new patient
+    // New patient = not logged in AND haven't used services before
+    const isNewPatient = !isLoggedIn && formData.haveUsedServicesBefore !== 'Yes';
+    
+    // Check if the specific pet (if provided) is a new pet for an existing client
+    const isNewPetForExistingClient = petId && isLoggedIn && 
+      formData.existingClientNewPets?.some(pet => pet.id === petId);
+    
+    // Filter appointment types based on newPatientAllowed for new patients
+    // This is a safeguard in case the API didn't filter correctly
+    let filteredTypes = appointmentTypes;
+    if (isNewPatient) {
+      // For new patients, only show appointment types where newPatientAllowed is true
+      filteredTypes = appointmentTypes.filter(type => type.newPatientAllowed === true);
+    } else if (isNewPetForExistingClient) {
+      // For existing clients with new patients, only show appointment types where newPatientAllowed is true
+      // (if the flag is false, new patients should NOT see that appointment type)
+      filteredTypes = appointmentTypes.filter(type => type.newPatientAllowed === true);
+    }
+    
+    // Map to objects with id, name and prettyName, and sort so euthanasia appears last
+    const options = filteredTypes.map(type => ({
+      id: type.id,
+      name: type.name,
+      prettyName: type.prettyName || type.name,
+    }));
+    const euthanasiaIndex = options.findIndex(opt => isEuthanasiaAppointmentType(opt.name));
+    
+    if (euthanasiaIndex !== -1) {
+      // Move euthanasia to the end
+      const euthanasia = options[euthanasiaIndex];
+      const others = options.filter((_, idx) => idx !== euthanasiaIndex);
+      return [...others, euthanasia];
+    }
+    
+    return options;
+  };
+
+  // Get all selected appointment type names from the form
+  // Returns a Set of unique appointment type names (converted from prettyNames) selected across all pets
+  const getSelectedAppointmentTypes = (): Set<string> => {
+    const selectedTypes = new Set<string>();
+    
+    // Helper to convert prettyName to name for veterinarian matching
+    const convertPrettyNameToName = (prettyName: string): string => {
+      const type = getAppointmentTypeByPrettyName(prettyName);
+      return type?.name || prettyName; // Fallback to prettyName if not found
+    };
+    
+    // Check selectedPetIds (existing pets)
+    if (formData.selectedPetIds && formData.petSpecificData) {
+      formData.selectedPetIds.forEach(petId => {
+        const petData = formData.petSpecificData?.[petId];
+        if (petData?.needsToday) {
+          // needsToday now stores prettyName, convert to name for veterinarian matching
+          const typeName = convertPrettyNameToName(petData.needsToday);
+          selectedTypes.add(typeName);
+        }
+      });
+    }
+    
+    // Check newClientPets
+    if (formData.newClientPets && formData.petSpecificData) {
+      formData.newClientPets.forEach(pet => {
+        const petData = formData.petSpecificData?.[pet.id];
+        if (petData?.needsToday) {
+          const typeName = convertPrettyNameToName(petData.needsToday);
+          selectedTypes.add(typeName);
+        }
+      });
+    }
+    
+    // Check existingClientNewPets
+    if (formData.existingClientNewPets && formData.petSpecificData) {
+      formData.existingClientNewPets.forEach(pet => {
+        const petData = formData.petSpecificData?.[pet.id];
+        if (petData?.needsToday) {
+          const typeName = convertPrettyNameToName(petData.needsToday);
+          selectedTypes.add(typeName);
+        }
+      });
+    }
+    
+    return selectedTypes;
+  };
+
+  // Filter veterinarians to only include those who accept ALL selected appointment types
+  // Takes raw veterinarian data and filters based on appointment type names (not prettyNames)
+  const filterVeterinariansByAppointmentTypes = (veterinarians: any[]): any[] => {
+    const selectedTypes = getSelectedAppointmentTypes();
+    
+    // If no appointment types are selected yet, return all veterinarians
+    if (selectedTypes.size === 0) {
+      return veterinarians;
+    }
+    
+    return veterinarians.filter((vet) => {
+      // Get all appointment type names that this veterinarian accepts
+      const vetAppointmentTypes = new Set<string>();
+      if (vet.appointmentTypes && Array.isArray(vet.appointmentTypes)) {
+        vet.appointmentTypes.forEach((aptType: any) => {
+          // Use the name field, not prettyName (selectedTypes contains appointment type names)
+          if (aptType.name) {
+            vetAppointmentTypes.add(aptType.name);
+          }
+        });
+      }
+      
+      // Check if veterinarian accepts ALL selected appointment types
+      // Only include veterinarians who have all selected types in their appointmentTypes array
+      for (const selectedType of selectedTypes) {
+        if (!vetAppointmentTypes.has(selectedType)) {
+          return false; // This veterinarian doesn't accept this appointment type
+        }
+      }
+      
+      return true; // Veterinarian accepts all selected appointment types
+    });
+  };
+
+  // Convert raw veterinarian data to PublicProvider format
+  const mapRawVeterinarianToPublicProvider = (vet: any): PublicProvider => {
+    const id = vet.id ?? vet.pimsId ?? vet.employeeId;
+    
+    // Build name from title, firstName, lastName, and designation
+    const nameParts: string[] = [];
+    if (vet.title) nameParts.push(vet.title);
+    if (vet.firstName) nameParts.push(vet.firstName);
+    if (vet.lastName) nameParts.push(vet.lastName);
+    if (vet.designation) nameParts.push(vet.designation);
+    
+    const name = nameParts.length > 0 
+      ? nameParts.join(' ')
+      : (`${vet.firstName || ''} ${vet.lastName || ''}`.trim() || `Veterinarian ${id ?? ''}`);
+    
+    return {
+      id: id,
+      name: name,
+      email: vet?.email,
+    };
+  };
+
+  // Convert raw veterinarian data to Provider format
+  const mapRawVeterinarianToProvider = (vet: any): Provider => {
+    const pimsId = vet.pimsId ? String(vet.pimsId) : null;
+    const id = vet.id ?? vet.pimsId;
+    
+    // Build name from firstName, middleName, lastName
+    const nameParts: string[] = [];
+    if (vet.firstName) nameParts.push(vet.firstName);
+    if (vet.middleName || vet.middleInitial) {
+      const middle = vet.middleInitial || (vet.middleName ? vet.middleName.charAt(0).toUpperCase() : '');
+      if (middle) nameParts.push(middle);
+    }
+    if (vet.lastName) nameParts.push(vet.lastName);
+    
+    const name = nameParts.length > 0 
+      ? nameParts.join(' ').trim()
+      : (vet.name || `Provider ${id ?? ''}`);
+    
+    return {
+      id: id,
+      pimsId: pimsId || String(id),
+      email: vet?.email || '',
+      name: name,
+      dailyRevenueGoal: vet?.dailyRevenueGoal ?? null,
+      bonusRevenueGoal: vet?.bonusRevenueGoal ?? null,
+      dailyPointGoal: vet?.dailyPointGoal ?? null,
+      weeklyPointGoal: vet?.weeklyPointGoal ?? null,
+    };
+  };
 
   // Find available appointment slots
   const findAvailableSlots = async () => {
@@ -560,11 +788,11 @@ export default function AppointmentRequestForm() {
     const hasEuthanasiaPet = 
       (formData.selectedPetIds?.some(petId => {
         const petData = formData.petSpecificData?.[petId];
-        return petData?.needsToday === 'End-of-life care / Euthanasia';
+        return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
       }) || false) ||
       (formData.newClientPets?.some(pet => {
         const petData = formData.petSpecificData?.[pet.id];
-        return petData?.needsToday === 'End-of-life care / Euthanasia';
+        return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
       }) || false);
     
     console.log('[AppointmentForm] useEffect check:', {
@@ -768,121 +996,161 @@ export default function AppointmentRequestForm() {
   useEffect(() => {
     if (isLoggedIn) return; // Skip if logged in (will use regular veterinarians)
 
-    // Check if address is valid (all required fields filled)
-    const hasValidAddress = 
-      formData.physicalAddress?.line1?.trim() &&
-      formData.physicalAddress?.city?.trim() &&
-      formData.physicalAddress?.state?.trim() &&
-      formData.physicalAddress?.zip?.trim();
+    // Defer execution to ensure it doesn't block initial render
+    let debounceTimeoutId: NodeJS.Timeout | null = null;
+    const deferTimeoutId = setTimeout(() => {
+      // Check if address is valid (all required fields filled)
+      const hasValidAddress = 
+        formData.physicalAddress?.line1?.trim() &&
+        formData.physicalAddress?.city?.trim() &&
+        formData.physicalAddress?.state?.trim() &&
+        formData.physicalAddress?.zip?.trim();
 
-    // Don't fetch if address is not valid
-    if (!hasValidAddress) {
-      setPublicProviders([]);
-      setProviders([]);
-      setLoadingVeterinarians(false);
-      setErrors(prev => {
-        const next = { ...prev };
-        delete next.zoneNotServiced;
-        return next;
-      });
-      lastCheckedAddressRef.current = ''; // Reset last checked address when address is incomplete
-      return;
-    }
+      // Don't fetch if address is not valid
+      if (!hasValidAddress) {
+        setPublicProviders([]);
+        setProviders([]);
+        setRawPublicVeterinarians([]);
+        setLoadingVeterinarians(false);
+        setErrors(prev => {
+          const next = { ...prev };
+          delete next.zoneNotServiced;
+          return next;
+        });
+        lastCheckedAddressRef.current = ''; // Reset last checked address when address is incomplete
+        return;
+      }
 
-    // Build address string from form data
-    const addressParts = [
-      formData.physicalAddress?.line1,
-      formData.physicalAddress?.city,
-      formData.physicalAddress?.state,
-      formData.physicalAddress?.zip,
-    ].filter(Boolean);
-    const address = addressParts.join(', ');
+      // Build address string from form data
+      const addressParts = [
+        formData.physicalAddress?.line1,
+        formData.physicalAddress?.city,
+        formData.physicalAddress?.state,
+        formData.physicalAddress?.zip,
+      ].filter(Boolean);
+      const address = addressParts.join(', ');
 
-    // Only proceed if address has changed from last check
-    if (lastCheckedAddressRef.current === address) {
-      return; // Address hasn't changed, skip
-    }
+      // Only proceed if address has changed from last check
+      if (lastCheckedAddressRef.current === address) {
+        return; // Address hasn't changed, skip
+      }
 
-    // Debounce: wait 500ms after user stops typing before checking zone
-    const timeoutId = setTimeout(() => {
-      let alive = true;
-      (async () => {
-        // Double-check address hasn't changed during debounce
-        const currentAddressParts = [
-          formData.physicalAddress?.line1,
-          formData.physicalAddress?.city,
-          formData.physicalAddress?.state,
-          formData.physicalAddress?.zip,
-        ].filter(Boolean);
-        const currentAddress = currentAddressParts.join(', ');
-        
-        if (lastCheckedAddressRef.current === currentAddress) {
-          return; // Address changed during debounce, skip
-        }
+      // Debounce: wait 500ms after user stops typing before checking zone
+      debounceTimeoutId = setTimeout(() => {
+        let alive = true;
+        (async () => {
+          // Double-check address hasn't changed during debounce
+          const currentAddressParts = [
+            formData.physicalAddress?.line1,
+            formData.physicalAddress?.city,
+            formData.physicalAddress?.state,
+            formData.physicalAddress?.zip,
+          ].filter(Boolean);
+          const currentAddress = currentAddressParts.join(', ');
+          
+          if (lastCheckedAddressRef.current === currentAddress) {
+            return; // Address changed during debounce, skip
+          }
 
-        setLoadingVeterinarians(true);
-        try {
-          // Check zone before fetching veterinarians
+          setLoadingVeterinarians(true);
           try {
-            await http.get(`/public/appointments/find-zone-by-address?address=${encodeURIComponent(currentAddress)}`);
-            // Zone exists, clear any previous error
-            if (alive) {
-              setErrors(prev => {
-                const next = { ...prev };
-                delete next.zoneNotServiced;
-                return next;
-              });
-              lastCheckedAddressRef.current = currentAddress; // Update last checked address
-            }
-          } catch (zoneError: any) {
-            if (zoneError?.response?.status === 404) {
-              // Zone not serviced - set error and don't fetch veterinarians
+            // Check zone before fetching veterinarians
+            try {
+              await http.get(`/public/appointments/find-zone-by-address?address=${encodeURIComponent(currentAddress)}`);
+              // Zone exists, clear any previous error
               if (alive) {
-                setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry we don't serve your area at this time. Please check back with us periodically to see if we have changed our service area at www.vetatyourdoor.com/service-area." }));
-                setPublicProviders([]);
-                setProviders([]);
-                setLoadingVeterinarians(false);
+                setErrors(prev => {
+                  const next = { ...prev };
+                  delete next.zoneNotServiced;
+                  return next;
+                });
+                lastCheckedAddressRef.current = currentAddress; // Update last checked address
+              }
+            } catch (zoneError: any) {
+              if (zoneError?.response?.status === 404) {
+                // Zone not serviced - set error and don't fetch veterinarians
+                if (alive) {
+                  setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry we don't serve your area at this time. Please check back with us periodically to see if we have changed our service area at www.vetatyourdoor.com/service-area." }));
+                  setPublicProviders([]);
+                  setProviders([]);
+                  setRawPublicVeterinarians([]);
+                  setLoadingVeterinarians(false);
+                  lastCheckedAddressRef.current = currentAddress; // Update last checked address even on error
+                }
+                return;
+              }
+              // For other errors, log but continue with veterinarian fetch
+              console.warn('[AppointmentForm] Zone check failed:', zoneError);
+              if (alive) {
                 lastCheckedAddressRef.current = currentAddress; // Update last checked address even on error
               }
-              return;
             }
-            // For other errors, log but continue with veterinarian fetch
-            console.warn('[AppointmentForm] Zone check failed:', zoneError);
+            
+            if (!alive) return;
+            
+            // Fetch raw veterinarian data directly from API to get appointmentTypes
+            const params: any = { practiceId };
+            if (currentAddress) {
+              params.address = currentAddress;
+            }
+            const { data } = await http.get('/public/appointments/veterinarians', { params });
+            const rawVeterinarians: any[] = Array.isArray(data) ? data : (data?.items ?? data?.veterinarians ?? []);
+            
+            if (!alive) return;
+            
+            // Filter by acceptingNewPatients first (existing logic)
+            const filteredByNewPatients = rawVeterinarians.filter((v) => {
+              if (!v.weeklySchedules || !Array.isArray(v.weeklySchedules)) {
+                return true; // Backwards compatibility
+              }
+              const hasNonAcceptingZone = v.weeklySchedules.some((schedule: any) => {
+                if (!schedule.zones || !Array.isArray(schedule.zones)) {
+                  return false;
+                }
+                return schedule.zones.some((zone: any) => zone.acceptingNewPatients === false);
+              });
+              return !hasNonAcceptingZone;
+            });
+            
+            // Store raw data
+            setRawPublicVeterinarians(filteredByNewPatients);
+            
+            // Filter by appointment types
+            const filteredByAppointmentTypes = filterVeterinariansByAppointmentTypes(filteredByNewPatients);
+            
+            // Convert to PublicProvider format
+            const publicVeterinariansData = filteredByAppointmentTypes.map(mapRawVeterinarianToPublicProvider);
+            
+            setPublicProviders(publicVeterinariansData);
+            
+            // Also set providers for compatibility with existing code
+            setProviders(publicVeterinariansData.map(v => ({
+              id: v.id,
+              name: v.name,
+              email: v.email || '',
+              pimsId: v.id,
+            })));
+          } catch (error) {
+            console.error('[AppointmentForm] Failed to load public veterinarians:', error);
             if (alive) {
-              lastCheckedAddressRef.current = currentAddress; // Update last checked address even on error
+              setPublicProviders([]);
+              setProviders([]);
+              setRawPublicVeterinarians([]);
+            }
+          } finally {
+            if (alive) {
+              setLoadingVeterinarians(false);
             }
           }
-          
-          if (!alive) return;
-          
-          const publicVeterinariansData = await fetchPublicVeterinarians(practiceId, currentAddress);
-          if (!alive) return;
-          
-          setPublicProviders(publicVeterinariansData);
-          
-          // Also set providers for compatibility with existing code
-          setProviders(publicVeterinariansData.map(v => ({
-            id: v.id,
-            name: v.name,
-            email: v.email || '',
-            pimsId: v.id,
-          })));
-        } catch (error) {
-          console.error('[AppointmentForm] Failed to load public veterinarians:', error);
-          if (alive) {
-            setPublicProviders([]);
-            setProviders([]);
-          }
-        } finally {
-          if (alive) {
-            setLoadingVeterinarians(false);
-          }
-        }
-      })();
-    }, 500); // 500ms debounce
+        })();
+      }, 500); // 500ms debounce
+    }, 0); // Defer to next tick to avoid blocking initial render
 
     return () => {
-      clearTimeout(timeoutId);
+      clearTimeout(deferTimeoutId);
+      if (debounceTimeoutId) {
+        clearTimeout(debounceTimeoutId);
+      }
     };
   }, [isLoggedIn, practiceId, formData.physicalAddress?.line1, formData.physicalAddress?.city, formData.physicalAddress?.state, formData.physicalAddress?.zip]);
 
@@ -890,13 +1158,15 @@ export default function AppointmentRequestForm() {
   useEffect(() => {
     if (!isLoggedIn) return;
 
+    // Defer execution to ensure it doesn't block initial render
     let alive = true;
-    (async () => {
-      setLoadingClientData(true);
-      
-      try {
-        // Always fetch pets first
-        const petsData = await fetchClientPets();
+    const timeoutId = setTimeout(() => {
+      (async () => {
+        setLoadingClientData(true);
+        
+        try {
+          // Always fetch pets first
+          const petsData = await fetchClientPets();
 
         if (!alive) return;
 
@@ -1066,61 +1336,9 @@ export default function AppointmentRequestForm() {
           address: clientAddress,
         };
         
-        // Fetch veterinarians using client location if available (only if not using new address)
-        if (formData.isThisTheAddressWhereWeWillCome !== 'No') {
-          const lat = clientLat;
-          const lon = clientLon;
-          const address = clientAddress;
-          
-          if ((lat != null && lon != null) || address) {
-            setLoadingVeterinarians(true);
-            try {
-              // Clear any zone error when using address on file
-              setErrors(prev => {
-                const next = { ...prev };
-                delete next.zoneNotServiced;
-                return next;
-              });
-              
-              if (!alive) return;
-              
-              // Pass lat/lon if available, otherwise pass address
-              const providersData = await fetchVeterinarians(address, lat, lon);
-              
-              if (!alive) return;
-              
-              setProviders(providersData);
-              setLoadingVeterinarians(false);
-              
-              // Set default doctor to primary provider if found
-              const primaryProvider = petsData.find(p => p.primaryProviderName)?.primaryProviderName || null;
-              if (primaryProvider && providersData.length > 0) {
-                const providerMatch = providersData.find(p => 
-                  p.name === primaryProvider || 
-                  p.name.includes(primaryProvider) ||
-                  primaryProvider.includes(p.name) ||
-                  `Dr. ${p.name}` === primaryProvider ||
-                  p.name.toLowerCase().includes(primaryProvider.toLowerCase()) ||
-                  primaryProvider.toLowerCase().includes(p.name.toLowerCase())
-                );
-                if (providerMatch) {
-                  setFormData(prev => ({ 
-                    ...prev, 
-                    preferredDoctorExisting: `Dr. ${providerMatch.name}` 
-                  }));
-                }
-              }
-            } catch (err) {
-              console.error('Failed to fetch veterinarians:', err);
-              if (alive) {
-                setProviders([]);
-                setLoadingVeterinarians(false);
-              }
-            }
-          } else {
-            setProviders([]);
-            setLoadingVeterinarians(false);
-          }
+        // Mark client location as ready (triggers separate veterinarian fetch)
+        if (clientLat || clientLon || clientAddress) {
+          setClientLocationReady(true);
         }
 
         // Skip intro page and go directly to existing client form
@@ -1133,10 +1351,12 @@ export default function AppointmentRequestForm() {
       } finally {
         if (alive) setLoadingClientData(false);
       }
-    })();
+      })();
+    }, 0); // Defer to next tick to avoid blocking initial render
 
     return () => {
       alive = false;
+      clearTimeout(timeoutId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -1149,17 +1369,21 @@ export default function AppointmentRequestForm() {
     if (!isLoggedIn) return; // Only for logged-in users
     if (formData.isThisTheAddressWhereWeWillCome !== 'No') return; // Only when entering new address
 
-    // Check if new address is complete (all required fields filled)
-    const hasValidNewAddress = 
-      formData.newPhysicalAddress?.line1?.trim() &&
-      formData.newPhysicalAddress?.city?.trim() &&
-      formData.newPhysicalAddress?.state?.trim() &&
-      formData.newPhysicalAddress?.zip?.trim();
+    // Defer execution to ensure it doesn't block initial render
+    let debounceTimeoutId: NodeJS.Timeout | null = null;
+    const deferTimeoutId = setTimeout(() => {
+      // Check if new address is complete (all required fields filled)
+      const hasValidNewAddress = 
+        formData.newPhysicalAddress?.line1?.trim() &&
+        formData.newPhysicalAddress?.city?.trim() &&
+        formData.newPhysicalAddress?.state?.trim() &&
+        formData.newPhysicalAddress?.zip?.trim();
 
-    // Don't fetch if address is not complete
-    if (!hasValidNewAddress || !formData.newPhysicalAddress) {
+      // Don't fetch if address is not complete
+      if (!hasValidNewAddress || !formData.newPhysicalAddress) {
       // Clear providers and errors if address is incomplete
       setProviders([]);
+      setRawVeterinarians([]);
       setLoadingVeterinarians(false);
       setErrors(prev => {
         const next = { ...prev };
@@ -1168,25 +1392,25 @@ export default function AppointmentRequestForm() {
       });
       lastCheckedAddressRef.current = ''; // Reset last checked address when address is incomplete
       return;
-    }
+      }
 
-    // Build address string from form data
-    // At this point, we know newPhysicalAddress is defined due to the check above
-    const addressParts = [
-      formData.newPhysicalAddress.line1,
-      formData.newPhysicalAddress.city,
-      formData.newPhysicalAddress.state,
-      formData.newPhysicalAddress.zip,
-    ].filter(Boolean);
-    const address = addressParts.join(', ');
+      // Build address string from form data
+      // At this point, we know newPhysicalAddress is defined due to the check above
+      const addressParts = [
+        formData.newPhysicalAddress.line1,
+        formData.newPhysicalAddress.city,
+        formData.newPhysicalAddress.state,
+        formData.newPhysicalAddress.zip,
+      ].filter(Boolean);
+      const address = addressParts.join(', ');
 
-    // Only proceed if address has changed from last check
-    if (lastCheckedAddressRef.current === address) {
-      return; // Address hasn't changed, skip
-    }
+      // Only proceed if address has changed from last check
+      if (lastCheckedAddressRef.current === address) {
+        return; // Address hasn't changed, skip
+      }
 
-    // Debounce: wait 500ms after user stops typing before making requests
-    const timeoutId = setTimeout(() => {
+      // Debounce: wait 500ms after user stops typing before making requests
+      debounceTimeoutId = setTimeout(() => {
       let alive = true;
       (async () => {
         // Double-check address hasn't changed during debounce
@@ -1236,29 +1460,51 @@ export default function AppointmentRequestForm() {
           
           if (!alive) return;
           
-          // Fetch veterinarians using the new address
-          const providersData = await fetchVeterinarians(currentAddress, undefined, undefined);
+          // Fetch raw veterinarian data directly from API to get appointmentTypes
+          const params: any = {};
+          if (currentAddress) {
+            params.address = currentAddress;
+          }
+          const { data } = await http.get('/employees/veterinarians', { params });
+          const rawVeterinarians: any[] = Array.isArray(data) ? data : [];
           
           if (!alive) return;
           
+          // Filter by isActive
+          const filteredByActive = rawVeterinarians.filter((v) => v.isActive !== false);
+          
+          // Store raw data
+          setRawVeterinarians(filteredByActive);
+          
+          // Filter by appointment types
+          const filteredByAppointmentTypes = filterVeterinariansByAppointmentTypes(filteredByActive);
+          
+          // Convert to Provider format
+          const providersData = filteredByAppointmentTypes.map(mapRawVeterinarianToProvider);
+          
           setProviders(providersData);
           setLoadingVeterinarians(false);
-        } catch (err) {
-          console.error('Failed to fetch veterinarians:', err);
-          if (alive) {
-            setProviders([]);
-            setLoadingVeterinarians(false);
+          } catch (err) {
+            console.error('Failed to fetch veterinarians:', err);
+            if (alive) {
+              setProviders([]);
+              setRawVeterinarians([]);
+              setLoadingVeterinarians(false);
+            }
           }
-        }
       })();
 
       return () => {
         alive = false;
       };
-    }, 500); // 500ms debounce
+      }, 500); // 500ms debounce
+    }, 0); // Defer to next tick to avoid blocking initial render
 
     return () => {
-      clearTimeout(timeoutId);
+      clearTimeout(deferTimeoutId);
+      if (debounceTimeoutId) {
+        clearTimeout(debounceTimeoutId);
+      }
     };
   }, [
     isLoggedIn,
@@ -1269,19 +1515,25 @@ export default function AppointmentRequestForm() {
     formData.newPhysicalAddress?.zip,
   ]);
 
-  // Handle switching back to original address for existing clients
+  // Fetch veterinarians for logged-in users when client location becomes available
+  // This runs completely independently and non-blocking after client data is loaded
   useEffect(() => {
-    if (!isLoggedIn) return; // Only for logged-in users
-    if (formData.isThisTheAddressWhereWeWillCome !== 'Yes') return; // Only when using original address
-
-    const { lat, lon, address } = clientLocationRef.current;
+    if (!isLoggedIn) return;
+    if (!clientLocationReady) return;
+    // Only fetch if using original address (not a new address)
+    if (formData.isThisTheAddressWhereWeWillCome === 'No') return;
     
-    // Fetch veterinarians using client location if available
-    if ((lat != null && lon != null) || address) {
-      setLoadingVeterinarians(true);
-      let alive = true;
+    const { lat, lon, address } = clientLocationRef.current;
+    // Don't fetch if no location available
+    if (!lat && !lon && !address) return;
+    
+    // Defer execution to ensure it doesn't block render - use longer delay to ensure everything is loaded first
+    let alive = true;
+    const timeoutId = setTimeout(() => {
+      // Fire and forget - completely async, non-blocking
       (async () => {
         try {
+          setLoadingVeterinarians(true);
           // Clear any zone error when using address on file
           setErrors(prev => {
             const next = { ...prev };
@@ -1291,8 +1543,31 @@ export default function AppointmentRequestForm() {
           
           if (!alive) return;
           
-          // Pass lat/lon if available, otherwise pass address
-          const providersData = await fetchVeterinarians(address, lat, lon);
+          // Fetch raw veterinarian data directly from API to get appointmentTypes
+          const params: any = {};
+          if (lat != null && lon != null && Number.isFinite(lat) && Number.isFinite(lon)) {
+            params.lat = lat;
+            params.lon = lon;
+          } else if (address) {
+            params.address = address;
+          }
+          
+          const { data } = await http.get('/employees/veterinarians', { params });
+          const rawVeterinarians: any[] = Array.isArray(data) ? data : [];
+          
+          if (!alive) return;
+          
+          // Filter by isActive
+          const filteredByActive = rawVeterinarians.filter((v) => v.isActive !== false);
+          
+          // Store raw data
+          setRawVeterinarians(filteredByActive);
+          
+          // Filter by appointment types
+          const filteredByAppointmentTypes = filterVeterinariansByAppointmentTypes(filteredByActive);
+          
+          // Convert to Provider format
+          const providersData = filteredByAppointmentTypes.map(mapRawVeterinarianToProvider);
           
           if (!alive) return;
           
@@ -1302,58 +1577,144 @@ export default function AppointmentRequestForm() {
           console.error('Failed to fetch veterinarians:', err);
           if (alive) {
             setProviders([]);
+            setRawVeterinarians([]);
             setLoadingVeterinarians(false);
           }
         }
       })();
+    }, 300); // Delay to ensure client data loading and page navigation complete first
 
-      return () => {
-        alive = false;
-      };
-    } else {
-      setProviders([]);
-      setLoadingVeterinarians(false);
-    }
+    return () => {
+      alive = false;
+      clearTimeout(timeoutId);
+    };
   }, [
     isLoggedIn,
+    clientLocationReady,
     formData.isThisTheAddressWhereWeWillCome,
   ]);
 
   // Fetch species list on mount
   useEffect(() => {
+    // Defer execution to ensure it doesn't block initial render
     let alive = true;
-    (async () => {
-      setLoadingSpecies(true);
-      try {
-        const response = await http.get(`/public/species-breeds?practiceId=${practiceId}`);
-        if (!alive) return;
-        const species = Array.isArray(response.data?.species) ? response.data.species : [];
-        // Filter to only show species with showInUi === true and include prettyName
-        setSpeciesList(
-          species
-            .filter((s: any) => s.showInUi !== false) // Only show species where showInUi is true (or undefined, defaulting to true)
-            .map((s: any) => ({ 
-              id: s.id, 
-              name: s.name,
-              prettyName: s.prettyName || s.name, // Use prettyName if available, fallback to name
-              showInUi: s.showInUi 
-            }))
-        );
-      } catch (error) {
-        console.error('[AppointmentForm] Failed to load species:', error);
-        if (alive) {
-          setSpeciesList([]);
+    const timeoutId = setTimeout(() => {
+      (async () => {
+        setLoadingSpecies(true);
+        try {
+          const response = await http.get(`/public/species-breeds?practiceId=${practiceId}`);
+          if (!alive) return;
+          const species = Array.isArray(response.data?.species) ? response.data.species : [];
+          // Filter to only show species with showInUi === true and include prettyName
+          setSpeciesList(
+            species
+              .filter((s: any) => s.showInUi !== false) // Only show species where showInUi is true (or undefined, defaulting to true)
+              .map((s: any) => ({ 
+                id: s.id, 
+                name: s.name,
+                prettyName: s.prettyName || s.name, // Use prettyName if available, fallback to name
+                showInUi: s.showInUi 
+              }))
+          );
+        } catch (error) {
+          console.error('[AppointmentForm] Failed to load species:', error);
+          if (alive) {
+            setSpeciesList([]);
+          }
+        } finally {
+          if (alive) {
+            setLoadingSpecies(false);
+          }
         }
-      } finally {
-        if (alive) {
-          setLoadingSpecies(false);
-        }
-      }
-    })();
+      })();
+    }, 0); // Defer to next tick to avoid blocking initial render
+
     return () => {
       alive = false;
+      clearTimeout(timeoutId);
     };
   }, [practiceId]);
+
+  // Fetch appointment types on mount and when new patient status changes
+  useEffect(() => {
+    // Defer execution to ensure it doesn't block initial render
+    let alive = true;
+    const timeoutId = setTimeout(() => {
+      (async () => {
+        setLoadingAppointmentTypes(true);
+        try {
+          // Determine if this is a new patient
+          // New patient = not logged in AND haven't used services before
+          const isNewPatient = !isLoggedIn && formData.haveUsedServicesBefore !== 'Yes';
+          
+          // Use authenticated endpoint for logged-in users, public endpoint for others
+          // Always filter to showInApptRequestForm=true since we only want types that appear in the form
+          // For new patients, also filter by newPatientAllowed=true
+          const types = await fetchAppointmentTypes(
+            practiceId,
+            true, // showInApptRequestForm
+            isNewPatient ? true : undefined, // newPatientAllowed for new patients only
+            isLoggedIn
+          );
+          if (!alive) return;
+          // The API already filters, but we ensure showInApptRequestForm is true as a safeguard
+          setAppointmentTypes(
+            types.filter((type) => type.showInApptRequestForm === true)
+          );
+        } catch (error) {
+          console.error('[AppointmentForm] Failed to load appointment types:', error);
+          if (alive) {
+            setAppointmentTypes([]);
+          }
+        } finally {
+          if (alive) {
+            setLoadingAppointmentTypes(false);
+          }
+        }
+      })();
+    }, 0); // Defer to next tick to avoid blocking initial render
+
+    return () => {
+      alive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [practiceId, isLoggedIn, formData.haveUsedServicesBefore]);
+
+  // Re-filter veterinarians when appointment types change
+  useEffect(() => {
+    // Only re-filter if we have raw data already loaded
+    // Re-filter public veterinarians for new clients
+    if (rawPublicVeterinarians.length > 0 && !isLoggedIn) {
+      const filteredByAppointmentTypes = filterVeterinariansByAppointmentTypes(rawPublicVeterinarians);
+      
+      const publicVeterinariansData = filteredByAppointmentTypes.map(mapRawVeterinarianToPublicProvider);
+      
+      setPublicProviders(publicVeterinariansData);
+      setProviders(publicVeterinariansData.map(v => ({
+        id: v.id,
+        name: v.name,
+        email: v.email || '',
+        pimsId: v.id,
+      })));
+    }
+    
+    // Re-filter veterinarians for logged-in clients
+    if (rawVeterinarians.length > 0 && isLoggedIn) {
+      const filteredByAppointmentTypes = filterVeterinariansByAppointmentTypes(rawVeterinarians);
+      
+      const providersData = filteredByAppointmentTypes.map(mapRawVeterinarianToProvider);
+      setProviders(providersData);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    formData.petSpecificData,
+    formData.selectedPetIds,
+    formData.newClientPets,
+    formData.existingClientNewPets,
+    rawVeterinarians,
+    rawPublicVeterinarians,
+    isLoggedIn,
+  ]);
 
   // Fetch breeds when species is selected for any pet
   useEffect(() => {
@@ -1391,6 +1752,13 @@ export default function AppointmentRequestForm() {
           }
         } catch (error) {
           console.error(`[AppointmentForm] Failed to load breeds for species ${speciesId}:`, error);
+          // On error, set empty array to indicate no breeds available
+          if (alive) {
+            setBreedsBySpecies(prev => ({
+              ...prev,
+              [speciesId]: []
+            }));
+          }
         } finally {
           if (alive) {
             setLoadingBreeds(prev => ({ ...prev, [speciesId]: false }));
@@ -1489,7 +1857,7 @@ export default function AppointmentRequestForm() {
         if (!formData.physicalAddress.zip.trim()) newErrors['physicalAddress.zip'] = 'Zip code is required';
         if (errors.zoneNotServiced) newErrors.zoneNotServiced = errors.zoneNotServiced;
         if (!formData.previousVeterinaryPractices?.trim()) newErrors.previousVeterinaryPractices = 'Previous veterinary practices are required';
-          if (!formData.preferredDoctor) newErrors.preferredDoctor = 'Please select a preferred doctor';
+        // Doctor selection moved to request-visit-continued page
         }
         break;
       case 'new-client-pet-info':
@@ -1506,9 +1874,8 @@ export default function AppointmentRequestForm() {
               const selectedSpecies = speciesList.find(s => s.id === pet.speciesId);
               if (!pet.speciesId) {
                 newErrors[`newClientPet.${pet.id}.species`] = 'Species is required';
-              } else if (selectedSpecies?.name === 'Other' && !pet.otherSpecies?.trim()) {
-                newErrors[`newClientPet.${pet.id}.otherSpecies`] = 'Please specify the species name';
               }
+              // Note: otherSpecies is optional when "Other" is selected - user can leave it empty
               if (!pet.age?.trim()) {
                 newErrors[`newClientPet.${pet.id}.age`] = 'Age/DOB is required';
               }
@@ -1518,9 +1885,25 @@ export default function AppointmentRequestForm() {
               if (!pet.sex?.trim()) {
                 newErrors[`newClientPet.${pet.id}.sex`] = 'Sex is required';
               }
-              if (!pet.breed?.trim()) {
-                newErrors[`newClientPet.${pet.id}.breed`] = 'Breed is required';
+              // Breed validation: If "Other" is selected, breed is always optional (can be empty or free-form text)
+              // Check both selectedSpecies name and pet.otherSpecies to detect "Other" species
+              const isOtherSpecies = selectedSpecies?.name === 'Other' || !!pet.otherSpecies?.trim();
+              if (!isOtherSpecies && pet.speciesId) {
+                // For non-"Other" species, only require breed if we're certain breeds exist
+                const breedsHaveLoaded = breedsBySpecies.hasOwnProperty(pet.speciesId);
+                const breedsCurrentlyLoading = loadingBreeds[pet.speciesId] === true;
+                
+                // Only check breed requirement if breeds have finished loading (not loading, and have loaded)
+                if (!breedsCurrentlyLoading && breedsHaveLoaded) {
+                  const breedsArray = breedsBySpecies[pet.speciesId];
+                  // Only require breed if breeds array exists, is an array, and has at least one breed
+                  if (breedsArray && Array.isArray(breedsArray) && breedsArray.length > 0 && !pet.breed?.trim()) {
+                    newErrors[`newClientPet.${pet.id}.breed`] = 'Breed is required';
+                  }
+                }
+                // If breeds are loading or haven't loaded yet, don't require breed
               }
+              // If "Other" is selected, breed is optional (no validation needed)
               if (!pet.color?.trim()) {
                 newErrors[`newClientPet.${pet.id}.color`] = 'Color is required';
               }
@@ -1542,7 +1925,7 @@ export default function AppointmentRequestForm() {
                 newErrors[`needsToday.${pet.id}`] = 'Please select an option for what your pet needs today';
               }
               if (petData?.needsToday) {
-                if (petData.needsToday === 'End-of-life care / Euthanasia') {
+                if (petData.needsToday && isEuthanasiaAppointmentType(petData.needsToday)) {
                   if (!petData.euthanasiaReason?.trim()) {
                     newErrors[`euthanasiaReason.${pet.id}`] = 'Please provide details about the reason for this appointment';
                   }
@@ -1556,8 +1939,8 @@ export default function AppointmentRequestForm() {
                     newErrors[`aftercarePreference.${pet.id}`] = 'Please select your preferences for aftercare';
                   }
                 } else if (
-                  petData.needsToday === 'My pet isn\'t feeling well (new concern or illness)' ||
-                  petData.needsToday?.startsWith('Recheck / follow-up')
+                                                  (petData.needsToday && matchesAppointmentTypeName(petData.needsToday, ['not feeling well', 'illness', 'Medical Visit'])) ||
+                                                  (petData.needsToday && matchesAppointmentTypeName(petData.needsToday, ['recheck', 'follow-up', 'Follow Up']))
                 ) {
                   if (!petData.needsTodayDetails?.trim()) {
                     newErrors[`needsTodayDetails.${pet.id}`] = 'Please provide details about the reason for this appointment';
@@ -1585,7 +1968,7 @@ export default function AppointmentRequestForm() {
             if (errors.zoneNotServiced) newErrors.zoneNotServiced = errors.zoneNotServiced;
           }
         }
-        if (!formData.preferredDoctorExisting) newErrors.preferredDoctorExisting = 'Please select a preferred doctor';
+        // Doctor selection moved to request-visit-continued page
         // Temporarily disabled - question is hidden but logic is preserved
         // if (!formData.lookingForEuthanasiaExisting) newErrors.lookingForEuthanasiaExisting = 'Please select an option';
         break;
@@ -1602,7 +1985,7 @@ export default function AppointmentRequestForm() {
               }
               // Validate based on selected option
               if (petData?.needsToday) {
-                if (petData.needsToday === 'End-of-life care / Euthanasia') {
+                if (petData.needsToday && isEuthanasiaAppointmentType(petData.needsToday)) {
                   // Validate euthanasia fields
                   if (!petData.euthanasiaReason?.trim()) {
                     newErrors[`euthanasiaReason.${petId}`] = 'Please let us know what is going on with your pet';
@@ -1635,9 +2018,8 @@ export default function AppointmentRequestForm() {
               const selectedSpecies = speciesList.find(s => s.id === pet.speciesId);
               if (!pet.speciesId) {
                 newErrors[`existingClientNewPet.${pet.id}.species`] = 'Species is required';
-              } else if (selectedSpecies?.name === 'Other' && !pet.otherSpecies?.trim()) {
-                newErrors[`existingClientNewPet.${pet.id}.otherSpecies`] = 'Please specify the species name';
               }
+              // Note: otherSpecies is optional when "Other" is selected - user can leave it empty
               if (!pet.age?.trim()) {
                 newErrors[`existingClientNewPet.${pet.id}.age`] = 'Age/DOB is required';
               }
@@ -1647,9 +2029,25 @@ export default function AppointmentRequestForm() {
               if (!pet.sex?.trim()) {
                 newErrors[`existingClientNewPet.${pet.id}.sex`] = 'Sex is required';
               }
-              if (!pet.breed?.trim()) {
-                newErrors[`existingClientNewPet.${pet.id}.breed`] = 'Breed is required';
+              // Breed validation: If "Other" is selected, breed is always optional (can be empty or free-form text)
+              // Check both selectedSpecies name and pet.otherSpecies to detect "Other" species
+              const isOtherSpecies = selectedSpecies?.name === 'Other' || !!pet.otherSpecies?.trim();
+              if (!isOtherSpecies && pet.speciesId) {
+                // For non-"Other" species, only require breed if we're certain breeds exist
+                const breedsHaveLoaded = breedsBySpecies.hasOwnProperty(pet.speciesId);
+                const breedsCurrentlyLoading = loadingBreeds[pet.speciesId] === true;
+                
+                // Only check breed requirement if breeds have finished loading (not loading, and have loaded)
+                if (!breedsCurrentlyLoading && breedsHaveLoaded) {
+                  const breedsArray = breedsBySpecies[pet.speciesId];
+                  // Only require breed if breeds array exists, is an array, and has at least one breed
+                  if (breedsArray && Array.isArray(breedsArray) && breedsArray.length > 0 && !pet.breed?.trim()) {
+                    newErrors[`existingClientNewPet.${pet.id}.breed`] = 'Breed is required';
+                  }
+                }
+                // If breeds are loading or haven't loaded yet, don't require breed
               }
+              // If "Other" is selected, breed is optional (no validation needed)
               if (!pet.color?.trim()) {
                 newErrors[`existingClientNewPet.${pet.id}.color`] = 'Color is required';
               }
@@ -1686,15 +2084,20 @@ export default function AppointmentRequestForm() {
         if (!formData.aftercarePreference) newErrors.aftercarePreference = 'Please select an aftercare preference';
         break;
       case 'request-visit-continued':
+        // Validate doctor selection
+        if (!formData.preferredDoctorExisting && !formData.preferredDoctor) {
+          newErrors.preferredDoctorExisting = 'Please select a preferred doctor';
+        }
+        
         // Check if any pet is selected for euthanasia
         const hasEuthanasiaPet = 
           (formData.selectedPetIds?.some(petId => {
             const petData = formData.petSpecificData?.[petId];
-            return petData?.needsToday === 'End-of-life care / Euthanasia';
+            return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
           }) || false) ||
           (formData.newClientPets?.some(pet => {
             const petData = formData.petSpecificData?.[pet.id];
-            return petData?.needsToday === 'End-of-life care / Euthanasia';
+            return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
           }) || false);
         
         const isUrgentTimeframe = formData.howSoon === 'Emergent – today' || formData.howSoon === 'Urgent – within 24–48 hours';
@@ -1977,6 +2380,23 @@ export default function AppointmentRequestForm() {
     }
   };
 
+  const handleBackToPortal = () => {
+    // If on intro or success page, navigate immediately without warning
+    if (currentPage === 'intro' || currentPage === 'success') {
+      navigate('/client-portal');
+      return;
+    }
+
+    // For other pages, show unsaved changes warning
+    const message = "You will lose your data if you leave this form. Are you sure you want to go back to the client portal?";
+    const userWantsToLeave = window.confirm(message);
+    
+    if (userWantsToLeave) {
+      // Navigate immediately after user clicks OK
+      navigate('/client-portal');
+    }
+  };
+
   const handleSubmit = async () => {
     if (!validatePage(currentPage)) {
       return;
@@ -1989,11 +2409,11 @@ export default function AppointmentRequestForm() {
       const hasEuthanasiaPet = 
         (formData.selectedPetIds?.some(petId => {
           const petData = formData.petSpecificData?.[petId];
-          return petData?.needsToday === 'End-of-life care / Euthanasia';
+          return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
         }) || false) ||
         (formData.newClientPets?.some(pet => {
           const petData = formData.petSpecificData?.[pet.id];
-          return petData?.needsToday === 'End-of-life care / Euthanasia';
+          return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
         }) || false);
       
       const isEuthanasia = 
@@ -2246,7 +2666,53 @@ export default function AppointmentRequestForm() {
         petSpecificData: formData.petSpecificData || undefined,
         
         // Appointment Details
-        appointmentType: isEuthanasia ? 'euthanasia' : 'regular_visit',
+        appointmentType: (() => {
+          // Find the appointment type name from the first pet that has one
+          let appointmentTypeName: string | undefined;
+          
+          // Check selectedPetIds (existing pets)
+          if (formData.selectedPetIds && formData.petSpecificData) {
+            for (const petId of formData.selectedPetIds) {
+              const petData = formData.petSpecificData[petId];
+              if (petData?.needsToday) {
+                appointmentTypeName = petData.needsToday;
+                break;
+              }
+            }
+          }
+          
+          // Check newClientPets if not found yet
+          if (!appointmentTypeName && formData.newClientPets && formData.petSpecificData) {
+            for (const pet of formData.newClientPets) {
+              const petData = formData.petSpecificData[pet.id];
+              if (petData?.needsToday) {
+                appointmentTypeName = petData.needsToday;
+                break;
+              }
+            }
+          }
+          
+          // Check existingClientNewPets if not found yet
+          if (!appointmentTypeName && formData.existingClientNewPets && formData.petSpecificData) {
+            for (const pet of formData.existingClientNewPets) {
+              const petData = formData.petSpecificData[pet.id];
+              if (petData?.needsToday) {
+                appointmentTypeName = petData.needsToday;
+                break;
+              }
+            }
+          }
+          
+          // If we found an appointment type (now stored as prettyName), return it directly
+          // The needsToday field now stores prettyName, so we can return it as-is
+          if (appointmentTypeName) {
+            // appointmentTypeName is now the prettyName since needsToday stores prettyName
+            return appointmentTypeName;
+          }
+          
+          // Fallback to old logic if no appointment type found
+          return isEuthanasia ? 'euthanasia' : 'regular_visit';
+        })(),
         preferredDoctor: (() => {
           const selectedDoctor = formData.preferredDoctorExisting || formData.preferredDoctor;
           if (!selectedDoctor || selectedDoctor === 'I have no preference') {
@@ -2429,7 +2895,17 @@ export default function AppointmentRequestForm() {
         return (
           <div>
             <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginBottom: '20px' }}>
+              <div 
+                onClick={handleBackToPortal}
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  gap: '12px', 
+                  marginBottom: '20px',
+                  cursor: 'pointer',
+                }}
+              >
                 <img
                   src="/final_thick_lines_cropped.jpeg"
                   alt="VAYD Scout Logo"
@@ -2884,80 +3360,6 @@ export default function AppointmentRequestForm() {
               </div>
             </div>
 
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Do you have a preferred doctor? <span style={{ color: '#ef4444' }}>*</span>{' '}
-                <a 
-                  href="https://www.vetatyourdoor.com/#team" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  style={{ color: '#3b82f6', textDecoration: 'underline', fontWeight: 400, fontSize: '14px' }}
-                >
-                  (View Our Team)
-                </a>
-              </label>
-              {(() => {
-                // Check if address is valid for new clients
-                const hasValidAddress = isLoggedIn || (
-                  formData.physicalAddress?.line1?.trim() &&
-                  formData.physicalAddress?.city?.trim() &&
-                  formData.physicalAddress?.state?.trim() &&
-                  formData.physicalAddress?.zip?.trim()
-                );
-                const isDisabled = !isLoggedIn && !hasValidAddress;
-                
-                return (
-                  <>
-                    <select
-                      value={formData.preferredDoctor || ''}
-                      onChange={(e) => updateFormData('preferredDoctor', e.target.value)}
-                      disabled={isDisabled || loadingVeterinarians}
-                      style={{
-                        width: '100%',
-                        padding: '12px',
-                        border: `1px solid ${errors.preferredDoctor ? '#ef4444' : '#d1d5db'}`,
-                        borderRadius: '8px',
-                        fontSize: '14px',
-                        backgroundColor: (isDisabled || loadingVeterinarians) ? '#f3f4f6' : '#fff',
-                        cursor: (isDisabled || loadingVeterinarians) ? 'not-allowed' : 'pointer',
-                        opacity: (isDisabled || loadingVeterinarians) ? 0.6 : 1,
-                      }}
-                    >
-                      <option value="">
-                        {isDisabled 
-                          ? 'Please enter your address above first...' 
-                          : loadingVeterinarians
-                          ? 'Loading doctors...'
-                          : 'Select a doctor...'}
-                      </option>
-                      {!isDisabled && !loadingVeterinarians && (
-                        <>
-                          <option value="I have no preference">I have no preference</option>
-                          {providers.map((provider) => {
-                            // Check if name already starts with "Dr." to avoid duplication
-                            const providerName = provider.name.startsWith('Dr. ') 
-                              ? provider.name 
-                              : `Dr. ${provider.name}`;
-                            return (
-                              <option key={provider.id} value={providerName}>
-                                {providerName}
-                              </option>
-                            );
-                          })}
-                        </>
-                      )}
-                    </select>
-                    {isDisabled && (
-                      <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px', fontStyle: 'italic' }}>
-                        Please enter your complete address (street, city, state, zip) above to see available doctors.
-                      </div>
-                    )}
-                    {errors.preferredDoctor && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.preferredDoctor}</div>}
-                  </>
-                );
-              })()}
-            </div>
-
           </div>
         );
 
@@ -3256,38 +3658,35 @@ export default function AppointmentRequestForm() {
                             )}
                           </div>
                           <div style={{ position: 'relative' }}>
-                            <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
-                              Breed <span style={{ color: '#ef4444' }}>*</span>
-                            </label>
                             {(() => {
                               // Check if breeds exist for this species
                               const hasBreeds = pet.speciesId && 
                                 breedsBySpecies[pet.speciesId] && 
                                 breedsBySpecies[pet.speciesId].length > 0;
                               const isLoading = pet.speciesId && loadingBreeds[pet.speciesId];
-                              
-                              // If no breeds available (and not loading), show simple text input
-                              if (pet.speciesId && !isLoading && !hasBreeds) {
-                                return (
-                                  <input
-                                    type="text"
-                                    value={pet.breed || ''}
-                                    onChange={(e) => updateNewClientPet(pet.id, 'breed', e.target.value)}
-                                    placeholder="Enter breed"
-                                    style={{
-                                      padding: '8px',
-                                      border: `1px solid ${errors[`newClientPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
-                                      borderRadius: '6px',
-                                      fontSize: '14px',
-                                      width: '100%',
-                                      backgroundColor: '#fff',
-                                    }}
-                                  />
-                                );
-                              }
-                              
-                              // Otherwise, show autocomplete input
                               return (
+                                <>
+                                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                                    Breed {hasBreeds && !isLoading && <span style={{ color: '#ef4444' }}>*</span>}
+                                  </label>
+                                  {/* If no breeds available (and not loading), show simple text input */}
+                                  {pet.speciesId && !isLoading && !hasBreeds ? (
+                                    <input
+                                      type="text"
+                                      value={pet.breed || ''}
+                                      onChange={(e) => updateNewClientPet(pet.id, 'breed', e.target.value)}
+                                      placeholder="Enter breed"
+                                      style={{
+                                        padding: '8px',
+                                        border: `1px solid ${errors[`newClientPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
+                                        borderRadius: '6px',
+                                        fontSize: '14px',
+                                        width: '100%',
+                                        backgroundColor: '#fff',
+                                      }}
+                                    />
+                                  ) : (
+                                    /* Otherwise, show autocomplete input */
                                 <>
                                   <input
                                     type="text"
@@ -3385,9 +3784,12 @@ export default function AppointmentRequestForm() {
                                 )}
                               </div>
                             )}
-                                </>
-                              );
-                            })()}
+                                  </>
+                                  )
+                                }
+                              </>
+                            );
+                          })()}
                             {errors[`newClientPet.${pet.id}.breed`] && (
                               <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
                                 {errors[`newClientPet.${pet.id}.breed`]}
@@ -3621,15 +4023,30 @@ export default function AppointmentRequestForm() {
                           </label>
                           {(() => {
                             const petData = getPetData(pet.id);
+                            const appointmentTypeOptions = getAppointmentTypeOptions(pet.id);
+                            
+                            // Show loading state if appointment types are still loading
+                            if (loadingAppointmentTypes) {
+                              return (
+                                <div style={{ padding: '12px', color: '#6b7280', fontSize: '14px' }}>
+                                  Loading appointment types...
+                                </div>
+                              );
+                            }
+                            
+                            // If no appointment types available, show fallback
+                            if (appointmentTypeOptions.length === 0) {
+                              return (
+                                <div style={{ padding: '12px', color: '#ef4444', fontSize: '14px' }}>
+                                  No appointment types available. Please refresh the page.
+                                </div>
+                              );
+                            }
+                            
                             return (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                {[
-                                  'Wellness exam / check-up',
-                                  'My pet isn\'t feeling well (new concern or illness)',
-                                  'Recheck / follow-up (for a condition that has already been diagnosed)',
-                                  'End-of-life care / Euthanasia',
-                                ].map((option) => (
-                                  <div key={option}>
+                                {appointmentTypeOptions.map((option) => (
+                                  <div key={option.name}>
                                     <label
                                       style={{
                                         display: 'flex',
@@ -3644,19 +4061,22 @@ export default function AppointmentRequestForm() {
                                       <input
                                         type="radio"
                                         name={`needsToday-${pet.id}`}
-                                        value={option}
-                                        checked={petData.needsToday === option}
+                                        value={option.name}
+                                        checked={(petData.needsToday === option.prettyName) || (petData.needsToday === option.name)}
                                         onChange={(e) => {
-                                          updatePetSpecificData(pet.id, 'needsToday', e.target.value);
+                                          // Store prettyName, id, and name for backend lookup
+                                          updatePetSpecificData(pet.id, 'needsToday', option.prettyName);
+                                          updatePetSpecificData(pet.id, 'appointmentTypeId', option.id);
+                                          updatePetSpecificData(pet.id, 'appointmentTypeName', option.name);
                                           updatePetSpecificData(pet.id, 'needsTodayDetails', '');
                                         }}
                                         style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
                                       />
-                                      <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option}</span>
+                                      <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option.prettyName}</span>
                                     </label>
-                                    {petData.needsToday === option && (
+                                    {(petData.needsToday === option.prettyName || petData.needsToday === option.name) && (
                                       <div style={{ marginLeft: '26px', marginTop: '8px', marginBottom: '8px' }}>
-                                        {option === 'End-of-life care / Euthanasia' ? (
+                                        {isEuthanasiaAppointmentType(option.name) ? (
                                           // Euthanasia questions
                                           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                                             <div>
@@ -3793,11 +4213,11 @@ export default function AppointmentRequestForm() {
                                             value={petData.needsTodayDetails || ''}
                                             onChange={(e) => updatePetSpecificData(pet.id, 'needsTodayDetails', e.target.value)}
                                             placeholder={
-                                              option === 'Wellness exam / check-up'
+                                              matchesAppointmentTypeName(option.name, ['wellness', 'check-up'])
                                                 ? `Do you have any specific concerns you want to discuss at the visit?`
-                                                : option === 'My pet isn\'t feeling well (new concern or illness)'
+                                                : matchesAppointmentTypeName(option.name, ['not feeling well', 'illness', 'Medical Visit'])
                                                 ? `Describe what is going on with ${pet.name || 'this pet'}`
-                                                : option === 'Recheck / follow-up (for a condition that has already been diagnosed)'
+                                                : matchesAppointmentTypeName(option.name, ['recheck', 'follow-up', 'Follow Up'])
                                                 ? `What are we checking on for ${pet.name || 'this pet'}?`
                                                 : 'Please provide details about the reason for this appointment...'
                                             }
@@ -4243,56 +4663,6 @@ export default function AppointmentRequestForm() {
               </>
             )}
 
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Do you have a preferred doctor? <span style={{ color: '#ef4444' }}>*</span>{' '}
-                <a 
-                  href="https://www.vetatyourdoor.com/#team" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  style={{ color: '#3b82f6', textDecoration: 'underline', fontWeight: 400, fontSize: '14px' }}
-                >
-                  (View Our Team)
-                </a>
-              </label>
-              <select
-                value={formData.preferredDoctorExisting || ''}
-                onChange={(e) => updateFormData('preferredDoctorExisting', e.target.value)}
-                disabled={loadingVeterinarians}
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  border: `1px solid ${errors.preferredDoctorExisting ? '#ef4444' : '#d1d5db'}`,
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  backgroundColor: loadingVeterinarians ? '#f3f4f6' : '#fff',
-                  cursor: loadingVeterinarians ? 'not-allowed' : 'pointer',
-                  opacity: loadingVeterinarians ? 0.6 : 1,
-                }}
-              >
-                <option value="">
-                  {loadingVeterinarians ? 'Loading doctors...' : 'Select a doctor...'}
-                </option>
-                {!loadingVeterinarians && (
-                  <>
-                    <option value="I have no preference">I have no preference</option>
-                    {providers.map((provider) => {
-                      const providerName = `Dr. ${provider.name}`;
-                      return (
-                        <option key={provider.id} value={providerName}>
-                          {providerName}
-                        </option>
-                      );
-                    })}
-                    <option value="Whomever I saw last time (I don't remember their name)">
-                      Whomever I saw last time (I don't remember their name)
-                    </option>
-                  </>
-                )}
-              </select>
-              {errors.preferredDoctorExisting && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.preferredDoctorExisting}</div>}
-            </div>
-            
             {/* Temporarily hidden - will be moved elsewhere */}
             {/* <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
@@ -4514,14 +4884,29 @@ export default function AppointmentRequestForm() {
                                 What does {pet.name} need today? <span style={{ color: '#ef4444' }}>*</span>
                               </label>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                {[
-                                  'Wellness exam / check-up',
-                                  'My pet isn\'t feeling well (new concern or illness)',
-                                  'Recheck / follow-up (for a condition that has already been diagnosed)',
-                                  'Technician visit (nail trim, anal glands, booster, blood draw, monthly injection, etc.)',
-                                  'End-of-life care / Euthanasia',
-                                ].map((option) => (
-                                  <div key={option}>
+                                {(() => {
+                                  const appointmentTypeOptions = getAppointmentTypeOptions(pet.id);
+                                  
+                                  // Show loading state if appointment types are still loading
+                                  if (loadingAppointmentTypes) {
+                                    return (
+                                      <div style={{ padding: '12px', color: '#6b7280', fontSize: '14px' }}>
+                                        Loading appointment types...
+                                      </div>
+                                    );
+                                  }
+                                  
+                                  // If no appointment types available, show fallback
+                                  if (appointmentTypeOptions.length === 0) {
+                                    return (
+                                      <div style={{ padding: '12px', color: '#ef4444', fontSize: '14px' }}>
+                                        No appointment types available. Please refresh the page.
+                                      </div>
+                                    );
+                                  }
+                                  
+                                  return appointmentTypeOptions.map((option) => (
+                                  <div key={option.name}>
                                     <label
                                       style={{
                                         display: 'flex',
@@ -4536,20 +4921,23 @@ export default function AppointmentRequestForm() {
                                       <input
                                         type="radio"
                                         name={`needsToday-${pet.id}`}
-                                        value={option}
-                                        checked={petData.needsToday === option}
+                                        value={option.name}
+                                        checked={(petData.needsToday === option.prettyName) || (petData.needsToday === option.name)}
                                         onChange={(e) => {
-                                          updatePetSpecificData(pet.id, 'needsToday', e.target.value);
+                                          // Store prettyName, id, and name for backend lookup
+                                          updatePetSpecificData(pet.id, 'needsToday', option.prettyName);
+                                          updatePetSpecificData(pet.id, 'appointmentTypeId', option.id);
+                                          updatePetSpecificData(pet.id, 'appointmentTypeName', option.name);
                                           // Clear details when changing selection
                                           updatePetSpecificData(pet.id, 'needsTodayDetails', '');
                                         }}
                                         style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
                                       />
-                                      <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option}</span>
+                                      <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option.prettyName}</span>
                                     </label>
-                                    {petData.needsToday === option && (
+                                    {(petData.needsToday === option.prettyName || petData.needsToday === option.name) && (
                                       <div style={{ marginLeft: '26px', marginTop: '8px', marginBottom: '8px' }}>
-                                        {option === 'End-of-life care / Euthanasia' ? (
+                                        {isEuthanasiaAppointmentType(option.prettyName) ? (
                                           // Euthanasia questions
                                           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                                             <div>
@@ -4687,13 +5075,13 @@ export default function AppointmentRequestForm() {
                                             value={petData.needsTodayDetails || ''}
                                             onChange={(e) => updatePetSpecificData(pet.id, 'needsTodayDetails', e.target.value)}
                                             placeholder={
-                                              option === 'Wellness exam / check-up'
+                                              matchesAppointmentTypeName(option.name, ['wellness', 'check-up'])
                                                 ? `Do you have any specific concerns you want to discuss at the visit?`
-                                                : option === 'My pet isn\'t feeling well (new concern or illness)'
+                                                : matchesAppointmentTypeName(option.name, ['not feeling well', 'illness', 'Medical Visit'])
                                                 ? `Describe what is going on with ${pet.name}`
-                                                : option === 'Recheck / follow-up (for a condition that has already been diagnosed)'
+                                                : matchesAppointmentTypeName(option.name, ['recheck', 'follow-up', 'Follow Up'])
                                                 ? `What are we checking on for ${pet.name}?`
-                                                : option === 'Technician visit (nail trim, anal glands, booster, blood draw, monthly injection, etc.)'
+                                                : matchesAppointmentTypeName(option.name, ['technician', 'Tech'])
                                                 ? `What would you like done for ${pet.name}?`
                                                 : 'Please provide details about the reason for this appointment...'
                                             }
@@ -4716,7 +5104,8 @@ export default function AppointmentRequestForm() {
                                       </div>
                                     )}
                                   </div>
-                                ))}
+                                ));
+                                })()}
                               </div>
                               {errors[`needsToday.${pet.id}`] && (
                                 <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>
@@ -4985,38 +5374,35 @@ export default function AppointmentRequestForm() {
                                 )}
                               </div>
                               <div style={{ position: 'relative' }}>
-                                <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
-                                  Breed <span style={{ color: '#ef4444' }}>*</span>
-                                </label>
                                 {(() => {
                                   // Check if breeds exist for this species
                                   const hasBreeds = pet.speciesId && 
                                     breedsBySpecies[pet.speciesId] && 
                                     breedsBySpecies[pet.speciesId].length > 0;
                                   const isLoading = pet.speciesId && loadingBreeds[pet.speciesId];
-                                  
-                                  // If no breeds available (and not loading), show simple text input
-                                  if (pet.speciesId && !isLoading && !hasBreeds) {
-                                    return (
-                                      <input
-                                        type="text"
-                                        value={pet.breed || ''}
-                                        onChange={(e) => updateExistingClientNewPet(pet.id, 'breed', e.target.value)}
-                                        placeholder="Enter breed"
-                                        style={{
-                                          padding: '8px',
-                                          border: `1px solid ${errors[`existingClientNewPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
-                                          borderRadius: '6px',
-                                          fontSize: '14px',
-                                          width: '100%',
-                                          backgroundColor: '#fff',
-                                        }}
-                                      />
-                                    );
-                                  }
-                                  
-                                  // Otherwise, show autocomplete input
                                   return (
+                                    <>
+                                      <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                                        Breed {hasBreeds && !isLoading && <span style={{ color: '#ef4444' }}>*</span>}
+                                      </label>
+                                      {/* If no breeds available (and not loading), show simple text input */}
+                                      {pet.speciesId && !isLoading && !hasBreeds ? (
+                                        <input
+                                          type="text"
+                                          value={pet.breed || ''}
+                                          onChange={(e) => updateExistingClientNewPet(pet.id, 'breed', e.target.value)}
+                                          placeholder="Enter breed"
+                                          style={{
+                                            padding: '8px',
+                                            border: `1px solid ${errors[`existingClientNewPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
+                                            borderRadius: '6px',
+                                            fontSize: '14px',
+                                            width: '100%',
+                                            backgroundColor: '#fff',
+                                          }}
+                                        />
+                                      ) : (
+                                        /* Otherwise, show autocomplete input */
                                     <>
                                       <input
                                         type="text"
@@ -5114,9 +5500,12 @@ export default function AppointmentRequestForm() {
                                     )}
                                   </div>
                                 )}
-                                    </>
-                                  );
-                                })()}
+                                      </>
+                                      )
+                                    }
+                                  </>
+                                );
+                              })()}
                                 {errors[`existingClientNewPet.${pet.id}.breed`] && (
                                   <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
                                     {errors[`existingClientNewPet.${pet.id}.breed`]}
@@ -5337,14 +5726,29 @@ export default function AppointmentRequestForm() {
                                     What does {pet.name || 'this pet'} need today? <span style={{ color: '#ef4444' }}>*</span>
                                   </label>
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                    {[
-                                      'Wellness exam / check-up',
-                                      'My pet isn\'t feeling well (new concern or illness)',
-                                      'Recheck / follow-up (for a condition that has already been diagnosed)',
-                                      'Technician visit (nail trim, anal glands, booster, blood draw, monthly injection, etc.)',
-                                      'End-of-life care / Euthanasia',
-                                    ].map((option) => (
-                                      <div key={option}>
+                                    {(() => {
+                                      const appointmentTypeOptions = getAppointmentTypeOptions(pet.id);
+                                      
+                                      // Show loading state if appointment types are still loading
+                                      if (loadingAppointmentTypes) {
+                                        return (
+                                          <div style={{ padding: '12px', color: '#6b7280', fontSize: '14px' }}>
+                                            Loading appointment types...
+                                          </div>
+                                        );
+                                      }
+                                      
+                                      // If no appointment types available, show fallback
+                                      if (appointmentTypeOptions.length === 0) {
+                                        return (
+                                          <div style={{ padding: '12px', color: '#ef4444', fontSize: '14px' }}>
+                                            No appointment types available. Please refresh the page.
+                                          </div>
+                                        );
+                                      }
+                                      
+                                      return appointmentTypeOptions.map((option) => (
+                                      <div key={option.name}>
                                         <label
                                           style={{
                                             display: 'flex',
@@ -5359,19 +5763,22 @@ export default function AppointmentRequestForm() {
                                           <input
                                             type="radio"
                                             name={`needsToday-${pet.id}`}
-                                            value={option}
-                                            checked={petData.needsToday === option}
+                                            value={option.name}
+                                            checked={(petData.needsToday === option.prettyName) || (petData.needsToday === option.name)}
                                             onChange={(e) => {
-                                              updatePetSpecificData(pet.id, 'needsToday', e.target.value);
+                                              // Store prettyName, id, and name for backend lookup
+                                              updatePetSpecificData(pet.id, 'needsToday', option.prettyName);
+                                              updatePetSpecificData(pet.id, 'appointmentTypeId', option.id);
+                                              updatePetSpecificData(pet.id, 'appointmentTypeName', option.name);
                                               updatePetSpecificData(pet.id, 'needsTodayDetails', '');
                                             }}
                                             style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
                                           />
-                                          <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option}</span>
+                                          <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{option.prettyName}</span>
                                         </label>
-                                        {petData.needsToday === option && (
+                                        {(petData.needsToday === option.prettyName || petData.needsToday === option.name) && (
                                           <div style={{ marginLeft: '26px', marginTop: '8px', marginBottom: '8px' }}>
-                                            {option === 'End-of-life care / Euthanasia' ? (
+                                            {isEuthanasiaAppointmentType(option.name) ? (
                                               // Euthanasia questions - same as existing pets
                                               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                                                 <div>
@@ -5508,13 +5915,13 @@ export default function AppointmentRequestForm() {
                                                 value={petData.needsTodayDetails || ''}
                                                 onChange={(e) => updatePetSpecificData(pet.id, 'needsTodayDetails', e.target.value)}
                                                 placeholder={
-                                                  option === 'Wellness exam / check-up'
+                                                  matchesAppointmentTypeName(option.name, ['wellness', 'check-up'])
                                                     ? `Do you have any specific concerns you want to discuss at the visit?`
-                                                    : option === 'My pet isn\'t feeling well (new concern or illness)'
+                                                    : matchesAppointmentTypeName(option.name, ['not feeling well', 'illness', 'Medical Visit'])
                                                     ? `Describe what is going on with ${pet.name || 'this pet'}`
-                                                    : option === 'Recheck / follow-up (for a condition that has already been diagnosed)'
+                                                    : matchesAppointmentTypeName(option.name, ['recheck', 'follow-up', 'Follow Up'])
                                                     ? `What are we checking on for ${pet.name || 'this pet'}?`
-                                                    : option === 'Technician visit (nail trim, anal glands, booster, blood draw, monthly injection, etc.)'
+                                                    : matchesAppointmentTypeName(option.name, ['technician', 'Tech'])
                                                     ? `What would you like done for ${pet.name || 'this pet'}?`
                                                     : 'Please provide details about the reason for this appointment...'
                                                 }
@@ -5537,7 +5944,8 @@ export default function AppointmentRequestForm() {
                                           </div>
                                         )}
                                       </div>
-                                    ))}
+                                    ));
+                                  })()}
                                   </div>
                                   {errors[`needsToday.${pet.id}`] && (
                                     <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>
@@ -5854,11 +6262,11 @@ export default function AppointmentRequestForm() {
         const hasEuthanasiaPetEuthanasiaPage = 
           (formData.selectedPetIds?.some(petId => {
             const petData = formData.petSpecificData?.[petId];
-            return petData?.needsToday === 'End-of-life care / Euthanasia';
+            return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
           }) || false) ||
           (formData.newClientPets?.some(pet => {
             const petData = formData.petSpecificData?.[pet.id];
-            return petData?.needsToday === 'End-of-life care / Euthanasia';
+            return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
           }) || false);
 
         return (
@@ -6004,11 +6412,11 @@ export default function AppointmentRequestForm() {
         const hasEuthanasiaPet = 
           (formData.selectedPetIds?.some(petId => {
             const petData = formData.petSpecificData?.[petId];
-            return petData?.needsToday === 'End-of-life care / Euthanasia';
+            return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
           }) || false) ||
           (formData.newClientPets?.some(pet => {
             const petData = formData.petSpecificData?.[pet.id];
-            return petData?.needsToday === 'End-of-life care / Euthanasia';
+            return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
           }) || false);
 
         return (
@@ -6017,6 +6425,107 @@ export default function AppointmentRequestForm() {
               <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
                 Request Visit (Continued)
               </h1>
+            </div>
+
+            {/* Doctor Selection - at the top of request visit page */}
+            <div style={{ marginBottom: '32px', padding: '20px', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
+                Select a Doctor <span style={{ color: '#ef4444' }}>*</span>{' '}
+                <a 
+                  href="https://www.vetatyourdoor.com/#team" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={{ color: '#3b82f6', textDecoration: 'underline', fontWeight: 400, fontSize: '14px' }}
+                >
+                  (View Our Team)
+                </a>
+              </label>
+              {(() => {
+                // Check if address is valid for new clients
+                const hasValidAddress = isLoggedIn || (
+                  formData.physicalAddress?.line1?.trim() &&
+                  formData.physicalAddress?.city?.trim() &&
+                  formData.physicalAddress?.state?.trim() &&
+                  formData.physicalAddress?.zip?.trim()
+                );
+                const isDisabled = !isLoggedIn && !hasValidAddress;
+                
+                // Use the appropriate field based on client type
+                const doctorValue = formData.preferredDoctorExisting || formData.preferredDoctor || '';
+                const updateDoctor = (value: string) => {
+                  if (isLoggedIn || formData.haveUsedServicesBefore === 'Yes') {
+                    updateFormData('preferredDoctorExisting', value);
+                  } else {
+                    updateFormData('preferredDoctor', value);
+                  }
+                };
+                
+                return (
+                  <>
+                    <select
+                      value={doctorValue}
+                      onChange={(e) => updateDoctor(e.target.value)}
+                      disabled={isDisabled || loadingVeterinarians}
+                      style={{
+                        width: '100%',
+                        padding: '12px',
+                        border: `1px solid ${errors.preferredDoctorExisting || errors.preferredDoctor ? '#ef4444' : '#d1d5db'}`,
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        backgroundColor: (isDisabled || loadingVeterinarians) ? '#f3f4f6' : '#fff',
+                        cursor: (isDisabled || loadingVeterinarians) ? 'not-allowed' : 'pointer',
+                        opacity: (isDisabled || loadingVeterinarians) ? 0.6 : 1,
+                      }}
+                    >
+                      <option value="">
+                        {isDisabled 
+                          ? 'Please enter your address above first...' 
+                          : loadingVeterinarians
+                          ? 'Loading doctors...'
+                          : 'Select a doctor...'}
+                      </option>
+                      {!isDisabled && !loadingVeterinarians && (() => {
+                        // Determine which provider list to use
+                        const providerList = (isLoggedIn || formData.haveUsedServicesBefore === 'Yes') 
+                          ? providers 
+                          : (publicProviders.length > 0 ? publicProviders : providers);
+                        
+                        return (
+                          <>
+                            <option value="I have no preference">I have no preference</option>
+                            {providerList.map((provider) => {
+                              // Check if name already starts with "Dr." to avoid duplication
+                              const providerName = provider.name.startsWith('Dr. ') 
+                                ? provider.name 
+                                : `Dr. ${provider.name}`;
+                              return (
+                                <option key={provider.id} value={providerName}>
+                                  {providerName}
+                                </option>
+                              );
+                            })}
+                            {(isLoggedIn || formData.haveUsedServicesBefore === 'Yes') && (
+                              <option value="Whomever I saw last time (I don't remember their name)">
+                                Whomever I saw last time (I don't remember their name)
+                              </option>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </select>
+                    {isDisabled && (
+                      <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px', fontStyle: 'italic' }}>
+                        Please enter your complete address (street, city, state, zip) above to see available doctors.
+                      </div>
+                    )}
+                    {(errors.preferredDoctorExisting || errors.preferredDoctor) && (
+                      <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                        {errors.preferredDoctorExisting || errors.preferredDoctor}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
 
             {/* If any pet is selected for euthanasia, show message instead of time slots */}
@@ -6554,11 +7063,11 @@ export default function AppointmentRequestForm() {
     const hasEuthanasiaPet = 
       (formData.selectedPetIds?.some(petId => {
         const petData = formData.petSpecificData?.[petId];
-        return petData?.needsToday === 'End-of-life care / Euthanasia';
+        return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
       }) || false) ||
       (formData.newClientPets?.some(pet => {
         const petData = formData.petSpecificData?.[pet.id];
-        return petData?.needsToday === 'End-of-life care / Euthanasia';
+        return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
       }) || false);
     
     const isEuthanasia = currentPage.startsWith('euthanasia') ||
@@ -6717,7 +7226,15 @@ export default function AppointmentRequestForm() {
           borderBottom: '1px solid rgba(17, 163, 106, 0.1)',
           backdropFilter: 'saturate(120%) blur(6px)',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div 
+            onClick={handleBackToPortal}
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '12px',
+              cursor: 'pointer',
+            }}
+          >
             <img
               src="/final_thick_lines_cropped.jpeg"
               alt="VAYD Scout Logo"
@@ -6770,6 +7287,29 @@ export default function AppointmentRequestForm() {
           minWidth: 0, // Prevent flex item from overflowing
           width: '100%',
         }}>
+          {/* Back to Client Portal Button - Only show for existing clients (logged in users) */}
+          {currentPage !== 'intro' && isLoggedIn && (
+            <button
+              type="button"
+              onClick={handleBackToPortal}
+              style={{
+                marginBottom: '24px',
+                padding: '8px 16px',
+                backgroundColor: 'transparent',
+                color: '#4FB128',
+                border: '1px solid #4FB128',
+                borderRadius: '8px',
+                fontSize: '14px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+              }}
+            >
+              ← Back to Client Portal
+            </button>
+          )}
           {renderPage()}
         
         {errors.submit && (
