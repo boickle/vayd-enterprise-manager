@@ -7250,8 +7250,8 @@ export default function AppointmentRequestForm() {
           minWidth: 0, // Prevent flex item from overflowing
           width: '100%',
         }}>
-          {/* Back to Client Portal Button - Show on all pages except intro (success page has early return) */}
-          {currentPage !== 'intro' && (
+          {/* Back to Client Portal Button - Only show for existing clients (logged in users) */}
+          {currentPage !== 'intro' && isLoggedIn && (
             <button
               type="button"
               onClick={handleBackToPortal}
