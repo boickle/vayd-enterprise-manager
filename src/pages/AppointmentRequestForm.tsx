@@ -33,6 +33,8 @@ type FormData = {
   selectedPetIds: string[]; // Array of selected pet IDs
   petSpecificData?: Record<string, {
     needsToday?: string; // Appointment type prettyName (e.g., "Standard Visit", "Wellness Exam", etc.)
+    appointmentTypeId?: number; // Appointment type ID for backend lookup
+    appointmentTypeName?: string; // Appointment type name for backend lookup
     needsTodayDetails?: string; // Details/reason for the selected need
     // Euthanasia-specific fields (for end-of-life option)
     euthanasiaReason?: string;
@@ -304,10 +306,10 @@ export default function AppointmentRequestForm() {
   };
 
   // Get appointment type options for the form
-  // Returns array of objects with name and prettyName, sorted to show euthanasia last if present
+  // Returns array of objects with id, name and prettyName, sorted to show euthanasia last if present
   // Filters by newPatientAllowed for new patients
   // @param petId Optional pet ID to check if this specific pet is a new patient
-  const getAppointmentTypeOptions = (petId?: string): Array<{ name: string; prettyName: string }> => {
+  const getAppointmentTypeOptions = (petId?: string): Array<{ id: number; name: string; prettyName: string }> => {
     if (loadingAppointmentTypes || appointmentTypes.length === 0) {
       return []; // Return empty array while loading
     }
@@ -332,8 +334,9 @@ export default function AppointmentRequestForm() {
       filteredTypes = appointmentTypes.filter(type => type.newPatientAllowed === true);
     }
     
-    // Map to objects with name and prettyName, and sort so euthanasia appears last
+    // Map to objects with id, name and prettyName, and sort so euthanasia appears last
     const options = filteredTypes.map(type => ({
+      id: type.id,
       name: type.name,
       prettyName: type.prettyName || type.name,
     }));
@@ -4024,8 +4027,10 @@ export default function AppointmentRequestForm() {
                                         value={option.name}
                                         checked={(petData.needsToday === option.prettyName) || (petData.needsToday === option.name)}
                                         onChange={(e) => {
-                                          // Store prettyName instead of name
+                                          // Store prettyName, id, and name for backend lookup
                                           updatePetSpecificData(pet.id, 'needsToday', option.prettyName);
+                                          updatePetSpecificData(pet.id, 'appointmentTypeId', option.id);
+                                          updatePetSpecificData(pet.id, 'appointmentTypeName', option.name);
                                           updatePetSpecificData(pet.id, 'needsTodayDetails', '');
                                         }}
                                         style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
@@ -4882,8 +4887,10 @@ export default function AppointmentRequestForm() {
                                         value={option.name}
                                         checked={(petData.needsToday === option.prettyName) || (petData.needsToday === option.name)}
                                         onChange={(e) => {
-                                          // Store prettyName instead of name
+                                          // Store prettyName, id, and name for backend lookup
                                           updatePetSpecificData(pet.id, 'needsToday', option.prettyName);
+                                          updatePetSpecificData(pet.id, 'appointmentTypeId', option.id);
+                                          updatePetSpecificData(pet.id, 'appointmentTypeName', option.name);
                                           // Clear details when changing selection
                                           updatePetSpecificData(pet.id, 'needsTodayDetails', '');
                                         }}
@@ -5722,8 +5729,10 @@ export default function AppointmentRequestForm() {
                                             value={option.name}
                                             checked={(petData.needsToday === option.prettyName) || (petData.needsToday === option.name)}
                                             onChange={(e) => {
-                                              // Store prettyName instead of name
+                                              // Store prettyName, id, and name for backend lookup
                                               updatePetSpecificData(pet.id, 'needsToday', option.prettyName);
+                                              updatePetSpecificData(pet.id, 'appointmentTypeId', option.id);
+                                              updatePetSpecificData(pet.id, 'appointmentTypeName', option.name);
                                               updatePetSpecificData(pet.id, 'needsTodayDetails', '');
                                             }}
                                             style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
