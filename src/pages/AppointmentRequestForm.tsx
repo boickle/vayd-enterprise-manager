@@ -372,9 +372,7 @@ export default function AppointmentRequestForm() {
     });
     
     // Remove formListOrder from the returned objects to maintain compatibility
-    const options = optionsWithOrder.map(({ formListOrder, ...rest }) => ({ id: rest.id, name: rest.name, prettyName: rest.prettyName }));
-    
-    return options;
+    return optionsWithOrder.map(({ id, name, prettyName }) => ({ id, name, prettyName }));
   };
 
   // Get all selected appointment type names from the form
