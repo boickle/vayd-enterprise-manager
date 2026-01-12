@@ -46,9 +46,8 @@ const squareScriptUrl =
 
 function formatMoney(amountCents: number, currency = 'USD') {
   return (amountCents / 100).toLocaleString(undefined, {
-    style: 'currency',
-    currency,
     minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
 }
 
