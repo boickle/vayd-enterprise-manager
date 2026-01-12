@@ -137,7 +137,7 @@ export default function App() {
         className={isClient && location.pathname.startsWith('/client-portal') ? '' : 'container'}
       >
         <Routes>
-          {/* Root redirect: client -> client-portal, else -> home */}
+          {/* Root redirect: client -> client-portal, else -> routing */}
           <Route
             path="/"
             element={
@@ -145,7 +145,7 @@ export default function App() {
                 isClient ? (
                   <Navigate to="/client-portal" replace />
                 ) : (
-                  <Navigate to="/home" replace />
+                  <Navigate to="/routing" replace />
                 )
               ) : (
                 <Navigate to="/login" replace />

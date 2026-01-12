@@ -51,8 +51,8 @@ export default function LoginPage() {
         return;
       }
 
-      // Employees: go back to where they came from, or /home
-      const fallback = from && from !== '/' && from !== '/login' ? from : '/home';
+      // Employees: go back to where they came from, or /routing
+      const fallback = from && from !== '/' && from !== '/login' ? from : '/routing';
       nav(fallback, { replace: true });
       // --------------------------------------
     } catch (err: any) {
