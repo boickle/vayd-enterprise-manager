@@ -173,8 +173,6 @@ const MEMBERSHIP_AGREEMENT_TEXT = [
 function formatMoney(amount?: number | null): string {
   if (amount == null) return '—';
   return amount.toLocaleString(undefined, {
-    style: 'currency',
-    currency: 'USD',
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   });
@@ -1774,12 +1772,12 @@ export default function MembershipSignup() {
                           {tiers.map((tier, idx) => (
                             <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                               <div className="cp-card-price-main">
-                                ${tier.monthly}
+                                {tier.monthly}
                                 <span>/month</span>
                               </div>
                               {tier.annual ? (
                                 <div className="cp-card-price-note">
-                                  or ${tier.annual} annually (10% discount!) {tier.suffix ? `(${tier.suffix})` : ''}
+                                  or {tier.annual} annually (10% discount!) {tier.suffix ? `(${tier.suffix})` : ''}
                                 </div>
                               ) : tier.suffix ? (
                                 <div className="cp-card-price-note">{tier.suffix}</div>
@@ -1858,7 +1856,7 @@ export default function MembershipSignup() {
                         </div>
                         <div className="cp-card-price">
                           <div className="cp-card-price-main">
-                            $29<span>/month</span>
+                            29<span>/month</span>
                           </div>
                           <div className="cp-card-price-note">or {formatMoney(309)} annually (10% discount!)</div>
                         </div>
@@ -1913,10 +1911,10 @@ export default function MembershipSignup() {
                   </div>
                   <div className="cp-card-price">
                     <div className="cp-card-price-main">
-                      $49<span>/month</span>
+                      49<span>/month</span>
                     </div>
                     {comfortAnswer !== 'yes' && (
-                      <div className="cp-card-price-note">or $529 annually (10% discount!)</div>
+                      <div className="cp-card-price-note">or 529 annually (10% discount!)</div>
                     )}
                   </div>
                 </div>
@@ -2005,7 +2003,7 @@ export default function MembershipSignup() {
                       row.annual != null ? `${formatMoney(row.annual)} annually (10% discount!)` : null;
                     const monthlyText = row.monthly != null ? `${formatMoney(row.monthly)}/month` : null;
                     const preferAnnual = billingPreference === 'annual' && annualText !== null;
-                    const primary = preferAnnual ? annualText! : monthlyText ?? annualText ?? '$0';
+                    const primary = preferAnnual ? annualText! : monthlyText ?? annualText ?? '0';
                     const secondary = preferAnnual ? monthlyText : annualText;
                     return (
                       <span className="cp-cost-wrapper">
