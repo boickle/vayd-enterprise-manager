@@ -30,3 +30,11 @@ export async function loginUser(email: string, password: string) {
 export async function getCurrentUser() {
   return http.get('/users');
 }
+
+// Update communication preferences
+export async function updateCommunicationPreferences(allowEmail?: boolean, allowText?: boolean) {
+  const body: { allowEmail?: boolean; allowText?: boolean } = {};
+  if (allowEmail !== undefined) body.allowEmail = allowEmail;
+  if (allowText !== undefined) body.allowText = allowText;
+  return http.post('/users/communication-preferences', body);
+}
