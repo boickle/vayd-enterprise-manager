@@ -19,6 +19,7 @@ import { listMembershipTransactions } from '../api/membershipTransactions';
 import { http } from '../api/http';
 import { uploadPetImage } from '../api/patients';
 import VaccinationCertificateModal from '../components/VaccinationCertificateModal';
+import { updateCommunicationPreferences, getCurrentUser } from '../api/users';
 
 type PetWithWellness = Pet & {
   wellnessPlans?: WellnessPlan[];
@@ -204,6 +205,11 @@ export default function ClientPortal() {
   const [showVaccinationModal, setShowVaccinationModal] = useState(false);
   const [selectedPetForVaccination, setSelectedPetForVaccination] = useState<PetWithWellness | null>(null);
   const [localClientInfo, setLocalClientInfo] = useState<any | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showPreferencesModal, setShowPreferencesModal] = useState(false);
+  const [allowEmail, setAllowEmail] = useState<boolean | null>(null);
+  const [allowText, setAllowText] = useState<boolean | null>(null);
+  const [savingPreferences, setSavingPreferences] = useState(false);
 
   // Fetch client info if not available in auth context
   useEffect(() => {
@@ -224,6 +230,27 @@ export default function ClientPortal() {
         });
     }
   }, [clientInfo, userId, token]);
+
+  // Load communication preferences when preferences modal opens
+  useEffect(() => {
+    if (showPreferencesModal) {
+      getCurrentUser()
+        .then((response) => {
+          const user = response.data;
+          setAllowEmail(user?.allowEmail ?? null);
+          setAllowText(user?.allowText ?? null);
+        })
+        .catch((err) => {
+          console.warn('Failed to fetch user preferences:', err);
+          // Try to get from clientInfo as fallback
+          const info = clientInfo || localClientInfo;
+          if (info) {
+            setAllowEmail(info?.allowEmail ?? null);
+            setAllowText(info?.allowText ?? null);
+          }
+        });
+    }
+  }, [showPreferencesModal, clientInfo, localClientInfo]);
 
   useEffect(() => {
     let alive = true;
@@ -963,6 +990,26 @@ export default function ClientPortal() {
   function handleMessages() {
     window.location.assign('sms:207-536-8387');
   }
+  function handleShop() {
+    window.open('https://www.vetatyourdoor.com/online-pharmacy', '_blank');
+  }
+  async function handleSavePreferences() {
+    setSavingPreferences(true);
+    try {
+      await updateCommunicationPreferences(
+        allowEmail ?? undefined,
+        allowText ?? undefined
+      );
+      setShowPreferencesModal(false);
+      setMenuOpen(false);
+    } catch (err) {
+      console.error('Failed to save preferences:', err);
+      setErrorModalMessage('Failed to save preferences. Please try again.');
+      setShowErrorModal(true);
+    } finally {
+      setSavingPreferences(false);
+    }
+  }
 
   return (
     <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px', width: '100%' }}>
@@ -1094,7 +1141,314 @@ export default function ClientPortal() {
         pointer-events: none;
         transition: opacity 0.2s;
       }
+
+      /* Hamburger menu */
+      .cp-hamburger-menu {
+        position: relative;
+      }
+      .cp-hamburger-button {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        z-index: 1001;
+        width: 44px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        border-radius: 8px;
+        cursor: pointer;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        transition: all 0.2s;
+      }
+      .cp-hamburger-button:hover {
+        background: rgba(255, 255, 255, 1);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      }
+      .cp-hamburger-button svg {
+        width: 24px;
+        height: 24px;
+        stroke: #111827;
+      }
+      .cp-menu-dropdown {
+        position: fixed;
+        top: 68px;
+        right: 16px;
+        z-index: 1000;
+        background: white;
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        border-radius: 8px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+        min-width: 180px;
+        overflow: hidden;
+        opacity: 0;
+        transform: translateY(-8px);
+        pointer-events: none;
+        transition: all 0.2s;
+      }
+      .cp-menu-dropdown.open {
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: all;
+      }
+      .cp-menu-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        color: #374151;
+        cursor: pointer;
+        transition: background 0.2s;
+        border: none;
+        background: none;
+        width: 100%;
+        text-align: left;
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .cp-menu-item:hover {
+        background: #f3f4f6;
+      }
+      .cp-menu-item svg {
+        width: 18px;
+        height: 18px;
+        stroke: currentColor;
+      }
+      .cp-menu-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 999;
+        background: transparent;
+        display: none;
+      }
+      .cp-menu-overlay.open {
+        display: block;
+      }
+
+      /* Preferences Modal */
+      .cp-preferences-modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 2000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+      .cp-preferences-modal {
+        background: white;
+        border-radius: 12px;
+        width: 100%;
+        max-width: 600px;
+        max-height: 90vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+      }
+      .cp-preferences-modal-header {
+        padding: 20px 24px;
+        border-bottom: 1px solid #e5e7eb;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .cp-preferences-modal-title {
+        font-size: 20px;
+        font-weight: 600;
+        color: #111827;
+        margin: 0;
+      }
+      .cp-preferences-modal-close {
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        background: transparent;
+        border-radius: 6px;
+        cursor: pointer;
+        color: #6b7280;
+        transition: all 0.2s;
+      }
+      .cp-preferences-modal-close:hover {
+        background: #f3f4f6;
+        color: #111827;
+      }
+      .cp-preferences-modal-tabs {
+        display: flex;
+        border-bottom: 1px solid #e5e7eb;
+        padding: 0 24px;
+      }
+      .cp-preferences-modal-tab {
+        padding: 12px 16px;
+        border: none;
+        background: none;
+        font-size: 14px;
+        font-weight: 500;
+        color: #6b7280;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        transition: all 0.2s;
+        margin-bottom: -1px;
+      }
+      .cp-preferences-modal-tab.active {
+        color: #0f766e;
+        border-bottom-color: #0f766e;
+      }
+      .cp-preferences-modal-tab:hover:not(.active) {
+        color: #111827;
+      }
+      .cp-preferences-modal-content {
+        padding: 24px;
+        overflow-y: auto;
+        flex: 1;
+      }
+      .cp-preferences-section {
+        margin-bottom: 24px;
+      }
+      .cp-preferences-section-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: #111827;
+        margin: 0 0 12px 0;
+      }
+      .cp-preferences-section-description {
+        font-size: 14px;
+        color: #6b7280;
+        margin: 0 0 16px 0;
+      }
+      .cp-preferences-checkbox-group {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .cp-preferences-checkbox-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 12px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .cp-preferences-checkbox-item:hover {
+        border-color: #0f766e;
+        background: #f0fdfa;
+      }
+      .cp-preferences-checkbox {
+        width: 20px;
+        height: 20px;
+        margin-top: 2px;
+        cursor: pointer;
+        accent-color: #0f766e;
+      }
+      .cp-preferences-checkbox-label {
+        flex: 1;
+        font-size: 14px;
+        color: #111827;
+        cursor: pointer;
+      }
+      .cp-preferences-checkbox-description {
+        font-size: 12px;
+        color: #6b7280;
+        margin-top: 4px;
+      }
+      .cp-preferences-modal-footer {
+        padding: 16px 24px;
+        border-top: 1px solid #e5e7eb;
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+      }
+      .cp-preferences-button {
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+        border: none;
+      }
+      .cp-preferences-button-secondary {
+        background: #f3f4f6;
+        color: #374151;
+      }
+      .cp-preferences-button-secondary:hover {
+        background: #e5e7eb;
+      }
+      .cp-preferences-button-primary {
+        background: #0f766e;
+        color: white;
+      }
+      .cp-preferences-button-primary:hover:not(:disabled) {
+        background: #0d9488;
+      }
+      .cp-preferences-button-primary:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
       `}</style>
+
+      {/* Hamburger Menu */}
+      <div className="cp-hamburger-menu">
+        <button
+          className="cp-hamburger-button"
+          onClick={() => setMenuOpen(!menuOpen)}
+          aria-label="Menu"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            {menuOpen ? (
+              <path d="M18 6L6 18M6 6l12 12" />
+            ) : (
+              <>
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </>
+            )}
+          </svg>
+        </button>
+        <div
+          className={`cp-menu-overlay ${menuOpen ? 'open' : ''}`}
+          onClick={() => setMenuOpen(false)}
+        />
+        <div className={`cp-menu-dropdown ${menuOpen ? 'open' : ''}`}>
+          <button
+            className="cp-menu-item"
+            onClick={() => {
+              setShowPreferencesModal(true);
+              setMenuOpen(false);
+            }}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"></path>
+            </svg>
+            Preferences
+          </button>
+          <button
+            className="cp-menu-item"
+            onClick={() => {
+              logout();
+              navigate('/login');
+              setMenuOpen(false);
+            }}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+            Log out
+          </button>
+        </div>
+      </div>
 
       {/* HERO - Logo */}
       <div
@@ -2374,52 +2728,90 @@ export default function ClientPortal() {
         </div>
       </footer>
 
+
       {/* ---------------------------
-          Logout Button - Bottom
+          Preferences Modal
       ---------------------------- */}
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'center', 
-        marginTop: '32px',
-        marginBottom: '16px',
-        paddingBottom: '16px'
-      }}>
-        <button
-          onClick={() => {
-            logout();
-            navigate('/login');
-          }}
-          style={{
-            padding: '10px 20px',
-            backgroundColor: '#f3f4f6',
-            color: '#374151',
-            border: '1px solid #d1d5db',
-            borderRadius: '8px',
-            fontSize: '14px',
-            fontWeight: 500,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            transition: 'all 0.2s',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = '#e5e7eb';
-            e.currentTarget.style.borderColor = '#9ca3af';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = '#f3f4f6';
-            e.currentTarget.style.borderColor = '#d1d5db';
-          }}
+      {showPreferencesModal && (
+        <div
+          className="cp-preferences-modal-overlay"
+          onClick={() => setShowPreferencesModal(false)}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16 }}>
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-            <polyline points="16 17 21 12 16 7"></polyline>
-            <line x1="21" y1="12" x2="9" y2="12"></line>
-          </svg>
-          Log out
-        </button>
-      </div>
+          <div
+            className="cp-preferences-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="cp-preferences-modal-header">
+              <h2 className="cp-preferences-modal-title">Preferences</h2>
+              <button
+                className="cp-preferences-modal-close"
+                onClick={() => setShowPreferencesModal(false)}
+                aria-label="Close"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="cp-preferences-modal-tabs">
+              <button className="cp-preferences-modal-tab active">Communications</button>
+            </div>
+            <div className="cp-preferences-modal-content">
+              <div className="cp-preferences-section">
+                <h3 className="cp-preferences-section-title">Communication Preferences</h3>
+                <p className="cp-preferences-section-description">
+                  Choose how you would like to receive communications from us.
+                </p>
+                <div className="cp-preferences-checkbox-group">
+                  <label className="cp-preferences-checkbox-item">
+                    <input
+                      type="checkbox"
+                      className="cp-preferences-checkbox"
+                      checked={allowEmail === true}
+                      onChange={(e) => setAllowEmail(e.target.checked)}
+                    />
+                    <div className="cp-preferences-checkbox-label">
+                      <div>Email</div>
+                      <div className="cp-preferences-checkbox-description">
+                        Receive communications via email
+                      </div>
+                    </div>
+                  </label>
+                  <label className="cp-preferences-checkbox-item">
+                    <input
+                      type="checkbox"
+                      className="cp-preferences-checkbox"
+                      checked={allowText === true}
+                      onChange={(e) => setAllowText(e.target.checked)}
+                    />
+                    <div className="cp-preferences-checkbox-label">
+                      <div>Text (SMS)</div>
+                      <div className="cp-preferences-checkbox-description">
+                        Receive communications via text message
+                      </div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div className="cp-preferences-modal-footer">
+              <button
+                className="cp-preferences-button cp-preferences-button-secondary"
+                onClick={() => setShowPreferencesModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="cp-preferences-button cp-preferences-button-primary"
+                onClick={handleSavePreferences}
+                disabled={savingPreferences}
+              >
+                {savingPreferences ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ---------------------------
           Mobile Bottom Navigation
@@ -2440,12 +2832,14 @@ export default function ClientPortal() {
             <span>Book</span>
           </button>
 
-          <button className="cp-tab" onClick={handleContact} aria-label="Contact us">
-            {/* chat-bubble */}
+          <button className="cp-tab" onClick={handleShop} aria-label="Shop online pharmacy">
+            {/* shopping-bag icon */}
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+              <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <path d="M16 10a4 4 0 0 1-8 0"></path>
             </svg>
-            <span>Contact</span>
+            <span>Shop</span>
           </button>
 
           <button className="cp-tab" onClick={handleCall} aria-label="Call us">
@@ -2456,13 +2850,13 @@ export default function ClientPortal() {
             <span>Call</span>
           </button>
 
-          <button className="cp-tab" onClick={handleMessages} aria-label="Messages">
+          <button className="cp-tab" onClick={handleMessages} aria-label="Text">
             {/* inbox */}
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path d="M22 12h-6l-2 3h-4l-2-3H2" />
               <path d="M5 7h14l3 5v6a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3v-6l3-5z" />
             </svg>
-            <span>Messages</span>
+            <span>Text</span>
           </button>
         </div>
       </nav>
