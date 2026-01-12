@@ -1838,117 +1838,6 @@ export default function ClientPortal() {
                       </div>
 
                       <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {hasActiveWellnessPlan && (
-                          <div style={{ position: 'relative', width: '100%' }}>
-                            {isChatHoursOpen ? (
-                              <a
-                                href="https://direct.lc.chat/19087357/"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{
-                                  width: '100%',
-                                  padding: '8px 12px',
-                                  backgroundColor: '#3b82f6',
-                                  color: '#fff',
-                                  border: 'none',
-                                  borderRadius: 8,
-                                  fontSize: 14,
-                                  fontWeight: 600,
-                                  cursor: 'pointer',
-                                  textDecoration: 'none',
-                                  textAlign: 'center',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: 8,
-                                  transition: 'opacity 0.2s',
-                                }}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.opacity = '0.9';
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.opacity = '1';
-                                }}
-                              >
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
-                                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                                </svg>
-                                After-hours Chat
-                              </a>
-                            ) : (
-                              <div
-                                style={{
-                                  width: '100%',
-                                  padding: '8px 12px',
-                                  backgroundColor: '#9ca3af',
-                                  color: '#fff',
-                                  border: 'none',
-                                  borderRadius: 8,
-                                  fontSize: 14,
-                                  fontWeight: 600,
-                                  cursor: 'not-allowed',
-                                  textAlign: 'center',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: 8,
-                                  position: 'relative',
-                                }}
-                                onMouseEnter={(e) => {
-                                  const tooltip = e.currentTarget.querySelector('.chat-hours-tooltip') as HTMLElement;
-                                  if (tooltip) tooltip.style.opacity = '1';
-                                }}
-                                onMouseLeave={(e) => {
-                                  const tooltip = e.currentTarget.querySelector('.chat-hours-tooltip') as HTMLElement;
-                                  if (tooltip) tooltip.style.opacity = '0';
-                                }}
-                              >
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
-                                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                                </svg>
-                                After-hours Chat
-                                {formattedChatHours && (
-                                  <div
-                                    style={{
-                                      position: 'absolute',
-                                      bottom: '100%',
-                                      left: '50%',
-                                      transform: 'translateX(-50%)',
-                                      marginBottom: '8px',
-                                      padding: '12px 16px',
-                                      backgroundColor: '#1f2937',
-                                      color: '#fff',
-                                      borderRadius: 8,
-                                      fontSize: 13,
-                                      lineHeight: 1.6,
-                                      whiteSpace: 'pre-line',
-                                      textAlign: 'left',
-                                      minWidth: '240px',
-                                      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-                                      opacity: 0,
-                                      pointerEvents: 'none',
-                                      transition: 'opacity 0.2s',
-                                      zIndex: 1000,
-                                    }}
-                                    className="chat-hours-tooltip"
-                                  >
-                                    <div style={{ fontWeight: 600, marginBottom: '8px' }}>
-                                      Chat is only available during the hours the practice allows:
-                                    </div>
-                                    <div style={{ display: 'grid', gap: '4px' }}>
-                                      {formattedChatHours.map((f) => (
-                                        <div key={f.day} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                          <span style={{ fontWeight: 500 }}>{f.day}:</span>
-                                          <span style={{ marginLeft: '12px' }}>{f.hours}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
                         {false && (() => {
                           const canUpgrade = canUpgradeMembership(p);
                           // canUpgradeMembership already checks for base plans in both membership and wellness plans
@@ -2012,6 +1901,147 @@ export default function ClientPortal() {
                             Explore membership options for {p.name}
                           </button>
                         )}
+                        <div style={{ position: 'relative', width: '100%' }}>
+                          {isChatHoursOpen ? (
+                            <button
+                              onClick={() => {
+                                if (hasActiveWellnessPlan) {
+                                  window.open('https://direct.lc.chat/19087357/', '_blank', 'noopener,noreferrer');
+                                } else {
+                                  alert('After-hours chat is only available to members. Please sign up for a membership plan to access this feature.');
+                                }
+                              }}
+                              style={{
+                                width: '100%',
+                                padding: '8px 12px',
+                                backgroundColor: '#3b82f6',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: 8,
+                                fontSize: 14,
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                textAlign: 'center',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 8,
+                                transition: 'opacity 0.2s',
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.opacity = '0.9';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.opacity = '1';
+                              }}
+                            >
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                              </svg>
+                              After-hours Chat
+                            </button>
+                          ) : (
+                            <div
+                              style={{
+                                width: '100%',
+                                padding: '8px 12px',
+                                backgroundColor: '#9ca3af',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: 8,
+                                fontSize: 14,
+                                fontWeight: 600,
+                                cursor: 'not-allowed',
+                                textAlign: 'center',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 8,
+                                position: 'relative',
+                              }}
+                              onMouseEnter={(e) => {
+                                const tooltip = e.currentTarget.querySelector('.chat-hours-tooltip') as HTMLElement;
+                                if (tooltip) tooltip.style.opacity = '1';
+                              }}
+                              onMouseLeave={(e) => {
+                                const tooltip = e.currentTarget.querySelector('.chat-hours-tooltip') as HTMLElement;
+                                if (tooltip) tooltip.style.opacity = '0';
+                              }}
+                            >
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                              </svg>
+                              After-hours Chat
+                              {hasActiveWellnessPlan && formattedChatHours ? (
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    bottom: '100%',
+                                    left: '50%',
+                                    transform: 'translateX(-50%)',
+                                    marginBottom: '8px',
+                                    padding: '12px 16px',
+                                    backgroundColor: '#1f2937',
+                                    color: '#fff',
+                                    borderRadius: 8,
+                                    fontSize: 13,
+                                    lineHeight: 1.6,
+                                    whiteSpace: 'pre-line',
+                                    textAlign: 'left',
+                                    minWidth: '240px',
+                                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                                    opacity: 0,
+                                    pointerEvents: 'none',
+                                    transition: 'opacity 0.2s',
+                                    zIndex: 1000,
+                                  }}
+                                  className="chat-hours-tooltip"
+                                >
+                                  <div style={{ fontWeight: 600, marginBottom: '8px' }}>
+                                    Chat is only available during the hours the practice allows:
+                                  </div>
+                                  <div style={{ display: 'grid', gap: '4px' }}>
+                                    {formattedChatHours.map((f) => (
+                                      <div key={f.day} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ fontWeight: 500 }}>{f.day}:</span>
+                                        <span style={{ marginLeft: '12px' }}>{f.hours}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    bottom: '100%',
+                                    left: '50%',
+                                    transform: 'translateX(-50%)',
+                                    marginBottom: '8px',
+                                    padding: '12px 16px',
+                                    backgroundColor: '#1f2937',
+                                    color: '#fff',
+                                    borderRadius: 8,
+                                    fontSize: 13,
+                                    lineHeight: 1.6,
+                                    whiteSpace: 'pre-line',
+                                    textAlign: 'left',
+                                    minWidth: '240px',
+                                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                                    opacity: 0,
+                                    pointerEvents: 'none',
+                                    transition: 'opacity 0.2s',
+                                    zIndex: 1000,
+                                  }}
+                                  className="chat-hours-tooltip"
+                                >
+                                  <div style={{ fontWeight: 600 }}>
+                                    Chat is available for members only. Sign up today!
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </article>
                   );
