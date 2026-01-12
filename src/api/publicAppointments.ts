@@ -223,6 +223,7 @@ export type AppointmentType = {
   defaultStartTime: string;
   showInApptRequestForm: boolean;
   newPatientAllowed: boolean;
+  formListOrder?: number | null;
   practice?: {
     id: number;
     isActive: boolean;
@@ -275,6 +276,7 @@ export async function fetchAppointmentTypes(
     defaultStartTime: type.defaultStartTime,
     showInApptRequestForm: type.showInApptRequestForm || false,
     newPatientAllowed: type.newPatientAllowed || false,
+    formListOrder: type.formListOrder ?? null,
     practice: type.practice,
   }));
 }

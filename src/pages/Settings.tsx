@@ -177,6 +177,7 @@ export default function Settings() {
         prettyName: editingAppointmentType.prettyName,
         showInApptRequestForm: editingAppointmentType.showInApptRequestForm,
         newPatientAllowed: editingAppointmentType.newPatientAllowed,
+        formListOrder: editingAppointmentType.formListOrder ?? null,
       });
       setAppointmentTypes((prev) =>
         prev.map((at) => (at.id === updated.id ? updated : at))
@@ -501,6 +502,7 @@ export default function Settings() {
                     <th>Pretty Name</th>
                     <th>Show in Form</th>
                     <th>New Patients Allowed</th>
+                    <th>Form List Order</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -555,6 +557,26 @@ export default function Settings() {
                           />
                         ) : (
                           type.newPatientAllowed ? 'Yes' : 'No'
+                        )}
+                      </td>
+                      <td>
+                        {editingAppointmentType?.id === type.id ? (
+                          <input
+                            type="number"
+                            value={editingAppointmentType.formListOrder ?? ''}
+                            onChange={(e) =>
+                              setEditingAppointmentType({
+                                ...editingAppointmentType,
+                                formListOrder: e.target.value === '' ? null : Number(e.target.value),
+                              })
+                            }
+                            className="settings-input"
+                            placeholder="Order (1 = top)"
+                            min="1"
+                            style={{ width: '100px' }}
+                          />
+                        ) : (
+                          type.formListOrder ?? '—'
                         )}
                       </td>
                       <td>

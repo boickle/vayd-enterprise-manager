@@ -7,6 +7,7 @@ export type AppointmentType = {
   prettyName: string;
   showInApptRequestForm: boolean;
   newPatientAllowed: boolean;
+  formListOrder?: number | null;
   isBoardingType: boolean;
   hasExtraInstructions: boolean;
   defaultDuration: number;
@@ -123,6 +124,7 @@ export async function updateAppointmentType(
     prettyName?: string;
     showInApptRequestForm?: boolean;
     newPatientAllowed?: boolean;
+    formListOrder?: number | null;
   }
 ): Promise<AppointmentType> {
   const { data } = await http.put(`/appointment-types/${appointmentTypeId}`, updates);
