@@ -334,22 +334,45 @@ export default function AppointmentRequestForm() {
       filteredTypes = appointmentTypes.filter(type => type.newPatientAllowed === true);
     }
     
-    // Map to objects with id, name and prettyName, and sort so euthanasia appears last
-    const options = filteredTypes.map(type => ({
+    // Map to objects with id, name and prettyName, and sort by formListOrder
+    const optionsWithOrder = filteredTypes.map(type => ({
       id: type.id,
       name: type.name,
       prettyName: type.prettyName || type.name,
+      formListOrder: type.formListOrder ?? null,
     }));
-    const euthanasiaIndex = options.findIndex(opt => isEuthanasiaAppointmentType(opt.name));
     
-    if (euthanasiaIndex !== -1) {
-      // Move euthanasia to the end
-      const euthanasia = options[euthanasiaIndex];
-      const others = options.filter((_, idx) => idx !== euthanasiaIndex);
-      return [...others, euthanasia];
-    }
+    // Sort by formListOrder:
+    // 1. Items with formListOrder (ascending, 1 at top)
+    // 2. Items with same formListOrder sorted alphabetically by prettyName
+    // 3. Items with null formListOrder at the bottom, sorted alphabetically
+    optionsWithOrder.sort((a, b) => {
+      const aOrder = a.formListOrder;
+      const bOrder = b.formListOrder;
+      
+      // If both have order values, sort by order, then alphabetically
+      if (aOrder !== null && bOrder !== null) {
+        if (aOrder !== bOrder) {
+          return aOrder - bOrder;
+        }
+        // Same order, sort alphabetically by prettyName
+        return a.prettyName.localeCompare(b.prettyName);
+      }
+      
+      // If only one has an order value, the one with order comes first
+      if (aOrder !== null && bOrder === null) {
+        return -1;
+      }
+      if (aOrder === null && bOrder !== null) {
+        return 1;
+      }
+      
+      // Both are null, sort alphabetically
+      return a.prettyName.localeCompare(b.prettyName);
+    });
     
-    return options;
+    // Remove formListOrder from the returned objects to maintain compatibility
+    return optionsWithOrder.map(({ id, name, prettyName }) => ({ id, name, prettyName }));
   };
 
   // Get all selected appointment type names from the form

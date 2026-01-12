@@ -210,7 +210,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             >
-              <Route path="/home" element={<Home pages={pages} />} />
+              <Route path="/home" element={<Home />} />
               {pages.map((p: any) => (
                 <Route key={p.path} path={p.path} element={p.element} />
               ))}
