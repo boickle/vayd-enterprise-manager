@@ -2773,7 +2773,7 @@ export default function ClientPortal() {
                     <div className="cp-preferences-checkbox-label">
                       <div>Email</div>
                       <div className="cp-preferences-checkbox-description">
-                        Receive communications via email
+                        If you uncheck this, you will no longer receive any communications via email, including appointment and service reminders, appointment request confirmations, and anything else now or in the future managed through the client portal.
                       </div>
                     </div>
                   </label>
@@ -2787,7 +2787,7 @@ export default function ClientPortal() {
                     <div className="cp-preferences-checkbox-label">
                       <div>Text (SMS)</div>
                       <div className="cp-preferences-checkbox-description">
-                        Receive communications via text message
+                        If you uncheck this, you will no longer receive any communications via text, including appointment and service reminders, appointment request confirmations, and anything else now or in the future managed through the client portal.
                       </div>
                     </div>
                   </label>
@@ -2851,10 +2851,11 @@ export default function ClientPortal() {
           </button>
 
           <button className="cp-tab" onClick={handleMessages} aria-label="Text">
-            {/* inbox */}
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path d="M22 12h-6l-2 3h-4l-2-3H2" />
-              <path d="M5 7h14l3 5v6a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3v-6l3-5z" />
+            {/* text message icon */}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              <line x1="8" y1="10" x2="16" y2="10" />
+              <line x1="8" y1="14" x2="14" y2="14" />
             </svg>
             <span>Text</span>
           </button>
