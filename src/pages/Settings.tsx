@@ -76,6 +76,22 @@ export default function Settings() {
     });
   }, [employees]);
 
+  // Sort appointment types: first by showInApptRequestForm (true first), then by formListOrder
+  const sortedAppointmentTypes = useMemo(() => {
+    return [...appointmentTypes].sort((a, b) => {
+      // First, sort by showInApptRequestForm (true first)
+      const aShowInForm = a.showInApptRequestForm === true ? 0 : 1;
+      const bShowInForm = b.showInApptRequestForm === true ? 0 : 1;
+      if (aShowInForm !== bShowInForm) {
+        return aShowInForm - bShowInForm;
+      }
+      // Then sort by formListOrder (ascending, null values at the end)
+      const aOrder = a.formListOrder ?? Number.MAX_SAFE_INTEGER;
+      const bOrder = b.formListOrder ?? Number.MAX_SAFE_INTEGER;
+      return aOrder - bOrder;
+    });
+  }, [appointmentTypes]);
+
   useEffect(() => {
     if (!isAdmin) return;
     loadData();
@@ -507,7 +523,7 @@ export default function Settings() {
                   </tr>
                 </thead>
                 <tbody>
-                  {appointmentTypes.map((type) => (
+                  {sortedAppointmentTypes.map((type) => (
                     <tr key={type.id}>
                       <td>{type.name}</td>
                       <td>
