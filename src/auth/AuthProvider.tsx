@@ -32,6 +32,67 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Helper function to extract role from JWT token
+function extractRoleFromToken(token: string | null): string[] {
+  if (!token) return [];
+  try {
+    const payload = decodeJwt(token);
+    if (!payload) return [];
+    
+    // Check multiple possible field names for role (common JWT claim variations)
+    let roleClaim = payload?.role ?? payload?.roles ?? payload?.userRole ?? payload?.user_role 
+      ?? payload?.UserRole ?? payload?.User_Role ?? payload?.authorities ?? payload?.authority ?? [];
+    
+    // If still not found, check if it's nested
+    if (!roleClaim && payload?.user) {
+      roleClaim = payload.user?.role ?? payload.user?.roles ?? [];
+    }
+    
+    // If still not found, check if it's a string with comma-separated roles
+    if (!roleClaim && typeof payload === 'object') {
+      // Check all keys for role-like patterns
+      const keys = Object.keys(payload);
+      for (const key of keys) {
+        if (key.toLowerCase().includes('role') || key.toLowerCase().includes('authority')) {
+          roleClaim = payload[key];
+          break;
+        }
+      }
+    }
+    
+    if (Array.isArray(roleClaim)) {
+      return roleClaim.map((r) => String(r).trim()).filter((r) => r.length > 0);
+    } else if (roleClaim) {
+      // Handle comma-separated or space-separated roles
+      const roleStr = String(roleClaim).trim();
+      if (roleStr.includes(',') || roleStr.includes(' ')) {
+        return roleStr.split(/[,\s]+/).map((r) => r.trim()).filter((r) => r.length > 0);
+      }
+      return [roleStr];
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+// Helper function to decode JWT
+function decodeJwt(token: string): any | null {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(jsonPayload);
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [tokenState, setTokenState] = useState<string | null>(() => {
     try {
@@ -47,7 +108,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return null;
     }
   });
-  const [role, setRole] = useState<string[]>([]);
+  // Extract role immediately from token if available
+  const [role, setRole] = useState<string[]>(() => {
+    try {
+      const token = localStorage.getItem('vayd_token');
+      const extractedRole = extractRoleFromToken(token);
+      // Debug: log JWT payload to help diagnose role extraction issues
+      if (token && extractedRole.length === 0) {
+        try {
+          const payload = decodeJwt(token);
+          console.log('[AuthProvider] JWT payload (for debugging):', payload);
+          console.log('[AuthProvider] Extracted role:', extractedRole);
+        } catch (e) {
+          // Ignore decode errors in debug
+        }
+      }
+      return extractedRole;
+    } catch {
+      return [];
+    }
+  });
   const [userId, setUserId] = useState<string | null>(() => {
     try {
       return localStorage.getItem('vayd_clientId');
@@ -67,9 +147,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setToken(tokenState);
     if (tokenState) {
+      // Extract role from JWT token
+      // Only update if we successfully extract a role (don't overwrite with empty array)
+      const extractedRole = extractRoleFromToken(tokenState);
+      if (extractedRole.length > 0) {
+        setRole(extractedRole);
+      }
+      
       const payload = decodeJwt(tokenState);
-      const roleClaim = payload?.role || [];
-      setRole(Array.isArray(roleClaim) ? roleClaim : [String(roleClaim)]);
       const claimedId =
         payload?.clientId ??
         payload?.client_id ??
@@ -187,7 +272,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUserId(null);
         }
         
-        // Fetch and store client info if user is a client
+        // Extract and set role from login response immediately
         const roles: string[] = Array.isArray((user as any)?.role)
           ? (user as any).role
           : (user as any)?.role
@@ -195,7 +280,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             : Array.isArray((user as any)?.roles)
               ? (user as any).roles
               : [];
-        const isClient = roles.includes('client') || roles.includes('Client');
+        
+        // Set role immediately from login response (don't wait for JWT decode)
+        if (roles.length > 0) {
+          setRole(roles);
+        }
+        
+        const isClient = roles.some((r) => String(r).toLowerCase() === 'client');
         
         if (isClient && inferredClientId != null) {
           // Import fetchClientInfo dynamically to avoid circular dependency
@@ -267,21 +358,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [tokenState, email, userId, role, clientInfo]
   );
 
-  function decodeJwt(token: string): any | null {
-    try {
-      const base64Url = token.split('.')[1];
-      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-      const jsonPayload = decodeURIComponent(
-        atob(base64)
-          .split('')
-          .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-          .join('')
-      );
-      return JSON.parse(jsonPayload);
-    } catch {
-      return null;
-    }
-  }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
