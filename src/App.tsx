@@ -67,21 +67,13 @@ export default function App() {
   // Track page views on route changes
   usePageTracking();
 
-  // Normalize roles - handle arrays, single values, and edge cases
+  // Normalize roles
   const roles = useMemo<string[]>(
-    () => {
-      if (!role) return [];
-      const roleArray = Array.isArray(role) ? role : [role];
-      return roleArray
-        .map((r) => String(r).toLowerCase().trim())
-        .filter((r) => r.length > 0);
-    },
+    () =>
+      (Array.isArray(role) ? role : role ? [String(role)] : []).map((r) => String(r).toLowerCase()),
     [role]
   );
-  // Check if user is a client - must explicitly have 'client' role
-  const isClient = useMemo(() => {
-    return roles.includes('client');
-  }, [roles]);
+  const isClient = roles.includes('client');
 
   // Compute employee pages if NOT a client
   const pages = useMemo(
@@ -145,7 +137,7 @@ export default function App() {
         className={isClient && location.pathname.startsWith('/client-portal') ? '' : 'container'}
       >
         <Routes>
-          {/* Root redirect: client -> client-portal, admin/employee -> routing */}
+          {/* Root redirect: client -> client-portal, else -> routing */}
           <Route
             path="/"
             element={
@@ -153,7 +145,6 @@ export default function App() {
                 isClient ? (
                   <Navigate to="/client-portal" replace />
                 ) : (
-                  // Only redirect to routing for admin/employee (non-client) users
                   <Navigate to="/routing" replace />
                 )
               ) : (
@@ -219,7 +210,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             >
-              <Route path="/home" element={<Home />} />
+              <Route path="/home" element={<Home pages={pages} />} />
               {pages.map((p: any) => (
                 <Route key={p.path} path={p.path} element={p.element} />
               ))}
