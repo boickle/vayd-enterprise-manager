@@ -180,7 +180,6 @@ export default function RoomLoaderPage() {
       if (data?.patients && Array.isArray(data.patients)) {
         setVaccineCheckboxes((prev) => {
           const updated = { ...prev };
-          const declinedItems = data.declinedInventoryItems || [];
           
           data.patients!.forEach((patient) => {
             if (patient.id && !(patient.id in updated)) {
@@ -193,9 +192,13 @@ export default function RoomLoaderPage() {
                 sharps: true, // Will be set based on vaccine selections
               };
               
+              // Check declined items for THIS specific patient (declined items are nested under each patient)
+              const declinedItems = patient.declinedInventoryItems || [];
+              
               // Check if any declined items match vaccine names
-              declinedItems.forEach((declinedItem) => {
-                const name = (declinedItem.name || '').toLowerCase();
+              declinedItems.forEach((declinedItem: any) => {
+                // Handle both structures: direct name or nested inventoryItem.name
+                const name = ((declinedItem.inventoryItem?.name || declinedItem.name) || '').toLowerCase();
                 // String matching for each checkbox - check for various name variations
                 if (name.includes('felv') || name.includes('feline leukemia') || name.includes('feline leukemia virus')) {
                   initial.felv = false;
@@ -793,13 +796,16 @@ export default function RoomLoaderPage() {
       };
     });
 
+    // Return payload in the new structure: { roomLoaderId, formData }
     return {
       roomLoaderId: selectedRoomLoader.id,
-      practiceId: selectedRoomLoader.practice.id,
-      practiceName: selectedRoomLoader.practice.name,
-      sentStatus: selectedRoomLoader.sentStatus,
-      dueStatus: selectedRoomLoader.dueStatus,
-      patients: patientData,
+      formData: {
+        practiceId: selectedRoomLoader.practice.id,
+        practiceName: selectedRoomLoader.practice.name,
+        sentStatus: selectedRoomLoader.sentStatus,
+        dueStatus: selectedRoomLoader.dueStatus,
+        patients: patientData,
+      },
     };
   }
 
@@ -2284,7 +2290,10 @@ export default function RoomLoaderPage() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                       {(() => {
                         const checkboxes = vaccineCheckboxes[patient.id] || { felv: true, lepto: true, lyme: true, bordatella: true, sharps: true };
-                        const declinedItems = selectedRoomLoader?.declinedInventoryItems || [];
+                        
+                        // Get declined items for THIS specific patient (declined items are nested under each patient)
+                        const patientFromLoader = selectedRoomLoader?.patients?.find((p) => p.id === patient.id);
+                        const declinedItems = patientFromLoader?.declinedInventoryItems || [];
                         
                         // Calculate sharps based on any vaccine being checked
                         const anyVaccineChecked = checkboxes.felv || checkboxes.lepto || checkboxes.lyme || checkboxes.bordatella;
@@ -2292,8 +2301,9 @@ export default function RoomLoaderPage() {
                         
                         // Helper function to check if an item name matches a vaccine
                         const isDeclined = (vaccineName: string) => {
-                          return declinedItems.some((item) => {
-                            const itemName = (item.name || '').toLowerCase();
+                          return declinedItems.some((item: any) => {
+                            // Handle both structures: direct name or nested inventoryItem.name
+                            const itemName = ((item.inventoryItem?.name || item.name) || '').toLowerCase();
                             const searchTerms: string[] = [];
                             
                             if (vaccineName === 'felv') {

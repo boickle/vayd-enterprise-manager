@@ -130,6 +130,7 @@ export type Patient = {
   created?: string;
   updated?: string;
   reminders?: ReminderWithPrice[];
+  declinedInventoryItems?: DeclinedInventoryItem[];
 };
 
 export type PrimaryProvider = {
