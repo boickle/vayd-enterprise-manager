@@ -560,7 +560,15 @@ export default function MembershipSignup() {
             );
             const now = Date.now();
             const any = relevant.length > 0;
-            const past = relevant.some((appt) => new Date(appt.startIso).getTime() < now);
+            // For puppy/kitten eligibility, only count appointments from yesterday or before as "past"
+            // This allows pets with appointments today to still be eligible for puppy/kitten add-on
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            yesterday.setHours(23, 59, 59, 999); // End of yesterday
+            const past = relevant.some((appt) => {
+              const apptDate = new Date(appt.startIso);
+              return apptDate <= yesterday;
+            });
             const upcoming = relevant.some((appt) => new Date(appt.startIso).getTime() >= now);
             setHasAnyAppointments(any);
             setHasPastAppointment(past);
