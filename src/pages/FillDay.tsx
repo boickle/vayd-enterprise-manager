@@ -10,6 +10,8 @@ import { useAuth } from '../auth/useAuth';
 import { PreviewMyDayModal, type PreviewMyDayOption } from '../components/PreviewMyDayModal';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
 import { fetchClientMessages, type ClientMessagesResponse } from '../api/clientPortal';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 export default function FillDayPage() {
   const { userEmail } = useAuth();
@@ -95,6 +97,10 @@ export default function FillDayPage() {
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [messagesError, setMessagesError] = useState<string | null>(null);
   const [messageCounts, setMessageCounts] = useState<Record<number, number>>({});
+
+  // PDF export
+  const resultsContainerRef = useRef<HTMLDivElement | null>(null);
+  const [exportingPDF, setExportingPDF] = useState(false);
 
   // Load providers
   useEffect(() => {
@@ -522,15 +528,93 @@ This spot is also being offered to other clients. If you'd like to book it for $
     }
   }, [smsModalOpen, pendingSmsCandidate]);
 
+  // Handle PDF export
+  async function handleExportToPDF() {
+    if (!resultsContainerRef.current) {
+      setError('No results to export');
+      return;
+    }
+
+    setExportingPDF(true);
+    try {
+      const element = resultsContainerRef.current;
+
+      // Use html2canvas to capture the results container
+      const canvas = await html2canvas(element, {
+        scale: 2, // Higher quality
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        width: element.scrollWidth,
+        height: element.scrollHeight,
+      });
+
+      // Calculate PDF dimensions (letter size: 8.5 x 11 inches)
+      const imgWidth = 8.5;
+      const pageHeight = 11;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let heightLeft = imgHeight;
+
+      // Create PDF
+      const pdf = new jsPDF('portrait', 'in', 'letter');
+      let position = 0;
+
+      // Add image to PDF
+      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+
+      // Add additional pages if content is taller than one page
+      while (heightLeft >= 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+
+      // Generate filename
+      const dateStr = formatDate(targetDate);
+      const filename = `Schedule_Loader_Results_${selectedDoctorName.replace(/\s+/g, '_')}_${dateStr.replace(/[,\s]/g, '_')}.pdf`;
+      
+      // Save the PDF
+      pdf.save(filename);
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      setError('Failed to generate PDF. Please try again.');
+    } finally {
+      setExportingPDF(false);
+    }
+  }
+
   return (
     <div className="container" style={{ padding: '24px', maxWidth: 1400 }}>
-      <div style={{ marginBottom: '32px' }}>
-        <h1 style={{ margin: '0 0 8px', fontSize: '28px', fontWeight: 700 }}>
-          Schedule Loader
-        </h1>
-        <p className="muted" style={{ margin: 0 }}>
-          Find patients with overdue reminders to fill scheduling holes
-        </p>
+      <div style={{ marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+        <div>
+          <h1 style={{ margin: '0 0 8px', fontSize: '28px', fontWeight: 700 }}>
+            Schedule Loader
+          </h1>
+          <p className="muted" style={{ margin: 0 }}>
+            Find patients with overdue reminders to fill scheduling holes
+          </p>
+        </div>
+        {candidates.length > 0 && (
+          <button
+            onClick={handleExportToPDF}
+            disabled={exportingPDF}
+            style={{
+              padding: '10px 20px',
+              background: exportingPDF ? '#ccc' : '#4FB128',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '14px',
+              fontWeight: 600,
+              cursor: exportingPDF ? 'not-allowed' : 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {exportingPDF ? 'Exporting...' : 'Export Results to PDF'}
+          </button>
+        )}
       </div>
 
       {/* Controls */}
@@ -698,50 +782,52 @@ This spot is also being offered to other clients. If you'd like to book it for $
         </div>
       )}
 
-      {/* Stats */}
-      {stats && (
-        <div
-          style={{
-            padding: '16px',
-            background: '#f0f7f4',
-            borderRadius: '8px',
-            marginBottom: '24px',
-            display: 'flex',
-            gap: '24px',
-            flexWrap: 'wrap',
-          }}
-        >
-          <div>
-            <strong>Holes Found:</strong> {stats.holesFound}
+      {/* Results Container for PDF Export */}
+      <div ref={resultsContainerRef}>
+        {/* Stats */}
+        {stats && (
+          <div
+            style={{
+              padding: '16px',
+              background: '#f0f7f4',
+              borderRadius: '8px',
+              marginBottom: '24px',
+              display: 'flex',
+              gap: '24px',
+              flexWrap: 'wrap',
+            }}
+          >
+            <div>
+              <strong>Holes Found:</strong> {stats.holesFound}
+            </div>
+            <div>
+              <strong>Candidates Evaluated:</strong> {stats.candidatesEvaluated}
+            </div>
+            <div>
+              <strong>Shortlist Size:</strong> {stats.shortlistSize}
+            </div>
+            <div>
+              <strong>Final Results:</strong> {stats.finalResults}
+            </div>
           </div>
-          <div>
-            <strong>Candidates Evaluated:</strong> {stats.candidatesEvaluated}
-          </div>
-          <div>
-            <strong>Shortlist Size:</strong> {stats.shortlistSize}
-          </div>
-          <div>
-            <strong>Final Results:</strong> {stats.finalResults}
-          </div>
-        </div>
-      )}
+        )}
 
-      {/* Message */}
-      {message && (
-        <div
-          style={{
-            padding: '16px',
-            background: '#fef2f2',
-            borderRadius: '8px',
-            marginBottom: '24px',
-            color: '#dc2626',
-          }}
-        >
-          {message}
-        </div>
-      )}
+        {/* Message */}
+        {message && (
+          <div
+            style={{
+              padding: '16px',
+              background: '#fef2f2',
+              borderRadius: '8px',
+              marginBottom: '24px',
+              color: '#dc2626',
+            }}
+          >
+            {message}
+          </div>
+        )}
 
-      {/* Candidates List */}
+        {/* Candidates List */}
       {candidates.length === 0 && !loading && !error && stats && (
         <div
           style={{
@@ -1122,6 +1208,7 @@ This spot is also being offered to other clients. If you'd like to book it for $
           ))}
         </div>
       )}
+      </div>
 
       {/* SMS Confirmation Modal */}
       {smsModalOpen && pendingSmsCandidate && typeof document !== 'undefined' && document.body && createPortal(
