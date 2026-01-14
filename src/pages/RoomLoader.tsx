@@ -16,6 +16,7 @@ import {
   type ReminderWithPrice,
   type SearchableItem,
 } from '../api/roomLoader';
+import { http } from '../api/http';
 import { KeyValue } from '../components/KeyValue';
 
 export default function RoomLoaderPage() {
@@ -330,14 +331,14 @@ export default function RoomLoaderPage() {
       });
     });
 
-    // Sort by appointment date (most recent first), then by room loader ID
+    // Sort by appointment date (soonest first), then by room loader ID
     return rows.sort((a, b) => {
       if (a.apptDate && b.apptDate) {
-        return b.apptDate.localeCompare(a.apptDate);
+        return a.apptDate.localeCompare(b.apptDate);
       }
       if (a.apptDate) return -1;
       if (b.apptDate) return 1;
-      return b.roomLoaderId - a.roomLoaderId;
+      return a.roomLoaderId - b.roomLoaderId;
     });
   }, [roomLoaders]);
 
@@ -815,23 +816,22 @@ export default function RoomLoaderPage() {
         return;
       }
 
-      // TODO: Replace with actual API call when endpoint is provided
-      // Example:
-      // await http.post('/room-loader/send-to-client', payload);
+      await http.post('/room-loader/send-to-client', payload);
       
-      console.log('Payload to send to client:', JSON.stringify(payload, null, 2));
+      // Show success message
+      alert('Successfully sent to client!');
       
-      // For now, just log the payload
-      alert('Payload prepared! Check console for details. API endpoint will be added when provided.');
+      // Refresh the room loader data to get updated sent status
+      await loadRoomLoaders();
       
-      // After successful send, you might want to:
-      // - Refresh the room loader data
-      // - Close the modal
-      // - Show a success message
+      // Reload the selected room loader details to reflect changes
+      if (selectedRoomLoaderId) {
+        await loadRoomLoaderDetails(selectedRoomLoaderId);
+      }
       
     } catch (error: any) {
       console.error('Error sending to client:', error);
-      alert('Failed to send to client. Please try again.');
+      alert(`Failed to send to client: ${error?.message || 'Please try again.'}`);
     } finally {
       setSendingToClient(false);
     }

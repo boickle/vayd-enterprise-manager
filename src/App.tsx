@@ -24,6 +24,7 @@ import MembershipSignup from './pages/MembershipSignup';
 import MembershipPayment from './pages/MembershipPayment';
 import MembershipUpgrade from './pages/MembershipUpgrade';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
+import PublicRoomLoaderForm from './pages/PublicRoomLoaderForm';
 import { usePageTracking } from './hooks/usePageTracking';
 
 /** ------------------------------------------------------------------
@@ -94,12 +95,13 @@ export default function App() {
 
   return (
     <div>
-      {/* Hide navbar on client portal, login page, create-client page, and reset password */}
+      {/* Hide navbar on client portal, login page, create-client page, reset password, and public room loader form */}
       {!(isClient && location.pathname.startsWith('/client-portal')) &&
         location.pathname !== '/login' &&
         location.pathname !== '/create-client' &&
         location.pathname !== '/reset-password' &&
-        location.pathname !== '/request-reset' && (
+        location.pathname !== '/request-reset' &&
+        !location.pathname.startsWith('/public/room-loader') && (
         <header className="navbar">
           <div className="brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <img
@@ -198,6 +200,12 @@ export default function App() {
           <Route
             path="/client-portal/request-appointment"
             element={<AppointmentRequestForm />}
+          />
+
+          {/* Public room loader form (no authentication required) */}
+          <Route
+            path="/public/room-loader/form"
+            element={<PublicRoomLoaderForm />}
           />
 
           {/* Employees only: keep these pages alive across tab switches */}
