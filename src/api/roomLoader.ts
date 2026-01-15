@@ -79,7 +79,7 @@ export type ReminderWithPrice = {
   matchedItem?: {
     id: number;
     code?: string;
-    name?: string;
+  name?: string;
     price?: string;
     category?: string;
     cost?: string;
@@ -292,8 +292,16 @@ export type SearchableItem = {
   price: number;
   name: string;
   code?: string;
+  wellnessPlanPricing?: {
+    hasCoverage: boolean;
+    adjustedPrice: number;
+    originalPrice: number;
+    includedQuantity: number;
+    usedQuantity: number;
+    remainingQuantity: number;
+    isWithinLimit: boolean;
+  };
 };
-
 export type ItemSearchParams = {
   q: string;
   practiceId: number;
@@ -350,3 +358,57 @@ export async function submitReminderFeedback(request: ReminderMappingFeedbackReq
   return data;
 }
 
+
+// Check item pricing for a patient
+export type CheckItemPricingRequest = {
+  patientId: number;
+  practiceId: number;
+  itemType: 'lab' | 'procedure' | 'inventory' | string;
+  item: {
+    lab?: {
+      id: number;
+      name: string;
+      price: string;
+      code?: string;
+    };
+    procedure?: {
+      id: number;
+      name: string;
+      price: string;
+      code?: string;
+    };
+    inventoryItem?: {
+      id: number;
+      name: string;
+      price: string;
+      code?: string;
+    };
+  };
+};
+
+export type CheckItemPricingResponse = {
+  item: {
+    itemType: string;
+    lab?: any;
+    procedure?: any;
+    inventoryItem?: any;
+    price: number;
+    name: string;
+    code?: string;
+  };
+  adjustedPrice: number;
+  originalPrice: number;
+  wellnessPlanPricing?: {
+    hasCoverage: boolean;
+    adjustedPrice: number;
+    originalPrice: number;
+    includedQuantity: number;
+    usedQuantity: number;
+    remainingQuantity: number;
+    isWithinLimit: boolean;
+  };
+};
+export async function checkItemPricing(request: CheckItemPricingRequest): Promise<CheckItemPricingResponse> {
+  const { data } = await http.post<CheckItemPricingResponse>('/room-loader/check-item-pricing', request);
+  return data;
+}

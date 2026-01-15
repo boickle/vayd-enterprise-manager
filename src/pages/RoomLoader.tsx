@@ -6,6 +6,7 @@ import {
   getRoomLoader,
   searchItems,
   submitReminderFeedback,
+  checkItemPricing,
   type RoomLoader,
   type RoomLoaderSearchParams,
   type SentStatus,
@@ -392,6 +393,7 @@ export default function RoomLoaderPage() {
     setReminderFeedback({});
     setReminderCorrections({});
     setReminderQuantities({});
+    setAddedItemQuantities({});
     setAppointmentReasons({});
     setVaccineCheckboxes({});
   }
@@ -402,6 +404,16 @@ export default function RoomLoaderPage() {
     setReminderQuantities((prev) => ({
       ...prev,
       [reminderId]: validQuantity,
+    }));
+  }
+
+  function handleAddedItemQuantityChange(petId: number, itemIdx: number, quantity: number) {
+    // Ensure quantity is at least 1
+    const validQuantity = Math.max(1, Math.floor(quantity) || 1);
+    const key = `${petId}-${itemIdx}`;
+    setAddedItemQuantities((prev) => ({
+      ...prev,
+      [key]: validQuantity,
     }));
   }
 
@@ -427,22 +439,140 @@ export default function RoomLoaderPage() {
     }
   }
 
-  function handleAddItem(petId: number, item: SearchableItem) {
+  async function handleAddItem(petId: number, item: SearchableItem) {
+    if (!selectedRoomLoader?.practice?.id) {
+      console.error('Cannot add item: practice ID not available');
+      return;
+    }
+
+    // First, add the item with the original price
+    const itemWithOriginalPrice = { ...item };
     setAddedItems((prev) => ({
       ...prev,
-      [petId]: [...(prev[petId] || []), item],
+      [petId]: [...(prev[petId] || []), itemWithOriginalPrice],
     }));
+
     // Clear search
     setSearchQuery((prev) => ({ ...prev, [petId]: '' }));
     setSearchResults((prev) => ({ ...prev, [petId]: [] }));
+
+    // Check pricing for the item
+    try {
+      // Construct the item object based on itemType
+      const itemPayload: any = {};
+      if (item.itemType === 'lab' && item.lab) {
+        itemPayload.lab = {
+          id: item.lab.id || 0,
+          name: item.name,
+          price: String(item.price || 0),
+          code: item.code || '',
+        };
+      } else if (item.itemType === 'procedure' && (item as any).procedure) {
+        itemPayload.procedure = {
+          id: (item as any).procedure.id || 0,
+          name: item.name,
+          price: String(item.price || 0),
+          code: item.code || '',
+        };
+      } else if (item.itemType === 'inventory' && item.inventoryItem) {
+        itemPayload.inventoryItem = {
+          id: item.inventoryItem.id || 0,
+          name: item.name,
+          price: String(item.price || 0),
+          code: item.code || '',
+        };
+      } else {
+        // Fallback: try to extract ID from the item object
+        const itemId = (item.lab?.id || (item as any).procedure?.id || item.inventoryItem?.id || 0);
+        if (item.itemType === 'lab') {
+          itemPayload.lab = {
+            id: itemId,
+            name: item.name,
+            price: String(item.price || 0),
+            code: item.code || '',
+          };
+        } else if (item.itemType === 'procedure') {
+          itemPayload.procedure = {
+            id: itemId,
+            name: item.name,
+            price: String(item.price || 0),
+            code: item.code || '',
+          };
+        } else if (item.itemType === 'inventory') {
+          itemPayload.inventoryItem = {
+            id: itemId,
+            name: item.name,
+            price: String(item.price || 0),
+            code: item.code || '',
+          };
+        }
+      }
+
+      const pricingResponse = await checkItemPricing({
+        patientId: petId,
+        practiceId: selectedRoomLoader.practice.id,
+        itemType: item.itemType,
+        item: itemPayload,
+      });
+
+      // Update the item with the adjusted price and wellness plan info
+      setAddedItems((prev) => {
+        const items = prev[petId] || [];
+        const itemIndex = items.findIndex((i, idx) => {
+          // Find the last added item (the one we just added)
+          return idx === items.length - 1 && i.name === item.name;
+        });
+        
+        if (itemIndex !== -1) {
+          const updatedItems = [...items];
+          updatedItems[itemIndex] = {
+            ...updatedItems[itemIndex],
+            price: pricingResponse.adjustedPrice,
+            wellnessPlanPricing: pricingResponse.wellnessPlanPricing,
+          };
+          return {
+            ...prev,
+            [petId]: updatedItems,
+          };
+        }
+        return prev;
+      });
+    } catch (err: any) {
+      console.error('Error checking item pricing:', err);
+      // Item was already added with original price, so we just log the error
+    }
   }
 
   function handleRemoveAddedItem(petId: number, index: number) {
     setAddedItems((prev) => {
       const items = prev[petId] || [];
+      const newItems = items.filter((_, i) => i !== index);
+      
+      // Clean up quantities for removed items and reindex remaining items
+      setAddedItemQuantities((prevQty) => {
+        const newQty: Record<string, number> = {};
+        Object.keys(prevQty).forEach((key) => {
+          const [keyPetId, keyIdx] = key.split('-').map(Number);
+          if (keyPetId === petId) {
+            if (keyIdx < index) {
+              // Keep quantities for items before the removed one
+              newQty[key] = prevQty[key];
+            } else if (keyIdx > index) {
+              // Reindex quantities for items after the removed one
+              newQty[`${petId}-${keyIdx - 1}`] = prevQty[key];
+            }
+            // Skip the removed item's quantity
+          } else {
+            // Keep quantities for other pets
+            newQty[key] = prevQty[key];
+          }
+        });
+        return newQty;
+      });
+      
       return {
         ...prev,
-        [petId]: items.filter((_, i) => i !== index),
+        [petId]: newItems,
       };
     });
   }
@@ -452,6 +582,8 @@ export default function RoomLoaderPage() {
   const [reminderCorrections, setReminderCorrections] = useState<Record<string, { searchQuery: string; results: SearchableItem[]; loading: boolean; selectedItem: SearchableItem | null }>>({});
   // Store quantities for each reminder (keyed by reminderId)
   const [reminderQuantities, setReminderQuantities] = useState<Record<number, number>>({});
+  // Store quantities for each added item (keyed by `${petId}-${itemIdx}`)
+  const [addedItemQuantities, setAddedItemQuantities] = useState<Record<string, number>>({});
   // Store edited reason for appointment for each patient (keyed by patient.id)
   const [appointmentReasons, setAppointmentReasons] = useState<Record<number, string>>({});
   // Store checkbox states for each patient (keyed by patient.id)
@@ -2103,8 +2235,8 @@ export default function RoomLoaderPage() {
                             onClick={() => handleRemoveAddedItem(patient.id, itemIdx)}
                             style={{
                               position: 'absolute',
-                              top: '10px',
-                              right: '10px',
+                              top: '0px',
+                              right: '0px',
                               background: 'none',
                               border: 'none',
                               fontSize: '20px',
@@ -2134,11 +2266,69 @@ export default function RoomLoaderPage() {
                               <div style={{ fontSize: '14px', color: '#666', marginBottom: '5px' }}>
                                 <strong>Type:</strong> {item.itemType}
                               </div>
+                              {item.wellnessPlanPricing && item.wellnessPlanPricing.hasCoverage && (
+                                <div style={{ 
+                                  fontSize: '13px', 
+                                  color: '#1976d2', 
+                                  marginTop: '8px',
+                                  padding: '6px 10px',
+                                  backgroundColor: '#e3f2fd',
+                                  borderRadius: '4px',
+                                  border: '1px solid #90caf9',
+                                  display: 'inline-block'
+                                }}>
+                                  <strong>Wellness Plan:</strong> ${item.wellnessPlanPricing.originalPrice.toFixed(2)} → ${item.wellnessPlanPricing.adjustedPrice.toFixed(2)}
+                                  {item.wellnessPlanPricing.isWithinLimit && (
+                                    <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
+                                      ({item.wellnessPlanPricing.usedQuantity} of {item.wellnessPlanPricing.includedQuantity} used, {item.wellnessPlanPricing.remainingQuantity} remaining)
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                             </div>
-                            <div style={{ marginLeft: '15px', textAlign: 'right', minWidth: '100px' }}>
-                              <div style={{ fontSize: '20px', fontWeight: 700, color: '#2e7d32' }}>
-                                ${item.price != null ? Number(item.price).toFixed(2) : '0.00'}
+                            <div style={{ marginLeft: '15px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px', minWidth: '150px' }}>
+                              {/* Quantity Field */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <label style={{ fontSize: '14px', color: '#666', fontWeight: 500 }}>Qty:</label>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={addedItemQuantities[`${patient.id}-${itemIdx}`] || 1}
+                                  onChange={(e) => {
+                                    const qty = parseInt(e.target.value, 10);
+                                    handleAddedItemQuantityChange(patient.id, itemIdx, qty);
+                                  }}
+                                  style={{
+                                    width: '60px',
+                                    padding: '6px 8px',
+                                    fontSize: '14px',
+                                    border: '1px solid #ced4da',
+                                    borderRadius: '4px',
+                                    textAlign: 'center',
+                                  }}
+                                />
                               </div>
+                              {/* Price Display */}
+                              {(() => {
+                                const quantity = addedItemQuantities[`${patient.id}-${itemIdx}`] || 1;
+                                const unitPrice = item.price != null ? Number(item.price) : 0;
+                                const totalPrice = unitPrice * quantity;
+                                const originalUnitPrice = item.wellnessPlanPricing?.originalPrice || unitPrice;
+                                const originalTotalPrice = originalUnitPrice * quantity;
+                                
+                                return (
+                                  <>
+                                    {item.wellnessPlanPricing && item.wellnessPlanPricing.hasCoverage && item.wellnessPlanPricing.originalPrice !== item.wellnessPlanPricing.adjustedPrice && (
+                                      <div style={{ fontSize: '12px', color: '#999', textDecoration: 'line-through', marginBottom: '4px' }}>
+                                        ${originalTotalPrice.toFixed(2)}
+                                      </div>
+                                    )}
+                                    <div style={{ fontSize: '20px', fontWeight: 700, color: '#2e7d32' }}>
+                                      ${totalPrice.toFixed(2)}
+                                    </div>
+                                  </>
+                                );
+                              })()}
                             </div>
                           </div>
                         </div>
@@ -2180,7 +2370,11 @@ export default function RoomLoaderPage() {
                           const quantity = reminderQuantities[reminderId] || 1;
                           return sum + (basePrice * quantity);
                         }, 0) || 0) +
-                        (addedItems[patient.id]?.reduce((sum, item) => sum + (item.price != null ? Number(item.price) : 0), 0) || 0)
+                        (addedItems[patient.id]?.reduce((sum, item, itemIdx) => {
+                          const quantity = addedItemQuantities[`${patient.id}-${itemIdx}`] || 1;
+                          const itemPrice = item.price != null ? Number(item.price) : 0;
+                          return sum + (itemPrice * quantity);
+                        }, 0) || 0)
                       ).toFixed(2)}
                       </div>
                     </div>
