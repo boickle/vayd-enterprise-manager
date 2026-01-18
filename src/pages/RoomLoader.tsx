@@ -7,6 +7,7 @@ import {
   searchItems,
   submitReminderFeedback,
   checkItemPricing,
+  saveRoomLoaderForm,
   type RoomLoader,
   type RoomLoaderSearchParams,
   type SentStatus,
@@ -19,6 +20,7 @@ import {
 } from '../api/roomLoader';
 import { http } from '../api/http';
 import { KeyValue } from '../components/KeyValue';
+import { evetPatientLink, evetClientLink } from '../utils/evet';
 
 export default function RoomLoaderPage() {
   const [roomLoaders, setRoomLoaders] = useState<RoomLoader[]>([]);
@@ -36,6 +38,10 @@ export default function RoomLoaderPage() {
   const [petAnswers, setPetAnswers] = useState<Record<number, { mobility: boolean | null; labWork: boolean | null }>>({});
   // Store added items for each pet (items added via search)
   const [addedItems, setAddedItems] = useState<Record<number, SearchableItem[]>>({});
+  // Store removed reminder IDs (reminders that have been removed by the user)
+  const [removedReminders, setRemovedReminders] = useState<Set<number>>(new Set());
+  // Confirmation modal state for removing reminders
+  const [reminderToRemove, setReminderToRemove] = useState<{ id: number; description: string } | null>(null);
   // Search state
   const [searchQuery, setSearchQuery] = useState<Record<number, string>>({});
   const [searchResults, setSearchResults] = useState<Record<number, SearchableItem[]>>({});
@@ -144,85 +150,132 @@ export default function RoomLoaderPage() {
     try {
       const data = await getRoomLoader(id);
       setSelectedRoomLoader(data);
-      // Initialize quantities to 1 for all reminders (preserve existing quantities if any)
-      if (data?.reminders && Array.isArray(data.reminders)) {
-        setReminderQuantities((prev) => {
-          const updated = { ...prev };
-          data.reminders!.forEach((reminder) => {
-            if (reminder.reminder?.id && !(reminder.reminder.id in updated)) {
-              updated[reminder.reminder.id] = 1;
-            }
+      
+      // Check if saved form data exists and restore it
+      if (data?.savedForm) {
+        const savedForm = data.savedForm;
+        
+        // Restore added items
+        if (savedForm.addedItems) {
+          const restoredAddedItems: Record<number, SearchableItem[]> = {};
+          Object.keys(savedForm.addedItems).forEach((petIdStr) => {
+            const petId = Number(petIdStr);
+            restoredAddedItems[petId] = savedForm.addedItems[petId] || [];
           });
-          return updated;
-        });
-      }
-      // Initialize appointment reasons from appointment descriptions/instructions
-      if (data?.appointments && Array.isArray(data.appointments)) {
-        setAppointmentReasons((prev) => {
-          const updated = { ...prev };
-          // Group appointments by patient and use the first appointment's description
-          const patientAppointments = new Map<number, Appointment>();
-          data.appointments!.forEach((apt) => {
-            if (apt.patient?.id) {
-              if (!patientAppointments.has(apt.patient.id)) {
-                patientAppointments.set(apt.patient.id, apt);
+          setAddedItems(restoredAddedItems);
+        }
+        
+        // Restore quantities
+        if (savedForm.reminderQuantities) {
+          setReminderQuantities(savedForm.reminderQuantities);
+        }
+        if (savedForm.addedItemQuantities) {
+          setAddedItemQuantities(savedForm.addedItemQuantities);
+        }
+        
+        // Restore text fields
+        if (savedForm.appointmentReasons) {
+          setAppointmentReasons(savedForm.appointmentReasons);
+        }
+        if (savedForm.arrivalWindows) {
+          setArrivalWindows(savedForm.arrivalWindows);
+        }
+        
+        // Restore answers
+        if (savedForm.petAnswers) {
+          setPetAnswers(savedForm.petAnswers);
+        }
+        
+        // Restore vaccine checkboxes
+        if (savedForm.vaccineCheckboxes) {
+          setVaccineCheckboxes(savedForm.vaccineCheckboxes);
+        }
+        
+        // Restore reminder corrections
+        if (savedForm.reminderCorrections) {
+          setReminderCorrections(savedForm.reminderCorrections);
+        }
+        
+        // Restore removed reminders
+        if (savedForm.removedReminders && Array.isArray(savedForm.removedReminders)) {
+          setRemovedReminders(new Set(savedForm.removedReminders));
+        }
+        
+        // Note: reminders are already loaded from the API (they come from savedForm.reminders automatically)
+        // Initialize quantities for reminders if not already set
+        if (data?.reminders && Array.isArray(data.reminders)) {
+          setReminderQuantities((prev) => {
+            const updated = { ...prev };
+            data.reminders!.forEach((reminder) => {
+              if (reminder.reminder?.id && !(reminder.reminder.id in updated)) {
+                updated[reminder.reminder.id] = 1;
               }
-            }
+            });
+            return updated;
           });
-          patientAppointments.forEach((apt, patientId) => {
-            if (!(patientId in updated)) {
-              updated[patientId] = apt.description || apt.instructions || '';
-            }
+        }
+      } else {
+        // No saved form - initialize with defaults
+        // Initialize quantities to 1 for all reminders (preserve existing quantities if any)
+        if (data?.reminders && Array.isArray(data.reminders)) {
+          setReminderQuantities((prev) => {
+            const updated = { ...prev };
+            data.reminders!.forEach((reminder) => {
+              if (reminder.reminder?.id && !(reminder.reminder.id in updated)) {
+                updated[reminder.reminder.id] = 1;
+              }
+            });
+            return updated;
           });
-          return updated;
-        });
-      }
-      // Initialize vaccine checkboxes based on declinedInventoryItems
-      if (data?.patients && Array.isArray(data.patients)) {
-        setVaccineCheckboxes((prev) => {
-          const updated = { ...prev };
-          
-          data.patients!.forEach((patient) => {
-            if (patient.id && !(patient.id in updated)) {
-              // Default all to checked
-              const initial = {
-                felv: true,
-                lepto: true,
-                lyme: true,
-                bordatella: true,
-                sharps: true, // Will be set based on vaccine selections
-              };
-              
-              // Check declined items for THIS specific patient (declined items are nested under each patient)
-              const declinedItems = patient.declinedInventoryItems || [];
-              
-              // Check if any declined items match vaccine names
-              declinedItems.forEach((declinedItem: any) => {
-                // Handle both structures: direct name or nested inventoryItem.name
-                const name = ((declinedItem.inventoryItem?.name || declinedItem.name) || '').toLowerCase();
-                // String matching for each checkbox - check for various name variations
-                if (name.includes('felv') || name.includes('feline leukemia') || name.includes('feline leukemia virus')) {
-                  initial.felv = false;
-                }
-                if (name.includes('lepto') || name.includes('leptospirosis')) {
-                  initial.lepto = false;
-                }
-                if (name.includes('lyme') || name.includes('lyme disease')) {
-                  initial.lyme = false;
-                }
-                if (name.includes('bordatella') || name.includes('bordetella') || name.includes('kennel cough')) {
-                  initial.bordatella = false;
-                }
-              });
-              
-              // Sharps is checked if any vaccine is checked
-              initial.sharps = initial.felv || initial.lepto || initial.lyme || initial.bordatella;
-              
-              updated[patient.id] = initial;
-            }
+        }
+        
+        // Initialize vaccine checkboxes based on declinedInventoryItems
+        if (data?.patients && Array.isArray(data.patients)) {
+          setVaccineCheckboxes((prev) => {
+            const updated = { ...prev };
+            
+            data.patients!.forEach((patient) => {
+              if (patient.id && !(patient.id in updated)) {
+                // Default all to checked
+                const initial = {
+                  felv: true,
+                  lepto: true,
+                  lyme: true,
+                  bordatella: true,
+                  sharps: true, // Will be set based on vaccine selections
+                };
+                
+                // Check declined items for THIS specific patient (declined items are nested under each patient)
+                const declinedItems = patient.declinedInventoryItems || [];
+                
+                // Check if any declined items match vaccine names
+                declinedItems.forEach((declinedItem: any) => {
+                  // Handle both structures: direct name or nested inventoryItem.name
+                  const name = ((declinedItem.inventoryItem?.name || declinedItem.name) || '').toLowerCase();
+                  // String matching for each checkbox - check for various name variations
+                  if (name.includes('felv') || name.includes('feline leukemia') || name.includes('feline leukemia virus')) {
+                    initial.felv = false;
+                  }
+                  if (name.includes('lepto') || name.includes('leptospirosis')) {
+                    initial.lepto = false;
+                  }
+                  if (name.includes('lyme') || name.includes('lyme disease')) {
+                    initial.lyme = false;
+                  }
+                  if (name.includes('bordatella') || name.includes('bordetella') || name.includes('kennel cough')) {
+                    initial.bordatella = false;
+                  }
+                });
+                
+                // Sharps is checked if any vaccine is checked
+                initial.sharps = initial.felv || initial.lepto || initial.lyme || initial.bordatella;
+                
+                updated[patient.id] = initial;
+              }
+            });
+            return updated;
           });
-          return updated;
-        });
+        }
       }
     } catch (err: any) {
       setError(err?.message || 'Failed to load room loader details');
@@ -417,6 +470,81 @@ export default function RoomLoaderPage() {
     }));
   }
 
+  function handleRemoveReminder(reminderId: number, reminderDescription: string) {
+    // Show confirmation modal
+    setReminderToRemove({ id: reminderId, description: reminderDescription });
+  }
+
+  function confirmRemoveReminder() {
+    if (!reminderToRemove) return;
+    
+    const reminderId = reminderToRemove.id;
+    setRemovedReminders((prev) => {
+      const newSet = new Set(prev);
+      newSet.add(reminderId);
+      return newSet;
+    });
+    
+    // Also clean up related state
+    const feedbackKey = `reminder-${reminderId}`;
+    setReminderFeedback((prev) => {
+      const newFeedback = { ...prev };
+      delete newFeedback[feedbackKey];
+      return newFeedback;
+    });
+    setReminderCorrections((prev) => {
+      const newCorrections = { ...prev };
+      delete newCorrections[feedbackKey];
+      return newCorrections;
+    });
+    setReminderQuantities((prev) => {
+      const newQuantities = { ...prev };
+      delete newQuantities[reminderId];
+      return newQuantities;
+    });
+    
+    // Close modal
+    setReminderToRemove(null);
+  }
+
+  function cancelRemoveReminder() {
+    setReminderToRemove(null);
+  }
+
+  // Helper function to get tiered price for a given quantity
+  function getTieredPrice(tieredPricing: any, quantity: number, basePrice: number): number {
+    if (!tieredPricing?.hasTieredPricing || !tieredPricing.priceBreaks || tieredPricing.priceBreaks.length === 0) {
+      return basePrice;
+    }
+
+    // Find the price break that matches the quantity
+    const qty = Math.floor(quantity);
+    for (const priceBreak of tieredPricing.priceBreaks) {
+      if (!priceBreak.isActive) continue;
+      
+      const lowQty = parseInt(priceBreak.lowQuantity, 10);
+      const highQty = parseInt(priceBreak.highQuantity, 10);
+      
+      if (qty >= lowQty && qty <= highQty) {
+        return Number(priceBreak.price);
+      }
+    }
+
+    // If no match found, use the highest tier or base price
+    const activeBreaks = tieredPricing.priceBreaks.filter((pb: any) => pb.isActive);
+    if (activeBreaks.length > 0) {
+      // Use the highest tier for quantities beyond the max
+      const highestTier = activeBreaks.reduce((max: any, pb: any) => {
+        const maxHigh = parseInt(max.highQuantity, 10);
+        const pbHigh = parseInt(pb.highQuantity, 10);
+        return pbHigh > maxHigh ? pb : max;
+      });
+      return Number(highestTier.price);
+    }
+
+    return basePrice;
+  }
+
   async function handleSearchItems(petId: number, query: string) {
     if (!query.trim() || !selectedRoomLoader?.practice?.id) {
       setSearchResults((prev) => ({ ...prev, [petId]: [] }));
@@ -442,6 +570,13 @@ export default function RoomLoaderPage() {
   async function handleAddItem(petId: number, item: SearchableItem) {
     if (!selectedRoomLoader?.practice?.id) {
       console.error('Cannot add item: practice ID not available');
+      return;
+    }
+
+    // Find the patient and client from petsWithAppointments
+    const patientData = petsWithAppointments.find((p) => p.patient.id === petId);
+    if (!patientData?.client?.id) {
+      console.error('Cannot add item: client ID not available');
       return;
     }
 
@@ -511,6 +646,7 @@ export default function RoomLoaderPage() {
       const pricingResponse = await checkItemPricing({
         patientId: petId,
         practiceId: selectedRoomLoader.practice.id,
+        clientId: patientData.client.id,
         itemType: item.itemType,
         item: itemPayload,
       });
@@ -528,7 +664,10 @@ export default function RoomLoaderPage() {
           updatedItems[itemIndex] = {
             ...updatedItems[itemIndex],
             price: pricingResponse.adjustedPrice,
+            originalPrice: pricingResponse.originalPrice,
             wellnessPlanPricing: pricingResponse.wellnessPlanPricing,
+            discountPricing: pricingResponse.discountPricing,
+            tieredPricing: pricingResponse.tieredPricing,
           };
           return {
             ...prev,
@@ -579,25 +718,30 @@ export default function RoomLoaderPage() {
 
   // Reminder feedback state
   const [reminderFeedback, setReminderFeedback] = useState<Record<string, 'correct' | 'incorrect' | 'correcting' | null>>({});
-  const [reminderCorrections, setReminderCorrections] = useState<Record<string, { searchQuery: string; results: SearchableItem[]; loading: boolean; selectedItem: SearchableItem | null }>>({});
+  const [reminderCorrections, setReminderCorrections] = useState<Record<string, { searchQuery: string; results: SearchableItem[]; loading: boolean; selectedItem: SearchableItem | null; patientId?: number }>>({});
   // Store quantities for each reminder (keyed by reminderId)
   const [reminderQuantities, setReminderQuantities] = useState<Record<number, number>>({});
   // Store quantities for each added item (keyed by `${petId}-${itemIdx}`)
   const [addedItemQuantities, setAddedItemQuantities] = useState<Record<string, number>>({});
   // Store edited reason for appointment for each patient (keyed by patient.id)
   const [appointmentReasons, setAppointmentReasons] = useState<Record<number, string>>({});
+  // Store edited arrival window for each patient (keyed by patient.id)
+  const [arrivalWindows, setArrivalWindows] = useState<Record<number, string>>({});
   // Store checkbox states for each patient (keyed by patient.id)
   const [vaccineCheckboxes, setVaccineCheckboxes] = useState<Record<number, { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean; sharps: boolean }>>({});
   
   // Loading state for sending to client
   const [sendingToClient, setSendingToClient] = useState(false);
+  // Loading state for saving form
+  const [savingForm, setSavingForm] = useState(false);
 
   async function handleReminderFeedback(
     reminderId: number,
     reminderText: string,
     isCorrect: boolean,
     reminderWithPrice?: ReminderWithPrice,
-    correctItem?: SearchableItem
+    correctItem?: SearchableItem,
+    patientId?: number
   ) {
     if (!selectedRoomLoader?.practice?.id) return;
 
@@ -647,6 +791,11 @@ export default function RoomLoaderPage() {
             ? 'Corrected match' 
             : 'Marked as incorrect',
       };
+
+      // Add patientId if provided (for patient-specific mapping)
+      if (patientId) {
+        requestPayload.patientId = patientId;
+      }
 
       if (isCorrect) {
         // When confirming as correct, use itemType and itemId
@@ -711,8 +860,8 @@ export default function RoomLoaderPage() {
     }));
   }
 
-  function handleSubmitCorrection(reminderId: number, reminderText: string, item: SearchableItem, reminderWithPrice?: ReminderWithPrice) {
-    handleReminderFeedback(reminderId, reminderText, false, reminderWithPrice, item);
+  function handleSubmitCorrection(reminderId: number, reminderText: string, item: SearchableItem, reminderWithPrice?: ReminderWithPrice, patientId?: number) {
+    handleReminderFeedback(reminderId, reminderText, false, reminderWithPrice, item, patientId);
   }
 
 
@@ -909,7 +1058,7 @@ export default function RoomLoaderPage() {
         clientId: client?.id || null,
         clientName: client ? `${client.firstName} ${client.lastName}`.trim() : null,
         appointmentIds: appointments.map((apt) => apt.id),
-        appointmentReason: appointmentReasons[patient.id] || firstAppt?.description || firstAppt?.instructions || '',
+        appointmentReason: appointmentReasons[patient.id] || '',
         originalAppointmentReason: firstAppt?.description || firstAppt?.instructions || '',
         arrivalWindow: arrivalWindow,
         questions: {
@@ -975,6 +1124,73 @@ export default function RoomLoaderPage() {
     }
   }
 
+  async function handleSaveForLater() {
+    if (!selectedRoomLoader) return;
+
+    setSavingForm(true);
+    try {
+      // Collect reminders from current state, filtering out removed reminders
+      const remindersToSave: ReminderWithPrice[] = [];
+      
+      if (selectedRoomLoader.reminders) {
+        selectedRoomLoader.reminders.forEach((reminderWithPrice) => {
+          const reminderId = reminderWithPrice.reminder.id;
+          // Only include reminders that haven't been removed
+          if (reminderId && !removedReminders.has(reminderId)) {
+            // Use the reminder as-is since it already has the full ReminderWithPrice structure
+            remindersToSave.push(reminderWithPrice);
+          }
+        });
+      }
+
+      // Collect all form state
+      const formDataToSave: any = {
+        reminders: remindersToSave,
+        // Save added items (manually added items)
+        addedItems: Object.keys(addedItems).reduce((acc, petIdStr) => {
+          const petId = Number(petIdStr);
+          acc[petId] = addedItems[petId] || [];
+          return acc;
+        }, {} as Record<number, SearchableItem[]>),
+        // Save quantities
+        reminderQuantities: reminderQuantities,
+        addedItemQuantities: addedItemQuantities,
+        // Save text fields
+        appointmentReasons: appointmentReasons,
+        arrivalWindows: arrivalWindows,
+        // Save answers
+        petAnswers: petAnswers,
+        // Save vaccine checkboxes
+        vaccineCheckboxes: vaccineCheckboxes,
+        // Save reminder corrections
+        reminderCorrections: reminderCorrections,
+        // Save removed reminders (so we know which ones to exclude when loading)
+        removedReminders: Array.from(removedReminders),
+      };
+
+      await saveRoomLoaderForm({
+        roomLoaderId: selectedRoomLoader.id,
+        formData: formDataToSave,
+      });
+
+      // Show success message
+      alert('Form saved successfully!');
+
+      // Refresh the room loader data
+      await loadRoomLoaders();
+
+      // Reload the selected room loader details to reflect changes
+      if (selectedRoomLoaderId) {
+        await loadRoomLoaderDetails(selectedRoomLoaderId);
+      }
+    } catch (error: any) {
+      console.error('Error saving form:', error);
+      alert(`Failed to save form: ${error?.message || 'Please try again.'}`);
+    } finally {
+      setSavingForm(false);
+    }
+  }
+
   // Group appointments by patient for display
   const petsWithAppointments = useMemo(() => {
     if (!selectedRoomLoader) return [];
@@ -989,12 +1205,13 @@ export default function RoomLoaderPage() {
             id: firstClient.id,
             isActive: true,
             isDeleted: false,
-            pimsId: null,
-            pimsType: undefined,
+            pimsId: (firstClient as any).pimsId || null,
+            pimsType: (firstClient as any).pimsType,
             firstName: firstClient.firstName || '',
             lastName: firstClient.lastName || '',
             email: firstClient.email || null,
             phone1: firstClient.phone1 || null,
+            alerts: (firstClient as any).alerts || null,
           }
         : null;
       petMap.set(patient.id, {
@@ -1011,9 +1228,14 @@ export default function RoomLoaderPage() {
         const existing = petMap.get(apt.patient.id);
         if (existing) {
           existing.appointments.push(apt);
-          // Use appointment client if available and patient doesn't have one
-          if (!existing.client && apt.client) {
-            existing.client = apt.client;
+          // Use appointment client if available and patient doesn't have one, or update if appointment client has more info (like pimsId)
+          if (apt.client) {
+            if (!existing.client) {
+              existing.client = apt.client;
+            } else {
+              // Update client with appointment client data (especially pimsId and alerts)
+              existing.client = { ...existing.client, ...apt.client };
+            }
           }
           // Update patient data from appointment if it has more complete info
           if (apt.patient) {
@@ -1027,12 +1249,13 @@ export default function RoomLoaderPage() {
                 id: aptClient.id,
                 isActive: true,
                 isDeleted: false,
-                pimsId: null,
-                pimsType: undefined,
+                pimsId: (aptClient as any).pimsId || null,
+                pimsType: (aptClient as any).pimsType,
                 firstName: aptClient.firstName || '',
                 lastName: aptClient.lastName || '',
                 email: aptClient.email || null,
                 phone1: aptClient.phone1 || null,
+                alerts: (aptClient as any).alerts || null,
               }
             : null;
           petMap.set(apt.patient.id, {
@@ -1387,25 +1610,6 @@ export default function RoomLoaderPage() {
                 borderRadius: '4px',
               }}
             >
-          {/* Room Loader Summary */}
-          <div style={{ marginBottom: '30px', paddingBottom: '20px', borderBottom: '2px solid #ddd' }}>
-            <KeyValue k="ID" v={selectedRoomLoader.id} />
-            <KeyValue k="PIMS ID" v={selectedRoomLoader.pimsId || 'N/A'} />
-            <KeyValue k="Practice" v={selectedRoomLoader.practice?.name || 'N/A'} />
-            <KeyValue
-              k="Sent Status"
-              v={selectedRoomLoader.sentStatus.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
-            />
-            <KeyValue
-              k="Due Status"
-              v={
-                selectedRoomLoader.dueStatus
-                  ? selectedRoomLoader.dueStatus.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
-                  : 'N/A'
-              }
-            />
-          </div>
-
           {/* Pet-by-Pet Information */}
           {petsWithAppointments.length === 0 ? (
             <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
@@ -1441,146 +1645,58 @@ export default function RoomLoaderPage() {
                   }}
                 >
                   <h3 style={{ margin: 0, color: '#212529', fontSize: '24px', fontWeight: 700 }}>
-                    Pet {petIndex + 1}: {displayPatient.name || 'Unknown Pet'}
+                    Pet {petIndex + 1}:{' '}
+                    {displayPatient.pimsId ? (
+                      <a
+                        href={evetPatientLink(displayPatient.pimsId)}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: '#212529', textDecoration: 'underline', cursor: 'pointer' }}
+                      >
+                        {displayPatient.name || 'Unknown Pet'}
+                      </a>
+                    ) : (
+                      displayPatient.name || 'Unknown Pet'
+                    )}
+                    {(() => {
+                      const details = [];
+                      // Calculate age from DOB
+                      if (displayPatient.dob) {
+                        try {
+                          const dob = DateTime.fromISO(displayPatient.dob);
+                          const now = DateTime.now();
+                          const ageYears = Math.floor(now.diff(dob, 'years').years);
+                          const ageMonths = Math.floor(now.diff(dob, 'months').months % 12);
+                          if (ageYears > 0) {
+                            details.push(ageMonths > 0 ? `${ageYears}y ${ageMonths}m` : `${ageYears}y`);
+                          } else if (ageMonths > 0) {
+                            details.push(`${ageMonths}m`);
+                          } else {
+                            const ageDays = Math.floor(now.diff(dob, 'days').days);
+                            details.push(`${ageDays}d`);
+                          }
+                        } catch (e) {
+                          // If date parsing fails, skip age
+                        }
+                      }
+                      if (displayPatient.sex) details.push(displayPatient.sex);
+                      if (displayPatient.breed) details.push(displayPatient.breed);
+                      if (displayPatient.weight) details.push(`${displayPatient.weight} lbs`);
+                      if (details.length > 0) {
+                        return <span style={{ fontSize: '18px', fontWeight: 400, color: '#666', marginLeft: '10px' }}>({details.join(', ')})</span>;
+                      }
+                      return null;
+                    })()}
                   </h3>
                 </div>
 
-                {/* Appointment Information */}
-                <div
-                  style={{
-                    marginBottom: '20px',
-                    padding: '20px',
-                    backgroundColor: '#e3f2fd',
-                    borderRadius: '8px',
-                    border: '2px solid #90caf9',
-                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                  }}
-                >
-                  <h4 style={{ marginTop: 0, marginBottom: '20px', color: '#1565c0', fontSize: '18px', fontWeight: 600 }}>
-                    Appointment Information
-                  </h4>
-                  {appointments.length > 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                      {appointments.map((apt, aptIdx) => (
-                        <div
-                          key={apt.id || aptIdx}
-                          style={{
-                            padding: '18px',
-                            backgroundColor: '#fff',
-                            borderRadius: '6px',
-                            border: '1px solid #b3d9ff',
-                            boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-                          }}
-                        >
-                          {appointments.length > 1 && (
-                            <div
-                              style={{
-                                fontWeight: 600,
-                                marginBottom: '15px',
-                                color: '#1565c0',
-                                fontSize: '16px',
-                                paddingBottom: '10px',
-                                borderBottom: '2px solid #90caf9',
-                              }}
-                            >
-                              Appointment {aptIdx + 1}
-                            </div>
-                          )}
-                          <div
-                            style={{
-                              display: 'grid',
-                              gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-                              gap: '15px',
-                            }}
-                          >
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                              <KeyValue k="Appointment ID" v={apt.id} />
-                              <KeyValue k="PIMS ID" v={apt.pimsId || 'N/A'} />
-                              <KeyValue k="Description" v={apt.description || 'N/A'} />
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                              <KeyValue k="Start" v={formatDateTime(apt.appointmentStart)} />
-                              <KeyValue k="End" v={formatDateTime(apt.appointmentEnd)} />
-                              <KeyValue k="Status" v={apt.statusName || 'N/A'} />
-                              <KeyValue k="Confirm Status" v={apt.confirmStatusName || 'N/A'} />
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                              {apt.appointmentType && (
-                                <KeyValue
-                                  k="Type"
-                                  v={apt.appointmentType.prettyName || apt.appointmentType.name || 'N/A'}
-                                />
-                              )}
-                              {apt.primaryProvider && (
-                                <KeyValue
-                                  k="Provider"
-                                  v={`${apt.primaryProvider.firstName || ''} ${apt.primaryProvider.lastName || ''}`.trim() || 'N/A'}
-                                />
-                              )}
-                              {apt.instructions && <KeyValue k="Instructions" v={apt.instructions} />}
-                              {apt.equipment && <KeyValue k="Equipment" v={apt.equipment} />}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div style={{ color: '#666', fontStyle: 'italic', padding: '20px', textAlign: 'center' }}>
-                      No appointments found for this pet
-                    </div>
-                  )}
-                </div>
-
-                {/* Pet/Patient Information */}
-                <div
-                  style={{
-                    marginBottom: '20px',
-                    padding: '20px',
-                    backgroundColor: '#f8f9fa',
-                    borderRadius: '8px',
-                    border: '2px solid #dee2e6',
-                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                  }}
-                >
-                  <h4 style={{ marginTop: 0, marginBottom: '20px', color: '#495057', fontSize: '18px', fontWeight: 600 }}>
-                    Pet Details
-                  </h4>
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-                      gap: '20px',
-                      padding: '15px',
-                      backgroundColor: '#fff',
-                      borderRadius: '6px',
-                      border: '1px solid #e9ecef',
-                    }}
-                  >
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      <KeyValue k="Patient ID" v={displayPatient.id} />
-                      <KeyValue k="PIMS ID" v={displayPatient.pimsId || 'N/A'} />
-                      <KeyValue k="Name" v={displayPatient.name || 'N/A'} />
-                      <KeyValue k="Species" v={displayPatient.species || 'N/A'} />
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      <KeyValue k="Breed" v={displayPatient.breed || 'N/A'} />
-                      <KeyValue k="Color" v={displayPatient.color || 'N/A'} />
-                      <KeyValue k="Weight" v={displayPatient.weight ? `${displayPatient.weight} lbs` : 'N/A'} />
-                      <KeyValue k="DOB" v={formatDate(displayPatient.dob || null)} />
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      <KeyValue k="Sex" v={displayPatient.sex || 'N/A'} />
-                      {displayPatient.alerts && <KeyValue k="Alerts" v={displayPatient.alerts} />}
-                      {displayPatient.primaryProvider && (
-                        <KeyValue
-                          k="Primary Provider"
-                          v={`${displayPatient.primaryProvider.firstName || ''} ${displayPatient.primaryProvider.lastName || ''}`.trim() || 'N/A'}
-                        />
-                      )}
-                    </div>
+                {/* Patient Alerts */}
+                {displayPatient.alerts && (
+                  <div style={{ marginBottom: '15px', padding: '8px', backgroundColor: '#fff3cd', borderRadius: '4px', border: '1px solid #ffc107' }}>
+                    <strong style={{ color: '#856404' }}>Patient Alerts:</strong>
+                    <div style={{ marginTop: '4px', color: '#856404' }}>{displayPatient.alerts}</div>
                   </div>
-                </div>
-
+                )}
 
                 {/* Client Name */}
                 <div style={{ marginBottom: '20px' }}>
@@ -1588,15 +1704,51 @@ export default function RoomLoaderPage() {
                   <div style={{ padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #ddd' }}>
                     {client ? (
                       <div>
-                        <strong>{client.firstName} {client.lastName}</strong>
+                        <strong>
+                          {client.pimsId ? (
+                            <a
+                              href={evetClientLink(String(client.pimsId))}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ color: '#212529', textDecoration: 'underline', cursor: 'pointer' }}
+                            >
+                              {client.firstName} {client.lastName}
+                            </a>
+                          ) : (
+                            <span>{client.firstName} {client.lastName}</span>
+                          )}
+                        </strong>
                         {client.email && <div style={{ marginTop: '5px', color: '#666' }}>Email: {client.email}</div>}
                         {client.phone1 && <div style={{ color: '#666' }}>Phone: {client.phone1}</div>}
+                        {client.alerts && (
+                          <div style={{ marginTop: '10px', padding: '8px', backgroundColor: '#fff3cd', borderRadius: '4px', border: '1px solid #ffc107' }}>
+                            <strong style={{ color: '#856404' }}>Alerts:</strong>
+                            <div style={{ marginTop: '4px', color: '#856404' }}>{client.alerts}</div>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div style={{ color: '#999' }}>No client information available</div>
                     )}
                   </div>
                 </div>
+
+                {/* Appointment Information */}
+                {firstAppt && (
+                  <div style={{ marginBottom: '20px' }}>
+                    <h4 style={{ marginBottom: '10px', color: '#555' }}>Appointment Information</h4>
+                    <div style={{ padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #ddd' }}>
+                      {(() => {
+                        const startTime = DateTime.fromISO(firstAppt.appointmentStart);
+                        const endTime = DateTime.fromISO(firstAppt.appointmentEnd);
+                        const dateStr = startTime.toFormat('MMM dd, yyyy');
+                        const startTimeStr = startTime.toFormat('h:mma');
+                        const endTimeStr = endTime.toFormat('h:mma');
+                        return `${dateStr} Scheduled Time: ${startTimeStr}-${endTimeStr}`;
+                      })()}
+                    </div>
+                  </div>
+                )}
 
                 {/* Window of Arrival */}
                 {firstAppt && (() => {
@@ -1609,16 +1761,39 @@ export default function RoomLoaderPage() {
                     return null;
                   }
                   
-                  // Calculate one hour before and one hour after start time
+                  // Calculate default window of arrival (one hour before and one hour after start time)
                   const startTime = DateTime.fromISO(firstAppt.appointmentStart);
                   const windowStart = startTime.minus({ hours: 1 });
                   const windowEnd = startTime.plus({ hours: 1 });
+                  const defaultWindow = `${windowStart.toFormat('h:mma')} - ${windowEnd.toFormat('h:mma')}`;
+                  
+                  // Use stored value or default
+                  const arrivalWindowValue = arrivalWindows[patient.id] || defaultWindow;
                   
                   return (
                     <div style={{ marginBottom: '20px' }}>
                       <h4 style={{ marginBottom: '10px', color: '#555' }}>Window of Arrival</h4>
-                      <div style={{ padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #ddd' }}>
-                        {formatDateTime(windowStart.toISO())} - {formatDateTime(windowEnd.toISO())}
+                      <div style={{ flex: 1 }}>
+                        <textarea
+                          value={arrivalWindowValue}
+                          onChange={(e) => {
+                            setArrivalWindows((prev) => ({
+                              ...prev,
+                              [patient.id]: e.target.value,
+                            }));
+                          }}
+                          placeholder="Enter arrival window..."
+                          style={{
+                            width: '100%',
+                            minHeight: '60px',
+                            padding: '12px',
+                            fontSize: '14px',
+                            border: '1px solid #ced4da',
+                            borderRadius: '4px',
+                            fontFamily: 'inherit',
+                            resize: 'vertical',
+                          }}
+                        />
                       </div>
                     </div>
                   );
@@ -1732,30 +1907,41 @@ export default function RoomLoaderPage() {
                 {/* Reminders */}
                 <div style={{ marginBottom: '20px' }}>
                   <h4 style={{ marginBottom: '15px', color: '#555' }}>
-                    Reminders ({item.reminders?.length || 0} + {addedItems[patient.id]?.length || 0} added)
+                    Reminders ({item.reminders?.filter((r) => {
+                      const id = r.reminder.id;
+                      return id && !removedReminders.has(id);
+                    }).length || 0} + {addedItems[patient.id]?.length || 0} added)
                   </h4>
                   
                   {/* Original Reminders */}
                   {item.reminders && item.reminders.length > 0 && (
                     <div style={{ marginBottom: '15px' }}>
-                      {item.reminders.map((reminderWithPrice, reminderIdx) => {
-                        const reminderId = reminderWithPrice.reminder.id || reminderIdx;
-                        const feedbackKey = `reminder-${reminderId}`;
-                        const feedbackStatus = reminderFeedback[feedbackKey];
-                        const correction = reminderCorrections[feedbackKey];
-                        const hasMatchedItem = reminderWithPrice.matchedItem?.name;
+                      {item.reminders
+                        .filter((reminderWithPrice) => {
+                          const reminderId = reminderWithPrice.reminder.id;
+                          return reminderId && !removedReminders.has(reminderId);
+                        })
+                        .map((reminderWithPrice, reminderIdx) => {
+                          const reminderId = reminderWithPrice.reminder.id || reminderIdx;
+                          const feedbackKey = `reminder-${reminderId}`;
+                          const feedbackStatus = reminderFeedback[feedbackKey];
+                          const correction = reminderCorrections[feedbackKey];
+                          const hasMatchedItem = reminderWithPrice.matchedItem?.name;
 
-                        return (
-                          <div
-                            key={reminderId}
-                            style={{
-                              marginBottom: reminderIdx < item.reminders.length - 1 ? '15px' : 0,
-                              padding: '15px',
-                              backgroundColor: feedbackStatus === 'correct' ? '#e8f5e9' : feedbackStatus === 'incorrect' ? '#ffebee' : '#fafafa',
-                              border: feedbackStatus === 'correct' ? '1px solid #4caf50' : feedbackStatus === 'incorrect' ? '1px solid #f44336' : '1px solid #e0e0e0',
-                              borderRadius: '4px',
-                            }}
-                          >
+                          return (
+                            <div
+                              key={reminderId}
+                              style={{
+                                marginBottom: reminderIdx < item.reminders.filter((r) => {
+                                  const id = r.reminder.id;
+                                  return id && !removedReminders.has(id);
+                                }).length - 1 ? '15px' : 0,
+                                padding: '15px',
+                                backgroundColor: feedbackStatus === 'correct' ? '#e8f5e9' : feedbackStatus === 'incorrect' ? '#ffebee' : '#fafafa',
+                                border: feedbackStatus === 'correct' ? '1px solid #4caf50' : feedbackStatus === 'incorrect' ? '1px solid #f44336' : '1px solid #e0e0e0',
+                                borderRadius: '4px',
+                              }}
+                            >
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                               <div style={{ flex: 1 }}>
                                 <div style={{ fontWeight: 600, marginBottom: '8px', color: '#333', fontSize: '16px' }}>
@@ -1775,7 +1961,120 @@ export default function RoomLoaderPage() {
                                   <div style={{ fontSize: '14px', color: '#666', marginBottom: '5px' }}>
                                     <strong>Matched Item:</strong> {reminderWithPrice.matchedItem.name}
                                     {reminderWithPrice.matchedItem.code && ` (${reminderWithPrice.matchedItem.code})`}
+                                    {reminderWithPrice.itemType === 'inventory' && displayPatient.weight && (
+                                      <span style={{ color: '#dc3545', marginLeft: '10px', fontWeight: 600 }}>
+                                        Weight: {displayPatient.weight} lbs
+                                      </span>
+                                    )}
                                   </div>
+                                )}
+                                {reminderWithPrice.wellnessPlanPricing && reminderWithPrice.wellnessPlanPricing.hasCoverage && (
+                                  <div style={{ 
+                                    fontSize: '13px', 
+                                    color: '#1976d2', 
+                                    marginTop: '8px',
+                                    padding: '6px 10px',
+                                    backgroundColor: '#e3f2fd',
+                                    borderRadius: '4px',
+                                    border: '1px solid #90caf9',
+                                    display: 'inline-block'
+                                  }}>
+                                    {reminderWithPrice.wellnessPlanPricing.priceAdjustedByMembership === true && 
+                                     reminderWithPrice.wellnessPlanPricing.originalPrice !== reminderWithPrice.wellnessPlanPricing.adjustedPrice ? (
+                                      <>
+                                        <strong>Membership Discount:</strong> {reminderWithPrice.wellnessPlanPricing.membershipPlanName || 'Membership Plan'}
+                                        {reminderWithPrice.wellnessPlanPricing.membershipDiscountAmount != null && reminderWithPrice.wellnessPlanPricing.membershipDiscountAmount > 0 && (
+                                          <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
+                                            Savings: ${reminderWithPrice.wellnessPlanPricing.membershipDiscountAmount.toFixed(2)}
+                                          </span>
+                                        )}
+                                        {reminderWithPrice.wellnessPlanPricing.usedQuantity != null && reminderWithPrice.wellnessPlanPricing.includedQuantity != null && (
+                                          <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
+                                            ({reminderWithPrice.wellnessPlanPricing.usedQuantity} of {reminderWithPrice.wellnessPlanPricing.includedQuantity} used, {reminderWithPrice.wellnessPlanPricing.remainingQuantity} remaining)
+                                          </span>
+                                        )}
+                                      </>
+                                    ) : (
+                                      <>
+                                        {reminderWithPrice.wellnessPlanPricing.originalPrice !== reminderWithPrice.wellnessPlanPricing.adjustedPrice ? (
+                                          <>
+                                            <strong>Wellness Plan:</strong> ${reminderWithPrice.wellnessPlanPricing.originalPrice.toFixed(2)} → ${reminderWithPrice.wellnessPlanPricing.adjustedPrice.toFixed(2)}
+                                            {reminderWithPrice.wellnessPlanPricing.isWithinLimit && (
+                                              <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
+                                                ({reminderWithPrice.wellnessPlanPricing.usedQuantity} of {reminderWithPrice.wellnessPlanPricing.includedQuantity} used, {reminderWithPrice.wellnessPlanPricing.remainingQuantity} remaining)
+                                              </span>
+                                            )}
+                                          </>
+                                        ) : (
+                                          <>
+                                            <strong>Wellness Plan Coverage:</strong>
+                                            {reminderWithPrice.wellnessPlanPricing.remainingQuantity === 0 || !reminderWithPrice.wellnessPlanPricing.isWithinLimit ? (
+                                              <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#d32f2f', fontWeight: 500 }}>
+                                                Already used ({reminderWithPrice.wellnessPlanPricing.usedQuantity} of {reminderWithPrice.wellnessPlanPricing.includedQuantity} used)
+                                              </span>
+                                            ) : (
+                                              <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
+                                                ({reminderWithPrice.wellnessPlanPricing.usedQuantity} of {reminderWithPrice.wellnessPlanPricing.includedQuantity} used, {reminderWithPrice.wellnessPlanPricing.remainingQuantity} remaining)
+                                              </span>
+                                            )}
+                                          </>
+                                        )}
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                                {reminderWithPrice.discountPricing && 
+                                 reminderWithPrice.discountPricing.priceAdjustedByDiscount && (
+                                  <>
+                                    {reminderWithPrice.wellnessPlanPricing && 
+                                     reminderWithPrice.wellnessPlanPricing.adjustedPrice === 0 ? (
+                                      <div style={{ 
+                                        fontSize: '13px', 
+                                        color: '#1976d2', 
+                                        marginTop: '8px',
+                                        padding: '6px 10px',
+                                        backgroundColor: '#e3f2fd',
+                                        borderRadius: '4px',
+                                        border: '1px solid #90caf9',
+                                        display: 'inline-block'
+                                      }}>
+                                        <strong>Note:</strong> Discount ignored due to membership coverage
+                                      </div>
+                                    ) : (
+                                      <div style={{ 
+                                        fontSize: '13px', 
+                                        color: '#2e7d32', 
+                                        marginTop: '8px',
+                                        padding: '6px 10px',
+                                        backgroundColor: '#e8f5e9',
+                                        borderRadius: '4px',
+                                        border: '1px solid #81c784',
+                                        display: 'inline-block'
+                                      }}>
+                                        <strong>Discount Applied:</strong>
+                                        {reminderWithPrice.discountPricing.discountAmount != null && (
+                                          <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1b5e20' }}>
+                                            ${reminderWithPrice.discountPricing.discountAmount.toFixed(2)} off
+                                          </span>
+                                        )}
+                                        {reminderWithPrice.discountPricing.discountPercentage != null && (
+                                          <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1b5e20' }}>
+                                            {reminderWithPrice.discountPricing.discountPercentage.toFixed(1)}% discount
+                                          </span>
+                                        )}
+                                        {reminderWithPrice.discountPricing.clientDiscounts?.clientStatusDiscount && (
+                                          <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1b5e20' }}>
+                                            {reminderWithPrice.discountPricing.clientDiscounts.clientStatusDiscount.clientStatusName || 'Client Status'} Discount
+                                          </span>
+                                        )}
+                                        {reminderWithPrice.discountPricing.clientDiscounts?.personalDiscount && (
+                                          <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1b5e20' }}>
+                                            Personal Discount Applied
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </>
                                 )}
                                 {!hasMatchedItem && correction?.selectedItem && (
                                   <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#e3f2fd', borderRadius: '4px', fontSize: '14px', color: '#1565c0', border: '1px solid #90caf9' }}>
@@ -1809,9 +2108,43 @@ export default function RoomLoaderPage() {
                                   </div>
                                 )}
                               </div>
-                              <div style={{ marginLeft: '15px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px', minWidth: '150px' }}>
+                              <div style={{ marginLeft: '15px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px', minWidth: '150px', position: 'relative' }}>
+                                {/* Remove Button */}
+                                <button
+                                  onClick={() => handleRemoveReminder(reminderId, reminderWithPrice.reminder.description)}
+                                  style={{
+                                    position: 'absolute',
+                                    top: '0px',
+                                    right: '0px',
+                                    background: '#f44336',
+                                    border: '1px solid #d32f2f',
+                                    borderRadius: '4px',
+                                    fontSize: '18px',
+                                    cursor: 'pointer',
+                                    color: 'white',
+                                    padding: '4px 8px',
+                                    minWidth: '28px',
+                                    height: '28px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontWeight: 'bold',
+                                    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                                    transition: 'background-color 0.2s',
+                                    zIndex: 10,
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.backgroundColor = '#d32f2f';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.backgroundColor = '#f44336';
+                                  }}
+                                  aria-label="Remove reminder"
+                                >
+                                  ×
+                                </button>
                                 {/* Quantity Field */}
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '35px' }}>
                                   <label style={{ fontSize: '14px', color: '#666', fontWeight: 500 }}>Qty:</label>
                                   <input
                                     type="number"
@@ -1832,43 +2165,95 @@ export default function RoomLoaderPage() {
                                   />
                                 </div>
                                 {/* Price Display */}
-                                <div style={{ fontSize: '20px', fontWeight: 700, color: '#2e7d32' }}>
-                                  ${(() => {
-                                    // Get the base price
-                                    let basePrice = 0;
-                                    if (correction?.selectedItem?.price != null) {
-                                      basePrice = Number(correction.selectedItem.price);
-                                    } else if (reminderWithPrice.price != null) {
-                                      basePrice = Number(reminderWithPrice.price);
+                                {(() => {
+                                  // Backend already calculates final price with all discounts applied
+                                  // Use the price field directly, or corrected item price if available
+                                  let finalPrice = 0;
+                                  let originalPrice = 0;
+                                  const wellnessPricing = reminderWithPrice.wellnessPlanPricing;
+                                  const discountPricing = reminderWithPrice.discountPricing;
+                                  const hasPrice = reminderWithPrice.price != null;
+                                  
+                                  // Get final price (backend-calculated with all discounts)
+                                  if (correction?.selectedItem?.price != null) {
+                                    finalPrice = Number(correction.selectedItem.price);
+                                    originalPrice = finalPrice;
+                                  } else if (hasPrice) {
+                                    finalPrice = Number(reminderWithPrice.price);
+                                  } else {
+                                    // No price available
+                                    if (!hasPrice && !correction?.selectedItem && !wellnessPricing) {
+                                      return (
+                                        <div style={{ fontSize: '14px', color: '#999', fontStyle: 'italic' }}>
+                                          No price available
+                                        </div>
+                                      );
                                     }
-                                    // Multiply by quantity
-                                    const quantity = reminderQuantities[reminderId] || 1;
-                                    return (basePrice * quantity).toFixed(2);
-                                  })()}
-                                </div>
+                                    finalPrice = 0;
+                                  }
+                                  
+                                  // Get original price for display (to show strikethrough)
+                                  let baseOriginalPrice = 0;
+                                  if (correction?.selectedItem?.price != null) {
+                                    baseOriginalPrice = Number(correction.selectedItem.price);
+                                  } else if (wellnessPricing) {
+                                    baseOriginalPrice = wellnessPricing.originalPrice;
+                                  } else if (reminderWithPrice.matchedItem?.price) {
+                                    baseOriginalPrice = Number(reminderWithPrice.matchedItem.price);
+                                  } else {
+                                    baseOriginalPrice = finalPrice;
+                                  }
+                                  
+                                  // Get quantity and apply tiered pricing if available
+                                  const quantity = reminderQuantities[reminderId] || 1;
+                                  
+                                  // Get tiered price for the current quantity
+                                  // Check correction item tiered pricing first, then fall back to reminder tiered pricing
+                                  let tieredOriginalPrice = baseOriginalPrice;
+                                  const tieredPricing = correction?.selectedItem?.tieredPricing || reminderWithPrice.tieredPricing;
+                                  if (tieredPricing?.hasTieredPricing) {
+                                    tieredOriginalPrice = getTieredPrice(tieredPricing, quantity, baseOriginalPrice);
+                                  }
+                                  
+                                  // Calculate the discount ratio from the backend response (for qty 1)
+                                  const backendOriginalPrice = baseOriginalPrice;
+                                  const backendAdjustedPrice = finalPrice;
+                                  const discountRatio = backendOriginalPrice > 0 ? backendAdjustedPrice / backendOriginalPrice : 1;
+                                  
+                                  // Apply the same discount ratio to the tiered price
+                                  const tieredFinalPrice = tieredOriginalPrice * discountRatio;
+                                  
+                                  const totalFinalPrice = tieredFinalPrice * quantity;
+                                  const totalOriginalPrice = tieredOriginalPrice * quantity;
+                                  
+                                  // Show original price if there's any discount applied
+                                  const hasAnyDiscount = (wellnessPricing && wellnessPricing.originalPrice !== wellnessPricing.adjustedPrice) || 
+                                                         discountPricing?.priceAdjustedByDiscount;
+                                  
+                                  return (
+                                    <>
+                                      {hasAnyDiscount && totalOriginalPrice !== totalFinalPrice && (
+                                        <div style={{ fontSize: '12px', color: '#999', textDecoration: 'line-through', marginBottom: '4px' }}>
+                                          ${totalOriginalPrice.toFixed(2)}
+                                        </div>
+                                      )}
+                                      <div style={{ fontSize: '20px', fontWeight: 700, color: '#2e7d32' }}>
+                                        ${totalFinalPrice.toFixed(2)}
+                                      </div>
+                                      {tieredPricing?.hasTieredPricing && quantity > 1 && (
+                                        <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                                          ${tieredFinalPrice.toFixed(2)} each
+                                        </div>
+                                      )}
+                                    </>
+                                  );
+                                })()}
                               </div>
                             </div>
 
                             {/* Feedback Buttons - Only show for reminders with matches */}
                             {hasMatchedItem && !feedbackStatus && (
                               <div style={{ marginTop: '15px', display: 'flex', gap: '10px', paddingTop: '15px', borderTop: '1px solid #e0e0e0' }}>
-                                <button
-                                  onClick={() => handleReminderFeedback(reminderId, reminderWithPrice.reminder.description, true, reminderWithPrice)}
-                                  disabled={feedbackStatus === 'correcting'}
-                                  style={{
-                                    padding: '8px 16px',
-                                    backgroundColor: '#4caf50',
-                                    color: 'white',
-                                    border: 'none',
-                                    borderRadius: '4px',
-                                    cursor: feedbackStatus === 'correcting' ? 'not-allowed' : 'pointer',
-                                    fontSize: '14px',
-                                    fontWeight: 500,
-                                    opacity: feedbackStatus === 'correcting' ? 0.6 : 1,
-                                  }}
-                                >
-                                  ✓ Correct Match
-                                </button>
                                 <button
                                   onClick={() => {
                                     setReminderFeedback((prev) => ({ ...prev, [feedbackKey]: 'correcting' }));
@@ -1890,7 +2275,30 @@ export default function RoomLoaderPage() {
                                     opacity: feedbackStatus === 'correcting' ? 0.6 : 1,
                                   }}
                                 >
-                                  ✗ Incorrect Match
+                                  ✗ Incorrect Match Globally
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setReminderFeedback((prev) => ({ ...prev, [feedbackKey]: 'correcting' }));
+                                    setReminderCorrections((prev) => ({
+                                      ...prev,
+                                      [feedbackKey]: { searchQuery: '', results: [], loading: false, selectedItem: null, patientId: patient.id },
+                                    }));
+                                  }}
+                                  disabled={feedbackStatus === 'correcting'}
+                                  style={{
+                                    padding: '8px 16px',
+                                    backgroundColor: '#ff9800',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    cursor: feedbackStatus === 'correcting' ? 'not-allowed' : 'pointer',
+                                    fontSize: '14px',
+                                    fontWeight: 500,
+                                    opacity: feedbackStatus === 'correcting' ? 0.6 : 1,
+                                  }}
+                                >
+                                  Match for Patient Only
                                 </button>
                               </div>
                             )}
@@ -2019,29 +2427,6 @@ export default function RoomLoaderPage() {
                                   <div style={{ marginTop: '15px', display: 'flex', gap: '10px', paddingTop: '15px', borderTop: '1px solid #e0e0e0' }}>
                                     <button
                                       onClick={() => {
-                                        // Submit as correct match with the selected item
-                                        handleReminderFeedback(reminderId, reminderWithPrice.reminder.description, true, reminderWithPrice, correction.selectedItem!);
-                                        // Clear the search query and results after submission, but keep selectedItem for price display
-                                        setReminderCorrections((prev) => ({
-                                          ...prev,
-                                          [feedbackKey]: { searchQuery: '', results: [], loading: false, selectedItem: correction.selectedItem },
-                                        }));
-                                      }}
-                                      style={{
-                                        padding: '8px 16px',
-                                        backgroundColor: '#4caf50',
-                                        color: 'white',
-                                        border: 'none',
-                                        borderRadius: '4px',
-                                        cursor: 'pointer',
-                                        fontSize: '14px',
-                                        fontWeight: 500,
-                                      }}
-                                    >
-                                      ✓ Correct Match
-                                    </button>
-                                    <button
-                                      onClick={() => {
                                         // Clear selection
                                         setReminderCorrections((prev) => ({
                                           ...prev,
@@ -2070,7 +2455,7 @@ export default function RoomLoaderPage() {
                             {feedbackStatus === 'correcting' && (
                               <div style={{ marginTop: '15px', paddingTop: '15px', borderTop: '1px solid #e0e0e0' }}>
                                 <div style={{ marginBottom: '10px', fontSize: '14px', fontWeight: 500, color: '#333' }}>
-                                  Search for the correct item:
+                                  {correction?.patientId ? 'Search for the correct item (Patient-specific match):' : 'Search for the correct item:'}
                                 </div>
                                 <div style={{ position: 'relative', marginBottom: '10px' }}>
                                   <input
@@ -2156,7 +2541,7 @@ export default function RoomLoaderPage() {
                                 <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                                   {correction?.selectedItem && (
                                     <button
-                                      onClick={() => handleSubmitCorrection(reminderId, reminderWithPrice.reminder.description, correction.selectedItem!, reminderWithPrice)}
+                                      onClick={() => handleSubmitCorrection(reminderId, reminderWithPrice.reminder.description, correction.selectedItem!, reminderWithPrice, correction.patientId)}
                                       style={{
                                         padding: '8px 16px',
                                         backgroundColor: '#2196f3',
@@ -2168,7 +2553,7 @@ export default function RoomLoaderPage() {
                                         fontWeight: 500,
                                       }}
                                     >
-                                      Submit Correction
+                                      {correction.patientId ? 'Submit Match for Patient' : 'Submit Correction'}
                                     </button>
                                   )}
                                   <button
@@ -2277,13 +2662,101 @@ export default function RoomLoaderPage() {
                                   border: '1px solid #90caf9',
                                   display: 'inline-block'
                                 }}>
-                                  <strong>Wellness Plan:</strong> ${item.wellnessPlanPricing.originalPrice.toFixed(2)} → ${item.wellnessPlanPricing.adjustedPrice.toFixed(2)}
-                                  {item.wellnessPlanPricing.isWithinLimit && (
-                                    <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
-                                      ({item.wellnessPlanPricing.usedQuantity} of {item.wellnessPlanPricing.includedQuantity} used, {item.wellnessPlanPricing.remainingQuantity} remaining)
-                                    </span>
+                                  {item.wellnessPlanPricing.priceAdjustedByMembership ? (
+                                    <>
+                                      <strong>Membership Discount:</strong> {item.wellnessPlanPricing.membershipPlanName || 'Membership Plan'}
+                                      {item.wellnessPlanPricing.membershipDiscountAmount != null && item.wellnessPlanPricing.membershipDiscountAmount > 0 && (
+                                        <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
+                                          Savings: ${item.wellnessPlanPricing.membershipDiscountAmount.toFixed(2)}
+                                        </span>
+                                      )}
+                                      {item.wellnessPlanPricing.usedQuantity != null && item.wellnessPlanPricing.includedQuantity != null && (
+                                        <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
+                                          ({item.wellnessPlanPricing.usedQuantity} of {item.wellnessPlanPricing.includedQuantity} used, {item.wellnessPlanPricing.remainingQuantity} remaining)
+                                        </span>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <>
+                                      {item.wellnessPlanPricing.originalPrice !== item.wellnessPlanPricing.adjustedPrice ? (
+                                        <>
+                                          <strong>Wellness Plan:</strong> ${item.wellnessPlanPricing.originalPrice.toFixed(2)} → ${item.wellnessPlanPricing.adjustedPrice.toFixed(2)}
+                                          {item.wellnessPlanPricing.isWithinLimit && (
+                                            <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
+                                              ({item.wellnessPlanPricing.usedQuantity} of {item.wellnessPlanPricing.includedQuantity} used, {item.wellnessPlanPricing.remainingQuantity} remaining)
+                                            </span>
+                                          )}
+                                        </>
+                                      ) : (
+                                        <>
+                                          <strong>Wellness Plan Coverage:</strong>
+                                          {item.wellnessPlanPricing.remainingQuantity === 0 || !item.wellnessPlanPricing.isWithinLimit ? (
+                                            <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#d32f2f', fontWeight: 500 }}>
+                                              Already used ({item.wellnessPlanPricing.usedQuantity} of {item.wellnessPlanPricing.includedQuantity} used)
+                                            </span>
+                                          ) : (
+                                            <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
+                                              ({item.wellnessPlanPricing.usedQuantity} of {item.wellnessPlanPricing.includedQuantity} used, {item.wellnessPlanPricing.remainingQuantity} remaining)
+                                            </span>
+                                          )}
+                                        </>
+                                      )}
+                                    </>
                                   )}
                                 </div>
+                              )}
+                              {item.discountPricing && 
+                               item.discountPricing.priceAdjustedByDiscount && (
+                                <>
+                                  {item.wellnessPlanPricing && 
+                                   item.wellnessPlanPricing.adjustedPrice === 0 ? (
+                                    <div style={{ 
+                                      fontSize: '13px', 
+                                      color: '#1976d2', 
+                                      marginTop: '8px',
+                                      padding: '6px 10px',
+                                      backgroundColor: '#e3f2fd',
+                                      borderRadius: '4px',
+                                      border: '1px solid #90caf9',
+                                      display: 'inline-block'
+                                    }}>
+                                      <strong>Note:</strong> Discount ignored due to membership coverage
+                                    </div>
+                                  ) : (
+                                    <div style={{ 
+                                      fontSize: '13px', 
+                                      color: '#2e7d32', 
+                                      marginTop: '8px',
+                                      padding: '6px 10px',
+                                      backgroundColor: '#e8f5e9',
+                                      borderRadius: '4px',
+                                      border: '1px solid #81c784',
+                                      display: 'inline-block'
+                                    }}>
+                                      <strong>Discount Applied:</strong>
+                                      {item.discountPricing.discountAmount != null && (
+                                        <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1b5e20' }}>
+                                          ${item.discountPricing.discountAmount.toFixed(2)} off
+                                        </span>
+                                      )}
+                                      {item.discountPricing.discountPercentage != null && (
+                                        <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1b5e20' }}>
+                                          {item.discountPricing.discountPercentage.toFixed(1)}% discount
+                                        </span>
+                                      )}
+                                      {item.discountPricing.clientDiscounts?.clientStatusDiscount && (
+                                        <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1b5e20' }}>
+                                          {item.discountPricing.clientDiscounts.clientStatusDiscount.clientStatusName || 'Client Status'} Discount
+                                        </span>
+                                      )}
+                                      {item.discountPricing.clientDiscounts?.personalDiscount && (
+                                        <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1b5e20' }}>
+                                          Personal Discount Applied
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </>
                               )}
                             </div>
                             <div style={{ marginLeft: '15px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px', minWidth: '150px' }}>
@@ -2311,21 +2784,52 @@ export default function RoomLoaderPage() {
                               {/* Price Display */}
                               {(() => {
                                 const quantity = addedItemQuantities[`${patient.id}-${itemIdx}`] || 1;
-                                const unitPrice = item.price != null ? Number(item.price) : 0;
-                                const totalPrice = unitPrice * quantity;
-                                const originalUnitPrice = item.wellnessPlanPricing?.originalPrice || unitPrice;
-                                const originalTotalPrice = originalUnitPrice * quantity;
+                                
+                                // Get the base original price (for qty 1)
+                                const baseOriginalPrice = item.wellnessPlanPricing?.originalPrice ?? 
+                                                         item.originalPrice ?? 
+                                                         (item.price != null ? Number(item.price) : 0);
+                                
+                                // Get tiered price for the current quantity
+                                let tieredOriginalPrice = baseOriginalPrice;
+                                if (item.tieredPricing?.hasTieredPricing) {
+                                  tieredOriginalPrice = getTieredPrice(item.tieredPricing, quantity, baseOriginalPrice);
+                                }
+                                
+                                // Calculate the discount ratio from the backend response (for qty 1)
+                                // The backend gives us adjustedPrice and originalPrice for qty 1
+                                const backendOriginalPrice = item.originalPrice ?? baseOriginalPrice;
+                                const backendAdjustedPrice = item.price ?? 0;
+                                const discountRatio = backendOriginalPrice > 0 ? backendAdjustedPrice / backendOriginalPrice : 1;
+                                
+                                // Apply the same discount ratio to the tiered price
+                                let finalPrice = tieredOriginalPrice * discountRatio;
+                                
+                                // Get original price for display (tiered price before discounts)
+                                const originalPrice = tieredOriginalPrice;
+                                
+                                const totalFinalPrice = finalPrice * quantity;
+                                const totalOriginalPrice = originalPrice * quantity;
+                                
+                                // Show original price if there's any discount applied
+                                const hasAnyDiscount = (item.wellnessPlanPricing && item.wellnessPlanPricing.originalPrice !== item.wellnessPlanPricing.adjustedPrice) || 
+                                                       item.discountPricing?.priceAdjustedByDiscount;
                                 
                                 return (
                                   <>
-                                    {item.wellnessPlanPricing && item.wellnessPlanPricing.hasCoverage && item.wellnessPlanPricing.originalPrice !== item.wellnessPlanPricing.adjustedPrice && (
+                                    {hasAnyDiscount && totalOriginalPrice !== totalFinalPrice && totalOriginalPrice > totalFinalPrice && (
                                       <div style={{ fontSize: '12px', color: '#999', textDecoration: 'line-through', marginBottom: '4px' }}>
-                                        ${originalTotalPrice.toFixed(2)}
+                                        ${totalOriginalPrice.toFixed(2)}
                                       </div>
                                     )}
                                     <div style={{ fontSize: '20px', fontWeight: 700, color: '#2e7d32' }}>
-                                      ${totalPrice.toFixed(2)}
+                                      ${totalFinalPrice.toFixed(2)}
                                     </div>
+                                    {item.tieredPricing?.hasTieredPricing && quantity > 1 && (
+                                      <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                                        ${finalPrice.toFixed(2)} each
+                                      </div>
+                                    )}
                                   </>
                                 );
                               })()}
@@ -2337,7 +2841,10 @@ export default function RoomLoaderPage() {
                   )}
 
                   {/* Total */}
-                  {((item.reminders && item.reminders.length > 0) || (addedItems[patient.id] && addedItems[patient.id].length > 0)) && (
+                  {((item.reminders && item.reminders.filter((r) => {
+                    const id = r.reminder.id;
+                    return id && !removedReminders.has(id);
+                  }).length > 0) || (addedItems[patient.id] && addedItems[patient.id].length > 0)) && (
                     <div
                       style={{
                         marginTop: '15px',
@@ -2354,26 +2861,71 @@ export default function RoomLoaderPage() {
                       <div style={{ fontSize: '20px', fontWeight: 700, color: '#2e7d32' }}>
                         $
                         {(
-                        (item.reminders?.reduce((sum, r) => {
-                          // For reminders with selected/corrected items, use selected item price
-                          const reminderId = r.reminder.id;
-                          const correctionKey = `reminder-${reminderId}`;
-                          const correction = reminderCorrections[correctionKey];
-                          // Get the base price
+                        (item.reminders
+                          ?.filter((r) => {
+                            const id = r.reminder.id;
+                            return id && !removedReminders.has(id);
+                          })
+                          .reduce((sum, r) => {
+                            // For reminders with selected/corrected items, use selected item price
+                            const reminderId = r.reminder.id;
+                            const correctionKey = `reminder-${reminderId}`;
+                            const correction = reminderCorrections[correctionKey];
+                          
+                          // Get base price
                           let basePrice = 0;
+                          let baseOriginalPrice = 0;
+                          
                           if (correction?.selectedItem?.price != null) {
                             basePrice = Number(correction.selectedItem.price);
+                            baseOriginalPrice = basePrice;
                           } else if (r.price != null) {
                             basePrice = Number(r.price);
+                            baseOriginalPrice = r.wellnessPlanPricing?.originalPrice ?? 
+                                              (r.matchedItem?.price ? Number(r.matchedItem.price) : basePrice);
                           }
-                          // Multiply by quantity
+                          
+                          // Get quantity and apply tiered pricing if available
                           const quantity = reminderQuantities[reminderId] || 1;
-                          return sum + (basePrice * quantity);
+                          
+                          // Get tiered price for the current quantity
+                          // Check correction item tiered pricing first, then fall back to reminder tiered pricing
+                          let tieredOriginalPrice = baseOriginalPrice;
+                          const tieredPricing = correction?.selectedItem?.tieredPricing || r.tieredPricing;
+                          if (tieredPricing?.hasTieredPricing) {
+                            tieredOriginalPrice = getTieredPrice(tieredPricing, quantity, baseOriginalPrice);
+                          }
+                          
+                          // Calculate the discount ratio from the backend response (for qty 1)
+                          const discountRatio = baseOriginalPrice > 0 ? basePrice / baseOriginalPrice : 1;
+                          
+                          // Apply the same discount ratio to the tiered price
+                          const tieredFinalPrice = tieredOriginalPrice * discountRatio;
+                          
+                          return sum + (tieredFinalPrice * quantity);
                         }, 0) || 0) +
                         (addedItems[patient.id]?.reduce((sum, item, itemIdx) => {
                           const quantity = addedItemQuantities[`${patient.id}-${itemIdx}`] || 1;
-                          const itemPrice = item.price != null ? Number(item.price) : 0;
-                          return sum + (itemPrice * quantity);
+                          
+                          // Calculate price with tiered pricing if applicable
+                          const baseOriginalPrice = item.wellnessPlanPricing?.originalPrice ?? 
+                                                   item.originalPrice ?? 
+                                                   (item.price != null ? Number(item.price) : 0);
+                          
+                          let tieredOriginalPrice = baseOriginalPrice;
+                          if (item.tieredPricing?.hasTieredPricing) {
+                            tieredOriginalPrice = getTieredPrice(item.tieredPricing, quantity, baseOriginalPrice);
+                          }
+                          
+                          // Calculate the discount ratio from the backend response (for qty 1)
+                          const backendOriginalPrice = item.originalPrice ?? baseOriginalPrice;
+                          const backendAdjustedPrice = item.price ?? 0;
+                          const discountRatio = backendOriginalPrice > 0 ? backendAdjustedPrice / backendOriginalPrice : 1;
+                          
+                          // Apply the same discount ratio to the tiered price
+                          const finalPrice = tieredOriginalPrice * discountRatio;
+                          
+                          return sum + (finalPrice * quantity);
                         }, 0) || 0)
                       ).toFixed(2)}
                       </div>
@@ -2384,6 +2936,11 @@ export default function RoomLoaderPage() {
                   <div style={{ marginTop: '20px', padding: '15px', backgroundColor: '#f8f9fa', borderRadius: '4px', border: '1px solid #dee2e6' }}>
                     <h5 style={{ marginTop: 0, marginBottom: '10px', color: '#495057', fontSize: '16px', fontWeight: 600 }}>
                       Add Item
+                      {displayPatient.weight && (
+                        <span style={{ color: '#dc3545', marginLeft: '10px', fontWeight: 600 }}>
+                          Weight: {displayPatient.weight} lbs
+                        </span>
+                      )}
                     </h5>
                     <div style={{ position: 'relative' }}>
                       <input
@@ -2476,169 +3033,31 @@ export default function RoomLoaderPage() {
                       )}
                   </div>
 
-                  {/* Vaccine Checkboxes */}
+                  {/* Sharps Checkbox */}
                   <div style={{ marginTop: '20px', marginBottom: '20px', padding: '15px', backgroundColor: '#f8f9fa', borderRadius: '4px', border: '1px solid #dee2e6' }}>
-                    <h5 style={{ marginTop: 0, marginBottom: '15px', color: '#495057', fontSize: '16px', fontWeight: 600 }}>
-                      Vaccines
-                    </h5>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                       {(() => {
                         const checkboxes = vaccineCheckboxes[patient.id] || { felv: true, lepto: true, lyme: true, bordatella: true, sharps: true };
                         
-                        // Get declined items for THIS specific patient (declined items are nested under each patient)
-                        const patientFromLoader = selectedRoomLoader?.patients?.find((p) => p.id === patient.id);
-                        const declinedItems = patientFromLoader?.declinedInventoryItems || [];
-                        
-                        // Calculate sharps based on any vaccine being checked
+                        // Calculate sharps based on any vaccine being checked (logic preserved but UI hidden)
                         const anyVaccineChecked = checkboxes.felv || checkboxes.lepto || checkboxes.lyme || checkboxes.bordatella;
                         const sharpsChecked = checkboxes.sharps !== undefined ? checkboxes.sharps : anyVaccineChecked;
-                        
-                        // Helper function to check if an item name matches a vaccine
-                        const isDeclined = (vaccineName: string) => {
-                          return declinedItems.some((item: any) => {
-                            // Handle both structures: direct name or nested inventoryItem.name
-                            const itemName = ((item.inventoryItem?.name || item.name) || '').toLowerCase();
-                            const searchTerms: string[] = [];
-                            
-                            if (vaccineName === 'felv') {
-                              searchTerms.push('felv', 'feline leukemia', 'feline leukemia virus');
-                            } else if (vaccineName === 'lepto') {
-                              searchTerms.push('lepto', 'leptospirosis');
-                            } else if (vaccineName === 'lyme') {
-                              searchTerms.push('lyme', 'lyme disease');
-                            } else if (vaccineName === 'bordatella') {
-                              searchTerms.push('bordatella', 'bordetella', 'kennel cough');
-                            }
-                            
-                            return searchTerms.some((term) => itemName.includes(term));
-                          });
-                        };
-
-                        const felvDeclined = isDeclined('felv');
-                        const leptoDeclined = isDeclined('lepto');
-                        const lymeDeclined = isDeclined('lyme');
-                        const bordatellaDeclined = isDeclined('bordatella');
 
                         return (
-                          <>
-                            {/* FeLV - Cats only */}
-                            <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}>
-                              <input
-                                type="checkbox"
-                                checked={checkboxes.felv}
-                                onChange={(e) => {
-                                  const newFelv = e.target.checked;
-                                  setVaccineCheckboxes((prev) => {
-                                    const current = prev[patient.id] || { felv: true, lepto: true, lyme: true, bordatella: true, sharps: true };
-                                    const updated = { ...current, felv: newFelv };
-                                    // Auto-check sharps if any vaccine is checked
-                                    updated.sharps = updated.felv || updated.lepto || updated.lyme || updated.bordatella;
-                                    return { ...prev, [patient.id]: updated };
-                                  });
-                                }}
-                                style={{ cursor: 'pointer', width: '18px', height: '18px' }}
-                              />
-                              <span style={{ fontSize: '14px', color: '#333' }}>FeLV (Cats only)</span>
-                              {felvDeclined && (
-                                <span style={{ fontSize: '12px', color: '#dc3545', fontWeight: 500, marginLeft: '8px' }}>
-                                  Previously declined
-                                </span>
-                              )}
-                            </label>
-
-                            {/* Lepto - Dogs only */}
-                            <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}>
-                              <input
-                                type="checkbox"
-                                checked={checkboxes.lepto}
-                                onChange={(e) => {
-                                  const newLepto = e.target.checked;
-                                  setVaccineCheckboxes((prev) => {
-                                    const current = prev[patient.id] || { felv: true, lepto: true, lyme: true, bordatella: true, sharps: true };
-                                    const updated = { ...current, lepto: newLepto };
-                                    // Auto-check sharps if any vaccine is checked
-                                    updated.sharps = updated.felv || updated.lepto || updated.lyme || updated.bordatella;
-                                    return { ...prev, [patient.id]: updated };
-                                  });
-                                }}
-                                style={{ cursor: 'pointer', width: '18px', height: '18px' }}
-                              />
-                              <span style={{ fontSize: '14px', color: '#333' }}>Lepto (Dogs only)</span>
-                              {leptoDeclined && (
-                                <span style={{ fontSize: '12px', color: '#dc3545', fontWeight: 500, marginLeft: '8px' }}>
-                                  Previously declined
-                                </span>
-                              )}
-                            </label>
-
-                            {/* Lyme - Dog only */}
-                            <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}>
-                              <input
-                                type="checkbox"
-                                checked={checkboxes.lyme}
-                                onChange={(e) => {
-                                  const newLyme = e.target.checked;
-                                  setVaccineCheckboxes((prev) => {
-                                    const current = prev[patient.id] || { felv: true, lepto: true, lyme: true, bordatella: true, sharps: true };
-                                    const updated = { ...current, lyme: newLyme };
-                                    // Auto-check sharps if any vaccine is checked
-                                    updated.sharps = updated.felv || updated.lepto || updated.lyme || updated.bordatella;
-                                    return { ...prev, [patient.id]: updated };
-                                  });
-                                }}
-                                style={{ cursor: 'pointer', width: '18px', height: '18px' }}
-                              />
-                              <span style={{ fontSize: '14px', color: '#333' }}>Lyme (Dog only)</span>
-                              {lymeDeclined && (
-                                <span style={{ fontSize: '12px', color: '#dc3545', fontWeight: 500, marginLeft: '8px' }}>
-                                  Previously declined
-                                </span>
-                              )}
-                            </label>
-
-                            {/* Bordatella - Dogs only */}
-                            <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}>
-                              <input
-                                type="checkbox"
-                                checked={checkboxes.bordatella}
-                                onChange={(e) => {
-                                  const newBordatella = e.target.checked;
-                                  setVaccineCheckboxes((prev) => {
-                                    const current = prev[patient.id] || { felv: true, lepto: true, lyme: true, bordatella: true, sharps: true };
-                                    const updated = { ...current, bordatella: newBordatella };
-                                    // Auto-check sharps if any vaccine is checked
-                                    updated.sharps = updated.felv || updated.lepto || updated.lyme || updated.bordatella;
-                                    return { ...prev, [patient.id]: updated };
-                                  });
-                                }}
-                                style={{ cursor: 'pointer', width: '18px', height: '18px' }}
-                              />
-                              <span style={{ fontSize: '14px', color: '#333' }}>Bordatella (Dogs only)</span>
-                              {bordatellaDeclined && (
-                                <span style={{ fontSize: '12px', color: '#dc3545', fontWeight: 500, marginLeft: '8px' }}>
-                                  Previously declined
-                                </span>
-                              )}
-                            </label>
-
-                            {/* Sharps Checkbox */}
-                            <div style={{ marginTop: '15px', paddingTop: '15px', borderTop: '1px solid #dee2e6' }}>
-                              <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}>
-                                <input
-                                  type="checkbox"
-                                  checked={sharpsChecked}
-                                  onChange={(e) => {
-                                    setVaccineCheckboxes((prev) => ({
-                                      ...prev,
-                                      [patient.id]: { ...checkboxes, sharps: e.target.checked },
-                                    }));
-                                  }}
-                                  style={{ cursor: 'pointer', width: '18px', height: '18px' }}
-                                />
-                                <span style={{ fontSize: '14px', color: '#333', fontWeight: 500 }}>Sharps</span>
-                              </label>
-                            </div>
-                          </>
+                          <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}>
+                            <input
+                              type="checkbox"
+                              checked={sharpsChecked}
+                              onChange={(e) => {
+                                setVaccineCheckboxes((prev) => ({
+                                  ...prev,
+                                  [patient.id]: { ...checkboxes, sharps: e.target.checked },
+                                }));
+                              }}
+                              style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                            />
+                            <span style={{ fontSize: '14px', color: '#333', fontWeight: 500 }}>Charge for Sharps</span>
+                          </label>
                         );
                       })()}
                     </div>
@@ -2649,9 +3068,37 @@ export default function RoomLoaderPage() {
           })
           )}
 
-          {/* Send to Client Button */}
+          {/* Action Buttons */}
           {selectedRoomLoader && (
-            <div style={{ marginTop: '30px', paddingTop: '20px', borderTop: '2px solid #ddd', display: 'flex', justifyContent: 'flex-end' }}>
+            <div style={{ marginTop: '30px', paddingTop: '20px', borderTop: '2px solid #ddd', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                onClick={handleSaveForLater}
+                disabled={savingForm}
+                style={{
+                  padding: '12px 24px',
+                  fontSize: '16px',
+                  fontWeight: 600,
+                  backgroundColor: savingForm ? '#6c757d' : '#28a745',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: savingForm ? 'not-allowed' : 'pointer',
+                  transition: 'background-color 0.2s ease-in-out',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                }}
+                onMouseEnter={(e) => {
+                  if (!savingForm) {
+                    e.currentTarget.style.backgroundColor = '#218838';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!savingForm) {
+                    e.currentTarget.style.backgroundColor = '#28a745';
+                  }
+                }}
+              >
+                {savingForm ? 'Saving...' : 'Save for Later'}
+              </button>
               <button
                 onClick={handleSendToClient}
                 disabled={sendingToClient}
@@ -2686,6 +3133,76 @@ export default function RoomLoaderPage() {
               </button>
             </div>
           )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Removing Reminder */}
+      {reminderToRemove && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+          }}
+          onClick={cancelRemoveReminder}
+        >
+          <div
+            style={{
+              backgroundColor: 'white',
+              padding: '30px',
+              borderRadius: '8px',
+              maxWidth: '500px',
+              width: '90%',
+              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.3)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ marginTop: 0, marginBottom: '15px', color: '#333', fontSize: '20px' }}>
+              Remove Reminder?
+            </h2>
+            <p style={{ marginBottom: '20px', color: '#666', fontSize: '16px', lineHeight: '1.5' }}>
+              Are you sure you want to remove <strong>"{reminderToRemove.description}"</strong>?
+            </p>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={cancelRemoveReminder}
+                style={{
+                  padding: '10px 20px',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  backgroundColor: '#6c757d',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmRemoveReminder}
+                style={{
+                  padding: '10px 20px',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  backgroundColor: '#f44336',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                }}
+              >
+                Remove
+              </button>
             </div>
           </div>
         </div>

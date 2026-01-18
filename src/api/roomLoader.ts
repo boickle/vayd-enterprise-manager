@@ -41,6 +41,7 @@ export type Client = {
   latLonMatchLevel?: string | null;
   latLonValidated?: boolean;
   username?: string | null;
+  alerts?: string | null;
 };
 
 export type Reminder = {
@@ -74,17 +75,58 @@ export type Reminder = {
 export type ReminderWithPrice = {
   reminder: Reminder;
   confidence: number;
-  price: number;
-  itemType: string;
+  price: number | null;
+  itemType: string | null;
   matchedItem?: {
     id: number;
     code?: string;
-  name?: string;
+    name?: string;
     price?: string;
     category?: string;
     cost?: string;
     serviceFee?: string;
   } | null;
+  wellnessPlanPricing?: {
+    hasCoverage: boolean;
+    adjustedPrice: number;
+    originalPrice: number;
+    includedQuantity: number;
+    usedQuantity: number;
+    remainingQuantity: number;
+    isWithinLimit: boolean;
+    priceAdjustedByMembership?: boolean;
+    membershipPlanName?: string;
+    membershipDiscountAmount?: number;
+    clientDiscounts?: Record<string, any>;
+  };
+  discountPricing?: {
+    priceAdjustedByDiscount: boolean;
+    discountAmount?: number;
+    discountPercentage?: number;
+    clientDiscounts?: {
+      clientStatusDiscount?: {
+        discount: number;
+        discountType: string;
+        clientStatusName?: string;
+        clientStatusCode?: string;
+      };
+      personalDiscount?: {
+        discount: number;
+      };
+      totalDiscountAmount?: number;
+      totalDiscountPercentage?: number;
+    };
+  };
+  tieredPricing?: {
+    hasTieredPricing: boolean;
+    priceBreaks?: Array<{
+      lowQuantity: string;
+      highQuantity: string;
+      price: string;
+      markup: string;
+      isActive: boolean;
+    }>;
+  };
 };
 
 export type Patient = {
@@ -215,6 +257,7 @@ export type RoomLoader = {
   patients: Patient[];
   reminders?: ReminderWithPrice[];
   declinedInventoryItems?: DeclinedInventoryItem[];
+  savedForm?: Record<string, any> | null;
   created?: string;
   updated?: string;
 };
@@ -292,6 +335,17 @@ export type SearchableItem = {
   price: number;
   name: string;
   code?: string;
+  originalPrice?: number;
+  tieredPricing?: {
+    hasTieredPricing: boolean;
+    priceBreaks?: Array<{
+      lowQuantity: string;
+      highQuantity: string;
+      price: string;
+      markup: string;
+      isActive: boolean;
+    }>;
+  };
   wellnessPlanPricing?: {
     hasCoverage: boolean;
     adjustedPrice: number;
@@ -300,8 +354,41 @@ export type SearchableItem = {
     usedQuantity: number;
     remainingQuantity: number;
     isWithinLimit: boolean;
+    priceAdjustedByMembership?: boolean;
+    membershipPlanName?: string;
+    membershipDiscountAmount?: number;
+    clientDiscounts?: Record<string, any>;
+  };
+  discountPricing?: {
+    priceAdjustedByDiscount: boolean;
+    discountAmount?: number;
+    discountPercentage?: number;
+    clientDiscounts?: {
+      clientStatusDiscount?: {
+        discount: number;
+        discountType: string;
+        clientStatusName?: string;
+        clientStatusCode?: string;
+      };
+      personalDiscount?: {
+        discount: number;
+      };
+      totalDiscountAmount?: number;
+      totalDiscountPercentage?: number;
+    };
+  };
+  tieredPricing?: {
+    hasTieredPricing: boolean;
+    priceBreaks?: Array<{
+      lowQuantity: string;
+      highQuantity: string;
+      price: string;
+      markup: string;
+      isActive: boolean;
+    }>;
   };
 };
+
 export type ItemSearchParams = {
   q: string;
   practiceId: number;
@@ -325,6 +412,7 @@ export type ReminderMappingFeedbackRequest = {
   reminderText: string;
   reminderId?: number;
   practiceId: number;
+  patientId?: number; // Optional: For patient-specific mapping
   isCorrect: boolean;
   // For confirming correct matches
   itemType?: 'lab' | 'procedure' | 'inventory';
@@ -358,11 +446,11 @@ export async function submitReminderFeedback(request: ReminderMappingFeedbackReq
   return data;
 }
 
-
 // Check item pricing for a patient
 export type CheckItemPricingRequest = {
   patientId: number;
   practiceId: number;
+  clientId: number;
   itemType: 'lab' | 'procedure' | 'inventory' | string;
   item: {
     lab?: {
@@ -407,8 +495,51 @@ export type CheckItemPricingResponse = {
     remainingQuantity: number;
     isWithinLimit: boolean;
   };
+  discountPricing?: {
+    priceAdjustedByDiscount: boolean;
+    discountAmount?: number;
+    discountPercentage?: number;
+    clientDiscounts?: {
+      clientStatusDiscount?: {
+        discount: number;
+        discountType: string;
+        clientStatusName?: string;
+        clientStatusCode?: string;
+      };
+      personalDiscount?: {
+        discount: number;
+      };
+      totalDiscountAmount?: number;
+      totalDiscountPercentage?: number;
+    };
+  };
+  tieredPricing?: {
+    hasTieredPricing: boolean;
+    priceBreaks?: Array<{
+      lowQuantity: string;
+      highQuantity: string;
+      price: string;
+      markup: string;
+      isActive: boolean;
+    }>;
+  };
 };
+
 export async function checkItemPricing(request: CheckItemPricingRequest): Promise<CheckItemPricingResponse> {
   const { data } = await http.post<CheckItemPricingResponse>('/room-loader/check-item-pricing', request);
+  return data;
+}
+
+// Save form data for later
+export type SaveFormRequest = {
+  roomLoaderId: number;
+  formData?: {
+    reminders?: ReminderWithPrice[];
+    [key: string]: any;
+  };
+};
+
+export async function saveRoomLoaderForm(request: SaveFormRequest): Promise<RoomLoader> {
+  const { data } = await http.post<RoomLoader>('/room-loader/save-form', request);
   return data;
 }
