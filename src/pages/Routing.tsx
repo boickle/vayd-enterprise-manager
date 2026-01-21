@@ -449,7 +449,7 @@ export default function Routing() {
   });
 
   // Preferences
-  const [preferredWeekday, setPreferredWeekday] = useState<number | null>(null); // 1..7
+  const [preferredWeekday, setPreferredWeekday] = useState<number[]>([]); // 1..7, supports multiple days
   const [preferredTimeOfDay, setPreferredTimeOfDay] = useState<'first' | 'middle' | 'end' | null>(
     null
   ); // send exactly these
@@ -934,13 +934,21 @@ export default function Routing() {
     const ignoreEmergencyBlocks = reserveOption === 'reserve-only' || reserveOption === 'reserve-overflow';
     const allowOverflow = reserveOption === 'reserve-overflow';
 
+    // Format preferredWeekday: single number (backward compatible) or array of numbers
+    const preferredWeekdayPayload: number | number[] | null = 
+      preferredWeekday.length === 0 
+        ? null 
+        : preferredWeekday.length === 1 
+          ? preferredWeekday[0] 
+          : preferredWeekday;
+
     const base = {
       startDate: form.startDate,
       numDays,
       newAppt: newApptPayload,
       useTraffic,
       ignoreEmergencyBlocks,
-      preferredWeekday,
+      preferredWeekday: preferredWeekdayPayload,
       preferredTimeOfDay, // 'first' | 'middle' | 'end' | null
       preferEdge, // 'first' | 'last' | null
       ...(allowOverflow
@@ -1677,25 +1685,23 @@ export default function Routing() {
                   <label key={n} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
                     <input
                       type="checkbox"
-                      checked={preferredWeekday === n}
-                      onChange={() => setPreferredWeekday((cur) => (cur === n ? null : n))}
+                      checked={preferredWeekday.includes(n)}
+                      onChange={() => {
+                        setPreferredWeekday((cur) => {
+                          if (cur.includes(n)) {
+                            return cur.filter((day) => day !== n);
+                          } else {
+                            return [...cur, n].sort((a, b) => a - b);
+                          }
+                        });
+                      }}
                     />
                     <span>{label}</span>
                   </label>
                 ))}
-                <label
-                  style={{ display: 'inline-flex', gap: 6, alignItems: 'center', marginLeft: 8 }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={preferredWeekday === null}
-                    onChange={() => setPreferredWeekday(null)}
-                  />
-                  <span>None</span>
-                </label>
               </div>
               <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                Only one day can be selected. Click again to unselect.
+                Select one or more days. Multiple selections are supported.
               </div>
             </Field>
 
