@@ -128,6 +128,7 @@ type Household = {
   isPreview?: boolean;
   isPersonalBlock?: boolean;
   patients: PatientBadge[];
+  primary: DoctorDayAppt; // Store primary appointment for checking appointment type
 };
 
 /* ----------------- schedule bounds (for work start) ----------------- */
@@ -447,6 +448,7 @@ export default function DoctorDayVisual({
           isPreview: apptIsPreview,
           isPersonalBlock,
           patients: isPersonalBlock ? [] : [patient],
+          primary: a, // Store primary appointment
         });
       } else {
         const h = m.get(key)!;
@@ -1290,27 +1292,43 @@ export default function DoctorDayVisual({
 
             const durMin = Math.max(1, Math.round(schedEnd.diff(schedStart).as('minutes')));
 
-            // ---- ETA-based positioning (authoritative) ----
+            // Check if appointment type is "Fixed Time" - same logic as list view
+            // Check multiple fields: appointmentType, appointmentTypeName, serviceName
+            // Handle both string and object (with .name property) cases
+            const getApptTypeString = (appt: DoctorDayAppt): string => {
+              const type1 = str(appt, 'appointmentType');
+              const type2 = str(appt, 'appointmentTypeName');
+              const type3 = str(appt, 'serviceName');
+              const type4 = (appt as any)?.appointmentType;
+              const type5 = (appt as any)?.appointmentTypeName;
+              // Handle object case (appointmentType might be { name: 'Fixed Time' })
+              const type6 = typeof type4 === 'object' && type4?.name ? String(type4.name) : null;
+              
+              return type1 || type2 || type3 || (typeof type4 === 'string' ? type4 : null) || 
+                     (typeof type5 === 'string' ? type5 : null) || type6 || '';
+            };
+            
+            const primaryTypeLower = getApptTypeString(h.primary).toLowerCase();
+            // Also check first patient's type as fallback
+            const firstPatientType = (h.patients[0]?.type || '').toLowerCase();
+            const isFixedTime = 
+              primaryTypeLower === 'fixed time' || 
+              firstPatientType === 'fixed time';
+
+            // ---- Positioning: For fixed time, use scheduled start; otherwise use ETA ----
             const etaIso = timeline[idx]?.eta ?? null;
             const etdIso = timeline[idx]?.etd ?? null;
-
-            const anchorIso = etaIso ?? h.startIso!; // position by ETA; fallback to scheduled start
+            
+            // Fixed time appointments should be positioned at their scheduled start time, not ETA
+            const anchorIso = isFixedTime ? h.startIso! : (etaIso ?? h.startIso!);
             const top =
               Math.max(0, Math.round(DateTime.fromISO(anchorIso).diff(t0).as('minutes'))) * PPM;
             const height = Math.max(22, durMin * PPM);
 
-            // adjusted window for tooltip
-            const { winStartIso, winEndIso } = adjustedWindowForStart(
-              date,
-              h.startIso!,
-              schedStartIso
-            );
-
-            // Check if appointment type is "Fixed Time".
-            // We infer this from the first patient's badge.type, which is built from
-            // appointmentType / appointmentTypeName / serviceName in makePatientBadge().
-            const firstPatientType = (h.patients[0]?.type || '').toLowerCase();
-            const isFixedTime = firstPatientType === 'fixed time';
+            // adjusted window for tooltip (only for non-fixed-time appointments)
+            const { winStartIso, winEndIso } = isFixedTime 
+              ? { winStartIso: h.startIso!, winEndIso: h.endIso! } // Use scheduled times for fixed time
+              : adjustedWindowForStart(date, h.startIso!, schedStartIso);
 
             const patientsPreview = h.patients
               .map((p) => p.name)
@@ -1332,8 +1350,9 @@ export default function DoctorDayVisual({
                     client: h.client,
                     address: h.address,
                     durMin,
-                    etaIso: etaIso ?? null,
-                    etdIso: etdIso ?? null,
+                    // For fixed time appointments, use scheduled times for ETA/ETD
+                    etaIso: isFixedTime ? h.startIso! : (etaIso ?? null),
+                    etdIso: isFixedTime ? h.endIso! : (etdIso ?? null),
                     sIso: h.startIso!,
                     eIso: h.endIso!,
                     patients: h.patients || [],
@@ -1453,6 +1472,22 @@ export default function DoctorDayVisual({
                     }}
                   >
                     Preview
+                  </div>
+                ) : isFixedTime ? (
+                  <div
+                    title="FIXED TIME"
+                    style={{
+                      marginLeft: 8,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      padding: '2px 8px',
+                      borderRadius: 999,
+                      background: '#fee2e2',
+                      color: '#dc2626',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    FIXED TIME
                   </div>
                 ) : null}
 
@@ -1607,12 +1642,10 @@ export default function DoctorDayVisual({
             const s = DateTime.fromISO(hoverCard.sIso);
             const e = DateTime.fromISO(hoverCard.eIso);
 
-            // adjusted visual window (for hover)
-            const { winStartIso, winEndIso } = adjustedWindowForStart(
-              date,
-              hoverCard.sIso,
-              schedStartIso
-            );
+            // adjusted visual window (for hover) - only calculate if not fixed time
+            const { winStartIso, winEndIso } = hoverCard.isFixedTime
+              ? { winStartIso: hoverCard.sIso, winEndIso: hoverCard.eIso } // Use scheduled times for fixed time
+              : adjustedWindowForStart(date, hoverCard.sIso, schedStartIso);
             return (
               <div
                 style={{
