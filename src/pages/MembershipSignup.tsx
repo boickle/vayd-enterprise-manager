@@ -16,6 +16,7 @@ import {
   type FormattedSubscriptionPlan,
 } from '../api/payments';
 import { useAuth } from '../auth/useAuth';
+import { trackEvent, trackViewItem, trackAddToCart, trackBeginCheckout } from '../utils/analytics';
 
  type MembershipPlan = {
   id: string;
@@ -549,6 +550,13 @@ export default function MembershipSignup() {
           return;
         }
         if (alive) setPet(selectedPet);
+        
+        // Track membership signup page view
+        trackEvent('membership_signup_page_viewed', {
+          pet_id: selectedPet.id,
+          pet_name: selectedPet.name || 'Unknown',
+          pet_species: selectedPet.species || selectedPet.breed || 'Unknown',
+        });
 
         try {
           const appts = await fetchClientAppointments();
@@ -1064,6 +1072,38 @@ export default function MembershipSignup() {
       metadata,
       membershipTransaction,
     };
+
+    // Track begin checkout
+    const checkoutItems = [
+      {
+        item_id: selectedPlanExplicit,
+        item_name: basePlanName,
+        price: planPrice,
+        quantity: 1,
+      },
+      ...addOnDetails.map((addon) => ({
+        item_id: addon.id,
+        item_name: addon.name,
+        price: addon.price,
+        quantity: 1,
+      })),
+    ];
+    
+    trackBeginCheckout(
+      amountBase,
+      'USD',
+      checkoutItems,
+      {
+        pet_id: pet.id,
+        pet_name: pet.name,
+        pet_species: petDetails.kind,
+        billing_preference: effectiveBillingPreference,
+        plan_name: basePlanName,
+        addons: addOns,
+        has_addons: addOns.length > 0,
+        plan_category: selectedPlanExplicit === 'comfort-care' ? 'comfort-care' : selectedPlanExplicit === 'golden' ? 'golden' : 'foundations',
+      }
+    );
 
     setError(null);
     navigate('/client-portal/membership-payment', { state: paymentState });
@@ -1836,6 +1876,40 @@ export default function MembershipSignup() {
                               setAgreementAccepted(false);
                               setAgreementSignature('');
                             }
+                            
+                            // Track add to cart / remove from cart
+                            if (next && !prev) {
+                              // Adding to cart
+                              const matchedTier = tiers.find((tier) => (petDetails.kind ? tier.species === petDetails.kind : false)) ?? tiers[0];
+                              const price = billingPreference === 'annual' && matchedTier?.annual != null
+                                ? matchedTier.annual
+                                : matchedTier?.monthly ?? 0;
+                              
+                              trackAddToCart(
+                                plan.id,
+                                plan.name,
+                                price,
+                                'USD',
+                                1,
+                                {
+                                  pet_id: pet?.id,
+                                  pet_name: pet?.name,
+                                  pet_species: petDetails.kind,
+                                  billing_preference: billingPreference,
+                                  is_addon: false,
+                                  plan_category: plan.id === 'comfort-care' ? 'comfort-care' : plan.id === 'golden' ? 'golden' : 'foundations',
+                                }
+                              );
+                            } else if (!next && prev) {
+                              // Removing from cart
+                              trackEvent('remove_from_cart', {
+                                item_id: plan.id,
+                                item_name: plan.name,
+                                pet_id: pet?.id,
+                                pet_name: pet?.name,
+                              });
+                            }
+                            
                             return next;
                           });
                         }}
@@ -1891,7 +1965,39 @@ export default function MembershipSignup() {
                               setToast(`Please select ${primaryPlanName} first`);
                               return;
                             }
-                            setStarterExplicit((prev) => !prev);
+                            setStarterExplicit((prev) => {
+                              const isAdding = !prev;
+                              
+                              // Track add to cart / remove from cart
+                              if (isAdding) {
+                                // Get price from cost summary if available, otherwise use default
+                                const price = billingPreference === 'annual' ? 309 : 29;
+                                trackAddToCart(
+                                  'starter-addon',
+                                  'Puppy / Kitten Add-on',
+                                  price,
+                                  'USD',
+                                  1,
+                                  {
+                                    pet_id: pet?.id,
+                                    pet_name: pet?.name,
+                                    pet_species: petDetails.kind,
+                                    billing_preference: billingPreference,
+                                    is_addon: true,
+                                    addon_type: 'starter',
+                                  }
+                                );
+                              } else {
+                                trackEvent('remove_from_cart', {
+                                  item_id: 'starter-addon',
+                                  item_name: 'Puppy / Kitten Add-on',
+                                  pet_id: pet?.id,
+                                  pet_name: pet?.name,
+                                });
+                              }
+                              
+                              return !prev;
+                            });
                           }}
                           style={{ alignSelf: 'flex-end', marginTop: 'auto', background: '#4FB128', color: '#fff' }}
                         >
@@ -1948,7 +2054,39 @@ export default function MembershipSignup() {
                         setToast(`Please select ${primaryPlanName} first`);
                         return;
                       }
-                      setPlusExplicit((prev) => !prev);
+                      setPlusExplicit((prev) => {
+                        const isAdding = !prev;
+                        
+                        // Track add to cart / remove from cart
+                        if (isAdding) {
+                          // Get price based on billing preference
+                          const price = billingPreference === 'annual' && selectedPlanExplicit !== 'comfort-care' ? 529 : 49;
+                          trackAddToCart(
+                            'plus-addon',
+                            'PLUS Add-on',
+                            price,
+                            'USD',
+                            1,
+                            {
+                              pet_id: pet?.id,
+                              pet_name: pet?.name,
+                              pet_species: petDetails.kind,
+                              billing_preference: billingPreference,
+                              is_addon: true,
+                              addon_type: 'plus',
+                            }
+                          );
+                        } else {
+                          trackEvent('remove_from_cart', {
+                            item_id: 'plus-addon',
+                            item_name: 'PLUS Add-on',
+                            pet_id: pet?.id,
+                            pet_name: pet?.name,
+                          });
+                        }
+                        
+                        return !prev;
+                      });
                     }}
                     style={{ alignSelf: 'flex-end', marginTop: 'auto', background: '#4FB128', color: '#fff' }}
                   >

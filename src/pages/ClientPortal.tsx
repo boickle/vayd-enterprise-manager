@@ -20,6 +20,7 @@ import { http } from '../api/http';
 import { uploadPetImage } from '../api/patients';
 import VaccinationCertificateModal from '../components/VaccinationCertificateModal';
 import { updateCommunicationPreferences, getCurrentUser } from '../api/users';
+import { trackEvent } from '../utils/analytics';
 
 type PetWithWellness = Pet & {
   wellnessPlans?: WellnessPlan[];
@@ -683,6 +684,17 @@ export default function ClientPortal() {
     if (!pet.id) {
       return;
     }
+    
+    // Track explore memberships click
+    trackEvent('membership_explore_clicked', {
+      pet_id: pet.id,
+      pet_name: pet.name || 'Unknown',
+      pet_species: pet.species || pet.breed || 'Unknown',
+      pet_age_years: pet.dob ? ((Date.now() - new Date(pet.dob).getTime()) / (1000 * 60 * 60 * 24 * 365.25)).toFixed(1) : null,
+      has_membership: pet.membershipStatus ? true : false,
+      membership_status: pet.membershipStatus || 'none',
+    });
+    
     navigate('/client-portal/membership-signup', { state: { petId: pet.id } });
   }
 
