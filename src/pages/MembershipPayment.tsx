@@ -9,6 +9,7 @@ import {
   type MembershipUpgradeRequest,
 } from '../api/payments';
 import { useAuth } from '../auth/useAuth';
+import { trackPurchase } from '../utils/analytics';
 
 declare global {
   interface Window {
@@ -253,6 +254,28 @@ export default function MembershipPayment() {
           throw new Error(upgradeResponse.message || 'Upgrade was not successful.');
         }
 
+        // Track purchase completion for upgrade
+        const upgradeTransactionId = `upgrade-${Date.now()}-${state.patientId}`;
+        const upgradeItems = state.selectedUpgrades?.map((upgrade) => ({
+          item_id: upgrade.planId,
+          item_name: upgrade.planName,
+          price: upgrade.price,
+          quantity: 1,
+        })) || [];
+
+        trackPurchase(
+          upgradeTransactionId,
+          state.amountCents / 100,
+          state.currency,
+          upgradeItems,
+          {
+            pet_id: state.petId,
+            pet_name: state.petName,
+            is_upgrade: true,
+            upgrade_type: 'membership_upgrade',
+          }
+        );
+
         setEnrollmentComplete(true);
         return;
       }
@@ -308,6 +331,40 @@ export default function MembershipPayment() {
       if (!payment.success) {
         throw new Error(payment.status || 'Payment was not successful.');
       }
+
+      // Track purchase completion
+      const transactionId = payment.providerPaymentId || 
+                           payment.providerResponse?.payment?.id || 
+                           payment.providerResponse?.id ||
+                           `membership-${Date.now()}`;
+      
+      const purchaseItems = state.costSummary?.items.map((item) => {
+        const price = state.billingPreference === 'annual' && item.annual != null
+          ? item.annual
+          : item.monthly ?? 0;
+        return {
+          item_id: item.label.toLowerCase().replace(/\s+/g, '-'),
+          item_name: item.label,
+          price: price,
+          quantity: 1,
+        };
+      }) || [];
+
+      trackPurchase(
+        transactionId,
+        state.amountCents / 100,
+        state.currency,
+        purchaseItems,
+        {
+          pet_id: state.petId,
+          pet_name: state.petName,
+          plan_name: state.planName,
+          billing_preference: state.billingPreference,
+          addons: state.addOns || [],
+          has_addons: (state.addOns?.length || 0) > 0,
+          is_upgrade: state.isUpgrade || false,
+        }
+      );
 
       setEnrollmentComplete(true);
     } catch (err: any) {
