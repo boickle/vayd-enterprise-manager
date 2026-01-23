@@ -21,6 +21,7 @@ import { uploadPetImage } from '../api/patients';
 import VaccinationCertificateModal from '../components/VaccinationCertificateModal';
 import { updateCommunicationPreferences, getCurrentUser } from '../api/users';
 import { trackEvent } from '../utils/analytics';
+import { getAppointmentCancellationStatus, requestAppointmentCancellation, type CancellationStatus } from '../api/appointments';
 
 type PetWithWellness = Pet & {
   wellnessPlans?: WellnessPlan[];
@@ -211,6 +212,10 @@ export default function ClientPortal() {
   const [allowEmail, setAllowEmail] = useState<boolean | null>(null);
   const [allowText, setAllowText] = useState<boolean | null>(null);
   const [savingPreferences, setSavingPreferences] = useState(false);
+  const [cancellationStatuses, setCancellationStatuses] = useState<Map<string | number, CancellationStatus>>(new Map());
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [appointmentToCancel, setAppointmentToCancel] = useState<ClientAppointment | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   // Fetch client info if not available in auth context
   useEffect(() => {
@@ -367,10 +372,34 @@ export default function ClientPortal() {
         );
 
         setPets(petsWithWellness);
-        setAppts([...a].sort((x, y) => +new Date(x.startIso) - +new Date(y.startIso)));
+        const sortedAppts = [...a].sort((x, y) => +new Date(x.startIso) - +new Date(y.startIso));
+        setAppts(sortedAppts);
         setReminders(
           [...r].sort((x, y) => Date.parse(x.dueIso ?? '') - Date.parse(y.dueIso ?? ''))
         );
+
+        // Fetch cancellation statuses for upcoming appointments
+        if (alive) {
+          const now = Date.now();
+          const upcoming = sortedAppts.filter((apt) => new Date(apt.startIso).getTime() >= now);
+          const statusPromises = upcoming.map(async (apt) => {
+            try {
+              const status = await getAppointmentCancellationStatus(apt.id);
+              return { id: apt.id, status };
+            } catch (err) {
+              console.warn(`Failed to fetch cancellation status for appointment ${apt.id}:`, err);
+              return { id: apt.id, status: { hasCancellation: false, cancellationDetails: null } };
+            }
+          });
+          const statuses = await Promise.all(statusPromises);
+          if (alive) {
+            const statusMap = new Map<string | number, CancellationStatus>();
+            statuses.forEach(({ id, status }) => {
+              statusMap.set(id, status);
+            });
+            setCancellationStatuses(statusMap);
+          }
+        }
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message || 'Failed to load your portal.');
@@ -1023,6 +1052,53 @@ export default function ClientPortal() {
     }
   }
 
+  function handleCancelClick(appointment: ClientAppointment) {
+    setAppointmentToCancel(appointment);
+    setShowCancelModal(true);
+  }
+
+  async function handleConfirmCancel() {
+    if (!appointmentToCancel) return;
+    
+    setCancelling(true);
+    try {
+      await requestAppointmentCancellation(appointmentToCancel.id);
+      
+      // Update cancellation status
+      const newStatus: CancellationStatus = {
+        hasCancellation: true,
+        cancellationDetails: {
+          sentAt: new Date().toISOString(),
+          status: 'sent',
+          clientId: Number(appointmentToCancel.clientId) || 0,
+          patientId: Number(appointmentToCancel.patientPimsId) || 0,
+        },
+      };
+      
+      setCancellationStatuses((prev) => {
+        const updated = new Map(prev);
+        updated.set(appointmentToCancel.id, newStatus);
+        return updated;
+      });
+      
+      setShowCancelModal(false);
+      setAppointmentToCancel(null);
+    } catch (err) {
+      console.error('Failed to cancel appointment:', err);
+      setErrorModalMessage('Failed to cancel appointment. Please try again.');
+      setShowErrorModal(true);
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  function handleCancelModalClose() {
+    if (!cancelling) {
+      setShowCancelModal(false);
+      setAppointmentToCancel(null);
+    }
+  }
+
   return (
     <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px', width: '100%' }}>
 
@@ -1043,7 +1119,7 @@ export default function ClientPortal() {
         .cp-pet-img { height: 120px; border-radius: 16px; border: 1px solid rgba(0, 0, 0, 0.06); }
         .cp-appt-row, .cp-rem-row {
           display: grid;
-          grid-template-columns: 1fr 1fr;
+          grid-template-columns: 1fr 1fr auto;
           gap: 10px;
           align-items: center;
           padding: 10px 12px;
@@ -1112,7 +1188,7 @@ export default function ClientPortal() {
           h1.cp-title { font-size: 32px; }
           .cp-hero-inner { padding: 32px 28px; min-height: 220px; }
           .cp-appt-row {
-            grid-template-columns: 160px 1fr 1fr 1fr 120px; /* time | pet | type | addr | status */
+            grid-template-columns: 160px 1fr 1fr 1fr 120px auto; /* time | pet | type | addr | status | cancel */
           }
           .cp-rem-row {
             grid-template-columns: 140px 1fr 1fr 120px; /* date | pet | desc | status */
@@ -2442,37 +2518,72 @@ export default function ClientPortal() {
                     </div>
 
                     <div className="cp-grid-gap" style={{ marginTop: 10 }}>
-                      {items.map((a) => (
-                        <div
-                          key={a.id}
-                          className="cp-card"
-                          style={{ padding: 0, overflow: 'hidden' }}
-                        >
-                          <div className="cp-appt-row">
-                            <div style={{ fontWeight: 600 }}>{fmtDateTime(a.startIso)}</div>
-                            <div className="cp-muted">
-                              <strong>{a.patientName ?? '—'}</strong>
-                            </div>
-                            <div className="cp-muted cp-hide-xs">
-                              {a.appointmentTypeName ??
-                                (typeof a.appointmentType === 'string'
-                                  ? a.appointmentType
-                                  : a.appointmentType?.name) ??
-                                '—'}
-                            </div>
-                            <div
-                              className="cp-muted cp-hide-xs"
-                              style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
-                            >
-                              {[a.address1, a.city, a.state, a.zip].filter(Boolean).join(', ') ||
-                                '—'}
-                            </div>
-                            <div className="cp-muted cp-hide-xs" style={{ textAlign: 'right' }}>
-                              {a.statusName ?? '—'}
+                      {items.map((a) => {
+                        const cancellationStatus = cancellationStatuses.get(a.id);
+                        const hasCancellation = cancellationStatus?.hasCancellation ?? false;
+                        
+                        return (
+                          <div
+                            key={a.id}
+                            className="cp-card"
+                            style={{ padding: 0, overflow: 'hidden' }}
+                          >
+                            <div className="cp-appt-row">
+                              <div style={{ fontWeight: 600 }}>{fmtDateTime(a.startIso)}</div>
+                              <div className="cp-muted">
+                                <strong>{a.patientName ?? '—'}</strong>
+                              </div>
+                              <div className="cp-muted cp-hide-xs">
+                                {a.appointmentTypeName ??
+                                  (typeof a.appointmentType === 'string'
+                                    ? a.appointmentType
+                                    : a.appointmentType?.name) ??
+                                  '—'}
+                              </div>
+                              <div
+                                className="cp-muted cp-hide-xs"
+                                style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
+                              >
+                                {[a.address1, a.city, a.state, a.zip].filter(Boolean).join(', ') ||
+                                  '—'}
+                              </div>
+                              <div className="cp-muted cp-hide-xs" style={{ textAlign: 'right' }}>
+                                {a.statusName ?? '—'}
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                <button
+                                  onClick={() => handleCancelClick(a)}
+                                  disabled={hasCancellation}
+                                  style={{
+                                    padding: '6px 12px',
+                                    fontSize: 13,
+                                    fontWeight: 500,
+                                    border: '1px solid #dc2626',
+                                    borderRadius: 6,
+                                    background: hasCancellation ? '#f3f4f6' : '#fff',
+                                    color: hasCancellation ? '#6b7280' : '#dc2626',
+                                    cursor: hasCancellation ? 'not-allowed' : 'pointer',
+                                    transition: 'all 0.2s',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    if (!hasCancellation) {
+                                      e.currentTarget.style.background = '#fee2e2';
+                                    }
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    if (!hasCancellation) {
+                                      e.currentTarget.style.background = '#fff';
+                                    }
+                                  }}
+                                >
+                                  {hasCancellation ? 'Cancellation Requested' : 'Cancel'}
+                                </button>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ))}
@@ -2549,6 +2660,106 @@ export default function ClientPortal() {
                     }}
                   >
                     OK
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Cancellation Confirmation Modal */}
+          {showCancelModal && appointmentToCancel && (
+            <div
+              style={{
+                position: 'fixed',
+                inset: 0,
+                backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 10000,
+                padding: '20px',
+              }}
+              onClick={handleCancelModalClose}
+            >
+              <div
+                className="cp-card"
+                style={{
+                  maxWidth: '500px',
+                  width: '100%',
+                  padding: '24px',
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                  <h2 className="cp-h2" style={{ margin: 0 }}>
+                    Cancel Appointment
+                  </h2>
+                  <button
+                    onClick={handleCancelModalClose}
+                    disabled={cancelling}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      fontSize: 24,
+                      cursor: cancelling ? 'not-allowed' : 'pointer',
+                      color: '#6b7280',
+                      padding: '0 8px',
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div style={{ color: '#374151', lineHeight: 1.6, marginBottom: 24 }}>
+                  <p>Are you sure you want to cancel this appointment?</p>
+                  <div style={{ marginTop: 12, padding: 12, background: '#f9fafb', borderRadius: 8 }}>
+                    <div style={{ marginBottom: 4 }}>
+                      <strong>Date & Time:</strong> {fmtDateTime(appointmentToCancel.startIso)}
+                    </div>
+                    <div style={{ marginBottom: 4 }}>
+                      <strong>Patient:</strong> {appointmentToCancel.patientName ?? '—'}
+                    </div>
+                    <div>
+                      <strong>Type:</strong>{' '}
+                      {appointmentToCancel.appointmentTypeName ??
+                        (typeof appointmentToCancel.appointmentType === 'string'
+                          ? appointmentToCancel.appointmentType
+                          : appointmentToCancel.appointmentType?.name) ??
+                        '—'}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+                  <button
+                    onClick={handleCancelModalClose}
+                    disabled={cancelling}
+                    style={{
+                      background: '#f3f4f6',
+                      color: '#374151',
+                      border: 'none',
+                      padding: '10px 24px',
+                      borderRadius: '8px',
+                      cursor: cancelling ? 'not-allowed' : 'pointer',
+                      fontSize: 14,
+                      fontWeight: 600,
+                    }}
+                  >
+                    No, Keep Appointment
+                  </button>
+                  <button
+                    onClick={handleConfirmCancel}
+                    disabled={cancelling}
+                    style={{
+                      background: cancelling ? '#9ca3af' : '#dc2626',
+                      color: '#fff',
+                      border: 'none',
+                      padding: '10px 24px',
+                      borderRadius: '8px',
+                      cursor: cancelling ? 'not-allowed' : 'pointer',
+                      fontSize: 14,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {cancelling ? 'Cancelling...' : 'Yes, Cancel Appointment'}
                   </button>
                 </div>
               </div>

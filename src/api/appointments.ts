@@ -232,3 +232,41 @@ export async function fetchDoctorMonth(
     days,
   };
 }
+
+/* =========================
+   Appointment Cancellation API
+   ========================= */
+
+export type CancellationStatus = {
+  hasCancellation: boolean;
+  cancellationDetails?: {
+    sentAt: string;
+    status: string;
+    clientId: number;
+    patientId: number;
+  } | null;
+};
+
+/**
+ * Check if an appointment has a cancellation request
+ * GET /appointments/:id/cancellation-status
+ */
+export async function getAppointmentCancellationStatus(
+  appointmentId: string | number
+): Promise<CancellationStatus> {
+  const { data } = await http.get(`/appointments/${encodeURIComponent(appointmentId)}/cancellation-status`);
+  return {
+    hasCancellation: data?.hasCancellation ?? false,
+    cancellationDetails: data?.cancellationDetails ?? null,
+  };
+}
+
+/**
+ * Request cancellation for an appointment
+ * POST /appointments/:id/request-cancellation
+ */
+export async function requestAppointmentCancellation(
+  appointmentId: string | number
+): Promise<void> {
+  await http.post(`/appointments/${encodeURIComponent(appointmentId)}/request-cancellation`);
+}
