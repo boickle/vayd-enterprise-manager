@@ -36,9 +36,9 @@ export default function UserMenu() {
     }
   }, [isOpen]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     setIsOpen(false);
-    logout();
+    await logout();
     nav('/login');
   };
 
