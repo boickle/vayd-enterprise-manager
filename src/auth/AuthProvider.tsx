@@ -186,13 +186,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [tokenState, userId]);
 
   useEffect(() => {
+    console.log('[AuthProvider] 🔧 useEffect: tokenState changed, calling setToken(), tokenState:', tokenState ? 'has token' : 'null');
     setToken(tokenState);
   }, [tokenState]);
 
-  // Listen for storage changes across tabs
+  // Listen for storage changes across tabs and token refresh events
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
+      console.log('[AuthProvider] 📦 Storage event:', e.key, e.newValue ? 'has value' : 'null');
       if (e.key === 'accessToken' || e.key === 'vayd_token') {
+        console.log('[AuthProvider] 📦 Updating tokenState from storage event');
         setTokenState(e.newValue);
       } else if (e.key === 'vayd_email') {
         setEmail(e.newValue);
@@ -204,8 +207,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } catch {}
       }
     };
+    
+    // Listen for custom token refresh events (for same-tab token updates)
+    const handleTokenRefresh = (e: CustomEvent) => {
+      const newToken = (e as any).detail?.accessToken;
+      console.log('[AuthProvider] 🔄 tokenRefreshed event received, has token:', !!newToken);
+      if (newToken) {
+        // Update token state from localStorage (in case the event fired before localStorage update)
+        const storedToken = localStorage.getItem('accessToken');
+        console.log('[AuthProvider] 🔄 Updating tokenState from tokenRefreshed event, storedToken:', !!storedToken);
+        if (storedToken) {
+          setTokenState(storedToken);
+        }
+      }
+    };
+    
     window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
+    window.addEventListener('tokenRefreshed', handleTokenRefresh as EventListener);
+    
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('tokenRefreshed', handleTokenRefresh as EventListener);
+    };
   }, []);
 
   useEffect(() => {
