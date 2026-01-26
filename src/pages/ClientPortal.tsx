@@ -1446,8 +1446,8 @@ export default function ClientPortal() {
           </button>
           <button
             className="cp-menu-item"
-            onClick={() => {
-              logout();
+            onClick={async () => {
+              await logout();
               navigate('/login');
               setMenuOpen(false);
             }}

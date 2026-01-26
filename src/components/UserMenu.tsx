@@ -39,9 +39,9 @@ export default function UserMenu({ pages = [] }: { pages?: Page[] }) {
     }
   }, [isOpen]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     setIsOpen(false);
-    logout();
+    await logout();
     nav('/login');
   };
 
