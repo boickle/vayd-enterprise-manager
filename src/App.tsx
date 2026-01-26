@@ -245,11 +245,11 @@ export default function App() {
             </span>
           </div>
 
-          {/* Tabs only for employees */}
+          {/* Tabs only for employees - hidden on mobile, shown in UserMenu */}
           {token && !isClient && <AppTabs pages={pages} />}
 
           <div className="spacer" />
-          {token && <UserMenu />}
+          {token && <UserMenu pages={isClient ? [] : pages} />}
         </header>
       )}
 
