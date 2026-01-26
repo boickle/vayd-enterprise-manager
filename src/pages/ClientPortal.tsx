@@ -1176,6 +1176,15 @@ export default function ClientPortal() {
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         transition: all 0.2s;
       }
+      /* Push hamburger menu down on mobile to avoid status bar */
+      @media (max-width: 768px) {
+        .cp-hamburger-button {
+          top: calc(env(safe-area-inset-top, 0px) + 0px);
+        }
+        .cp-menu-dropdown {
+          top: calc(env(safe-area-inset-top, 0px) + 96px) !important;
+        }
+      }
       .cp-hamburger-button:hover {
         background: rgba(255, 255, 255, 1);
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
