@@ -176,9 +176,8 @@ export default function FillDayPage() {
             doctorId: doctorId,
             targetDate: urlTargetDate,
             ignoreEmergencyBlocks,
-            // Always include overtime (120 min, afterHoursOk)
-            returnToDepot: 'afterHoursOk' as const,
-            tailOvertimeMinutes: 120 as const,
+            returnToDepot: 'optional' as const,
+            tailOvertimeMinutes: 0 as const,
           };
 
           const response = await fetchFillDayCandidates(request);
@@ -231,9 +230,8 @@ export default function FillDayPage() {
         doctorId: selectedDoctorId,
         targetDate,
         ignoreEmergencyBlocks,
-        // Always include overtime (120 min, afterHoursOk)
-        returnToDepot: 'afterHoursOk' as const,
-        tailOvertimeMinutes: 120 as const,
+        returnToDepot: 'optional' as const,
+        tailOvertimeMinutes: 0 as const,
       };
 
       const response = await fetchFillDayCandidates(request);
