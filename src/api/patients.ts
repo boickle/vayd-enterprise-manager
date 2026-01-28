@@ -95,3 +95,117 @@ export async function getPetImageUrl(
   const response = await http.get(`/patients/${patientId}/image`);
   return response.data;
 }
+
+// ---------------------------
+// Medical Record
+// ---------------------------
+
+export type MedicalRecordPatient = {
+  id: number;
+  created?: string;
+  updated?: string;
+  externalCreated?: string;
+  externalUpdated?: string;
+  isActive?: boolean;
+  pimsId?: string;
+  pimsType?: string;
+  isDeleted?: boolean;
+  dob?: string;
+  name: string;
+  breed?: string;
+  color?: string;
+  weight?: string;
+  species?: string;
+  sex?: string;
+  alerts?: string | null;
+  imageUrl?: string;
+};
+
+export type MedicalRecordPractice = {
+  id: number;
+  name?: string;
+  address1?: string;
+  address2?: string | null;
+  city?: string;
+  state?: string;
+  zipcode?: string;
+  phone1?: string;
+  phone2?: string;
+  hoursOfOperation?: Record<string, { open: string; close: string } | null>;
+  [key: string]: unknown;
+};
+
+export type MedicalRecordEntity = {
+  id: number;
+  pimsId?: string;
+  pimsType?: string;
+  [key: string]: unknown;
+};
+
+export type LabOrderOrder = {
+  id: number;
+  pimsId?: string;
+  submittedDate?: string;
+  orderStatusValue?: number;
+  labOrderType?: string;
+  externalId?: string | null;
+  isCritical?: boolean;
+  notes?: string;
+  [key: string]: unknown;
+};
+
+export type LabOrderResult = {
+  id: number;
+  reportDate?: string;
+  externalData?: string | null; // XML string for IDEXX etc.
+  comments?: string | null;
+  viewed?: boolean;
+  viewedDate?: string;
+  [key: string]: unknown;
+};
+
+export type LabOrderEntry = {
+  order: LabOrderOrder;
+  result?: LabOrderResult | null;
+};
+
+export type MedicalRecordMedication = {
+  id: number;
+  dateOfService?: string;
+  name: string;
+  isActive?: boolean;
+  treatmentItem?: { quantity?: string; price?: string; serviceDate?: string; [key: string]: unknown };
+  [key: string]: unknown;
+};
+
+export type MedicalRecordExam = {
+  id: number;
+  formName?: string;
+  serviceDate?: string;
+  employee?: { firstName?: string; lastName?: string; [key: string]: unknown };
+  [key: string]: unknown;
+};
+
+export type MedicalRecordResponse = {
+  patient: MedicalRecordPatient;
+  practice: MedicalRecordPractice;
+  medicalRecord: MedicalRecordEntity;
+  labOrders: LabOrderEntry[];
+  complaints: unknown[];
+  diagnoses: unknown[];
+  medications: MedicalRecordMedication[];
+  imagingStudies: unknown[];
+  dentalCharts: unknown[];
+  anestheticMonitorForms: unknown[];
+  exams: MedicalRecordExam[];
+  histories: unknown[];
+};
+
+export async function fetchMedicalRecord(
+  patientId: string | number
+): Promise<MedicalRecordResponse> {
+  const { data } = await http.get<MedicalRecordResponse>(
+    `/patients/${patientId}/medical-record`
+  );
+  return data;
+}
