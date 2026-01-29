@@ -30,6 +30,7 @@ export type Employee = {
   title?: string;
   designation?: string;
   isProvider?: boolean;
+  imageUrl?: string | null;
   appointmentTypes: AppointmentType[];
   weeklySchedules: EmployeeWeeklySchedule[];
   practice?: {
@@ -173,6 +174,36 @@ export async function fetchAllEmployees(): Promise<Employee[]> {
 export async function fetchAllZones(): Promise<Zone[]> {
   const { data } = await http.get('/zones');
   return Array.isArray(data) ? data : (data?.items ?? []);
+}
+
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
+
+/**
+ * Upload or replace an employee's profile image.
+ * POST /employees/:employeeId/image
+ * Body: multipart/form-data with one file under field name "file"
+ * Allowed: JPEG, JPG, PNG, GIF, WebP. Max 5MB.
+ */
+export async function uploadEmployeeImage(
+  employeeId: number,
+  file: File
+): Promise<{ success: boolean; imageUrl: string; s3Key: string }> {
+  const lower = file.type?.toLowerCase() ?? '';
+  const allowed = ALLOWED_IMAGE_TYPES.some((t) => t === lower) || /\.(jpe?g|png|gif|webp)$/i.test(file.name);
+  if (!allowed) {
+    throw new Error('Allowed types: JPEG, JPG, PNG, GIF, WebP');
+  }
+  if (file.size > MAX_IMAGE_SIZE_BYTES) {
+    throw new Error('Max file size is 5MB');
+  }
+  const form = new FormData();
+  form.append('file', file);
+  const { data } = await http.post<{ success: boolean; imageUrl: string; s3Key: string }>(
+    `/employees/${employeeId}/image`,
+    form
+  );
+  return data;
 }
 
 

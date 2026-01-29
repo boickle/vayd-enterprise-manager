@@ -1,7 +1,8 @@
 // src/api/http.ts
 import axios, { AxiosError, AxiosHeaders, AxiosRequestHeaders, InternalAxiosRequestConfig } from 'axios';
 
-const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+export const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+const baseURL = apiBaseUrl;
 
 // Initialize token from localStorage on module load
 // Support both old token format and new accessToken format for migration

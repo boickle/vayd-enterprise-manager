@@ -11,8 +11,10 @@ import MyMonth from './pages/MyMonth.';
 import MyDayToggle from './pages/MyDayToggle';
 import FillDayPage from './pages/FillDay';
 import Settings from './pages/Settings';
+import SurveyResponsesPage from './pages/SurveyResponses';
+import SurveyResults from './pages/SurveyResults';
+import Admin from './pages/Admin';
 
-// src/app-pages.ts
 export type AppPage = {
   path: string;
   label: string;
@@ -20,6 +22,8 @@ export type AppPage = {
   permission?: string;
   icon?: React.ReactNode;
   role?: string | string[];
+  /** If false, page is only reachable via Admin tab (not in main tab bar). Default true. */
+  showInMainTabs?: boolean;
 };
 
 function matchesRole(required: AppPage['role'], userRoles?: string[]) {
@@ -54,11 +58,19 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       role: ['employee', 'admin'],
     },
     {
+      path: '/admin',
+      label: 'Admin',
+      element: <Admin />,
+      role: ['admin', 'superadmin'],
+      showInMainTabs: true,
+    },
+    {
       path: '/users/create',
       label: 'Create User',
       element: <CreateUser />,
       permission: 'canManageUsers',
       role: ['superadmin'],
+      showInMainTabs: false,
     },
     {
       path: '/analytics/payments',
@@ -66,6 +78,7 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       element: <PaymentsAnalyticsPage />,
       permission: 'canSeePaymentsAnalytics',
       role: ['admin', 'superadmin'],
+      showInMainTabs: false,
     },
     {
       path: '/analytics/ops',
@@ -73,6 +86,7 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       element: <OpsAnalyticsPage />,
       permission: 'canSeeOpsAnalytics',
       role: ['admin'],
+      showInMainTabs: false,
     },
     {
       path: '/analytics/revenue/doctor',
@@ -80,6 +94,7 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       element: <DoctorRevenueAnalyticsPage />,
       permission: 'canSeeDoctorAnalytics',
       role: ['admin'],
+      showInMainTabs: false,
     },
     {
       path: '/audit',
@@ -87,6 +102,7 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       element: <AuditAdminPage />,
       permission: 'superadmin',
       role: 'superadmin',
+      showInMainTabs: false,
     },
     {
       path: '/simulation',
@@ -94,6 +110,7 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       element: <SimResults />,
       permission: 'superadmin',
       role: 'superadmin',
+      showInMainTabs: false,
     },
     {
       path: '/schedule-loader',
@@ -106,6 +123,21 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       label: 'Settings',
       element: <Settings />,
       role: ['admin', 'superadmin'],
+      showInMainTabs: false,
+    },
+    {
+      path: '/survey/responses',
+      label: 'Survey Responses',
+      element: <SurveyResponsesPage />,
+      role: ['admin', 'superadmin'],
+      showInMainTabs: false,
+    },
+    {
+      path: '/survey/results',
+      label: 'Survey Results',
+      element: <SurveyResults />,
+      role: ['admin', 'superadmin'],
+      showInMainTabs: false,
     },
   ];
 

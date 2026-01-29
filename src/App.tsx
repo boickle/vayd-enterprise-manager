@@ -24,6 +24,7 @@ import MembershipSignup from './pages/MembershipSignup';
 import MembershipPayment from './pages/MembershipPayment';
 import MembershipUpgrade from './pages/MembershipUpgrade';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
+import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
 import { usePageTracking } from './hooks/usePageTracking';
 
 /**
@@ -78,10 +79,13 @@ function RouteGuard() {
     '/routing',
     '/doctor',
     '/doctormonth',
+    '/admin',
     '/users/create',
     '/analytics/payments',
     '/analytics/ops',
     '/analytics/revenue/doctor',
+    '/survey/responses',
+    '/survey/results',
     '/audit',
     '/simulation',
     '/schedule-loader',
@@ -195,10 +199,15 @@ export default function App() {
     return roles.includes('client');
   }, [roles]);
 
-  // Compute employee pages if NOT a client
+  // Compute employee pages if NOT a client (all accessible pages for routing)
   const pages = useMemo(
     () => (isClient ? [] : getAccessiblePages(abilities, roles)),
     [abilities, roles, isClient]
+  );
+  // Main tab bar: only pages with showInMainTabs !== false
+  const mainTabPages = useMemo(
+    () => pages.filter((p: { showInMainTabs?: boolean }) => p.showInMainTabs !== false),
+    [pages]
   );
 
   // If a client lands on "/" or "/home", redirect to client portal
@@ -219,7 +228,8 @@ export default function App() {
         location.pathname !== '/login' &&
         location.pathname !== '/create-client' &&
         location.pathname !== '/reset-password' &&
-        location.pathname !== '/request-reset' && (
+        location.pathname !== '/request-reset' &&
+        !location.pathname.startsWith('/survey/post-appointment') && (
         <header className="navbar">
           <div className="brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <img
@@ -246,10 +256,10 @@ export default function App() {
           </div>
 
           {/* Tabs only for employees - hidden on mobile, shown in UserMenu */}
-          {token && !isClient && <AppTabs pages={pages} />}
+          {token && !isClient && <AppTabs pages={mainTabPages} />}
 
           <div className="spacer" />
-          {token && <UserMenu pages={isClient ? [] : pages} />}
+          {token && <UserMenu pages={isClient ? [] : mainTabPages} />}
         </header>
       )}
 
@@ -320,6 +330,10 @@ export default function App() {
             path="/client-portal/request-appointment"
             element={<AppointmentRequestForm />}
           />
+
+          {/* Public survey (no login) – exact path and any subpath (e.g. duplicate path in email link) */}
+          <Route path="/survey/post-appointment" element={<PostAppointmentSurvey />} />
+          <Route path="/survey/post-appointment/*" element={<PostAppointmentSurvey />} />
 
           {/* Employees only: keep these pages alive across tab switches */}
           {!isClient && (

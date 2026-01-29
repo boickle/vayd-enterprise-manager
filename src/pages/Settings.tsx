@@ -10,12 +10,21 @@ import {
   updateEmployeeScheduleZones,
   updateAppointmentType,
   updateWeeklySchedule,
+  uploadEmployeeImage,
   type AppointmentType,
   type Employee,
   type EmployeeWeeklySchedule,
   type Zone,
 } from '../api/appointmentSettings';
+import { apiBaseUrl } from '../api/http';
 import './Settings.css';
+
+/** Placeholder when GET /employees/:id/image returns 404 or fails */
+const EMPLOYEE_IMAGE_PLACEHOLDER =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80"><rect width="80" height="80" fill="#e4efe9"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#4b7c6a" font-size="11">No photo</text></svg>'
+  );
 
 // Helper function to format employee name with title and designation
 function formatEmployeeName(emp: Employee): string {
@@ -32,7 +41,7 @@ function formatEmployeeName(emp: Employee): string {
 
 export default function Settings() {
   const { role } = useAuth() as any;
-  const [activeTab, setActiveTab] = useState<'appointment-types' | 'employee-types' | 'employee-zones' | 'employee-schedule'>('appointment-types');
+  const [activeTab, setActiveTab] = useState<'appointment-types' | 'employee-types' | 'employee-zones' | 'employee-schedule' | 'employee-images'>('appointment-types');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +66,12 @@ export default function Settings() {
   const [selectedEmployeeForSchedule, setSelectedEmployeeForSchedule] = useState<Employee | null>(null);
   // Use composite key: `${employeeId}-${dayOfWeek}` since schedules might not have ids
   const [scheduleUpdates, setScheduleUpdates] = useState<Map<string, Partial<EmployeeWeeklySchedule>>>(new Map());
+
+  // Employee Images state
+  const [uploadingEmployeeId, setUploadingEmployeeId] = useState<number | null>(null);
+  const [imageUploadError, setImageUploadError] = useState<string | null>(null);
+  /** Bump per employee after upload so img src changes and browser reloads the image */
+  const [employeeImageVersion, setEmployeeImageVersion] = useState<Record<number, number>>({});
 
   // Normalize roles
   const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
@@ -436,6 +451,22 @@ export default function Settings() {
     });
   };
 
+  const handleUploadEmployeeImage = async (employeeId: number, file: File | null) => {
+    if (!file) return;
+    setUploadingEmployeeId(employeeId);
+    setImageUploadError(null);
+    try {
+      await uploadEmployeeImage(employeeId, file);
+      setEmployeeImageVersion((prev) => ({ ...prev, [employeeId]: Date.now() }));
+      setSuccess('Image updated successfully');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setImageUploadError(err?.response?.data?.message ?? err?.message ?? 'Failed to upload image');
+    } finally {
+      setUploadingEmployeeId(null);
+    }
+  };
+
   if (!isAdmin) {
     return (
       <div className="container">
@@ -478,6 +509,12 @@ export default function Settings() {
             onClick={() => setActiveTab('employee-schedule')}
           >
             Employee Schedule
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'employee-images' ? 'active' : ''}`}
+            onClick={() => setActiveTab('employee-images')}
+          >
+            Employee Images
           </button>
         </div>
 
@@ -892,6 +929,63 @@ export default function Settings() {
                 )}
               </>
             )}
+          </div>
+        )}
+
+        {/* Employee Images Tab */}
+        {activeTab === 'employee-images' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Employee Images</h2>
+            <p className="settings-section-description">
+              View and update profile images for each employee. These images can appear in the post-appointment survey and elsewhere. Allowed: JPEG, PNG, GIF, WebP. Max 5MB.
+            </p>
+
+            {imageUploadError && (
+              <div className="settings-message settings-error-message">
+                {imageUploadError}
+                <button onClick={() => setImageUploadError(null)} className="settings-close">×</button>
+              </div>
+            )}
+
+            <div className="settings-employee-images-list">
+              {sortedEmployees.map((emp) => (
+                <div key={emp.id} className="settings-employee-image-row">
+                  <div className="settings-employee-image-preview">
+                    <img
+                      src={`${apiBaseUrl}/employees/${emp.id}/image?t=${employeeImageVersion[emp.id] ?? 0}`}
+                      alt=""
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = EMPLOYEE_IMAGE_PLACEHOLDER;
+                      }}
+                    />
+                  </div>
+                  <div className="settings-employee-image-info">
+                    <strong>{formatEmployeeName(emp)}</strong>
+                  </div>
+                  <div className="settings-employee-image-upload">
+                    <label className={`settings-file-label ${uploadingEmployeeId === emp.id ? 'uploading' : ''}`}>
+                      <input
+                        type="file"
+                        accept=".jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp"
+                        className="settings-file-input"
+                        disabled={uploadingEmployeeId === emp.id}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            handleUploadEmployeeImage(emp.id, file);
+                          }
+                          e.target.value = '';
+                        }}
+                      />
+                      <span className="btn secondary">
+                        {uploadingEmployeeId === emp.id ? 'Uploading…' : 'Change image'}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
