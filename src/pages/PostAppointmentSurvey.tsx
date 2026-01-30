@@ -8,6 +8,7 @@ import {
   type SurveyFormQuestion,
   type SurveyFormSection,
   type SurveyAnswerInput,
+  type SurveyQuestionConfigShowWhen,
 } from '../api/survey';
 import { apiBaseUrl } from '../api/http';
 import './PostAppointmentSurvey.css';
@@ -20,6 +21,19 @@ const FALLBACK_IMAGE =
   );
 
 type Block = { order: number; type: 'section'; section: SurveyFormSection } | { order: number; type: 'question'; question: SurveyFormQuestion };
+
+/** True if question has no showWhen, or the referenced question's answer equals showWhen.value. */
+function isQuestionVisible(
+  question: SurveyFormQuestion,
+  answers: Record<string, string | string[]>
+): boolean {
+  const showWhen = (question.config as { showWhen?: SurveyQuestionConfigShowWhen })?.showWhen;
+  if (!showWhen) return true;
+  const ref = answers[showWhen.questionKey];
+  if (ref == null) return false;
+  const refStr = Array.isArray(ref) ? ref[0] : ref;
+  return String(refStr).trim() === String(showWhen.value).trim();
+}
 
 function buildOrderedBlocks(sections: SurveyFormSection[], questions: SurveyFormQuestion[]): Block[] {
   const blocks: Block[] = [
@@ -57,15 +71,9 @@ function addPageSectionBlocks(blocks: Block[]): Block[] {
   return out;
 }
 
-/** Sections that should be collapsible and collapsed by default (e.g. Veterinary Nurses) */
-function isCollapsibleSection(section: SurveyFormSection): boolean {
-  const id = (section.id ?? '').toLowerCase();
-  const title = (section.title ?? '').toLowerCase();
-  return (
-    id === 'veterinarynurses' ||
-    id === 'veterinarytechnicians' ||
-    /veterinary\s*(nurse|technician)/i.test(title)
-  );
+/** Sections that should be collapsible and collapsed by default. (Currently none; Veterinary Nurses is always expanded.) */
+function isCollapsibleSection(_section: SurveyFormSection): boolean {
+  return false;
 }
 
 type DisplayNode =
@@ -121,22 +129,28 @@ function QuestionScale({
         {question.questionText}
         {question.required && <span className="survey-required"> *</span>}
       </p>
-      <div className="survey-scale-labels">
-        <span>{fromText}</span>
-        <span>{toText}</span>
-      </div>
-      <div className="survey-scale-options" role="group" aria-label={question.questionText}>
-        {options.map((n) => (
-          <label key={n} className="survey-scale-option">
-            <input
-              type="radio"
-              name={question.questionKey}
-              value={String(n)}
-              checked={value === String(n)}
-              onChange={() => onChange(String(n))}
-            />
-            <span>{n}</span>
-          </label>
+      <div
+        className="survey-scale-row"
+        style={{ gridTemplateColumns: `repeat(${options.length}, 1fr)` }}
+        role="group"
+        aria-label={question.questionText}
+      >
+        {options.map((n, idx) => (
+          <div key={n} className="survey-scale-cell">
+            <span className="survey-scale-label-top">
+              {idx === 0 ? fromText : idx === options.length - 1 ? toText : ''}
+            </span>
+            <label className="survey-scale-option">
+              <input
+                type="radio"
+                name={question.questionKey}
+                value={String(n)}
+                checked={value === String(n)}
+                onChange={() => onChange(String(n))}
+              />
+              <span>{n}</span>
+            </label>
+          </div>
         ))}
       </div>
     </div>
@@ -257,7 +271,6 @@ function QuestionImageChoice({
       <p className="survey-q-label">
         {question.questionText}
         {question.required && <span className="survey-required"> *</span>}
-        {multiple && <span className="survey-muted"> (select all that apply)</span>}
       </p>
       <div className="survey-image-grid" role="group" aria-label={question.questionText}>
         {options.map((opt) => (
@@ -450,10 +463,10 @@ export default function PostAppointmentSurvey() {
     setAnswers((prev) => ({ ...prev, [questionKey]: value }));
   };
 
-  /** Required question keys on a given page's blocks */
-  const getRequiredOnPage = (pageBlks: Block[]) => {
+  /** Required question keys on a given page's blocks (only for visible questions). */
+  const getRequiredOnPage = (pageBlks: Block[], ans: Record<string, string | string[]>) => {
     return pageBlks
-      .filter((b): b is Block & { type: 'question'; question: SurveyFormQuestion } => b.type === 'question' && b.question.required)
+      .filter((b): b is Block & { type: 'question'; question: SurveyFormQuestion } => b.type === 'question' && b.question.required && isQuestionVisible(b.question, ans))
       .map((b) => b.question.questionKey);
   };
 
@@ -465,14 +478,14 @@ export default function PostAppointmentSurvey() {
   };
 
   const validatePage = (pageIndex: number): boolean => {
-    const required = getRequiredOnPage(pageBlocks[pageIndex] ?? []);
+    const required = getRequiredOnPage(pageBlocks[pageIndex] ?? [], answers);
     return required.every((key) => isAnswered(key));
   };
 
   const validateAll = (): boolean => {
     if (!formData) return false;
     for (const q of formData.questions) {
-      if (q.required && !isAnswered(q.questionKey)) return false;
+      if (q.required && isQuestionVisible(q, answers) && !isAnswered(q.questionKey)) return false;
     }
     return true;
   };
@@ -499,13 +512,15 @@ export default function PostAppointmentSurvey() {
       setSubmitError('Please answer all required questions.');
       return;
     }
-    const answerList: SurveyAnswerInput[] = formData.questions.flatMap((q) => {
-      const raw = answers[q.questionKey];
-      if (raw == null) return [];
-      const values = Array.isArray(raw) ? raw : [raw];
-      const trimmed = values.map((v) => String(v).trim()).filter(Boolean);
-      return trimmed.map((value) => ({ questionKey: q.questionKey, value }));
-    });
+    const answerList: SurveyAnswerInput[] = formData.questions
+      .filter((q) => isQuestionVisible(q, answers))
+      .flatMap((q) => {
+        const raw = answers[q.questionKey];
+        if (raw == null) return [];
+        const values = Array.isArray(raw) ? raw : [raw];
+        const trimmed = values.map((v) => String(v).trim()).filter(Boolean);
+        return trimmed.map((value) => ({ questionKey: q.questionKey, value }));
+      });
 
     setState('submitting');
     setSubmitError(null);
@@ -599,6 +614,7 @@ export default function PostAppointmentSurvey() {
         </div>
       );
     }
+    if (!isQuestionVisible(block.question, answers)) return null;
     return (
       <SurveyQuestion
         key={`${keyPrefix}-q-${block.question.id}`}

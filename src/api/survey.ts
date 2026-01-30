@@ -42,6 +42,12 @@ export type SurveyQuestionConfigRadio = {
   options: string[];
 };
 
+/** Conditional visibility: show this question only when another question has exactly this value. */
+export type SurveyQuestionConfigShowWhen = {
+  questionKey: string;
+  value: string;
+};
+
 export type SurveyFormQuestion = {
   id: number;
   questionKey: string;
