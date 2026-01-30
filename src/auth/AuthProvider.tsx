@@ -8,6 +8,8 @@ const MOCK = import.meta.env.VITE_MOCK_AUTH === '1';
 
 export type LoginResult = {
   token?: string | null;
+  accessToken?: string | null;
+  refreshToken?: string | null;
   user?: {
     id?: number;
     email?: string;
@@ -27,15 +29,78 @@ type AuthContextType = {
   clientInfo: any | null; // Store client information for clients
   // ⬅️ now returns a LoginResult instead of void
   login: (email: string, password: string) => Promise<LoginResult>;
-  logout: () => void;
+  logout: () => Promise<void>;
+  logoutAll: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Helper function to extract role from JWT token
+function extractRoleFromToken(token: string | null): string[] {
+  if (!token) return [];
+  try {
+    const payload = decodeJwt(token);
+    if (!payload) return [];
+    
+    // Check multiple possible field names for role (common JWT claim variations)
+    let roleClaim = payload?.role ?? payload?.roles ?? payload?.userRole ?? payload?.user_role 
+      ?? payload?.UserRole ?? payload?.User_Role ?? payload?.authorities ?? payload?.authority ?? [];
+    
+    // If still not found, check if it's nested
+    if (!roleClaim && payload?.user) {
+      roleClaim = payload.user?.role ?? payload.user?.roles ?? [];
+    }
+    
+    // If still not found, check if it's a string with comma-separated roles
+    if (!roleClaim && typeof payload === 'object') {
+      // Check all keys for role-like patterns
+      const keys = Object.keys(payload);
+      for (const key of keys) {
+        if (key.toLowerCase().includes('role') || key.toLowerCase().includes('authority')) {
+          roleClaim = payload[key];
+          break;
+        }
+      }
+    }
+    
+    if (Array.isArray(roleClaim)) {
+      return roleClaim.map((r) => String(r).trim()).filter((r) => r.length > 0);
+    } else if (roleClaim) {
+      // Handle comma-separated or space-separated roles
+      const roleStr = String(roleClaim).trim();
+      if (roleStr.includes(',') || roleStr.includes(' ')) {
+        return roleStr.split(/[,\s]+/).map((r) => r.trim()).filter((r) => r.length > 0);
+      }
+      return [roleStr];
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+// Helper function to decode JWT
+function decodeJwt(token: string): any | null {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(jsonPayload);
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [tokenState, setTokenState] = useState<string | null>(() => {
     try {
-      return localStorage.getItem('vayd_token');
+      // Support both old token format and new accessToken format for migration
+      return localStorage.getItem('accessToken') || localStorage.getItem('vayd_token');
     } catch {
       return null;
     }
@@ -47,7 +112,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return null;
     }
   });
-  const [role, setRole] = useState<string[]>([]);
+  // Extract role immediately from token if available
+  const [role, setRole] = useState<string[]>(() => {
+    try {
+      const token = localStorage.getItem('accessToken') || localStorage.getItem('vayd_token');
+      const extractedRole = extractRoleFromToken(token);
+      // Debug: log JWT payload to help diagnose role extraction issues
+      if (token && extractedRole.length === 0) {
+        try {
+          const payload = decodeJwt(token);
+          console.log('[AuthProvider] JWT payload (for debugging):', payload);
+          console.log('[AuthProvider] Extracted role:', extractedRole);
+        } catch (e) {
+          // Ignore decode errors in debug
+        }
+      }
+      return extractedRole;
+    } catch {
+      return [];
+    }
+  });
   const [userId, setUserId] = useState<string | null>(() => {
     try {
       return localStorage.getItem('vayd_clientId');
@@ -67,9 +151,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setToken(tokenState);
     if (tokenState) {
+      // Extract role from JWT token
+      // Only update if we successfully extract a role (don't overwrite with empty array)
+      const extractedRole = extractRoleFromToken(tokenState);
+      if (extractedRole.length > 0) {
+        setRole(extractedRole);
+      }
+      
       const payload = decodeJwt(tokenState);
-      const roleClaim = payload?.role || [];
-      setRole(Array.isArray(roleClaim) ? roleClaim : [String(roleClaim)]);
       const claimedId =
         payload?.clientId ??
         payload?.client_id ??
@@ -97,13 +186,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [tokenState, userId]);
 
   useEffect(() => {
+    console.log('[AuthProvider] 🔧 useEffect: tokenState changed, calling setToken(), tokenState:', tokenState ? 'has token' : 'null');
     setToken(tokenState);
   }, [tokenState]);
 
-  // Listen for storage changes across tabs
+  // Listen for storage changes across tabs and token refresh events
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'vayd_token') {
+      console.log('[AuthProvider] 📦 Storage event:', e.key, e.newValue ? 'has value' : 'null');
+      if (e.key === 'accessToken' || e.key === 'vayd_token') {
+        console.log('[AuthProvider] 📦 Updating tokenState from storage event');
         setTokenState(e.newValue);
       } else if (e.key === 'vayd_email') {
         setEmail(e.newValue);
@@ -115,15 +207,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } catch {}
       }
     };
+    
+    // Listen for custom token refresh events (for same-tab token updates)
+    const handleTokenRefresh = (e: CustomEvent) => {
+      const newToken = (e as any).detail?.accessToken;
+      console.log('[AuthProvider] 🔄 tokenRefreshed event received, has token:', !!newToken);
+      if (newToken) {
+        // Update token state from localStorage (in case the event fired before localStorage update)
+        const storedToken = localStorage.getItem('accessToken');
+        console.log('[AuthProvider] 🔄 Updating tokenState from tokenRefreshed event, storedToken:', !!storedToken);
+        if (storedToken) {
+          setTokenState(storedToken);
+        }
+      }
+    };
+    
     window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
+    window.addEventListener('tokenRefreshed', handleTokenRefresh as EventListener);
+    
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('tokenRefreshed', handleTokenRefresh as EventListener);
+    };
   }, []);
 
   useEffect(() => {
     if (typeof setLogoutHandler === 'function') {
       setLogoutHandler(() => {
         try {
-          localStorage.removeItem('vayd_token');
+          localStorage.removeItem('accessToken');
+          localStorage.removeItem('refreshToken');
+          localStorage.removeItem('vayd_token'); // Remove old token for migration
           localStorage.removeItem('vayd_email');
           localStorage.removeItem('vayd_clientId');
           localStorage.removeItem('vayd_clientInfo');
@@ -138,22 +252,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // -------------------
-  // LOGIN (updated)
+  // LOGIN (updated for refresh tokens)
   // -------------------
   async function login(emailInput: string, password: string): Promise<LoginResult> {
     if (MOCK) {
       if (!emailInput || !password) throw new Error('Missing credentials');
-      const fakeToken = 'mock.' + Math.random().toString(36).slice(2);
+      const fakeAccessToken = 'mock.' + Math.random().toString(36).slice(2);
+      const fakeRefreshToken = 'mock.refresh.' + Math.random().toString(36).slice(2);
       try {
-        localStorage.setItem('vayd_token', fakeToken);
+        localStorage.setItem('accessToken', fakeAccessToken);
+        localStorage.setItem('refreshToken', fakeRefreshToken);
         localStorage.setItem('vayd_email', emailInput);
         localStorage.setItem('vayd_clientId', 'mock-client');
       } catch {}
-      setTokenState(fakeToken);
+      setTokenState(fakeAccessToken);
       setEmail(emailInput);
       setUserId('mock-client');
       return {
-        token: fakeToken,
+        token: fakeAccessToken, // Keep for backward compatibility
+        accessToken: fakeAccessToken,
+        refreshToken: fakeRefreshToken,
         user: { email: emailInput, requiresPasswordReset: false, resetPasswordCode: null },
         resetRequired: false,
       };
@@ -161,17 +279,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const { data } = await http.post('/auth/login', { email: emailInput, password });
 
-    // Your response example:
-    // { token: "...", user: { requiresPasswordReset: true, resetPasswordCode: "808759", ... } }
-    const token: string | null = data?.token ?? null;
+    // New response format: { accessToken, refreshToken, user: { ... } }
+    // Also support old format for migration: { token, user: { ... } }
+    const accessToken: string | null = data?.accessToken ?? data?.token ?? null;
+    const refreshToken: string | null = data?.refreshToken ?? null;
     const user = (data?.user ?? null) as LoginResult['user'];
     const resetRequired = !!(user?.requiresPasswordReset || user?.resetPasswordCode);
     const resetCode = user?.resetPasswordCode ?? null;
 
-    // Persist token/email if token is present (even if reset is required)
-    if (token) {
+    // Persist tokens/email if accessToken is present (even if reset is required)
+    if (accessToken) {
       try {
-        localStorage.setItem('vayd_token', token);
+        localStorage.setItem('accessToken', accessToken);
+        if (refreshToken) {
+          localStorage.setItem('refreshToken', refreshToken);
+        }
+        // Remove old token format for migration
+        localStorage.removeItem('vayd_token');
         localStorage.setItem('vayd_email', emailInput);
         const inferredClientId =
           (user as any)?.clientId ??
@@ -187,7 +311,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUserId(null);
         }
         
-        // Fetch and store client info if user is a client
+        // Extract and set role from login response immediately
         const roles: string[] = Array.isArray((user as any)?.role)
           ? (user as any).role
           : (user as any)?.role
@@ -195,7 +319,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             : Array.isArray((user as any)?.roles)
               ? (user as any).roles
               : [];
-        const isClient = roles.includes('client') || roles.includes('Client');
+        
+        // Set role immediately from login response (don't wait for JWT decode)
+        if (roles.length > 0) {
+          setRole(roles);
+        }
+        
+        const isClient = roles.some((r) => String(r).toLowerCase() === 'client');
         
         if (isClient && inferredClientId != null) {
           // Import fetchClientInfo dynamically to avoid circular dependency
@@ -215,7 +345,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           });
         }
       } catch {}
-      setTokenState(token);
+      setTokenState(accessToken);
       setEmail(emailInput);
       
       // Track successful login
@@ -223,6 +353,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } else {
       // No token returned — ensure we don't have a stale token set
       try {
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('refreshToken');
         localStorage.removeItem('vayd_token');
         localStorage.removeItem('vayd_email');
         localStorage.removeItem('vayd_clientId');
@@ -234,15 +366,73 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setClientInfo(null);
     }
 
-    return { token, user, resetRequired, resetCode };
+    return { 
+      token: accessToken, // Keep for backward compatibility
+      accessToken, 
+      refreshToken, 
+      user, 
+      resetRequired, 
+      resetCode 
+    };
   }
 
-  function logout() {
+  async function logout() {
     // Track logout before clearing state
     trackLogout();
     
+    const refreshToken = localStorage.getItem('refreshToken');
+    
+    // Call logout endpoint to revoke refresh token server-side
+    if (refreshToken) {
+      try {
+        await http.post('/auth/logout', { refreshToken });
+      } catch (error) {
+        // Log error but continue with local cleanup
+        console.error('Logout request failed:', error);
+      }
+    }
+    
+    // Clear local storage regardless of API call success
     try {
-      localStorage.removeItem('vayd_token');
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      localStorage.removeItem('vayd_token'); // Remove old token for migration
+      localStorage.removeItem('vayd_email');
+      localStorage.removeItem('vayd_clientId');
+      localStorage.removeItem('vayd_clientInfo');
+    } catch {}
+    setTokenState(null);
+    setEmail(null);
+    setToken(null);
+    setUserId(null);
+    setClientInfo(null);
+  }
+
+  async function logoutAll() {
+    // Track logout before clearing state
+    trackLogout();
+    
+    const accessToken = localStorage.getItem('accessToken');
+    
+    // Call logout-all endpoint to revoke all refresh tokens server-side
+    if (accessToken) {
+      try {
+        await http.post('/auth/logout-all', {}, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+      } catch (error) {
+        // Log error but continue with local cleanup
+        console.error('Logout all request failed:', error);
+      }
+    }
+    
+    // Clear local storage regardless of API call success
+    try {
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      localStorage.removeItem('vayd_token'); // Remove old token for migration
       localStorage.removeItem('vayd_email');
       localStorage.removeItem('vayd_clientId');
       localStorage.removeItem('vayd_clientInfo');
@@ -263,25 +453,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clientInfo,
       login,
       logout,
+      logoutAll,
     }),
     [tokenState, email, userId, role, clientInfo]
   );
 
-  function decodeJwt(token: string): any | null {
-    try {
-      const base64Url = token.split('.')[1];
-      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-      const jsonPayload = decodeURIComponent(
-        atob(base64)
-          .split('')
-          .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-          .join('')
-      );
-      return JSON.parse(jsonPayload);
-    } catch {
-      return null;
-    }
-  }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -365,16 +365,26 @@ export default function CreateClientUser() {
           <p style={{ margin: '0 0 0 0' }}>
             <strong>For current Vet At Your Door clients only</strong>
           </p>
-          <p style={{ margin: '0 0 16px 0', fontStyle: 'italic' }}>
-            (If you&apos;ve had a past visit or have an upcoming appointment.)
+          <p style={{ margin: '0 0 8px 0', fontStyle: 'italic' }}>
+            (Those with past visits or upcoming appointments.)
           </p>
           <p style={{ margin: '0 0 16px 0' }}>
-            Enter the email we have on file and we&apos;ll send you a secure setup link to access your pet&apos;s information and membership options.
+            Enter the email we have on file and we&apos;ll send you a secure setup link to access your pet&apos;s information and membership options. The rest is easy.
           </p>
-          <p style={{ margin: '0 0 8px 0' }}>
+          <p style={{ margin: '0 0 20px 0' }}>
+            <a 
+              href="https://www.vetatyourdoor.com/memberships" 
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#052940', textDecoration: 'underline', cursor: 'pointer' }}
+            >
+              Explore Memberships
+            </a>
+          </p>
+          <p style={{ margin: '0 0 0px 0' }}>
             <strong>New to Vet At Your Door?</strong>
           </p>
-          <p style={{ margin: '0 0 8px 0' }}>
+          <p style={{ margin: '0 0 4px 0' }}>
             After your first appointment is booked, you&apos;ll be invited to create your Client Portal account and join a membership.
           </p>
           <p style={{ margin: 0 }}>
@@ -421,11 +431,11 @@ export default function CreateClientUser() {
           </form>
         </div>
 
-        <div style={{ fontSize: 20, lineHeight: 1.4 }}>
+        <div style={{ fontSize: 20, lineHeight: 1.4, marginTop: '42px' }}>
           <div>Already have an account? Sign in to access your portal:</div>
         </div>
 
-        <Link to="/login" style={secondaryButtonStyle}>
+        <Link to="/login" style={{ ...secondaryButtonStyle, marginTop: '-20px' }}>
           Sign In
         </Link>
       </section>

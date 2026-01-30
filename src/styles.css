@@ -320,9 +320,10 @@ label > .label {
 }
 
 /* Responsive tweaks */
-@media (max-width: 720px) {
+@media (max-width: 768px) {
   .navbar {
     padding: 10px 12px;
+    padding-top: calc(env(safe-area-inset-top, 0px) + 0px); /* Push header down below status bar */
     gap: 8px;
   }
   .brand {
@@ -331,6 +332,10 @@ label > .label {
   .app-tab {
     padding: 7px 10px;
     font-size: 13px;
+  }
+  /* Hide tabs on mobile - they're moved to the hamburger menu */
+  .app-tabs {
+    display: none;
   }
 }
 

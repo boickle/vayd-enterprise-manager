@@ -16,6 +16,7 @@ import {
   type FormattedSubscriptionPlan,
 } from '../api/payments';
 import { useAuth } from '../auth/useAuth';
+import { trackEvent, trackViewItem, trackAddToCart, trackBeginCheckout } from '../utils/analytics';
 
  type MembershipPlan = {
   id: string;
@@ -173,8 +174,6 @@ const MEMBERSHIP_AGREEMENT_TEXT = [
 function formatMoney(amount?: number | null): string {
   if (amount == null) return '—';
   return amount.toLocaleString(undefined, {
-    style: 'currency',
-    currency: 'USD',
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   });
@@ -551,6 +550,13 @@ export default function MembershipSignup() {
           return;
         }
         if (alive) setPet(selectedPet);
+        
+        // Track membership signup page view
+        trackEvent('membership_signup_page_viewed', {
+          pet_id: selectedPet.id,
+          pet_name: selectedPet.name || 'Unknown',
+          pet_species: selectedPet.species || selectedPet.breed || 'Unknown',
+        });
 
         try {
           const appts = await fetchClientAppointments();
@@ -562,7 +568,15 @@ export default function MembershipSignup() {
             );
             const now = Date.now();
             const any = relevant.length > 0;
-            const past = relevant.some((appt) => new Date(appt.startIso).getTime() < now);
+            // For puppy/kitten eligibility, only count appointments from yesterday or before as "past"
+            // This allows pets with appointments today to still be eligible for puppy/kitten add-on
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            yesterday.setHours(23, 59, 59, 999); // End of yesterday
+            const past = relevant.some((appt) => {
+              const apptDate = new Date(appt.startIso);
+              return apptDate <= yesterday;
+            });
             const upcoming = relevant.some((appt) => new Date(appt.startIso).getTime() >= now);
             setHasAnyAppointments(any);
             setHasPastAppointment(past);
@@ -1058,6 +1072,38 @@ export default function MembershipSignup() {
       metadata,
       membershipTransaction,
     };
+
+    // Track begin checkout
+    const checkoutItems = [
+      {
+        item_id: selectedPlanExplicit,
+        item_name: basePlanName,
+        price: planPrice,
+        quantity: 1,
+      },
+      ...addOnDetails.map((addon) => ({
+        item_id: addon.id,
+        item_name: addon.name,
+        price: addon.price,
+        quantity: 1,
+      })),
+    ];
+    
+    trackBeginCheckout(
+      amountBase,
+      'USD',
+      checkoutItems,
+      {
+        pet_id: pet.id,
+        pet_name: pet.name,
+        pet_species: petDetails.kind,
+        billing_preference: effectiveBillingPreference,
+        plan_name: basePlanName,
+        addons: addOns,
+        has_addons: addOns.length > 0,
+        plan_category: selectedPlanExplicit === 'comfort-care' ? 'comfort-care' : selectedPlanExplicit === 'golden' ? 'golden' : 'foundations',
+      }
+    );
 
     setError(null);
     navigate('/client-portal/membership-payment', { state: paymentState });
@@ -1774,12 +1820,12 @@ export default function MembershipSignup() {
                           {tiers.map((tier, idx) => (
                             <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                               <div className="cp-card-price-main">
-                                ${tier.monthly}
+                                {tier.monthly}
                                 <span>/month</span>
                               </div>
                               {tier.annual ? (
                                 <div className="cp-card-price-note">
-                                  or ${tier.annual} annually (10% discount!) {tier.suffix ? `(${tier.suffix})` : ''}
+                                  or {tier.annual} annually (10% discount!) {tier.suffix ? `(${tier.suffix})` : ''}
                                 </div>
                               ) : tier.suffix ? (
                                 <div className="cp-card-price-note">{tier.suffix}</div>
@@ -1830,6 +1876,40 @@ export default function MembershipSignup() {
                               setAgreementAccepted(false);
                               setAgreementSignature('');
                             }
+                            
+                            // Track add to cart / remove from cart
+                            if (next && !prev) {
+                              // Adding to cart
+                              const matchedTier = tiers.find((tier) => (petDetails.kind ? tier.species === petDetails.kind : false)) ?? tiers[0];
+                              const price = billingPreference === 'annual' && matchedTier?.annual != null
+                                ? matchedTier.annual
+                                : matchedTier?.monthly ?? 0;
+                              
+                              trackAddToCart(
+                                plan.id,
+                                plan.name,
+                                price,
+                                'USD',
+                                1,
+                                {
+                                  pet_id: pet?.id,
+                                  pet_name: pet?.name,
+                                  pet_species: petDetails.kind,
+                                  billing_preference: billingPreference,
+                                  is_addon: false,
+                                  plan_category: plan.id === 'comfort-care' ? 'comfort-care' : plan.id === 'golden' ? 'golden' : 'foundations',
+                                }
+                              );
+                            } else if (!next && prev) {
+                              // Removing from cart
+                              trackEvent('remove_from_cart', {
+                                item_id: plan.id,
+                                item_name: plan.name,
+                                pet_id: pet?.id,
+                                pet_name: pet?.name,
+                              });
+                            }
+                            
                             return next;
                           });
                         }}
@@ -1858,7 +1938,7 @@ export default function MembershipSignup() {
                         </div>
                         <div className="cp-card-price">
                           <div className="cp-card-price-main">
-                            $29<span>/month</span>
+                            29<span>/month</span>
                           </div>
                           <div className="cp-card-price-note">or {formatMoney(309)} annually (10% discount!)</div>
                         </div>
@@ -1885,7 +1965,39 @@ export default function MembershipSignup() {
                               setToast(`Please select ${primaryPlanName} first`);
                               return;
                             }
-                            setStarterExplicit((prev) => !prev);
+                            setStarterExplicit((prev) => {
+                              const isAdding = !prev;
+                              
+                              // Track add to cart / remove from cart
+                              if (isAdding) {
+                                // Get price from cost summary if available, otherwise use default
+                                const price = billingPreference === 'annual' ? 309 : 29;
+                                trackAddToCart(
+                                  'starter-addon',
+                                  'Puppy / Kitten Add-on',
+                                  price,
+                                  'USD',
+                                  1,
+                                  {
+                                    pet_id: pet?.id,
+                                    pet_name: pet?.name,
+                                    pet_species: petDetails.kind,
+                                    billing_preference: billingPreference,
+                                    is_addon: true,
+                                    addon_type: 'starter',
+                                  }
+                                );
+                              } else {
+                                trackEvent('remove_from_cart', {
+                                  item_id: 'starter-addon',
+                                  item_name: 'Puppy / Kitten Add-on',
+                                  pet_id: pet?.id,
+                                  pet_name: pet?.name,
+                                });
+                              }
+                              
+                              return !prev;
+                            });
                           }}
                           style={{ alignSelf: 'flex-end', marginTop: 'auto', background: '#4FB128', color: '#fff' }}
                         >
@@ -1913,10 +2025,10 @@ export default function MembershipSignup() {
                   </div>
                   <div className="cp-card-price">
                     <div className="cp-card-price-main">
-                      $49<span>/month</span>
+                      49<span>/month</span>
                     </div>
                     {comfortAnswer !== 'yes' && (
-                      <div className="cp-card-price-note">or $529 annually (10% discount!)</div>
+                      <div className="cp-card-price-note">or 529 annually (10% discount!)</div>
                     )}
                   </div>
                 </div>
@@ -1942,7 +2054,39 @@ export default function MembershipSignup() {
                         setToast(`Please select ${primaryPlanName} first`);
                         return;
                       }
-                      setPlusExplicit((prev) => !prev);
+                      setPlusExplicit((prev) => {
+                        const isAdding = !prev;
+                        
+                        // Track add to cart / remove from cart
+                        if (isAdding) {
+                          // Get price based on billing preference
+                          const price = billingPreference === 'annual' && selectedPlanExplicit !== 'comfort-care' ? 529 : 49;
+                          trackAddToCart(
+                            'plus-addon',
+                            'PLUS Add-on',
+                            price,
+                            'USD',
+                            1,
+                            {
+                              pet_id: pet?.id,
+                              pet_name: pet?.name,
+                              pet_species: petDetails.kind,
+                              billing_preference: billingPreference,
+                              is_addon: true,
+                              addon_type: 'plus',
+                            }
+                          );
+                        } else {
+                          trackEvent('remove_from_cart', {
+                            item_id: 'plus-addon',
+                            item_name: 'PLUS Add-on',
+                            pet_id: pet?.id,
+                            pet_name: pet?.name,
+                          });
+                        }
+                        
+                        return !prev;
+                      });
                     }}
                     style={{ alignSelf: 'flex-end', marginTop: 'auto', background: '#4FB128', color: '#fff' }}
                   >
@@ -2005,7 +2149,7 @@ export default function MembershipSignup() {
                       row.annual != null ? `${formatMoney(row.annual)} annually (10% discount!)` : null;
                     const monthlyText = row.monthly != null ? `${formatMoney(row.monthly)}/month` : null;
                     const preferAnnual = billingPreference === 'annual' && annualText !== null;
-                    const primary = preferAnnual ? annualText! : monthlyText ?? annualText ?? '$0';
+                    const primary = preferAnnual ? annualText! : monthlyText ?? annualText ?? '0';
                     const secondary = preferAnnual ? monthlyText : annualText;
                     return (
                       <span className="cp-cost-wrapper">

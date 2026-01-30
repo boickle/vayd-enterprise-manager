@@ -846,7 +846,7 @@ export default function MembershipUpgrade() {
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontSize: 24, fontWeight: 700, color: '#0f766e' }}>
-                        ${upgrade.price.toFixed(2)}
+                        {upgrade.price.toFixed(2)}
                       </div>
                       <div style={{ fontSize: 12, color: '#6b7280' }}>
                         {upgrade.pricingOption === 'monthly' ? '/month' : '/year'}
@@ -891,7 +891,7 @@ export default function MembershipUpgrade() {
                         {upgrade.pricingOption === 'monthly' ? 'Monthly' : 'Annual'}
                       </div>
                     </div>
-                    <div style={{ fontWeight: 600 }}>${upgrade.price.toFixed(2)}</div>
+                    <div style={{ fontWeight: 600 }}>{upgrade.price.toFixed(2)}</div>
                   </div>
                 ))}
                 {proratedCalculation && (
@@ -902,12 +902,12 @@ export default function MembershipUpgrade() {
                     {proratedCalculation.refundAmount > 0 && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, color: '#059669' }}>
                         <span>Refund ({proratedCalculation.refundDescription}):</span>
-                        <span>-${proratedCalculation.refundAmount.toFixed(2)}</span>
+                        <span>-{proratedCalculation.refundAmount.toFixed(2)}</span>
                       </div>
                     )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                       <span>Charge ({proratedCalculation.chargeDescription}):</span>
-                      <span>${proratedCalculation.chargeAmount.toFixed(2)}</span>
+                      <span>{proratedCalculation.chargeAmount.toFixed(2)}</span>
                     </div>
                     <div style={{ fontSize: 12, color: '#6b7280', marginTop: 8 }}>
                       Next billing date: {new Date(proratedCalculation.nextBillingDate).toLocaleDateString()}
@@ -928,8 +928,8 @@ export default function MembershipUpgrade() {
                   <span>Net Amount Due</span>
                   <span>
                     {proratedCalculation 
-                      ? `$${(proratedCalculation.chargeAmount - proratedCalculation.refundAmount).toFixed(2)}`
-                      : `$${totalPrice.toFixed(2)}`
+                      ? (proratedCalculation.chargeAmount - proratedCalculation.refundAmount).toFixed(2)
+                      : totalPrice.toFixed(2)
                     }
                   </span>
                 </div>

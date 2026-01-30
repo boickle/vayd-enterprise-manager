@@ -68,20 +68,59 @@ export async function fetchPublicProviders(practiceId: number = 1): Promise<Publ
 
 /**
  * Get list of available veterinarians (public endpoint)
- * GET /public/appointments/veterinarians?practiceId=1&address=...
+ * GET /public/appointments/veterinarians?practiceId=1&address=...&lat=...&lon=...
  * @param practiceId Practice ID
  * @param address Optional address to filter veterinarians by service area
+ * @param lat Optional latitude to filter veterinarians by service area
+ * @param lon Optional longitude to filter veterinarians by service area
  */
-export async function fetchPublicVeterinarians(practiceId: number = 1, address?: string): Promise<PublicProvider[]> {
+export async function fetchPublicVeterinarians(
+  practiceId: number = 1, 
+  address?: string, 
+  lat?: number, 
+  lon?: number
+): Promise<PublicProvider[]> {
   const params: any = { practiceId };
-  if (address) {
+  if (lat != null && lon != null && Number.isFinite(lat) && Number.isFinite(lon)) {
+    params.lat = lat;
+    params.lon = lon;
+  } else if (address) {
     params.address = address;
   }
   
   const { data } = await http.get('/public/appointments/veterinarians', { params });
   const veterinarians: any[] = Array.isArray(data) ? data : (data?.items ?? data?.veterinarians ?? []);
   
-  return veterinarians.map((v) => {
+  // Filter veterinarians based on acceptingNewPatients
+  // For new clients, we should only include veterinarians where acceptingNewPatients is true for the relevant zone
+  // When lat/lon are passed, only one zone will be returned (the one the lat/lon is in)
+  // When address is passed, the backend will return the relevant zone(s)
+  const filteredVeterinarians = veterinarians.filter((v) => {
+    // Check if veterinarian has weeklySchedules with zones
+    if (!v.weeklySchedules || !Array.isArray(v.weeklySchedules)) {
+      // If no schedules/zones data, include the veterinarian (backwards compatibility)
+      return true;
+    }
+    
+    // Check all zones across all schedules
+    // Exclude veterinarian if ANY zone has acceptingNewPatients === false
+    // When lat/lon are passed, only one zone will be returned, so we check that specific zone
+    // When address is passed, the backend should return only relevant zones
+    const hasNonAcceptingZone = v.weeklySchedules.some((schedule: any) => {
+      if (!schedule.zones || !Array.isArray(schedule.zones)) {
+        return false;
+      }
+      
+      // Check if any zone in this schedule has acceptingNewPatients === false
+      return schedule.zones.some((zone: any) => zone.acceptingNewPatients === false);
+    });
+    
+    // Exclude veterinarians that have at least one zone not accepting new patients
+    // Include veterinarians where all zones accept new patients (or don't have the field set)
+    return !hasNonAcceptingZone;
+  });
+  
+  return filteredVeterinarians.map((v) => {
     const id = v.id ?? v.pimsId ?? v.employeeId;
     
     // Build name from title, firstName, lastName, and designation
@@ -168,5 +207,77 @@ export async function fetchAvailability(request: AvailabilityRequest): Promise<A
   
   // Fallback: return empty
   return { slots: [], alternates: [] };
+}
+
+export type AppointmentType = {
+  id: number;
+  isActive: boolean;
+  isDeleted: boolean;
+  pimsId: string;
+  pimsType: string;
+  name: string;
+  prettyName: string;
+  isBoardingType: boolean;
+  hasExtraInstructions: boolean;
+  defaultDuration: number;
+  defaultStartTime: string;
+  showInApptRequestForm: boolean;
+  newPatientAllowed: boolean;
+  formListOrder?: number | null;
+  practice?: {
+    id: number;
+    isActive: boolean;
+    isDeleted: boolean;
+    pimsId: string;
+    pimsType: string;
+    name: string;
+  };
+};
+
+/**
+ * Get list of appointment types
+ * GET /public/appointment-types?practiceId=1&showInApptRequestForm=true
+ * @param practiceId Practice ID
+ * @param showInApptRequestForm Filter to only show types that appear in appointment request form
+ * @param newPatientAllowed Filter to only show types that allow new patients
+ * @param isAuthenticated Whether the request is from an authenticated user (uses different endpoint)
+ */
+export async function fetchAppointmentTypes(
+  practiceId: number = 1,
+  showInApptRequestForm: boolean = true,
+  newPatientAllowed?: boolean,
+  isAuthenticated: boolean = false
+): Promise<AppointmentType[]> {
+  const endpoint = isAuthenticated ? '/appointment-types' : '/public/appointment-types';
+  const params: any = { practiceId };
+  
+  if (showInApptRequestForm) {
+    params.showInApptRequestForm = true;
+  }
+  
+  if (newPatientAllowed !== undefined) {
+    params.newPatientAllowed = newPatientAllowed;
+  }
+  
+  const { data } = await http.get(endpoint, { params });
+  const appointmentTypes: any[] = Array.isArray(data) ? data : (data?.items ?? data?.appointmentTypes ?? []);
+  
+  return appointmentTypes.map((type) => ({
+    id: type.id,
+    isActive: type.isActive,
+    isDeleted: type.isDeleted,
+    pimsId: type.pimsId,
+    pimsType: type.pimsType,
+    name: type.name,
+    prettyName: type.prettyName || type.name,
+    isBoardingType: type.isBoardingType || false,
+    hasExtraInstructions: type.hasExtraInstructions || false,
+    defaultDuration: type.defaultDuration,
+    defaultStartTime: type.defaultStartTime,
+    showInApptRequestForm: type.showInApptRequestForm || false,
+    newPatientAllowed: type.newPatientAllowed || false,
+    formListOrder: type.formListOrder ?? null,
+    practice: type.practice,
+  }));
 }
 
