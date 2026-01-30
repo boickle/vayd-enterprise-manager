@@ -15,6 +15,17 @@ import {
   type EmployeeWeeklySchedule,
   type Zone,
 } from '../api/appointmentSettings';
+import {
+  searchItems,
+  getItemWithPriceBreaks,
+  createQuantityPriceBreak,
+  updateQuantityPriceBreak,
+  deleteQuantityPriceBreak,
+  type SearchResultItem,
+  type ItemWithPriceBreaks,
+  type QuantityPriceBreak,
+  type ItemType,
+} from '../api/quantityPriceBreaks';
 import './Settings.css';
 
 // Helper function to format employee name with title and designation
@@ -32,7 +43,7 @@ function formatEmployeeName(emp: Employee): string {
 
 export default function Settings() {
   const { role } = useAuth() as any;
-  const [activeTab, setActiveTab] = useState<'appointment-types' | 'employee-types' | 'employee-zones' | 'employee-schedule'>('appointment-types');
+  const [activeTab, setActiveTab] = useState<'appointment-types' | 'employee-types' | 'employee-zones' | 'employee-schedule' | 'inventory'>('appointment-types');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +68,23 @@ export default function Settings() {
   const [selectedEmployeeForSchedule, setSelectedEmployeeForSchedule] = useState<Employee | null>(null);
   // Use composite key: `${employeeId}-${dayOfWeek}` since schedules might not have ids
   const [scheduleUpdates, setScheduleUpdates] = useState<Map<string, Partial<EmployeeWeeklySchedule>>>(new Map());
+
+  // Inventory state
+  const [practiceId] = useState(1); // Default practice ID, could be made configurable
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<ItemWithPriceBreaks | null>(null);
+  const [loadingItem, setLoadingItem] = useState(false);
+  const [editingPriceBreak, setEditingPriceBreak] = useState<QuantityPriceBreak | null>(null);
+  const [newPriceBreak, setNewPriceBreak] = useState<{
+    price: string;
+    markup: string;
+    lowQuantity: string;
+    highQuantity: string;
+    isActive: boolean;
+  } | null>(null);
+  const [priceManuallyEdited, setPriceManuallyEdited] = useState(false);
 
   // Normalize roles
   const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
@@ -436,6 +464,215 @@ export default function Settings() {
     });
   };
 
+  // Inventory handlers - type-ahead search with debouncing
+  useEffect(() => {
+    if (activeTab !== 'inventory') return;
+    
+    const trimmedQuery = searchQuery.trim();
+    if (!trimmedQuery) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+
+    // Debounce search - wait 300ms after user stops typing
+    const timeoutId = setTimeout(async () => {
+      setSearching(true);
+      setError(null);
+      try {
+        const results = await searchItems(trimmedQuery, practiceId);
+        setSearchResults(results);
+      } catch (err: any) {
+        setError(err?.response?.data?.message || err?.message || 'Failed to search items');
+        setSearchResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [searchQuery, practiceId, activeTab]);
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    setSearching(true);
+    setError(null);
+    try {
+      const results = await searchItems(searchQuery.trim(), practiceId);
+      setSearchResults(results);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to search items');
+      setSearchResults([]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const handleSelectItem = async (itemType: ItemType, itemId: number) => {
+    if (!itemId || itemId === 0) {
+      setError('Invalid item ID');
+      return;
+    }
+    setLoadingItem(true);
+    setError(null);
+    setSuccess(null);
+    setEditingPriceBreak(null);
+    setNewPriceBreak(null);
+    setSelectedItem(null); // Clear previous selection
+    try {
+      const item = await getItemWithPriceBreaks(itemType, itemId, practiceId);
+      // Ensure the response has the expected structure
+      if (item && item.item && item.itemType) {
+        // Ensure priceBreaks is always an array
+        if (!Array.isArray(item.priceBreaks)) {
+          item.priceBreaks = [];
+        }
+        setSelectedItem(item);
+      } else {
+        throw new Error('Invalid response structure from server');
+      }
+    } catch (err: any) {
+      const errorMessage = err?.response?.data?.message || err?.message || 'Failed to load item details';
+      setError(errorMessage);
+      setSelectedItem(null);
+    } finally {
+      setLoadingItem(false);
+    }
+  };
+
+  const handleSavePriceBreak = async (id: number) => {
+    if (!editingPriceBreak) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await updateQuantityPriceBreak(id, {
+        price: editingPriceBreak.price,
+        markup: editingPriceBreak.markup,
+        lowQuantity: editingPriceBreak.lowQuantity,
+        highQuantity: editingPriceBreak.highQuantity,
+        isActive: editingPriceBreak.isActive,
+      });
+      setSuccess('Price break updated successfully');
+      setTimeout(() => setSuccess(null), 3000);
+      setEditingPriceBreak(null);
+      // Reload item details
+      if (selectedItem) {
+        const item = await getItemWithPriceBreaks(
+          selectedItem.itemType,
+          selectedItem.item.id,
+          practiceId
+        );
+        setSelectedItem(item);
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to update price break');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCreatePriceBreak = async () => {
+    if (!newPriceBreak || !selectedItem) {
+      setError('Missing required data');
+      return;
+    }
+    
+    // Validate required fields
+    const price = newPriceBreak.price?.trim();
+    const lowQty = newPriceBreak.lowQuantity?.trim();
+    const highQty = newPriceBreak.highQuantity?.trim();
+    
+    if (!price || !lowQty || !highQty) {
+      setError('Please fill in all required fields (Price, Low Quantity, High Quantity)');
+      return;
+    }
+    
+    const priceNum = Number(price);
+    const lowQtyNum = Number(lowQty);
+    const highQtyNum = Number(highQty);
+    
+    if (isNaN(priceNum) || priceNum < 0) {
+      setError('Price must be a valid number >= 0');
+      return;
+    }
+    
+    if (isNaN(lowQtyNum) || lowQtyNum < 1) {
+      setError('Low Quantity must be >= 1');
+      return;
+    }
+    
+    if (isNaN(highQtyNum) || highQtyNum < 1) {
+      setError('High Quantity must be >= 1');
+      return;
+    }
+    
+    if (lowQtyNum > highQtyNum) {
+      setError('Low Quantity must be <= High Quantity');
+      return;
+    }
+    
+    const markupValue = newPriceBreak.markup?.trim() ? Number(newPriceBreak.markup) : null;
+    
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await createQuantityPriceBreak(
+        selectedItem.itemType,
+        selectedItem.item.id,
+        practiceId,
+        priceNum,
+        lowQtyNum,
+        highQtyNum,
+        markupValue,
+        newPriceBreak.isActive
+      );
+      setSuccess('Price break created successfully');
+      setTimeout(() => setSuccess(null), 3000);
+      setNewPriceBreak(null);
+      // Reload item details
+      const item = await getItemWithPriceBreaks(
+        selectedItem.itemType,
+        selectedItem.item.id,
+        practiceId
+      );
+      setSelectedItem(item);
+    } catch (err: any) {
+      const errorMessage = err?.response?.data?.message || err?.message || 'Failed to create price break';
+      setError(errorMessage);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeletePriceBreak = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this price break?')) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await deleteQuantityPriceBreak(id);
+      setSuccess('Price break deleted successfully');
+      setTimeout(() => setSuccess(null), 3000);
+      // Reload item details
+      if (selectedItem) {
+        const item = await getItemWithPriceBreaks(
+          selectedItem.itemType,
+          selectedItem.item.id,
+          practiceId
+        );
+        setSelectedItem(item);
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to delete price break');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (!isAdmin) {
     return (
       <div className="container">
@@ -478,6 +715,12 @@ export default function Settings() {
             onClick={() => setActiveTab('employee-schedule')}
           >
             Employee Schedule
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'inventory' ? 'active' : ''}`}
+            onClick={() => setActiveTab('inventory')}
+          >
+            Inventory
           </button>
         </div>
 
@@ -1089,6 +1332,524 @@ export default function Settings() {
                   >
                     {saving ? 'Saving...' : 'Save Changes'}
                   </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Inventory Tab */}
+        {activeTab === 'inventory' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Inventory Management</h2>
+            <p className="settings-section-description">
+              Search for inventory items, labs, and procedures to manage quantity price breaks.
+            </p>
+
+            <div className="settings-form-group">
+              <label className="settings-label">Search Items</label>
+              <div style={{ position: 'relative', marginBottom: '16px' }}>
+                <input
+                  type="text"
+                  className="settings-input"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Type to search for items..."
+                  style={{ width: '100%', maxWidth: '100%', paddingRight: searching ? '40px' : '12px' }}
+                />
+                {searching && (
+                  <div style={{ 
+                    position: 'absolute', 
+                    right: '12px', 
+                    top: '50%', 
+                    transform: 'translateY(-50%)',
+                    display: 'flex',
+                    alignItems: 'center'
+                  }}>
+                    <div className="settings-spinner" style={{ width: '16px', height: '16px', borderWidth: '2px' }}></div>
+                  </div>
+                )}
+              </div>
+              {searchQuery.trim() && (
+                <p className="settings-muted" style={{ fontSize: '12px', marginTop: '4px' }}>
+                  {searching ? 'Searching...' : searchResults.length > 0 ? `Found ${searchResults.length} result${searchResults.length === 1 ? '' : 's'}` : 'No results found'}
+                </p>
+              )}
+            </div>
+
+            {searchResults.length > 0 && (
+              <div className="settings-card" style={{ marginBottom: '24px' }}>
+                <h3 className="settings-card-title">Search Results</h3>
+                <div className="settings-table-container">
+                  <table className="settings-table">
+                    <thead>
+                      <tr>
+                        <th>Type</th>
+                        <th>Name</th>
+                        <th>Code</th>
+                        <th>Price</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {searchResults.map((item, index) => {
+                        // Extract the correct item ID based on itemType
+                        const itemId = item.itemType === 'inventory' 
+                          ? item.inventoryItem?.id 
+                          : item.itemType === 'lab' 
+                          ? item.lab?.id 
+                          : item.procedure?.id;
+                        
+                        return (
+                          <tr key={`${item.itemType}-${itemId}-${index}`}>
+                            <td style={{ textTransform: 'capitalize' }}>{item.itemType}</td>
+                            <td>{item.name}</td>
+                            <td>{item.code || '—'}</td>
+                            <td>${Number(item.price).toFixed(2)}</td>
+                            <td>
+                              <button
+                                className="btn secondary"
+                                onClick={() => {
+                                  if (itemId) {
+                                    handleSelectItem(item.itemType, itemId);
+                                  } else {
+                                    setError('Item ID not found');
+                                  }
+                                }}
+                                disabled={loadingItem || !itemId}
+                              >
+                                View Details
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {!searching && searchQuery.trim() && searchResults.length === 0 && (
+              <div className="settings-card" style={{ marginBottom: '24px' }}>
+                <p className="settings-muted">No items found matching "{searchQuery}".</p>
+              </div>
+            )}
+
+            {loadingItem && !selectedItem && (
+              <div className="settings-loading">
+                <div className="settings-spinner"></div>
+                <span>Loading item details...</span>
+              </div>
+            )}
+
+            {/* Inventory Item Details Modal */}
+            {selectedItem && selectedItem.item && (
+              <div
+                role="dialog"
+                aria-modal="true"
+                onClick={() => {
+                  setSelectedItem(null);
+                  setEditingPriceBreak(null);
+                  setNewPriceBreak(null);
+                }}
+                style={{
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 10000,
+                  padding: 16,
+                }}
+              >
+                <div
+                  className="settings-card"
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    width: 'min(900px, 90vw)',
+                    maxHeight: '90vh',
+                    overflow: 'auto',
+                    padding: '24px',
+                    borderRadius: '12px',
+                    background: '#fff',
+                    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+                    <h2 className="settings-card-title" style={{ margin: 0, fontSize: '24px' }}>
+                      {selectedItem.item.name}
+                    </h2>
+                    <button
+                      className="btn secondary"
+                      onClick={() => {
+                        setSelectedItem(null);
+                        setEditingPriceBreak(null);
+                        setNewPriceBreak(null);
+                        setError(null);
+                        setSuccess(null);
+                      }}
+                      style={{ fontSize: '14px', padding: '8px 16px' }}
+                    >
+                      × Close
+                    </button>
+                  </div>
+                  <p className="settings-card-subtitle">
+                    Type: <strong style={{ textTransform: 'capitalize' }}>{selectedItem.itemType}</strong>
+                    {' | '}
+                    Code: <strong>{selectedItem.item.code || 'N/A'}</strong>
+                    {' | '}
+                    Cost: <strong>${Number(selectedItem.item.cost || 0).toFixed(2)}</strong>
+                    {' | '}
+                    Price: <strong>${Number(selectedItem.item.price).toFixed(2)}</strong>
+                  </p>
+
+                  {/* Error/Success messages inside modal */}
+                  {error && (
+                    <div className="settings-message settings-error-message" style={{ marginBottom: '16px' }}>
+                      {error}
+                      <button onClick={() => setError(null)} className="settings-close">×</button>
+                    </div>
+                  )}
+
+                  {success && (
+                    <div className="settings-message settings-success-message" style={{ marginBottom: '16px' }}>
+                      {success}
+                      <button onClick={() => setSuccess(null)} className="settings-close">×</button>
+                    </div>
+                  )}
+
+                <div style={{ marginBottom: '24px' }}>
+                  <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px' }}>
+                    Quantity Price Breaks
+                  </h4>
+                  {selectedItem.priceBreaks.length > 0 ? (
+                    <div className="settings-table-container">
+                      <table className="settings-table">
+                        <thead>
+                          <tr>
+                            <th>Low Qty</th>
+                            <th>High Qty</th>
+                            <th>Price</th>
+                            <th>Markup %</th>
+                            <th>Active</th>
+                            <th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedItem.priceBreaks
+                            .sort((a, b) => a.lowQuantity - b.lowQuantity)
+                            .map((priceBreak) => (
+                              <tr key={priceBreak.id}>
+                                {editingPriceBreak?.id === priceBreak.id ? (
+                                  <>
+                                    <td>
+                                      <input
+                                        type="number"
+                                        className="settings-input"
+                                        value={editingPriceBreak.lowQuantity}
+                                        onChange={(e) =>
+                                          setEditingPriceBreak({
+                                            ...editingPriceBreak,
+                                            lowQuantity: Number(e.target.value),
+                                          })
+                                        }
+                                        min="1"
+                                        style={{ width: '80px' }}
+                                      />
+                                    </td>
+                                    <td>
+                                      <input
+                                        type="number"
+                                        className="settings-input"
+                                        value={editingPriceBreak.highQuantity}
+                                        onChange={(e) =>
+                                          setEditingPriceBreak({
+                                            ...editingPriceBreak,
+                                            highQuantity: Number(e.target.value),
+                                          })
+                                        }
+                                        min="1"
+                                        style={{ width: '80px' }}
+                                      />
+                                    </td>
+                                    <td>
+                                      <input
+                                        type="number"
+                                        className="settings-input"
+                                        value={editingPriceBreak.price}
+                                        onChange={(e) => {
+                                          setEditingPriceBreak({
+                                            ...editingPriceBreak,
+                                            price: Number(e.target.value),
+                                          });
+                                        }}
+                                        min="0"
+                                        step="0.01"
+                                        style={{ width: '100px' }}
+                                      />
+                                    </td>
+                                    <td>
+                                      <input
+                                        type="number"
+                                        className="settings-input"
+                                        value={editingPriceBreak.markup ?? ''}
+                                        onChange={(e) => {
+                                          const markupValue = e.target.value === '' ? null : Number(e.target.value);
+                                          const updated = {
+                                            ...editingPriceBreak,
+                                            markup: markupValue,
+                                          };
+                                          // Auto-calculate price if markup is entered, using cost as base, rounded to nearest cent
+                                          if (markupValue !== null && selectedItem?.item?.cost) {
+                                            const baseCost = Number(selectedItem.item.cost);
+                                            if (!isNaN(baseCost) && !isNaN(markupValue)) {
+                                              updated.price = Math.round(baseCost * (1 + markupValue / 100) * 100) / 100;
+                                            }
+                                          }
+                                          setEditingPriceBreak(updated);
+                                        }}
+                                        step="0.1"
+                                        style={{ width: '100px' }}
+                                      />
+                                    </td>
+                                    <td>
+                                      <input
+                                        type="checkbox"
+                                        checked={editingPriceBreak.isActive}
+                                        onChange={(e) =>
+                                          setEditingPriceBreak({
+                                            ...editingPriceBreak,
+                                            isActive: e.target.checked,
+                                          })
+                                        }
+                                      />
+                                    </td>
+                                    <td>
+                                      <div className="settings-action-buttons">
+                                        <button
+                                          className="btn"
+                                          onClick={() => handleSavePriceBreak(priceBreak.id)}
+                                          disabled={saving}
+                                        >
+                                          {saving ? 'Saving...' : 'Save'}
+                                        </button>
+                                        <button
+                                          className="btn secondary"
+                                          onClick={() => setEditingPriceBreak(null)}
+                                          disabled={saving}
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </>
+                                ) : (
+                                  <>
+                                    <td>{priceBreak.lowQuantity}</td>
+                                    <td>{priceBreak.highQuantity === 999 ? '∞' : priceBreak.highQuantity}</td>
+                                    <td>${Number(priceBreak.price).toFixed(2)}</td>
+                                    <td>{priceBreak.markup ? `${Number(priceBreak.markup).toFixed(1)}%` : '—'}</td>
+                                    <td>{priceBreak.isActive ? 'Yes' : 'No'}</td>
+                                    <td>
+                                      <div className="settings-action-buttons">
+                                        <button
+                                          className="btn secondary"
+                                          onClick={() => setEditingPriceBreak(priceBreak)}
+                                        >
+                                          Edit
+                                        </button>
+                                        <button
+                                          className="btn secondary"
+                                          onClick={() => handleDeletePriceBreak(priceBreak.id)}
+                                          disabled={saving}
+                                        >
+                                          Delete
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </>
+                                )}
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="settings-muted">No price breaks configured for this item.</p>
+                  )}
+                </div>
+
+                {!newPriceBreak && !editingPriceBreak && (
+                  <div className="settings-action-bar">
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        setPriceManuallyEdited(false);
+                        setNewPriceBreak({
+                          price: '',
+                          markup: '',
+                          lowQuantity: '',
+                          highQuantity: '',
+                          isActive: true,
+                        });
+                      }}
+                    >
+                      Add Price Break
+                    </button>
+                  </div>
+                )}
+
+                {newPriceBreak && (
+                  <div className="settings-card" style={{ marginTop: '24px', background: '#f8fdfa' }}>
+                    <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>
+                      New Price Break
+                    </h4>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                      <div>
+                        <label className="settings-label">Low Quantity</label>
+                        <input
+                          type="number"
+                          className="settings-input"
+                          value={newPriceBreak.lowQuantity}
+                          onChange={(e) =>
+                            setNewPriceBreak({
+                              ...newPriceBreak,
+                              lowQuantity: e.target.value,
+                            })
+                          }
+                          min="1"
+                          placeholder="1"
+                        />
+                      </div>
+                      <div>
+                        <label className="settings-label">High Quantity</label>
+                        <input
+                          type="number"
+                          className="settings-input"
+                          value={newPriceBreak.highQuantity}
+                          onChange={(e) =>
+                            setNewPriceBreak({
+                              ...newPriceBreak,
+                              highQuantity: e.target.value,
+                            })
+                          }
+                          min="1"
+                          placeholder="999"
+                        />
+                      </div>
+                      <div>
+                        <label className="settings-label">Price</label>
+                        <input
+                          type="number"
+                          className="settings-input"
+                          value={newPriceBreak.price}
+                          onChange={(e) => {
+                            setPriceManuallyEdited(true);
+                            setNewPriceBreak({
+                              ...newPriceBreak,
+                              price: e.target.value,
+                            });
+                          }}
+                          min="0"
+                          step="0.01"
+                          placeholder="0.00"
+                        />
+                      </div>
+                      <div>
+                        <label className="settings-label">Markup % (optional)</label>
+                        <input
+                          type="number"
+                          className="settings-input"
+                          value={newPriceBreak.markup}
+                          onChange={(e) => {
+                            const markupValue = e.target.value;
+                            setNewPriceBreak({
+                              ...newPriceBreak,
+                              markup: markupValue,
+                            });
+                            // Auto-calculate price if markup is entered and price hasn't been manually edited, using cost as base, rounded to nearest cent
+                            if (markupValue && selectedItem?.item?.cost && !priceManuallyEdited) {
+                              const baseCost = Number(selectedItem.item.cost);
+                              const markupPercent = Number(markupValue);
+                              if (!isNaN(baseCost) && !isNaN(markupPercent)) {
+                                const calculatedPrice = Math.round(baseCost * (1 + markupPercent / 100) * 100) / 100;
+                                setNewPriceBreak((prev) => ({
+                                  ...(prev || {
+                                    price: '',
+                                    markup: '',
+                                    lowQuantity: '',
+                                    highQuantity: '',
+                                    isActive: true,
+                                  }),
+                                  markup: markupValue,
+                                  price: calculatedPrice.toFixed(2),
+                                }));
+                              }
+                            }
+                          }}
+                          step="0.1"
+                          placeholder="Optional"
+                        />
+                      </div>
+                    </div>
+                    <div style={{ marginBottom: '16px' }}>
+                      <label className="settings-checkbox-item">
+                        <input
+                          type="checkbox"
+                          checked={newPriceBreak.isActive}
+                          onChange={(e) =>
+                            setNewPriceBreak({
+                              ...newPriceBreak,
+                              isActive: e.target.checked,
+                            })
+                          }
+                        />
+                        <span>Active</span>
+                      </label>
+                    </div>
+                    <div className="settings-action-bar">
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (saving) {
+                            return;
+                          }
+                          if (!newPriceBreak.price || !newPriceBreak.lowQuantity || !newPriceBreak.highQuantity) {
+                            setError('Please fill in all required fields (Price, Low Quantity, High Quantity)');
+                            return;
+                          }
+                          handleCreatePriceBreak();
+                        }}
+                        style={{ 
+                          cursor: (saving || !newPriceBreak.price || !newPriceBreak.lowQuantity || !newPriceBreak.highQuantity) ? 'not-allowed' : 'pointer',
+                          opacity: (saving || !newPriceBreak.price || !newPriceBreak.lowQuantity || !newPriceBreak.highQuantity) ? 0.5 : 1
+                        }}
+                      >
+                        {saving ? 'Creating...' : 'Create Price Break'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setNewPriceBreak(null);
+                        }}
+                        disabled={saving}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
                 </div>
               </div>
             )}

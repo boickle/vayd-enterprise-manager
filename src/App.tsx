@@ -24,6 +24,7 @@ import MembershipSignup from './pages/MembershipSignup';
 import MembershipPayment from './pages/MembershipPayment';
 import MembershipUpgrade from './pages/MembershipUpgrade';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
+import PublicRoomLoaderForm from './pages/PublicRoomLoaderForm';
 import { usePageTracking } from './hooks/usePageTracking';
 
 /**
@@ -179,21 +180,13 @@ export default function App() {
   // Track page views on route changes
   usePageTracking();
 
-  // Normalize roles - handle arrays, single values, and edge cases
+  // Normalize roles
   const roles = useMemo<string[]>(
-    () => {
-      if (!role) return [];
-      const roleArray = Array.isArray(role) ? role : [role];
-      return roleArray
-        .map((r) => String(r).toLowerCase().trim())
-        .filter((r) => r.length > 0);
-    },
+    () =>
+      (Array.isArray(role) ? role : role ? [String(role)] : []).map((r) => String(r).toLowerCase()),
     [role]
   );
-  // Check if user is a client - must explicitly have 'client' role
-  const isClient = useMemo(() => {
-    return roles.includes('client');
-  }, [roles]);
+  const isClient = roles.includes('client');
 
   // Compute employee pages if NOT a client
   const pages = useMemo(
@@ -214,12 +207,13 @@ export default function App() {
 
   return (
     <div>
-      {/* Hide navbar on client portal, login page, create-client page, and reset password */}
+      {/* Hide navbar on client portal, login page, create-client page, reset password, and public room loader form */}
       {!(isClient && location.pathname.startsWith('/client-portal')) &&
         location.pathname !== '/login' &&
         location.pathname !== '/create-client' &&
         location.pathname !== '/reset-password' &&
-        location.pathname !== '/request-reset' && (
+        location.pathname !== '/request-reset' &&
+        !location.pathname.startsWith('/public/room-loader') && (
         <header className="navbar">
           <div className="brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <img
@@ -257,7 +251,7 @@ export default function App() {
         className={isClient && location.pathname.startsWith('/client-portal') ? '' : 'container'}
       >
         <Routes>
-          {/* Root redirect: client -> client-portal, admin/employee -> routing */}
+          {/* Root redirect: client -> client-portal, else -> routing */}
           <Route
             path="/"
             element={
@@ -265,7 +259,6 @@ export default function App() {
                 isClient ? (
                   <Navigate to="/client-portal" replace />
                 ) : (
-                  // Only redirect to routing for admin/employee (non-client) users
                   <Navigate to="/routing" replace />
                 )
               ) : (
@@ -321,6 +314,12 @@ export default function App() {
             element={<AppointmentRequestForm />}
           />
 
+          {/* Public room loader form (no authentication required) */}
+          <Route
+            path="/public/room-loader/form"
+            element={<PublicRoomLoaderForm />}
+          />
+
           {/* Employees only: keep these pages alive across tab switches */}
           {!isClient && (
             <Route
@@ -331,7 +330,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             >
-              <Route path="/home" element={<Home />} />
+              <Route path="/home" element={<Home pages={pages} />} />
               {pages.map((p: any) => (
                 <Route key={p.path} path={p.path} element={p.element} />
               ))}
