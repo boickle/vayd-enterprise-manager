@@ -1,12 +1,15 @@
 // src/components/UserMenu.tsx
 import { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import './UserMenu.css';
 
-export default function UserMenu() {
+type Page = { path: string; label: string };
+
+export default function UserMenu({ pages = [] }: { pages?: Page[] }) {
   const { logout, userEmail, role } = useAuth() as any;
   const nav = useNavigate();
+  const location = useLocation();
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -36,15 +39,19 @@ export default function UserMenu() {
     }
   }, [isOpen]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     setIsOpen(false);
-    logout();
+    await logout();
     nav('/login');
   };
 
   const handleSettings = () => {
     setIsOpen(false);
     nav('/settings');
+  };
+
+  const handlePageClick = () => {
+    setIsOpen(false);
   };
 
   return (
@@ -78,6 +85,28 @@ export default function UserMenu() {
             <span className="user-menu-email">{userEmail || 'Signed in'}</span>
           </div>
           <div className="user-menu-divider"></div>
+          
+          {/* Navigation tabs - shown on mobile only */}
+          {pages.length > 0 && (
+            <>
+              <div className="user-menu-section-label">Navigation</div>
+              {pages.map((page) => {
+                const isActive = location.pathname === page.path || location.pathname.startsWith(page.path + '/');
+                return (
+                  <NavLink
+                    key={page.path}
+                    to={page.path}
+                    className={`user-menu-item user-menu-nav-item${isActive ? ' is-active' : ''}`}
+                    onClick={handlePageClick}
+                  >
+                    {page.label}
+                  </NavLink>
+                );
+              })}
+              <div className="user-menu-divider"></div>
+            </>
+          )}
+          
           {isAdmin && (
             <>
               <button className="user-menu-item" onClick={handleSettings}>

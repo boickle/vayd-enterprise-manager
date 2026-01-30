@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { http } from '../api/http';
 import { fetchFillDayCandidates, type FillDayCandidate, type FillDayRequest, type FillDayResponse, type FillDayStats } from '../api/routing';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
@@ -16,6 +16,7 @@ import html2canvas from 'html2canvas';
 export default function FillDayPage() {
   const { userEmail } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   // Doctor selection
   const [doctorQuery, setDoctorQuery] = useState('');
@@ -102,6 +103,9 @@ export default function FillDayPage() {
   const resultsContainerRef = useRef<HTMLDivElement | null>(null);
   const [exportingPDF, setExportingPDF] = useState(false);
 
+  // Track if we've already processed URL params to avoid re-processing
+  const hasProcessedUrlParamsRef = useRef(false);
+
   // Load providers
   useEffect(() => {
     let alive = true;
@@ -122,6 +126,78 @@ export default function FillDayPage() {
       alive = false;
     };
   }, [userEmail]);
+
+  // Handle URL parameters: doctorId and targetDate, and auto-fetch
+  useEffect(() => {
+    const urlDoctorId = searchParams.get('doctorId');
+    const urlTargetDate = searchParams.get('targetDate');
+
+    // Only process URL params if they exist and we haven't processed them yet
+    if (!urlDoctorId || !urlTargetDate || hasProcessedUrlParamsRef.current) {
+      return;
+    }
+
+    // Wait for providers to be loaded before matching doctor
+    if (allProviders.length === 0) {
+      return;
+    }
+
+    // Find matching doctor by pimsId or id
+    const matchingDoctor = allProviders.find((provider) => {
+      const providerPimsId = provider.pimsId ? String(provider.pimsId) : null;
+      const providerId = String(provider.id);
+      return providerPimsId === urlDoctorId || providerId === urlDoctorId;
+    });
+
+    if (matchingDoctor) {
+      // Set the selected doctor
+      const doctorId = matchingDoctor.pimsId ? String(matchingDoctor.pimsId) : String(matchingDoctor.id);
+      setSelectedDoctorId(doctorId);
+      setSelectedDoctorName(matchingDoctor.name);
+      setDoctorQuery(matchingDoctor.name);
+
+      // Set the target date
+      setTargetDate(urlTargetDate);
+
+      // Mark that we've processed the URL params
+      hasProcessedUrlParamsRef.current = true;
+
+      // Auto-fetch candidates directly with the values we have
+      // Create an inline async function to fetch with the URL param values
+      (async () => {
+        setLoading(true);
+        setError(null);
+        setCandidates([]);
+        setStats(null);
+        setMessage(null);
+
+        try {
+          const request: FillDayRequest = {
+            doctorId: doctorId,
+            targetDate: urlTargetDate,
+            ignoreEmergencyBlocks,
+            returnToDepot: 'optional' as const,
+            tailOvertimeMinutes: 0 as const,
+          };
+
+          const response = await fetchFillDayCandidates(request);
+          setCandidates(response.candidates);
+          setStats(response.stats);
+          if (response.message) {
+            setMessage(response.message);
+          }
+        } catch (e: any) {
+          setError(e?.response?.data?.message || e?.message || 'Failed to fetch candidates');
+        } finally {
+          setLoading(false);
+        }
+      })();
+    } else {
+      // Doctor not found - show error
+      setError(`Doctor with ID "${urlDoctorId}" not found`);
+      hasProcessedUrlParamsRef.current = true;
+    }
+  }, [searchParams, allProviders, ignoreEmergencyBlocks]);
 
   // Filter doctors based on query
   useEffect(() => {
@@ -154,9 +230,8 @@ export default function FillDayPage() {
         doctorId: selectedDoctorId,
         targetDate,
         ignoreEmergencyBlocks,
-        // Always include overtime (120 min, afterHoursOk)
-        returnToDepot: 'afterHoursOk' as const,
-        tailOvertimeMinutes: 120 as const,
+        returnToDepot: 'optional' as const,
+        tailOvertimeMinutes: 0 as const,
       };
 
       const response = await fetchFillDayCandidates(request);

@@ -82,3 +82,109 @@ export const trackClick = (elementName: string, location?: string): void => {
   });
 };
 
+
+/**
+ * Ecommerce tracking functions for GA4
+ * These follow the Enhanced Ecommerce standard
+ */
+
+/**
+ * Track when a user views an item/product
+ */
+export const trackViewItem = (
+  itemId: string,
+  itemName: string,
+  price?: number,
+  currency?: string,
+  additionalParams?: Record<string, any>
+): void => {
+  const params: Record<string, any> = {
+    currency: currency || 'USD',
+    value: price,
+    items: [
+      {
+        item_id: itemId,
+        item_name: itemName,
+        price: price,
+        quantity: 1,
+      },
+    ],
+    ...additionalParams,
+  };
+  trackEvent('view_item', params);
+};
+
+/**
+ * Track when a user adds an item to cart
+ */
+export const trackAddToCart = (
+  itemId: string,
+  itemName: string,
+  price?: number,
+  currency?: string,
+  quantity?: number,
+  additionalParams?: Record<string, any>
+): void => {
+  const params: Record<string, any> = {
+    currency: currency || 'USD',
+    value: price ? (price * (quantity || 1)) : undefined,
+    items: [
+      {
+        item_id: itemId,
+        item_name: itemName,
+        price: price,
+        quantity: quantity || 1,
+      },
+    ],
+    ...additionalParams,
+  };
+  trackEvent('add_to_cart', params);
+};
+
+/**
+ * Track when a user begins checkout
+ */
+export const trackBeginCheckout = (
+  value: number,
+  currency?: string,
+  items?: Array<{
+    item_id: string;
+    item_name: string;
+    price?: number;
+    quantity?: number;
+  }>,
+  additionalParams?: Record<string, any>
+): void => {
+  const params: Record<string, any> = {
+    currency: currency || 'USD',
+    value,
+    items: items || [],
+    ...additionalParams,
+  };
+  trackEvent('begin_checkout', params);
+};
+
+/**
+ * Track when a purchase is completed
+ */
+export const trackPurchase = (
+  transactionId: string,
+  value: number,
+  currency?: string,
+  items?: Array<{
+    item_id: string;
+    item_name: string;
+    price?: number;
+    quantity?: number;
+  }>,
+  additionalParams?: Record<string, any>
+): void => {
+  const params: Record<string, any> = {
+    transaction_id: transactionId,
+    currency: currency || 'USD',
+    value,
+    items: items || [],
+    ...additionalParams,
+  };
+  trackEvent('purchase', params);
+};

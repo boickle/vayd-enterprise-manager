@@ -20,6 +20,7 @@ import { http } from '../api/http';
 import { uploadPetImage } from '../api/patients';
 import VaccinationCertificateModal from '../components/VaccinationCertificateModal';
 import { updateCommunicationPreferences, getCurrentUser } from '../api/users';
+import { trackEvent } from '../utils/analytics';
 
 type PetWithWellness = Pet & {
   wellnessPlans?: WellnessPlan[];
@@ -683,6 +684,17 @@ export default function ClientPortal() {
     if (!pet.id) {
       return;
     }
+    
+    // Track explore memberships click
+    trackEvent('membership_explore_clicked', {
+      pet_id: pet.id,
+      pet_name: pet.name || 'Unknown',
+      pet_species: pet.species || pet.breed || 'Unknown',
+      pet_age_years: pet.dob ? ((Date.now() - new Date(pet.dob).getTime()) / (1000 * 60 * 60 * 24 * 365.25)).toFixed(1) : null,
+      has_membership: pet.membershipStatus ? true : false,
+      membership_status: pet.membershipStatus || 'none',
+    });
+    
     navigate('/client-portal/membership-signup', { state: { petId: pet.id } });
   }
 
@@ -1164,6 +1176,15 @@ export default function ClientPortal() {
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         transition: all 0.2s;
       }
+      /* Push hamburger menu down on mobile to avoid status bar */
+      @media (max-width: 768px) {
+        .cp-hamburger-button {
+          top: calc(env(safe-area-inset-top, 0px) + 0px);
+        }
+        .cp-menu-dropdown {
+          top: calc(env(safe-area-inset-top, 0px) + 96px) !important;
+        }
+      }
       .cp-hamburger-button:hover {
         background: rgba(255, 255, 255, 1);
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
@@ -1434,8 +1455,8 @@ export default function ClientPortal() {
           </button>
           <button
             className="cp-menu-item"
-            onClick={() => {
-              logout();
+            onClick={async () => {
+              await logout();
               navigate('/login');
               setMenuOpen(false);
             }}
