@@ -47,7 +47,7 @@ export default function UserMenu({ pages = [] }: { pages?: Page[] }) {
 
   const handleSettings = () => {
     setIsOpen(false);
-    nav('/admin/settings');
+    nav('/admin');
   };
 
   const handlePageClick = () => {

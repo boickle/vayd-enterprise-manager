@@ -627,7 +627,7 @@ export default function OpsAnalyticsPage() {
             }
           />
           <CardContent>
-            <Box height={340}>
+            <Box height={340} minHeight={340}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -730,7 +730,7 @@ export default function OpsAnalyticsPage() {
               <Card variant="outlined">
                 <CardHeader title={METRICS.find((m) => m.key === k)?.label || k} />
                 <CardContent>
-                  <Box height={220}>
+                  <Box height={220} minHeight={220}>
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={series} margin={{ left: 8, right: 8, top: 8, bottom: 8 }}>
                         <CartesianGrid strokeDasharray="3 3" />

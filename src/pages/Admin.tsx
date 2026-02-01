@@ -1,7 +1,7 @@
 // src/pages/Admin.tsx
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
-import { ADMIN_TAB_PAGES, type AdminTabPage } from '../app-pages';
+import { ADMIN_TAB_PAGES, type AdminTabPage } from '../admin-tabs';
 import './Settings.css';
 
 function matchesRole(required: AdminTabPage['role'], userRoles: string[]): boolean {
