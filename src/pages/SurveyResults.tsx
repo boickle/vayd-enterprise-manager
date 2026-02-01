@@ -255,35 +255,39 @@ export default function SurveyResults() {
               {surveyReport.questions.map((q) => (
                 <div key={q.questionKey} className="settings-survey-report-item">
                   <strong className="settings-survey-report-question">{q.questionText}</strong>
-                  {q.type === 'scale' && (
-                    <div className="settings-survey-report-stats">
-                      <span>
-                        Average:{' '}
-                        <strong>
-                          {(q as SurveyReportQuestionScale).stats.average?.toFixed(2) ?? '—'}
-                        </strong>
-                      </span>
-                      <span>
-                        Total responses:{' '}
-                        <strong>
-                          {(q as SurveyReportQuestionScale).stats.totalResponses ?? 0}
-                        </strong>
-                      </span>
-                      {(q as SurveyReportQuestionScale).stats.distribution &&
-                        Object.keys((q as SurveyReportQuestionScale).stats.distribution).length >
-                          0 && (
+                  {q.type === 'scale' && (() => {
+                    const scaleQ = q as SurveyReportQuestionScale;
+                    const distribution = scaleQ.stats.distribution || {};
+                    const scaleKeys = Object.keys(distribution).map(Number).filter((n) => !isNaN(n));
+                    const maxScale = 5; // Scale is always 1-5
+                    const avg = scaleQ.stats.average;
+                    const pct = avg != null ? ((avg / maxScale) * 100).toFixed(0) : null;
+                    return (
+                      <div className="settings-survey-report-stats">
+                        <span>
+                          Average:{' '}
+                          <strong>
+                            {pct != null ? `${pct}%` : '—'}
+                          </strong>
+                        </span>
+                        <span>
+                          Total responses:{' '}
+                          <strong>
+                            {scaleQ.stats.totalResponses ?? 0}
+                          </strong>
+                        </span>
+                        {scaleKeys.length > 0 && (
                           <span className="settings-muted">
                             Distribution:{' '}
-                            {Object.entries(
-                              (q as SurveyReportQuestionScale).stats.distribution
-                            )
+                            {Object.entries(distribution)
                               .sort((a, b) => Number(a[0]) - Number(b[0]))
                               .map(([k, v]) => `${k}: ${v}`)
                               .join(', ')}
                           </span>
                         )}
-                    </div>
-                  )}
+                      </div>
+                    );
+                  })()}
                   {(q.type === 'image_choice' ||
                     q.type === 'radio' ||
                     q.type === 'dropdown') && (
