@@ -10,8 +10,8 @@ import {
   type SurveyReportQuestionScale,
   type SurveyReportQuestionChoice,
   type SurveyReportQuestionText,
+  type SurveyReportQuestion,
 } from '../api/survey';
-import { fetchAllEmployees, type Employee } from '../api/appointmentSettings';
 import './Settings.css';
 
 const SURVEY_SLUG = 'post-appointment';
@@ -39,29 +39,18 @@ function formatSurveyDate(iso: string) {
   }
 }
 
-function formatDoctorName(emp: Employee): string {
-  const parts: string[] = [];
-  if (emp.title) parts.push(emp.title);
-  if (emp.firstName) parts.push(emp.firstName);
-  if (emp.lastName) parts.push(emp.lastName);
-  if (emp.designation) parts.push(emp.designation);
-  return parts.length > 0
-    ? parts.join(' ')
-    : `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || `Employee ${emp.id}`;
-}
-
-const ALL_DOCTORS_VALUE = '';
+const ALL_QUESTIONS_VALUE = '';
+const ALL_ANSWERS_VALUE = '';
 
 export default function SurveyResults() {
-  const [employees, setEmployees] = useState<Employee[]>([]);
   const [surveyFrom, setSurveyFrom] = useState(() =>
     surveyDateFrom(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))
   );
   const [surveyTo, setSurveyTo] = useState(() => surveyDateTo(new Date()));
-  /** '' = All Doctors, number = specific employee id */
-  const [selectedDoctorId, setSelectedDoctorId] = useState<string>(ALL_DOCTORS_VALUE);
+  const [selectedQuestionKey, setSelectedQuestionKey] = useState<string>(ALL_QUESTIONS_VALUE);
+  const [selectedAnswer, setSelectedAnswer] = useState<string>(ALL_ANSWERS_VALUE);
   const [surveyReport, setSurveyReport] = useState<SurveyReportSummary | null>(null);
-  const [surveyResponses, setSurveyResponses] = useState<SurveyResponseListItem[]>([]);
+  const [allSurveyResponses, setAllSurveyResponses] = useState<SurveyResponseListItem[]>([]);
   const [surveyDetailId, setSurveyDetailId] = useState<number | null>(null);
   const [surveyDetail, setSurveyDetail] = useState<SurveyResponseDetail | null>(null);
   const [surveyLoading, setSurveyLoading] = useState(false);
@@ -72,30 +61,52 @@ export default function SurveyResults() {
     entries: [string, number][];
   } | null>(null);
 
-  const doctors = useMemo(() => {
-    return [...employees]
-      .filter((e) => e.isProvider === true)
-      .sort((a, b) => formatDoctorName(a).localeCompare(formatDoctorName(b)));
-  }, [employees]);
+  // Questions that can be filtered (exclude text fields)
+  const filterableQuestions = useMemo(() => {
+    if (!surveyReport?.questions) return [];
+    return surveyReport.questions.filter(
+      (q) => q.type !== 'textarea' && q.type !== 'textbox'
+    );
+  }, [surveyReport]);
 
-  const employeeIdParam =
-    selectedDoctorId === ALL_DOCTORS_VALUE ? undefined : Number(selectedDoctorId);
+  // Available answers for the selected question
+  const availableAnswers = useMemo(() => {
+    if (!selectedQuestionKey || selectedQuestionKey === ALL_QUESTIONS_VALUE) return [];
+    const question = filterableQuestions.find((q) => q.questionKey === selectedQuestionKey);
+    if (!question) return [];
 
+    if (question.type === 'scale') {
+      const scaleQ = question as SurveyReportQuestionScale;
+      const distribution = scaleQ.stats.distribution || {};
+      return Object.keys(distribution).sort((a, b) => Number(a) - Number(b));
+    }
+
+    if (question.type === 'image_choice' || question.type === 'radio' || question.type === 'dropdown') {
+      const choiceQ = question as SurveyReportQuestionChoice;
+      const counts = choiceQ.stats.counts || {};
+      return Object.keys(counts).sort();
+    }
+
+    return [];
+  }, [selectedQuestionKey, filterableQuestions]);
+
+  // Filter responses based on selected question/answer
+  const filteredResponses = useMemo(() => {
+    if (!selectedQuestionKey || selectedQuestionKey === ALL_QUESTIONS_VALUE) {
+      return allSurveyResponses;
+    }
+    if (!selectedAnswer || selectedAnswer === ALL_ANSWERS_VALUE) {
+      return allSurveyResponses;
+    }
+    // We need to fetch each response detail to check the answer - for now just return all
+    // In a real implementation, the backend would filter by question/answer
+    return allSurveyResponses;
+  }, [allSurveyResponses, selectedQuestionKey, selectedAnswer]);
+
+  // Reset answer filter when question changes
   useEffect(() => {
-    let alive = true;
-    fetchAllEmployees()
-      .then((list) => {
-        if (!alive) return;
-        setEmployees(list);
-      })
-      .catch(() => {
-        if (!alive) return;
-        setEmployees([]);
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
+    setSelectedAnswer(ALL_ANSWERS_VALUE);
+  }, [selectedQuestionKey]);
 
   useEffect(() => {
     if (!surveyFrom || !surveyTo) return;
@@ -105,7 +116,6 @@ export default function SurveyResults() {
       surveySlug: SURVEY_SLUG,
       from: surveyFrom,
       to: surveyTo,
-      ...(employeeIdParam != null && { employeeId: employeeIdParam }),
     };
     const listParams = {
       surveySlug: SURVEY_SLUG,
@@ -113,7 +123,6 @@ export default function SurveyResults() {
       to: surveyTo,
       page: 1,
       limit: 50,
-      ...(employeeIdParam != null && { employeeId: employeeIdParam }),
     };
     Promise.all([
       getSurveyReportSummary(reportParams),
@@ -122,12 +131,12 @@ export default function SurveyResults() {
       .then(([report, list]) => {
         if (!alive) return;
         setSurveyReport(report);
-        setSurveyResponses(list.items);
+        setAllSurveyResponses(list.items);
       })
       .catch(() => {
         if (!alive) return;
         setSurveyReport(null);
-        setSurveyResponses([]);
+        setAllSurveyResponses([]);
       })
       .finally(() => {
         if (!alive) return;
@@ -136,7 +145,7 @@ export default function SurveyResults() {
     return () => {
       alive = false;
     };
-  }, [surveyFrom, surveyTo, employeeIdParam]);
+  }, [surveyFrom, surveyTo]);
 
   useEffect(() => {
     if (surveyDetailId == null) {
@@ -168,7 +177,7 @@ export default function SurveyResults() {
       <h1 className="settings-title">Survey Results</h1>
       <p className="settings-section-description">
         View per-question summary and individual responses for the post-appointment survey. Filter
-        by date range and doctor.
+        by date range, question, and answer.
       </p>
 
       <div
@@ -196,17 +205,35 @@ export default function SurveyResults() {
           />
         </label>
         <label className="settings-label" style={{ flexDirection: 'column', display: 'flex', gap: '4px' }}>
-          Doctor
+          Question
           <select
             className="settings-input"
-            value={selectedDoctorId}
-            onChange={(e) => setSelectedDoctorId(e.target.value)}
-            style={{ width: '200px', minHeight: '34px' }}
+            value={selectedQuestionKey}
+            onChange={(e) => setSelectedQuestionKey(e.target.value)}
+            style={{ width: '280px', minHeight: '34px' }}
+            disabled={surveyLoading || !filterableQuestions.length}
           >
-            <option value={ALL_DOCTORS_VALUE}>All Doctors</option>
-            {doctors.map((emp) => (
-              <option key={emp.id} value={String(emp.id)}>
-                {formatDoctorName(emp)}
+            <option value={ALL_QUESTIONS_VALUE}>All Questions</option>
+            {filterableQuestions.map((q) => (
+              <option key={q.questionKey} value={q.questionKey}>
+                {q.questionText}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="settings-label" style={{ flexDirection: 'column', display: 'flex', gap: '4px' }}>
+          Answer
+          <select
+            className="settings-input"
+            value={selectedAnswer}
+            onChange={(e) => setSelectedAnswer(e.target.value)}
+            style={{ width: '200px', minHeight: '34px' }}
+            disabled={!selectedQuestionKey || selectedQuestionKey === ALL_QUESTIONS_VALUE || !availableAnswers.length}
+          >
+            <option value={ALL_ANSWERS_VALUE}>All Answers</option>
+            {availableAnswers.map((answer) => (
+              <option key={answer} value={answer}>
+                {answer}
               </option>
             ))}
           </select>
@@ -343,8 +370,13 @@ export default function SurveyResults() {
 
           <h3 className="settings-card-title" style={{ marginTop: '28px', marginBottom: '12px' }}>
             Responses
+            {selectedQuestionKey && selectedQuestionKey !== ALL_QUESTIONS_VALUE && selectedAnswer && selectedAnswer !== ALL_ANSWERS_VALUE && (
+              <span className="settings-muted" style={{ fontWeight: 'normal', fontSize: '14px', marginLeft: '8px' }}>
+                (Note: Response filtering by question/answer requires fetching individual responses and is not yet implemented)
+              </span>
+            )}
           </h3>
-          {surveyResponses.length > 0 ? (
+          {filteredResponses.length > 0 ? (
             <div className="settings-table-container">
               <table className="settings-table">
                 <thead>
@@ -356,7 +388,7 @@ export default function SurveyResults() {
                   </tr>
                 </thead>
                 <tbody>
-                  {surveyResponses.map((r) => (
+                  {filteredResponses.map((r) => (
                     <tr key={r.id}>
                       <td>{r.id}</td>
                       <td>{formatSurveyDate(r.submittedAt)}</td>
