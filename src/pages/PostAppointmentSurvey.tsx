@@ -441,15 +441,32 @@ export default function PostAppointmentSurvey() {
     return addPageSectionBlocks(raw);
   }, [formData]);
 
-  /** Split blocks into 3 roughly equal pages */
+  /** Group blocks by each question's page (API page is 1-based). Section blocks use the next question's page. */
   const pageBlocks = useMemo(() => {
-    if (blocks.length === 0) return [[], [], []];
-    const chunkSize = Math.ceil(blocks.length / 3);
-    return [
-      blocks.slice(0, chunkSize),
-      blocks.slice(chunkSize, chunkSize * 2),
-      blocks.slice(chunkSize * 2),
-    ];
+    if (blocks.length === 0) return [[]];
+    const pageNumbers: number[] = [];
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
+      if (block.type === 'question') {
+        pageNumbers[i] = block.question.page ?? 1;
+      } else {
+        let nextPage = 1;
+        for (let j = i + 1; j < blocks.length; j++) {
+          if (blocks[j].type === 'question') {
+            nextPage = (blocks[j] as Block & { type: 'question'; question: SurveyFormQuestion }).question.page ?? 1;
+            break;
+          }
+        }
+        pageNumbers[i] = nextPage;
+      }
+    }
+    const maxPage = Math.max(1, ...pageNumbers);
+    const byPage: Block[][] = Array.from({ length: maxPage }, () => []);
+    blocks.forEach((block, i) => {
+      const p = pageNumbers[i];
+      if (p >= 1 && p <= maxPage) byPage[p - 1].push(block);
+    });
+    return byPage;
   }, [blocks]);
 
   const [currentPage, setCurrentPage] = useState(0);
@@ -497,7 +514,7 @@ export default function PostAppointmentSurvey() {
     }
     setSubmitError(null);
     // Defer so the click finishes on the Next button; otherwise the same click can fire on the newly rendered Submit button
-    setTimeout(() => setCurrentPage((p) => Math.min(2, p + 1)), 0);
+    setTimeout(() => setCurrentPage((p) => Math.min(pageBlocks.length - 1, p + 1)), 0);
   };
 
   const handleBack = () => {
@@ -636,7 +653,7 @@ export default function PostAppointmentSurvey() {
             <h1 className="survey-title">{formData.survey.name}</h1>
           )}
           <div className="survey-page-indicator">
-            Page {currentPage + 1} of 3
+            Page {currentPage + 1} of {pageBlocks.length}
           </div>
           {displayNodes.map((node, idx) => {
             if (node.type === 'single') {
@@ -675,7 +692,7 @@ export default function PostAppointmentSurvey() {
             ) : (
               <span />
             )}
-            {currentPage < 2 ? (
+            {currentPage < pageBlocks.length - 1 ? (
               <button type="button" className="btn" onClick={handleNext}>
                 Next
               </button>

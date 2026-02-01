@@ -55,6 +55,8 @@ export type SurveyFormQuestion = {
   questionType: 'scale' | 'radio' | 'dropdown' | 'image_choice' | 'textarea' | 'textbox';
   required: boolean;
   order: number;
+  /** 1-based page number this question appears on (from API). Default 1. */
+  page?: number | null;
   config?: SurveyQuestionConfigScale | SurveyQuestionConfigImageChoice | SurveyQuestionConfigRadio | Record<string, unknown>;
   /** Optional section header to show before this question (when API omits sections array) */
   pageSection?: string | null;
