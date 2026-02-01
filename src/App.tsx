@@ -18,12 +18,14 @@ import Home from './pages/Home';
 import AppTabs from './components/AppTabs';
 import UserMenu from './components/UserMenu';
 import { getAccessiblePages } from './app-pages';
+import { ADMIN_TAB_PAGES } from './admin-tabs';
 import CreateClientUser from './pages/CreateClientUser';
 import ClientPortal from './pages/ClientPortal';
 import MembershipSignup from './pages/MembershipSignup';
 import MembershipPayment from './pages/MembershipPayment';
 import MembershipUpgrade from './pages/MembershipUpgrade';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
+import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
 import { usePageTracking } from './hooks/usePageTracking';
 
 /**
@@ -78,14 +80,9 @@ function RouteGuard() {
     '/routing',
     '/doctor',
     '/doctormonth',
-    '/users/create',
-    '/analytics/payments',
-    '/analytics/ops',
-    '/analytics/revenue/doctor',
-    '/audit',
-    '/simulation',
+    '/admin',
     '/schedule-loader',
-    '/settings',
+    '/survey/responses',
     '/home',
   ];
 
@@ -142,8 +139,9 @@ function RouteGuard() {
  * KeepAliveOutlet
  * - Caches matched child routes and toggles their visibility instead
  *   of unmounting, so component state persists across tab switches.
- * - Pass a list of base paths you want to keep alive (e.g. /home and
- *   any tab paths). Subpaths (/page/x) are also kept alive.
+ * - Uses the matching base path from keepPaths as the cache key (not the
+ *   full path), so e.g. /admin/survey/results and /admin/analytics/payments
+ *   share one Admin instance and tab switching works on first load.
  * ------------------------------------------------------------------ */
 function KeepAliveOutlet({ keepPaths }: { keepPaths: string[] }) {
   const location = useLocation();
@@ -151,17 +149,21 @@ function KeepAliveOutlet({ keepPaths }: { keepPaths: string[] }) {
   const cacheRef = useRef(new Map<string, React.ReactNode>());
 
   const path = location.pathname;
-  const shouldKeep = keepPaths.some((p) => path === p || path.startsWith(p + '/'));
+  const matchingKeepPath = keepPaths.find((p) => path === p || path.startsWith(p + '/'));
+  const shouldKeep = matchingKeepPath !== undefined;
 
-  // Cache current outlet if path should be kept alive
-  if (outlet && shouldKeep) {
-    cacheRef.current.set(path, outlet);
+  // Cache current outlet by base path so sub-routes (e.g. admin tabs) share one instance
+  if (outlet && matchingKeepPath !== undefined) {
+    cacheRef.current.set(matchingKeepPath, outlet);
   }
 
   return (
     <>
-      {[...cacheRef.current.entries()].map(([p, element]) => (
-        <div key={p} style={{ display: p === path ? 'block' : 'none' }}>
+      {[...cacheRef.current.entries()].map(([basePath, element]) => (
+        <div
+          key={basePath}
+          style={{ display: path === basePath || path.startsWith(basePath + '/') ? 'block' : 'none' }}
+        >
           {element}
         </div>
       ))}
@@ -195,10 +197,15 @@ export default function App() {
     return roles.includes('client');
   }, [roles]);
 
-  // Compute employee pages if NOT a client
+  // Compute employee pages if NOT a client (all accessible pages for routing)
   const pages = useMemo(
     () => (isClient ? [] : getAccessiblePages(abilities, roles)),
     [abilities, roles, isClient]
+  );
+  // Main tab bar: only pages with showInMainTabs !== false
+  const mainTabPages = useMemo(
+    () => pages.filter((p: { showInMainTabs?: boolean }) => p.showInMainTabs !== false),
+    [pages]
   );
 
   // If a client lands on "/" or "/home", redirect to client portal
@@ -219,7 +226,8 @@ export default function App() {
         location.pathname !== '/login' &&
         location.pathname !== '/create-client' &&
         location.pathname !== '/reset-password' &&
-        location.pathname !== '/request-reset' && (
+        location.pathname !== '/request-reset' &&
+        !location.pathname.startsWith('/survey/post-appointment') && (
         <header className="navbar">
           <div className="brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <img
@@ -246,10 +254,10 @@ export default function App() {
           </div>
 
           {/* Tabs only for employees - hidden on mobile, shown in UserMenu */}
-          {token && !isClient && <AppTabs pages={pages} />}
+          {token && !isClient && <AppTabs pages={mainTabPages} />}
 
           <div className="spacer" />
-          {token && <UserMenu pages={isClient ? [] : pages} />}
+          {token && <UserMenu pages={isClient ? [] : mainTabPages} />}
         </header>
       )}
 
@@ -321,6 +329,10 @@ export default function App() {
             element={<AppointmentRequestForm />}
           />
 
+          {/* Public survey (no login) – exact path and any subpath (e.g. duplicate path in email link) */}
+          <Route path="/survey/post-appointment" element={<PostAppointmentSurvey />} />
+          <Route path="/survey/post-appointment/*" element={<PostAppointmentSurvey />} />
+
           {/* Employees only: keep these pages alive across tab switches */}
           {!isClient && (
             <Route
@@ -332,9 +344,18 @@ export default function App() {
               }
             >
               <Route path="/home" element={<Home />} />
-              {pages.map((p: any) => (
-                <Route key={p.path} path={p.path} element={p.element} />
-              ))}
+              {pages.map((p: any) =>
+                p.path === '/admin' ? (
+                  <Route key={p.path} path={p.path} element={p.element}>
+                    <Route index element={<Navigate to="/admin/survey/results" replace />} />
+                    {ADMIN_TAB_PAGES.map((tab) => (
+                      <Route key={tab.path} path={tab.path} element={tab.element} />
+                    ))}
+                  </Route>
+                ) : (
+                  <Route key={p.path} path={p.path} element={p.element} />
+                )
+              )}
             </Route>
           )}
 

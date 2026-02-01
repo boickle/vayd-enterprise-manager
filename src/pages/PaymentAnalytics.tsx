@@ -311,7 +311,7 @@ export default function PaymentsAnalyticsPage() {
             }
           />
           <CardContent>
-            <Box height={320}>
+            <Box height={320} minHeight={320}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={series} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" />
