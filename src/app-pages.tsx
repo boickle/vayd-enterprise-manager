@@ -3,10 +3,7 @@ import Routing from './pages/Routing';
 import DoctorDay from './pages/DoctorDay';
 import CreateUser from './pages/CreateUser';
 import PaymentsAnalyticsPage from './pages/PaymentAnalytics';
-import OpsAnalyticsPage from './pages/OpsAnalytics';
 import DoctorRevenueAnalyticsPage from './pages/DoctorRevenueAnalytics';
-import AuditAdminPage from './pages/AuditAdmin';
-import SimResults from './pages/SimResults';
 import MyMonth from './pages/MyMonth.';
 import MyDayToggle from './pages/MyDayToggle';
 import FillDayPage from './pages/FillDay';
@@ -25,6 +22,22 @@ export type AppPage = {
   /** If false, page is only reachable via Admin tab (not in main tab bar). Default true. */
   showInMainTabs?: boolean;
 };
+
+/** Admin tab config: path is relative to /admin (e.g. 'settings', 'survey/results'). */
+export type AdminTabPage = {
+  path: string;
+  label: string;
+  element: JSX.Element;
+  role?: string | string[];
+};
+
+export const ADMIN_TAB_PAGES: AdminTabPage[] = [
+  { path: 'settings', label: 'Settings', element: <Settings />, role: ['admin', 'superadmin'] },
+  { path: 'survey/results', label: 'Survey Results', element: <SurveyResults />, role: ['admin', 'superadmin'] },
+  { path: 'users/create', label: 'Create User', element: <CreateUser />, role: 'superadmin' },
+  { path: 'analytics/payments', label: 'Payments Analytics', element: <PaymentsAnalyticsPage />, role: ['admin', 'superadmin'] },
+  { path: 'analytics/revenue/doctor', label: 'Doctor Revenue Analytics', element: <DoctorRevenueAnalyticsPage />, role: ['admin'] },
+];
 
 function matchesRole(required: AppPage['role'], userRoles?: string[]) {
   if (!required) return true; // no role requirement
@@ -65,77 +78,15 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       showInMainTabs: true,
     },
     {
-      path: '/users/create',
-      label: 'Create User',
-      element: <CreateUser />,
-      permission: 'canManageUsers',
-      role: ['superadmin'],
-      showInMainTabs: false,
-    },
-    {
-      path: '/analytics/payments',
-      label: 'Payments Analytics',
-      element: <PaymentsAnalyticsPage />,
-      permission: 'canSeePaymentsAnalytics',
-      role: ['admin', 'superadmin'],
-      showInMainTabs: false,
-    },
-    {
-      path: '/analytics/ops',
-      label: 'Ops Analytics',
-      element: <OpsAnalyticsPage />,
-      permission: 'canSeeOpsAnalytics',
-      role: ['admin'],
-      showInMainTabs: false,
-    },
-    {
-      path: '/analytics/revenue/doctor',
-      label: 'Doctor Revenue Analytics',
-      element: <DoctorRevenueAnalyticsPage />,
-      permission: 'canSeeDoctorAnalytics',
-      role: ['admin'],
-      showInMainTabs: false,
-    },
-    {
-      path: '/audit',
-      label: 'Super Admin Audit',
-      element: <AuditAdminPage />,
-      permission: 'superadmin',
-      role: 'superadmin',
-      showInMainTabs: false,
-    },
-    {
-      path: '/simulation',
-      label: 'Simulate Routing',
-      element: <SimResults />,
-      permission: 'superadmin',
-      role: 'superadmin',
-      showInMainTabs: false,
-    },
-    {
       path: '/schedule-loader',
       label: 'Schedule Loader',
       element: <FillDayPage />,
       role: ['employee', 'admin', 'superadmin'],
     },
     {
-      path: '/settings',
-      label: 'Settings',
-      element: <Settings />,
-      role: ['admin', 'superadmin'],
-      showInMainTabs: false,
-    },
-    {
       path: '/survey/responses',
       label: 'Survey Responses',
       element: <SurveyResponsesPage />,
-      role: ['admin', 'superadmin'],
-      showInMainTabs: false,
-    },
-    {
-      path: '/survey/results',
-      label: 'Survey Results',
-      element: <SurveyResults />,
       role: ['admin', 'superadmin'],
       showInMainTabs: false,
     },

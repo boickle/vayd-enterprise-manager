@@ -17,7 +17,7 @@ import { useAuth } from './auth/useAuth';
 import Home from './pages/Home';
 import AppTabs from './components/AppTabs';
 import UserMenu from './components/UserMenu';
-import { getAccessiblePages } from './app-pages';
+import { getAccessiblePages, ADMIN_TAB_PAGES } from './app-pages';
 import CreateClientUser from './pages/CreateClientUser';
 import ClientPortal from './pages/ClientPortal';
 import MembershipSignup from './pages/MembershipSignup';
@@ -80,16 +80,8 @@ function RouteGuard() {
     '/doctor',
     '/doctormonth',
     '/admin',
-    '/users/create',
-    '/analytics/payments',
-    '/analytics/ops',
-    '/analytics/revenue/doctor',
-    '/survey/responses',
-    '/survey/results',
-    '/audit',
-    '/simulation',
     '/schedule-loader',
-    '/settings',
+    '/survey/responses',
     '/home',
   ];
 
@@ -346,9 +338,18 @@ export default function App() {
               }
             >
               <Route path="/home" element={<Home />} />
-              {pages.map((p: any) => (
-                <Route key={p.path} path={p.path} element={p.element} />
-              ))}
+              {pages.map((p: any) =>
+                p.path === '/admin' ? (
+                  <Route key={p.path} path={p.path} element={p.element}>
+                    <Route index element={<Navigate to="/admin/settings" replace />} />
+                    {ADMIN_TAB_PAGES.map((tab) => (
+                      <Route key={tab.path} path={tab.path} element={tab.element} />
+                    ))}
+                  </Route>
+                ) : (
+                  <Route key={p.path} path={p.path} element={p.element} />
+                )
+              )}
             </Route>
           )}
 
