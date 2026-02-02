@@ -51,8 +51,15 @@ export default function LoginPage() {
         return;
       }
 
-      // Employees: go back to where they came from, or /routing
-      const fallback = from && from !== '/' && from !== '/login' ? from : '/routing';
+      // Admins go directly to routing
+      const isAdmin = roles.some(r => r.toLowerCase() === 'admin' || r.toLowerCase() === 'superadmin');
+      if (isAdmin) {
+        nav('/routing', { replace: true });
+        return;
+      }
+
+      // Other employees: go back to where they came from, or /home
+      const fallback = from && from !== '/' && from !== '/login' ? from : '/home';
       nav(fallback, { replace: true });
       // --------------------------------------
     } catch (err: any) {
