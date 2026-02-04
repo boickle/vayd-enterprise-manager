@@ -129,17 +129,20 @@ function QuestionScale({
         {question.questionText}
         {question.required && <span className="survey-required"> *</span>}
       </p>
+      {(fromText || toText) && (
+        <div className="survey-scale-labels-row" aria-hidden>
+          <span className="survey-scale-label-end">{fromText}</span>
+          <span className="survey-scale-label-end">{toText}</span>
+        </div>
+      )}
       <div
         className="survey-scale-row"
         style={{ gridTemplateColumns: `repeat(${options.length}, 1fr)` }}
         role="group"
         aria-label={question.questionText}
       >
-        {options.map((n, idx) => (
+        {options.map((n) => (
           <div key={n} className="survey-scale-cell">
-            <span className="survey-scale-label-top">
-              {idx === 0 ? fromText : idx === options.length - 1 ? toText : ''}
-            </span>
             <label className="survey-scale-option">
               <input
                 type="radio"

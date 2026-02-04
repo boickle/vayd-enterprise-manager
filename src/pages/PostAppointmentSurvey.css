@@ -99,6 +99,32 @@
   font-weight: 400;
 }
 
+/* Single row for scale end labels so they align with first/last radio */
+.survey-scale-labels-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 0 2px;
+}
+
+.survey-scale-label-end {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.3;
+  text-transform: uppercase;
+  max-width: 42%;
+}
+
+.survey-scale-label-end:first-child {
+  text-align: left;
+}
+
+.survey-scale-label-end:last-child {
+  text-align: right;
+}
+
 .survey-scale-row {
   display: grid;
   gap: 8px 16px;
@@ -111,14 +137,6 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-}
-
-.survey-scale-label-top {
-  font-size: 11px;
-  color: var(--muted);
-  text-align: center;
-  line-height: 1.3;
-  min-height: 2.6em;
 }
 
 .survey-scale-option {
