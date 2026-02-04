@@ -475,6 +475,27 @@ export default function PostAppointmentSurvey() {
   const [currentPage, setCurrentPage] = useState(0);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
 
+  const surveyTopRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const scrollToTop = () => {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      surveyTopRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' });
+    };
+    scrollToTop();
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const raf = requestAnimationFrame(() => {
+      scrollToTop();
+      timeoutId = window.setTimeout(scrollToTop, 100);
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timeoutId);
+    };
+  }, [currentPage]);
+
   /** Current page blocks and display nodes (for collapsible sections). Must be called unconditionally. */
   const blocksForCurrentPage = useMemo(() => pageBlocks[currentPage] ?? [], [pageBlocks, currentPage]);
   const displayNodes = useMemo(() => buildDisplayNodes(blocksForCurrentPage), [blocksForCurrentPage]);
@@ -649,7 +670,7 @@ export default function PostAppointmentSurvey() {
   };
 
   return (
-    <div className="survey-page">
+    <div className="survey-page" ref={surveyTopRef}>
       <div className="survey-card">
         <form onSubmit={handleSubmit} className="survey-form">
           {formData?.survey?.name && (
