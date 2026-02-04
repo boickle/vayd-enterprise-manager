@@ -129,17 +129,20 @@ function QuestionScale({
         {question.questionText}
         {question.required && <span className="survey-required"> *</span>}
       </p>
+      {(fromText || toText) && (
+        <div className="survey-scale-labels-row" aria-hidden>
+          <span className="survey-scale-label-end">{fromText}</span>
+          <span className="survey-scale-label-end">{toText}</span>
+        </div>
+      )}
       <div
         className="survey-scale-row"
         style={{ gridTemplateColumns: `repeat(${options.length}, 1fr)` }}
         role="group"
         aria-label={question.questionText}
       >
-        {options.map((n, idx) => (
+        {options.map((n) => (
           <div key={n} className="survey-scale-cell">
-            <span className="survey-scale-label-top">
-              {idx === 0 ? fromText : idx === options.length - 1 ? toText : ''}
-            </span>
             <label className="survey-scale-option">
               <input
                 type="radio"
@@ -472,6 +475,27 @@ export default function PostAppointmentSurvey() {
   const [currentPage, setCurrentPage] = useState(0);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
 
+  const surveyTopRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const scrollToTop = () => {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      surveyTopRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' });
+    };
+    scrollToTop();
+    let timeoutId: number;
+    const raf = requestAnimationFrame(() => {
+      scrollToTop();
+      timeoutId = window.setTimeout(scrollToTop, 100);
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timeoutId);
+    };
+  }, [currentPage]);
+
   /** Current page blocks and display nodes (for collapsible sections). Must be called unconditionally. */
   const blocksForCurrentPage = useMemo(() => pageBlocks[currentPage] ?? [], [pageBlocks, currentPage]);
   const displayNodes = useMemo(() => buildDisplayNodes(blocksForCurrentPage), [blocksForCurrentPage]);
@@ -646,7 +670,7 @@ export default function PostAppointmentSurvey() {
   };
 
   return (
-    <div className="survey-page">
+    <div className="survey-page" ref={surveyTopRef}>
       <div className="survey-card">
         <form onSubmit={handleSubmit} className="survey-form">
           {formData?.survey?.name && (
