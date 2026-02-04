@@ -310,6 +310,28 @@
   color: var(--text);
 }
 
+.settings-cadence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.settings-cadence-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: #f8fdfa;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.settings-cadence-row .settings-checkbox-item {
+  white-space: nowrap;
+}
+
 .settings-error {
   text-align: center;
   padding: 48px 24px;

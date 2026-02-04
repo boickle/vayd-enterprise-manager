@@ -16,8 +16,19 @@ import {
   type EmployeeWeeklySchedule,
   type Zone,
 } from '../api/appointmentSettings';
+import {
+  getPracticeSettings,
+  updatePracticeSettings,
+  settingsToForm,
+  formToSettings,
+  type ReminderSettingsForm,
+  type CadenceEntry,
+} from '../api/practiceSettings';
 import { apiBaseUrl } from '../api/http';
 import './Settings.css';
+
+/** Practice ID for reminder settings (default 1; override via env if needed) */
+const REMINDERS_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
 /** Placeholder when GET /employees/:id/image returns 404 or fails */
 const EMPLOYEE_IMAGE_PLACEHOLDER =
@@ -41,7 +52,7 @@ function formatEmployeeName(emp: Employee): string {
 
 export default function Settings() {
   const { role } = useAuth() as any;
-  const [activeTab, setActiveTab] = useState<'appointment-types' | 'employee-types' | 'employee-zones' | 'employee-schedule' | 'employee-images'>('appointment-types');
+  const [activeTab, setActiveTab] = useState<'appointment-types' | 'employee-types' | 'employee-zones' | 'employee-schedule' | 'employee-images' | 'reminders'>('appointment-types');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,6 +83,20 @@ export default function Settings() {
   const [imageUploadError, setImageUploadError] = useState<string | null>(null);
   /** Bump per employee after upload so img src changes and browser reloads the image */
   const [employeeImageVersion, setEmployeeImageVersion] = useState<Record<number, number>>({});
+
+  // Reminders tab state
+  const [reminderForm, setReminderForm] = useState<ReminderSettingsForm>({
+    enableEmail: true,
+    enableSms: false,
+    appointmentWindowDays: 30,
+    appointmentCadence: [],
+    healthCadence: [],
+    testRedirectEmail: '',
+    testRedirectPhone: '',
+  });
+  const [reminderLoading, setReminderLoading] = useState(false);
+  const [reminderSaving, setReminderSaving] = useState(false);
+  const [reminderLoadError, setReminderLoadError] = useState<string | null>(null);
 
   // Normalize roles
   const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
@@ -111,6 +136,29 @@ export default function Settings() {
     if (!isAdmin) return;
     loadData();
   }, [isAdmin]);
+
+  // Load reminder settings when Reminders tab is active
+  useEffect(() => {
+    if (!isAdmin || activeTab !== 'reminders') return;
+    let cancelled = false;
+    setReminderLoadError(null);
+    setReminderLoading(true);
+    getPracticeSettings(REMINDERS_PRACTICE_ID)
+      .then((settings) => {
+        if (!cancelled) setReminderForm(settingsToForm(settings));
+      })
+      .catch((err: any) => {
+        if (!cancelled) {
+          setReminderLoadError(err?.response?.data?.message || err?.message || 'Failed to load reminder settings');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setReminderLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, activeTab]);
 
   const loadData = async () => {
     setLoading(true);
@@ -451,6 +499,65 @@ export default function Settings() {
     });
   };
 
+  const handleSaveReminders = async () => {
+    setReminderSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await updatePracticeSettings(REMINDERS_PRACTICE_ID, formToSettings(reminderForm));
+      setSuccess('Reminder settings updated successfully');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to update reminder settings');
+    } finally {
+      setReminderSaving(false);
+    }
+  };
+
+  const updateAppointmentCadenceEntry = (index: number, update: Partial<CadenceEntry>) => {
+    setReminderForm((prev) => {
+      const next = [...prev.appointmentCadence];
+      next[index] = { ...next[index], ...update };
+      return { ...prev, appointmentCadence: next };
+    });
+  };
+
+  const updateHealthCadenceEntry = (index: number, update: Partial<CadenceEntry>) => {
+    setReminderForm((prev) => {
+      const next = [...prev.healthCadence];
+      next[index] = { ...next[index], ...update };
+      return { ...prev, healthCadence: next };
+    });
+  };
+
+  const addAppointmentCadenceEntry = () => {
+    setReminderForm((prev) => ({
+      ...prev,
+      appointmentCadence: [...prev.appointmentCadence, { days: 1, channels: ['sms'], smsFallback: 'email' }],
+    }));
+  };
+
+  const addHealthCadenceEntry = () => {
+    setReminderForm((prev) => ({
+      ...prev,
+      healthCadence: [...prev.healthCadence, { days: 30, channels: ['email'], smsFallback: 'none' }],
+    }));
+  };
+
+  const removeAppointmentCadenceEntry = (index: number) => {
+    setReminderForm((prev) => ({
+      ...prev,
+      appointmentCadence: prev.appointmentCadence.filter((_, i) => i !== index),
+    }));
+  };
+
+  const removeHealthCadenceEntry = (index: number) => {
+    setReminderForm((prev) => ({
+      ...prev,
+      healthCadence: prev.healthCadence.filter((_, i) => i !== index),
+    }));
+  };
+
   const handleUploadEmployeeImage = async (employeeId: number, file: File | null) => {
     if (!file) return;
     setUploadingEmployeeId(employeeId);
@@ -515,6 +622,12 @@ export default function Settings() {
             onClick={() => setActiveTab('employee-images')}
           >
             Employee Images
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'reminders' ? 'active' : ''}`}
+            onClick={() => setActiveTab('reminders')}
+          >
+            Reminders
           </button>
         </div>
 
@@ -1182,6 +1295,281 @@ export default function Settings() {
                     disabled={saving || scheduleUpdates.size === 0}
                   >
                     {saving ? 'Saving...' : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Reminders Tab */}
+        {activeTab === 'reminders' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Reminder Settings</h2>
+            <p className="settings-section-description">
+              Configure when and how appointment and health reminders are sent (email and SMS). Each cadence entry specifies days before/after, channels (email, SMS), and SMS fallback when only SMS is used.
+            </p>
+
+            {reminderLoadError && (
+              <div className="settings-message settings-error-message">
+                {reminderLoadError}
+                <button onClick={() => setReminderLoadError(null)} className="settings-close">×</button>
+              </div>
+            )}
+
+            {reminderLoading ? (
+              <div className="settings-loading">
+                <div className="settings-spinner"></div>
+                <span>Loading reminder settings...</span>
+              </div>
+            ) : (
+              <div className="settings-card">
+                <h3 className="settings-card-title">Channels</h3>
+                <div className="settings-form-group">
+                  <label className="settings-checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={reminderForm.enableEmail}
+                      onChange={(e) =>
+                        setReminderForm((prev) => ({ ...prev, enableEmail: e.target.checked }))
+                      }
+                    />
+                    <span>Enable email reminders</span>
+                  </label>
+                </div>
+                <div className="settings-form-group">
+                  <label className="settings-checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={reminderForm.enableSms}
+                      onChange={(e) =>
+                        setReminderForm((prev) => ({ ...prev, enableSms: e.target.checked }))
+                      }
+                    />
+                    <span>Enable SMS reminders</span>
+                  </label>
+                </div>
+
+                <h3 className="settings-card-title" style={{ marginTop: '24px' }}>Appointment reminders</h3>
+                <div className="settings-form-group">
+                  <label className="settings-label">Appointment cadence</label>
+                  <span className="settings-muted" style={{ display: 'block', marginBottom: '8px' }}>
+                    Days before appointment (positive). Each row: days, channels (email/SMS), and SMS fallback when only SMS is used.
+                  </span>
+                  <div className="settings-cadence-list">
+                    {reminderForm.appointmentCadence.map((entry, index) => (
+                      <div key={index} className="settings-cadence-row">
+                        <input
+                          type="number"
+                          className="settings-input"
+                          value={entry.days}
+                          onChange={(e) =>
+                            updateAppointmentCadenceEntry(index, {
+                              days: parseInt(e.target.value, 10) || 0,
+                            })
+                          }
+                          placeholder="Days"
+                          style={{ width: '80px' }}
+                        />
+                        <label className="settings-checkbox-item" style={{ margin: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={entry.channels.includes('email')}
+                            onChange={(e) => {
+                              const channels = e.target.checked
+                                ? ([...entry.channels.filter((c) => c !== 'email'), 'email'] as ('email' | 'sms')[]).sort()
+                                : (entry.channels.filter((c) => c !== 'email') as ('email' | 'sms')[]);
+                              const next: ('email' | 'sms')[] = channels.length ? channels : ['sms'];
+                              updateAppointmentCadenceEntry(index, {
+                                channels: next,
+                                smsFallback: next.length === 1 && next[0] === 'sms' ? (entry.smsFallback ?? 'email') : undefined,
+                              });
+                            }}
+                          />
+                          <span>Email</span>
+                        </label>
+                        <label className="settings-checkbox-item" style={{ margin: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={entry.channels.includes('sms')}
+                            onChange={(e) => {
+                              const channels = e.target.checked
+                                ? ([...entry.channels.filter((c) => c !== 'sms'), 'sms'] as ('email' | 'sms')[]).sort()
+                                : (entry.channels.filter((c) => c !== 'sms') as ('email' | 'sms')[]);
+                              updateAppointmentCadenceEntry(index, {
+                                channels: channels.length ? (channels as ('email' | 'sms')[]) : ['email'],
+                                smsFallback: channels.length && channels.includes('sms') && channels.length === 1 ? (entry.smsFallback ?? 'email') : undefined,
+                              });
+                            }}
+                          />
+                          <span>SMS</span>
+                        </label>
+                        {entry.channels.length === 1 && entry.channels[0] === 'sms' && (
+                          <select
+                            className="settings-select"
+                            value={entry.smsFallback ?? 'email'}
+                            onChange={(e) =>
+                              updateAppointmentCadenceEntry(index, {
+                                smsFallback: e.target.value as 'email' | 'none',
+                              })
+                            }
+                            style={{ width: '150px' }}
+                          >
+                            <option value="email">Fallback: email</option>
+                            <option value="none">Fallback: none</option>
+                          </select>
+                        )}
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          onClick={() => removeAppointmentCadenceEntry(index)}
+                          aria-label="Remove entry"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" className="btn secondary" onClick={addAppointmentCadenceEntry} style={{ marginTop: '8px' }}>
+                    Add appointment cadence entry
+                  </button>
+                </div>
+
+                <h3 className="settings-card-title" style={{ marginTop: '24px' }}>Health reminders</h3>
+                <div className="settings-form-group">
+                  <label className="settings-label">Health cadence</label>
+                  <span className="settings-muted" style={{ display: 'block', marginBottom: '8px' }}>
+                    Days before (positive) or after (negative) due date. Each row: days, channels, and SMS fallback when only SMS is used.
+                  </span>
+                  <div className="settings-cadence-list">
+                    {reminderForm.healthCadence.map((entry, index) => (
+                      <div key={index} className="settings-cadence-row">
+                        <input
+                          type="number"
+                          className="settings-input"
+                          value={entry.days}
+                          onChange={(e) =>
+                            updateHealthCadenceEntry(index, {
+                              days: parseInt(e.target.value, 10) || 0,
+                            })
+                          }
+                          placeholder="Days"
+                          style={{ width: '80px' }}
+                        />
+                        <label className="settings-checkbox-item" style={{ margin: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={entry.channels.includes('email')}
+                            onChange={(e) => {
+                              const channels = e.target.checked
+                                ? ([...entry.channels.filter((c) => c !== 'email'), 'email'] as ('email' | 'sms')[]).sort()
+                                : (entry.channels.filter((c) => c !== 'email') as ('email' | 'sms')[]);
+                              const next: ('email' | 'sms')[] = channels.length ? channels : ['sms'];
+                              updateHealthCadenceEntry(index, {
+                                channels: next,
+                                smsFallback: next.length === 1 && next[0] === 'sms' ? (entry.smsFallback ?? 'email') : undefined,
+                              });
+                            }}
+                          />
+                          <span>Email</span>
+                        </label>
+                        <label className="settings-checkbox-item" style={{ margin: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={entry.channels.includes('sms')}
+                            onChange={(e) => {
+                              const channels = e.target.checked
+                                ? ([...entry.channels.filter((c) => c !== 'sms'), 'sms'] as ('email' | 'sms')[]).sort()
+                                : (entry.channels.filter((c) => c !== 'sms') as ('email' | 'sms')[]);
+                              updateHealthCadenceEntry(index, {
+                                channels: channels.length ? (channels as ('email' | 'sms')[]) : ['email'],
+                                smsFallback: channels.length && channels.includes('sms') && channels.length === 1 ? (entry.smsFallback ?? 'email') : undefined,
+                              });
+                            }}
+                          />
+                          <span>SMS</span>
+                        </label>
+                        {entry.channels.length === 1 && entry.channels[0] === 'sms' && (
+                          <select
+                            className="settings-select"
+                            value={entry.smsFallback ?? 'email'}
+                            onChange={(e) =>
+                              updateHealthCadenceEntry(index, {
+                                smsFallback: e.target.value as 'email' | 'none',
+                              })
+                            }
+                            style={{ width: '150px' }}
+                          >
+                            <option value="email">Fallback: email</option>
+                            <option value="none">Fallback: none</option>
+                          </select>
+                        )}
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          onClick={() => removeHealthCadenceEntry(index)}
+                          aria-label="Remove entry"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" className="btn secondary" onClick={addHealthCadenceEntry} style={{ marginTop: '8px' }}>
+                    Add health cadence entry
+                  </button>
+                </div>
+                <div className="settings-form-group">
+                  <label className="settings-label">Appointment window (days)</label>
+                  <input
+                    type="number"
+                    className="settings-input"
+                    value={reminderForm.appointmentWindowDays}
+                    onChange={(e) =>
+                      setReminderForm((prev) => ({
+                        ...prev,
+                        appointmentWindowDays: parseInt(e.target.value, 10) || 0,
+                      }))
+                    }
+                    min={0}
+                    style={{ maxWidth: '120px' }}
+                  />
+                  <span className="settings-muted">Do not send health reminders if the patient has an appointment within this many days.</span>
+                </div>
+
+                <h3 className="settings-card-title" style={{ marginTop: '24px' }}>Test redirects (non-production)</h3>
+                <div className="settings-form-group">
+                  <label className="settings-label">Test redirect email</label>
+                  <input
+                    type="text"
+                    className="settings-input"
+                    value={reminderForm.testRedirectEmail}
+                    onChange={(e) =>
+                      setReminderForm((prev) => ({ ...prev, testRedirectEmail: e.target.value }))
+                    }
+                    placeholder="email@example.com"
+                  />
+                </div>
+                <div className="settings-form-group">
+                  <label className="settings-label">Test redirect phone</label>
+                  <input
+                    type="text"
+                    className="settings-input"
+                    value={reminderForm.testRedirectPhone}
+                    onChange={(e) =>
+                      setReminderForm((prev) => ({ ...prev, testRedirectPhone: e.target.value }))
+                    }
+                    placeholder="2078440442"
+                  />
+                </div>
+
+                <div className="settings-action-bar">
+                  <button
+                    className="btn"
+                    onClick={handleSaveReminders}
+                    disabled={reminderSaving}
+                  >
+                    {reminderSaving ? 'Saving...' : 'Save reminder settings'}
                   </button>
                 </div>
               </div>
