@@ -15,25 +15,34 @@ export default function PublicRoomLoaderForm() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!token) {
+    const tokenValue = token;
+    if (!tokenValue) {
       setError('Missing token parameter');
       setLoading(false);
       return;
     }
+    const safeToken = tokenValue as string;
 
     async function fetchRoomLoaderData() {
       try {
         setLoading(true);
         setError(null);
-        const { data: responseData } = await http.get(`/public/room-loader/form?token=${encodeURIComponent(token)}`);
+        const { data: responseData } = await http.get(
+          `/public/room-loader/form?token=${encodeURIComponent(safeToken)}`
+        );
         setData(responseData);
         
         // Initialize form data with existing values
         if (responseData?.patients) {
           const initialFormData: Record<string, any> = {};
+          const appts = responseData.appointments || [];
           responseData.patients.forEach((patient: any, idx: number) => {
             const petKey = `pet${idx}`;
-            initialFormData[`${petKey}_appointmentReason`] = patient.appointmentReason || '';
+            const appointmentReason =
+              patient.appointmentReason ??
+              (appts[idx] && (appts[idx].description || appts[idx].instructions)) ??
+              '';
+            initialFormData[`${petKey}_appointmentReason`] = appointmentReason;
             initialFormData[`${petKey}_generalWellbeing`] = '';
             initialFormData[`${petKey}_outdoorAccess`] = '';
             initialFormData[`${petKey}_specificConcerns`] = '';
@@ -85,11 +94,13 @@ export default function PublicRoomLoaderForm() {
   }
 
   async function handleSubmit() {
-    if (!token) return;
+    const tokenValue = token;
+    if (!tokenValue) return;
+    const safeToken = tokenValue as string;
     
     setSubmitting(true);
     try {
-      await http.post(`/public/room-loader/form/submit?token=${encodeURIComponent(token)}`, {
+      await http.post(`/public/room-loader/form/submit?token=${encodeURIComponent(safeToken)}`, {
         formData,
       });
       alert('Form submitted successfully!');
@@ -212,17 +223,17 @@ export default function PublicRoomLoaderForm() {
           <div style={{ marginBottom: '30px' }}>
             <h1 style={{ 
               fontSize: '24px', 
-              fontWeight: 600, 
+              fontWeight: 400, 
               marginBottom: '20px',
               color: '#333'
             }}>
-              Time to Check-in for your appt!
+              Time to Check-in for your Appointment!
             </h1>
             <p style={{ fontSize: '16px', lineHeight: '1.6', color: '#555', marginBottom: '15px' }}>
-              <strong>{doctorName}</strong> is looking forward to <strong>{petNames}</strong>'s <strong>{appointmentType}</strong> on <strong>{appointmentDate}</strong> with Window <strong>{arrivalWindowStart}</strong> to <strong>{arrivalWindowEnd}</strong>
+              {doctorName} is looking forward to {petNames}'s {appointmentType} on {appointmentDate} with Window {arrivalWindowStart} to {arrivalWindowEnd}
             </p>
             <p style={{ fontSize: '16px', lineHeight: '1.6', color: '#555', marginBottom: '20px' }}>
-              To best prepare for your appt, please answer some questions for us.
+              To best prepare for your appointment, please answer some questions for us.
             </p>
             <p style={{ fontSize: '16px', lineHeight: '1.6', color: '#555' }}>
               In the spirit of transparent pricing, we will give you an estimate of costs before your visit.
@@ -234,7 +245,11 @@ export default function PublicRoomLoaderForm() {
             const petKey = `pet${petIdx}`;
             const petName = patient.patientName || `Pet ${petIdx + 1}`;
             const isCatPatient = patient.species?.toLowerCase().includes('cat') || patient.speciesEntity?.name?.toLowerCase().includes('cat');
-            const isNewPatient = !patient.dob || DateTime.now().diff(DateTime.fromISO(patient.dob || DateTime.now().toISO()), 'years').years < 0.5;
+            const isNewPatient = patient.isNewPatient === true || appointments[petIdx]?.isNewPatient === true;
+            const appointmentReasonDisplay =
+              patient.appointmentReason ??
+              (appointments[petIdx] && (appointments[petIdx].description || appointments[petIdx].instructions)) ??
+              '(RL-APPT-REASON)';
 
             return (
               <div key={petIdx} style={{ marginBottom: '40px' }}>
@@ -245,15 +260,15 @@ export default function PublicRoomLoaderForm() {
                   borderRadius: '4px',
                   marginBottom: '20px',
                   fontSize: '14px',
-                  fontWeight: 600
+                  fontWeight: 400
                 }}>
                   {petName}
                 </div>
 
                 {/* Reason for Appointment */}
                 <div style={{ marginBottom: '25px' }}>
-                  <p style={{ fontSize: '16px', marginBottom: '10px', fontWeight: 500 }}>
-                    You told us that you wanted the following addressed at our appointment: <strong>{patient.appointmentReason || '(RL-APPT-REASON)'}</strong>
+                  <p style={{ fontSize: '16px', marginBottom: '10px', fontWeight: 400 }}>
+                    You told us that you wanted the following addressed at our appointment: {appointmentReasonDisplay}
                   </p>
                   <p style={{ fontSize: '16px', marginBottom: '10px' }}>
                     Could you expand on that at all?
@@ -275,10 +290,10 @@ export default function PublicRoomLoaderForm() {
                   />
                 </div>
 
-                {/* General Well-being */}
+                {/* General Well-being & Specific Concerns (combined) */}
                 <div style={{ marginBottom: '25px' }}>
                   <p style={{ fontSize: '16px', marginBottom: '10px' }}>
-                    Let us know how <strong>{petName}</strong> is doing otherwise:
+                    Let us know how {petName} is doing otherwise. Any other specific concerns that you want to address at this visit?
                   </p>
                   <textarea
                     value={formData[`${petKey}_generalWellbeing`] || ''}
@@ -293,18 +308,18 @@ export default function PublicRoomLoaderForm() {
                       fontFamily: 'inherit',
                       resize: 'vertical'
                     }}
-                    placeholder="How is your pet doing?"
+                    placeholder="How is your pet doing? Any other concerns?"
                   />
                 </div>
 
                 {/* Cat-Only Section */}
                 {isCatPatient && (
                   <div style={{ marginBottom: '25px' }}>
-                    <p style={{ fontSize: '14px', fontWeight: 600, marginBottom: '10px', color: '#666' }}>
+                    <p style={{ fontSize: '14px', fontWeight: 400, marginBottom: '10px', color: '#666' }}>
                       (CAT ONLY)
                     </p>
                     <p style={{ fontSize: '16px', marginBottom: '10px' }}>
-                      Does <strong>{petName}</strong> go outdoors at all or live with another cat that goes outdoors?
+                      Does {petName} go outdoors at all or live with another cat that goes outdoors?
                     </p>
                     <div style={{ display: 'flex', gap: '20px', marginTop: '10px' }}>
                       <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
@@ -333,39 +348,17 @@ export default function PublicRoomLoaderForm() {
                   </div>
                 )}
 
-                {/* Specific Concerns */}
-                <div style={{ marginBottom: '25px' }}>
-                  <p style={{ fontSize: '16px', marginBottom: '10px' }}>
-                    Any other specific concerns that you want to address for <strong>{petName}</strong> at this visit?
-                  </p>
-                  <textarea
-                    value={formData[`${petKey}_specificConcerns`] || ''}
-                    onChange={(e) => handleInputChange(`${petKey}_specificConcerns`, e.target.value)}
-                    style={{
-                      width: '100%',
-                      minHeight: '80px',
-                      padding: '12px',
-                      border: '1px solid #ddd',
-                      borderRadius: '4px',
-                      fontSize: '14px',
-                      fontFamily: 'inherit',
-                      resize: 'vertical'
-                    }}
-                    placeholder="Any other concerns?"
-                  />
-                </div>
-
                 {/* New Patient Section */}
                 {isNewPatient && (
                   <div style={{ marginBottom: '25px' }}>
-                    <p style={{ fontSize: '16px', fontWeight: 600, marginBottom: '10px' }}>
+                    <p style={{ fontSize: '16px', fontWeight: 400, marginBottom: '10px' }}>
                       IF NEW PATIENT
                     </p>
                     <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
-                      Since we haven't met <strong>{petName}</strong> before, it is helpful to know a bit about <strong>{petName}</strong>'s behavior. Please know it isn't to judge! Rather, it is aligned with our Fear Free™ methodology, to help us prepare best so that you + <strong>{petName}</strong> are most comfortable.
+                      Since we haven't met {petName} before, it is helpful to know a bit about {petName}'s behavior. Please know it isn't to judge! Rather, it is aligned with our Fear Free™ methodology, to help us prepare best so that you + {petName} are most comfortable.
                     </p>
                     <p style={{ fontSize: '16px', marginBottom: '10px' }}>
-                      Can you describe <strong>{petName}</strong>'s behavior at home, behavior around strangers, and behavior at a typical veterinary office?
+                      Can you describe {petName}'s behavior at home, behavior around strangers, and behavior at a typical veterinary office?
                     </p>
                     <textarea
                       value={formData[`${petKey}_newPatientBehavior`] || ''}
@@ -389,7 +382,7 @@ export default function PublicRoomLoaderForm() {
                 {isNewPatient && (
                   <div style={{ marginBottom: '25px' }}>
                     <p style={{ fontSize: '16px', marginBottom: '10px' }}>
-                      What are you feeding <strong>{petName}</strong>? Include brand, amt, & frequency if possible.
+                      What are you feeding {petName}? Include brand, amt, & frequency if possible.
                     </p>
                     <textarea
                       value={formData[`${petKey}_feeding`] || ''}
@@ -414,7 +407,7 @@ export default function PublicRoomLoaderForm() {
                   <div style={{ marginBottom: '25px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
                       <p style={{ fontSize: '16px', margin: 0 }}>
-                        Do <strong>YOU</strong> or <strong>{petName}</strong> have any food allergies? (we like to bribe!)
+                        Do YOU or {petName} have any food allergies? (we like to bribe!)
                       </p>
                       <div style={{ fontSize: '14px', color: '#666', writingMode: 'vertical-rl', textOrientation: 'mixed' }}>
                         Y/N
@@ -553,11 +546,6 @@ export default function PublicRoomLoaderForm() {
                           (Qty: {item.quantity})
                         </span>
                       )}
-                      {item.price != null && item.price !== '' && (
-                        <span style={{ fontSize: '14px', color: '#666', marginLeft: '8px' }}>
-                          - ${Number(item.price).toFixed(2)}
-                        </span>
-                      )}
                     </div>
                   </div>
                 ))}
@@ -682,7 +670,7 @@ export default function PublicRoomLoaderForm() {
                             onChange={(e) => handleInputChange(`${petKey}_rabiesPreference`, e.target.value)}
                             style={{ marginRight: '8px' }}
                           />
-                          Purevax Rabies 1 year (Price)
+                          Purevax Rabies 1 year
                         </label>
                       </div>
                       <div style={{ marginBottom: '10px' }}>
@@ -695,7 +683,7 @@ export default function PublicRoomLoaderForm() {
                             onChange={(e) => handleInputChange(`${petKey}_rabiesPreference`, e.target.value)}
                             style={{ marginRight: '8px' }}
                           />
-                          Purevax Rabies 3 year (Price)
+                          Purevax Rabies 3 year
                         </label>
                       </div>
                       <div>
@@ -741,7 +729,7 @@ export default function PublicRoomLoaderForm() {
                             onChange={(e) => handleInputChange(`${petKey}_felvVaccine`, e.target.value)}
                             style={{ marginRight: '8px' }}
                           />
-                          Yes (price)
+                          Yes
                         </label>
                       </div>
                       <div>

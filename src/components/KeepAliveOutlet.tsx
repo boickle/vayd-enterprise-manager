@@ -4,27 +4,30 @@ import { useRef } from 'react';
 
 type Props = { keepPaths: string[] };
 
+/** Cache by base path so sub-routes (e.g. admin tabs) share one parent instance and tab switching works on first load. */
 export default function KeepAliveOutlet({ keepPaths }: Props) {
   const location = useLocation();
   const outlet = useOutlet();
   const cacheRef = useRef(new Map<string, React.ReactNode>());
 
   const path = location.pathname;
-  const shouldKeep = keepPaths.some((p) => path === p || path.startsWith(p + '/'));
+  const matchingKeepPath = keepPaths.find((p) => path === p || path.startsWith(p + '/'));
+  const shouldKeep = matchingKeepPath !== undefined;
 
-  // Cache current route element if it's one we want to keep alive
-  if (outlet && shouldKeep) {
-    cacheRef.current.set(path, outlet);
+  if (outlet && matchingKeepPath !== undefined) {
+    cacheRef.current.set(matchingKeepPath, outlet);
   }
 
   return (
     <>
-      {[...cacheRef.current.entries()].map(([p, el]) => (
-        <div key={p} style={{ display: p === path ? 'block' : 'none' }}>
+      {[...cacheRef.current.entries()].map(([basePath, el]) => (
+        <div
+          key={basePath}
+          style={{ display: path === basePath || path.startsWith(basePath + '/') ? 'block' : 'none' }}
+        >
           {el}
         </div>
       ))}
-      {/* If current path isn't in the cache list, just render it normally */}
       {!shouldKeep && outlet}
     </>
   );

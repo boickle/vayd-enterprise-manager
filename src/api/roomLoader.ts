@@ -336,16 +336,6 @@ export type SearchableItem = {
   name: string;
   code?: string;
   originalPrice?: number;
-  tieredPricing?: {
-    hasTieredPricing: boolean;
-    priceBreaks?: Array<{
-      lowQuantity: string;
-      highQuantity: string;
-      price: string;
-      markup: string;
-      isActive: boolean;
-    }>;
-  };
   wellnessPlanPricing?: {
     hasCoverage: boolean;
     adjustedPrice: number;

@@ -40,6 +40,8 @@ export default function RoomLoaderPage() {
   const [addedItems, setAddedItems] = useState<Record<number, SearchableItem[]>>({});
   // Store removed reminder IDs (reminders that have been removed by the user)
   const [removedReminders, setRemovedReminders] = useState<Set<number>>(new Set());
+  // Reminder IDs that have had "Confirm match" clicked (required before Send to Client)
+  const [confirmedMatchReminders, setConfirmedMatchReminders] = useState<Set<number>>(new Set());
   // Confirmation modal state for removing reminders
   const [reminderToRemove, setReminderToRemove] = useState<{ id: number; description: string } | null>(null);
   // Search state
@@ -201,6 +203,11 @@ export default function RoomLoaderPage() {
           setRemovedReminders(new Set(savedForm.removedReminders));
         }
         
+        // Restore confirmed match reminders
+        if (savedForm.confirmedMatchReminders && Array.isArray(savedForm.confirmedMatchReminders)) {
+          setConfirmedMatchReminders(new Set(savedForm.confirmedMatchReminders));
+        }
+        
         // Note: reminders are already loaded from the API (they come from savedForm.reminders automatically)
         // Initialize quantities for reminders if not already set
         if (data?.reminders && Array.isArray(data.reminders)) {
@@ -216,6 +223,8 @@ export default function RoomLoaderPage() {
         }
       } else {
         // No saved form - initialize with defaults
+        setConfirmedMatchReminders(new Set());
+        setReminderValidationErrorIds(new Set());
         // Initialize quantities to 1 for all reminders (preserve existing quantities if any)
         if (data?.reminders && Array.isArray(data.reminders)) {
           setReminderQuantities((prev) => {
@@ -484,6 +493,16 @@ export default function RoomLoaderPage() {
       newSet.add(reminderId);
       return newSet;
     });
+    setConfirmedMatchReminders((prev) => {
+      const next = new Set(prev);
+      next.delete(reminderId);
+      return next;
+    });
+    setReminderValidationErrorIds((prev) => {
+      const next = new Set(prev);
+      next.delete(reminderId);
+      return next;
+    });
     
     // Also clean up related state
     const feedbackKey = `reminder-${reminderId}`;
@@ -718,7 +737,7 @@ export default function RoomLoaderPage() {
 
   // Reminder feedback state
   const [reminderFeedback, setReminderFeedback] = useState<Record<string, 'correct' | 'incorrect' | 'correcting' | null>>({});
-  const [reminderCorrections, setReminderCorrections] = useState<Record<string, { searchQuery: string; results: SearchableItem[]; loading: boolean; selectedItem: SearchableItem | null; patientId?: number }>>({});
+  const [reminderCorrections, setReminderCorrections] = useState<Record<string, { searchQuery: string; results: SearchableItem[]; loading: boolean; selectedItem: SearchableItem | null; patientId?: number; scopeChosen?: boolean }>>({});
   // Store quantities for each reminder (keyed by reminderId)
   const [reminderQuantities, setReminderQuantities] = useState<Record<number, number>>({});
   // Store quantities for each added item (keyed by `${petId}-${itemIdx}`)
@@ -734,6 +753,10 @@ export default function RoomLoaderPage() {
   const [sendingToClient, setSendingToClient] = useState(false);
   // Loading state for saving form
   const [savingForm, setSavingForm] = useState(false);
+  // Inline validation errors when Send to Client fails (per patient: reason, mobility, labWork)
+  const [sendValidationErrors, setSendValidationErrors] = useState<Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean }>>({});
+  // Reminder IDs that still need "Confirm match" (or match + confirm, or remove) before Send to Client
+  const [reminderValidationErrorIds, setReminderValidationErrorIds] = useState<Set<number>>(new Set());
 
   async function handleReminderFeedback(
     reminderId: number,
@@ -861,7 +884,7 @@ export default function RoomLoaderPage() {
   }
 
   function handleSubmitCorrection(reminderId: number, reminderText: string, item: SearchableItem, reminderWithPrice?: ReminderWithPrice, patientId?: number) {
-    handleReminderFeedback(reminderId, reminderText, false, reminderWithPrice, item, patientId);
+    return handleReminderFeedback(reminderId, reminderText, false, reminderWithPrice, item, patientId);
   }
 
 
@@ -969,6 +992,14 @@ export default function RoomLoaderPage() {
         [question]: value,
       },
     }));
+    setSendValidationErrors((prev) => {
+      if (!prev[petId]) return prev;
+      const next = { ...prev };
+      const { [question]: _removed, ...rest } = next[petId] as { reason?: boolean; mobility?: boolean; labWork?: boolean };
+      if (Object.keys(rest).length === 0) delete next[petId];
+      else next[petId] = rest;
+      return next;
+    });
   }
 
   // Package all data for sending to client
@@ -1094,6 +1125,55 @@ export default function RoomLoaderPage() {
   async function handleSendToClient() {
     if (!selectedRoomLoader) return;
 
+    // Validate required fields before sending; build inline error state per patient
+    const errors: Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean }> = {};
+    let hasErrors = false;
+    petsWithAppointments.forEach((item) => {
+      const pid = item.patient.id;
+      const patientErrors: { reason?: boolean; mobility?: boolean; labWork?: boolean } = {};
+      if (!(appointmentReasons[pid] || '').trim()) {
+        patientErrors.reason = true;
+        hasErrors = true;
+      }
+      const answers = petAnswers[pid] || { mobility: null, labWork: null };
+      if (answers.mobility === null) {
+        patientErrors.mobility = true;
+        hasErrors = true;
+      }
+      if (answers.labWork === null) {
+        patientErrors.labWork = true;
+        hasErrors = true;
+      }
+      if (Object.keys(patientErrors).length > 0) {
+        errors[pid] = patientErrors;
+      }
+    });
+    if (hasErrors) {
+      setSendValidationErrors(errors);
+      return;
+    }
+
+    // Validate reminders: every displayed reminder must have a match and be confirmed (or be removed)
+    const reminderErrorIds = new Set<number>();
+    petsWithAppointments.forEach((item) => {
+      (item.reminders || []).forEach((reminderWithPrice) => {
+        const reminderId = reminderWithPrice.reminder.id;
+        if (!reminderId || removedReminders.has(reminderId)) return;
+        const correction = reminderCorrections[`reminder-${reminderId}`];
+        const hasMatch = !!(reminderWithPrice.matchedItem?.name || correction?.selectedItem);
+        const isConfirmed = confirmedMatchReminders.has(reminderId);
+        if (!hasMatch || !isConfirmed) {
+          reminderErrorIds.add(reminderId);
+        }
+      });
+    });
+    if (reminderErrorIds.size > 0) {
+      setReminderValidationErrorIds(reminderErrorIds);
+      return;
+    }
+
+    setSendValidationErrors({});
+    setReminderValidationErrorIds(new Set());
     setSendingToClient(true);
     try {
       const payload = packageDataForClient();
@@ -1166,6 +1246,8 @@ export default function RoomLoaderPage() {
         reminderCorrections: reminderCorrections,
         // Save removed reminders (so we know which ones to exclude when loading)
         removedReminders: Array.from(removedReminders),
+        // Save confirmed match reminders
+        confirmedMatchReminders: Array.from(confirmedMatchReminders),
       };
 
       await saveRoomLoaderForm({
@@ -1802,7 +1884,7 @@ export default function RoomLoaderPage() {
                 {/* Reason for Appointment */}
                 {firstAppt && (
                   <div style={{ marginBottom: '20px' }}>
-                    <h4 style={{ marginBottom: '10px', color: '#555' }}>Reason for Appointment</h4>
+                    <h4 style={{ marginBottom: '10px', color: '#555' }}>Reason for Appointment (required)</h4>
                     <div style={{ display: 'flex', gap: '15px', alignItems: 'flex-start' }}>
                       {/* Editable text box */}
                       <div style={{ flex: 1 }}>
@@ -1813,6 +1895,15 @@ export default function RoomLoaderPage() {
                               ...prev,
                               [patient.id]: e.target.value,
                             }));
+                            setSendValidationErrors((prev) => {
+                              const next = { ...prev };
+                              if (next[patient.id]) {
+                                const { reason, ...rest } = next[patient.id] as { reason?: boolean; mobility?: boolean; labWork?: boolean };
+                                if (Object.keys(rest).length === 0) delete next[patient.id];
+                                else next[patient.id] = rest;
+                              }
+                              return next;
+                            });
                           }}
                           placeholder="Enter reason for appointment..."
                           style={{
@@ -1820,13 +1911,16 @@ export default function RoomLoaderPage() {
                             minHeight: '80px',
                             padding: '12px',
                             fontSize: '14px',
-                            border: '1px solid #ced4da',
+                            border: sendValidationErrors[patient.id]?.reason ? '1px solid #dc3545' : '1px solid #ced4da',
                             borderRadius: '4px',
                             fontFamily: 'inherit',
                             resize: 'vertical',
                             boxSizing: 'border-box',
                           }}
                         />
+                        {sendValidationErrors[patient.id]?.reason && (
+                          <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#dc3545' }}>Reason for Appointment is required</p>
+                        )}
                       </div>
                       {/* Original appointment reason for reference */}
                       <div style={{ flex: 1, padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #ddd', minHeight: '80px' }}>
@@ -1848,7 +1942,7 @@ export default function RoomLoaderPage() {
                   {/* Mobility Question */}
                   <div style={{ marginBottom: '20px' }}>
                     <label style={{ display: 'block', marginBottom: '10px', fontWeight: 500, color: '#333', fontSize: '16px' }}>
-                      Does this issue have anything to do with mobility?
+                      Does this issue have anything to do with mobility? (required)
                     </label>
                     <div style={{ display: 'flex', gap: '20px' }}>
                       <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
@@ -1872,12 +1966,15 @@ export default function RoomLoaderPage() {
                         No
                       </label>
                     </div>
+                    {sendValidationErrors[patient.id]?.mobility && (
+                      <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#dc3545' }}>Please answer Yes or No</p>
+                    )}
                   </div>
 
                   {/* Lab Work Question */}
                   <div>
                     <label style={{ display: 'block', marginBottom: '10px', fontWeight: 500, color: '#333', fontSize: '16px' }}>
-                      Would lab work help to diagnose the issue?
+                      Would lab work help to diagnose the issue? Examples include PU/PD, lethargy, ADR, vomiting, weight loss (required)
                     </label>
                     <div style={{ display: 'flex', gap: '20px' }}>
                       <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
@@ -1901,6 +1998,9 @@ export default function RoomLoaderPage() {
                         No
                       </label>
                     </div>
+                    {sendValidationErrors[patient.id]?.labWork && (
+                      <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#dc3545' }}>Please answer Yes or No</p>
+                    )}
                   </div>
                 </div>
 
@@ -1927,6 +2027,9 @@ export default function RoomLoaderPage() {
                           const feedbackStatus = reminderFeedback[feedbackKey];
                           const correction = reminderCorrections[feedbackKey];
                           const hasMatchedItem = reminderWithPrice.matchedItem?.name;
+                          const hasMatch = !!hasMatchedItem || !!correction?.selectedItem;
+                          const isConfirmed = confirmedMatchReminders.has(reminderId);
+                          const showReminderValidationError = reminderValidationErrorIds.has(reminderId);
 
                           return (
                             <div
@@ -1937,8 +2040,8 @@ export default function RoomLoaderPage() {
                                   return id && !removedReminders.has(id);
                                 }).length - 1 ? '15px' : 0,
                                 padding: '15px',
-                                backgroundColor: feedbackStatus === 'correct' ? '#e8f5e9' : feedbackStatus === 'incorrect' ? '#ffebee' : '#fafafa',
-                                border: feedbackStatus === 'correct' ? '1px solid #4caf50' : feedbackStatus === 'incorrect' ? '1px solid #f44336' : '1px solid #e0e0e0',
+                                backgroundColor: isConfirmed ? '#e8f5e9' : feedbackStatus === 'correct' ? '#e8f5e9' : feedbackStatus === 'incorrect' ? '#ffebee' : '#fafafa',
+                                border: isConfirmed ? '1px solid #4caf50' : feedbackStatus === 'correct' ? '1px solid #4caf50' : feedbackStatus === 'incorrect' ? '1px solid #f44336' : '1px solid #e0e0e0',
                                 borderRadius: '4px',
                               }}
                             >
@@ -2090,7 +2193,12 @@ export default function RoomLoaderPage() {
                                     Confidence: {(reminderWithPrice.confidence * 100).toFixed(0)}%
                                   </div>
                                 )}
-                                {feedbackStatus === 'correct' && (
+                                {isConfirmed && (
+                                  <div style={{ marginTop: '10px', padding: '8px', backgroundColor: '#c8e6c9', borderRadius: '4px', fontSize: '14px', color: '#2e7d32', fontWeight: 500 }}>
+                                    ✓ Match confirmed
+                                  </div>
+                                )}
+                                {!isConfirmed && feedbackStatus === 'correct' && (
                                   <div style={{ marginTop: '10px', padding: '8px', backgroundColor: '#c8e6c9', borderRadius: '4px', fontSize: '14px', color: '#2e7d32', fontWeight: 500 }}>
                                     ✓ Match confirmed as correct
                                     {correction?.selectedItem && !hasMatchedItem && (
@@ -2109,6 +2217,31 @@ export default function RoomLoaderPage() {
                                 )}
                               </div>
                               <div style={{ marginLeft: '15px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px', minWidth: '150px', position: 'relative' }}>
+                                {/* When confirmed: only Undo. Otherwise: Remove, Qty, Price */}
+                                {isConfirmed ? (
+                                  <button
+                                    onClick={() => {
+                                      setConfirmedMatchReminders((prev) => {
+                                        const next = new Set(prev);
+                                        next.delete(reminderId);
+                                        return next;
+                                      });
+                                    }}
+                                    style={{
+                                      padding: '8px 16px',
+                                      backgroundColor: '#6c757d',
+                                      color: 'white',
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                      fontSize: '14px',
+                                      fontWeight: 500,
+                                    }}
+                                  >
+                                    Undo
+                                  </button>
+                                ) : (
+                                  <>
                                 {/* Remove Button */}
                                 <button
                                   onClick={() => handleRemoveReminder(reminderId, reminderWithPrice.reminder.description)}
@@ -2248,11 +2381,20 @@ export default function RoomLoaderPage() {
                                     </>
                                   );
                                 })()}
+                                  </>
+                                )}
                               </div>
                             </div>
 
-                            {/* Feedback Buttons - Only show for reminders with matches */}
-                            {hasMatchedItem && !feedbackStatus && (
+                            {/* Validation error when reminder not confirmed / no match */}
+                            {showReminderValidationError && (
+                              <p style={{ margin: '10px 0 0', fontSize: '13px', color: '#dc3545' }}>
+                                {hasMatch ? 'Click Confirm match or remove this reminder to continue.' : 'Match an item and confirm, or remove this reminder to continue.'}
+                              </p>
+                            )}
+
+                            {/* Feedback Buttons - Only show when not confirmed. Confirm match only when has match. */}
+                            {!isConfirmed && hasMatchedItem && !feedbackStatus && (
                               <div style={{ marginTop: '15px', display: 'flex', gap: '10px', paddingTop: '15px', borderTop: '1px solid #e0e0e0' }}>
                                 <button
                                   onClick={() => {
@@ -2298,13 +2440,145 @@ export default function RoomLoaderPage() {
                                     opacity: feedbackStatus === 'correcting' ? 0.6 : 1,
                                   }}
                                 >
-                                  Match for Patient Only
+                                  Update for Patient Only
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setConfirmedMatchReminders((prev) => new Set(prev).add(reminderId));
+                                    setReminderValidationErrorIds((prev) => {
+                                      const next = new Set(prev);
+                                      next.delete(reminderId);
+                                      return next;
+                                    });
+                                  }}
+                                  style={{
+                                    padding: '8px 16px',
+                                    backgroundColor: '#4caf50',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                    fontSize: '14px',
+                                    fontWeight: 500,
+                                  }}
+                                >
+                                  Confirm match
                                 </button>
                               </div>
                             )}
 
+                            {/* When user selected item via search (no original match): show scope options then Confirm match */}
+                            {!isConfirmed && !hasMatchedItem && correction?.selectedItem && !feedbackStatus && (
+                              <div style={{ marginTop: '15px', paddingTop: '15px', borderTop: '1px solid #e0e0e0' }}>
+                                <p style={{ fontSize: '14px', fontWeight: 500, color: '#333', marginBottom: '10px' }}>
+                                  Apply this match:
+                                </p>
+                                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                                  <button
+                                    onClick={() => {
+                                      setReminderCorrections((prev) => ({
+                                        ...prev,
+                                        [feedbackKey]: { ...prev[feedbackKey], patientId: undefined, scopeChosen: true },
+                                      }));
+                                    }}
+                                    style={{
+                                      padding: '8px 16px',
+                                      backgroundColor: correction?.scopeChosen && correction?.patientId === undefined ? '#2196f3' : '#e0e0e0',
+                                      color: correction?.scopeChosen && correction?.patientId === undefined ? 'white' : '#333',
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                      fontSize: '14px',
+                                      fontWeight: 500,
+                                    }}
+                                  >
+                                    Match globally
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setReminderCorrections((prev) => ({
+                                        ...prev,
+                                        [feedbackKey]: { ...prev[feedbackKey], patientId: patient.id, scopeChosen: true },
+                                      }));
+                                    }}
+                                    style={{
+                                      padding: '8px 16px',
+                                      backgroundColor: correction?.scopeChosen && correction?.patientId === patient.id ? '#2196f3' : '#e0e0e0',
+                                      color: correction?.scopeChosen && correction?.patientId === patient.id ? 'white' : '#333',
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                      fontSize: '14px',
+                                      fontWeight: 500,
+                                    }}
+                                  >
+                                    Match for this patient only
+                                  </button>
+                                </div>
+                                {correction?.scopeChosen && (
+                                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                    <button
+                                      onClick={async () => {
+                                        if (!correction?.selectedItem) return;
+                                        try {
+                                          await handleSubmitCorrection(
+                                            reminderId,
+                                            reminderWithPrice.reminder.description,
+                                            correction.selectedItem,
+                                            reminderWithPrice,
+                                            correction.patientId
+                                          );
+                                          setConfirmedMatchReminders((prev) => new Set(prev).add(reminderId));
+                                          setReminderValidationErrorIds((prev) => {
+                                            const next = new Set(prev);
+                                            next.delete(reminderId);
+                                            return next;
+                                          });
+                                        } catch (err: any) {
+                                          console.error('Error submitting match:', err);
+                                          alert(err?.message || 'Failed to submit match. Please try again.');
+                                        }
+                                      }}
+                                      style={{
+                                        padding: '8px 16px',
+                                        backgroundColor: '#4caf50',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        fontSize: '14px',
+                                        fontWeight: 500,
+                                      }}
+                                    >
+                                      Confirm match
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setReminderCorrections((prev) => ({
+                                          ...prev,
+                                          [feedbackKey]: { searchQuery: '', results: [], loading: false, selectedItem: null, scopeChosen: false },
+                                        }));
+                                      }}
+                                      style={{
+                                        padding: '8px 16px',
+                                        backgroundColor: '#6c757d',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        fontSize: '14px',
+                                        fontWeight: 500,
+                                      }}
+                                    >
+                                      Clear Selection
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
                             {/* Search for Match - Show for reminders without matches */}
-                            {!hasMatchedItem && !feedbackStatus && (
+                            {!hasMatch && !feedbackStatus && (
                               <div style={{ marginTop: '15px', paddingTop: '15px', borderTop: '1px solid #e0e0e0' }}>
                                 <div style={{ marginBottom: '15px', fontSize: '14px', fontWeight: 500, color: '#333' }}>
                                   No match found. Search for the correct item:
@@ -2373,11 +2647,10 @@ export default function RoomLoaderPage() {
                                         onClick={(e) => {
                                           e.preventDefault();
                                           e.stopPropagation();
-                                          // Select the item (don't submit yet)
-                                          // Clear the search query and results after selection to stop any pending searches
+                                          // Select the item; scope (global vs patient) must be chosen before Confirm match
                                           setReminderCorrections((prev) => ({
                                             ...prev,
-                                            [feedbackKey]: { searchQuery: '', results: [], loading: false, selectedItem: result },
+                                            [feedbackKey]: { searchQuery: '', results: [], loading: false, selectedItem: result, scopeChosen: false },
                                           }));
                                         }}
                                         style={{
@@ -2452,7 +2725,7 @@ export default function RoomLoaderPage() {
                             )}
 
                             {/* Correction Search */}
-                            {feedbackStatus === 'correcting' && (
+                            {!isConfirmed && feedbackStatus === 'correcting' && (
                               <div style={{ marginTop: '15px', paddingTop: '15px', borderTop: '1px solid #e0e0e0' }}>
                                 <div style={{ marginBottom: '10px', fontSize: '14px', fontWeight: 500, color: '#333' }}>
                                   {correction?.patientId ? 'Search for the correct item (Patient-specific match):' : 'Search for the correct item:'}

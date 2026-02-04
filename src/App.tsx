@@ -1,13 +1,5 @@
 // src/App.tsx
-import {
-  NavLink,
-  Route,
-  Routes,
-  useNavigate,
-  Navigate,
-  useLocation,
-  useOutlet,
-} from 'react-router-dom';
+import { Route, Routes, useNavigate, Navigate, useLocation, useOutlet } from 'react-router-dom';
 import { useEffect, useMemo, useRef } from 'react';
 import LoginPage from './pages/Login';
 import RequestReset from './pages/RequestReset';
@@ -18,6 +10,7 @@ import Home from './pages/Home';
 import AppTabs from './components/AppTabs';
 import UserMenu from './components/UserMenu';
 import { getAccessiblePages } from './app-pages';
+import { ADMIN_TAB_PAGES } from './admin-tabs';
 import CreateClientUser from './pages/CreateClientUser';
 import ClientPortal from './pages/ClientPortal';
 import MembershipSignup from './pages/MembershipSignup';
@@ -25,6 +18,7 @@ import MembershipPayment from './pages/MembershipPayment';
 import MembershipUpgrade from './pages/MembershipUpgrade';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
 import PublicRoomLoaderForm from './pages/PublicRoomLoaderForm';
+import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
 import { usePageTracking } from './hooks/usePageTracking';
 
 /**
@@ -53,7 +47,15 @@ function RouteGuard() {
 
   // Check if this is a public route (login, reset password, etc.)
   // If logged in user tries to access these, redirect to their home
-  const publicRoutes = ['/login', '/create-client', '/request-reset', '/reset-password', '/resetpass', '/auth/request-reset', '/requestreset'];
+  const publicRoutes = [
+    '/login',
+    '/create-client',
+    '/request-reset',
+    '/reset-password',
+    '/resetpass',
+    '/auth/request-reset',
+    '/requestreset',
+  ];
   if (publicRoutes.includes(path)) {
     return <Navigate to={isClient ? '/client-portal' : '/routing'} replace />;
   }
@@ -79,14 +81,9 @@ function RouteGuard() {
     '/routing',
     '/doctor',
     '/doctormonth',
-    '/users/create',
-    '/analytics/payments',
-    '/analytics/ops',
-    '/analytics/revenue/doctor',
-    '/audit',
-    '/simulation',
+    '/admin',
     '/schedule-loader',
-    '/settings',
+    '/survey/responses',
     '/home',
   ];
 
@@ -143,8 +140,9 @@ function RouteGuard() {
  * KeepAliveOutlet
  * - Caches matched child routes and toggles their visibility instead
  *   of unmounting, so component state persists across tab switches.
- * - Pass a list of base paths you want to keep alive (e.g. /home and
- *   any tab paths). Subpaths (/page/x) are also kept alive.
+ * - Uses the matching base path from keepPaths as the cache key (not the
+ *   full path), so e.g. /admin/survey/results and /admin/analytics/payments
+ *   share one Admin instance and tab switching works on first load.
  * ------------------------------------------------------------------ */
 function KeepAliveOutlet({ keepPaths }: { keepPaths: string[] }) {
   const location = useLocation();
@@ -152,17 +150,23 @@ function KeepAliveOutlet({ keepPaths }: { keepPaths: string[] }) {
   const cacheRef = useRef(new Map<string, React.ReactNode>());
 
   const path = location.pathname;
-  const shouldKeep = keepPaths.some((p) => path === p || path.startsWith(p + '/'));
+  const matchingKeepPath = keepPaths.find((p) => path === p || path.startsWith(p + '/'));
+  const shouldKeep = matchingKeepPath !== undefined;
 
-  // Cache current outlet if path should be kept alive
-  if (outlet && shouldKeep) {
-    cacheRef.current.set(path, outlet);
+  // Cache current outlet by base path so sub-routes (e.g. admin tabs) share one instance
+  if (outlet && matchingKeepPath !== undefined) {
+    cacheRef.current.set(matchingKeepPath, outlet);
   }
 
   return (
     <>
-      {[...cacheRef.current.entries()].map(([p, element]) => (
-        <div key={p} style={{ display: p === path ? 'block' : 'none' }}>
+      {[...cacheRef.current.entries()].map(([basePath, element]) => (
+        <div
+          key={basePath}
+          style={{
+            display: path === basePath || path.startsWith(basePath + '/') ? 'block' : 'none',
+          }}
+        >
           {element}
         </div>
       ))}
@@ -173,25 +177,31 @@ function KeepAliveOutlet({ keepPaths }: { keepPaths: string[] }) {
 }
 
 export default function App() {
-  const { token, logout, userEmail, abilities, role } = useAuth() as any;
+  const { token, abilities, role } = useAuth() as any;
   const nav = useNavigate();
   const location = useLocation();
 
   // Track page views on route changes
   usePageTracking();
 
-  // Normalize roles
-  const roles = useMemo<string[]>(
-    () =>
-      (Array.isArray(role) ? role : role ? [String(role)] : []).map((r) => String(r).toLowerCase()),
-    [role]
-  );
-  const isClient = roles.includes('client');
+  // Normalize roles - handle arrays, single values, and edge cases
+  const roles = useMemo<string[]>(() => {
+    if (!role) return [];
+    const roleArray = Array.isArray(role) ? role : [role];
+    return roleArray.map((r) => String(r).toLowerCase().trim()).filter((r) => r.length > 0);
+  }, [role]);
+  // Check if user is a client - must explicitly have 'client' role
+  const isClient = useMemo(() => roles.includes('client'), [roles]);
 
-  // Compute employee pages if NOT a client
+  // Compute employee pages if NOT a client (all accessible pages for routing)
   const pages = useMemo(
     () => (isClient ? [] : getAccessiblePages(abilities, roles)),
     [abilities, roles, isClient]
+  );
+  // Main tab bar: only pages with showInMainTabs !== false
+  const mainTabPages = useMemo(
+    () => pages.filter((p: { showInMainTabs?: boolean }) => p.showInMainTabs !== false),
+    [pages]
   );
 
   // If a client lands on "/" or "/home", redirect to client portal
@@ -213,39 +223,54 @@ export default function App() {
         location.pathname !== '/create-client' &&
         location.pathname !== '/reset-password' &&
         location.pathname !== '/request-reset' &&
-        !location.pathname.startsWith('/public/room-loader') && (
-        <header className="navbar">
-          <div className="brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <img
-              src="/final_thick_lines_cropped.jpeg"
-              alt="VAYD Scout Logo"
-              style={{
-                height: '60px',
-                width: 'auto',
-                opacity: 0.9,
-                mixBlendMode: 'multiply',
-              }}
-            />
-            <span style={{
-              fontFamily: "'Libre Baskerville', 'Times New Roman', serif",
-              fontWeight: 400,
-              fontSize: '30px',
-              color: '#2c1810',
-              lineHeight: '60px',
-              display: 'flex',
-              alignItems: 'center',
-            }}>
-              Scout<sup style={{ fontSize: '9px', verticalAlign: 'super', marginLeft: '2px', lineHeight: 0, position: 'relative', top: '-8px' }}>TM</sup>
-            </span>
-          </div>
+        !location.pathname.startsWith('/public/room-loader') &&
+        !location.pathname.startsWith('/survey/post-appointment') && (
+          <header className="navbar">
+            <div className="brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <img
+                src="/final_thick_lines_cropped.jpeg"
+                alt="VAYD Scout Logo"
+                style={{
+                  height: '60px',
+                  width: 'auto',
+                  opacity: 0.9,
+                  mixBlendMode: 'multiply',
+                }}
+              />
+              <span
+                style={{
+                  fontFamily: "'Libre Baskerville', 'Times New Roman', serif",
+                  fontWeight: 400,
+                  fontSize: '30px',
+                  color: '#2c1810',
+                  lineHeight: '60px',
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              >
+                Scout
+                <sup
+                  style={{
+                    fontSize: '9px',
+                    verticalAlign: 'super',
+                    marginLeft: '2px',
+                    lineHeight: 0,
+                    position: 'relative',
+                    top: '-8px',
+                  }}
+                >
+                  TM
+                </sup>
+              </span>
+            </div>
 
-          {/* Tabs only for employees - hidden on mobile, shown in UserMenu */}
-          {token && !isClient && <AppTabs pages={pages} />}
+            {/* Tabs only for employees - hidden on mobile, shown in UserMenu */}
+            {token && !isClient && <AppTabs pages={mainTabPages} />}
 
-          <div className="spacer" />
-          {token && <UserMenu pages={isClient ? [] : pages} />}
-        </header>
-      )}
+            <div className="spacer" />
+            {token && <UserMenu pages={isClient ? [] : mainTabPages} />}
+          </header>
+        )}
 
       <main
         className={isClient && location.pathname.startsWith('/client-portal') ? '' : 'container'}
@@ -309,16 +334,13 @@ export default function App() {
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/client-portal/request-appointment"
-            element={<AppointmentRequestForm />}
-          />
+          <Route path="/client-portal/request-appointment" element={<AppointmentRequestForm />} />
 
+          {/* Public survey (no login) – exact path and any subpath (e.g. duplicate path in email link) */}
+          <Route path="/survey/post-appointment" element={<PostAppointmentSurvey />} />
+          <Route path="/survey/post-appointment/*" element={<PostAppointmentSurvey />} />
           {/* Public room loader form (no authentication required) */}
-          <Route
-            path="/public/room-loader/form"
-            element={<PublicRoomLoaderForm />}
-          />
+          <Route path="/public/room-loader/form" element={<PublicRoomLoaderForm />} />
 
           {/* Employees only: keep these pages alive across tab switches */}
           {!isClient && (
@@ -330,10 +352,19 @@ export default function App() {
                 </ProtectedRoute>
               }
             >
-              <Route path="/home" element={<Home pages={pages} />} />
-              {pages.map((p: any) => (
-                <Route key={p.path} path={p.path} element={p.element} />
-              ))}
+              <Route path="/home" element={<Home />} />
+              {pages.map((p: any) =>
+                p.path === '/admin' ? (
+                  <Route key={p.path} path={p.path} element={p.element}>
+                    <Route index element={<Navigate to="/admin/survey/results" replace />} />
+                    {ADMIN_TAB_PAGES.map((tab) => (
+                      <Route key={tab.path} path={tab.path} element={tab.element} />
+                    ))}
+                  </Route>
+                ) : (
+                  <Route key={p.path} path={p.path} element={p.element} />
+                )
+              )}
             </Route>
           )}
 
@@ -341,10 +372,7 @@ export default function App() {
           {isClient && <Route path="/home" element={<Navigate to="/client-portal" replace />} />}
 
           {/* Fallback - Check access and redirect appropriately */}
-          <Route
-            path="*"
-            element={<RouteGuard />}
-          />
+          <Route path="*" element={<RouteGuard />} />
         </Routes>
       </main>
     </div>

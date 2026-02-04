@@ -79,7 +79,8 @@ export default function SimResults() {
           <div style={{ display: 'grid', gap: 24, marginTop: 16 }}>
             <div className="card">
               <h3>Drive Minutes per Day (sum across doctors)</h3>
-              <ResponsiveContainer width="100%" height={300}>
+              <div style={{ minHeight: 300 }}>
+                <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={dailyAggregates}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="day" hide />
@@ -89,12 +90,14 @@ export default function SimResults() {
                   <Line type="monotone" dataKey="baselineDriveMin" name="Baseline" dot={false} />
                   <Line type="monotone" dataKey="optimDriveMin" name="Optimized" dot={false} />
                 </LineChart>
-              </ResponsiveContainer>
+                </ResponsiveContainer>
+              </div>
             </div>
 
             <div className="card">
               <h3>Appointments per Day</h3>
-              <ResponsiveContainer width="100%" height={300}>
+              <div style={{ minHeight: 300 }}>
+                <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={dailyAggregates}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="day" hide />
@@ -104,12 +107,14 @@ export default function SimResults() {
                   <Line type="monotone" dataKey="baselineAppts" name="Baseline" dot={false} />
                   <Line type="monotone" dataKey="optimAppts" name="Optimized" dot={false} />
                 </LineChart>
-              </ResponsiveContainer>
+                </ResponsiveContainer>
+              </div>
             </div>
 
             <div className="card">
               <h3>Rejections per Day</h3>
-              <ResponsiveContainer width="100%" height={300}>
+              <div style={{ minHeight: 300 }}>
+                <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={dailyAggregates}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="day" hide />
@@ -119,7 +124,8 @@ export default function SimResults() {
                   <Bar dataKey="baselineRejected" name="Baseline Rejected" />
                   <Bar dataKey="optimRejected" name="Optimized Rejected" />
                 </BarChart>
-              </ResponsiveContainer>
+                </ResponsiveContainer>
+              </div>
             </div>
 
             <div className="card">
