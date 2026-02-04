@@ -485,7 +485,7 @@ export default function PostAppointmentSurvey() {
       surveyTopRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' });
     };
     scrollToTop();
-    let timeoutId: ReturnType<typeof setTimeout>;
+    let timeoutId: number;
     const raf = requestAnimationFrame(() => {
       scrollToTop();
       timeoutId = window.setTimeout(scrollToTop, 100);
