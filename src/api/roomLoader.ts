@@ -235,6 +235,13 @@ export type Appointment = {
   externallyCreated?: boolean;
   externalCreated?: string; // External creation timestamp
   bookedDate?: string | null;
+  /** Arrival window for the client (e.g. "11:20 AM - 1:20 PM") */
+  arrivalWindow?: {
+    windowStartIso?: string | null;
+    windowEndIso?: string | null;
+    windowStartLocal?: string | null;
+    windowEndLocal?: string | null;
+  } | null;
 };
 
 export type DeclinedInventoryItem = {
@@ -244,6 +251,38 @@ export type DeclinedInventoryItem = {
   [key: string]: any;
 };
 
+/** Payload that was sent to the client (returned when room loader was already sent) */
+export type SentToClientPatient = {
+  patientId: number;
+  clientId?: number;
+  clientName?: string;
+  patientName?: string;
+  vaccines?: { felv?: boolean; lepto?: boolean; lyme?: boolean; bordatella?: boolean; sharps?: boolean };
+  questions?: { labWork?: boolean; mobility?: boolean };
+  reminders?: Array<{
+    reminderId: number;
+    quantity?: number;
+    item?: { id: number; type: string; name: string; code?: string; price: number };
+    reminderText?: string;
+    reminderType?: string;
+    dueDate?: string;
+    confidence?: number;
+  }>;
+  addedItems?: Array<{ id: number; type: string; name: string; code?: string; price: number; quantity?: number }>;
+  arrivalWindow?: { start: string; end: string };
+  appointmentIds?: number[];
+  appointmentReason?: string;
+  originalAppointmentReason?: string;
+};
+
+export type SentToClient = {
+  practiceId?: number;
+  practiceName?: string;
+  sentStatus?: string;
+  dueStatus?: DueStatus | null;
+  patients: SentToClientPatient[];
+};
+
 export type RoomLoader = {
   id: number;
   isActive: boolean;
@@ -251,6 +290,8 @@ export type RoomLoader = {
   pimsId?: string | null;
   pimsType: string;
   sentStatus: SentStatus;
+  /** Number of times the form has been sent to the client */
+  timesSentToClient?: number;
   dueStatus: DueStatus | null;
   practice: Practice;
   appointments: Appointment[];
@@ -258,6 +299,8 @@ export type RoomLoader = {
   reminders?: ReminderWithPrice[];
   declinedInventoryItems?: DeclinedInventoryItem[];
   savedForm?: Record<string, any> | null;
+  /** Payload that was sent to the client (when sentStatus indicates already sent) */
+  sentToClient?: SentToClient | null;
   created?: string;
   updated?: string;
 };
