@@ -423,14 +423,14 @@ export default function RoomLoaderPage() {
           setAddedItemQuantities(addedQtyFromSent);
           setConfirmedMatchReminders(confirmedFromSent);
         } else {
-          // New submission: no sent data — initialize reasons and answers per patient so Send to Client can submit
+          // New submission: no sent data — leave Reason for Appointment unfilled (required); initialize answers per patient
           const initialReasons: Record<number, string> = {};
           const initialAnswers: Record<number, { mobility: boolean | null; labWork: boolean | null }> = {};
           (data?.appointments || []).forEach((appt: any) => {
             const patientId = appt.patient?.id;
             if (patientId == null) return;
             if (initialReasons[patientId] == null) {
-              initialReasons[patientId] = (appt.description || appt.instructions || '').trim();
+              initialReasons[patientId] = '';
             }
             if (initialAnswers[patientId] == null) {
               initialAnswers[patientId] = { mobility: null, labWork: null };
@@ -2218,7 +2218,7 @@ export default function RoomLoaderPage() {
                 {/* Reason for Appointment */}
                 {firstAppt && (
                   <div style={{ marginBottom: '20px' }}>
-                    <h4 style={{ marginBottom: '10px', color: '#555' }}>Reason for Appointment (required)</h4>
+                    <h4 style={{ marginBottom: '10px', color: '#555' }}>Reason for Appointment - THIS WILL BE SHOWN VERBATIM TO THE CLIENT <span style={{ color: '#dc3545' }}>*</span></h4>
                     <div style={{ display: 'flex', gap: '15px', alignItems: 'flex-start' }}>
                       {/* Editable text box */}
                       <div style={{ flex: 1 }}>
@@ -2276,7 +2276,7 @@ export default function RoomLoaderPage() {
                   {/* Mobility Question */}
                   <div style={{ marginBottom: '20px' }}>
                     <label style={{ display: 'block', marginBottom: '10px', fontWeight: 500, color: '#333', fontSize: '16px' }}>
-                      Does this issue have anything to do with mobility? (required)
+                      Does this issue have anything to do with mobility? <span style={{ color: '#dc3545' }}>*</span>
                     </label>
                     <div style={{ display: 'flex', gap: '20px' }}>
                       <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
@@ -2308,7 +2308,7 @@ export default function RoomLoaderPage() {
                   {/* Lab Work Question */}
                   <div>
                     <label style={{ display: 'block', marginBottom: '10px', fontWeight: 500, color: '#333', fontSize: '16px' }}>
-                      Would lab work help to diagnose the issue? Examples include PU/PD, lethargy, ADR, vomiting, weight loss (required)
+                      Would lab work help to diagnose the issue? Examples include PU/PD, lethargy, ADR, vomiting, weight loss <span style={{ color: '#dc3545' }}>*</span>
                     </label>
                     <div style={{ display: 'flex', gap: '20px' }}>
                       <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>

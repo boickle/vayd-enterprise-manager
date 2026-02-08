@@ -150,6 +150,18 @@ function getProductOptionLabel(product: EcwidProduct, fallbackIdx: number): stri
 /** One row in the store option modal: label, price, and the item to add. */
 type StoreModalRow = { key: string; label: string; price: number; item: EcwidProduct };
 
+/** True if the label is descriptive enough to show in the modal (exclude e.g. "Size", "Option", "# doses"). */
+function isDescriptiveModalLabel(label: string | null | undefined): boolean {
+  const t = (label ?? '').trim();
+  if (!t) return false;
+  const lower = t.toLowerCase();
+  const generic = ['size', 'option', 'quantity', 'color', 'weight', '# doses', 'doses'];
+  if (generic.includes(lower)) return false;
+  if (/^#\s*doses$/i.test(lower)) return false;
+  if (/^option\s*\d+$/i.test(lower)) return false;
+  return true;
+}
+
 /** Build modal rows: if single product with combinations, one row per combination; else one row per product. No duplicates. */
 function getStoreModalRows(products: EcwidProduct[]): StoreModalRow[] {
   let rows: StoreModalRow[];
@@ -195,13 +207,17 @@ function getStoreModalRows(products: EcwidProduct[]): StoreModalRow[] {
       }))
       .filter((row): row is StoreModalRow => row.label != null) as StoreModalRow[];
   }
-  // Deduplicate by key (first occurrence wins)
-  const seen = new Set<string>();
-  return rows.filter((row) => {
-    if (seen.has(row.key)) return false;
-    seen.add(row.key);
+  // Exclude rows with no real description (e.g. "Size", "Option")
+  rows = rows.filter((row) => isDescriptiveModalLabel(row.label));
+  // Deduplicate by (label, price) so we show each option once even if API returns same variation multiple times
+  const seenLabelPrice = new Set<string>();
+  const deduped = rows.filter((row) => {
+    const labelPriceKey = `${row.label}\t${row.price}`;
+    if (seenLabelPrice.has(labelPriceKey)) return false;
+    seenLabelPrice.add(labelPriceKey);
     return true;
   });
+  return deduped.sort((a, b) => a.price - b.price);
 }
 
 /** Get price from a search result; API may return it top-level or on nested inventoryItem/lab/procedure or wellness pricing. */
@@ -648,6 +664,8 @@ export default function PublicRoomLoaderForm() {
   const [formAlreadySubmitted, setFormAlreadySubmitted] = useState(false);
   /** When submitStatus === 'completed', we show PDF view; this is the blob URL for the generated PDF. */
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+  /** Inline validation errors keyed by form field (e.g. pet0_outdoorAccess). Shown below the field instead of alert. */
+  const [fieldValidationErrors, setFieldValidationErrors] = useState<Record<string, string>>({});
 
   const COMMON_ITEMS_CONFIG = [
     { searchQuery: 'Pedicure - Cat', searchQueryDog: 'Pedicure - Dog', displayName: 'Pedicure', dogOnly: false },
@@ -888,6 +906,11 @@ export default function PublicRoomLoaderForm() {
       ...prev,
       [key]: value,
     }));
+    setFieldValidationErrors((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   }
 
   const practiceId = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
@@ -1200,31 +1223,31 @@ export default function PublicRoomLoaderForm() {
       const seniorFelineYes = formData[`lab_senior_feline_${patientId}`] === 'yes';
       const seniorCaninePanelVal = formData[`lab_senior_canine_panel_${patientId}`];
       const seniorFelineTwoPanelVal = formData[`lab_senior_feline_two_panel_${patientId}`];
-      if (earlyDetectionYes) {
+      if (earlyDetectionYes && formData[`summary_exclude_lab_early_detection_feline_${patientId}`] !== true) {
         const p = getSearchItemPrice(earlyDetectionFelineItem);
         if (p != null) summaryLineItems.push({ name: 'Early Detection Panel - Feline', quantity: 1, price: p, patientId, patientName, category: 'lab' });
       }
-      if (earlyDetectionCanineYes) {
+      if (earlyDetectionCanineYes && formData[`summary_exclude_lab_early_detection_canine_${patientId}`] !== true) {
         const p = getSearchItemPrice(earlyDetectionCanineItem);
         if (p != null) summaryLineItems.push({ name: 'Early Detection Panel - Canine', quantity: 1, price: p, patientId, patientName, category: 'lab' });
       }
-      if (seniorFelineYes) {
+      if (seniorFelineYes && formData[`summary_exclude_lab_senior_feline_${patientId}`] !== true) {
         const p = getSearchItemPrice(seniorFelineItem);
         if (p != null) summaryLineItems.push({ name: 'Senior Screen Feline', quantity: 1, price: p, patientId, patientName, category: 'lab' });
       }
-      if (seniorCaninePanelVal === 'standard') {
+      if (seniorCaninePanelVal === 'standard' && formData[`summary_exclude_lab_senior_canine_standard_${patientId}`] !== true) {
         const p = getSearchItemPrice(seniorCanineStandardItem);
         if (p != null) summaryLineItems.push({ name: 'Senior Screen - Standard Comprehensive Panel', quantity: 1, price: p, patientId, patientName, category: 'lab' });
       }
-      if (seniorCaninePanelVal === 'extended') {
+      if (seniorCaninePanelVal === 'extended' && formData[`summary_exclude_lab_senior_canine_extended_${patientId}`] !== true) {
         const p = getSearchItemPrice(seniorCanineExtendedItem);
         if (p != null) summaryLineItems.push({ name: 'Senior Screen - Extended Comprehensive Panel', quantity: 1, price: p, patientId, patientName, category: 'lab' });
       }
-      if (seniorFelineTwoPanelVal === 'standard') {
+      if (seniorFelineTwoPanelVal === 'standard' && formData[`summary_exclude_lab_senior_feline_two_standard_${patientId}`] !== true) {
         const p = getSearchItemPrice(seniorCanineStandardItem);
         if (p != null) summaryLineItems.push({ name: 'Senior Screen Feline - Standard Panel', quantity: 1, price: p, patientId, patientName, category: 'lab' });
       }
-      if (seniorFelineTwoPanelVal === 'extended') {
+      if (seniorFelineTwoPanelVal === 'extended' && formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] !== true) {
         const p = getSearchItemPrice(seniorFelineExtendedItem);
         if (p != null) summaryLineItems.push({ name: 'Senior Screen Feline - Extended Panel', quantity: 1, price: p, patientId, patientName, category: 'lab' });
       }
@@ -1383,31 +1406,31 @@ export default function PublicRoomLoaderForm() {
       });
 
       const labRows: { name: string; price: number }[] = [];
-      if (earlyDetectionYes) {
+      if (earlyDetectionYes && formData[`summary_exclude_lab_early_detection_feline_${patientId}`] !== true) {
         const p = getSearchItemPrice(earlyDetectionFelineItem);
         if (p != null) labRows.push({ name: 'Early Detection Panel - Feline', price: p });
       }
-      if (earlyDetectionCanineYes) {
+      if (earlyDetectionCanineYes && formData[`summary_exclude_lab_early_detection_canine_${patientId}`] !== true) {
         const p = getSearchItemPrice(earlyDetectionCanineItem);
         if (p != null) labRows.push({ name: 'Early Detection Panel - Canine', price: p });
       }
-      if (seniorFelineYes) {
+      if (seniorFelineYes && formData[`summary_exclude_lab_senior_feline_${patientId}`] !== true) {
         const p = getSearchItemPrice(seniorFelineItem);
         if (p != null) labRows.push({ name: 'Senior Screen Feline', price: p });
       }
-      if (seniorCaninePanelVal === 'standard') {
+      if (seniorCaninePanelVal === 'standard' && formData[`summary_exclude_lab_senior_canine_standard_${patientId}`] !== true) {
         const p = getSearchItemPrice(seniorCanineStandardItem);
         if (p != null) labRows.push({ name: 'Senior Screen - Standard Comprehensive Panel', price: p });
       }
-      if (seniorCaninePanelVal === 'extended') {
+      if (seniorCaninePanelVal === 'extended' && formData[`summary_exclude_lab_senior_canine_extended_${patientId}`] !== true) {
         const p = getSearchItemPrice(seniorCanineExtendedItem);
         if (p != null) labRows.push({ name: 'Senior Screen - Extended Comprehensive Panel', price: p });
       }
-      if (seniorFelineTwoPanelVal === 'standard') {
+      if (seniorFelineTwoPanelVal === 'standard' && formData[`summary_exclude_lab_senior_feline_two_standard_${patientId}`] !== true) {
         const p = getSearchItemPrice(seniorCanineStandardItem);
         if (p != null) labRows.push({ name: 'Senior Screen Feline - Standard Panel', price: p });
       }
-      if (seniorFelineTwoPanelVal === 'extended') {
+      if (seniorFelineTwoPanelVal === 'extended' && formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] !== true) {
         const p = getSearchItemPrice(seniorFelineExtendedItem);
         if (p != null) labRows.push({ name: 'Senior Screen Feline - Extended Panel', price: p });
       }
@@ -1503,8 +1526,8 @@ export default function PublicRoomLoaderForm() {
         const label = valueLabels && val != null && typeof val === 'string' ? (valueLabels[val] ?? val) : (typeof val === 'string' ? val : null);
         questions.push({ question, answer: val ?? null, answerLabel: label ?? (val != null ? String(val) : null) });
       };
-      addRequired('Could you expand on that?', `${petKey}_appointmentReason`);
-      addRequired(`How is ${petName} doing otherwise? Any other specific concerns for this visit?`, `${petKey}_generalWellbeing`);
+      addOptional('Would you like to share any additional details about this?', `${petKey}_appointmentReason`);
+      addOptional(`How is ${petName} doing otherwise? Are there any other concerns you'd like us to address during this visit?`, `${petKey}_generalWellbeing`);
       addOptional(`Does ${petName} go outdoors or live with a cat that goes outdoors?`, `${petKey}_outdoorAccess`, { yes: 'Yes', no: 'No' });
       addOptional(`Describe ${petName}'s behavior at home, around strangers, and at a typical vet office.`, `${petKey}_newPatientBehavior`);
       addOptional(`What are you feeding ${petName}? (brand, amount, frequency)`, `${petKey}_feeding`);
@@ -1523,6 +1546,14 @@ export default function PublicRoomLoaderForm() {
       const petKey = `pet${petIdx}`;
       const patientId = patient.patientId ?? patient.patient?.id ?? petIdx;
       const petName = patient.patientName || `Pet ${petIdx + 1}`;
+      const speciesParts = [
+        patient.species,
+        patient.speciesEntity?.name,
+        patient.patient?.species,
+        patient.patient?.speciesEntity?.name,
+      ].filter(Boolean) as string[];
+      const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
+      const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
       const questions: Qa[] = [];
       const add = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
@@ -1531,7 +1562,10 @@ export default function PublicRoomLoaderForm() {
         const label = valueLabels && typeof val === 'string' ? (valueLabels[val] ?? val) : (typeof val === 'string' ? val : String(val));
         questions.push({ question, answer: val, answerLabel: label });
       };
-      add('Should we schedule your crLyme booster in the next 3-4 weeks?', `${petKey}_crLymeBooster`, { yes: 'Yes', no: 'No', unsure: "I'm not sure" });
+      if (isCatPatient) {
+        add(`Does ${petName} go outdoors or live with a cat who does?`, `${petKey}_outdoorAccess`, { yes: 'Yes', no: 'No' });
+      }
+      add('Do you want us to schedule you a booster appointment after this visit? (crLyme)', `${petKey}_crLymeBooster`, { yes: 'Yes', no: 'No', unsure: "I'm not sure" });
       add('Do you want us to give the Lepto vaccine?', `${petKey}_leptoVaccine`, { yes: 'Yes', no: 'No' });
       add('Do you want us to give the Bordetella vaccine?', `${petKey}_bordetellaVaccine`, { yes: 'Yes', no: 'No' });
       add('If not a member AND due for rabies AND a cat: we offer two rabies vaccines - a one year or three year - which would you prefer?', `${petKey}_rabiesPreference`, {
@@ -1539,7 +1573,7 @@ export default function PublicRoomLoaderForm() {
         '3year': 'Purevax Rabies 3 year',
         no: 'No thank you, I do not want a rabies vx administered to my cat.',
       });
-      add('Do you want us to give the FeLV vaccine?', `${petKey}_felvVaccine`, { yes: 'Yes', no: 'No' });
+      add('Do you want us to give the FeLV vaccine? For initial immunity, two vaccines must be given, 3-4 weeks apart.', `${petKey}_felvVaccine`, { yes: 'Yes', no: 'No' });
       if (questions.length > 0) {
         formAnswersPages.push({
           pageNumber: 2 + petIdx,
@@ -1564,7 +1598,7 @@ export default function PublicRoomLoaderForm() {
         questions.push({ question, answer: val, answerLabel: label });
       };
       add('Would you like to do the Early Detection Panel? (Feline)', `lab_early_detection_feline_${patientId}`, { yes: 'Yes', no: 'No' });
-      add('Would you like to do the Early Detection Panel? (Canine)', `lab_early_detection_canine_${patientId}`, { yes: 'Yes', no: 'No' });
+      add('Would you like us to include this recommended screening today? (Early Detection - Canine)', `lab_early_detection_canine_${patientId}`, { yes: 'Yes — Include Early Detection Panel', no: 'Not at this time.' });
       add('Would you like to do the Senior Screen Feline?', `lab_senior_feline_${patientId}`, { yes: 'Yes', no: 'No' });
       add('Which panel would you like your pet to receive? (Senior Screen — Canine)', `lab_senior_canine_panel_${patientId}`, {
         standard: 'Standard Comprehensive Panel',
@@ -1617,10 +1651,220 @@ export default function PublicRoomLoaderForm() {
     };
   }
 
+  /** Validate required fields: outdoor (cats) and any vaccine question that is shown. */
+  function validateRequiredBeforeSubmit(): { valid: boolean; message?: string; errors?: Record<string, string> } {
+    const patientsData = data?.patients ?? [];
+    const appts = data?.appointments ?? [];
+    const errors: Record<string, string> = {};
+    for (let petIdx = 0; petIdx < patientsData.length; petIdx++) {
+      const patient = patientsData[petIdx];
+      const petKey = `pet${petIdx}`;
+      const petName = patient.patientName || `Pet ${petIdx + 1}`;
+      const patientId = patient.patientId ?? patient.patient?.id ?? petIdx;
+      const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
+      const apptPatient = appts[petIdx]?.patient;
+      const speciesParts = [
+        patient.species,
+        patient.speciesEntity?.name,
+        patient.patient?.species,
+        patient.patient?.speciesEntity?.name,
+        apptPatient?.species,
+        apptPatient?.speciesEntity?.name,
+      ].filter(Boolean) as string[];
+      const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
+      const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
+      const isDog = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !isCatPatient);
+      const isUnderOneYear = patient.dob ? DateTime.now().diff(DateTime.fromISO(patient.dob), 'years').years < 1 : false;
+      const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
+
+      if (isCatPatient) {
+        const outdoor = formData[`${petKey}_outdoorAccess`];
+        if (outdoor !== 'yes' && outdoor !== 'no') {
+          errors[`${petKey}_outdoorAccess`] = `Please answer whether ${petName} goes outdoors or lives with a cat who does.`;
+        }
+      }
+
+      const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+      const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
+      const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
+      const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
+      const showFeLV = isCatPatient && patientId != null && (isUnderOneYear || outdoorAccess) && !declinedFeLVInPast(history) && !hadFeLVInLastYear(history) && !hasFeLVInLineItems(patient);
+
+      if (showCrLymeBooster && formData[`${petKey}_crLymeBooster`] !== 'yes' && formData[`${petKey}_crLymeBooster`] !== 'no' && formData[`${petKey}_crLymeBooster`] !== 'unsure') {
+        errors[`${petKey}_crLymeBooster`] = `Please answer the crLyme booster question for ${petName}.`;
+      }
+      if (showLepto && formData[`${petKey}_leptoVaccine`] !== 'yes' && formData[`${petKey}_leptoVaccine`] !== 'no') {
+        errors[`${petKey}_leptoVaccine`] = `Please answer the Leptospirosis vaccine question for ${petName}.`;
+      }
+      if (showBordetella && formData[`${petKey}_bordetellaVaccine`] !== 'yes' && formData[`${petKey}_bordetellaVaccine`] !== 'no') {
+        errors[`${petKey}_bordetellaVaccine`] = `Please answer the Bordetella vaccine question for ${petName}.`;
+      }
+      if (showRabiesCats && formData[`${petKey}_rabiesPreference`] !== '1year' && formData[`${petKey}_rabiesPreference`] !== '3year' && formData[`${petKey}_rabiesPreference`] !== 'no') {
+        errors[`${petKey}_rabiesPreference`] = `Please answer the Rabies vaccine preference for ${petName}.`;
+      }
+      if (showFeLV && formData[`${petKey}_felvVaccine`] !== 'yes' && formData[`${petKey}_felvVaccine`] !== 'no') {
+        errors[`${petKey}_felvVaccine`] = `Please answer the FeLV vaccine question for ${petName}.`;
+      }
+    }
+
+    // Early Detection Panel (required when shown on Labs page)
+    const labRecs = labRecommendationsByPet ?? [];
+    labRecs.forEach((entry, idx) => {
+      const patientId = entry.patientId ?? idx;
+      const petName = entry.patientName || `Pet ${idx + 1}`;
+      entry.recommendations.forEach((rec: { code?: string }) => {
+        if (rec.code === 'FIL48119999') {
+          const v = formData[`lab_early_detection_feline_${patientId}`];
+          if (v !== 'yes' && v !== 'no') {
+            errors[`lab_early_detection_feline_${patientId}`] = `Please answer the Early Detection Panel question for ${petName} before continuing.`;
+          }
+        }
+        if (rec.code === 'FIL48719999') {
+          const v = formData[`lab_early_detection_canine_${patientId}`];
+          if (v !== 'yes' && v !== 'no') {
+            errors[`lab_early_detection_canine_${patientId}`] = `Please answer the Early Detection Panel question for ${petName} before continuing.`;
+          }
+        }
+      });
+    });
+
+    if (Object.keys(errors).length > 0) {
+      return { valid: false, message: Object.values(errors)[0], errors };
+    }
+    return { valid: true };
+  }
+
+  /** Validate required fields when leaving Labs page (Early Detection if shown). */
+  function validateRequiredForLabsPage(): { valid: boolean; message?: string; errors?: Record<string, string> } {
+    const errors: Record<string, string> = {};
+    const labRecs = labRecommendationsByPet ?? [];
+    labRecs.forEach((entry, idx) => {
+      const patientId = entry.patientId ?? idx;
+      const petName = entry.patientName || `Pet ${idx + 1}`;
+      entry.recommendations.forEach((rec: { code?: string }) => {
+        if (rec.code === 'FIL48119999') {
+          const v = formData[`lab_early_detection_feline_${patientId}`];
+          if (v !== 'yes' && v !== 'no') {
+            errors[`lab_early_detection_feline_${patientId}`] = `Please answer the Early Detection Panel question for ${petName} before continuing.`;
+          }
+        }
+        if (rec.code === 'FIL48719999') {
+          const v = formData[`lab_early_detection_canine_${patientId}`];
+          if (v !== 'yes' && v !== 'no') {
+            errors[`lab_early_detection_canine_${patientId}`] = `Please answer the Early Detection Panel question for ${petName} before continuing.`;
+          }
+        }
+      });
+    });
+    if (Object.keys(errors).length > 0) {
+      return { valid: false, message: Object.values(errors)[0], errors };
+    }
+    return { valid: true };
+  }
+
+  /** Validate required fields when leaving page 1 (Check-in): outdoor for every cat. */
+  function validateRequiredForPage1(): { valid: boolean; message?: string; errors?: Record<string, string> } {
+    const patientsData = data?.patients ?? [];
+    const appts = data?.appointments ?? [];
+    for (let petIdx = 0; petIdx < patientsData.length; petIdx++) {
+      const patient = patientsData[petIdx];
+      const petKey = `pet${petIdx}`;
+      const petName = patient.patientName || `Pet ${petIdx + 1}`;
+      const apptPatient = appts[petIdx]?.patient;
+      const speciesParts = [
+        patient.species,
+        patient.speciesEntity?.name,
+        patient.patient?.species,
+        patient.patient?.speciesEntity?.name,
+        apptPatient?.species,
+        apptPatient?.speciesEntity?.name,
+      ].filter(Boolean) as string[];
+      const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
+      const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
+      if (isCatPatient) {
+        const outdoor = formData[`${petKey}_outdoorAccess`];
+        if (outdoor !== 'yes' && outdoor !== 'no') {
+          const msg = `Please answer whether ${petName} goes outdoors or lives with a cat who does before continuing.`;
+          return { valid: false, message: msg, errors: { [`${petKey}_outdoorAccess`]: msg } };
+        }
+      }
+    }
+    return { valid: true };
+  }
+
+  /** Validate required fields for one pet on Care Plan (outdoor if cat + any vaccine questions shown). Used before "Next pet" or "Next: Labs". */
+  function validateRequiredForCarePlanPet(petIdx: number): { valid: boolean; message?: string; errors?: Record<string, string> } {
+    const patientsData = data?.patients ?? [];
+    const appts = data?.appointments ?? [];
+    const patient = patientsData[petIdx];
+    if (!patient) return { valid: true };
+    const petKey = `pet${petIdx}`;
+    const petName = patient.patientName || `Pet ${petIdx + 1}`;
+    const patientId = patient.patientId ?? patient.patient?.id ?? petIdx;
+    const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
+    const apptPatient = appts[petIdx]?.patient;
+    const speciesParts = [
+      patient.species,
+      patient.speciesEntity?.name,
+      patient.patient?.species,
+      patient.patient?.speciesEntity?.name,
+      apptPatient?.species,
+      apptPatient?.speciesEntity?.name,
+    ].filter(Boolean) as string[];
+    const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
+    const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
+    const isDog = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !isCatPatient);
+    const isUnderOneYear = patient.dob ? DateTime.now().diff(DateTime.fromISO(patient.dob), 'years').years < 1 : false;
+    const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
+
+    if (isCatPatient) {
+      const outdoor = formData[`${petKey}_outdoorAccess`];
+      if (outdoor !== 'yes' && outdoor !== 'no') {
+        const msg = `Please answer whether ${petName} goes outdoors or lives with a cat who does before continuing.`;
+        return { valid: false, message: msg, errors: { [`${petKey}_outdoorAccess`]: msg } };
+      }
+    }
+
+    const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+    const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
+    const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
+    const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
+    const showFeLV = isCatPatient && patientId != null && (isUnderOneYear || outdoorAccess) && !declinedFeLVInPast(history) && !hadFeLVInLastYear(history) && !hasFeLVInLineItems(patient);
+
+    if (showCrLymeBooster && formData[`${petKey}_crLymeBooster`] !== 'yes' && formData[`${petKey}_crLymeBooster`] !== 'no' && formData[`${petKey}_crLymeBooster`] !== 'unsure') {
+      const msg = `Please answer the crLyme booster question for ${petName} before continuing.`;
+      return { valid: false, message: msg, errors: { [`${petKey}_crLymeBooster`]: msg } };
+    }
+    if (showLepto && formData[`${petKey}_leptoVaccine`] !== 'yes' && formData[`${petKey}_leptoVaccine`] !== 'no') {
+      const msg = `Please answer the Leptospirosis vaccine question for ${petName} before continuing.`;
+      return { valid: false, message: msg, errors: { [`${petKey}_leptoVaccine`]: msg } };
+    }
+    if (showBordetella && formData[`${petKey}_bordetellaVaccine`] !== 'yes' && formData[`${petKey}_bordetellaVaccine`] !== 'no') {
+      const msg = `Please answer the Bordetella vaccine question for ${petName} before continuing.`;
+      return { valid: false, message: msg, errors: { [`${petKey}_bordetellaVaccine`]: msg } };
+    }
+    if (showRabiesCats && formData[`${petKey}_rabiesPreference`] !== '1year' && formData[`${petKey}_rabiesPreference`] !== '3year' && formData[`${petKey}_rabiesPreference`] !== 'no') {
+      const msg = `Please answer the Rabies vaccine preference for ${petName} before continuing.`;
+      return { valid: false, message: msg, errors: { [`${petKey}_rabiesPreference`]: msg } };
+    }
+    if (showFeLV && formData[`${petKey}_felvVaccine`] !== 'yes' && formData[`${petKey}_felvVaccine`] !== 'no') {
+      const msg = `Please answer the FeLV vaccine question for ${petName} before continuing.`;
+      return { valid: false, message: msg, errors: { [`${petKey}_felvVaccine`]: msg } };
+    }
+    return { valid: true };
+  }
+
   async function handleSubmit() {
     const tokenValue = token;
     if (!tokenValue) return;
     const safeToken = tokenValue as string;
+
+    const validation = validateRequiredBeforeSubmit();
+    if (!validation.valid) {
+      setFieldValidationErrors(validation.errors || {});
+      return;
+    }
+    setFieldValidationErrors({});
 
     const payloadFormData = buildFullFormSnapshot();
 
@@ -1786,7 +2030,9 @@ export default function PublicRoomLoaderForm() {
       e.recommendations.some((r) => r.code === 'FIL25659999' || r.code === 'FIL8659999')
     );
     const has8659999 = labRecommendationsByPet.some((e) => e.recommendations.some((r) => r.code === '8659999'));
-    const needStandard = hasSeniorCanine || has8659999;
+    const hasFIL45129999 = labRecommendationsByPet.some((e) => e.recommendations.some((r) => r.code === 'FIL45129999'));
+    const needStandard = hasSeniorCanine || has8659999 || hasFIL45129999;
+    const needFelineExtended = has8659999 || hasFIL45129999;
     if (!needStandard || !data) {
       setSeniorCanineStandardItem(null);
       setSeniorFelineExtendedItem(null);
@@ -1797,13 +2043,13 @@ export default function PublicRoomLoaderForm() {
     // Codes: Standard = "Senior Screen (chem 25, CBC, T4, UA)" (same as dog). Feline Extended = "Senior Screen Feline (Fecal Dx, felv/fiv/hw, fPL, chem 25, CBC, T4, UA)".
     const standardPromise = searchItems({ q: 'Senior Screen (chem 25, CBC, T4, UA)', practiceId: pid, limit: 10 });
     const canineExtendedPromise = hasSeniorCanine ? searchItems({ q: 'Senior Screen Canine (4Dx, Fecal O&P, chem 25, CBC, T4, UA)', practiceId: pid, limit: 10 }) : Promise.resolve([]);
-    const felineExtendedPromise = has8659999 ? searchItems({ q: 'Senior Screen Feline (Fecal Dx, felv/fiv/hw, fPL, chem 25, CBC, T4, UA)', practiceId: pid, limit: 10 }) : Promise.resolve([]);
+    const felineExtendedPromise = needFelineExtended ? searchItems({ q: 'Senior Screen Feline (Fecal Dx, felv/fiv/hw, fPL, chem 25, CBC, T4, UA)', practiceId: pid, limit: 10 }) : Promise.resolve([]);
     Promise.all([standardPromise, canineExtendedPromise, felineExtendedPromise])
       .then(([standardRes, canineExtendedRes, felineExtendedRes]) => {
         const first = (arr: any) => (Array.isArray(arr) ? arr[0] : arr?.data?.[0] ?? arr?.results?.[0] ?? arr?.items?.[0]);
         setSeniorCanineStandardItem(first(standardRes) || null);
         setSeniorCanineExtendedItem(hasSeniorCanine ? (first(canineExtendedRes) || null) : null);
-        setSeniorFelineExtendedItem(has8659999 ? (first(felineExtendedRes) || null) : null);
+        setSeniorFelineExtendedItem(needFelineExtended ? (first(felineExtendedRes) || null) : null);
       })
       .catch(() => {
         setSeniorCanineStandardItem(null);
@@ -2148,7 +2394,7 @@ export default function PublicRoomLoaderForm() {
                     <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px', fontWeight: 500 }}>You told us:</div>
                     <div style={{ fontSize: '14px', color: '#333' }}>{appointmentReasonDisplay}</div>
                   </div>
-                  <label style={questionLabelStyle}>Could you expand on that?</label>
+                  <label style={questionLabelStyle}>Would you like to share any additional details about this?</label>
                   <textarea
                     value={formData[`${petKey}_appointmentReason`] || ''}
                     onChange={(e) => handleInputChange(`${petKey}_appointmentReason`, e.target.value)}
@@ -2162,7 +2408,7 @@ export default function PublicRoomLoaderForm() {
                 <div style={{ marginBottom: '20px' }}>
                   <h4 style={sectionLabelStyle}>General Well-being & Concerns</h4>
                   <label style={questionLabelStyle}>
-                    How is {petName} doing otherwise? Any other specific concerns for this visit?
+                    How is {petName} doing otherwise? Are there any other concerns you'd like us to address during this visit?
                   </label>
                   <textarea
                     value={formData[`${petKey}_generalWellbeing`] || ''}
@@ -2186,6 +2432,9 @@ export default function PublicRoomLoaderForm() {
                         No
                       </label>
                     </div>
+                    {fieldValidationErrors[`${petKey}_outdoorAccess`] && (
+                      <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_outdoorAccess`]}</p>
+                    )}
                   </div>
                 )}
 
@@ -2232,7 +2481,9 @@ export default function PublicRoomLoaderForm() {
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '32px', paddingTop: '20px', borderTop: '2px solid #e0e0e0' }}>
             <button
-              onClick={() => setCurrentPage(2)}
+              onClick={() => {
+                setCurrentPage(2);
+              }}
               style={{
                 padding: '12px 28px',
                 backgroundColor: '#0d6efd',
@@ -2325,6 +2576,61 @@ export default function PublicRoomLoaderForm() {
             })()}
           </div>
 
+          {/* Cats only: Does pet go outdoors or live with a cat who does? (under list of checked services) */}
+          {currentCarePlanPatient != null && (() => {
+            const patient = currentCarePlanPatient;
+            const petIdx = carePlanPetIndex;
+            const petKey = `pet${petIdx}`;
+            const petName = patient.patientName || `Pet ${petIdx + 1}`;
+            const apptPatient = appointments[petIdx]?.patient;
+            const speciesParts = [
+              patient.species,
+              patient.speciesEntity?.name,
+              patient.patient?.species,
+              patient.patient?.speciesEntity?.name,
+              apptPatient?.species,
+              apptPatient?.speciesEntity?.name,
+            ].filter(Boolean) as string[];
+            const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
+            const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
+            if (!isCatPatient) return null;
+            return (
+              <div style={{ marginBottom: '20px' }}>
+                <h4 style={sectionLabelStyle}>Outdoor access (cats) <span style={{ color: '#dc3545' }}>*</span></h4>
+                <label style={questionLabelStyle}>Does {petName} go outdoors or live with a cat who does?</label>
+                <div style={{ display: 'flex', gap: '20px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
+                    <input
+                      type="radio"
+                      name={`${petKey}_outdoorAccess`}
+                      value="yes"
+                      checked={formData[`${petKey}_outdoorAccess`] === 'yes'}
+                      onChange={(e) => handleInputChange(`${petKey}_outdoorAccess`, e.target.value)}
+                      disabled={readOnly}
+                      style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }}
+                    />
+                    Yes
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
+                    <input
+                      type="radio"
+                      name={`${petKey}_outdoorAccess`}
+                      value="no"
+                      checked={formData[`${petKey}_outdoorAccess`] === 'no'}
+                      onChange={(e) => handleInputChange(`${petKey}_outdoorAccess`, e.target.value)}
+                      disabled={readOnly}
+                      style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }}
+                    />
+                    No
+                  </label>
+                </div>
+                {fieldValidationErrors[`${petKey}_outdoorAccess`] && (
+                  <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_outdoorAccess`]}</p>
+                )}
+              </div>
+            );
+          })()}
+
           {currentCarePlanPatient != null && (() => {
             const patientId = currentCarePlanPatient.patientId ?? currentCarePlanPatient.patient?.id;
             const optedIn = patientId != null ? optedInVaccinesByPatientId[patientId] : undefined;
@@ -2337,7 +2643,7 @@ export default function PublicRoomLoaderForm() {
                   {items.map((item, idx) => (
                     <div key={idx} style={{ padding: '8px 0', borderBottom: idx < items.length - 1 ? '1px solid #c8e6c9' : 'none' }}>
                       <span style={{ fontSize: '16px', color: '#333' }}>{item.name}</span>
-                      {item.price != null && <span style={{ fontSize: '14px', color: '#666', marginLeft: '8px' }}>— ${typeof item.price === 'number' ? item.price.toFixed(2) : Number(item.price).toFixed(2)}</span>}
+                      {item.price != null && <span style={{ fontSize: '14px', color: '#666', marginLeft: '8px' }}>— <strong>${typeof item.price === 'number' ? item.price.toFixed(2) : Number(item.price).toFixed(2)}</strong></span>}
                     </div>
                   ))}
                 </div>
@@ -2375,9 +2681,9 @@ export default function PublicRoomLoaderForm() {
             const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
             const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
             const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-            const showFeLV = isCatPatient && patientId != null && !declinedFeLVInPast(history) && !hadFeLVInLastYear(history) && !hasFeLVInLineItems(patient);
-            const showFeLVUnderOneOrOutdoor = isCatPatient && (isUnderOneYear || outdoorAccess);
-            const hasAnyOptionalContent = showCrLymeBooster || showLepto || showBordetella || showRabiesCats || showFeLV || showFeLVUnderOneOrOutdoor;
+            // FeLV: show if cat and haven't had it before; if <1 yr always show, if 1+ yr only if they answered Yes to outdoor
+            const showFeLV = isCatPatient && patientId != null && (isUnderOneYear || outdoorAccess) && !declinedFeLVInPast(history) && !hadFeLVInLastYear(history) && !hasFeLVInLineItems(patient);
+            const hasAnyOptionalContent = showCrLymeBooster || showLepto || showBordetella || showRabiesCats || showFeLV;
 
             if (!hasAnyOptionalContent) return null;
 
@@ -2395,8 +2701,12 @@ export default function PublicRoomLoaderForm() {
                   if (!showCrLymeBooster) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
+                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '12px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>crLyme vaccine</div>
+                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '12px', color: '#555' }}>
+                        We&apos;re excited to let you know that we&apos;ve switched to the crLyme vaccine, offering broader, more effective protection than what {petName} has received in the past, while remaining just as safe.
+                      </p>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
-                        Should we schedule your crLyme booster in the next 3-4 weeks?
+                        To ensure full effectiveness, we recommend a crLyme booster in 3-4 weeks. If the booster is skipped, however, the initial dose still is at least as protective as {petName}&apos;s previous Lyme vaccine. Do you want us to schedule you a booster appointment after this visit? <span style={{ color: '#dc3545' }}>*</span>
                       </p>
                       <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
                         <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
@@ -2433,6 +2743,9 @@ export default function PublicRoomLoaderForm() {
                           I'm not sure
                         </label>
                       </div>
+                      {fieldValidationErrors[`${petKey}_crLymeBooster`] && (
+                        <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_crLymeBooster`]}</p>
+                      )}
                     </div>
                   );
                 })()}
@@ -2450,6 +2763,7 @@ export default function PublicRoomLoaderForm() {
                   if (!showLepto) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
+                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '12px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>Leptospirosis vaccine</div>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
                         Leptospirosis: It looks like {petName} has not yet received the Leptospirosis vaccine.
                       </p>
@@ -2463,7 +2777,7 @@ export default function PublicRoomLoaderForm() {
                         To protect {petName}, we recommend starting the vaccine series at your visit. It will involve two vaccines, 3–4 weeks apart, then an annual booster to stay protected.
                       </p>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
-                        Do you want us to give the Lepto vaccine?
+                        Do you want us to give the Lepto vaccine? <span style={{ color: '#dc3545' }}>*</span>
                       </p>
                       <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
                         <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
@@ -2506,6 +2820,7 @@ export default function PublicRoomLoaderForm() {
                   if (!showBordetella) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
+                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '12px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>Bordetella vaccine</div>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
                         Bordetella: It doesn't look like {petName} has received the Bordetella ("Kennel Cough") vaccine in the last year.
                       </p>
@@ -2513,7 +2828,7 @@ export default function PublicRoomLoaderForm() {
                         We recommend this vaccine for dogs under a year old and for dogs that are boarded, go to doggy day care, or take group training classes.
                       </p>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
-                        Do you want us to give the Bordetella vaccine?
+                        Do you want us to give the Bordetella vaccine? <span style={{ color: '#dc3545' }}>*</span>
                       </p>
                       <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
                         <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
@@ -2539,6 +2854,9 @@ export default function PublicRoomLoaderForm() {
                           No
                         </label>
                       </div>
+                      {fieldValidationErrors[`${petKey}_bordetellaVaccine`] && (
+                        <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_bordetellaVaccine`]}</p>
+                      )}
                     </div>
                   );
                 })()}
@@ -2546,8 +2864,9 @@ export default function PublicRoomLoaderForm() {
                 {/* Rabies Vaccine (Cats only) */}
                 {isCatPatient && patient.vaccines?.rabies && (
                   <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
+                    <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '12px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>Rabies vaccine</div>
                     <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
-                      If not a member AND due for rabies AND a cat: we offer two rabies vaccines - a one year or three year - which would you prefer?
+                      If not a member AND due for rabies AND a cat: we offer two rabies vaccines - a one year or three year - which would you prefer? <span style={{ color: '#dc3545' }}>*</span>
                     </p>
                     <div style={{ marginLeft: '20px' }}>
                       <div style={{ marginBottom: '10px' }}>
@@ -2590,6 +2909,9 @@ export default function PublicRoomLoaderForm() {
                         </label>
                       </div>
                     </div>
+                    {fieldValidationErrors[`${petKey}_rabiesPreference`] && (
+                      <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_rabiesPreference`]}</p>
+                    )}
                   </div>
                 )}
 
@@ -2606,6 +2928,7 @@ export default function PublicRoomLoaderForm() {
                   if (!showFeLV) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
+                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '12px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>FeLV vaccine</div>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
                         FeLV (Feline Leukemia Vaccine): It looks like {petName} has not yet received the FeLV vaccine.
                       </p>
@@ -2616,7 +2939,7 @@ export default function PublicRoomLoaderForm() {
                         Based on updated veterinary guidelines, FeLV is now considered a core vaccine for all kittens under one year old, regardless of whether they live indoors or outdoors. We also highly recommend it for any adult cats who go outside or live with cats who do.
                       </p>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
-                        Do you want us to give the FeLV vaccine?
+                        Do you want us to give the FeLV vaccine? For initial immunity, two vaccines must be given, 3-4 weeks apart. <span style={{ color: '#dc3545' }}>*</span>
                       </p>
                       <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
                         <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
@@ -2642,55 +2965,12 @@ export default function PublicRoomLoaderForm() {
                           No
                         </label>
                       </div>
+                      {fieldValidationErrors[`${petKey}_felvVaccine`] && (
+                        <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_felvVaccine`]}</p>
+                      )}
                     </div>
                   );
                 })()}
-
-                {/* FELV Vaccine (cat, under 1 yr or outdoor) */}
-                {isCatPatient && (isUnderOneYear || outdoorAccess) && (
-                  <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
-                    <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
-                      If a cat AND (&lt; 1 yr old OR answered yes to outdoor question)
-                    </p>
-                    <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
-                      FELV, or feline leukemia virus, is a contagious and potentially fatal virus spread through close contact between cats, like grooming or sharing food and water bowls.
-                    </p>
-                    <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
-                      Based on veterinary guidelines, FELV is now considered a core vaccine for all kittens under one year old, regardless of whether they live indoors or outdoors. We also highly recommend it for any adult cats who go outside or live with cats who do.
-                    </p>
-                    <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
-                      Do you want us to give the FELV vaccine to <strong>{petName}</strong>? This would be the first of two. The second would be given 3-4 weeks later.
-                    </p>
-                    <div style={{ marginLeft: '20px' }}>
-                      <div style={{ marginBottom: '10px' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                          <input
-                            type="radio"
-                            name={`${petKey}_felvVaccine`}
-                            value="yes"
-                            checked={formData[`${petKey}_felvVaccine`] === 'yes'}
-                            onChange={(e) => handleVaccineOptChange(petKey, patient.patientId ?? patient.patient?.id, 'felv', `${petKey}_felvVaccine`, e.target.value)}
-                            style={{ marginRight: '8px' }}
-                          />
-                          Yes
-                        </label>
-                      </div>
-                      <div>
-                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                          <input
-                            type="radio"
-                            name={`${petKey}_felvVaccine`}
-                            value="no"
-                            checked={formData[`${petKey}_felvVaccine`] === 'no'}
-                            onChange={(e) => handleVaccineOptChange(petKey, patient.patientId ?? patient.patient?.id, 'felv', `${petKey}_felvVaccine`, e.target.value)}
-                            style={{ marginRight: '8px' }}
-                          />
-                          No thank you.
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             );
           })()}
@@ -2713,7 +2993,15 @@ export default function PublicRoomLoaderForm() {
             </button>
             {isLastCarePlanPet ? (
               <button
-                onClick={() => setCurrentPage(labsPageIndex)}
+                onClick={() => {
+                  const v = validateRequiredForCarePlanPet(carePlanPetIndex);
+                  if (!v.valid) {
+                    setFieldValidationErrors(v.errors || {});
+                    return;
+                  }
+                  setFieldValidationErrors({});
+                  setCurrentPage(labsPageIndex);
+                }}
                 style={{
                   padding: '12px 28px',
                   backgroundColor: '#0d6efd',
@@ -2729,7 +3017,15 @@ export default function PublicRoomLoaderForm() {
               </button>
             ) : (
               <button
-                onClick={() => setCurrentPage(currentPage + 1)}
+                onClick={() => {
+                  const v = validateRequiredForCarePlanPet(carePlanPetIndex);
+                  if (!v.valid) {
+                    setFieldValidationErrors(v.errors || {});
+                    return;
+                  }
+                  setFieldValidationErrors({});
+                  setCurrentPage(currentPage + 1);
+                }}
                 style={{
                   padding: '12px 28px',
                   backgroundColor: '#0d6efd',
@@ -2835,43 +3131,49 @@ export default function PublicRoomLoaderForm() {
                   const seniorFelineExtendedMinusFecal = seniorFelineExtendedPrice != null && fecalPrice != null ? seniorFelineExtendedPrice - fecalPrice : null;
 
                   if (isEarlyDetectionFeline) {
+                    const earlyDetFelineCost = getSearchItemPrice(earlyDetectionFelineItem);
+                    const fivFelvReminder = patientForEntry?.reminders?.find((r: any) => {
+                      const n = (r?.item?.name ?? '').toLowerCase();
+                      return n.includes('fiv') || n.includes('felv') || (n.includes('heartworm') && isCatEntry);
+                    });
+                    const hasFivFelvReminder = !!fivFelvReminder;
+                    const testsAlreadyRecommendedFeline: string[] = [];
+                    if (hasFecalReminder) testsAlreadyRecommendedFeline.push('fecal parasite screening');
+                    if (hasFivFelvReminder) testsAlreadyRecommendedFeline.push('FIV/FeLV/Heartworm screening');
+                    const hasTestsAlreadyRecommendedFeline = testsAlreadyRecommendedFeline.length > 0;
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
-                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '12px', textDecoration: 'underline' }}>Early Detection Panel:</div>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '12px', flexWrap: 'wrap' }}>
-                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, flex: '1 1 280px' }}>
-                            For cats less than eight years old, we can run a more extensive &quot;mini&quot; panel called an Early Detection Panel. Conducting annual lab work establishes a baseline for {petName} that we can compare to in times of illness. It also aligns with the proactive essence of our philosophy we call Vet Med 3.0 by enabling early detection and tailored care strategies, ensuring optimal health outcomes for {petName}.
-                          </p>
-                          <img
-                            src="/early-detection-feline.png"
-                            alt="Early detection baseline and trend"
-                            style={{ width: '180px', height: 'auto', borderRadius: '4px', border: '1px solid #e0e0e0', flexShrink: 0 }}
-                          />
-                        </div>
+                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '12px', textDecoration: 'underline' }}>Early Detection Screening for {petName}</div>
+                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px' }}>
+                          We recommend an Early Detection Panel as part of routine preventive care. This screening establishes baseline values, helps us monitor trends over time, and can identify subtle changes before pets show symptoms.
+                        </p>
                         <p style={{ fontSize: '14px', fontWeight: 600, color: '#333', marginBottom: '8px' }}>The Early Detection Panel includes:</p>
                         <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px', paddingLeft: '20px' }}>
-                          <li><strong>Abbreviated Chemistry:</strong> looks at organ function such as for the liver and kidneys.</li>
-                          <li><strong>Complete Blood Count (CBC):</strong> looks at red blood cells, white blood cells and platelets.</li>
-                          <li><strong>Fecal:</strong> A stool sample analysis to check for intestinal parasites.</li>
-                          <li><strong>FIV/FeLV test:</strong> These two infectious diseases can cause harm to cats and can cause other cats that are exposed to get sick.</li>
+                          <li>Chemistry Panel (liver and kidney function)</li>
+                          <li>Complete Blood Count (CBC)</li>
+                          <li>Fecal parasite screening</li>
+                          <li>FIV/FeLV/Heartworm screening</li>
                         </ul>
-                        <p style={{ fontSize: '14px', color: '#555', marginBottom: hasFecalReminder ? '8px' : '16px' }}>
-                          This bundled panel costs {formatPrice(getSearchItemPrice(earlyDetectionFelineItem)) ?? 'our standard lab pricing (ask at visit).'}
+                        <p style={{ fontSize: '14px', color: '#555', marginBottom: hasTestsAlreadyRecommendedFeline ? '8px' : '12px' }}>
+                          Cost: {formatPrice(earlyDetFelineCost) != null ? <strong>{formatPrice(earlyDetFelineCost)}</strong> : 'our standard lab pricing (ask at visit).'}
                         </p>
-                        {hasFecalReminder && (
-                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '16px' }}>
-                            This will replace that fecal test
-                            {priceDiff != null && !Number.isNaN(priceDiff)
+                        {hasTestsAlreadyRecommendedFeline && (
+                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '12px' }}>
+                            This bundled panel includes the {testsAlreadyRecommendedFeline.join(' and ')} already recommended for today&apos;s visit and provides a more complete picture of {petName}&apos;s health
+                            {hasFecalReminder && priceDiff != null && !Number.isNaN(priceDiff)
                               ? priceDiff > 0
-                                ? ` and it only costs $${priceDiff.toFixed(2)} more.`
+                                ? <> for <strong>${priceDiff.toFixed(2)}</strong> more.</>
                                 : priceDiff < 0
-                                  ? ` and saves you $${(-priceDiff).toFixed(2)}.`
+                                  ? <> and saves you <strong>${(-priceDiff).toFixed(2)}</strong>.</>
                                   : ' at no extra cost.'
                               : '.'}
                           </p>
                         )}
-                        <p style={{ fontSize: '15px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Would you like to do the Early Detection Panel?</p>
-                        <div style={{ display: 'flex', gap: '20px' }}>
+                        <p style={{ fontSize: '14px', color: '#555', marginBottom: '16px' }}>
+                          Most families choose to include this screening so we have baseline information available if {petName} ever becomes sick.
+                        </p>
+                        <p style={{ fontSize: '15px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Would you like us to include this recommended screening today?</p>
+                        <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
                           <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
                             <input
                               type="radio"
@@ -2885,7 +3187,7 @@ export default function PublicRoomLoaderForm() {
                               }}
                               style={{ marginRight: '8px', cursor: 'pointer' }}
                             />
-                            Yes
+                            Yes — Include Early Detection Panel
                           </label>
                           <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
                             <input
@@ -2896,9 +3198,12 @@ export default function PublicRoomLoaderForm() {
                               onChange={(e) => handleInputChange(earlyDetKey, e.target.value)}
                               style={{ marginRight: '8px', cursor: 'pointer' }}
                             />
-                            No
+                            Not at this time
                           </label>
                         </div>
+                        {fieldValidationErrors[earlyDetKey] && (
+                          <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[earlyDetKey]}</p>
+                        )}
                         {earlyDetValue === 'yes' && (
                           <>
                             <p style={{ fontSize: '14px', color: '#333', marginTop: '12px', padding: '12px', backgroundColor: '#e8f5e9', border: '1px solid #81c784', borderRadius: '6px', lineHeight: 1.5 }}>
@@ -2917,43 +3222,46 @@ export default function PublicRoomLoaderForm() {
                   }
 
                   if (isEarlyDetectionCanine) {
+                    const fourDxReminder = patientForEntry?.reminders?.find((r: any) => hasPhrase(r?.item, '4dx') || hasPhrase(r?.item, 'heartworm'));
+                    const has4dxReminder = !!fourDxReminder;
+                    const testsAlreadyRecommended: string[] = [];
+                    if (hasFecalReminder) testsAlreadyRecommended.push('fecal test');
+                    if (has4dxReminder) testsAlreadyRecommended.push('4Dx');
+                    const hasTestsAlreadyRecommended = testsAlreadyRecommended.length > 0;
+                    const earlyDetCanineCost = getSearchItemPrice(earlyDetectionCanineItem);
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
-                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '12px', textDecoration: 'underline' }}>Early Detection Panel:</div>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '12px', flexWrap: 'wrap' }}>
-                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, flex: '1 1 280px' }}>
-                            For dogs less than eight years old, there is an extensive &quot;mini&quot; panel called an Early Detection Panel. Conducting annual lab work establishes a baseline for {petName} that we can compare to in times of illness. It also aligns with the proactive essence of our philosophy we call Vet Med 3.0 by enabling early detection and tailored care strategies, ensuring optimal health outcomes for {petName}.
-                          </p>
-                          <img
-                            src="/early-detection-feline.png"
-                            alt="Early detection baseline and trend"
-                            style={{ width: '180px', height: 'auto', borderRadius: '4px', border: '1px solid #e0e0e0', flexShrink: 0 }}
-                          />
-                        </div>
+                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '12px', textDecoration: 'underline' }}>Early Detection Screening for {petName}</div>
+                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px' }}>
+                          We recommend an Early Detection Panel as part of routine preventive care. This screening establishes baseline values, helps us monitor trends over time, and can identify subtle changes before pets show symptoms.
+                        </p>
                         <p style={{ fontSize: '14px', fontWeight: 600, color: '#333', marginBottom: '8px' }}>The Early Detection Panel includes:</p>
                         <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px', paddingLeft: '20px' }}>
-                          <li><strong>Abbreviated Chemistry:</strong> looks at organ function such as for the liver and kidneys.</li>
-                          <li><strong>Complete Blood Count, or &quot;CBC&quot;:</strong> that looks at red blood cells, white blood cells and platelets.</li>
-                          <li><strong>Fecal:</strong> A stool sample analysis to check for intestinal parasites.</li>
-                          <li><strong>4dx (Heartworm/Tick test):</strong> Tests for heartworm (spread by mosquitoes) and three different tick-borne diseases (lyme, anaplasma, and ehrlichia).</li>
+                          <li>Chemistry Panel (liver and kidney function)</li>
+                          <li>Complete Blood Count (CBC)</li>
+                          <li>Fecal parasite screening</li>
+                          <li>4Dx (Heartworm and tick-borne disease screening — Lyme, Anaplasma, and Ehrlichia)</li>
                         </ul>
-                        <p style={{ fontSize: '14px', color: '#555', marginBottom: hasFecalReminder ? '8px' : '16px' }}>
-                          This bundled panel costs {formatPrice(getSearchItemPrice(earlyDetectionCanineItem)) ?? 'our standard lab pricing (ask at visit).'}
+                        <p style={{ fontSize: '14px', color: '#555', marginBottom: hasTestsAlreadyRecommended ? '8px' : '12px' }}>
+                          Cost: {formatPrice(earlyDetCanineCost) != null ? <strong>{formatPrice(earlyDetCanineCost)}</strong> : 'our standard lab pricing (ask at visit).'}
                         </p>
-                        {hasFecalReminder && (
-                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '16px' }}>
-                            This will replace that fecal test
-                            {earlyDetCaninePriceDiff != null && !Number.isNaN(earlyDetCaninePriceDiff)
+                        {hasTestsAlreadyRecommended && (
+                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '12px' }}>
+                            This bundled panel includes the {testsAlreadyRecommended.join(' and ')} already recommended for today&apos;s visit and provides a more complete picture of {petName}&apos;s health
+                            {hasFecalReminder && earlyDetCaninePriceDiff != null && !Number.isNaN(earlyDetCaninePriceDiff)
                               ? earlyDetCaninePriceDiff > 0
-                                ? ` and it only costs $${earlyDetCaninePriceDiff.toFixed(2)} more.`
+                                ? <> for <strong>${earlyDetCaninePriceDiff.toFixed(2)}</strong> more.</>
                                 : earlyDetCaninePriceDiff < 0
-                                  ? ` and saves you $${(-earlyDetCaninePriceDiff).toFixed(2)}.`
+                                  ? <> and saves you <strong>${(-earlyDetCaninePriceDiff).toFixed(2)}</strong>.</>
                                   : ' at no extra cost.'
                               : '.'}
                           </p>
                         )}
-                        <p style={{ fontSize: '15px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Would you like to do the Early Detection Panel?</p>
-                        <div style={{ display: 'flex', gap: '20px' }}>
+                        <p style={{ fontSize: '14px', color: '#555', marginBottom: '16px' }}>
+                          Most families choose to include this screening so we have baseline information available if {petName} ever becomes sick.
+                        </p>
+                        <p style={{ fontSize: '15px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Would you like us to include this recommended screening today?</p>
+                        <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
                           <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
                             <input
                               type="radio"
@@ -2967,7 +3275,7 @@ export default function PublicRoomLoaderForm() {
                               }}
                               style={{ marginRight: '8px', cursor: 'pointer' }}
                             />
-                            Yes
+                            Yes — Include Early Detection Panel
                           </label>
                           <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
                             <input
@@ -2978,9 +3286,12 @@ export default function PublicRoomLoaderForm() {
                               onChange={(e) => handleInputChange(earlyDetCanineKey, e.target.value)}
                               style={{ marginRight: '8px', cursor: 'pointer' }}
                             />
-                            No
+                            Not at this time.
                           </label>
                         </div>
+                        {fieldValidationErrors[earlyDetCanineKey] && (
+                          <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[earlyDetCanineKey]}</p>
+                        )}
                         {earlyDetCanineValue === 'yes' && (
                           <>
                             <p style={{ fontSize: '14px', color: '#333', marginTop: '12px', padding: '12px', backgroundColor: '#e8f5e9', border: '1px solid #81c784', borderRadius: '6px', lineHeight: 1.5 }}>
@@ -3010,14 +3321,14 @@ export default function PublicRoomLoaderForm() {
                           </p>
                         )}
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '12px', flexWrap: 'wrap' }}>
-                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, flex: '1 1 280px' }}>
-                            We have two panels to choose from. Our <strong>Standard Comprehensive Panel</strong> ({formatPrice(standardPrice) ?? 'see pricing at visit'}) includes a:
-                          </p>
                           <img
                             src="/early-detection-feline.png"
                             alt="Early detection baseline and trend"
                             style={{ width: '180px', height: 'auto', borderRadius: '4px', border: '1px solid #e0e0e0', flexShrink: 0 }}
                           />
+                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, flex: '1 1 280px' }}>
+                            We have two panels to choose from. Our <strong>Standard Comprehensive Panel</strong> ({formatPrice(standardPrice) != null ? <strong>{formatPrice(standardPrice)}</strong> : 'see pricing at visit'}) includes a:
+                          </p>
                         </div>
                         <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px', paddingLeft: '20px' }}>
                           <li><strong>Chemistry</strong> to look at organ function such as liver or kidneys</li>
@@ -3026,7 +3337,7 @@ export default function PublicRoomLoaderForm() {
                           <li><strong>Urinalysis</strong>, to look at kidney and urinary health</li>
                         </ul>
                         <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder ? '8px' : '12px' }}>
-                          We also offer an <strong>Extended Comprehensive Panel</strong>, which is {seniorCanineDiff != null ? `$${seniorCanineDiff.toFixed(2)} more` : 'a bit more'}. This panel includes everything in the Standard Comprehensive Panel above and also includes a:
+                          We also offer an <strong>Extended Comprehensive Panel</strong>, which is {seniorCanineDiff != null ? <><strong>${seniorCanineDiff.toFixed(2)}</strong> more</> : 'a bit more'}. This panel includes everything in the Standard Comprehensive Panel above and also includes a:
                         </p>
                         <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder ? '8px' : '12px', paddingLeft: '20px' }}>
                           <li>Heartworm/tick disease screening test (called &quot;4Dx&quot;)</li>
@@ -3037,9 +3348,9 @@ export default function PublicRoomLoaderForm() {
                             The Extended Comprehensive Panel includes a fecal test, so it would replace the fecal already on your care plan.
                             {extendedMinusFecal != null && !Number.isNaN(extendedMinusFecal)
                               ? extendedMinusFecal > 0
-                                ? ` It only costs $${extendedMinusFecal.toFixed(2)} more.`
+                                ? <> It only costs <strong>${extendedMinusFecal.toFixed(2)}</strong> more.</>
                                 : extendedMinusFecal < 0
-                                  ? ` It saves you $${(-extendedMinusFecal).toFixed(2)}.`
+                                  ? <> It saves you <strong>${(-extendedMinusFecal).toFixed(2)}</strong>.</>
                                   : ' It\'s the same price.'
                               : ''}
                           </p>
@@ -3058,7 +3369,7 @@ export default function PublicRoomLoaderForm() {
                               onChange={() => handleInputChange(seniorPanelKey, 'standard')}
                               style={{ marginRight: '8px', cursor: 'pointer' }}
                             />
-                            Standard Comprehensive Panel {formatPrice(standardPrice) && `(${formatPrice(standardPrice)})`}
+                            Standard Comprehensive Panel {formatPrice(standardPrice) && <>(<strong>{formatPrice(standardPrice)}</strong>)</>}
                           </label>
                           <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
                             <input
@@ -3072,7 +3383,7 @@ export default function PublicRoomLoaderForm() {
                               }}
                               style={{ marginRight: '8px', cursor: 'pointer' }}
                             />
-                            Extended Comprehensive Panel {formatPrice(extendedPrice) && `(${formatPrice(extendedPrice)})`}
+                            Extended Comprehensive Panel {formatPrice(extendedPrice) && <>(<strong>{formatPrice(extendedPrice)}</strong>)</>}
                           </label>
                           <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
                             <input
@@ -3099,19 +3410,19 @@ export default function PublicRoomLoaderForm() {
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
                         <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '12px', textDecoration: 'underline' }}>Senior Screen — Feline</div>
-                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '16px' }}>
-                          With the symptoms you mentioned for {petName}, {doctorName} is likely to recommend lab work in order to gain valuable insight into why {petName} might be displaying these symptoms.
-                        </p>
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '12px', flexWrap: 'wrap' }}>
-                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, flex: '1 1 280px' }}>
-                            We have two panels to choose from. First, our <strong>Standard Comprehensive Panel</strong> ({formatPrice(seniorFelineStandardPrice) ?? 'see pricing at visit'}) includes a:
-                          </p>
                           <img
                             src="/early-detection-feline.png"
                             alt="Early detection baseline and trend"
                             style={{ width: '180px', height: 'auto', borderRadius: '4px', border: '1px solid #e0e0e0', flexShrink: 0 }}
                           />
+                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, flex: '1 1 280px' }}>
+                            With the symptoms you mentioned for {petName}, {doctorName} is likely to recommend lab work in order to gain valuable insight into why {petName} might be displaying these symptoms.
+                          </p>
                         </div>
+                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px' }}>
+                          We have two panels to choose from. First, our <strong>Standard Comprehensive Panel</strong> ({formatPrice(seniorFelineStandardPrice) != null ? <strong>{formatPrice(seniorFelineStandardPrice)}</strong> : 'see pricing at visit'}) includes a:
+                        </p>
                         <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px', paddingLeft: '20px' }}>
                           <li><strong>Chemistry</strong> to look at organ function like the liver and kidneys.</li>
                           <li><strong>Complete Blood Count</strong> to look at red/white blood cell and platelet counts.</li>
@@ -3119,7 +3430,7 @@ export default function PublicRoomLoaderForm() {
                           <li><strong>Urinalysis</strong>, to look at kidney and urinary health.</li>
                         </ul>
                         <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder ? '8px' : '12px' }}>
-                          We also offer a more <strong>Extended Comprehensive Panel</strong>, which is {seniorFelineTwoPanelDiff != null ? `around $${seniorFelineTwoPanelDiff.toFixed(2)} more` : 'a bit more'}. This panel includes everything in the Standard Comprehensive Panel above and also includes:
+                          We also offer a more <strong>Extended Comprehensive Panel</strong>, which is {seniorFelineTwoPanelDiff != null ? <>around <strong>${seniorFelineTwoPanelDiff.toFixed(2)}</strong> more</> : 'a bit more'}. This panel includes everything in the Standard Comprehensive Panel above and also includes:
                         </p>
                         <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder ? '8px' : '12px', paddingLeft: '20px' }}>
                           <li>A screening (called &quot;fPL&quot;) for chronic pancreatitis. This is a condition that is common in older cats, causes vague symptoms, and doesn&apos;t usually show itself on a standard comprehensive panel.</li>
@@ -3131,9 +3442,9 @@ export default function PublicRoomLoaderForm() {
                             The Extended Comprehensive Panel includes a fecal test, so it would replace the fecal already on your care plan.
                             {seniorFelineExtendedMinusFecal != null && !Number.isNaN(seniorFelineExtendedMinusFecal)
                               ? seniorFelineExtendedMinusFecal > 0
-                                ? ` It only costs $${seniorFelineExtendedMinusFecal.toFixed(2)} more.`
+                                ? <> It only costs <strong>${seniorFelineExtendedMinusFecal.toFixed(2)}</strong> more.</>
                                 : seniorFelineExtendedMinusFecal < 0
-                                  ? ` It saves you $${(-seniorFelineExtendedMinusFecal).toFixed(2)}.`
+                                  ? <> It saves you <strong>${(-seniorFelineExtendedMinusFecal).toFixed(2)}</strong>.</>
                                   : ' It\'s the same price.'
                               : ''}
                           </p>
@@ -3152,7 +3463,7 @@ export default function PublicRoomLoaderForm() {
                               onChange={() => handleInputChange(seniorFelineTwoPanelKey, 'standard')}
                               style={{ marginRight: '8px', cursor: 'pointer' }}
                             />
-                            Standard Comprehensive Panel {formatPrice(seniorFelineStandardPrice) && `(${formatPrice(seniorFelineStandardPrice)})`}
+                            Standard Comprehensive Panel {formatPrice(seniorFelineStandardPrice) && <>(<strong>{formatPrice(seniorFelineStandardPrice)}</strong>)</>}
                           </label>
                           <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
                             <input
@@ -3190,59 +3501,91 @@ export default function PublicRoomLoaderForm() {
                   }
 
                   if (isSeniorFelineWithFecal) {
+                    // Same two-panel choice (Standard / Extended / No) as 8659999, using lab_senior_feline_two_panel
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
                         <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '12px', textDecoration: 'underline' }}>Senior Screen Feline</div>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                          <img
+                            src="/early-detection-feline.png"
+                            alt="Early detection baseline and trend"
+                            style={{ width: '180px', height: 'auto', borderRadius: '4px', border: '1px solid #e0e0e0', flexShrink: 0 }}
+                          />
+                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, flex: '1 1 280px' }}>
+                            For senior cats, we recommend our Senior Screen Feline—a comprehensive panel that gives us a clear picture of {petName}&apos;s organ function, thyroid, and infectious disease status. We have two panels to choose from.
+                          </p>
+                        </div>
                         <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px' }}>
-                          We recommend our Senior Screen Feline (fecal Dx, FeLV/FIV/HW, fPL, Chem 25, CBC, T4, UA). It would be cheaper to run this one panel and we would get more information.
+                          First, our <strong>Standard Comprehensive Panel</strong> ({formatPrice(seniorFelineStandardPrice) != null ? <strong>{formatPrice(seniorFelineStandardPrice)}</strong> : 'see pricing at visit'}) includes:
                         </p>
-                        <p style={{ fontSize: '14px', color: '#555', marginBottom: hasFecalReminder ? '8px' : '16px' }}>
-                          This panel costs {formatPrice(seniorFelinePrice) ?? 'our standard lab pricing (ask at visit).'}
+                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px', paddingLeft: '20px' }}>
+                          <li><strong>Chemistry</strong> to look at organ function like the liver and kidneys.</li>
+                          <li><strong>Complete Blood Count</strong> to look at red/white blood cell and platelet counts.</li>
+                          <li><strong>Thyroid level</strong>, which may increase in older cats.</li>
+                          <li><strong>Urinalysis</strong>, to look at kidney and urinary health.</li>
+                        </ul>
+                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder ? '8px' : '12px' }}>
+                          We also offer a more <strong>Extended Comprehensive Panel</strong>, which is {seniorFelineTwoPanelDiff != null ? <>around <strong>${seniorFelineTwoPanelDiff.toFixed(2)}</strong> more</> : 'a bit more'}. This panel includes everything in the Standard Comprehensive Panel above and also includes:
                         </p>
+                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder ? '8px' : '12px', paddingLeft: '20px' }}>
+                          <li>A screening (called &quot;fPL&quot;) for chronic pancreatitis. This is a condition that is common in older cats, causes vague symptoms, and doesn&apos;t usually show itself on a standard comprehensive panel.</li>
+                          <li>Stool sample analysis for parasites (&quot;Fecal&quot;).</li>
+                          <li>Screening for three infectious diseases: FIV, FeLV, and Heartworm.</li>
+                        </ul>
                         {hasFecalReminder && (
-                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '16px' }}>
-                            This will replace that fecal test
-                            {seniorFelinePriceDiff != null && !Number.isNaN(seniorFelinePriceDiff)
-                              ? seniorFelinePriceDiff > 0
-                                ? ` and it only costs $${seniorFelinePriceDiff.toFixed(2)} more.`
-                                : seniorFelinePriceDiff < 0
-                                  ? ` and saves you $${(-seniorFelinePriceDiff).toFixed(2)}.`
-                                  : ' at no extra cost.'
-                              : '.'}
+                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '12px' }}>
+                            The Extended Comprehensive Panel includes a fecal test, so it would replace the fecal already on your care plan.
+                            {seniorFelineExtendedMinusFecal != null && !Number.isNaN(seniorFelineExtendedMinusFecal)
+                              ? seniorFelineExtendedMinusFecal > 0
+                                ? <> It only costs <strong>${seniorFelineExtendedMinusFecal.toFixed(2)}</strong> more.</>
+                                : seniorFelineExtendedMinusFecal < 0
+                                  ? <> It saves you <strong>${(-seniorFelineExtendedMinusFecal).toFixed(2)}</strong>.</>
+                                  : ' It\'s the same price.'
+                              : ''}
                           </p>
                         )}
-                        <p style={{ fontSize: '15px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Would you like {petName} to receive the Senior Screen Feline?</p>
-                        <div style={{ display: 'flex', gap: '20px' }}>
+                        <p style={{ fontSize: '15px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Which panel would you like {petName} to receive?</p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                           <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
                             <input
                               type="radio"
-                              name={seniorFelineKey}
-                              value="yes"
-                              checked={seniorFelineValue === 'yes'}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                handleInputChange(seniorFelineKey, val);
-                                if (val === 'yes' && fecalRecKey != null) handleInputChange(fecalRecKey, false);
+                              name={seniorFelineTwoPanelKey}
+                              value="standard"
+                              checked={seniorFelineTwoPanelValue === 'standard'}
+                              onChange={() => handleInputChange(seniorFelineTwoPanelKey, 'standard')}
+                              style={{ marginRight: '8px', cursor: 'pointer' }}
+                            />
+                            Standard Comprehensive Panel {formatPrice(seniorFelineStandardPrice) && <>(<strong>{formatPrice(seniorFelineStandardPrice)}</strong>)</>}
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
+                            <input
+                              type="radio"
+                              name={seniorFelineTwoPanelKey}
+                              value="extended"
+                              checked={seniorFelineTwoPanelValue === 'extended'}
+                              onChange={() => {
+                                handleInputChange(seniorFelineTwoPanelKey, 'extended');
+                                if (fecalRecKey != null) handleInputChange(fecalRecKey, false);
                               }}
                               style={{ marginRight: '8px', cursor: 'pointer' }}
                             />
-                            Yes
+                            Extended Comprehensive Panel {formatPrice(seniorFelineExtendedPrice) && <>(<strong>{formatPrice(seniorFelineExtendedPrice)}</strong>)</>}
                           </label>
                           <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
                             <input
                               type="radio"
-                              name={seniorFelineKey}
+                              name={seniorFelineTwoPanelKey}
                               value="no"
-                              checked={seniorFelineValue === 'no'}
-                              onChange={(e) => handleInputChange(seniorFelineKey, e.target.value)}
+                              checked={seniorFelineTwoPanelValue === 'no'}
+                              onChange={() => handleInputChange(seniorFelineTwoPanelKey, 'no')}
                               style={{ marginRight: '8px', cursor: 'pointer' }}
                             />
-                            No
+                            No thank you
                           </label>
                         </div>
-                        {seniorFelineValue === 'yes' && hasFecalReminder && fecalReminder?.item?.name && (
+                        {seniorFelineTwoPanelValue === 'extended' && hasFecalReminder && fecalReminder?.item?.name && (
                           <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
-                            Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalReminder.item.name}</span> (included in Senior Screen Feline)
+                            Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalReminder.item.name}</span> (included in Extended Comprehensive Panel)
                           </p>
                         )}
                       </div>
@@ -3277,7 +3620,15 @@ export default function PublicRoomLoaderForm() {
               ← Back to Care Plan
             </button>
             <button
-              onClick={() => setCurrentPage(summaryPageIndex)}
+              onClick={() => {
+                const v = validateRequiredForLabsPage();
+                if (!v.valid) {
+                  setFieldValidationErrors(v.errors || {});
+                  return;
+                }
+                setFieldValidationErrors({});
+                setCurrentPage(summaryPageIndex);
+              }}
               style={{
                 padding: '12px 28px',
                 backgroundColor: '#0d6efd',
@@ -3325,9 +3676,25 @@ export default function PublicRoomLoaderForm() {
               const seniorCaninePanel = formData[`lab_senior_canine_panel_${patientId}`];
               const seniorFelineTwoPanel = formData[`lab_senior_feline_two_panel_${patientId}`];
               const fecalReplacedBy: string[] = [];
-              if (earlyDetectionYes || earlyDetectionCanineYes) fecalReplacedBy.push('Early Detection Panel');
-              if (seniorFelineYes) fecalReplacedBy.push('Senior Screen Feline');
-              if (seniorCaninePanel === 'extended' || seniorFelineTwoPanel === 'extended') fecalReplacedBy.push('Extended Comprehensive Panel');
+              const earlyDetFelineExcluded = formData[`summary_exclude_lab_early_detection_feline_${patientId}`] === true;
+              const earlyDetCanineExcluded = formData[`summary_exclude_lab_early_detection_canine_${patientId}`] === true;
+              const seniorFelineExcluded = formData[`summary_exclude_lab_senior_feline_${patientId}`] === true;
+              const seniorCanineExtendedExcluded = formData[`summary_exclude_lab_senior_canine_extended_${patientId}`] === true;
+              const seniorFelineTwoExtendedExcluded = formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] === true;
+              if ((earlyDetectionYes && !earlyDetFelineExcluded) || (earlyDetectionCanineYes && !earlyDetCanineExcluded)) fecalReplacedBy.push('Early Detection Panel');
+              if (seniorFelineYes && !seniorFelineExcluded) fecalReplacedBy.push('Senior Screen Feline');
+              if ((seniorCaninePanel === 'extended' && !seniorCanineExtendedExcluded) || (seniorFelineTwoPanel === 'extended' && !seniorFelineTwoExtendedExcluded)) fecalReplacedBy.push('Extended Comprehensive Panel');
+
+              /** When a panel that replaces items (e.g. fecal) is unchecked on summary, re-check those items so they are no longer crossed out. */
+              const replacedItemRecKeys = displayWithIdx
+                .filter(({ item }) => hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0)
+                .map(({ idx }) => `pet${petIdx}_rec_${idx}`);
+              /** Exclude panel from summary (row stays visible, unchecked); restore replaced items when applicable. */
+              const excludePanelOnSummary = (summaryExcludeKey: string, shouldRestoreReplaced: boolean) => {
+                handleInputChange(summaryExcludeKey, true);
+                if (shouldRestoreReplaced) replacedItemRecKeys.forEach((recKey) => handleInputChange(recKey, true));
+              };
+              const includePanelOnSummary = (summaryExcludeKey: string) => handleInputChange(summaryExcludeKey, false);
 
               let petSubtotal = 0;
 
@@ -3374,7 +3741,7 @@ export default function PublicRoomLoaderForm() {
                         {isFecalReplaced && <span style={{ fontSize: '13px', color: '#666', marginLeft: '8px', fontStyle: 'italic' }}>(replaced by {fecalReplacedBy.join(' or ')})</span>}
                       </span>
                     </label>
-                    <span style={{ fontWeight: 500, flexShrink: 0, ...((!isChecked || isFecalReplaced) ? { textDecoration: 'line-through', color: '#888' } : {}) }}>
+                    <span style={{ fontWeight: 700, flexShrink: 0, ...((!isChecked || isFecalReplaced) ? { textDecoration: 'line-through', color: '#888' } : {}) }}>
                       {formatPrice(isChecked && !isFecalReplaced ? price * qty : 0)}
                     </span>
                   </div>
@@ -3408,79 +3775,190 @@ export default function PublicRoomLoaderForm() {
                               {qty > 1 && <span style={{ color: '#666', marginLeft: '6px', fontSize: '14px' }}>(Qty: {qty})</span>}
                             </span>
                           </label>
-                          <span style={{ fontWeight: 500, flexShrink: 0 }}>{formatPrice(lineTotal)}</span>
+                          <span style={{ fontWeight: 700, flexShrink: 0 }}>{formatPrice(lineTotal)}</span>
                         </div>
                       );
                     })}
                     {/* Checkable items (can be unchecked) */}
                     {checkableDisplay.map(({ item, idx }) => renderDisplayRow(item, idx))}
-                    {/* Opted-in vaccines - no checkbox */}
+                    {/* Opted-in vaccines - with checkbox */}
                     {(patientId != null ? optedInVaccinesByPatientId[patientId] : undefined) && (() => {
                       const optedIn = optedInVaccinesByPatientId[patientId];
-                      const vaccineItems = optedIn ? (Object.values(optedIn).filter(Boolean) as SearchableItem[]) : [];
-                      return vaccineItems.map((item: SearchableItem, i: number) => {
+                      const entries = optedIn ? (Object.entries(optedIn).filter(([, it]) => it) as [VaccineOptKey, SearchableItem][]) : [];
+                      return entries.map(([vaccineKey, item], i: number) => {
+                        const vaccineSummaryKey = `summary_vaccine_${patientId}_${vaccineKey}`;
+                        const isChecked = formData[vaccineSummaryKey] !== false;
                         const p = getSearchItemPrice(item);
                         const price = p != null ? p : 0;
-                        petSubtotal += price;
+                        if (isChecked) petSubtotal += price;
                         return (
                           <div key={`v-${i}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', fontSize: '15px', gap: '12px' }}>
-                            <span style={{ width: '30px', marginRight: '12px', flexShrink: 0 }} />
-                            <span style={{ flex: 1, color: '#333' }}>{item.name ?? 'Vaccine'}</span>
-                            <span style={{ fontWeight: 500, flexShrink: 0 }}>{formatPrice(price)}</span>
+                            <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                disabled={readOnly}
+                                onChange={() => handleInputChange(vaccineSummaryKey, !isChecked)}
+                                style={{ marginRight: '12px', width: '18px', height: '18px', cursor: readOnly ? 'default' : 'pointer', flexShrink: 0 }}
+                              />
+                              <span style={{ ...(isChecked ? { color: '#333' } : { textDecoration: 'line-through', color: '#888' }) }}>{item.name ?? 'Vaccine'}</span>
+                            </label>
+                            <span style={{ fontWeight: 700, flexShrink: 0, ...(isChecked ? {} : { textDecoration: 'line-through', color: '#888' }) }}>{formatPrice(isChecked ? price : 0)}</span>
                           </div>
                         );
                       });
                     })()}
-                    {/* Lab panels selected - no checkbox */}
-                    {earlyDetectionYes && getSearchItemPrice(earlyDetectionFelineItem) != null && (() => { const p = getSearchItemPrice(earlyDetectionFelineItem)!; petSubtotal += p; return (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', fontSize: '15px', gap: '12px' }}>
-                        <span style={{ width: '30px', marginRight: '12px', flexShrink: 0 }} />
-                        <span style={{ flex: 1, color: '#333' }}>Early Detection Panel - Feline</span>
-                        <span style={{ fontWeight: 500, flexShrink: 0 }}>{formatPrice(p)}</span>
-                      </div>
-                    ); })()}
-                    {earlyDetectionCanineYes && getSearchItemPrice(earlyDetectionCanineItem) != null && (() => { const p = getSearchItemPrice(earlyDetectionCanineItem)!; petSubtotal += p; return (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', fontSize: '15px', gap: '12px' }}>
-                        <span style={{ width: '30px', marginRight: '12px', flexShrink: 0 }} />
-                        <span style={{ flex: 1, color: '#333' }}>Early Detection Panel - Canine</span>
-                        <span style={{ fontWeight: 500, flexShrink: 0 }}>{formatPrice(p)}</span>
-                      </div>
-                    ); })()}
-                    {seniorFelineYes && getSearchItemPrice(seniorFelineItem) != null && (() => { const p = getSearchItemPrice(seniorFelineItem)!; petSubtotal += p; return (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', fontSize: '15px', gap: '12px' }}>
-                        <span style={{ width: '30px', marginRight: '12px', flexShrink: 0 }} />
-                        <span style={{ flex: 1, color: '#333' }}>Senior Screen Feline</span>
-                        <span style={{ fontWeight: 500, flexShrink: 0 }}>{formatPrice(p)}</span>
-                      </div>
-                    ); })()}
-                    {seniorCaninePanel === 'standard' && getSearchItemPrice(seniorCanineStandardItem) != null && (() => { const p = getSearchItemPrice(seniorCanineStandardItem)!; petSubtotal += p; return (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', fontSize: '15px', gap: '12px' }}>
-                        <span style={{ width: '30px', marginRight: '12px', flexShrink: 0 }} />
-                        <span style={{ flex: 1, color: '#333' }}>Senior Screen - Standard Comprehensive Panel</span>
-                        <span style={{ fontWeight: 500, flexShrink: 0 }}>{formatPrice(p)}</span>
-                      </div>
-                    ); })()}
-                    {seniorCaninePanel === 'extended' && getSearchItemPrice(seniorCanineExtendedItem) != null && (() => { const p = getSearchItemPrice(seniorCanineExtendedItem)!; petSubtotal += p; return (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', fontSize: '15px', gap: '12px' }}>
-                        <span style={{ width: '30px', marginRight: '12px', flexShrink: 0 }} />
-                        <span style={{ flex: 1, color: '#333' }}>Senior Screen - Extended Comprehensive Panel</span>
-                        <span style={{ fontWeight: 500, flexShrink: 0 }}>{formatPrice(p)}</span>
-                      </div>
-                    ); })()}
-                    {seniorFelineTwoPanel === 'standard' && getSearchItemPrice(seniorCanineStandardItem) != null && (() => { const p = getSearchItemPrice(seniorCanineStandardItem)!; petSubtotal += p; return (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', fontSize: '15px', gap: '12px' }}>
-                        <span style={{ width: '30px', marginRight: '12px', flexShrink: 0 }} />
-                        <span style={{ flex: 1, color: '#333' }}>Senior Screen Feline - Standard Panel</span>
-                        <span style={{ fontWeight: 500, flexShrink: 0 }}>{formatPrice(p)}</span>
-                      </div>
-                    ); })()}
-                    {seniorFelineTwoPanel === 'extended' && getSearchItemPrice(seniorFelineExtendedItem) != null && (() => { const p = getSearchItemPrice(seniorFelineExtendedItem)!; petSubtotal += p; return (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', fontSize: '15px', gap: '12px' }}>
-                        <span style={{ width: '30px', marginRight: '12px', flexShrink: 0 }} />
-                        <span style={{ flex: 1, color: '#333' }}>Senior Screen Feline - Extended Panel</span>
-                        <span style={{ fontWeight: 500, flexShrink: 0 }}>{formatPrice(p)}</span>
-                      </div>
-                    ); })()}
+                    {/* Lab panels selected - with checkbox (uncheck excludes from total but row stays so they can re-check) */}
+                    {earlyDetectionYes && getSearchItemPrice(earlyDetectionFelineItem) != null && (() => {
+                      const summaryExcludeKey = `summary_exclude_lab_early_detection_feline_${patientId}`;
+                      const isExcluded = formData[summaryExcludeKey] === true;
+                      const p = getSearchItemPrice(earlyDetectionFelineItem)!;
+                      if (!isExcluded) petSubtotal += p;
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', fontSize: '15px', gap: '12px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={!isExcluded}
+                              disabled={readOnly}
+                              onChange={() => !readOnly && (isExcluded ? includePanelOnSummary(summaryExcludeKey) : excludePanelOnSummary(summaryExcludeKey, true))}
+                              style={{ marginRight: '12px', width: '18px', height: '18px', cursor: readOnly ? 'default' : 'pointer', flexShrink: 0 }}
+                            />
+                            <span style={{ ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : { color: '#333' }) }}>Early Detection Panel - Feline</span>
+                          </label>
+                          <span style={{ fontWeight: 700, flexShrink: 0, ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{formatPrice(isExcluded ? 0 : p)}</span>
+                        </div>
+                      );
+                    })()}
+                    {earlyDetectionCanineYes && getSearchItemPrice(earlyDetectionCanineItem) != null && (() => {
+                      const summaryExcludeKey = `summary_exclude_lab_early_detection_canine_${patientId}`;
+                      const isExcluded = formData[summaryExcludeKey] === true;
+                      const p = getSearchItemPrice(earlyDetectionCanineItem)!;
+                      if (!isExcluded) petSubtotal += p;
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', fontSize: '15px', gap: '12px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={!isExcluded}
+                              disabled={readOnly}
+                              onChange={() => !readOnly && (isExcluded ? includePanelOnSummary(summaryExcludeKey) : excludePanelOnSummary(summaryExcludeKey, true))}
+                              style={{ marginRight: '12px', width: '18px', height: '18px', cursor: readOnly ? 'default' : 'pointer', flexShrink: 0 }}
+                            />
+                            <span style={{ ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : { color: '#333' }) }}>Early Detection Panel - Canine</span>
+                          </label>
+                          <span style={{ fontWeight: 700, flexShrink: 0, ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{formatPrice(isExcluded ? 0 : p)}</span>
+                        </div>
+                      );
+                    })()}
+                    {seniorFelineYes && getSearchItemPrice(seniorFelineItem) != null && (() => {
+                      const summaryExcludeKey = `summary_exclude_lab_senior_feline_${patientId}`;
+                      const isExcluded = formData[summaryExcludeKey] === true;
+                      const p = getSearchItemPrice(seniorFelineItem)!;
+                      if (!isExcluded) petSubtotal += p;
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', fontSize: '15px', gap: '12px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={!isExcluded}
+                              disabled={readOnly}
+                              onChange={() => !readOnly && (isExcluded ? includePanelOnSummary(summaryExcludeKey) : excludePanelOnSummary(summaryExcludeKey, true))}
+                              style={{ marginRight: '12px', width: '18px', height: '18px', cursor: readOnly ? 'default' : 'pointer', flexShrink: 0 }}
+                            />
+                            <span style={{ ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : { color: '#333' }) }}>Senior Screen Feline</span>
+                          </label>
+                          <span style={{ fontWeight: 700, flexShrink: 0, ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{formatPrice(isExcluded ? 0 : p)}</span>
+                        </div>
+                      );
+                    })()}
+                    {seniorCaninePanel === 'standard' && getSearchItemPrice(seniorCanineStandardItem) != null && (() => {
+                      const summaryExcludeKey = `summary_exclude_lab_senior_canine_standard_${patientId}`;
+                      const isExcluded = formData[summaryExcludeKey] === true;
+                      const p = getSearchItemPrice(seniorCanineStandardItem)!;
+                      if (!isExcluded) petSubtotal += p;
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', fontSize: '15px', gap: '12px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={!isExcluded}
+                              disabled={readOnly}
+                              onChange={() => !readOnly && (isExcluded ? includePanelOnSummary(summaryExcludeKey) : excludePanelOnSummary(summaryExcludeKey, false))}
+                              style={{ marginRight: '12px', width: '18px', height: '18px', cursor: readOnly ? 'default' : 'pointer', flexShrink: 0 }}
+                            />
+                            <span style={{ ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : { color: '#333' }) }}>Senior Screen - Standard Comprehensive Panel</span>
+                          </label>
+                          <span style={{ fontWeight: 700, flexShrink: 0, ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{formatPrice(isExcluded ? 0 : p)}</span>
+                        </div>
+                      );
+                    })()}
+                    {seniorCaninePanel === 'extended' && getSearchItemPrice(seniorCanineExtendedItem) != null && (() => {
+                      const summaryExcludeKey = `summary_exclude_lab_senior_canine_extended_${patientId}`;
+                      const isExcluded = formData[summaryExcludeKey] === true;
+                      const p = getSearchItemPrice(seniorCanineExtendedItem)!;
+                      if (!isExcluded) petSubtotal += p;
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', fontSize: '15px', gap: '12px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={!isExcluded}
+                              disabled={readOnly}
+                              onChange={() => !readOnly && (isExcluded ? includePanelOnSummary(summaryExcludeKey) : excludePanelOnSummary(summaryExcludeKey, true))}
+                              style={{ marginRight: '12px', width: '18px', height: '18px', cursor: readOnly ? 'default' : 'pointer', flexShrink: 0 }}
+                            />
+                            <span style={{ ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : { color: '#333' }) }}>Senior Screen - Extended Comprehensive Panel</span>
+                          </label>
+                          <span style={{ fontWeight: 700, flexShrink: 0, ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{formatPrice(isExcluded ? 0 : p)}</span>
+                        </div>
+                      );
+                    })()}
+                    {seniorFelineTwoPanel === 'standard' && getSearchItemPrice(seniorCanineStandardItem) != null && (() => {
+                      const key = `lab_senior_feline_two_panel_${patientId}`;
+                      const p = getSearchItemPrice(seniorCanineStandardItem)!;
+                      petSubtotal += p;
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', fontSize: '15px', gap: '12px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
+                            <input
+                              type="checkbox"
+                              checked
+                              disabled={readOnly}
+                              onChange={() => {
+                                if (readOnly) return;
+                                handleInputChange(key, 'no');
+                                replacedItemRecKeys.forEach((recKey) => handleInputChange(recKey, true));
+                              }}
+                              style={{ marginRight: '12px', width: '18px', height: '18px', cursor: readOnly ? 'default' : 'pointer', flexShrink: 0 }}
+                            />
+                            <span style={{ color: '#333' }}>Senior Screen Feline - Standard Panel</span>
+                          </label>
+                          <span style={{ fontWeight: 700, flexShrink: 0 }}>{formatPrice(p)}</span>
+                        </div>
+                      );
+                    })()}
+                    {seniorFelineTwoPanel === 'extended' && getSearchItemPrice(seniorFelineExtendedItem) != null && (() => {
+                      const summaryExcludeKey = `summary_exclude_lab_senior_feline_two_extended_${patientId}`;
+                      const isExcluded = formData[summaryExcludeKey] === true;
+                      const p = getSearchItemPrice(seniorFelineExtendedItem)!;
+                      if (!isExcluded) petSubtotal += p;
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', fontSize: '15px', gap: '12px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={!isExcluded}
+                              disabled={readOnly}
+                              onChange={() => !readOnly && (isExcluded ? includePanelOnSummary(summaryExcludeKey) : excludePanelOnSummary(summaryExcludeKey, true))}
+                              style={{ marginRight: '12px', width: '18px', height: '18px', cursor: readOnly ? 'default' : 'pointer', flexShrink: 0 }}
+                            />
+                            <span style={{ ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : { color: '#333' }) }}>Senior Screen Feline - Extended Panel</span>
+                          </label>
+                          <span style={{ fontWeight: 700, flexShrink: 0, ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{formatPrice(isExcluded ? 0 : p)}</span>
+                        </div>
+                      );
+                    })()}
                     {/* Commonly selected items - unchecked by default, can add to total */}
                     {(() => {
                       const existingNames = new Set<string>();
@@ -3535,7 +4013,7 @@ export default function PublicRoomLoaderForm() {
                                   />
                                   <span style={{ color: '#333' }}>{displayName}</span>
                                 </label>
-                                <span style={{ fontWeight: 500, flexShrink: 0 }}>{formatPrice(price)}</span>
+                                <span style={{ fontWeight: 700, flexShrink: 0 }}>{formatPrice(price)}</span>
                               </div>
                             );
                           })}
@@ -3545,7 +4023,7 @@ export default function PublicRoomLoaderForm() {
                   </div>
                   {patients.length > 1 && (
                     <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '15px', fontWeight: 600, color: '#333' }}>
-                      Subtotal: {formatPrice(petSubtotal)}
+                      Subtotal: <strong>{formatPrice(petSubtotal)}</strong>
                     </div>
                   )}
                   {(() => { grandTotal += petSubtotal; return null; })()}
@@ -3574,7 +4052,6 @@ export default function PublicRoomLoaderForm() {
                 <ul style={{ margin: 0, padding: 0, listStyle: 'none', maxHeight: '200px', overflowY: 'auto', border: '1px solid #dee2e6', borderRadius: '6px', backgroundColor: '#fff' }}>
                   {storeSearchResultsByName.map(([productName, items]) => {
                     const minPrice = Math.min(...items.map((p) => Number(p.price)));
-                    const priceLabel = items.length > 1 ? `from $${minPrice.toFixed(2)}` : `$${minPrice.toFixed(2)}`;
                     return (
                       <li
                         key={productName}
@@ -3584,7 +4061,7 @@ export default function PublicRoomLoaderForm() {
                         onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#fff'; }}
                       >
                         <span>{productName}</span>
-                        <span style={{ fontWeight: 600 }}>{priceLabel}</span>
+                        <span style={{ fontWeight: 600 }}>{items.length > 1 ? <>from <strong>${minPrice.toFixed(2)}</strong></> : <strong>${minPrice.toFixed(2)}</strong>}</span>
                       </li>
                     );
                   })}
@@ -3626,9 +4103,9 @@ export default function PublicRoomLoaderForm() {
                     Select an option to add to your items:
                   </p>
                   <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
-                    {getStoreModalRows(storeOptionModalGroup).map(({ key, label, price, item }) => (
+                    {getStoreModalRows(storeOptionModalGroup).map(({ key, label, price, item }, idx) => (
                       <li
-                        key={key}
+                        key={`${key}-${label}-${price}-${idx}`}
                         style={{
                           display: 'flex',
                           justifyContent: 'space-between',
@@ -3640,7 +4117,7 @@ export default function PublicRoomLoaderForm() {
                       >
                         <span style={{ fontSize: '14px', color: '#333' }}>{label}</span>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span style={{ fontWeight: 600 }}>{formatPrice(price)}</span>
+                          <strong>{formatPrice(price)}</strong>
                           <button
                             type="button"
                             disabled={readOnly}
@@ -3700,7 +4177,7 @@ export default function PublicRoomLoaderForm() {
                       <li key={`${item.id}-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #eee', fontSize: '15px' }}>
                         <span style={{ color: '#333' }}>{item.name}</span>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                          <span style={{ fontWeight: 500 }}>{formatPrice(Number(item.price))}</span>
+                          <span style={{ fontWeight: 700 }}>{formatPrice(Number(item.price))}</span>
                           <button
                             type="button"
                             onClick={() => !readOnly && setStoreAdditionalItems((prev) => prev.filter((_, i) => i !== idx))}
@@ -3722,7 +4199,7 @@ export default function PublicRoomLoaderForm() {
             })()}
 
             <div style={{ marginTop: '24px', paddingTop: '20px', borderTop: '3px solid #e0e0e0', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '16px' }}>
-              <span style={{ fontSize: '20px', fontWeight: 700, color: '#212529' }}>Total: {formatPrice(grandTotal)}</span>
+              <span style={{ fontSize: '20px', fontWeight: 700, color: '#212529' }}>Total: <strong>{formatPrice(grandTotal)}</strong></span>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '32px', paddingTop: '20px', borderTop: '2px solid #e0e0e0' }}>
