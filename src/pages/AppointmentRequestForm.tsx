@@ -1879,6 +1879,13 @@ export default function AppointmentRequestForm() {
         if (!formData.physicalAddress.state.trim()) newErrors['physicalAddress.state'] = 'State is required';
         if (!formData.physicalAddress.zip.trim()) newErrors['physicalAddress.zip'] = 'Zip code is required';
         if (errors.zoneNotServiced) newErrors.zoneNotServiced = errors.zoneNotServiced;
+        if (!formData.mailingAddressSame) newErrors.mailingAddressSame = 'Please select whether your mailing address is different from your physical address';
+        if (formData.mailingAddressSame === 'Yes, it is different.') {
+          if (!formData.mailingAddress?.line1?.trim()) newErrors['mailingAddress.line1'] = 'Mailing street address is required';
+          if (!formData.mailingAddress?.city?.trim()) newErrors['mailingAddress.city'] = 'Mailing city is required';
+          if (!formData.mailingAddress?.state?.trim()) newErrors['mailingAddress.state'] = 'Mailing state is required';
+          if (!formData.mailingAddress?.zip?.trim()) newErrors['mailingAddress.zip'] = 'Mailing zip code is required';
+        }
         if (!formData.previousVeterinaryPractices?.trim()) newErrors.previousVeterinaryPractices = 'Previous veterinary practices are required';
         // Doctor selection moved to request-visit-continued page
         }
@@ -1980,9 +1987,14 @@ export default function AppointmentRequestForm() {
         break;
       case 'existing-client':
         if (!formData.bestPhoneNumber?.trim()) newErrors.bestPhoneNumber = 'Phone number is required';
-        if (formData.physicalAddress && (formData.physicalAddress.line1 || formData.physicalAddress.city || formData.physicalAddress.state || formData.physicalAddress.zip)) {
+        // Use same logic as UI: show validation when address is present (from form or original)
+        const addressToCheckExisting = formData.physicalAddress && (formData.physicalAddress.line1 || formData.physicalAddress.city || formData.physicalAddress.state || formData.physicalAddress.zip)
+          ? formData.physicalAddress
+          : originalAddress;
+        const hasAddressForVisit = addressToCheckExisting && (addressToCheckExisting.line1 || addressToCheckExisting.city || addressToCheckExisting.state || addressToCheckExisting.zip);
+        if (hasAddressForVisit) {
           if (!formData.isThisTheAddressWhereWeWillCome) newErrors.isThisTheAddressWhereWeWillCome = 'Please select an option';
-          // If they answered "No", validate new address fields
+          // If they answered "No", require all fields for the other (visit) address
           if (formData.isThisTheAddressWhereWeWillCome === 'No') {
             if (!formData.newPhysicalAddress?.line1?.trim()) newErrors['newPhysicalAddress.line1'] = 'Street address is required';
             if (!formData.newPhysicalAddress?.city?.trim()) newErrors['newPhysicalAddress.city'] = 'City is required';
@@ -3216,7 +3228,7 @@ export default function AppointmentRequestForm() {
 
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Is your mailing address different from your physical address?
+                Is your mailing address different from your physical address? <span style={{ color: '#ef4444' }}>*</span>
               </label>
               <div style={{ display: 'flex', gap: '16px' }}>
                 {['Yes, it is different.', 'No, it is the same.'].map((option) => (
@@ -3228,7 +3240,7 @@ export default function AppointmentRequestForm() {
                       gap: '8px',
                       cursor: 'pointer',
                       padding: '12px',
-                      border: `1px solid ${formData.mailingAddressSame === option ? '#10b981' : '#d1d5db'}`,
+                      border: `1px solid ${errors.mailingAddressSame ? '#ef4444' : formData.mailingAddressSame === option ? '#10b981' : '#d1d5db'}`,
                       borderRadius: '8px',
                       backgroundColor: formData.mailingAddressSame === option ? '#f0fdf4' : '#fff',
                       flex: 1,
@@ -3246,12 +3258,17 @@ export default function AppointmentRequestForm() {
                   </label>
                 ))}
               </div>
+              {errors.mailingAddressSame && (
+                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
+                  {errors.mailingAddressSame}
+                </div>
+              )}
             </div>
 
             {formData.mailingAddressSame === 'Yes, it is different.' && (
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                  Please enter your MAILING address here.
+                  Please enter your MAILING address here. <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <input
                   type="text"
@@ -3261,35 +3278,45 @@ export default function AppointmentRequestForm() {
                   style={{
                     width: '100%',
                     padding: '12px',
-                    border: '1px solid #d1d5db',
+                    border: `1px solid ${errors['mailingAddress.line1'] ? '#ef4444' : '#d1d5db'}`,
                     borderRadius: '8px',
                     fontSize: '14px',
                     marginBottom: '12px',
                   }}
                 />
+                {errors['mailingAddress.line1'] && (
+                  <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '-8px', marginBottom: '12px' }}>
+                    {errors['mailingAddress.line1']}
+                  </div>
+                )}
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
                   <input
                     type="text"
                     value={formData.mailingAddress?.city || ''}
                     onChange={(e) => updateNestedFormData('mailingAddress', 'city', e.target.value)}
                     placeholder="City"
-                    style={{ padding: '12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px' }}
+                    style={{ padding: '12px', border: `1px solid ${errors['mailingAddress.city'] ? '#ef4444' : '#d1d5db'}`, borderRadius: '8px', fontSize: '14px' }}
                   />
                   <input
                     type="text"
                     value={formData.mailingAddress?.state || ''}
                     onChange={(e) => updateNestedFormData('mailingAddress', 'state', e.target.value)}
                     placeholder="State"
-                    style={{ padding: '12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px' }}
+                    style={{ padding: '12px', border: `1px solid ${errors['mailingAddress.state'] ? '#ef4444' : '#d1d5db'}`, borderRadius: '8px', fontSize: '14px' }}
                   />
                   <input
                     type="text"
                     value={formData.mailingAddress?.zip || ''}
                     onChange={(e) => updateNestedFormData('mailingAddress', 'zip', e.target.value)}
                     placeholder="Zip"
-                    style={{ padding: '12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px' }}
+                    style={{ padding: '12px', border: `1px solid ${errors['mailingAddress.zip'] ? '#ef4444' : '#d1d5db'}`, borderRadius: '8px', fontSize: '14px' }}
                   />
                 </div>
+                {(errors['mailingAddress.city'] || errors['mailingAddress.state'] || errors['mailingAddress.zip']) && (
+                  <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
+                    {errors['mailingAddress.city'] || errors['mailingAddress.state'] || errors['mailingAddress.zip']}
+                  </div>
+                )}
               </div>
             )}
 
@@ -4511,7 +4538,7 @@ export default function AppointmentRequestForm() {
               <>
                 <div style={{ marginBottom: '20px' }}>
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                    Please let us know where we will meet you.
+                    Please let us know where we will meet you. <span style={{ color: '#ef4444' }}>*</span>
                   </label>
                   <input
                     type="text"

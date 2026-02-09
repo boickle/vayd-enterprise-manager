@@ -16,7 +16,60 @@ let token: string | null = (() => {
 let logoutHandler: (() => void) | null = null;
 let logoutTimerId: number | null = null;
 let refreshPromise: Promise<string | null> | null = null;
-let refreshLock = false; // Synchronous lock to prevent race conditions
+
+// Cross-tab refresh lock so only one tab calls /auth/refresh (avoids "token already revoked")
+const REFRESH_LOCK_KEY = 'vayd_refresh_lock';
+const REFRESH_LOCK_TTL_MS = 15_000;
+// Give other tabs time to write the lock before we re-read (avoids race where we read before they write)
+const REFRESH_LOCK_ACQUIRE_DELAY_MS = 80;
+
+function getRefreshLock(): { ts: number; id: string } | null {
+  try {
+    const raw = localStorage.getItem(REFRESH_LOCK_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { ts: number; id: string };
+    return typeof parsed?.ts === 'number' && typeof parsed?.id === 'string' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function setRefreshLock(): string {
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  localStorage.setItem(REFRESH_LOCK_KEY, JSON.stringify({ ts: Date.now(), id }));
+  return id;
+}
+
+function clearRefreshLock(): void {
+  try {
+    localStorage.removeItem(REFRESH_LOCK_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/** Wait for another tab to finish refresh (poll until lock is gone or stale), then return current accessToken or null. */
+function waitForOtherTabRefresh(): Promise<string | null> {
+  const deadline = Date.now() + REFRESH_LOCK_TTL_MS + 2000;
+  return new Promise<string | null>((resolve) => {
+    const poll = () => {
+      if (Date.now() > deadline) {
+        resolve(null);
+        return;
+      }
+      const lock = getRefreshLock();
+      if (!lock || Date.now() - lock.ts > REFRESH_LOCK_TTL_MS) {
+        const accessToken = localStorage.getItem('accessToken');
+        const refreshToken = localStorage.getItem('refreshToken');
+        resolve(accessToken && refreshToken ? accessToken : null);
+        return;
+      }
+      setTimeout(poll, 100);
+    };
+    poll();
+  });
+}
+
 let failedQueue: Array<{
   resolve: (value?: any) => void;
   reject: (error?: any) => void;
@@ -172,6 +225,7 @@ export function forceLogout() {
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
     localStorage.removeItem('vayd_token'); // Remove old token for migration
+    clearRefreshLock();
     localStorage.setItem('logout_broadcast', String(Date.now()));
     console.log('[Token Refresh] 🚪 Tokens cleared from localStorage, logout_broadcast set');
   } catch (e) {
@@ -257,19 +311,15 @@ async function _performTokenRefresh(shouldLogoutOnFailure: boolean = true): Prom
       data: errorData
     });
     
-    // If we get 401, it might mean the refresh token was already used/rotated
-    // This can happen if multiple refresh requests were made simultaneously
-    // In this case, we should check if a new token was already stored by another request
+    // If we get 401, the refresh token was already used/rotated (e.g. another tab refreshed)
     if (status === 401) {
-      console.warn('[Token Refresh] 🔐 Got 401 on refresh - token may have been rotated by another request');
+      console.warn('[Token Refresh] 🔐 Got 401 on refresh - token was rotated by another tab/request');
       const currentAccessToken = localStorage.getItem('accessToken');
       const currentRefreshToken = localStorage.getItem('refreshToken');
-      
-      // If we still have tokens, another refresh might have succeeded
       if (currentAccessToken && currentRefreshToken) {
-        console.log('[Token Refresh] 🔐 Tokens still exist, another refresh may have succeeded');
-        // Don't logout - the other refresh succeeded
-        return null;
+        console.log('[Token Refresh] 🔐 Using new tokens from another tab, not logging out');
+        token = currentAccessToken;
+        return currentAccessToken;
       }
     }
     
@@ -282,15 +332,15 @@ async function _performTokenRefresh(shouldLogoutOnFailure: boolean = true): Prom
   }
 }
 
-// Refresh access token with deduplication - ensures only one refresh happens at a time
+// Refresh access token with deduplication - in-tab (single promise) and cross-tab (localStorage lock).
 async function refreshAccessToken(shouldLogoutOnFailure: boolean = true): Promise<string | null> {
   const caller = new Error().stack?.split('\n')[2]?.trim() || 'unknown';
   console.log(`[Token Refresh] 🔄 refreshAccessToken() called from: ${caller}, shouldLogoutOnFailure: ${shouldLogoutOnFailure}`);
-  console.log(`[Token Refresh] 🔄 Current state: refreshPromise=${!!refreshPromise}, refreshLock=${refreshLock}`);
-  
-  // First check: if refresh is already in progress, wait for it
+  console.log(`[Token Refresh] 🔄 Current state: refreshPromise=${!!refreshPromise}`);
+
+  // 1. In-tab: if refresh is already in progress, wait for it
   if (refreshPromise) {
-    console.log('[Token Refresh] 🔄 Refresh already in progress, waiting for existing promise');
+    console.log('[Token Refresh] 🔄 Refresh already in progress (this tab), waiting for existing promise');
     try {
       const result = await refreshPromise;
       console.log('[Token Refresh] 🔄 Waited for existing refresh, result:', result ? 'success' : 'failed');
@@ -301,50 +351,70 @@ async function refreshAccessToken(shouldLogoutOnFailure: boolean = true): Promis
     }
   }
 
-  // Acquire lock synchronously (this is atomic from the perspective of other synchronous code)
-  if (refreshLock) {
-    console.log('[Token Refresh] 🔄 Lock is set, waiting for other request to create promise');
-    // Another request is creating a refresh promise, wait for it
-    // Use a small delay to let the other request set refreshPromise
-    await new Promise(resolve => setTimeout(resolve, 0));
-    if (refreshPromise) {
-      console.log('[Token Refresh] 🔄 Promise was set by other request, waiting for it');
-      return await refreshPromise;
+  // 2. Cross-tab: if another tab is refreshing, wait for it and use the new token
+  const existingLock = getRefreshLock();
+  if (existingLock && Date.now() - existingLock.ts < REFRESH_LOCK_TTL_MS) {
+    console.log('[Token Refresh] 🔄 Another tab is refreshing (cross-tab lock), waiting for it');
+    refreshPromise = waitForOtherTabRefresh();
+    try {
+      const result = await refreshPromise;
+      console.log('[Token Refresh] 🔄 Other tab refresh result:', result ? 'success' : 'failed');
+      if (result) {
+        token = result;
+        scheduleAutoLogout(result);
+      }
+      return result;
+    } finally {
+      refreshPromise = null;
     }
-    console.warn('[Token Refresh] 🔄 Lock was set but promise not created, proceeding anyway');
   }
 
-  // Set lock
-  console.log('[Token Refresh] 🔄 Acquiring lock and creating new refresh promise');
-  refreshLock = true;
+  // 3. Acquire cross-tab lock (so other tabs wait for us)
+  const myLockId = setRefreshLock();
+  await new Promise((r) => setTimeout(r, REFRESH_LOCK_ACQUIRE_DELAY_MS));
+  const currentLock = getRefreshLock();
+  if (!currentLock || currentLock.id !== myLockId) {
+    console.log('[Token Refresh] 🔄 Another tab has the lock or already finished, waiting for token');
+    refreshPromise = waitForOtherTabRefresh();
+    try {
+      const result = await refreshPromise;
+      if (result) {
+        token = result;
+        scheduleAutoLogout(result);
+      }
+      return result;
+    } finally {
+      refreshPromise = null;
+    }
+  }
+
+  // 4. We hold the lock - do the refresh. Assign in-tab promise so concurrent 401s in this tab wait.
+  let resolvePending: (value: string | null) => void;
+  const pendingPromise = new Promise<string | null>((resolve) => {
+    resolvePending = resolve;
+  });
+  refreshPromise = pendingPromise;
+  console.log('[Token Refresh] 🔄 Created new refresh promise (we hold cross-tab lock)');
+
+  _performTokenRefresh(shouldLogoutOnFailure)
+    .then((result) => {
+      console.log('[Token Refresh] 🔄 Refresh completed, result:', result ? 'success' : 'failed');
+      resolvePending(result);
+    })
+    .catch((err) => {
+      console.error('[Token Refresh] 🔄 Refresh threw:', err);
+      resolvePending(null);
+    })
+    .finally(() => {
+      clearRefreshLock();
+      refreshPromise = null;
+    });
 
   try {
-    // Double-check: another request might have set refreshPromise while we were waiting
-    if (refreshPromise) {
-      console.log('[Token Refresh] 🔄 Promise was set while acquiring lock, using it');
-      refreshLock = false;
-      return await refreshPromise;
-    }
-
-    // Create and assign the promise
-    console.log('[Token Refresh] 🔄 Creating new refresh promise');
-    refreshPromise = _performTokenRefresh(shouldLogoutOnFailure)
-      .finally(() => {
-        console.log('[Token Refresh] 🔄 Refresh promise completed, clearing promise and lock');
-        // Clear both the promise and the lock when done
-        refreshPromise = null;
-        refreshLock = false;
-      });
-
-    // Wait for the refresh to complete
-    const result = await refreshPromise;
-    console.log('[Token Refresh] 🔄 Refresh completed, result:', result ? 'success' : 'failed');
-    return result;
+    return await pendingPromise;
   } catch (error) {
-    console.error('[Token Refresh] 🔄 Exception in refreshAccessToken:', error);
-    // On error, clear the lock and promise
-    refreshLock = false;
-    refreshPromise = null;
+    console.error('[Token Refresh] 🔄 Exception awaiting refresh:', error);
+    clearRefreshLock();
     return null;
   }
 }
