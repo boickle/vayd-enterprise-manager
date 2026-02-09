@@ -639,3 +639,26 @@ export async function fetchClientInfo(clientId: string | number): Promise<any | 
     return null;
   }
 }
+
+/** ---------- Referral ---------- **/
+export type ReferralCreated = {
+  id: string | number;
+  referredEmail: string;
+  referredName?: string | null;
+  createdAt: string; // ISO
+};
+
+/**
+ * Submit a referral (auth required). User id comes from JWT.
+ * Body: { email, name? }. Returns created referral or throws with server error message
+ * (e.g. "already a client", "already referred and fulfilled").
+ */
+export async function submitReferral(
+  email: string,
+  name?: string
+): Promise<ReferralCreated> {
+  const body: { email: string; name?: string } = { email: email.trim() };
+  if (name != null && String(name).trim()) body.name = String(name).trim();
+  const { data } = await http.post<ReferralCreated>('/referral', body);
+  return data;
+}
