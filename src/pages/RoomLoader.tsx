@@ -1308,8 +1308,13 @@ export default function RoomLoaderPage() {
         }
       }
 
-      // Get reminders with quantities and corrections
-      const reminderItems = (reminders || []).map((reminderWithPrice) => {
+      // Get reminders with quantities and corrections (exclude reminders that were removed by staff)
+      const reminderItems = (reminders || [])
+        .filter((reminderWithPrice) => {
+          const id = reminderWithPrice.reminder?.id;
+          return id != null && !removedReminders.has(id);
+        })
+        .map((reminderWithPrice) => {
         const reminderId = reminderWithPrice.reminder.id;
         const correctionKey = `reminder-${reminderId}`;
         const correction = reminderCorrections[correctionKey];
