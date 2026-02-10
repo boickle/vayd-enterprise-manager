@@ -1424,6 +1424,11 @@ export default function RoomLoaderPage() {
   async function handleSendToClient() {
     if (!selectedRoomLoader) return;
 
+    // Clear previous inline validation messages so we only show current errors
+    setSendValidationErrors({});
+    setReminderValidationErrorIds(new Set());
+    setTripFeeRequiredError(false);
+
     // Validate required fields before sending; build inline error state per patient
     const errors: Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean }> = {};
     let hasErrors = false;
@@ -1449,9 +1454,6 @@ export default function RoomLoaderPage() {
     });
     if (hasErrors) {
       setSendValidationErrors(errors);
-      alert(
-        'Please complete all required fields before sending: Appointment reason, Mobility, and Lab work are required for each pet.'
-      );
       return;
     }
 
@@ -1474,9 +1476,6 @@ export default function RoomLoaderPage() {
     });
     if (reminderErrorIds.size > 0) {
       setReminderValidationErrorIds(reminderErrorIds);
-      alert(
-        'Please confirm each reminder match (or remove it) before sending. Every reminder needs a matched item and "Confirm match" clicked, or the reminder removed.'
-      );
       return;
     }
 
@@ -1493,9 +1492,6 @@ export default function RoomLoaderPage() {
     });
     if (!hasTripFeeInAnyPet) {
       setTripFeeRequiredError(true);
-      alert(
-        'At least one pet must have a reminder or added item containing "Trip Fee" before sending to client.'
-      );
       return;
     }
     setTripFeeRequiredError(false);
@@ -3695,7 +3691,7 @@ export default function RoomLoaderPage() {
                   This form has been submitted by the client. View only — edits cannot be saved and the form cannot be re-sent.
                 </div>
               )}
-              {tripFeeRequiredError && (
+              {(Object.keys(sendValidationErrors).length > 0 || reminderValidationErrorIds.size > 0 || tripFeeRequiredError) && (
                 <div
                   style={{
                     marginBottom: '16px',
@@ -3708,7 +3704,21 @@ export default function RoomLoaderPage() {
                     fontWeight: 500,
                   }}
                 >
-                  At least one pet must have a reminder containing &quot;Trip Fee&quot; before sending to client.
+                  {Object.keys(sendValidationErrors).length > 0 && (
+                    <div style={{ marginBottom: reminderValidationErrorIds.size > 0 || tripFeeRequiredError ? '8px' : 0 }}>
+                      Please complete all required fields before sending: Appointment reason, Mobility, and Lab work are required for each pet.
+                    </div>
+                  )}
+                  {reminderValidationErrorIds.size > 0 && (
+                    <div style={{ marginBottom: tripFeeRequiredError ? '8px' : 0 }}>
+                      Please confirm each reminder match (or remove it) before sending. Every reminder needs a matched item and &quot;Confirm match&quot; clicked, or the reminder removed.
+                    </div>
+                  )}
+                  {tripFeeRequiredError && (
+                    <div>
+                      At least one pet must have a reminder or added item containing &quot;Trip Fee&quot; before sending to client.
+                    </div>
+                  )}
                 </div>
               )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
