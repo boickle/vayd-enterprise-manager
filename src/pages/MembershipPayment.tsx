@@ -120,6 +120,7 @@ export default function MembershipPayment() {
   const [error, setError] = useState<string | null>(null);
   const [paymentResponse, setPaymentResponse] = useState<PaymentResponse | null>(null);
   const [enrollmentComplete, setEnrollmentComplete] = useState(false);
+  const [formResetKey, setFormResetKey] = useState(0);
 
   const locationId = state?.enrollmentPayload?.locationId ?? defaultSquareLocationId;
 
@@ -202,7 +203,7 @@ export default function MembershipPayment() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, loadingScript, locationId]);
+  }, [state, loadingScript, locationId, formResetKey]);
 
   const costSummaryItems = useMemo(() => state?.costSummary?.items ?? [], [state]);
 
@@ -368,7 +369,38 @@ export default function MembershipPayment() {
 
       setEnrollmentComplete(true);
     } catch (err: any) {
-      setError(err?.message || 'Unable to process payment.');
+      const status = err?.response?.status;
+      const serverMessage = err?.response?.data?.message ?? err?.response?.data?.error;
+      const isPaymentFailure =
+        status === 500 ||
+        status === 502 ||
+        status === 503 ||
+        /request failed with status code \d+/i.test(String(err?.message ?? '')) ||
+        /network error/i.test(String(err?.message ?? ''));
+
+      const friendlyMessage = isPaymentFailure
+        ? "We couldn't process your payment. This can happen if your card was declined, has insufficient funds, or there was a temporary issue. Please try entering your information again."
+        : (serverMessage && typeof serverMessage === 'string' ? serverMessage : err?.message) || 'Unable to process payment. Please try entering your information again.';
+
+      setError(friendlyMessage);
+
+      // Reset the form so the user can try again
+      setCardholderName('');
+      setAddressLine1('');
+      setAddressLine2('');
+      setLocality('');
+      setAdministrativeDistrictLevel1('');
+      setPostalCode('');
+      try {
+        if (card && typeof (card as any).destroy === 'function') {
+          (card as any).destroy();
+        }
+      } catch (_) {
+        // ignore destroy errors
+      }
+      setCard(null);
+      setPaymentsInstance(null);
+      setFormResetKey((k) => k + 1);
     } finally {
       setProcessing(false);
     }
@@ -754,7 +786,9 @@ export default function MembershipPayment() {
               </p>
             ) : (
               <>
-                <div id="card-container" style={{ border: '1px solid rgba(0,0,0,0.08)', borderRadius: 8, padding: 12 }} />
+                <div key={formResetKey}>
+                  <div id="card-container" style={{ border: '1px solid rgba(0,0,0,0.08)', borderRadius: 8, padding: 12 }} />
+                </div>
                 <button
                   type="submit"
                   className="btn"
