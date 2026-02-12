@@ -2859,7 +2859,28 @@ export default function ClientPortal() {
                 <p style={{ color: '#374151', fontSize: 14, marginBottom: 24 }}>
                   We'll reach out to your friend. You'll receive a $50 credit when they complete an appointment, and an additional $25 if they become a member.
                 </p>
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReferralError(null);
+                      setReferralSuccess(false);
+                      setReferralEmail('');
+                      setReferralName('');
+                    }}
+                    style={{
+                      background: 'transparent',
+                      color: '#0f766e',
+                      border: '2px solid #0f766e',
+                      padding: '10px 24px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontSize: 14,
+                      fontWeight: 600,
+                    }}
+                  >
+                    Refer another friend
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
