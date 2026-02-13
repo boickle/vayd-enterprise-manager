@@ -4,13 +4,14 @@ import {
   listSurveyResponses,
   getSurveyResponse,
   getSurveyReportSummary,
+  getSurveyReportQuestions,
   type SurveyResponseListItem,
   type SurveyResponseDetail,
   type SurveyReportSummary,
   type SurveyReportQuestionScale,
   type SurveyReportQuestionChoice,
   type SurveyReportQuestionText,
-  type SurveyReportQuestion,
+  type SurveyReportQuestionsResponse,
 } from '../api/survey';
 import './Settings.css';
 
@@ -47,8 +48,9 @@ export default function SurveyResults() {
     surveyDateFrom(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))
   );
   const [surveyTo, setSurveyTo] = useState(() => surveyDateTo(new Date()));
-  const [selectedQuestionKey, setSelectedQuestionKey] = useState<string>(ALL_QUESTIONS_VALUE);
-  const [selectedAnswer, setSelectedAnswer] = useState<string>(ALL_ANSWERS_VALUE);
+  const [selectedQuestionId, setSelectedQuestionId] = useState<number | ''>('');
+  const [selectedAnswerValue, setSelectedAnswerValue] = useState<string>(ALL_ANSWERS_VALUE);
+  const [reportQuestions, setReportQuestions] = useState<SurveyReportQuestionsResponse | null>(null);
   const [surveyReport, setSurveyReport] = useState<SurveyReportSummary | null>(null);
   const [allSurveyResponses, setAllSurveyResponses] = useState<SurveyResponseListItem[]>([]);
   const [surveyDetailId, setSurveyDetailId] = useState<number | null>(null);
@@ -61,53 +63,49 @@ export default function SurveyResults() {
     entries: [string, number][];
   } | null>(null);
 
-  // Questions that can be filtered (exclude text fields)
+  // Filterable questions from GET /survey/reports/questions (exclude text fields for filter dropdown)
   const filterableQuestions = useMemo(() => {
-    if (!surveyReport?.questions) return [];
-    return surveyReport.questions.filter(
-      (q) => q.type !== 'textarea' && q.type !== 'textbox'
+    if (!reportQuestions?.questions) return [];
+    return reportQuestions.questions.filter(
+      (q) => q.questionType !== 'textarea' && q.questionType !== 'textbox'
     );
-  }, [surveyReport]);
+  }, [reportQuestions]);
 
-  // Available answers for the selected question
-  const availableAnswers = useMemo(() => {
-    if (!selectedQuestionKey || selectedQuestionKey === ALL_QUESTIONS_VALUE) return [];
-    const question = filterableQuestions.find((q) => q.questionKey === selectedQuestionKey);
-    if (!question) return [];
+  const selectedQuestion = useMemo(
+    () =>
+      typeof selectedQuestionId === 'number'
+        ? filterableQuestions.find((q) => q.id === selectedQuestionId) ?? null
+        : null,
+    [filterableQuestions, selectedQuestionId]
+  );
 
-    if (question.type === 'scale') {
-      const scaleQ = question as SurveyReportQuestionScale;
-      const distribution = scaleQ.stats.distribution || {};
-      return Object.keys(distribution).sort((a, b) => Number(a) - Number(b));
-    }
+  const filterActive = Boolean(
+    selectedQuestionId !== '' &&
+      selectedAnswerValue &&
+      selectedAnswerValue !== ALL_ANSWERS_VALUE
+  );
 
-    if (question.type === 'image_choice' || question.type === 'radio' || question.type === 'dropdown') {
-      const choiceQ = question as SurveyReportQuestionChoice;
-      const counts = choiceQ.stats.counts || {};
-      return Object.keys(counts).sort();
-    }
-
-    return [];
-  }, [selectedQuestionKey, filterableQuestions]);
-
-  // Filter responses based on selected question/answer
-  const filteredResponses = useMemo(() => {
-    if (!selectedQuestionKey || selectedQuestionKey === ALL_QUESTIONS_VALUE) {
-      return allSurveyResponses;
-    }
-    if (!selectedAnswer || selectedAnswer === ALL_ANSWERS_VALUE) {
-      return allSurveyResponses;
-    }
-    // We need to fetch each response detail to check the answer - for now just return all
-    // In a real implementation, the backend would filter by question/answer
-    return allSurveyResponses;
-  }, [allSurveyResponses, selectedQuestionKey, selectedAnswer]);
-
-  // Reset answer filter when question changes
+  // Load questions for filter dropdowns (once)
   useEffect(() => {
-    setSelectedAnswer(ALL_ANSWERS_VALUE);
-  }, [selectedQuestionKey]);
+    let alive = true;
+    getSurveyReportQuestions(SURVEY_SLUG)
+      .then((data) => {
+        if (alive) setReportQuestions(data);
+      })
+      .catch(() => {
+        if (alive) setReportQuestions(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
+  // Reset answer when question changes
+  useEffect(() => {
+    setSelectedAnswerValue(ALL_ANSWERS_VALUE);
+  }, [selectedQuestionId]);
+
+  // Fetch report summary (with optional question/answer filter) and response list when dates or filter change
   useEffect(() => {
     if (!surveyFrom || !surveyTo) return;
     let alive = true;
@@ -116,6 +114,14 @@ export default function SurveyResults() {
       surveySlug: SURVEY_SLUG,
       from: surveyFrom,
       to: surveyTo,
+      questionId:
+        typeof selectedQuestionId === 'number' && selectedAnswerValue && selectedAnswerValue !== ALL_ANSWERS_VALUE
+          ? selectedQuestionId
+          : undefined,
+      answerValue:
+        typeof selectedQuestionId === 'number' && selectedAnswerValue && selectedAnswerValue !== ALL_ANSWERS_VALUE
+          ? selectedAnswerValue
+          : undefined,
     };
     const listParams = {
       surveySlug: SURVEY_SLUG,
@@ -145,7 +151,7 @@ export default function SurveyResults() {
     return () => {
       alive = false;
     };
-  }, [surveyFrom, surveyTo]);
+  }, [surveyFrom, surveyTo, selectedQuestionId, selectedAnswerValue]);
 
   useEffect(() => {
     if (surveyDetailId == null) {
@@ -208,14 +214,17 @@ export default function SurveyResults() {
           Question
           <select
             className="settings-input"
-            value={selectedQuestionKey}
-            onChange={(e) => setSelectedQuestionKey(e.target.value)}
+            value={selectedQuestionId === '' ? ALL_QUESTIONS_VALUE : String(selectedQuestionId)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setSelectedQuestionId(v === ALL_QUESTIONS_VALUE ? '' : parseInt(v, 10));
+            }}
             style={{ width: '280px', minHeight: '34px' }}
             disabled={surveyLoading || !filterableQuestions.length}
           >
             <option value={ALL_QUESTIONS_VALUE}>All Questions</option>
             {filterableQuestions.map((q) => (
-              <option key={q.questionKey} value={q.questionKey}>
+              <option key={q.id} value={q.id}>
                 {q.questionText}
               </option>
             ))}
@@ -225,17 +234,17 @@ export default function SurveyResults() {
           Answer
           <select
             className="settings-input"
-            value={selectedAnswer}
-            onChange={(e) => setSelectedAnswer(e.target.value)}
+            value={selectedAnswerValue}
+            onChange={(e) => setSelectedAnswerValue(e.target.value)}
             style={{ width: '200px', minHeight: '34px' }}
-            disabled={!selectedQuestionKey || selectedQuestionKey === ALL_QUESTIONS_VALUE || !availableAnswers.length}
+            disabled={!selectedQuestion || !selectedQuestion.options?.length}
           >
             <option value={ALL_ANSWERS_VALUE}>All Answers</option>
-            {availableAnswers.map((answer) => (
-              <option key={answer} value={answer}>
-                {answer}
+            {selectedQuestion?.options?.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
               </option>
-            ))}
+            )) ?? null}
           </select>
         </label>
       </div>
@@ -249,9 +258,14 @@ export default function SurveyResults() {
         <>
           <h3 className="settings-card-title" style={{ marginTop: '24px', marginBottom: '12px' }}>
             Report summary
+            {filterActive && (
+              <span className="settings-muted" style={{ fontWeight: 'normal', fontSize: '14px', marginLeft: '8px' }}>
+                (filtered to answer “{selectedAnswerValue}”)
+              </span>
+            )}
           </h3>
           {surveyReport?.questions?.length ? (
-            <div className="settings-survey-report">
+            <div className="settings-survey-report" key={`report-${selectedQuestionId}-${selectedAnswerValue}`}>
               {surveyReport.questions.map((q) => (
                 <div key={q.questionKey} className="settings-survey-report-item">
                   <strong className="settings-survey-report-question">{q.questionText}</strong>
@@ -374,13 +388,8 @@ export default function SurveyResults() {
 
           <h3 className="settings-card-title" style={{ marginTop: '28px', marginBottom: '12px' }}>
             Responses
-            {selectedQuestionKey && selectedQuestionKey !== ALL_QUESTIONS_VALUE && selectedAnswer && selectedAnswer !== ALL_ANSWERS_VALUE && (
-              <span className="settings-muted" style={{ fontWeight: 'normal', fontSize: '14px', marginLeft: '8px' }}>
-                (Note: Response filtering by question/answer requires fetching individual responses and is not yet implemented)
-              </span>
-            )}
           </h3>
-          {filteredResponses.length > 0 ? (
+          {allSurveyResponses.length > 0 ? (
             <div className="settings-table-container">
               <table className="settings-table">
                 <thead>
@@ -392,7 +401,7 @@ export default function SurveyResults() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredResponses.map((r) => (
+                  {allSurveyResponses.map((r) => (
                     <tr key={r.id}>
                       <td>{r.id}</td>
                       <td>{formatSurveyDate(r.submittedAt)}</td>
