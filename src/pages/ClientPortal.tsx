@@ -1114,6 +1114,14 @@ export default function ClientPortal() {
           .cp-pet-img { height: 130px; border-radius: 16px; border: 1px solid rgba(0, 0, 0, 0.06); }
         }
 
+        /* Refer a friend: desktop = next to logo, mobile = below welcome */
+        .cp-referral-btn-desktop { display: none; }
+        .cp-referral-btn-mobile { display: flex; }
+        @media (min-width: 640px) {
+          .cp-referral-btn-desktop { display: inline-flex; }
+          .cp-referral-btn-mobile { display: none !important; }
+        }
+
         /* >= 640px (sm) */
         @media (min-width: 640px) {
           h1.cp-title { font-size: 32px; }
@@ -1504,6 +1512,7 @@ export default function ClientPortal() {
           />
           <button
             type="button"
+            className="cp-referral-btn-desktop"
             onClick={() => {
               setShowReferralModal(true);
               setReferralError(null);
@@ -1514,7 +1523,6 @@ export default function ClientPortal() {
             style={{
               position: 'absolute',
               right: 0,
-              display: 'inline-flex',
               alignItems: 'center',
               gap: '8px',
               padding: '10px 18px',
@@ -1538,16 +1546,52 @@ export default function ClientPortal() {
           </button>
         </div>
         {clientFirstName && (
-          <h1 style={{ 
-            margin: 0, 
-            fontSize: '24px', 
-            fontWeight: 600, 
-            color: '#111827',
-            textAlign: 'center',
-            width: '100%'
-          }}>
-            Welcome, {clientFirstName} to your VAYD Client Portal!
-          </h1>
+          <>
+            <h1 style={{ 
+              margin: 0, 
+              fontSize: '24px', 
+              fontWeight: 600, 
+              color: '#111827',
+              textAlign: 'center',
+              width: '100%'
+            }}>
+              Welcome, {clientFirstName} to your VAYD Client Portal!
+            </h1>
+            <div className="cp-referral-btn-mobile" style={{ display: 'flex', justifyContent: 'center', width: '100%', marginTop: 12 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowReferralModal(true);
+                  setReferralError(null);
+                  setReferralSuccess(false);
+                  setReferralEmail('');
+                  setReferralName('');
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '10px 18px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  color: '#0f766e',
+                  background: '#ecfff8',
+                  border: '1px solid #0f766e',
+                  borderRadius: '10px',
+                  cursor: 'pointer',
+                  boxShadow: '0 0 20px rgba(15, 118, 110, 0.5), 0 0 40px rgba(15, 118, 110, 0.3)',
+                }}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="9" cy="7" r="4"></circle>
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                </svg>
+                Refer a friend
+              </button>
+            </div>
+          </>
         )}
       </div>
 
