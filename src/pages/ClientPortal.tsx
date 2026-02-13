@@ -1491,7 +1491,17 @@ export default function ClientPortal() {
           borderRadius: '16px',
         }}
       >
-        <div style={{ width: '100%', display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+        <div style={{ width: '100%', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>
+          <img
+            src="/final_thick_lines_cropped.jpeg"
+            alt="Vet At Your Door logo"
+            style={{
+              width: 'min(320px, 60vw)',
+              maxWidth: 360,
+              height: 'auto',
+              mixBlendMode: 'multiply',
+            }}
+          />
           <button
             type="button"
             onClick={() => {
@@ -1502,6 +1512,8 @@ export default function ClientPortal() {
               setReferralName('');
             }}
             style={{
+              position: 'absolute',
+              right: 0,
               display: 'inline-flex',
               alignItems: 'center',
               gap: '8px',
@@ -1513,6 +1525,7 @@ export default function ClientPortal() {
               border: '1px solid #0f766e',
               borderRadius: '10px',
               cursor: 'pointer',
+              boxShadow: '0 0 20px rgba(15, 118, 110, 0.5), 0 0 40px rgba(15, 118, 110, 0.3)',
             }}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
@@ -1523,18 +1536,6 @@ export default function ClientPortal() {
             </svg>
             Refer a friend
           </button>
-        </div>
-        <div style={{ width: '100%', display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
-          <img
-            src="/final_thick_lines_cropped.jpeg"
-            alt="Vet At Your Door logo"
-            style={{
-              width: 'min(320px, 60vw)',
-              maxWidth: 360,
-              height: 'auto',
-              mixBlendMode: 'multiply',
-            }}
-          />
         </div>
         {clientFirstName && (
           <h1 style={{ 
@@ -2826,7 +2827,7 @@ export default function ClientPortal() {
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
               <h2 className="cp-h2" style={{ margin: 0 }}>
-                Refer a friend
+                {referralSuccess ? 'Thank you' : 'Know someone who would love this way of veterinary care?'}
               </h2>
               <button
                 type="button"
@@ -2853,11 +2854,14 @@ export default function ClientPortal() {
             </div>
             {referralSuccess ? (
               <>
-                <p style={{ color: '#0f766e', fontWeight: 600, marginBottom: 20 }}>
-                  Thank you! Your referral has been sent successfully.
+                <p style={{ color: '#0f766e', fontWeight: 600, marginBottom: 12 }}>
+                  Your referral has been sent successfully.
                 </p>
-                <p style={{ color: '#374151', fontSize: 14, marginBottom: 24 }}>
-                  We'll reach out to your friend. You'll receive a $50 credit when they complete an appointment, and an additional $25 if they become a member.
+                <p style={{ color: '#374151', fontSize: 14, marginBottom: 12, lineHeight: 1.5 }}>
+                  Referring a friend is the highest compliment you can give our team. We are grateful for your trust.
+                </p>
+                <p style={{ color: '#374151', fontSize: 14, marginBottom: 24, lineHeight: 1.5 }}>
+                  We will reach out to your friend directly. You will receive a $50 VAYD credit once their appointment is complete, plus an additional $25 credit if they become a member.
                 </p>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
                   <button
@@ -2907,8 +2911,11 @@ export default function ClientPortal() {
               </>
             ) : (
               <>
+                <p style={{ color: '#6b7280', fontSize: 14, marginBottom: 12, lineHeight: 1.5 }}>
+                  Share Vet At Your Door with a friend and invite them into the Vet At Your Door veterinary experience.
+                </p>
                 <p style={{ color: '#6b7280', fontSize: 14, marginBottom: 20, lineHeight: 1.5 }}>
-                  You'll receive a <strong>$50 credit</strong> when your referral completes an appointment, and an <strong>additional $25</strong> if they become a member.
+                  You'll receive a <strong>$50 VAYD credit</strong> when your referral completes an appointment, and an <strong>additional $25</strong> if they become a member.
                 </p>
                 {referralError && (
                   <div
@@ -2928,14 +2935,19 @@ export default function ClientPortal() {
                   onSubmit={async (e) => {
                     e.preventDefault();
                     const email = referralEmail.trim();
+                    const name = referralName.trim();
                     if (!email) {
                       setReferralError('Please enter an email address.');
+                      return;
+                    }
+                    if (!name) {
+                      setReferralError('Please enter your friend\'s name.');
                       return;
                     }
                     setReferralError(null);
                     setReferralSubmitting(true);
                     try {
-                      await submitReferral(email, referralName.trim() || undefined);
+                      await submitReferral(email, name);
                       setReferralSuccess(true);
                     } catch (err: any) {
                       const message =
@@ -2974,7 +2986,7 @@ export default function ClientPortal() {
                   </div>
                   <div>
                     <label htmlFor="referral-name" style={{ display: 'block', fontSize: 14, fontWeight: 500, color: '#374151', marginBottom: 6 }}>
-                      Name <span style={{ color: '#9ca3af', fontWeight: 400 }}>(optional)</span>
+                      Name <span style={{ color: '#b91c1c' }}>*</span>
                     </label>
                     <input
                       id="referral-name"
@@ -2982,6 +2994,7 @@ export default function ClientPortal() {
                       value={referralName}
                       onChange={(e) => setReferralName(e.target.value)}
                       placeholder="Friend's name"
+                      required
                       disabled={referralSubmitting}
                       style={{
                         width: '100%',
