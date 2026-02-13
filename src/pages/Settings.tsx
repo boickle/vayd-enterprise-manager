@@ -407,14 +407,17 @@ export default function Settings() {
       if (existing) {
         setOverrideForm({ ...existing });
       } else {
+        const employee = await fetchEmployee(overrideCalendarEmployeeId);
+        const dayOfWeek = dayjs(dateStr).day();
+        const defaultSchedule = employee.weeklySchedules?.find((s) => s.dayOfWeek === dayOfWeek);
         setOverrideForm({
           date: dateStr,
-          workStartLocal: '',
-          workEndLocal: '',
-          startDepotLat: undefined,
-          startDepotLon: undefined,
-          endDepotLat: undefined,
-          endDepotLon: undefined,
+          workStartLocal: defaultSchedule?.workStartLocal ?? '',
+          workEndLocal: defaultSchedule?.workEndLocal ?? '',
+          startDepotLat: defaultSchedule?.startDepotLat ?? undefined,
+          startDepotLon: defaultSchedule?.startDepotLon ?? undefined,
+          endDepotLat: defaultSchedule?.endDepotLat ?? undefined,
+          endDepotLon: defaultSchedule?.endDepotLon ?? undefined,
         });
       }
     } catch (err: any) {
@@ -472,14 +475,17 @@ export default function Settings() {
       const end = overrideCalendarMonth.endOf('month').format('YYYY-MM-DD');
       const list = await fetchScheduleOverrides(overrideCalendarEmployeeId, { startDate: start, endDate: end });
       setOverridesInRange(list);
+      const employee = await fetchEmployee(overrideCalendarEmployeeId);
+      const dayOfWeek = dayjs(overrideForm.date).day();
+      const defaultSchedule = employee.weeklySchedules?.find((s) => s.dayOfWeek === dayOfWeek);
       setOverrideForm({
         date: overrideForm.date,
-        workStartLocal: '',
-        workEndLocal: '',
-        startDepotLat: undefined,
-        startDepotLon: undefined,
-        endDepotLat: undefined,
-        endDepotLon: undefined,
+        workStartLocal: defaultSchedule?.workStartLocal ?? '',
+        workEndLocal: defaultSchedule?.workEndLocal ?? '',
+        startDepotLat: defaultSchedule?.startDepotLat ?? undefined,
+        startDepotLon: defaultSchedule?.startDepotLon ?? undefined,
+        endDepotLat: defaultSchedule?.endDepotLat ?? undefined,
+        endDepotLon: defaultSchedule?.endDepotLon ?? undefined,
       });
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Failed to remove override');
