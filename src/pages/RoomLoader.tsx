@@ -1556,20 +1556,28 @@ export default function RoomLoaderPage() {
     }
     setTripFeeRequiredError(false);
 
-    // Warnings: visit/consult per pet from reminders or added items (user can still confirm to send)
+    // Warnings: visit/consult per pet from matched item names (not reminder description) or added items (use active list so removed items don't count)
     const warnings: string[] = [];
     petsWithAppointments.forEach((item) => {
       const activeReminders = (item.reminders || []).filter(
         (r) => r.reminder?.id && !removedReminders.has(r.reminder.id)
       );
-      const fromReminders = activeReminders.some((r) => reminderContains(r, 'visit', 'consult'));
+      const fromReminders = activeReminders.some((r) => {
+        const correction = reminderCorrections[`reminder-${r.reminder.id}`];
+        const effectiveItem = correction?.selectedItem ?? r.matchedItem;
+        if (!effectiveItem) return false;
+        const name = (effectiveItem.name ?? '').toLowerCase();
+        const code = (effectiveItem.code ?? '').toLowerCase();
+        const text = `${name} ${code}`;
+        return text.includes('visit') || text.includes('consult');
+      });
       const fromAddedItems = (addedItems[item.patient.id] || []).some((added) =>
         itemContains(added, 'visit') || itemContains(added, 'consult')
       );
       const hasVisitOrConsult = fromReminders || fromAddedItems;
       if (!hasVisitOrConsult) {
         const petName = item.patient?.name ?? `Pet (ID ${item.patient?.id})`;
-        warnings.push(`${petName}: no reminder or added item contains "visit" or "consult".`);
+        warnings.push(`${petName}: It doesn't look like a visit type line item was selected (e.g. annual wellness visit, medical visit, additional wellness visit, etc.). Please be sure that you put one in before submitting.`);
       }
     });
     setSendWarningReasons(warnings);
@@ -2038,7 +2046,7 @@ export default function RoomLoaderPage() {
             className="card"
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: 'min(1000px, 95vw)',
+              width: 'min(1010px, 95vw)',
               maxHeight: '90vh',
               overflow: 'auto',
               padding: '24px',
@@ -2337,7 +2345,7 @@ export default function RoomLoaderPage() {
                   {/* Mobility Question */}
                   <div style={{ marginBottom: '20px' }}>
                     <label style={{ display: 'block', marginBottom: '10px', fontWeight: 500, color: '#333', fontSize: '16px' }}>
-                      Does this issue have anything to do with mobility? <span style={{ color: '#dc3545' }}>*</span>
+                      Does the client want us to address any mobility concerns? <span style={{ color: '#dc3545' }}>*</span>
                     </label>
                     <div style={{ display: 'flex', gap: '20px' }}>
                       <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
@@ -2369,7 +2377,9 @@ export default function RoomLoaderPage() {
                   {/* Lab Work Question */}
                   <div>
                     <label style={{ display: 'block', marginBottom: '10px', fontWeight: 500, color: '#333', fontSize: '16px' }}>
-                      Would lab work help to diagnose the issue? Examples include PU/PD, lethargy, ADR, vomiting, weight loss <span style={{ color: '#dc3545' }}>*</span>
+                      Is there a medical concern that may warrant lab work? <span style={{ color: '#dc3545' }}>*</span>
+                      <br />
+                      <span style={{ fontWeight: 400, fontSize: '14px', color: '#666' }}>Examples include PU/PD, lethargy, ADR, vomiting, weight loss</span>
                     </label>
                     <div style={{ display: 'flex', gap: '20px' }}>
                       <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>

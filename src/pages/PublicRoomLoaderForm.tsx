@@ -305,6 +305,18 @@ function hadLymeInLastYear(history: TreatmentWithItems[]): boolean {
   return false;
 }
 
+/** True if patient has ever received any Lyme vaccine (crLyme or other) in treatment history (not declined). */
+function everHadAnyLymeVaccine(history: TreatmentWithItems[]): boolean {
+  for (const tx of history ?? []) {
+    for (const item of tx.treatmentItems || []) {
+      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
+      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (isLymeItem(name, code) && !item.isDeclined) return true;
+    }
+  }
+  return false;
+}
+
 /** True if this visit's line items (reminders + added items) include Lyme vaccine. */
 function hasLymeInLineItems(patient: any): boolean {
   if (patient.reminders?.length) {
@@ -538,7 +550,7 @@ function buildRoomLoaderPdf(responseFromClient: any, options?: PdfOptions): jsPD
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
     doc.setTextColor(COLOR_MUTED[0], COLOR_MUTED[1], COLOR_MUTED[2]);
-    doc.text('Pre-Appointment Form', hasLogo ? PDF_MARGIN + logoW + 0.2 : PDF_MARGIN, y + maxLogoH / 2 + (hasLogo ? 0.2 : 0.22));
+    doc.text('Pre-Visit Check-In', hasLogo ? PDF_MARGIN + logoW + 0.2 : PDF_MARGIN, y + maxLogoH / 2 + (hasLogo ? 0.2 : 0.22));
     doc.setTextColor(COLOR_DARK[0], COLOR_DARK[1], COLOR_DARK[2]);
     doc.setFontSize(FONT_SIZE);
     y += maxLogoH + 0.28;
@@ -669,7 +681,7 @@ function buildRoomLoaderPdf(responseFromClient: any, options?: PdfOptions): jsPD
       pushY(0.15);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(12);
-      const totalStr = `Total: $${Number(summary.grandTotal).toFixed(2)}`;
+      const totalStr = `Estimated Total Due At Visit: $${Number(summary.grandTotal).toFixed(2)}`;
       doc.text(totalStr, PDF_PAGE_WIDTH - PDF_MARGIN - doc.getTextWidth(totalStr), y);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(FONT_SIZE);
@@ -703,6 +715,8 @@ export default function PublicRoomLoaderForm() {
   const [seniorFelineItem, setSeniorFelineItem] = useState<SearchableItem | null>(null);
   /** Fetched item for Senior Screen Feline Extended (two-panel "lab work yes" flow). */
   const [seniorFelineExtendedItem, setSeniorFelineExtendedItem] = useState<SearchableItem | null>(null);
+  /** Fetched item for Comprehensive Fecal (young new patients, lab work No). */
+  const [comprehensiveFecalItem, setComprehensiveFecalItem] = useState<SearchableItem | null>(null);
   /** Fetched "commonly selected" items for Summary page (search by name, keyed by query). */
   const [commonItemsFetched, setCommonItemsFetched] = useState<Record<string, SearchableItem | null>>({});
   /** Store (Ecwid) search on Summary page. */
@@ -756,11 +770,8 @@ export default function PublicRoomLoaderForm() {
           const appts = responseData.appointments || [];
           responseData.patients.forEach((patient: any, idx: number) => {
             const petKey = `pet${idx}`;
-            const appointmentReason =
-              patient.appointmentReason ??
-              (appts[idx] && (appts[idx].description || appts[idx].instructions)) ??
-              '';
-            initialFormData[`${petKey}_appointmentReason`] = appointmentReason;
+            // Do not pre-fill "Do you want to share any additional details about the reason for today's visit?"
+            initialFormData[`${petKey}_appointmentReason`] = '';
             initialFormData[`${petKey}_generalWellbeing`] = '';
             initialFormData[`${petKey}_outdoorAccess`] = '';
             initialFormData[`${petKey}_specificConcerns`] = '';
@@ -1155,6 +1166,10 @@ export default function PublicRoomLoaderForm() {
         const p = getSearchItemPrice(seniorFelineExtendedItem);
         if (p != null) petSubtotal += p;
       }
+      if (formData[`lab_comprehensive_fecal_${patientId}`] === 'yes' && formData[`summary_exclude_lab_comprehensive_fecal_${patientId}`] !== true) {
+        const p = getSearchItemPrice(comprehensiveFecalItem);
+        if (p != null) petSubtotal += p;
+      }
       petSubtotals.push(petSubtotal);
       grandTotal += petSubtotal;
     });
@@ -1262,6 +1277,13 @@ export default function PublicRoomLoaderForm() {
       if (seniorFelineTwoPanelVal === 'extended' && formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] !== true) {
         const p = getSearchItemPrice(seniorFelineExtendedItem);
         if (p != null) summaryLineItems.push({ name: 'Senior Screen Feline - Extended Panel', quantity: 1, price: p, patientId, patientName, category: 'lab' });
+      }
+      const comprehensiveFecalYes = formData[`lab_comprehensive_fecal_${patientId}`] === 'yes';
+      const comprehensiveFecalExcluded = formData[`summary_exclude_lab_comprehensive_fecal_${patientId}`] === true;
+      if (comprehensiveFecalYes && !comprehensiveFecalExcluded) {
+        const p = getSearchItemPrice(comprehensiveFecalItem);
+        const name = comprehensiveFecalItem?.name ?? 'Comprehensive Fecal';
+        if (p != null) summaryLineItems.push({ name, quantity: 1, price: p, patientId, patientName, category: 'lab' });
       }
       // Commonly selected items for this pet (checked) – resolve name/price from commonItemsFetched
       const appts = data?.appointments ?? [];
@@ -1499,8 +1521,8 @@ export default function PublicRoomLoaderForm() {
     });
 
     const summaryForPdf = {
-      title: 'Summary & Total',
-      instruction: 'Uncheck any item you do not want. Visits/consults and trip fee cannot be removed. Removed or declined items are shown crossed out and do not affect the total.',
+      title: 'Review Your Care Plan & Estimate',
+      instruction: "We've put together a personalized plan based on your pet's needs and our medical recommendations. You can review each item below, make adjustments, and see pricing clearly upfront so you feel informed and confident before your visit.",
       pets: pdfPets,
       additionalItems: {
         label: 'Additional items',
@@ -1545,7 +1567,7 @@ export default function PublicRoomLoaderForm() {
         const label = valueLabels && val != null && typeof val === 'string' ? (valueLabels[val] ?? val) : (typeof val === 'string' ? val : null);
         questions.push({ question, answer: val ?? null, answerLabel: label ?? (val != null ? String(val) : null) });
       };
-      addOptional('Would you like to share any additional details about this?', `${petKey}_appointmentReason`);
+      addOptional('Do you want to share any additional details about the reason for today\'s visit?', `${petKey}_appointmentReason`);
       addOptional(`How is ${petName} doing otherwise? Are there any other concerns you'd like us to address during this visit?`, `${petKey}_generalWellbeing`);
       if (isCatPatient) {
         addOptional(`Does ${petName} go outdoors or live with a cat that goes outdoors?`, `${petKey}_outdoorAccess`, { yes: 'Yes', no: 'No' });
@@ -1580,7 +1602,7 @@ export default function PublicRoomLoaderForm() {
       const dob = patient?.dob ?? patient?.patient?.dob;
       const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
       const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
-      const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+      const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
       const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
       const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
       const showLyme = isDog && patientId != null && !declinedLymeInPast(history) && !hadLymeInLastYear(history) && !hasLymeInLineItems(patient);
@@ -1668,6 +1690,9 @@ export default function PublicRoomLoaderForm() {
             no: 'No thank you',
           });
         }
+        if (rec.code === 'COMPREHENSIVE_FECAL') {
+          add('Would you like to add a comprehensive fecal today?', `lab_comprehensive_fecal_${pidStr}`, { yes: 'Yes', no: 'No' });
+        }
       });
       if (questions.length > 0) {
         labsSections.push({ sectionLabel: petName, patientId, patientName: petName, questions });
@@ -1704,6 +1729,7 @@ export default function PublicRoomLoaderForm() {
         if (rec.code === 'FIL48719999') shownLabKeys.add(`lab_early_detection_canine_${pidStr}`);
         if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999') && isDogEntry) shownLabKeys.add(`lab_senior_canine_panel_${pidStr}`);
         if ((rec.code === '8659999' || rec.code === 'FIL45129999') && isCatEntry) shownLabKeys.add(`lab_senior_feline_two_panel_${pidStr}`);
+        if (rec.code === 'COMPREHENSIVE_FECAL') shownLabKeys.add(`lab_comprehensive_fecal_${pidStr}`);
       });
     });
 
@@ -1745,7 +1771,7 @@ export default function PublicRoomLoaderForm() {
         const dob = patient?.dob ?? patient?.patient?.dob;
         const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
         const outdoorAccess = formData[`pet${petIdx}_outdoorAccess`] === 'yes';
-        const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+        const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
         const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
         const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
         const showLyme = isDog && patientId != null && !declinedLymeInPast(history) && !hadLymeInLastYear(history) && !hasLymeInLineItems(patient);
@@ -1776,6 +1802,7 @@ export default function PublicRoomLoaderForm() {
       if (shownLabKeys.has(`lab_early_detection_canine_${idStr}`)) sel.lab_early_detection_canine = formData[`lab_early_detection_canine_${id}`];
       if (shownLabKeys.has(`lab_senior_canine_panel_${idStr}`)) sel.lab_senior_canine_panel = formData[`lab_senior_canine_panel_${id}`];
       if (shownLabKeys.has(`lab_senior_feline_two_panel_${idStr}`)) sel.lab_senior_feline_two_panel = formData[`lab_senior_feline_two_panel_${id}`];
+      if (shownLabKeys.has(`lab_comprehensive_fecal_${idStr}`)) sel.lab_comprehensive_fecal = formData[`lab_comprehensive_fecal_${id}`];
       if (Object.keys(sel).length > 0) acc[idStr] = sel;
       return acc;
     }, {});
@@ -1838,13 +1865,23 @@ export default function PublicRoomLoaderForm() {
       const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
       const isNewPatient = !explicitlyNotNew && markedNewByApi && !hasReminders;
       if (isNewPatient) {
+        const behavior = (formData[`${petKey}_newPatientBehavior`] ?? '').toString().trim();
+        if (!behavior) {
+          errors[`${petKey}_newPatientBehavior`] = `Please describe ${petName}'s behavior at home, around strangers, and at a typical vet office.`;
+        }
         const foodAllergies = formData[`${petKey}_foodAllergies`];
         if (foodAllergies !== 'yes' && foodAllergies !== 'no') {
           errors[`${petKey}_foodAllergies`] = `Please answer the Food Allergies question for ${petName}.`;
         }
+        if (foodAllergies === 'yes') {
+          const details = (formData[`${petKey}_foodAllergiesDetails`] ?? '').toString().trim();
+          if (!details) {
+            errors[`${petKey}_foodAllergiesDetails`] = `Please describe ${petName}'s food allergies.`;
+          }
+        }
       }
 
-      const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+      const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
       const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
       const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
       const showLyme = isDog && patientId != null && !declinedLymeInPast(history) && !hadLymeInLastYear(history) && !hasLymeInLineItems(patient);
@@ -1922,6 +1959,12 @@ export default function PublicRoomLoaderForm() {
             errors[`lab_senior_feline_two_panel_${pidStr}`] = `Please select a panel option for ${petName} before continuing.`;
           }
         }
+        if (rec.code === 'COMPREHENSIVE_FECAL') {
+          const v = formData[`lab_comprehensive_fecal_${pidStr}`];
+          if (v !== 'yes' && v !== 'no') {
+            errors[`lab_comprehensive_fecal_${pidStr}`] = `Please answer the Comprehensive Fecal question for ${petName} before continuing.`;
+          }
+        }
       });
     });
 
@@ -1987,6 +2030,12 @@ export default function PublicRoomLoaderForm() {
             errors[`lab_senior_feline_two_panel_${pidStr}`] = `Please select a panel option for ${petName} before continuing.`;
           }
         }
+        if (rec.code === 'COMPREHENSIVE_FECAL') {
+          const v = formData[`lab_comprehensive_fecal_${pidStr}`];
+          if (v !== 'yes' && v !== 'no') {
+            errors[`lab_comprehensive_fecal_${pidStr}`] = `Please answer the Comprehensive Fecal question for ${petName} before continuing.`;
+          }
+        }
       });
     });
     if (Object.keys(errors).length > 0) {
@@ -2017,9 +2066,19 @@ export default function PublicRoomLoaderForm() {
         }
       }
       if (isNewPatient) {
+        const behavior = (formData[`${petKey}_newPatientBehavior`] ?? '').toString().trim();
+        if (!behavior) {
+          errors[`${petKey}_newPatientBehavior`] = `Please describe ${petName}'s behavior at home, around strangers, and at a typical vet office before continuing.`;
+        }
         const foodAllergies = formData[`${petKey}_foodAllergies`];
         if (foodAllergies !== 'yes' && foodAllergies !== 'no') {
           errors[`${petKey}_foodAllergies`] = `Please answer the Food Allergies question for ${petName} before continuing.`;
+        }
+        if (foodAllergies === 'yes') {
+          const details = (formData[`${petKey}_foodAllergiesDetails`] ?? '').toString().trim();
+          if (!details) {
+            errors[`${petKey}_foodAllergiesDetails`] = `Please describe ${petName}'s food allergies before continuing.`;
+          }
         }
       }
     }
@@ -2064,7 +2123,7 @@ export default function PublicRoomLoaderForm() {
       }
     }
 
-    const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+    const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
     const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
     const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
     const showLyme = isDog && patientId != null && !declinedLymeInPast(history) && !hadLymeInLastYear(history) && !hasLymeInLineItems(patient);
@@ -2161,6 +2220,25 @@ export default function PublicRoomLoaderForm() {
       const labWorkYes = formData[`${petKey}_labWork`] === true || formData[`${petKey}_labWork`] === 'yes' || (patient as any).questions?.labWork === true;
       const recs: LabRec[] = [];
 
+      // Build Care Plan display items for this pet (same as Veterinary Care Plan page) to detect unchecked items
+      const carePlanItems: { name: string }[] = [];
+      (patient?.reminders ?? []).forEach((r: any) => {
+        const name = r?.item?.name ?? (r?.reminderText ?? r?.description ?? '');
+        if (r?.item) {
+          carePlanItems.push({ name: name || '' });
+        } else if ((r?.reminderText ?? r?.description ?? '').toLowerCase().match(/visit|consult/)) {
+          carePlanItems.push({ name: r?.reminderText ?? r?.description ?? 'Visit/Consult' });
+        }
+      });
+      (patient?.addedItems ?? []).forEach((item: any) => {
+        carePlanItems.push({ name: item?.name ?? '' });
+      });
+      const carePlanDisplayItems = carePlanItems.filter((item) => !itemNameMatch(item.name, 'trip fee'));
+      const uncheckedOnCarePlan = (...phrases: string[]) =>
+        carePlanDisplayItems.some(
+          (item, i) => itemNameMatch(item.name, ...phrases) && formData[`pet${idx}_rec_${i}`] === false
+        );
+
       const speciesParts = [
         patient.species,
         patient.speciesEntity?.name,
@@ -2181,6 +2259,14 @@ export default function PublicRoomLoaderForm() {
       const hadYoungEarly8Mo = hadInLast8Months(history, 'young wellness', 'early detection');
       const listHasFIVOrFecal = listContains(patient, 'fiv', 'fecal');
       const listHas4dxOrFecal = listContains(patient, '4dx', 'fecal');
+      const listHasFecal = listContains(patient, 'fecal');
+      // Recommend lab if not on list OR if it was on Care Plan and client unchecked it
+      const shouldRecommendSenior = !listHasSenior || uncheckedOnCarePlan('senior screen');
+      const shouldRecommendYoungOrEarly = !listHasYoungOrEarly || uncheckedOnCarePlan('young wellness', 'early detection');
+      const markedNewByApi = patient.isNewPatient === true || appt?.isNewPatient === true;
+      const explicitlyNotNew = patient.isNewPatient === false;
+      const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
+      const isNewPatient = !explicitlyNotNew && !!markedNewByApi && !hasReminders;
 
       if (labWorkYes) {
         recs.push({
@@ -2190,7 +2276,7 @@ export default function PublicRoomLoaderForm() {
         });
       }
 
-      if (age != null && isCat && standard && !listHasSenior && !hadSenior8Mo && age > 8) {
+      if (age != null && isCat && standard && shouldRecommendSenior && !hadSenior8Mo && age > 8) {
         if (listHasFIVOrFecal) {
           recs.push({
             code: 'FIL45129999',
@@ -2206,7 +2292,7 @@ export default function PublicRoomLoaderForm() {
         }
       }
 
-      if (age != null && isDog && standard && !listHasSenior && !hadSenior8Mo && age > 7) {
+      if (age != null && isDog && standard && shouldRecommendSenior && !hadSenior8Mo && age > 7) {
         if (listHas4dxOrFecal) {
           recs.push({
             code: 'FIL25659999',
@@ -2222,18 +2308,27 @@ export default function PublicRoomLoaderForm() {
         }
       }
 
-      if (age != null && isCat && standard && !listHasYoungOrEarly && !hadYoungEarly8Mo && age > 1 && age <= 8) {
+      if (age != null && isCat && standard && shouldRecommendYoungOrEarly && !hadYoungEarly8Mo && age > 1 && age <= 8) {
         const msg = listHasFIVOrFecal
           ? "We recommend our Early Detection Panel - Feline (Chem 10, lytes, CBC, Fecal Dx, FeLV/FIV/HWT). Since you already have FIV or fecal on the list, it isn't much more to add on a lot more info."
           : 'We recommend our Early Detection Panel - Feline (Chem 10, lytes, CBC, Fecal Dx, FeLV/FIV/HWT).';
         recs.push({ code: 'FIL48119999', title: 'Early Detection Panel - Feline', message: msg });
       }
 
-      if (age != null && isDog && standard && !listHasYoungOrEarly && !hadYoungEarly8Mo && age > 1 && age <= 7) {
+      if (age != null && isDog && standard && shouldRecommendYoungOrEarly && !hadYoungEarly8Mo && age > 1 && age <= 7) {
         const msg = listHas4dxOrFecal
           ? "We recommend our Early Detection Panel - Canine (Chem 10, lytes, CBC, Fecal Dx, 4Dx). Since you already have 4Dx or fecal on the list, it isn't much more to add on a lot more info."
           : 'We recommend our Early Detection Panel - Canine (Chem 10, lytes, CBC, Fecal Dx, 4Dx).';
         recs.push({ code: 'FIL48719999', title: 'Early Detection Panel - Canine', message: msg });
+      }
+
+      // Pet < 1 year, new patient, fecal not on list, and they said No to lab work → recommend comprehensive fecal
+      if (age != null && age < 1 && isNewPatient && !listHasFecal && !labWorkYes) {
+        recs.push({
+          code: 'COMPREHENSIVE_FECAL',
+          title: 'Comprehensive Fecal',
+          message: 'Because young pets are more likely to carry intestinal parasites, we recommend a comprehensive fecal test for all pets under one year old. Even healthy-appearing pets can have parasites, and early screening helps us keep them healthy, growing well, and reduces the risk of parasites being passed to other pets or people in the household.',
+        });
       }
 
       result.push({
@@ -2326,6 +2421,23 @@ export default function PublicRoomLoaderForm() {
   }, [data, labRecommendationsByPet]);
 
   useEffect(() => {
+    const hasComprehensiveFecal = labRecommendationsByPet.some((e) =>
+      e.recommendations.some((r) => r.code === 'COMPREHENSIVE_FECAL')
+    );
+    if (!hasComprehensiveFecal || !data) {
+      setComprehensiveFecalItem(null);
+      return;
+    }
+    const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
+    searchItems({ q: 'comprehensive fecal', practiceId: pid, limit: 10 })
+      .then((results) => {
+        const first = Array.isArray(results) && results[0] ? results[0] : (results as any)?.data?.[0] ?? (results as any)?.results?.[0] ?? (results as any)?.items?.[0];
+        setComprehensiveFecalItem(first || null);
+      })
+      .catch(() => setComprehensiveFecalItem(null));
+  }, [data, labRecommendationsByPet]);
+
+  useEffect(() => {
     if (!data) return;
     const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
     const queries: string[] = [];
@@ -2402,30 +2514,7 @@ export default function PublicRoomLoaderForm() {
 
   // When submitStatus === 'completed', show thank you page (no PDF preview)
   if (formAlreadySubmitted && data.responseFromClient) {
-    const handleDownloadPdf = () => {
-      const tokenValue = token;
-      if (!tokenValue) {
-        console.error('Missing token for PDF download');
-        return;
-      }
-      const url = `${apiBaseUrl}/public/room-loader/pdf?token=${encodeURIComponent(tokenValue)}`;
-      fetch(url)
-        .then((res) => {
-          if (!res.ok) throw new Error(res.statusText || 'Failed to load PDF');
-          return res.blob();
-        })
-        .then((blob) => {
-          const blobUrl = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = blobUrl;
-          a.download = `Room-Loader-Form-${DateTime.now().toISODate() ?? 'submitted'}.pdf`;
-          a.click();
-          URL.revokeObjectURL(blobUrl);
-        })
-        .catch((e) => {
-          console.error('Error downloading PDF:', e);
-        });
-    };
+    const clientPortalUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/client-portal`;
     return (
       <div style={{ padding: '48px 24px', maxWidth: '560px', margin: '0 auto', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
         <div style={{ padding: '40px 36px', backgroundColor: '#fff', borderRadius: '16px', boxShadow: '0 4px 24px rgba(0,0,0,0.08)', textAlign: 'center' }}>
@@ -2434,15 +2523,21 @@ export default function PublicRoomLoaderForm() {
             Thank you
           </h1>
           <p style={{ margin: '0 0 8px', fontSize: '17px', color: '#444', lineHeight: 1.5 }}>
-            Your pre-appointment form has been submitted.
+            Your Pre-Visit Check-In has been submitted.
           </p>
           <p style={{ margin: '0 0 28px', fontSize: '15px', color: '#666', lineHeight: 1.5 }}>
             Our team has received your form. A copy was emailed to you with a PDF attachment for your records.
           </p>
-          <button
-            type="button"
-            onClick={handleDownloadPdf}
+          <p style={{ margin: '0 0 12px', fontSize: '15px', color: '#444', lineHeight: 1.6, textAlign: 'left', fontWeight: 700 }}>
+            Want to spread out the cost of care while getting even more support and benefits?
+          </p>
+          <p style={{ margin: '0 0 24px', fontSize: '15px', color: '#555', lineHeight: 1.6, textAlign: 'left' }}>
+            Memberships allow you to turn wellness care into easy monthly payments while giving you priority access to your dedicated One Team and after-hours triage support. You can explore membership options in your Client Portal. To apply membership benefits to this visit, enrollment should be completed before your appointment.
+          </p>
+          <a
+            href={clientPortalUrl}
             style={{
+              display: 'inline-block',
               padding: '14px 28px',
               fontSize: '16px',
               fontWeight: 600,
@@ -2452,10 +2547,11 @@ export default function PublicRoomLoaderForm() {
               borderRadius: '10px',
               cursor: 'pointer',
               boxShadow: '0 2px 8px rgba(13, 110, 253, 0.35)',
+              textDecoration: 'none',
             }}
           >
-            Download your form (PDF)
-          </button>
+            Visit your Client Portal
+          </a>
         </div>
       </div>
     );
@@ -2592,13 +2688,13 @@ export default function PublicRoomLoaderForm() {
               Time to Check-in for your Appointment
             </h1>
             <p style={{ fontSize: '16px', lineHeight: '1.6', color: '#555', marginTop: '12px', marginBottom: '8px' }}>
-              {doctorName} is looking forward to {petNames}'s {appointmentType} on {appointmentDate}.
+              {doctorName} is looking forward to {petNames}'s appointment on {appointmentDate}.
             </p>
             <p style={{ fontSize: '16px', lineHeight: '1.6', color: '#555', marginBottom: '8px' }}>
               Window of arrival: {arrivalWindowStart} – {arrivalWindowEnd}
             </p>
             <p style={{ fontSize: '16px', lineHeight: '1.6', color: '#555', marginBottom: '0' }}>
-              To best prepare for your appointment, please answer the questions below. We'll give you an estimate of costs before your visit.
+              To best prepare for your appointment, please answer the questions below. We'll give you an estimate of costs after you answer some questions.
             </p>
           </div>
 
@@ -2639,7 +2735,7 @@ export default function PublicRoomLoaderForm() {
                     <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px', fontWeight: 500 }}>You told us:</div>
                     <div style={{ fontSize: '14px', color: '#333' }}>{appointmentReasonDisplay}</div>
                   </div>
-                  <label style={questionLabelStyle}>Would you like to share any additional details about this?</label>
+                  <label style={questionLabelStyle}>Do you want to share any additional details about the reason for today's visit?</label>
                   <textarea
                     value={formData[`${petKey}_appointmentReason`] || ''}
                     onChange={(e) => handleInputChange(`${petKey}_appointmentReason`, e.target.value)}
@@ -2690,8 +2786,11 @@ export default function PublicRoomLoaderForm() {
                       <p style={{ fontSize: '15px', lineHeight: '1.6', color: '#555', marginBottom: '12px' }}>
                         Since we haven't met {petName} before, it helps to know a bit about their behavior (aligned with our Fear Free™ approach).
                       </p>
-                      <label style={questionLabelStyle}>Describe {petName}'s behavior at home, around strangers, and at a typical vet office.</label>
+                      <label style={questionLabelStyle}>Describe {petName}'s behavior at home, around strangers, and at a typical vet office. <span style={{ color: '#dc3545' }}>*</span></label>
                       <textarea value={formData[`${petKey}_newPatientBehavior`] || ''} onChange={(e) => handleInputChange(`${petKey}_newPatientBehavior`, e.target.value)} readOnly={readOnly} disabled={readOnly} style={{ ...textareaStyle, minHeight: '120px', ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}) }} placeholder="Describe your pet's behavior..." />
+                      {fieldValidationErrors[`${petKey}_newPatientBehavior`] && (
+                        <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_newPatientBehavior`]}</p>
+                      )}
                     </div>
                     <div style={{ marginBottom: '20px' }}>
                       <h4 style={sectionLabelStyle}>Feeding</h4>
@@ -2716,8 +2815,11 @@ export default function PublicRoomLoaderForm() {
                       )}
                       {formData[`${petKey}_foodAllergies`] === 'yes' && (
                         <>
-                          <label style={questionLabelStyle}>If yes, what are they?</label>
+                          <label style={questionLabelStyle}>If yes, what are they? <span style={{ color: '#dc3545' }}>*</span></label>
                           <textarea value={formData[`${petKey}_foodAllergiesDetails`] || ''} onChange={(e) => handleInputChange(`${petKey}_foodAllergiesDetails`, e.target.value)} readOnly={readOnly} disabled={readOnly} style={{ ...textareaStyle, ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}) }} placeholder="Please describe..." />
+                          {fieldValidationErrors[`${petKey}_foodAllergiesDetails`] && (
+                            <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_foodAllergiesDetails`]}</p>
+                          )}
                         </>
                       )}
                     </div>
@@ -2800,16 +2902,26 @@ export default function PublicRoomLoaderForm() {
               if (displayItems.length === 0) {
                 return <p style={{ color: '#666', fontStyle: 'italic', margin: 0 }}>No recommended items at this time.</p>;
               }
+              // Sort so uncheckable items (visit/consult, fecal-replaced) appear on top
+              const sortedWithOriginalIdx = displayItems
+                .map((item, originalIdx) => ({ item, originalIdx }))
+                .sort((a, b) => {
+                  const aUncheckable = hasPhrase(a.item, 'visit') || hasPhrase(a.item, 'consult') || (hasPhrase(a.item, 'fecal') && fecalReplacedBy.length > 0);
+                  const bUncheckable = hasPhrase(b.item, 'visit') || hasPhrase(b.item, 'consult') || (hasPhrase(b.item, 'fecal') && fecalReplacedBy.length > 0);
+                  if (aUncheckable && !bUncheckable) return -1;
+                  if (!aUncheckable && bUncheckable) return 1;
+                  return 0;
+                });
               return (
                 <div style={{ padding: '15px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #ddd' }}>
-                  {displayItems.map((item, idx) => {
+                  {sortedWithOriginalIdx.map(({ item, originalIdx }, displayIdx) => {
                     const isVisitOrConsult = hasPhrase(item, 'visit') || hasPhrase(item, 'consult');
                     const isFecalReplacedForItem = hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0;
-                    const recKey = `pet${carePlanPetIndex}_rec_${idx}`;
+                    const recKey = `pet${carePlanPetIndex}_rec_${originalIdx}`;
                     const isChecked = isFecalReplacedForItem ? false : (isVisitOrConsult || formData[recKey] !== false);
                     const disabled = isVisitOrConsult || isFecalReplacedForItem;
                     return (
-                      <div key={idx} style={{ display: 'flex', alignItems: 'center', padding: '10px 0', borderBottom: idx < displayItems.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
+                      <div key={originalIdx} style={{ display: 'flex', alignItems: 'center', padding: '10px 0', borderBottom: displayIdx < sortedWithOriginalIdx.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
                         <input
                           type="checkbox"
                           checked={isChecked}
@@ -2932,7 +3044,7 @@ export default function PublicRoomLoaderForm() {
 
             const patientId = patient.patientId ?? patient.patient?.id;
             const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
-            const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+            const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
             const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
             const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
             const showLyme = isDog && patientId != null && !declinedLymeInPast(history) && !hadLymeInLastYear(history) && !hasLymeInLineItems(patient);
@@ -2953,13 +3065,13 @@ export default function PublicRoomLoaderForm() {
                 {(() => {
                   const patientId = patient.patientId ?? patient.patient?.id;
                   const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
-                  const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+                  const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
                   if (!showCrLymeBooster) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
                       <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '12px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>crLyme vaccine</div>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '12px', color: '#555' }}>
-                        We&apos;re excited to let you know that we&apos;ve switched to the crLyme vaccine, offering broader, more effective protection than what {petName} has received in the past, while remaining just as safe.
+                        We&apos;re excited to let you know that we&apos;ve switched to the crLyme vaccine, offering broader, more effective protection than what {petName} has received in the past, while remaining just as safe. {petName} will receive their first crLyme vaccine at the appointment.
                       </p>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
                         To ensure full effectiveness, we recommend a crLyme booster in 3-4 weeks. If the booster is skipped, however, the initial dose still is at least as protective as {petName}&apos;s previous Lyme vaccine. Do you want us to schedule you a booster appointment after this visit? <span style={{ color: '#dc3545' }}>*</span>
@@ -3395,7 +3507,7 @@ export default function PublicRoomLoaderForm() {
                 <h3 style={{ margin: 0, color: '#212529', fontSize: '18px', fontWeight: 700 }}>{entry.patientName}</h3>
               </div>
               {entry.recommendations.length === 0 ? (
-                <p style={{ margin: 0, color: '#666', fontStyle: 'italic' }}>No specific lab recommendations for this visit.</p>
+                <p style={{ margin: 0, color: '#666', fontStyle: 'italic' }}>We have no further specific lab recommendations at this time for this visit.</p>
               ) : (
                 entry.recommendations.map((rec, rIdx) => {
                   const isEarlyDetectionFeline = rec.code === 'FIL48119999';
@@ -3930,6 +4042,35 @@ export default function PublicRoomLoaderForm() {
                     );
                   }
 
+                  if (rec.code === 'COMPREHENSIVE_FECAL') {
+                    const compFecalKey = `lab_comprehensive_fecal_${labIdStr}`;
+                    const compFecalValue = formData[compFecalKey];
+                    const compFecalPrice = getSearchItemPrice(comprehensiveFecalItem);
+                    return (
+                      <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
+                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '12px', textDecoration: 'underline' }}>Comprehensive Fecal</div>
+                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px' }}>{rec.message}</p>
+                        {compFecalPrice != null && (
+                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '12px' }}>Cost: <strong>{formatPrice(compFecalPrice)}</strong></p>
+                        )}
+                        <p style={{ fontSize: '15px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Would you like to add a comprehensive fecal today? <span style={{ color: '#dc3545' }}>*</span></p>
+                        <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
+                            <input type="radio" name={compFecalKey} value="yes" checked={compFecalValue === 'yes'} onChange={(e) => handleInputChange(compFecalKey, e.target.value)} style={{ marginRight: '8px', cursor: 'pointer' }} />
+                            Yes
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
+                            <input type="radio" name={compFecalKey} value="no" checked={compFecalValue === 'no'} onChange={(e) => handleInputChange(compFecalKey, e.target.value)} style={{ marginRight: '8px', cursor: 'pointer' }} />
+                            No
+                          </label>
+                        </div>
+                        {fieldValidationErrors[compFecalKey] && (
+                          <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[compFecalKey]}</p>
+                        )}
+                      </div>
+                    );
+                  }
+
                   return (
                     <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
                       <div style={{ fontWeight: 600, color: '#333', fontSize: '16px', marginBottom: '6px' }}>{rec.title}</div>
@@ -3994,9 +4135,9 @@ export default function PublicRoomLoaderForm() {
         return (
           <div style={{ padding: '24px', backgroundColor: '#fff', border: '2px solid #ddd', borderRadius: '12px', position: 'relative' }}>
             <div style={{ marginBottom: '25px', paddingBottom: '15px', borderBottom: '3px solid #e0e0e0' }}>
-              <h1 style={{ margin: 0, color: '#212529', fontSize: '24px', fontWeight: 700 }}>Summary & Total</h1>
+              <h1 style={{ margin: 0, color: '#212529', fontSize: '24px', fontWeight: 700 }}>Review Your Care Plan & Estimate</h1>
               <p style={{ fontSize: '16px', lineHeight: '1.6', color: '#555', marginTop: '10px', marginBottom: 0 }}>
-                Uncheck any item you do not want. Visits/consults and trip fee cannot be removed. Removed or declined items are shown crossed out and do not affect the total.
+                We've put together a personalized plan based on your pet's needs and our medical recommendations. You can review each item below, make adjustments, and see pricing clearly upfront so you feel informed and confident before your visit.
               </p>
             </div>
 
@@ -4190,6 +4331,28 @@ export default function PublicRoomLoaderForm() {
                         </div>
                       );
                     })()}
+                    {formData[`lab_comprehensive_fecal_${patientId}`] === 'yes' && getSearchItemPrice(comprehensiveFecalItem) != null && (() => {
+                      const summaryExcludeKey = `summary_exclude_lab_comprehensive_fecal_${patientId}`;
+                      const isExcluded = formData[summaryExcludeKey] === true;
+                      const p = getSearchItemPrice(comprehensiveFecalItem)!;
+                      const compFecalName = comprehensiveFecalItem?.name ?? 'Comprehensive Fecal';
+                      if (!isExcluded) petSubtotal += p;
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', fontSize: '15px', gap: '12px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={!isExcluded}
+                              disabled={readOnly}
+                              onChange={() => !readOnly && (isExcluded ? includePanelOnSummary(summaryExcludeKey) : excludePanelOnSummary(summaryExcludeKey, true))}
+                              style={{ marginRight: '12px', width: '18px', height: '18px', cursor: readOnly ? 'default' : 'pointer', flexShrink: 0 }}
+                            />
+                            <span style={{ ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : { color: '#333' }) }}>{compFecalName}</span>
+                          </label>
+                          <span style={{ fontWeight: 700, flexShrink: 0, ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{formatPrice(isExcluded ? 0 : p)}</span>
+                        </div>
+                      );
+                    })()}
                     {seniorFelineYes && getSearchItemPrice(seniorFelineItem) != null && (() => {
                       const summaryExcludeKey = `summary_exclude_lab_senior_feline_${patientId}`;
                       const isExcluded = formData[summaryExcludeKey] === true;
@@ -4372,7 +4535,20 @@ export default function PublicRoomLoaderForm() {
 
             {/* Store search - type-ahead, add products to Additional items (below pets) */}
             <div style={{ marginBottom: '24px', padding: '16px', backgroundColor: '#f5f5f5', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
-              <label style={{ display: 'block', fontSize: '14px', fontWeight: 600, color: '#555', marginBottom: '8px' }}>Search store items</label>
+              <div style={{ fontSize: '16px', fontWeight: 600, color: '#212529', marginBottom: '8px' }}>Add medications or preventatives</div>
+              <p style={{ fontSize: '14px', lineHeight: 1.5, color: '#555', marginBottom: '12px', marginTop: 0 }}>
+                If you'd like us to bring additional items, you can search and add them here. This is a great place to include flea/tick or heartworm prevention, chronic medications, or other products you know your pet needs.
+              </p>
+              {patients.length > 0 && (
+                <p style={{ fontSize: '14px', color: '#555', marginBottom: '12px', marginTop: 0 }}>
+                  Pet weight{patients.length > 1 ? 's' : ''}: {patients.map((p: any, i: number) => {
+                    const name = p.patientName || `Pet ${i + 1}`;
+                    const w = p.weight ?? p.patient?.weight ?? p.currentWeight;
+                    const weightStr = w != null && w !== '' ? (typeof w === 'number' ? `${w} lb` : String(w)) : '—';
+                    return <span key={i}>{i > 0 ? '; ' : ''}{name}: {weightStr}</span>;
+                  })}
+                </p>
+              )}
               <div style={{ position: 'relative', marginBottom: storeSearchResults.length > 0 ? '12px' : 0 }}>
                 <input
                   type="text"
@@ -4538,7 +4714,7 @@ export default function PublicRoomLoaderForm() {
             })()}
 
             <div style={{ marginTop: '24px', paddingTop: '20px', borderTop: '3px solid #e0e0e0', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '16px' }}>
-              <span style={{ fontSize: '20px', fontWeight: 700, color: '#212529' }}>Total: <strong>{formatPrice(grandTotal)}</strong></span>
+              <span style={{ fontSize: '20px', fontWeight: 700, color: '#212529' }}>Estimated Total Due At Visit: <strong>{formatPrice(grandTotal)}</strong></span>
             </div>
 
             {fieldValidationErrors._submit && (
