@@ -1,7 +1,7 @@
 // src/pages/PublicRoomLoaderForm.tsx
 import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { http } from '../api/http';
+import { apiBaseUrl, http } from '../api/http';
 import { getEcwidProducts, type EcwidProduct, type EcwidChoice } from '../api/ecwid';
 import { searchItems, type SearchableItem } from '../api/roomLoader';
 import { getPatientTreatmentHistory, type TreatmentWithItems } from '../api/treatments';
@@ -61,9 +61,10 @@ function hadInLast8Months(history: TreatmentWithItems[], ...nameSubstrings: stri
 }
 
 const VACCINE_SEARCH_QUERIES = {
-  lepto: 'Leptospirosis Vaccine - Annual',
+  lepto: 'Leptospirosis Vaccine - Initial',
   bordetella: 'Bordetella Oral Vaccine - Annual',
   crLyme: 'crLyme Vaccine- Annual',
+  lyme: 'crLyme Vaccine- Initial',
   felv: 'FeLV (Leukemia) Vaccine - 1 year',
 } as const;
 
@@ -270,6 +271,56 @@ function gettingCrLymeThisTime(patient: any): boolean {
   return false;
 }
 
+/** True if name or code indicates any Lyme vaccine (including crLyme). */
+function isLymeItem(name?: string | null, code?: string | null): boolean {
+  const n = (name ?? '').toLowerCase();
+  const c = (code ?? '').toLowerCase();
+  return (n.includes('lyme') && !n.includes('lepto')) || c.includes('lyme');
+}
+
+/** True if patient ever declined a Lyme vaccine. */
+function declinedLymeInPast(history: TreatmentWithItems[]): boolean {
+  for (const tx of history) {
+    for (const item of tx.treatmentItems || []) {
+      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
+      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (isLymeItem(name, code) && item.isDeclined) return true;
+    }
+  }
+  return false;
+}
+
+/** True if patient received Lyme vaccine in the last 12 months. */
+function hadLymeInLastYear(history: TreatmentWithItems[]): boolean {
+  const oneYearAgo = DateTime.now().minus({ years: 1 });
+  for (const tx of history) {
+    for (const item of tx.treatmentItems || []) {
+      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
+      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!isLymeItem(name, code)) continue;
+      const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
+      if (serviceDate && serviceDate >= oneYearAgo) return true;
+    }
+  }
+  return false;
+}
+
+/** True if this visit's line items (reminders + added items) include Lyme vaccine. */
+function hasLymeInLineItems(patient: any): boolean {
+  if (patient.reminders?.length) {
+    for (const r of patient.reminders) {
+      const item = r.item;
+      if (item && isLymeItem(item.name, item.code)) return true;
+    }
+  }
+  if (patient.addedItems?.length) {
+    for (const item of patient.addedItems) {
+      if (isLymeItem(item.name, item.code)) return true;
+    }
+  }
+  return false;
+}
+
 /** True if name or code indicates Leptospirosis vaccine. */
 function isLeptoItem(name?: string | null, code?: string | null): boolean {
   const n = (name ?? '').toLowerCase();
@@ -426,13 +477,14 @@ const PDF_PAGE_HEIGHT = 11;
 const PDF_CONTENT_WIDTH = PDF_PAGE_WIDTH - PDF_MARGIN * 2;
 const LINE_HEIGHT = 0.2;
 const FONT_SIZE = 10;
-const FONT_SIZE_SECTION = 12;
-const FONT_SIZE_TITLE = 16;
+const FONT_SIZE_SECTION = 11;
+const FONT_SIZE_TITLE = 18;
 const COLOR_DARK: [number, number, number] = [33, 37, 41];   // #212529
-const COLOR_MUTED: [number, number, number] = [85, 85, 85];   // #555
-const COLOR_LINE: [number, number, number] = [224, 224, 224]; // #e0e0e0
+const COLOR_MUTED: [number, number, number] = [73, 80, 87];  // #495057
+const COLOR_LINE: [number, number, number] = [222, 226, 230]; // #dee2e6
+const COLOR_HEADER_BG: [number, number, number] = [248, 249, 250]; // #f8f9fa
 
-type PdfOptions = { logoDataUrl?: string; practiceName?: string };
+type PdfOptions = { logoDataUrl?: string; practiceName?: string; logoWidth?: number; logoHeight?: number };
 
 /** Build a jsPDF from responseFromClient (formAnswersForPdf + summaryForPdf) for completed room-loader view. */
 function buildRoomLoaderPdf(responseFromClient: any, options?: PdfOptions): jsPDF {
@@ -442,7 +494,7 @@ function buildRoomLoaderPdf(responseFromClient: any, options?: PdfOptions): jsPD
 
   const pushY = (dy: number) => {
     y += dy;
-    if (y > PDF_PAGE_HEIGHT - PDF_MARGIN) {
+    if (y > PDF_PAGE_HEIGHT - PDF_MARGIN - 0.4) {
       doc.addPage();
       y = PDF_MARGIN;
       drawHeader();
@@ -450,15 +502,30 @@ function buildRoomLoaderPdf(responseFromClient: any, options?: PdfOptions): jsPD
   };
 
   const drawHeader = () => {
-    const logoH = 0.45;
-    const logoW = 1.6;
-    if (options?.logoDataUrl) {
+    const maxLogoW = 1.65;
+    const maxLogoH = 0.65;
+    const LOGO_DPI = 96; // pixels per inch for natural dimensions
+    let logoW = maxLogoW;
+    let logoH = maxLogoH;
+    const natW = options?.logoWidth;
+    const natH = options?.logoHeight;
+    if (natW != null && natH != null && natW > 0 && natH > 0) {
+      const natWIn = natW / LOGO_DPI;
+      const natHIn = natH / LOGO_DPI;
+      const scale = Math.min(maxLogoW / natWIn, maxLogoH / natHIn, 1);
+      logoW = natWIn * scale;
+      logoH = natHIn * scale;
+    }
+    const headerBottom = y + maxLogoH + 0.35;
+    doc.setFillColor(COLOR_HEADER_BG[0], COLOR_HEADER_BG[1], COLOR_HEADER_BG[2]);
+    doc.rect(0, 0, PDF_PAGE_WIDTH, headerBottom, 'F');
+    const hasLogo = !!options?.logoDataUrl;
+    if (hasLogo) {
       try {
-        doc.addImage(options.logoDataUrl, 'JPEG', PDF_MARGIN, y, logoW, logoH);
+        doc.addImage(options!.logoDataUrl!, 'JPEG', PDF_MARGIN, y, logoW, logoH);
       } catch {
-        // if JPEG fails (e.g. PNG), try PNG
         try {
-          doc.addImage(options.logoDataUrl, 'PNG', PDF_MARGIN, y, logoW, logoH);
+          doc.addImage(options!.logoDataUrl!, 'PNG', PDF_MARGIN, y, logoW, logoH);
         } catch {
           /* ignore */
         }
@@ -466,54 +533,46 @@ function buildRoomLoaderPdf(responseFromClient: any, options?: PdfOptions): jsPD
     }
     doc.setTextColor(COLOR_DARK[0], COLOR_DARK[1], COLOR_DARK[2]);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(14);
-    doc.text(practiceName, PDF_MARGIN + logoW + 0.15, y + logoH / 2 + 0.05);
+    doc.setFontSize(hasLogo ? 14 : 18);
+    doc.text(practiceName, hasLogo ? PDF_MARGIN + logoW + 0.2 : PDF_MARGIN, y + maxLogoH / 2 + (hasLogo ? 0.06 : 0.1));
     doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(COLOR_MUTED[0], COLOR_MUTED[1], COLOR_MUTED[2]);
+    doc.text('Pre-Appointment Form', hasLogo ? PDF_MARGIN + logoW + 0.2 : PDF_MARGIN, y + maxLogoH / 2 + (hasLogo ? 0.2 : 0.22));
+    doc.setTextColor(COLOR_DARK[0], COLOR_DARK[1], COLOR_DARK[2]);
     doc.setFontSize(FONT_SIZE);
-    y += logoH + 0.2;
+    y += maxLogoH + 0.28;
     doc.setDrawColor(COLOR_LINE[0], COLOR_LINE[1], COLOR_LINE[2]);
-    doc.setLineWidth(0.01);
+    doc.setLineWidth(0.012);
     doc.line(PDF_MARGIN, y, PDF_PAGE_WIDTH - PDF_MARGIN, y);
-    pushY(0.25);
+    pushY(0.28);
   };
 
   drawHeader();
 
-  const addText = (text: string, opts?: { bold?: boolean; fontSize?: number; color?: [number, number, number] }) => {
-    if (opts?.color) doc.setTextColor(opts.color[0], opts.color[1], opts.color[2]);
-    else doc.setTextColor(COLOR_DARK[0], COLOR_DARK[1], COLOR_DARK[2]);
-    if (opts?.bold) doc.setFont('helvetica', 'bold');
-    if (opts?.fontSize) doc.setFontSize(opts.fontSize);
-    const lines = doc.splitTextToSize(text, PDF_CONTENT_WIDTH);
-    doc.text(lines, PDF_MARGIN, y);
-    pushY(lines.length * LINE_HEIGHT);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(FONT_SIZE);
-    doc.setTextColor(COLOR_DARK[0], COLOR_DARK[1], COLOR_DARK[2]);
-  };
-
   const addPageTitle = (title: string) => {
-    pushY(0.15);
+    pushY(0.12);
     doc.setTextColor(COLOR_DARK[0], COLOR_DARK[1], COLOR_DARK[2]);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(FONT_SIZE_TITLE);
     const lines = doc.splitTextToSize(title, PDF_CONTENT_WIDTH);
     doc.text(lines, PDF_MARGIN, y);
-    pushY(lines.length * LINE_HEIGHT + 0.12);
+    pushY(lines.length * 0.24 + 0.1);
     doc.setDrawColor(COLOR_LINE[0], COLOR_LINE[1], COLOR_LINE[2]);
-    doc.setLineWidth(0.015);
+    doc.setLineWidth(0.018);
     doc.line(PDF_MARGIN, y, PDF_PAGE_WIDTH - PDF_MARGIN, y);
-    pushY(0.2);
+    pushY(0.22);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(FONT_SIZE);
   };
 
   const addSectionLabel = (label: string) => {
+    pushY(0.06);
     doc.setTextColor(COLOR_MUTED[0], COLOR_MUTED[1], COLOR_MUTED[2]);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(FONT_SIZE_SECTION);
     doc.text(label, PDF_MARGIN, y);
-    pushY(LINE_HEIGHT + 0.08);
+    pushY(0.22);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(FONT_SIZE);
     doc.setTextColor(COLOR_DARK[0], COLOR_DARK[1], COLOR_DARK[2]);
@@ -529,19 +588,22 @@ function buildRoomLoaderPdf(responseFromClient: any, options?: PdfOptions): jsPD
         const questions = sec.questions ?? [];
         for (const qa of questions) {
           if (qa.question) {
-            doc.setTextColor(COLOR_MUTED[0], COLOR_MUTED[1], COLOR_MUTED[2]);
             doc.setFont('helvetica', 'normal');
-            const qLines = doc.splitTextToSize(`Question: ${qa.question}`, PDF_CONTENT_WIDTH);
+            doc.setFontSize(9);
+            doc.setTextColor(COLOR_MUTED[0], COLOR_MUTED[1], COLOR_MUTED[2]);
+            const qLines = doc.splitTextToSize(qa.question, PDF_CONTENT_WIDTH);
             doc.text(qLines, PDF_MARGIN, y);
-            pushY(qLines.length * LINE_HEIGHT + 0.02);
+            pushY(qLines.length * LINE_HEIGHT + 0.04);
           }
           const ans = qa.answerLabel != null ? String(qa.answerLabel) : (qa.answer != null ? String(qa.answer) : '—');
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(FONT_SIZE);
           doc.setTextColor(COLOR_DARK[0], COLOR_DARK[1], COLOR_DARK[2]);
-          const aLines = doc.splitTextToSize(`Answer: ${ans || '—'}`, PDF_CONTENT_WIDTH - 0.2);
-          doc.text(aLines, PDF_MARGIN + 0.2, y);
-          pushY(aLines.length * LINE_HEIGHT + 0.12);
+          const aLines = doc.splitTextToSize(ans || '—', PDF_CONTENT_WIDTH - 0.25);
+          doc.text(aLines, PDF_MARGIN + 0.25, y);
+          pushY(aLines.length * LINE_HEIGHT + 0.14);
         }
-        pushY(0.08);
+        pushY(0.1);
       }
       pushY(0.15);
     }
@@ -550,22 +612,13 @@ function buildRoomLoaderPdf(responseFromClient: any, options?: PdfOptions): jsPD
   const summary = responseFromClient?.summaryForPdf;
   if (summary) {
     if (summary.title) addPageTitle(summary.title);
-    if (summary.instruction) {
-      doc.setTextColor(COLOR_MUTED[0], COLOR_MUTED[1], COLOR_MUTED[2]);
-      const instLines = doc.splitTextToSize(summary.instruction, PDF_CONTENT_WIDTH);
-      doc.text(instLines, PDF_MARGIN, y);
-      pushY(instLines.length * LINE_HEIGHT + 0.2);
-      doc.setTextColor(COLOR_DARK[0], COLOR_DARK[1], COLOR_DARK[2]);
-    }
     const pets = summary.pets ?? [];
     for (const pet of pets) {
-      doc.setDrawColor(COLOR_LINE[0], COLOR_LINE[1], COLOR_LINE[2]);
-      doc.setLineWidth(0.005);
-      doc.rect(PDF_MARGIN, y, PDF_CONTENT_WIDTH, 0.14);
+      pushY(0.1);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(FONT_SIZE_SECTION);
-      doc.text(pet.patientName ?? 'Pet', PDF_MARGIN + 0.1, y + 0.09);
-      pushY(0.2);
+      doc.text(pet.patientName ?? 'Pet', PDF_MARGIN, y);
+      pushY(LINE_HEIGHT + 0.08);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(FONT_SIZE);
       const rows = pet.rows ?? [];
@@ -663,7 +716,6 @@ export default function PublicRoomLoaderForm() {
   /** True when form was already submitted (client or admin viewing); show read-only or PDF view. */
   const [formAlreadySubmitted, setFormAlreadySubmitted] = useState(false);
   /** When submitStatus === 'completed', we show PDF view; this is the blob URL for the generated PDF. */
-  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
   /** Inline validation errors keyed by form field (e.g. pet0_outdoorAccess). Shown below the field instead of alert. */
   const [fieldValidationErrors, setFieldValidationErrors] = useState<Record<string, string>>({});
 
@@ -720,6 +772,7 @@ export default function PublicRoomLoaderForm() {
             initialFormData[`${petKey}_crLymeBooster`] = '';
             initialFormData[`${petKey}_leptoVaccine`] = '';
             initialFormData[`${petKey}_bordetellaVaccine`] = '';
+            initialFormData[`${petKey}_lymeVaccine`] = '';
             initialFormData[`${petKey}_rabiesPreference`] = '';
             initialFormData[`${petKey}_felvVaccine`] = '';
             initialFormData[`${petKey}_labWork`] = '';
@@ -786,9 +839,9 @@ export default function PublicRoomLoaderForm() {
               let key: VaccineOptKey | null = null;
               if (name.includes('leptospirosis')) key = 'lepto';
               else if (name.includes('bordetella')) key = 'bordetella';
-              else if (name.includes('crlyme') || (name.includes('lyme') && !name.includes('lepto'))) key = 'crLyme';
+              else if (name.includes('crlyme') || (name.includes('lyme') && !name.includes('lepto'))) key = 'lyme';
               else if (name.includes('felv') || name.includes('leukemia')) key = 'felv';
-              if (key && key !== 'crLyme') {
+              if (key) {
                 map[key] = {
                   itemType: (item.itemType as any) ?? 'inventory',
                   inventoryItem: item.id != null ? { id: item.id, name: item.name, price: item.price, code: item.code } : undefined,
@@ -840,47 +893,6 @@ export default function PublicRoomLoaderForm() {
       cancelled = true;
     };
   }, [data?.patients]);
-
-  // When form is completed (submitStatus === 'completed'), load logo and generate PDF from responseFromClient
-  useEffect(() => {
-    if (!formAlreadySubmitted || !data?.responseFromClient) return;
-    let cancelled = false;
-    const practiceName = data.practiceName ?? data.practice?.name ?? 'Vet At Your Door';
-    const loadLogo = (): Promise<string | undefined> =>
-      fetch('/final_thick_lines_cropped.jpeg')
-        .then((r) => r.blob())
-        .then(
-          (blob) =>
-            new Promise<string>((res, rej) => {
-              const r = new FileReader();
-              r.onload = () => res(r.result as string);
-              r.onerror = rej;
-              r.readAsDataURL(blob);
-            })
-        )
-        .catch(() => undefined);
-    loadLogo().then((logoDataUrl) => {
-      if (cancelled) return;
-      try {
-        const doc = buildRoomLoaderPdf(data.responseFromClient, { logoDataUrl, practiceName });
-        const blob = doc.output('blob');
-        const url = URL.createObjectURL(blob);
-        setPdfBlobUrl((prev) => {
-          if (prev) URL.revokeObjectURL(prev);
-          return url;
-        });
-      } catch (e) {
-        console.error('Error building room loader PDF:', e);
-      }
-    });
-    return () => {
-      cancelled = true;
-      setPdfBlobUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
-    };
-  }, [formAlreadySubmitted, data?.responseFromClient, data?.practiceName, data?.practice?.name]);
 
   function formatDate(dateStr: string | null | undefined): string {
     if (!dateStr) return 'N/A';
@@ -1507,18 +1519,25 @@ export default function PublicRoomLoaderForm() {
     type PageSection = { pageNumber: number; title: string; sections: Section[] };
     const formAnswersPages: PageSection[] = [];
 
-    // Page 1: Time to Check-in for your Appointment
+    // Page 1: Time to Check-in for your Appointment (only include questions that were shown)
     const page1Sections: Section[] = [];
+    const appts = data?.appointments ?? [];
     patientsData.forEach((patient: any, petIdx: number) => {
       const petKey = `pet${petIdx}`;
       const patientId = patient.patientId ?? patient.patient?.id ?? petIdx;
       const petName = patient.patientName || `Pet ${petIdx + 1}`;
+      const apptPatient = appts[petIdx]?.patient;
+      const speciesParts = [
+        patient.species,
+        patient.speciesEntity?.name,
+        patient.patient?.species,
+        patient.patient?.speciesEntity?.name,
+        apptPatient?.species,
+        apptPatient?.speciesEntity?.name,
+      ].filter(Boolean) as string[];
+      const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
+      const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
       const questions: Qa[] = [];
-      const addRequired = (question: string, key: string) => {
-        const raw = formData[key];
-        const val = raw === undefined ? null : raw;
-        questions.push({ question, answer: val ?? null, answerLabel: val != null && typeof val === 'string' ? val : null });
-      };
       const addOptional = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
         if (raw === undefined && valueLabels === undefined) return;
@@ -1528,7 +1547,9 @@ export default function PublicRoomLoaderForm() {
       };
       addOptional('Would you like to share any additional details about this?', `${petKey}_appointmentReason`);
       addOptional(`How is ${petName} doing otherwise? Are there any other concerns you'd like us to address during this visit?`, `${petKey}_generalWellbeing`);
-      addOptional(`Does ${petName} go outdoors or live with a cat that goes outdoors?`, `${petKey}_outdoorAccess`, { yes: 'Yes', no: 'No' });
+      if (isCatPatient) {
+        addOptional(`Does ${petName} go outdoors or live with a cat that goes outdoors?`, `${petKey}_outdoorAccess`, { yes: 'Yes', no: 'No' });
+      }
       addOptional(`Describe ${petName}'s behavior at home, around strangers, and at a typical vet office.`, `${petKey}_newPatientBehavior`);
       addOptional(`What are you feeding ${petName}? (brand, amount, frequency)`, `${petKey}_feeding`);
       addOptional(`Do you or ${petName} have any food allergies? (we like to bribe!)`, `${petKey}_foodAllergies`, { yes: 'Yes', no: 'No' });
@@ -1541,11 +1562,12 @@ export default function PublicRoomLoaderForm() {
       formAnswersPages.push({ pageNumber: 1, title: 'Time to Check-in for your Appointment', sections: page1Sections });
     }
 
-    // Care Plan pages (one section per pet): Optional Vaccines & Questions
+    // Care Plan pages (one section per pet): only include vaccine/outdoor questions that were shown
     patientsData.forEach((patient: any, petIdx: number) => {
       const petKey = `pet${petIdx}`;
       const patientId = patient.patientId ?? patient.patient?.id ?? petIdx;
       const petName = patient.patientName || `Pet ${petIdx + 1}`;
+      const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
       const speciesParts = [
         patient.species,
         patient.speciesEntity?.name,
@@ -1554,6 +1576,16 @@ export default function PublicRoomLoaderForm() {
       ].filter(Boolean) as string[];
       const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
       const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
+      const isDog = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !isCatPatient);
+      const dob = patient?.dob ?? patient?.patient?.dob;
+      const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
+      const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
+      const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+      const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
+      const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
+      const showLyme = isDog && patientId != null && !declinedLymeInPast(history) && !hadLymeInLastYear(history) && !hasLymeInLineItems(patient);
+      const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
+      const showFeLV = isCatPatient && patientId != null && (isUnderOneYear || outdoorAccess) && !declinedFeLVInPast(history) && !hadFeLVInLastYear(history) && !hasFeLVInLineItems(patient);
       const questions: Qa[] = [];
       const add = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
@@ -1565,15 +1597,16 @@ export default function PublicRoomLoaderForm() {
       if (isCatPatient) {
         add(`Does ${petName} go outdoors or live with a cat who does?`, `${petKey}_outdoorAccess`, { yes: 'Yes', no: 'No' });
       }
-      add('Do you want us to schedule you a booster appointment after this visit? (crLyme)', `${petKey}_crLymeBooster`, { yes: 'Yes', no: 'No', unsure: "I'm not sure" });
-      add('Do you want us to give the Lepto vaccine?', `${petKey}_leptoVaccine`, { yes: 'Yes', no: 'No' });
-      add('Do you want us to give the Bordetella vaccine?', `${petKey}_bordetellaVaccine`, { yes: 'Yes', no: 'No' });
-      add('If not a member AND due for rabies AND a cat: we offer two rabies vaccines - a one year or three year - which would you prefer?', `${petKey}_rabiesPreference`, {
+      if (showCrLymeBooster) add('Do you want us to schedule you a booster appointment after this visit? (crLyme)', `${petKey}_crLymeBooster`, { yes: 'Yes', no: 'No', unsure: "I'm not sure" });
+      if (showLepto) add('Do you want us to give the Lepto vaccine?', `${petKey}_leptoVaccine`, { yes: 'Yes', no: 'No' });
+      if (showBordetella) add('Do you want us to give the Bordetella vaccine?', `${petKey}_bordetellaVaccine`, { yes: 'Yes', no: 'No' });
+      if (showLyme) add('Do you want us to give the Lyme vaccine?', `${petKey}_lymeVaccine`, { yes: 'Yes', no: 'No' });
+      if (showRabiesCats) add('If not a member AND due for rabies AND a cat: we offer two rabies vaccines - a one year or three year - which would you prefer?', `${petKey}_rabiesPreference`, {
         '1year': 'Purevax Rabies 1 year',
         '3year': 'Purevax Rabies 3 year',
         no: 'No thank you, I do not want a rabies vx administered to my cat.',
       });
-      add('Do you want us to give the FeLV vaccine? For initial immunity, two vaccines must be given, 3-4 weeks apart.', `${petKey}_felvVaccine`, { yes: 'Yes', no: 'No' });
+      if (showFeLV) add('Do you want us to give the FeLV vaccine? For initial immunity, two vaccines must be given, 3-4 weeks apart.', `${petKey}_felvVaccine`, { yes: 'Yes', no: 'No' });
       if (questions.length > 0) {
         formAnswersPages.push({
           pageNumber: 2 + petIdx,
@@ -1583,12 +1616,29 @@ export default function PublicRoomLoaderForm() {
       }
     });
 
-    // Labs We Recommend (one section per pet)
+    // Labs We Recommend: only include lab questions that were shown (same logic as validation)
     const labsPageNum = 2 + patientsData.length;
     const labsSections: Section[] = [];
-    patientsData.forEach((patient: any, idx: number) => {
-      const patientId = patient.patientId ?? patient.patient?.id ?? idx;
-      const petName = patient.patientName || `Pet ${idx + 1}`;
+    const labRecs = labRecommendationsByPet ?? [];
+    const labAppts = data?.appointments ?? [];
+    labRecs.forEach((entry: { patientId?: number; patientName?: string; recommendations: { code?: string }[] }, idx: number) => {
+      const patientId = entry.patientId ?? idx;
+      const pidStr = String(patientId);
+      const petName = entry.patientName || `Pet ${idx + 1}`;
+      const patientForEntry = patientsData.find((p: any) => String(p.patientId ?? p.patient?.id ?? '') === String(entry.patientId ?? idx)) ?? patientsData[idx];
+      const apptForEntry = labAppts[idx];
+      const apptPatientEntry = apptForEntry?.patient;
+      const speciesPartsEntry = [
+        patientForEntry?.species,
+        (patientForEntry as any)?.speciesEntity?.name,
+        (patientForEntry as any)?.patient?.species,
+        (patientForEntry as any)?.patient?.speciesEntity?.name,
+        apptPatientEntry?.species,
+        apptPatientEntry?.speciesEntity?.name,
+      ].filter(Boolean) as string[];
+      const speciesLowerEntry = speciesPartsEntry.length ? speciesPartsEntry.join(' ').toLowerCase() : '';
+      const isDogEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine') || (speciesLowerEntry === '' && !speciesLowerEntry.includes('cat'));
+      const isCatEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
       const questions: Qa[] = [];
       const add = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
@@ -1597,18 +1647,27 @@ export default function PublicRoomLoaderForm() {
         const label = valueLabels && typeof val === 'string' ? (valueLabels[val] ?? val) : (typeof val === 'string' ? val : String(val));
         questions.push({ question, answer: val, answerLabel: label });
       };
-      add('Would you like to do the Early Detection Panel? (Feline)', `lab_early_detection_feline_${patientId}`, { yes: 'Yes', no: 'No' });
-      add('Would you like us to include this recommended screening today? (Early Detection - Canine)', `lab_early_detection_canine_${patientId}`, { yes: 'Yes — Include Early Detection Panel', no: 'Not at this time.' });
-      add('Would you like to do the Senior Screen Feline?', `lab_senior_feline_${patientId}`, { yes: 'Yes', no: 'No' });
-      add('Which panel would you like your pet to receive? (Senior Screen — Canine)', `lab_senior_canine_panel_${patientId}`, {
-        standard: 'Standard Comprehensive Panel',
-        extended: 'Extended Comprehensive Panel',
-        no: 'No thank you',
-      });
-      add('Which panel would you like your pet to receive? (Senior Screen — Feline)', `lab_senior_feline_two_panel_${patientId}`, {
-        standard: 'Senior Screen Feline - Standard Panel',
-        extended: 'Senior Screen Feline - Extended Panel',
-        no: 'No thank you',
+      entry.recommendations.forEach((rec: { code?: string }) => {
+        if (rec.code === 'FIL48119999') {
+          add('Would you like to do the Early Detection Panel? (Feline)', `lab_early_detection_feline_${pidStr}`, { yes: 'Yes', no: 'No' });
+        }
+        if (rec.code === 'FIL48719999') {
+          add('Would you like us to include this recommended screening today? (Early Detection - Canine)', `lab_early_detection_canine_${pidStr}`, { yes: 'Yes — Include Early Detection Panel', no: 'Not at this time.' });
+        }
+        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999') && isDogEntry) {
+          add('Which panel would you like your pet to receive? (Senior Screen — Canine)', `lab_senior_canine_panel_${pidStr}`, {
+            standard: 'Standard Comprehensive Panel',
+            extended: 'Extended Comprehensive Panel',
+            no: 'No thank you',
+          });
+        }
+        if ((rec.code === '8659999' || rec.code === 'FIL45129999') && isCatEntry) {
+          add('Which panel would you like your pet to receive? (Senior Screen — Feline)', `lab_senior_feline_two_panel_${pidStr}`, {
+            standard: 'Senior Screen Feline - Standard Panel',
+            extended: 'Senior Screen Feline - Extended Panel',
+            no: 'No thank you',
+          });
+        }
       });
       if (questions.length > 0) {
         labsSections.push({ sectionLabel: petName, patientId, patientName: petName, questions });
@@ -1620,8 +1679,109 @@ export default function PublicRoomLoaderForm() {
 
     const formAnswersForPdf = { pages: formAnswersPages };
 
+    // Lab keys that were actually shown (so we only send those in payload)
+    const shownLabKeys = new Set<string>();
+    const labRecsForFilter = labRecommendationsByPet ?? [];
+    labRecsForFilter.forEach((entry: { patientId?: number; recommendations: { code?: string }[] }, idx: number) => {
+      const patientId = entry.patientId ?? idx;
+      const pidStr = String(patientId);
+      const patientForEntry = patientsData.find((p: any) => String(p.patientId ?? p.patient?.id ?? '') === String(entry.patientId ?? idx)) ?? patientsData[idx];
+      const apptForEntry = appts[idx];
+      const apptPatientEntry = apptForEntry?.patient;
+      const speciesPartsEntry = [
+        patientForEntry?.species,
+        (patientForEntry as any)?.speciesEntity?.name,
+        (patientForEntry as any)?.patient?.species,
+        (patientForEntry as any)?.patient?.speciesEntity?.name,
+        apptPatientEntry?.species,
+        apptPatientEntry?.speciesEntity?.name,
+      ].filter(Boolean) as string[];
+      const speciesLowerEntry = speciesPartsEntry.length ? speciesPartsEntry.join(' ').toLowerCase() : '';
+      const isDogEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine') || (speciesLowerEntry === '' && !speciesLowerEntry.includes('cat'));
+      const isCatEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
+      entry.recommendations.forEach((rec: { code?: string }) => {
+        if (rec.code === 'FIL48119999') shownLabKeys.add(`lab_early_detection_feline_${pidStr}`);
+        if (rec.code === 'FIL48719999') shownLabKeys.add(`lab_early_detection_canine_${pidStr}`);
+        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999') && isDogEntry) shownLabKeys.add(`lab_senior_canine_panel_${pidStr}`);
+        if ((rec.code === '8659999' || rec.code === 'FIL45129999') && isCatEntry) shownLabKeys.add(`lab_senior_feline_two_panel_${pidStr}`);
+      });
+    });
+
+    // Only include form fields for questions that were actually shown to the client
+    const allowedFormData: Record<string, any> = {};
+    for (const [key, value] of Object.entries(formData)) {
+      if (!key.startsWith('pet') && !key.startsWith('lab_')) {
+        allowedFormData[key] = value;
+        continue;
+      }
+      if (key.startsWith('summary_exclude_')) {
+        allowedFormData[key] = value;
+        continue;
+      }
+      const petMatch = key.match(/^pet(\d+)_(.+)$/);
+      if (petMatch) {
+        const petIdx = Number(petMatch[1]);
+        const suffix = petMatch[2];
+        const patient = patientsData[petIdx];
+        if (!patient) continue;
+        const patientId = patient.patientId ?? patient.patient?.id ?? petIdx;
+        const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
+        const apptPatient = appts[petIdx]?.patient;
+        const speciesParts = [
+          patient.species,
+          patient.speciesEntity?.name,
+          patient.patient?.species,
+          patient.patient?.speciesEntity?.name,
+          apptPatient?.species,
+          apptPatient?.speciesEntity?.name,
+        ].filter(Boolean) as string[];
+        const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
+        const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
+        const isDog = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !isCatPatient);
+        const markedNewByApi = patient.isNewPatient === true || appts[petIdx]?.isNewPatient === true;
+        const explicitlyNotNew = patient.isNewPatient === false;
+        const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
+        const isNewPatient = !explicitlyNotNew && markedNewByApi && !hasReminders;
+        const dob = patient?.dob ?? patient?.patient?.dob;
+        const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
+        const outdoorAccess = formData[`pet${petIdx}_outdoorAccess`] === 'yes';
+        const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+        const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
+        const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
+        const showLyme = isDog && patientId != null && !declinedLymeInPast(history) && !hadLymeInLastYear(history) && !hasLymeInLineItems(patient);
+        const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
+        const showFeLV = isCatPatient && patientId != null && (isUnderOneYear || outdoorAccess) && !declinedFeLVInPast(history) && !hadFeLVInLastYear(history) && !hasFeLVInLineItems(patient);
+
+        if (suffix === 'appointmentReason' || suffix === 'generalWellbeing') allowedFormData[key] = value;
+        else if (suffix === 'outdoorAccess' && isCatPatient) allowedFormData[key] = value;
+        else if ((suffix === 'newPatientBehavior' || suffix === 'feeding' || suffix === 'foodAllergies' || suffix === 'foodAllergiesDetails') && isNewPatient) allowedFormData[key] = value;
+        else if (suffix === 'crLymeBooster' && showCrLymeBooster) allowedFormData[key] = value;
+        else if (suffix === 'leptoVaccine' && showLepto) allowedFormData[key] = value;
+        else if (suffix === 'bordetellaVaccine' && showBordetella) allowedFormData[key] = value;
+        else if (suffix === 'lymeVaccine' && showLyme) allowedFormData[key] = value;
+        else if (suffix === 'rabiesPreference' && showRabiesCats) allowedFormData[key] = value;
+        else if (suffix === 'felvVaccine' && showFeLV) allowedFormData[key] = value;
+        else if (suffix.startsWith('rec_')) allowedFormData[key] = value;
+        else if (suffix === 'labWork') allowedFormData[key] = value;
+        continue;
+      }
+      if (key.startsWith('lab_') && shownLabKeys.has(key)) allowedFormData[key] = value;
+    }
+
+    const filteredLabSelections = patientsData.reduce((acc: Record<string, any>, patient: any, idx: number) => {
+      const id = patient.patientId ?? patient.patient?.id ?? idx;
+      const idStr = String(id);
+      const sel: Record<string, any> = {};
+      if (shownLabKeys.has(`lab_early_detection_feline_${idStr}`)) sel.lab_early_detection_feline = formData[`lab_early_detection_feline_${id}`];
+      if (shownLabKeys.has(`lab_early_detection_canine_${idStr}`)) sel.lab_early_detection_canine = formData[`lab_early_detection_canine_${id}`];
+      if (shownLabKeys.has(`lab_senior_canine_panel_${idStr}`)) sel.lab_senior_canine_panel = formData[`lab_senior_canine_panel_${id}`];
+      if (shownLabKeys.has(`lab_senior_feline_two_panel_${idStr}`)) sel.lab_senior_feline_two_panel = formData[`lab_senior_feline_two_panel_${id}`];
+      if (Object.keys(sel).length > 0) acc[idStr] = sel;
+      return acc;
+    }, {});
+
     return {
-      ...formData,
+      ...allowedFormData,
       currentPage,
       optedInVaccineItems,
       storeAdditionalItems: storeAdditionalItemsPayload,
@@ -1637,17 +1797,7 @@ export default function PublicRoomLoaderForm() {
         storeTaxRate,
         petSubtotals,
       },
-      labSelections: patientsData.reduce((acc: Record<string, any>, patient: any, idx: number) => {
-        const id = patient.patientId ?? patient.patient?.id ?? idx;
-        acc[String(id)] = {
-          lab_early_detection_feline: formData[`lab_early_detection_feline_${id}`],
-          lab_early_detection_canine: formData[`lab_early_detection_canine_${id}`],
-          lab_senior_feline: formData[`lab_senior_feline_${id}`],
-          lab_senior_canine_panel: formData[`lab_senior_canine_panel_${id}`],
-          lab_senior_feline_two_panel: formData[`lab_senior_feline_two_panel_${id}`],
-        };
-        return acc;
-      }, {}),
+      labSelections: filteredLabSelections,
     };
   }
 
@@ -1683,10 +1833,21 @@ export default function PublicRoomLoaderForm() {
           errors[`${petKey}_outdoorAccess`] = `Please answer whether ${petName} goes outdoors or lives with a cat who does.`;
         }
       }
+      const markedNewByApi = patient.isNewPatient === true || appts[petIdx]?.isNewPatient === true;
+      const explicitlyNotNew = patient.isNewPatient === false;
+      const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
+      const isNewPatient = !explicitlyNotNew && markedNewByApi && !hasReminders;
+      if (isNewPatient) {
+        const foodAllergies = formData[`${petKey}_foodAllergies`];
+        if (foodAllergies !== 'yes' && foodAllergies !== 'no') {
+          errors[`${petKey}_foodAllergies`] = `Please answer the Food Allergies question for ${petName}.`;
+        }
+      }
 
       const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
       const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
       const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
+      const showLyme = isDog && patientId != null && !declinedLymeInPast(history) && !hadLymeInLastYear(history) && !hasLymeInLineItems(patient);
       const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
       const showFeLV = isCatPatient && patientId != null && (isUnderOneYear || outdoorAccess) && !declinedFeLVInPast(history) && !hadFeLVInLastYear(history) && !hasFeLVInLineItems(patient);
 
@@ -1699,6 +1860,9 @@ export default function PublicRoomLoaderForm() {
       if (showBordetella && formData[`${petKey}_bordetellaVaccine`] !== 'yes' && formData[`${petKey}_bordetellaVaccine`] !== 'no') {
         errors[`${petKey}_bordetellaVaccine`] = `Please answer the Bordetella vaccine question for ${petName}.`;
       }
+      if (showLyme && formData[`${petKey}_lymeVaccine`] !== 'yes' && formData[`${petKey}_lymeVaccine`] !== 'no') {
+        errors[`${petKey}_lymeVaccine`] = `Please answer the Lyme vaccine question for ${petName}.`;
+      }
       if (showRabiesCats && formData[`${petKey}_rabiesPreference`] !== '1year' && formData[`${petKey}_rabiesPreference`] !== '3year' && formData[`${petKey}_rabiesPreference`] !== 'no') {
         errors[`${petKey}_rabiesPreference`] = `Please answer the Rabies vaccine preference for ${petName}.`;
       }
@@ -1707,22 +1871,55 @@ export default function PublicRoomLoaderForm() {
       }
     }
 
-    // Early Detection Panel (required when shown on Labs page)
+    // Lab questions (required only when the corresponding block is shown on Labs page)
     const labRecs = labRecommendationsByPet ?? [];
     labRecs.forEach((entry, idx) => {
-      const patientId = entry.patientId ?? idx;
+      const pidStr = String(entry.patientId ?? idx);
       const petName = entry.patientName || `Pet ${idx + 1}`;
+      const patientForEntry = patientsData.find((p: any) => String(p.patientId ?? p.patient?.id ?? '') === String(entry.patientId ?? idx)) ?? patientsData[idx];
+      const apptForEntry = appts[idx];
+      const apptPatientEntry = apptForEntry?.patient;
+      const speciesPartsEntry = [
+        patientForEntry?.species,
+        (patientForEntry as any)?.speciesEntity?.name,
+        (patientForEntry as any)?.patient?.species,
+        (patientForEntry as any)?.patient?.speciesEntity?.name,
+        apptPatientEntry?.species,
+        apptPatientEntry?.speciesEntity?.name,
+      ].filter(Boolean) as string[];
+      const speciesLowerEntry = speciesPartsEntry.length ? speciesPartsEntry.join(' ').toLowerCase() : '';
+      const isDogEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine') || (speciesLowerEntry === '' && !speciesLowerEntry.includes('cat'));
+      const isCatEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
+
       entry.recommendations.forEach((rec: { code?: string }) => {
         if (rec.code === 'FIL48119999') {
-          const v = formData[`lab_early_detection_feline_${patientId}`];
+          const v = formData[`lab_early_detection_feline_${pidStr}`];
           if (v !== 'yes' && v !== 'no') {
-            errors[`lab_early_detection_feline_${patientId}`] = `Please answer the Early Detection Panel question for ${petName} before continuing.`;
+            errors[`lab_early_detection_feline_${pidStr}`] = `Please answer the Early Detection Panel question for ${petName} before continuing.`;
           }
         }
         if (rec.code === 'FIL48719999') {
-          const v = formData[`lab_early_detection_canine_${patientId}`];
+          const v = formData[`lab_early_detection_canine_${pidStr}`];
           if (v !== 'yes' && v !== 'no') {
-            errors[`lab_early_detection_canine_${patientId}`] = `Please answer the Early Detection Panel question for ${petName} before continuing.`;
+            errors[`lab_early_detection_canine_${pidStr}`] = `Please answer the Early Detection Panel question for ${petName} before continuing.`;
+          }
+        }
+        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999') && isDogEntry) {
+          const v = formData[`lab_senior_canine_panel_${pidStr}`];
+          if (v !== 'standard' && v !== 'extended' && v !== 'no') {
+            errors[`lab_senior_canine_panel_${pidStr}`] = `Please select a panel option for ${petName} before continuing.`;
+          }
+        }
+        if (rec.code === '8659999' && isCatEntry) {
+          const v = formData[`lab_senior_feline_two_panel_${pidStr}`];
+          if (v !== 'standard' && v !== 'extended' && v !== 'no') {
+            errors[`lab_senior_feline_two_panel_${pidStr}`] = `Please select a panel option for ${petName} before continuing.`;
+          }
+        }
+        if (rec.code === 'FIL45129999' && isCatEntry) {
+          const v = formData[`lab_senior_feline_two_panel_${pidStr}`];
+          if (v !== 'standard' && v !== 'extended' && v !== 'no') {
+            errors[`lab_senior_feline_two_panel_${pidStr}`] = `Please select a panel option for ${petName} before continuing.`;
           }
         }
       });
@@ -1734,24 +1931,60 @@ export default function PublicRoomLoaderForm() {
     return { valid: true };
   }
 
-  /** Validate required fields when leaving Labs page (Early Detection if shown). */
+  /** Validate required fields when leaving Labs page (only for lab blocks that are actually shown). */
   function validateRequiredForLabsPage(): { valid: boolean; message?: string; errors?: Record<string, string> } {
     const errors: Record<string, string> = {};
     const labRecs = labRecommendationsByPet ?? [];
+    const patientsData = data?.patients ?? [];
+    const appts = data?.appointments ?? [];
     labRecs.forEach((entry, idx) => {
-      const patientId = entry.patientId ?? idx;
       const petName = entry.patientName || `Pet ${idx + 1}`;
+      const pid = entry.patientId ?? idx;
+      const pidStr = String(pid);
+      const patientForEntry = patientsData.find((p: any) => String(p.patientId ?? p.patient?.id ?? '') === String(entry.patientId ?? idx)) ?? patientsData[idx];
+      const apptForEntry = appts[idx];
+      const apptPatientEntry = apptForEntry?.patient;
+      const speciesPartsEntry = [
+        patientForEntry?.species,
+        (patientForEntry as any)?.speciesEntity?.name,
+        (patientForEntry as any)?.patient?.species,
+        (patientForEntry as any)?.patient?.speciesEntity?.name,
+        apptPatientEntry?.species,
+        apptPatientEntry?.speciesEntity?.name,
+      ].filter(Boolean) as string[];
+      const speciesLowerEntry = speciesPartsEntry.length ? speciesPartsEntry.join(' ').toLowerCase() : '';
+      const isDogEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine') || (speciesLowerEntry === '' && !speciesLowerEntry.includes('cat'));
+      const isCatEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
+
       entry.recommendations.forEach((rec: { code?: string }) => {
         if (rec.code === 'FIL48119999') {
-          const v = formData[`lab_early_detection_feline_${patientId}`];
+          const v = formData[`lab_early_detection_feline_${pidStr}`];
           if (v !== 'yes' && v !== 'no') {
-            errors[`lab_early_detection_feline_${patientId}`] = `Please answer the Early Detection Panel question for ${petName} before continuing.`;
+            errors[`lab_early_detection_feline_${pidStr}`] = `Please answer the Early Detection Panel question for ${petName} before continuing.`;
           }
         }
         if (rec.code === 'FIL48719999') {
-          const v = formData[`lab_early_detection_canine_${patientId}`];
+          const v = formData[`lab_early_detection_canine_${pidStr}`];
           if (v !== 'yes' && v !== 'no') {
-            errors[`lab_early_detection_canine_${patientId}`] = `Please answer the Early Detection Panel question for ${petName} before continuing.`;
+            errors[`lab_early_detection_canine_${pidStr}`] = `Please answer the Early Detection Panel question for ${petName} before continuing.`;
+          }
+        }
+        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999') && isDogEntry) {
+          const v = formData[`lab_senior_canine_panel_${pidStr}`];
+          if (v !== 'standard' && v !== 'extended' && v !== 'no') {
+            errors[`lab_senior_canine_panel_${pidStr}`] = `Please select a panel option for ${petName} before continuing.`;
+          }
+        }
+        if (rec.code === '8659999' && isCatEntry) {
+          const v = formData[`lab_senior_feline_two_panel_${pidStr}`];
+          if (v !== 'standard' && v !== 'extended' && v !== 'no') {
+            errors[`lab_senior_feline_two_panel_${pidStr}`] = `Please select a panel option for ${petName} before continuing.`;
+          }
+        }
+        if (rec.code === 'FIL45129999' && isCatEntry) {
+          const v = formData[`lab_senior_feline_two_panel_${pidStr}`];
+          if (v !== 'standard' && v !== 'extended' && v !== 'no') {
+            errors[`lab_senior_feline_two_panel_${pidStr}`] = `Please select a panel option for ${petName} before continuing.`;
           }
         }
       });
@@ -1762,32 +1995,36 @@ export default function PublicRoomLoaderForm() {
     return { valid: true };
   }
 
-  /** Validate required fields when leaving page 1 (Check-in): outdoor for every cat. */
+  /** Validate required fields when leaving page 1 (Check-in): outdoor for cats, food allergies only when that block is shown (new patients). */
   function validateRequiredForPage1(): { valid: boolean; message?: string; errors?: Record<string, string> } {
     const patientsData = data?.patients ?? [];
     const appts = data?.appointments ?? [];
+    const errors: Record<string, string> = {};
     for (let petIdx = 0; petIdx < patientsData.length; petIdx++) {
       const patient = patientsData[petIdx];
       const petKey = `pet${petIdx}`;
       const petName = patient.patientName || `Pet ${petIdx + 1}`;
-      const apptPatient = appts[petIdx]?.patient;
-      const speciesParts = [
-        patient.species,
-        patient.speciesEntity?.name,
-        patient.patient?.species,
-        patient.patient?.speciesEntity?.name,
-        apptPatient?.species,
-        apptPatient?.speciesEntity?.name,
-      ].filter(Boolean) as string[];
-      const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
-      const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
+      const isCatPatient = (patient.species ?? '').toLowerCase().includes('cat') || (patient.speciesEntity?.name ?? '').toLowerCase().includes('cat') || (patient.species ?? '').toLowerCase().includes('feline');
+      const markedNewByApi = patient.isNewPatient === true || appts[petIdx]?.isNewPatient === true;
+      const explicitlyNotNew = patient.isNewPatient === false;
+      const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
+      const isNewPatient = !explicitlyNotNew && markedNewByApi && !hasReminders;
+
       if (isCatPatient) {
         const outdoor = formData[`${petKey}_outdoorAccess`];
         if (outdoor !== 'yes' && outdoor !== 'no') {
-          const msg = `Please answer whether ${petName} goes outdoors or lives with a cat who does before continuing.`;
-          return { valid: false, message: msg, errors: { [`${petKey}_outdoorAccess`]: msg } };
+          errors[`${petKey}_outdoorAccess`] = `Please answer whether ${petName} goes outdoors or lives with a cat who does.`;
         }
       }
+      if (isNewPatient) {
+        const foodAllergies = formData[`${petKey}_foodAllergies`];
+        if (foodAllergies !== 'yes' && foodAllergies !== 'no') {
+          errors[`${petKey}_foodAllergies`] = `Please answer the Food Allergies question for ${petName} before continuing.`;
+        }
+      }
+    }
+    if (Object.keys(errors).length > 0) {
+      return { valid: false, message: Object.values(errors)[0], errors };
     }
     return { valid: true };
   }
@@ -1817,39 +2054,44 @@ export default function PublicRoomLoaderForm() {
     const isUnderOneYear = patient.dob ? DateTime.now().diff(DateTime.fromISO(patient.dob), 'years').years < 1 : false;
     const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
 
+    const errors: Record<string, string> = {};
+
     if (isCatPatient) {
       const outdoor = formData[`${petKey}_outdoorAccess`];
       if (outdoor !== 'yes' && outdoor !== 'no') {
         const msg = `Please answer whether ${petName} goes outdoors or lives with a cat who does before continuing.`;
-        return { valid: false, message: msg, errors: { [`${petKey}_outdoorAccess`]: msg } };
+        errors[`${petKey}_outdoorAccess`] = msg;
       }
     }
 
     const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
     const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
     const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
+    const showLyme = isDog && patientId != null && !declinedLymeInPast(history) && !hadLymeInLastYear(history) && !hasLymeInLineItems(patient);
     const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
     const showFeLV = isCatPatient && patientId != null && (isUnderOneYear || outdoorAccess) && !declinedFeLVInPast(history) && !hadFeLVInLastYear(history) && !hasFeLVInLineItems(patient);
 
     if (showCrLymeBooster && formData[`${petKey}_crLymeBooster`] !== 'yes' && formData[`${petKey}_crLymeBooster`] !== 'no' && formData[`${petKey}_crLymeBooster`] !== 'unsure') {
-      const msg = `Please answer the crLyme booster question for ${petName} before continuing.`;
-      return { valid: false, message: msg, errors: { [`${petKey}_crLymeBooster`]: msg } };
+      errors[`${petKey}_crLymeBooster`] = `Please answer the crLyme booster question for ${petName} before continuing.`;
     }
     if (showLepto && formData[`${petKey}_leptoVaccine`] !== 'yes' && formData[`${petKey}_leptoVaccine`] !== 'no') {
-      const msg = `Please answer the Leptospirosis vaccine question for ${petName} before continuing.`;
-      return { valid: false, message: msg, errors: { [`${petKey}_leptoVaccine`]: msg } };
+      errors[`${petKey}_leptoVaccine`] = `Please answer the Leptospirosis vaccine question for ${petName} before continuing.`;
     }
     if (showBordetella && formData[`${petKey}_bordetellaVaccine`] !== 'yes' && formData[`${petKey}_bordetellaVaccine`] !== 'no') {
-      const msg = `Please answer the Bordetella vaccine question for ${petName} before continuing.`;
-      return { valid: false, message: msg, errors: { [`${petKey}_bordetellaVaccine`]: msg } };
+      errors[`${petKey}_bordetellaVaccine`] = `Please answer the Bordetella vaccine question for ${petName} before continuing.`;
+    }
+    if (showLyme && formData[`${petKey}_lymeVaccine`] !== 'yes' && formData[`${petKey}_lymeVaccine`] !== 'no') {
+      errors[`${petKey}_lymeVaccine`] = `Please answer the Lyme vaccine question for ${petName} before continuing.`;
     }
     if (showRabiesCats && formData[`${petKey}_rabiesPreference`] !== '1year' && formData[`${petKey}_rabiesPreference`] !== '3year' && formData[`${petKey}_rabiesPreference`] !== 'no') {
-      const msg = `Please answer the Rabies vaccine preference for ${petName} before continuing.`;
-      return { valid: false, message: msg, errors: { [`${petKey}_rabiesPreference`]: msg } };
+      errors[`${petKey}_rabiesPreference`] = `Please answer the Rabies vaccine preference for ${petName} before continuing.`;
     }
     if (showFeLV && formData[`${petKey}_felvVaccine`] !== 'yes' && formData[`${petKey}_felvVaccine`] !== 'no') {
-      const msg = `Please answer the FeLV vaccine question for ${petName} before continuing.`;
-      return { valid: false, message: msg, errors: { [`${petKey}_felvVaccine`]: msg } };
+      errors[`${petKey}_felvVaccine`] = `Please answer the FeLV vaccine question for ${petName} before continuing.`;
+    }
+
+    if (Object.keys(errors).length > 0) {
+      return { valid: false, message: Object.values(errors)[0], errors };
     }
     return { valid: true };
   }
@@ -1862,6 +2104,15 @@ export default function PublicRoomLoaderForm() {
     const validation = validateRequiredBeforeSubmit();
     if (!validation.valid) {
       setFieldValidationErrors(validation.errors || {});
+      const firstErrorKey = Object.keys(validation.errors || {})[0] ?? '';
+      const patientsCount = (data?.patients ?? []).length;
+      if (firstErrorKey.startsWith('lab_')) {
+        setCurrentPage(2 + patientsCount);
+      } else if (firstErrorKey.startsWith('pet')) {
+        const petNum = firstErrorKey.match(/pet(\d+)/)?.[1];
+        const page = petNum != null ? 2 + Math.min(Number(petNum), patientsCount - 1) : 2;
+        setCurrentPage(page);
+      }
       return;
     }
     setFieldValidationErrors({});
@@ -1890,7 +2141,7 @@ export default function PublicRoomLoaderForm() {
       }
     } catch (err: any) {
       console.error('Error submitting form:', err);
-      alert('Failed to submit form. Please try again.');
+      setFieldValidationErrors((prev) => ({ ...prev, _submit: 'Failed to submit form. Please try again.' }));
     } finally {
       setSubmitting(false);
     }
@@ -2149,41 +2400,48 @@ export default function PublicRoomLoaderForm() {
     );
   }
 
-  // When submitStatus === 'completed', show thank you page with review/download
+  // When submitStatus === 'completed', show thank you page (no PDF preview)
   if (formAlreadySubmitted && data.responseFromClient) {
-    const handleReviewAndDownload = () => {
-      if (pdfBlobUrl) {
-        const a = document.createElement('a');
-        a.href = pdfBlobUrl;
-        a.download = `Room-Loader-Form-${DateTime.now().toISODate() ?? 'submitted'}.pdf`;
-        a.click();
-      } else {
-        try {
-          const practiceName = data.practiceName ?? data.practice?.name ?? 'Vet At Your Door';
-          const doc = buildRoomLoaderPdf(data.responseFromClient, { practiceName });
-          doc.save(`Room-Loader-Form-${DateTime.now().toISODate() ?? 'submitted'}.pdf`);
-        } catch (e) {
-          console.error('Error generating PDF for download:', e);
-        }
+    const handleDownloadPdf = () => {
+      const tokenValue = token;
+      if (!tokenValue) {
+        console.error('Missing token for PDF download');
+        return;
       }
-      const el = document.getElementById('submitted-form-pdf');
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const url = `${apiBaseUrl}/public/room-loader/pdf?token=${encodeURIComponent(tokenValue)}`;
+      fetch(url)
+        .then((res) => {
+          if (!res.ok) throw new Error(res.statusText || 'Failed to load PDF');
+          return res.blob();
+        })
+        .then((blob) => {
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = `Room-Loader-Form-${DateTime.now().toISODate() ?? 'submitted'}.pdf`;
+          a.click();
+          URL.revokeObjectURL(blobUrl);
+        })
+        .catch((e) => {
+          console.error('Error downloading PDF:', e);
+        });
     };
     return (
-      <div style={{ padding: '24px 20px', maxWidth: '900px', margin: '0 auto', fontFamily: 'system-ui, sans-serif', backgroundColor: '#f9f9f9', minHeight: '100vh' }}>
-        <div style={{ marginBottom: '32px', padding: '28px 24px', backgroundColor: '#fff', border: '1px solid #e0e0e0', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', textAlign: 'center' }}>
-          <h1 style={{ margin: '0 0 16px', fontSize: '26px', fontWeight: 700, color: '#212529' }}>
+      <div style={{ padding: '48px 24px', maxWidth: '560px', margin: '0 auto', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+        <div style={{ padding: '40px 36px', backgroundColor: '#fff', borderRadius: '16px', boxShadow: '0 4px 24px rgba(0,0,0,0.08)', textAlign: 'center' }}>
+          <div style={{ marginBottom: '24px', fontSize: '48px' }}>✓</div>
+          <h1 style={{ margin: '0 0 12px', fontSize: '28px', fontWeight: 700, color: '#1a1a1a' }}>
             Thank you
           </h1>
-          <p style={{ margin: '0 0 12px', fontSize: '17px', color: '#495057', lineHeight: 1.5 }}>
+          <p style={{ margin: '0 0 8px', fontSize: '17px', color: '#444', lineHeight: 1.5 }}>
             Your pre-appointment form has been submitted.
           </p>
-          <p style={{ margin: '0 0 24px', fontSize: '16px', color: '#6c757d', lineHeight: 1.5 }}>
+          <p style={{ margin: '0 0 28px', fontSize: '15px', color: '#666', lineHeight: 1.5 }}>
             Our team has received your form. A copy was emailed to you with a PDF attachment for your records.
           </p>
           <button
             type="button"
-            onClick={handleReviewAndDownload}
+            onClick={handleDownloadPdf}
             style={{
               padding: '14px 28px',
               fontSize: '16px',
@@ -2191,26 +2449,13 @@ export default function PublicRoomLoaderForm() {
               backgroundColor: '#0d6efd',
               color: '#fff',
               border: 'none',
-              borderRadius: '8px',
+              borderRadius: '10px',
               cursor: 'pointer',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+              boxShadow: '0 2px 8px rgba(13, 110, 253, 0.35)',
             }}
           >
-            Review your form and download
+            Download your form (PDF)
           </button>
-        </div>
-        <div id="submitted-form-pdf" style={{ marginTop: '24px' }}>
-          {pdfBlobUrl ? (
-            <iframe
-              title="Submitted form PDF"
-              src={pdfBlobUrl}
-              style={{ width: '100%', height: '80vh', minHeight: '600px', border: '1px solid #ddd', borderRadius: '8px', backgroundColor: '#fff' }}
-            />
-          ) : (
-            <div style={{ padding: '40px', textAlign: 'center', color: '#666', fontSize: '16px' }}>
-              Generating PDF…
-            </div>
-          )}
         </div>
       </div>
     );
@@ -2454,7 +2699,7 @@ export default function PublicRoomLoaderForm() {
                       <textarea value={formData[`${petKey}_feeding`] || ''} onChange={(e) => handleInputChange(`${petKey}_feeding`, e.target.value)} readOnly={readOnly} disabled={readOnly} style={{ ...textareaStyle, ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}) }} placeholder="What are you feeding your pet?" />
                     </div>
                     <div style={{ marginBottom: '20px' }}>
-                      <h4 style={sectionLabelStyle}>Food Allergies</h4>
+                      <h4 style={sectionLabelStyle}>Food Allergies <span style={{ color: '#dc3545' }}>*</span></h4>
                       <label style={questionLabelStyle}>Do you or {petName} have any food allergies? (we like to bribe!)</label>
                       <div style={{ display: 'flex', gap: '20px', marginBottom: '12px' }}>
                         <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
@@ -2466,6 +2711,9 @@ export default function PublicRoomLoaderForm() {
                           No
                         </label>
                       </div>
+                      {fieldValidationErrors[`${petKey}_foodAllergies`] && (
+                        <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_foodAllergies`]}</p>
+                      )}
                       {formData[`${petKey}_foodAllergies`] === 'yes' && (
                         <>
                           <label style={questionLabelStyle}>If yes, what are they?</label>
@@ -2481,7 +2729,14 @@ export default function PublicRoomLoaderForm() {
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '32px', paddingTop: '20px', borderTop: '2px solid #e0e0e0' }}>
             <button
+              type="button"
               onClick={() => {
+                const v = validateRequiredForPage1();
+                if (!v.valid) {
+                  setFieldValidationErrors(v.errors || {});
+                  return;
+                }
+                setFieldValidationErrors({});
                 setCurrentPage(2);
               }}
               style={{
@@ -2680,10 +2935,11 @@ export default function PublicRoomLoaderForm() {
             const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
             const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
             const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
+            const showLyme = isDog && patientId != null && !declinedLymeInPast(history) && !hadLymeInLastYear(history) && !hasLymeInLineItems(patient);
             const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
             // FeLV: show if cat and haven't had it before; if <1 yr always show, if 1+ yr only if they answered Yes to outdoor
             const showFeLV = isCatPatient && patientId != null && (isUnderOneYear || outdoorAccess) && !declinedFeLVInPast(history) && !hadFeLVInLastYear(history) && !hasFeLVInLineItems(patient);
-            const hasAnyOptionalContent = showCrLymeBooster || showLepto || showBordetella || showRabiesCats || showFeLV;
+            const hasAnyOptionalContent = showCrLymeBooster || showLepto || showBordetella || showLyme || showRabiesCats || showFeLV;
 
             if (!hasAnyOptionalContent) return null;
 
@@ -2750,6 +3006,66 @@ export default function PublicRoomLoaderForm() {
                   );
                 })()}
 
+                {/* Lyme recommendation (dogs only: not declined, not in last year, not on this visit) */}
+                {(() => {
+                  const patientId = patient.patientId ?? patient.patient?.id;
+                  const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
+                  const showLyme =
+                    isDog &&
+                    patientId != null &&
+                    !declinedLymeInPast(history) &&
+                    !hadLymeInLastYear(history) &&
+                    !hasLymeInLineItems(patient);
+                  if (!showLyme) return null;
+                  return (
+                    <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
+                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '12px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>Lyme vaccine</div>
+                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '12px', color: '#555' }}>
+                        Lyme: It looks like {petName} has not yet received the Lyme vaccine.
+                      </p>
+                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '12px', color: '#555' }}>
+                        Lyme disease is extremely common in our area due to the high number of ticks. While many dogs can be exposed without symptoms, about 10–15% develop serious issues like painful joints — and in rare cases, life-threatening kidney disease.
+                      </p>
+                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '12px', color: '#555' }}>
+                        Because of the risk where we live, Vet At Your Door considers Lyme a core vaccine for all dogs.
+                      </p>
+                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                        To protect {petName}, we recommend starting the vaccine series now. It will involve two vaccines, 3–4 weeks apart, followed by an annual booster.
+                      </p>
+                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                        Do you want us to give the Lyme vaccine? <span style={{ color: '#dc3545' }}>*</span>
+                      </p>
+                      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                          <input
+                            type="radio"
+                            name={`${petKey}_lymeVaccine`}
+                            value="yes"
+                            checked={formData[`${petKey}_lymeVaccine`] === 'yes'}
+                            onChange={(e) => handleVaccineOptChange(petKey, patientId ?? undefined, 'lyme', `${petKey}_lymeVaccine`, e.target.value)}
+                            style={{ marginRight: '8px' }}
+                          />
+                          Yes
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                          <input
+                            type="radio"
+                            name={`${petKey}_lymeVaccine`}
+                            value="no"
+                            checked={formData[`${petKey}_lymeVaccine`] === 'no'}
+                            onChange={(e) => handleVaccineOptChange(petKey, patientId ?? undefined, 'lyme', `${petKey}_lymeVaccine`, e.target.value)}
+                            style={{ marginRight: '8px' }}
+                          />
+                          No
+                        </label>
+                      </div>
+                      {fieldValidationErrors[`${petKey}_lymeVaccine`] && (
+                        <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_lymeVaccine`]}</p>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {/* Leptospirosis recommendation (dogs only: not declined, not in last year, not on this visit) */}
                 {(() => {
                   const patientId = patient.patientId ?? patient.patient?.id;
@@ -2803,6 +3119,9 @@ export default function PublicRoomLoaderForm() {
                           No
                         </label>
                       </div>
+                      {fieldValidationErrors[`${petKey}_leptoVaccine`] && (
+                        <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_leptoVaccine`]}</p>
+                      )}
                     </div>
                   );
                 })()}
@@ -2993,6 +3312,7 @@ export default function PublicRoomLoaderForm() {
             </button>
             {isLastCarePlanPet ? (
               <button
+                type="button"
                 onClick={() => {
                   const v = validateRequiredForCarePlanPet(carePlanPetIndex);
                   if (!v.valid) {
@@ -3017,6 +3337,7 @@ export default function PublicRoomLoaderForm() {
               </button>
             ) : (
               <button
+                type="button"
                 onClick={() => {
                   const v = validateRequiredForCarePlanPet(carePlanPetIndex);
                   if (!v.valid) {
@@ -3053,6 +3374,11 @@ export default function PublicRoomLoaderForm() {
               Based on your pet's age, species, and today's visit, here are lab panels we suggest.
             </p>
           </div>
+          {Object.keys(fieldValidationErrors).some((k) => k.startsWith('lab_')) && (
+            <p style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: '6px', color: '#721c24', fontSize: '14px' }}>
+              Please complete all required lab questions below before continuing.
+            </p>
+          )}
 
           {labRecommendationsByPet.map((entry, idx) => (
             <div
@@ -3075,9 +3401,10 @@ export default function PublicRoomLoaderForm() {
                   const isEarlyDetectionFeline = rec.code === 'FIL48119999';
                   const isEarlyDetectionCanine = rec.code === 'FIL48719999';
                   const petName = entry.patientName || 'your pet';
-                  const earlyDetKey = `lab_early_detection_feline_${entry.patientId ?? idx}`;
+                  const labIdStr = String(entry.patientId ?? idx);
+                  const earlyDetKey = `lab_early_detection_feline_${labIdStr}`;
                   const earlyDetValue = formData[earlyDetKey];
-                  const earlyDetCanineKey = `lab_early_detection_canine_${entry.patientId ?? idx}`;
+                  const earlyDetCanineKey = `lab_early_detection_canine_${labIdStr}`;
                   const earlyDetCanineValue = formData[earlyDetCanineKey];
                   // For "replace fecal" copy and price diff: find this pet's fecal reminder
                   const patientForEntry = patients.find((p: any) => String(p.patientId ?? p.patient?.id ?? '') === String(entry.patientId ?? '')) ?? patients[idx];
@@ -3116,9 +3443,9 @@ export default function PublicRoomLoaderForm() {
                   const standardPrice = getSearchItemPrice(seniorCanineStandardItem);
                   const extendedPrice = getSearchItemPrice(seniorCanineExtendedItem);
                   const seniorCanineDiff = standardPrice != null && extendedPrice != null ? extendedPrice - standardPrice : null;
-                  const seniorPanelKey = `lab_senior_canine_panel_${entry.patientId ?? idx}`;
+                  const seniorPanelKey = `lab_senior_canine_panel_${labIdStr}`;
                   const seniorPanelValue = formData[seniorPanelKey];
-                  const seniorFelineKey = `lab_senior_feline_${entry.patientId ?? idx}`;
+                  const seniorFelineKey = `lab_senior_feline_${labIdStr}`;
                   const seniorFelineValue = formData[seniorFelineKey];
                   const seniorFelinePrice = getSearchItemPrice(seniorFelineItem);
                   const seniorFelinePriceDiff = seniorFelinePrice != null && fecalPrice != null ? seniorFelinePrice - fecalPrice : null;
@@ -3126,7 +3453,7 @@ export default function PublicRoomLoaderForm() {
                   const seniorFelineStandardPrice = getSearchItemPrice(seniorCanineStandardItem);
                   const seniorFelineExtendedPrice = getSearchItemPrice(seniorFelineExtendedItem);
                   const seniorFelineTwoPanelDiff = seniorFelineStandardPrice != null && seniorFelineExtendedPrice != null ? seniorFelineExtendedPrice - seniorFelineStandardPrice : null;
-                  const seniorFelineTwoPanelKey = `lab_senior_feline_two_panel_${entry.patientId ?? idx}`;
+                  const seniorFelineTwoPanelKey = `lab_senior_feline_two_panel_${labIdStr}`;
                   const seniorFelineTwoPanelValue = formData[seniorFelineTwoPanelKey];
                   const seniorFelineExtendedMinusFecal = seniorFelineExtendedPrice != null && fecalPrice != null ? seniorFelineExtendedPrice - fecalPrice : null;
 
@@ -3315,11 +3642,6 @@ export default function PublicRoomLoaderForm() {
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
                         <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '12px', textDecoration: 'underline' }}>Senior Screen — Canine</div>
-                        {!labWorkYesForEntry && (
-                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, marginBottom: '12px' }}>
-                            It looks like {petName} is due for Annual Comprehensive Lab Work, which helps us gain helpful insight into {petName}&apos;s overall health and trends over time.
-                          </p>
-                        )}
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '12px', flexWrap: 'wrap' }}>
                           <img
                             src="/early-detection-feline.png"
@@ -3327,9 +3649,16 @@ export default function PublicRoomLoaderForm() {
                             style={{ width: '180px', height: 'auto', borderRadius: '4px', border: '1px solid #e0e0e0', flexShrink: 0 }}
                           />
                           <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, flex: '1 1 280px' }}>
-                            We have two panels to choose from. Our <strong>Standard Comprehensive Panel</strong> ({formatPrice(standardPrice) != null ? <strong>{formatPrice(standardPrice)}</strong> : 'see pricing at visit'}) includes a:
+                            {!labWorkYesForEntry
+                              ? <>It looks like {petName} is due for Annual Comprehensive Lab Work, which helps us gain helpful insight into {petName}&apos;s overall health and trends over time.</>
+                              : <>We have two panels to choose from. Our <strong>Standard Comprehensive Panel</strong> ({formatPrice(standardPrice) != null ? <strong>{formatPrice(standardPrice)}</strong> : 'see pricing at visit'}) includes a:</>}
                           </p>
                         </div>
+                        {!labWorkYesForEntry && (
+                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, marginBottom: '12px' }}>
+                            We have two panels to choose from. Our <strong>Standard Comprehensive Panel</strong> ({formatPrice(standardPrice) != null ? <strong>{formatPrice(standardPrice)}</strong> : 'see pricing at visit'}) includes a:
+                          </p>
+                        )}
                         <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px', paddingLeft: '20px' }}>
                           <li><strong>Chemistry</strong> to look at organ function such as liver or kidneys</li>
                           <li><strong>Complete Blood Count</strong> to look at red/white blood cell and platelet counts</li>
@@ -3397,6 +3726,9 @@ export default function PublicRoomLoaderForm() {
                             No thank you
                           </label>
                         </div>
+                        {fieldValidationErrors[seniorPanelKey] && (
+                          <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[seniorPanelKey]}</p>
+                        )}
                         {seniorPanelValue === 'extended' && hasFecalReminder && fecalReminder?.item?.name && (
                           <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
                             Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalReminder.item.name}</span> (included in Extended Comprehensive Panel)
@@ -3491,6 +3823,9 @@ export default function PublicRoomLoaderForm() {
                             No thank you
                           </label>
                         </div>
+                        {fieldValidationErrors[seniorFelineTwoPanelKey] && (
+                          <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[seniorFelineTwoPanelKey]}</p>
+                        )}
                         {seniorFelineTwoPanelValue === 'extended' && hasFecalReminder && fecalReminder?.item?.name && (
                           <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
                             Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalReminder.item.name}</span> (included in Extended Comprehensive Panel)
@@ -3583,6 +3918,9 @@ export default function PublicRoomLoaderForm() {
                             No thank you
                           </label>
                         </div>
+                        {fieldValidationErrors[seniorFelineTwoPanelKey] && (
+                          <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[seniorFelineTwoPanelKey]}</p>
+                        )}
                         {seniorFelineTwoPanelValue === 'extended' && hasFecalReminder && fecalReminder?.item?.name && (
                           <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
                             Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalReminder.item.name}</span> (included in Extended Comprehensive Panel)
@@ -3620,6 +3958,7 @@ export default function PublicRoomLoaderForm() {
               ← Back to Care Plan
             </button>
             <button
+              type="button"
               onClick={() => {
                 const v = validateRequiredForLabsPage();
                 if (!v.valid) {
@@ -4202,6 +4541,9 @@ export default function PublicRoomLoaderForm() {
               <span style={{ fontSize: '20px', fontWeight: 700, color: '#212529' }}>Total: <strong>{formatPrice(grandTotal)}</strong></span>
             </div>
 
+            {fieldValidationErrors._submit && (
+              <p style={{ marginTop: '16px', marginBottom: 0, fontSize: '14px', color: '#dc3545' }}>{fieldValidationErrors._submit}</p>
+            )}
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '32px', paddingTop: '20px', borderTop: '2px solid #e0e0e0' }}>
               <button
                 onClick={() => setCurrentPage(labsPageIndex)}
@@ -4219,7 +4561,11 @@ export default function PublicRoomLoaderForm() {
                 ← Back to Labs
               </button>
               <button
-                onClick={handleSubmit}
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleSubmit();
+                }}
                 disabled={submitting || readOnly}
                 style={{
                   padding: '12px 28px',

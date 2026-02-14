@@ -31,6 +31,50 @@ function reminderContains(r: ReminderWithPrice, ...substrings: string[]): boolea
   return substrings.some((s) => text.includes(s.toLowerCase()));
 }
 
+/**
+ * Parse arrival window display string (e.g. "9:00AM - 10:00AM") into ISO start/end using the appointment date.
+ * Returns null if parsing fails.
+ */
+function parseArrivalWindowDisplay(
+  display: string,
+  appointmentStartIso: string
+): { start: string; end: string } | null {
+  const trimmed = display?.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(/\s*-\s*/);
+  if (parts.length < 2) return null;
+  const base = DateTime.fromISO(appointmentStartIso);
+  if (!base.isValid) return null;
+  const timeFormats = ['h:mma', 'h:mm a', 'ha', 'H:mm', 'h:mm'];
+  const parseTime = (s: string): DateTime | null => {
+    const t = s.trim();
+    for (const fmt of timeFormats) {
+      const dt = DateTime.fromFormat(t, fmt);
+      if (dt.isValid) return dt;
+    }
+    return null;
+  };
+  const startTime = parseTime(parts[0]);
+  const endTime = parseTime(parts[1]);
+  if (!startTime?.isValid || !endTime?.isValid) return null;
+  const startDt = base.set({
+    hour: startTime.hour,
+    minute: startTime.minute,
+    second: 0,
+    millisecond: 0,
+  });
+  const endDt = base.set({
+    hour: endTime.hour,
+    minute: endTime.minute,
+    second: 0,
+    millisecond: 0,
+  });
+  const startIso = startDt.toISO();
+  const endIso = endDt.toISO();
+  if (!startIso || !endIso) return null;
+  return { start: startIso, end: endIso };
+}
+
 /** True if searchable item name or code contains the substring (case-insensitive). */
 function itemContains(item: SearchableItem, substring: string): boolean {
   const text = `${item?.name ?? ''} ${item?.code ?? ''}`.toLowerCase();
@@ -1114,7 +1158,15 @@ export default function RoomLoaderPage() {
 
       setReminderFeedback((prev) => ({ ...prev, [key]: isCorrect ? 'correct' : 'incorrect' }));
       if (correctItem) {
-        setReminderCorrections((prev) => ({ ...prev, [key]: { ...prev[key], selectedItem: correctItem } }));
+        setReminderCorrections((prev) => ({
+          ...prev,
+          [key]: {
+            ...prev[key],
+            selectedItem: correctItem,
+            scopeChosen: true,
+            patientId: patientId ?? prev[key]?.patientId,
+          },
+        }));
       }
     } catch (err: any) {
       console.error('Error submitting reminder feedback:', err);
@@ -1286,24 +1338,32 @@ export default function RoomLoaderPage() {
       const { patient, appointments, reminders, client } = item;
       const firstAppt = appointments[0];
       
-      // Calculate window of arrival (if not FIXED)
+      // Calculate window of arrival (if not FIXED). Use manually edited value when present.
       let arrivalWindow: { start: string; end: string } | null = null;
       if (firstAppt) {
         const appointmentTypeName = firstAppt.appointmentType?.name?.toUpperCase() || firstAppt.appointmentType?.prettyName?.toUpperCase() || '';
         const isFixed = appointmentTypeName === 'FIXED';
         
         if (!isFixed) {
-          const aw = firstAppt.arrivalWindow;
-          if (aw?.windowStartIso && aw?.windowEndIso) {
-            arrivalWindow = { start: aw.windowStartIso, end: aw.windowEndIso };
+          const editedDisplay = arrivalWindows[patient.id];
+          const parsed = editedDisplay
+            ? parseArrivalWindowDisplay(editedDisplay, firstAppt.appointmentStart)
+            : null;
+          if (parsed) {
+            arrivalWindow = parsed;
           } else {
-            const startTime = DateTime.fromISO(firstAppt.appointmentStart);
-            const windowStart = startTime.minus({ hours: 1 });
-            const windowEnd = startTime.plus({ hours: 1 });
-            arrivalWindow = {
-              start: windowStart.toISO() || '',
-              end: windowEnd.toISO() || '',
-            };
+            const aw = firstAppt.arrivalWindow;
+            if (aw?.windowStartIso && aw?.windowEndIso) {
+              arrivalWindow = { start: aw.windowStartIso, end: aw.windowEndIso };
+            } else {
+              const startTime = DateTime.fromISO(firstAppt.appointmentStart);
+              const windowStart = startTime.minus({ hours: 1 });
+              const windowEnd = startTime.plus({ hours: 1 });
+              arrivalWindow = {
+                start: windowStart.toISO() || '',
+                end: windowEnd.toISO() || '',
+              };
+            }
           }
         }
       }
@@ -2802,50 +2862,52 @@ export default function RoomLoaderPage() {
                             {!isConfirmed && correction?.selectedItem && feedbackStatus !== 'correcting' && (
                               <div style={{ marginTop: '15px', paddingTop: '15px', borderTop: '1px solid #e0e0e0' }}>
                                 <p style={{ fontSize: '14px', fontWeight: 500, color: '#333', marginBottom: '10px' }}>
-                                  Apply this match:
+                                  {correction?.scopeChosen ? 'Confirm or clear this match:' : 'Apply this match:'}
                                 </p>
-                                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
-                                  <button
-                                    onClick={() => {
-                                      setReminderCorrections((prev) => ({
-                                        ...prev,
-                                        [feedbackKey]: { ...prev[feedbackKey], patientId: undefined, scopeChosen: true },
-                                      }));
-                                    }}
-                                    style={{
-                                      padding: '8px 16px',
-                                      backgroundColor: correction?.scopeChosen && correction?.patientId === undefined ? '#2196f3' : '#e0e0e0',
-                                      color: correction?.scopeChosen && correction?.patientId === undefined ? 'white' : '#333',
-                                      border: 'none',
-                                      borderRadius: '4px',
-                                      cursor: 'pointer',
-                                      fontSize: '14px',
-                                      fontWeight: 500,
-                                    }}
-                                  >
-                                    Match globally
-                                  </button>
-                                  <button
-                                    onClick={() => {
-                                      setReminderCorrections((prev) => ({
-                                        ...prev,
-                                        [feedbackKey]: { ...prev[feedbackKey], patientId: patient.id, scopeChosen: true },
-                                      }));
-                                    }}
-                                    style={{
-                                      padding: '8px 16px',
-                                      backgroundColor: correction?.scopeChosen && correction?.patientId === patient.id ? '#2196f3' : '#e0e0e0',
-                                      color: correction?.scopeChosen && correction?.patientId === patient.id ? 'white' : '#333',
-                                      border: 'none',
-                                      borderRadius: '4px',
-                                      cursor: 'pointer',
-                                      fontSize: '14px',
-                                      fontWeight: 500,
-                                    }}
-                                  >
-                                    Match for this patient only
-                                  </button>
-                                </div>
+                                {!correction?.scopeChosen && (
+                                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                                    <button
+                                      onClick={() => {
+                                        setReminderCorrections((prev) => ({
+                                          ...prev,
+                                          [feedbackKey]: { ...prev[feedbackKey], patientId: undefined, scopeChosen: true },
+                                        }));
+                                      }}
+                                      style={{
+                                        padding: '8px 16px',
+                                        backgroundColor: correction?.scopeChosen && correction?.patientId === undefined ? '#2196f3' : '#e0e0e0',
+                                        color: correction?.scopeChosen && correction?.patientId === undefined ? 'white' : '#333',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        fontSize: '14px',
+                                        fontWeight: 500,
+                                      }}
+                                    >
+                                      Match globally
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setReminderCorrections((prev) => ({
+                                          ...prev,
+                                          [feedbackKey]: { ...prev[feedbackKey], patientId: patient.id, scopeChosen: true },
+                                        }));
+                                      }}
+                                      style={{
+                                        padding: '8px 16px',
+                                        backgroundColor: correction?.scopeChosen && correction?.patientId === patient.id ? '#2196f3' : '#e0e0e0',
+                                        color: correction?.scopeChosen && correction?.patientId === patient.id ? 'white' : '#333',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        fontSize: '14px',
+                                        fontWeight: 500,
+                                      }}
+                                    >
+                                      Match for this patient only
+                                    </button>
+                                  </div>
+                                )}
                                 {correction?.scopeChosen && (
                                   <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                                     <button
