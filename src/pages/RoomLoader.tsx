@@ -779,8 +779,8 @@ export default function RoomLoaderPage() {
   }
 
   function handleQuantityChange(reminderId: number, quantity: number) {
-    // Ensure quantity is at least 1
-    const validQuantity = Math.max(1, Math.floor(quantity) || 1);
+    const parsed = Number(quantity);
+    const validQuantity = Number.isNaN(parsed) || parsed < 0.01 ? 1 : Math.round(parsed * 100) / 100;
     setReminderQuantities((prev) => ({
       ...prev,
       [reminderId]: validQuantity,
@@ -788,8 +788,8 @@ export default function RoomLoaderPage() {
   }
 
   function handleAddedItemQuantityChange(petId: number, itemIdx: number, quantity: number) {
-    // Ensure quantity is at least 1
-    const validQuantity = Math.max(1, Math.floor(quantity) || 1);
+    const parsed = Number(quantity);
+    const validQuantity = Number.isNaN(parsed) || parsed < 0.01 ? 1 : Math.round(parsed * 100) / 100;
     const key = `${petId}-${itemIdx}`;
     setAddedItemQuantities((prev) => ({
       ...prev,
@@ -1415,7 +1415,16 @@ export default function RoomLoaderPage() {
           }
         }
 
-        return {
+        // Use adjusted price when membership/discount applies (only when no correction; corrections use different item)
+        const effectivePrice = !correction?.selectedItem
+          ? ((reminderWithPrice.wellnessPlanPricing?.adjustedPrice ?? reminderWithPrice.discountPricing?.priceAdjustedByDiscount)
+              ?? (finalItem?.price ?? reminderWithPrice.price))
+          : (finalItem?.price ?? reminderWithPrice.price);
+        if (finalItem && effectivePrice != null) {
+          finalItem = { ...finalItem, price: Number(effectivePrice) };
+        }
+
+        const reminderPayload: any = {
           reminderId: reminderId,
           reminderText: reminderWithPrice.reminder.description,
           reminderType: reminderWithPrice.reminder.reminderType,
@@ -1424,17 +1433,38 @@ export default function RoomLoaderPage() {
           item: finalItem,
           confidence: reminderWithPrice.confidence,
         };
+        // Include discount info so client can surface why price is discounted (only when no correction)
+        if (reminderWithPrice.wellnessPlanPricing && !correction?.selectedItem) {
+          reminderPayload.wellnessPlanPricing = reminderWithPrice.wellnessPlanPricing;
+        }
+        if (reminderWithPrice.discountPricing && !correction?.selectedItem) {
+          reminderPayload.discountPricing = reminderWithPrice.discountPricing;
+        }
+        return reminderPayload;
       });
 
-      // Get added items
-      const addedItemsList = (addedItems[patient.id] || []).map((item) => ({
-        id: item.inventoryItem?.id || item.lab?.id || (item as any).procedure?.id,
-        type: item.itemType,
-        name: item.name,
-        code: item.code,
-        price: item.price != null ? Number(item.price) : null,
-        quantity: 1, // Added items default to quantity 1
-      }));
+      // Get added items (include wellnessPlanPricing/discountPricing so client can surface why price is discounted)
+      const addedItemsList = (addedItems[patient.id] || []).map((item) => {
+        const basePrice = item.price != null ? Number(item.price) : null;
+        const adjustedPrice = (item as any).wellnessPlanPricing?.adjustedPrice
+          ?? (item as any).discountPricing?.priceAdjustedByDiscount;
+        const effectivePrice = adjustedPrice != null ? Number(adjustedPrice) : basePrice;
+        const payload: any = {
+          id: item.inventoryItem?.id || item.lab?.id || (item as any).procedure?.id,
+          type: item.itemType,
+          name: item.name,
+          code: item.code,
+          price: effectivePrice,
+          quantity: 1, // Added items default to quantity 1
+        };
+        if ((item as any).wellnessPlanPricing) {
+          payload.wellnessPlanPricing = (item as any).wellnessPlanPricing;
+        }
+        if ((item as any).discountPricing) {
+          payload.discountPricing = (item as any).discountPricing;
+        }
+        return payload;
+      });
 
       // Get answers
       const answers = petAnswers[patient.id] || { mobility: null, labWork: null };
@@ -1792,6 +1822,11 @@ export default function RoomLoaderPage() {
 
   return (
     <div style={{ padding: '20px' }}>
+      <style>{`
+        .room-loader-qty-input::-webkit-outer-spin-button,
+        .room-loader-qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .room-loader-qty-input { -moz-appearance: textfield; }
+      `}</style>
       <h1>Room Loader</h1>
 
       {/* Filters */}
@@ -1893,11 +1928,10 @@ export default function RoomLoaderPage() {
         >
           <colgroup>
             <col style={{ width: '10%' }} />
-            <col style={{ width: '10%' }} />
             <col style={{ width: '12%' }} />
             <col style={{ width: '14%' }} />
             <col style={{ width: '18%' }} />
-            <col style={{ width: '20%' }} />
+            <col style={{ width: '22%' }} />
             <col style={{ width: '10%' }} />
             <col style={{ width: '6%' }} />
           </colgroup>
@@ -1905,9 +1939,6 @@ export default function RoomLoaderPage() {
             <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
               <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #ddd', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1, backgroundColor: '#f5f5f5' }}>
                 Appt Date
-              </th>
-              <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #ddd', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1, backgroundColor: '#f5f5f5' }}>
-                Booked Date
               </th>
               <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #ddd', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1, backgroundColor: '#f5f5f5' }}>
                 Appt Type
@@ -1932,13 +1963,13 @@ export default function RoomLoaderPage() {
           <tbody>
               {loading && filteredTableRows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ padding: '20px', textAlign: 'center' }}>
+                  <td colSpan={7} style={{ padding: '20px', textAlign: 'center' }}>
                     Loading...
                   </td>
                 </tr>
               ) : filteredTableRows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+                  <td colSpan={7} style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
                     {tableSearch.trim() ? 'No room loaders match your search' : 'No room loaders found'}
                   </td>
                 </tr>
@@ -1965,9 +1996,6 @@ export default function RoomLoaderPage() {
                   >
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>
                       {row.apptDate ? formatDate(row.apptDate) : 'N/A'}
-                    </td>
-                    <td style={{ padding: '12px', border: '1px solid #ddd' }}>
-                      {row.bookedDate ? formatDate(row.bookedDate) : 'N/A'}
                     </td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.appointmentType}</td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.doctor}</td>
@@ -2465,7 +2493,17 @@ export default function RoomLoaderPage() {
                                     <strong>Due Date:</strong> {formatDate(reminderWithPrice.reminder.dueDate)}
                                   </div>
                                 )}
-                                {reminderWithPrice.matchedItem?.name && (
+                                {feedbackStatus === 'incorrect' && correction?.selectedItem ? (
+                                  <div style={{ fontSize: '14px', color: '#666', marginBottom: '5px' }}>
+                                    <strong>Corrected to:</strong> {correction.selectedItem.name}
+                                    {correction.selectedItem.code && ` (${correction.selectedItem.code})`}
+                                    {reminderWithPrice.itemType === 'inventory' && displayPatient.weight && (
+                                      <span style={{ color: '#dc3545', marginLeft: '10px', fontWeight: 600 }}>
+                                        Weight: {displayPatient.weight} lbs
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : reminderWithPrice.matchedItem?.name ? (
                                   <div style={{ fontSize: '14px', color: '#666', marginBottom: '5px' }}>
                                     <strong>Matched Item:</strong> {reminderWithPrice.matchedItem.name}
                                     {reminderWithPrice.matchedItem.code && ` (${reminderWithPrice.matchedItem.code})`}
@@ -2475,7 +2513,7 @@ export default function RoomLoaderPage() {
                                       </span>
                                     )}
                                   </div>
-                                )}
+                                ) : null}
                                 {reminderWithPrice.wellnessPlanPricing && reminderWithPrice.wellnessPlanPricing.hasCoverage && (
                                   <div style={{ 
                                     fontSize: '13px', 
@@ -2515,7 +2553,7 @@ export default function RoomLoaderPage() {
                                           </>
                                         ) : (
                                           <>
-                                            <strong>Wellness Plan Coverage:</strong>
+                                            <strong>Membership Coverage:</strong>
                                             {reminderWithPrice.wellnessPlanPricing.remainingQuantity === 0 || !reminderWithPrice.wellnessPlanPricing.isWithinLimit ? (
                                               <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#d32f2f', fontWeight: 500 }}>
                                                 Already used ({reminderWithPrice.wellnessPlanPricing.usedQuantity} of {reminderWithPrice.wellnessPlanPricing.includedQuantity} used)
@@ -2614,15 +2652,9 @@ export default function RoomLoaderPage() {
                                     )}
                                   </div>
                                 )}
-                                {feedbackStatus === 'incorrect' && correction?.selectedItem && (
-                                  <div style={{ marginTop: '10px', padding: '8px', backgroundColor: '#ffcdd2', borderRadius: '4px', fontSize: '14px', color: '#c62828' }}>
-                                    <strong>Corrected to:</strong> {correction.selectedItem.name}
-                                    {correction.selectedItem.code && ` (${correction.selectedItem.code})`}
-                                  </div>
-                                )}
                               </div>
                               <div style={{ marginLeft: '15px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px', minWidth: '150px', position: 'relative' }}>
-                                {/* When confirmed: only Undo. Otherwise: Remove, Qty, Price */}
+                                {/* When confirmed: Undo only. Otherwise: Remove, Qty. Price is shown below for all states. */}
                                 {isConfirmed ? (
                                   <button
                                     onClick={() => {
@@ -2686,10 +2718,12 @@ export default function RoomLoaderPage() {
                                   <label style={{ fontSize: '14px', color: '#666', fontWeight: 500 }}>Qty:</label>
                                   <input
                                     type="number"
-                                    min="1"
-                                    value={reminderQuantities[reminderId] || 1}
+                                    min="0.01"
+                                    step="0.01"
+                                    className="room-loader-qty-input"
+                                    value={reminderQuantities[reminderId] ?? 1}
                                     onChange={(e) => {
-                                      const qty = parseInt(e.target.value, 10);
+                                      const qty = parseFloat(e.target.value);
                                       handleQuantityChange(reminderId, qty);
                                     }}
                                     style={{
@@ -2702,7 +2736,9 @@ export default function RoomLoaderPage() {
                                     }}
                                   />
                                 </div>
-                                {/* Price Display */}
+                                  </>
+                                )}
+                                {/* Price Display — always show for all reminder states (matched, confirmed, corrected) */}
                                 {(() => {
                                   // Backend already calculates final price with all discounts applied
                                   // Use the price field directly, or corrected item price if available
@@ -2786,8 +2822,6 @@ export default function RoomLoaderPage() {
                                     </>
                                   );
                                 })()}
-                                  </>
-                                )}
                               </div>
                             </div>
 
@@ -3365,7 +3399,7 @@ export default function RoomLoaderPage() {
                                         </>
                                       ) : (
                                         <>
-                                          <strong>Wellness Plan Coverage:</strong>
+                                          <strong>Membership Coverage:</strong>
                                           {item.wellnessPlanPricing.remainingQuantity === 0 || !item.wellnessPlanPricing.isWithinLimit ? (
                                             <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#d32f2f', fontWeight: 500 }}>
                                               Already used ({item.wellnessPlanPricing.usedQuantity} of {item.wellnessPlanPricing.includedQuantity} used)
@@ -3441,10 +3475,12 @@ export default function RoomLoaderPage() {
                                 <label style={{ fontSize: '14px', color: '#666', fontWeight: 500 }}>Qty:</label>
                                 <input
                                   type="number"
-                                  min="1"
-                                  value={addedItemQuantities[`${patient.id}-${itemIdx}`] || 1}
+                                  min="0.01"
+                                  step="0.01"
+                                  className="room-loader-qty-input"
+                                  value={addedItemQuantities[`${patient.id}-${itemIdx}`] ?? 1}
                                   onChange={(e) => {
-                                    const qty = parseInt(e.target.value, 10);
+                                    const qty = parseFloat(e.target.value);
                                     handleAddedItemQuantityChange(patient.id, itemIdx, qty);
                                   }}
                                   style={{

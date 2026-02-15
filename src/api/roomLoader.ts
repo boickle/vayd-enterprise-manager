@@ -563,6 +563,29 @@ export async function checkItemPricing(request: CheckItemPricingRequest): Promis
   return data;
 }
 
+/** Public (client) form: get adjusted price for an item with client/membership discounts applied. Same shape as employee check-item-pricing where possible (clientId, practiceId) so backend can apply client discounts. */
+export type CheckItemPricingPublicRequest = {
+  token: string;
+  patientId: number;
+  /** Practice ID (same as employee request). */
+  practiceId?: number;
+  /** Client ID (same as employee request) so backend can apply client-specific discounts. */
+  clientId?: number;
+  itemType: 'lab' | 'procedure' | 'inventory' | string;
+  item: {
+    lab?: { id: number; name: string; price: string; code?: string };
+    procedure?: { id: number; name: string; price: string; code?: string };
+    inventoryItem?: { id: number; name: string; price: string; code?: string };
+  };
+};
+
+export async function checkItemPricingPublic(
+  request: CheckItemPricingPublicRequest
+): Promise<CheckItemPricingResponse> {
+  const { data } = await http.post<CheckItemPricingResponse>('/public/room-loader/check-item-pricing', request);
+  return data;
+}
+
 // Save form data for later
 export type SaveFormRequest = {
   roomLoaderId: number;
