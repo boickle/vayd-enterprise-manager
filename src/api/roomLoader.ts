@@ -440,6 +440,17 @@ export async function searchItems(params: ItemSearchParams): Promise<SearchableI
   return data;
 }
 
+/** Public item search (no auth required). Used by the public room loader form. */
+export async function searchItemsPublic(params: ItemSearchParams): Promise<SearchableItem[]> {
+  const queryParams = new URLSearchParams();
+  queryParams.append('q', params.q);
+  queryParams.append('practiceId', String(params.practiceId));
+  queryParams.append('limit', String(params.limit ?? 50));
+
+  const { data } = await http.get<SearchableItem[]>(`/public/room-loader/items/search?${queryParams.toString()}`);
+  return data;
+}
+
 // Submit reminder match feedback
 export type ReminderMappingFeedbackRequest = {
   reminderText: string;

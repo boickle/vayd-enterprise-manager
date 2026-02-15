@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { apiBaseUrl, http } from '../api/http';
 import { getEcwidProducts, type EcwidProduct, type EcwidChoice } from '../api/ecwid';
-import { searchItems, type SearchableItem, checkItemPricingPublic, type CheckItemPricingResponse, type CheckItemPricingPublicRequest } from '../api/roomLoader';
+import { searchItemsPublic, type SearchableItem, checkItemPricingPublic, type CheckItemPricingResponse, type CheckItemPricingPublicRequest } from '../api/roomLoader';
 import { getPatientTreatmentHistory, type TreatmentWithItems } from '../api/treatments';
 import { DateTime } from 'luxon';
 import jsPDF from 'jspdf';
@@ -65,7 +65,7 @@ const VACCINE_SEARCH_QUERIES = {
   bordetella: 'Bordetella Oral Vaccine - Annual',
   crLyme: 'crLyme Vaccine- Annual',
   lyme: 'crLyme Vaccine- Initial',
-  felv: 'FeLV (Leukemia) Vaccine - 1 year',
+  felv: 'FELV (Leukemia) Vaccine - Initial',
 } as const;
 
 type VaccineOptKey = keyof typeof VACCINE_SEARCH_QUERIES;
@@ -1008,7 +1008,7 @@ export default function PublicRoomLoaderForm() {
       setVaccineSearchLoading((prev) => ({ ...prev, [loadKey]: true }));
       try {
         const q = VACCINE_SEARCH_QUERIES[vaccineKey];
-        const results = await searchItems({ q, practiceId, limit: 50 });
+        const results = await searchItemsPublic({ q, practiceId, limit: 50 });
         const first = results[0];
         setOptedInVaccinesByPatientId((prev) => {
           const next = { ...prev };
@@ -2384,7 +2384,7 @@ export default function PublicRoomLoaderForm() {
       return;
     }
     const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
-    searchItems({ q: 'Early Detection Panel - Feline', practiceId: pid, limit: 10 })
+    searchItemsPublic({ q: 'Early Detection Panel - Feline', practiceId: pid, limit: 10 })
       .then((results) => {
         const first = results[0];
         setEarlyDetectionFelineItem(first || null);
@@ -2399,7 +2399,7 @@ export default function PublicRoomLoaderForm() {
       return;
     }
     const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
-    searchItems({ q: 'Early Detection Panel - Canine (chem 10, cbc, lytes, fecal Dx, 4dx)', practiceId: pid, limit: 10 })
+    searchItemsPublic({ q: 'Early Detection Panel - Canine (chem 10, cbc, lytes, fecal Dx, 4dx)', practiceId: pid, limit: 10 })
       .then((results) => {
         const first = results[0];
         setEarlyDetectionCanineItem(first || null);
@@ -2424,9 +2424,9 @@ export default function PublicRoomLoaderForm() {
     }
     const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
     // Codes: Standard = "Senior Screen (chem 25, CBC, T4, UA)" (same as dog). Feline Extended = "Senior Screen Feline (Fecal Dx, felv/fiv/hw, fPL, chem 25, CBC, T4, UA)".
-    const standardPromise = searchItems({ q: 'Senior Screen (chem 25, CBC, T4, UA)', practiceId: pid, limit: 10 });
-    const canineExtendedPromise = hasSeniorCanine ? searchItems({ q: 'Senior Screen Canine (4Dx, Fecal O&P, chem 25, CBC, T4, UA)', practiceId: pid, limit: 10 }) : Promise.resolve([]);
-    const felineExtendedPromise = needFelineExtended ? searchItems({ q: 'Senior Screen Feline (Fecal Dx, felv/fiv/hw, fPL, chem 25, CBC, T4, UA)', practiceId: pid, limit: 10 }) : Promise.resolve([]);
+    const standardPromise = searchItemsPublic({ q: 'Senior Screen (chem 25, CBC, T4, UA)', practiceId: pid, limit: 10 });
+    const canineExtendedPromise = hasSeniorCanine ? searchItemsPublic({ q: 'Senior Screen Canine (4Dx, Fecal O&P, chem 25, CBC, T4, UA)', practiceId: pid, limit: 10 }) : Promise.resolve([]);
+    const felineExtendedPromise = needFelineExtended ? searchItemsPublic({ q: 'Senior Screen Feline (Fecal Dx, felv/fiv/hw, fPL, chem 25, CBC, T4, UA)', practiceId: pid, limit: 10 }) : Promise.resolve([]);
     Promise.all([standardPromise, canineExtendedPromise, felineExtendedPromise])
       .then(([standardRes, canineExtendedRes, felineExtendedRes]) => {
         const first = (arr: any) => (Array.isArray(arr) ? arr[0] : arr?.data?.[0] ?? arr?.results?.[0] ?? arr?.items?.[0]);
@@ -2450,7 +2450,7 @@ export default function PublicRoomLoaderForm() {
       return;
     }
     const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
-    searchItems({ q: 'Senior Screen Feline', practiceId: pid, limit: 10 })
+    searchItemsPublic({ q: 'Senior Screen Feline', practiceId: pid, limit: 10 })
       .then((results) => {
         setSeniorFelineItem(results[0] || null);
       })
@@ -2466,7 +2466,7 @@ export default function PublicRoomLoaderForm() {
       return;
     }
     const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
-    searchItems({ q: 'comprehensive fecal', practiceId: pid, limit: 10 })
+    searchItemsPublic({ q: 'comprehensive fecal', practiceId: pid, limit: 10 })
       .then((results) => {
         const first = Array.isArray(results) && results[0] ? results[0] : (results as any)?.data?.[0] ?? (results as any)?.results?.[0] ?? (results as any)?.items?.[0];
         setComprehensiveFecalItem(first || null);
@@ -2481,7 +2481,7 @@ export default function PublicRoomLoaderForm() {
       return;
     }
     const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
-    searchItems({ q: 'Sharps Disposal', practiceId: pid, limit: 10 })
+    searchItemsPublic({ q: 'Sharps Disposal', practiceId: pid, limit: 10 })
       .then((results) => {
         const first = Array.isArray(results) && results[0] ? results[0] : (results as any)?.data?.[0] ?? (results as any)?.results?.[0] ?? (results as any)?.items?.[0];
         setSharpsDisposalItem(first || null);
@@ -2497,7 +2497,7 @@ export default function PublicRoomLoaderForm() {
       queries.push(c.searchQuery);
       if ('searchQueryDog' in c && c.searchQueryDog) queries.push(c.searchQueryDog);
     });
-    Promise.all(queries.map((q) => searchItems({ q, practiceId: pid, limit: 5 })))
+    Promise.all(queries.map((q) => searchItemsPublic({ q, practiceId: pid, limit: 5 })))
       .then((results) => {
         const next: Record<string, SearchableItem | null> = {};
         queries.forEach((q, i) => {
