@@ -2671,7 +2671,7 @@ export default function PublicRoomLoaderForm() {
   };
 
   /** Human-readable note for why a price was discounted (membership plan and/or client discount), or why full price applies. */
-  const getDiscountNote = (pricing: CheckItemPricingResponse | null): string | null => {
+  const getDiscountNote = (pricing: CheckItemPricingResponse | { wellnessPlanPricing?: any; discountPricing?: any; } | null): string | null => {
     if (!pricing) return null;
     const parts: string[] = [];
     const wp = pricing.wellnessPlanPricing;
