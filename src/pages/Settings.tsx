@@ -403,21 +403,34 @@ export default function Settings() {
     setOverrideFormLoading(true);
     setOverrideForm(null);
     try {
-      const existing = await fetchScheduleOverrideByDate(overrideCalendarEmployeeId, dateStr);
+      const [existing, employee] = await Promise.all([
+        fetchScheduleOverrideByDate(overrideCalendarEmployeeId, dateStr),
+        fetchEmployee(overrideCalendarEmployeeId),
+      ]);
+      const dayOfWeek = dayjs(dateStr).day();
+      const defaultSchedule = employee.weeklySchedules?.find((s) => s.dayOfWeek === dayOfWeek);
+
+      const defaultLatLon = {
+        startDepotLat: defaultSchedule?.startDepotLat ?? undefined,
+        startDepotLon: defaultSchedule?.startDepotLon ?? undefined,
+        endDepotLat: defaultSchedule?.endDepotLat ?? undefined,
+        endDepotLon: defaultSchedule?.endDepotLon ?? undefined,
+      };
+
       if (existing) {
-        setOverrideForm({ ...existing });
+        setOverrideForm({
+          ...existing,
+          startDepotLat: existing.startDepotLat ?? defaultLatLon.startDepotLat,
+          startDepotLon: existing.startDepotLon ?? defaultLatLon.startDepotLon,
+          endDepotLat: existing.endDepotLat ?? defaultLatLon.endDepotLat,
+          endDepotLon: existing.endDepotLon ?? defaultLatLon.endDepotLon,
+        });
       } else {
-        const employee = await fetchEmployee(overrideCalendarEmployeeId);
-        const dayOfWeek = dayjs(dateStr).day();
-        const defaultSchedule = employee.weeklySchedules?.find((s) => s.dayOfWeek === dayOfWeek);
         setOverrideForm({
           date: dateStr,
           workStartLocal: defaultSchedule?.workStartLocal ?? '',
           workEndLocal: defaultSchedule?.workEndLocal ?? '',
-          startDepotLat: defaultSchedule?.startDepotLat ?? undefined,
-          startDepotLon: defaultSchedule?.startDepotLon ?? undefined,
-          endDepotLat: defaultSchedule?.endDepotLat ?? undefined,
-          endDepotLon: defaultSchedule?.endDepotLon ?? undefined,
+          ...defaultLatLon,
         });
       }
     } catch (err: any) {
@@ -1253,7 +1266,6 @@ export default function Settings() {
                                       className="settings-input"
                                       value={startDepotLat}
                                       onChange={(e) => updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'startDepotLat', e.target.value ? parseFloat(e.target.value) : undefined)}
-                                      placeholder="43.90065"
                                       step="any"
                                     />
                                   </div>
@@ -1264,7 +1276,6 @@ export default function Settings() {
                                       className="settings-input"
                                       value={startDepotLon}
                                       onChange={(e) => updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'startDepotLon', e.target.value ? parseFloat(e.target.value) : undefined)}
-                                      placeholder="-70.058646"
                                       step="any"
                                     />
                                   </div>
@@ -1281,7 +1292,6 @@ export default function Settings() {
                                       className="settings-input"
                                       value={endDepotLat}
                                       onChange={(e) => updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'endDepotLat', e.target.value ? parseFloat(e.target.value) : undefined)}
-                                      placeholder="43.90065"
                                       step="any"
                                     />
                                   </div>
@@ -1292,7 +1302,6 @@ export default function Settings() {
                                       className="settings-input"
                                       value={endDepotLon}
                                       onChange={(e) => updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'endDepotLon', e.target.value ? parseFloat(e.target.value) : undefined)}
-                                      placeholder="-70.058646"
                                       step="any"
                                     />
                                   </div>
@@ -1386,7 +1395,11 @@ export default function Settings() {
                   </select>
                 </div>
 
-                {overrideCalendarEmployeeId && (
+                {!overrideCalendarEmployeeId ? (
+                  <p className="settings-muted" style={{ marginTop: 16 }}>
+                    Please select a provider above to view and set schedule overrides by day.
+                  </p>
+                ) : (
                   <>
                     <div className="settings-override-calendar-nav">
                       <button
@@ -1490,7 +1503,6 @@ export default function Settings() {
                                 value={overrideForm.startDepotLat ?? ''}
                                 onChange={(e) => setOverrideForm((f) => (f ? { ...f, startDepotLat: e.target.value ? parseFloat(e.target.value) : undefined } : null))}
                                 step="any"
-                                placeholder="43.9"
                               />
                             </div>
                             <div className="settings-schedule-field">
@@ -1501,7 +1513,6 @@ export default function Settings() {
                                 value={overrideForm.startDepotLon ?? ''}
                                 onChange={(e) => setOverrideForm((f) => (f ? { ...f, startDepotLon: e.target.value ? parseFloat(e.target.value) : undefined } : null))}
                                 step="any"
-                                placeholder="-70.06"
                               />
                             </div>
                           </div>
@@ -1517,7 +1528,6 @@ export default function Settings() {
                                 value={overrideForm.endDepotLat ?? ''}
                                 onChange={(e) => setOverrideForm((f) => (f ? { ...f, endDepotLat: e.target.value ? parseFloat(e.target.value) : undefined } : null))}
                                 step="any"
-                                placeholder="43.9"
                               />
                             </div>
                             <div className="settings-schedule-field">
@@ -1528,7 +1538,6 @@ export default function Settings() {
                                 value={overrideForm.endDepotLon ?? ''}
                                 onChange={(e) => setOverrideForm((f) => (f ? { ...f, endDepotLon: e.target.value ? parseFloat(e.target.value) : undefined } : null))}
                                 step="any"
-                                placeholder="-70.06"
                               />
                             </div>
                           </div>
