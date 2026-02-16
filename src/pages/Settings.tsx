@@ -11,11 +11,18 @@ import {
   updateAppointmentType,
   updateWeeklySchedule,
   uploadEmployeeImage,
+  fetchScheduleOverrides,
+  fetchScheduleOverrideByDate,
+  createScheduleOverride,
+  updateScheduleOverride,
+  deleteScheduleOverride,
   type AppointmentType,
   type Employee,
   type EmployeeWeeklySchedule,
+  type ScheduleOverride,
   type Zone,
 } from '../api/appointmentSettings';
+import dayjs from 'dayjs';
 import { apiBaseUrl } from '../api/http';
 import {
   searchItems,
@@ -101,6 +108,16 @@ export default function Settings() {
     isActive: boolean;
   } | null>(null);
   const [priceManuallyEdited, setPriceManuallyEdited] = useState(false);
+
+  // Schedule overrides calendar (per-date overrides for routing)
+  const [showOverrideCalendar, setShowOverrideCalendar] = useState(false);
+  const [overrideCalendarEmployeeId, setOverrideCalendarEmployeeId] = useState<number | null>(null);
+  const [overrideCalendarMonth, setOverrideCalendarMonth] = useState(() => dayjs().startOf('month'));
+  const [overridesInRange, setOverridesInRange] = useState<ScheduleOverride[]>([]);
+  const [selectedOverrideDate, setSelectedOverrideDate] = useState<string | null>(null);
+  const [overrideForm, setOverrideForm] = useState<ScheduleOverride | Partial<ScheduleOverride> & { date: string } | null>(null);
+  const [overrideFormLoading, setOverrideFormLoading] = useState(false);
+  const [overrideFormSaving, setOverrideFormSaving] = useState(false);
 
   // Employee Images state
   const [uploadingEmployeeId, setUploadingEmployeeId] = useState<number | null>(null);
@@ -392,6 +409,137 @@ export default function Settings() {
       newMap.set(key, { ...current, [field]: value });
       return newMap;
     });
+  };
+
+  // Load overrides for the calendar month when modal is open and employee/month change
+  useEffect(() => {
+    if (!showOverrideCalendar || !overrideCalendarEmployeeId) {
+      setOverridesInRange([]);
+      return;
+    }
+    const start = overrideCalendarMonth.format('YYYY-MM-DD');
+    const end = overrideCalendarMonth.endOf('month').format('YYYY-MM-DD');
+    fetchScheduleOverrides(overrideCalendarEmployeeId, { startDate: start, endDate: end })
+      .then(setOverridesInRange)
+      .catch(() => setOverridesInRange([]));
+  }, [showOverrideCalendar, overrideCalendarEmployeeId, overrideCalendarMonth]);
+
+  const handleOpenOverrideCalendar = () => {
+    setOverrideCalendarEmployeeId(selectedEmployeeForSchedule?.id ?? sortedEmployees.find((e) => e.isProvider)?.id ?? null);
+    setOverrideCalendarMonth(dayjs().startOf('month'));
+    setSelectedOverrideDate(null);
+    setOverrideForm(null);
+    setShowOverrideCalendar(true);
+  };
+
+  const handleOverrideDayClick = async (dateStr: string) => {
+    if (!overrideCalendarEmployeeId) return;
+    setSelectedOverrideDate(dateStr);
+    setOverrideFormLoading(true);
+    setOverrideForm(null);
+    try {
+      const [existing, employee] = await Promise.all([
+        fetchScheduleOverrideByDate(overrideCalendarEmployeeId, dateStr),
+        fetchEmployee(overrideCalendarEmployeeId),
+      ]);
+      const dayOfWeek = dayjs(dateStr).day();
+      const defaultSchedule = employee.weeklySchedules?.find((s) => s.dayOfWeek === dayOfWeek);
+
+      const defaultLatLon = {
+        startDepotLat: defaultSchedule?.startDepotLat ?? undefined,
+        startDepotLon: defaultSchedule?.startDepotLon ?? undefined,
+        endDepotLat: defaultSchedule?.endDepotLat ?? undefined,
+        endDepotLon: defaultSchedule?.endDepotLon ?? undefined,
+      };
+
+      if (existing) {
+        setOverrideForm({
+          ...existing,
+          startDepotLat: existing.startDepotLat ?? defaultLatLon.startDepotLat,
+          startDepotLon: existing.startDepotLon ?? defaultLatLon.startDepotLon,
+          endDepotLat: existing.endDepotLat ?? defaultLatLon.endDepotLat,
+          endDepotLon: existing.endDepotLon ?? defaultLatLon.endDepotLon,
+        });
+      } else {
+        setOverrideForm({
+          date: dateStr,
+          workStartLocal: defaultSchedule?.workStartLocal ?? '',
+          workEndLocal: defaultSchedule?.workEndLocal ?? '',
+          ...defaultLatLon,
+        });
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to load override');
+    } finally {
+      setOverrideFormLoading(false);
+    }
+  };
+
+  const handleOverrideSave = async () => {
+    if (!overrideCalendarEmployeeId || !overrideForm?.date) return;
+    setOverrideFormSaving(true);
+    setError(null);
+    try {
+      const payload = {
+        workStartLocal: overrideForm.workStartLocal || undefined,
+        workEndLocal: overrideForm.workEndLocal || undefined,
+        startDepotLat: overrideForm.startDepotLat ?? undefined,
+        startDepotLon: overrideForm.startDepotLon ?? undefined,
+        endDepotLat: overrideForm.endDepotLat ?? undefined,
+        endDepotLon: overrideForm.endDepotLon ?? undefined,
+      };
+      if ('id' in overrideForm && overrideForm.id) {
+        await updateScheduleOverride(overrideCalendarEmployeeId, overrideForm.id, payload);
+      } else {
+        await createScheduleOverride(overrideCalendarEmployeeId, {
+          date: overrideForm.date,
+          ...payload,
+        });
+      }
+      setSuccess('Schedule override saved');
+      setTimeout(() => setSuccess(null), 3000);
+      const start = overrideCalendarMonth.format('YYYY-MM-DD');
+      const end = overrideCalendarMonth.endOf('month').format('YYYY-MM-DD');
+      const list = await fetchScheduleOverrides(overrideCalendarEmployeeId, { startDate: start, endDate: end });
+      setOverridesInRange(list);
+      const updated = list.find((o) => o.date === overrideForm.date) ?? { ...overrideForm, date: overrideForm.date };
+      setOverrideForm(updated as ScheduleOverride);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to save override');
+    } finally {
+      setOverrideFormSaving(false);
+    }
+  };
+
+  const handleOverrideRemove = async () => {
+    if (!overrideCalendarEmployeeId || !overrideForm || !('id' in overrideForm) || !overrideForm.id) return;
+    setOverrideFormSaving(true);
+    setError(null);
+    try {
+      await deleteScheduleOverride(overrideCalendarEmployeeId, overrideForm.id);
+      setSuccess('Override removed; default schedule will be used for that day');
+      setTimeout(() => setSuccess(null), 3000);
+      const start = overrideCalendarMonth.format('YYYY-MM-DD');
+      const end = overrideCalendarMonth.endOf('month').format('YYYY-MM-DD');
+      const list = await fetchScheduleOverrides(overrideCalendarEmployeeId, { startDate: start, endDate: end });
+      setOverridesInRange(list);
+      const employee = await fetchEmployee(overrideCalendarEmployeeId);
+      const dayOfWeek = dayjs(overrideForm.date).day();
+      const defaultSchedule = employee.weeklySchedules?.find((s) => s.dayOfWeek === dayOfWeek);
+      setOverrideForm({
+        date: overrideForm.date,
+        workStartLocal: defaultSchedule?.workStartLocal ?? '',
+        workEndLocal: defaultSchedule?.workEndLocal ?? '',
+        startDepotLat: defaultSchedule?.startDepotLat ?? undefined,
+        startDepotLon: defaultSchedule?.startDepotLon ?? undefined,
+        endDepotLat: defaultSchedule?.endDepotLat ?? undefined,
+        endDepotLon: defaultSchedule?.endDepotLon ?? undefined,
+      });
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to remove override');
+    } finally {
+      setOverrideFormSaving(false);
+    }
   };
 
   const handleSaveEmployeeSchedule = async () => {
@@ -1246,6 +1394,9 @@ export default function Settings() {
             <p className="settings-section-description">
               Configure work hours, workdays, and depot locations for each day of the week.
             </p>
+            <p className="settings-section-description" style={{ marginTop: '-16px' }}>
+              To set different start/end times or depot locations for specific dates (used by routing), use the calendar below.
+            </p>
 
             <div className="settings-form-group">
               <label className="settings-label">Select Employee</label>
@@ -1365,7 +1516,6 @@ export default function Settings() {
                                       className="settings-input"
                                       value={startDepotLat}
                                       onChange={(e) => updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'startDepotLat', e.target.value ? parseFloat(e.target.value) : undefined)}
-                                      placeholder="43.90065"
                                       step="any"
                                     />
                                   </div>
@@ -1376,7 +1526,6 @@ export default function Settings() {
                                       className="settings-input"
                                       value={startDepotLon}
                                       onChange={(e) => updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'startDepotLon', e.target.value ? parseFloat(e.target.value) : undefined)}
-                                      placeholder="-70.058646"
                                       step="any"
                                     />
                                   </div>
@@ -1393,7 +1542,6 @@ export default function Settings() {
                                       className="settings-input"
                                       value={endDepotLat}
                                       onChange={(e) => updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'endDepotLat', e.target.value ? parseFloat(e.target.value) : undefined)}
-                                      placeholder="43.90065"
                                       step="any"
                                     />
                                   </div>
@@ -1404,7 +1552,6 @@ export default function Settings() {
                                       className="settings-input"
                                       value={endDepotLon}
                                       onChange={(e) => updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'endDepotLon', e.target.value ? parseFloat(e.target.value) : undefined)}
-                                      placeholder="-70.058646"
                                       step="any"
                                     />
                                   </div>
@@ -1433,9 +1580,244 @@ export default function Settings() {
                   >
                     {saving ? 'Saving...' : 'Save Changes'}
                   </button>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    onClick={handleOpenOverrideCalendar}
+                  >
+                    Set schedule overrides (calendar)
+                  </button>
                 </div>
               </div>
             )}
+
+            {!selectedEmployeeForSchedule && (
+              <div className="settings-action-bar" style={{ marginTop: 16 }}>
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={handleOpenOverrideCalendar}
+                >
+                  Set schedule overrides (calendar)
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Schedule overrides calendar modal */}
+        {showOverrideCalendar && (
+          <div
+            className="settings-modal-overlay"
+            onClick={(e) => e.target === e.currentTarget && setShowOverrideCalendar(false)}
+          >
+            <div className="settings-modal settings-modal-wide">
+              <div className="settings-modal-header">
+                <h3>Schedule overrides by day</h3>
+                <button
+                  type="button"
+                  className="settings-modal-close"
+                  onClick={() => setShowOverrideCalendar(false)}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="settings-modal-body">
+                <div className="settings-form-group">
+                  <label className="settings-label">Employee (doctor)</label>
+                  <select
+                    className="settings-select"
+                    value={overrideCalendarEmployeeId ?? ''}
+                    onChange={(e) => {
+                      const id = e.target.value ? Number(e.target.value) : null;
+                      setOverrideCalendarEmployeeId(id);
+                      setSelectedOverrideDate(null);
+                      setOverrideForm(null);
+                    }}
+                  >
+                    <option value="">-- Select employee --</option>
+                    {sortedEmployees.map((emp) => (
+                      <option key={emp.id} value={emp.id}>
+                        {formatEmployeeName(emp)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {!overrideCalendarEmployeeId ? (
+                  <p className="settings-muted" style={{ marginTop: 16 }}>
+                    Please select a provider above to view and set schedule overrides by day.
+                  </p>
+                ) : (
+                  <>
+                    <div className="settings-override-calendar-nav">
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        onClick={() => setOverrideCalendarMonth((m) => m.subtract(1, 'month'))}
+                      >
+                        ← Prev
+                      </button>
+                      <span className="settings-override-calendar-month">
+                        {overrideCalendarMonth.format('MMMM YYYY')}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        onClick={() => setOverrideCalendarMonth((m) => m.add(1, 'month'))}
+                      >
+                        Next →
+                      </button>
+                    </div>
+
+                    <div className="settings-override-calendar-grid">
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
+                        <div key={d} className="settings-override-calendar-weekday">
+                          {d}
+                        </div>
+                      ))}
+                      {(() => {
+                        const start = overrideCalendarMonth.startOf('month');
+                        const end = overrideCalendarMonth.endOf('month');
+                        const startDay = start.day();
+                        const daysInMonth = end.date();
+                        const cells: React.ReactNode[] = [];
+                        for (let i = 0; i < startDay; i++) {
+                          cells.push(<div key={`pad-${i}`} className="settings-override-calendar-day settings-override-calendar-day-pad" />);
+                        }
+                        const overrideDates = new Set(overridesInRange.map((o) => o.date));
+                        for (let d = 1; d <= daysInMonth; d++) {
+                          const date = start.date(d);
+                          const dateStr = date.format('YYYY-MM-DD');
+                          const hasOverride = overrideDates.has(dateStr);
+                          const isSelected = selectedOverrideDate === dateStr;
+                          cells.push(
+                            <button
+                              key={dateStr}
+                              type="button"
+                              className={`settings-override-calendar-day ${hasOverride ? 'settings-override-calendar-day-has-override' : ''} ${isSelected ? 'settings-override-calendar-day-selected' : ''}`}
+                              onClick={() => handleOverrideDayClick(dateStr)}
+                            >
+                              {d}
+                            </button>
+                          );
+                        }
+                        return cells;
+                      })()}
+                    </div>
+
+                    {overrideFormLoading && (
+                      <div className="settings-loading" style={{ padding: 24 }}>
+                        <span className="settings-spinner" />
+                        <span>Loading day…</span>
+                      </div>
+                    )}
+
+                    {!overrideFormLoading && overrideForm && (
+                      <div className="settings-override-form">
+                        <h4 className="settings-schedule-subtitle">
+                          {overrideForm.date} {dayjs(overrideForm.date).format('dddd')}
+                        </h4>
+                        <p className="settings-muted" style={{ marginBottom: 12 }}>
+                          Set start/end time and depot locations for this day. Routing will use these values instead of the weekly schedule.
+                        </p>
+                        <div className="settings-schedule-row">
+                          <div className="settings-schedule-field">
+                            <label className="settings-label">Start time</label>
+                            <input
+                              type="time"
+                              className="settings-input"
+                              value={overrideForm.workStartLocal ?? ''}
+                              onChange={(e) => setOverrideForm((f) => (f ? { ...f, workStartLocal: e.target.value } : null))}
+                            />
+                          </div>
+                          <div className="settings-schedule-field">
+                            <label className="settings-label">End time</label>
+                            <input
+                              type="time"
+                              className="settings-input"
+                              value={overrideForm.workEndLocal ?? ''}
+                              onChange={(e) => setOverrideForm((f) => (f ? { ...f, workEndLocal: e.target.value } : null))}
+                            />
+                          </div>
+                        </div>
+                        <div className="settings-schedule-section">
+                          <h4 className="settings-schedule-subtitle">Start depot</h4>
+                          <div className="settings-schedule-row">
+                            <div className="settings-schedule-field">
+                              <label className="settings-label">Latitude</label>
+                              <input
+                                type="number"
+                                className="settings-input"
+                                value={overrideForm.startDepotLat ?? ''}
+                                onChange={(e) => setOverrideForm((f) => (f ? { ...f, startDepotLat: e.target.value ? parseFloat(e.target.value) : undefined } : null))}
+                                step="any"
+                              />
+                            </div>
+                            <div className="settings-schedule-field">
+                              <label className="settings-label">Longitude</label>
+                              <input
+                                type="number"
+                                className="settings-input"
+                                value={overrideForm.startDepotLon ?? ''}
+                                onChange={(e) => setOverrideForm((f) => (f ? { ...f, startDepotLon: e.target.value ? parseFloat(e.target.value) : undefined } : null))}
+                                step="any"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                        <div className="settings-schedule-section">
+                          <h4 className="settings-schedule-subtitle">End depot</h4>
+                          <div className="settings-schedule-row">
+                            <div className="settings-schedule-field">
+                              <label className="settings-label">Latitude</label>
+                              <input
+                                type="number"
+                                className="settings-input"
+                                value={overrideForm.endDepotLat ?? ''}
+                                onChange={(e) => setOverrideForm((f) => (f ? { ...f, endDepotLat: e.target.value ? parseFloat(e.target.value) : undefined } : null))}
+                                step="any"
+                              />
+                            </div>
+                            <div className="settings-schedule-field">
+                              <label className="settings-label">Longitude</label>
+                              <input
+                                type="number"
+                                className="settings-input"
+                                value={overrideForm.endDepotLon ?? ''}
+                                onChange={(e) => setOverrideForm((f) => (f ? { ...f, endDepotLon: e.target.value ? parseFloat(e.target.value) : undefined } : null))}
+                                step="any"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                        <div className="settings-action-bar" style={{ marginTop: 16 }}>
+                          <button
+                            type="button"
+                            className="btn"
+                            onClick={handleOverrideSave}
+                            disabled={overrideFormSaving}
+                          >
+                            {overrideFormSaving ? 'Saving…' : 'Save override'}
+                          </button>
+                          {'id' in overrideForm && overrideForm.id && (
+                            <button
+                              type="button"
+                              className="btn secondary"
+                              onClick={handleOverrideRemove}
+                              disabled={overrideFormSaving}
+                            >
+                              Remove override (use default)
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
