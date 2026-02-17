@@ -1,7 +1,7 @@
 // src/pages/Admin.tsx
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
-import { ADMIN_TAB_PAGES, type AdminTabPage } from '../admin-tabs';
+import { getAdminTabPages, type AdminTabPage } from '../admin-tabs';
 import './Settings.css';
 
 function matchesRole(required: AdminTabPage['role'], userRoles: string[]): boolean {
@@ -17,7 +17,7 @@ export default function Admin() {
   const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
   const normalizedRoles = roles.map((r) => String(r).toLowerCase().trim()).filter(Boolean);
 
-  const visibleTabs = ADMIN_TAB_PAGES.filter((tab) => matchesRole(tab.role, normalizedRoles));
+  const visibleTabs = getAdminTabPages().filter((tab) => matchesRole(tab.role, normalizedRoles));
 
   return (
     <div className="container">
