@@ -2198,6 +2198,23 @@ export default function RoomLoaderPage() {
                       return null;
                     })()}
                   </h3>
+                  {/* Appointment doctor and address */}
+                  {(firstAppt?.primaryProvider || client?.address1 || client?.city) && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', marginTop: '12px', fontSize: '14px', color: '#555' }}>
+                      {firstAppt?.primaryProvider && (
+                        <div>
+                          <strong style={{ color: '#333' }}>Doctor:</strong>{' '}
+                          {[firstAppt.primaryProvider.title, firstAppt.primaryProvider.firstName, firstAppt.primaryProvider.lastName].filter(Boolean).join(' ').trim() || '—'}
+                        </div>
+                      )}
+                      {(client?.address1 || client?.city) && (
+                        <div>
+                          <strong style={{ color: '#333' }}>Address:</strong>{' '}
+                          {[client.address1, client.address2, [client.city, client.state].filter(Boolean).join(', '), client.zipcode].filter(Boolean).join(', ') || '—'}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Patient Alerts */}
