@@ -6,6 +6,7 @@ import DoctorRevenueAnalyticsPage from './pages/DoctorRevenueAnalytics';
 import AuditAdminPage from './pages/AuditAdmin';
 import SimResults from './pages/SimResults';
 import SurveyResults from './pages/SurveyResults';
+import { isProduction } from './utils/env';
 
 export type AdminTabPage = {
   path: string;
@@ -23,3 +24,9 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
   { path: 'audit', label: 'Super Admin Audit', element: <AuditAdminPage />, role: 'superadmin' },
   { path: 'simulation', label: 'Simulate Routing', element: <SimResults />, role: 'superadmin' },
 ];
+
+/** Admin tabs visible to the current environment. Create User is hidden in non-production. */
+export function getAdminTabPages(): AdminTabPage[] {
+  if (isProduction()) return ADMIN_TAB_PAGES;
+  return ADMIN_TAB_PAGES.filter((tab) => tab.path !== 'users/create');
+}

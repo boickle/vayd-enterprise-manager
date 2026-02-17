@@ -18,7 +18,7 @@ import Home from './pages/Home';
 import AppTabs from './components/AppTabs';
 import UserMenu from './components/UserMenu';
 import { getAccessiblePages } from './app-pages';
-import { ADMIN_TAB_PAGES } from './admin-tabs';
+import { getAdminTabPages } from './admin-tabs';
 import CreateClientUser from './pages/CreateClientUser';
 import ClientPortal from './pages/ClientPortal';
 import MembershipSignup from './pages/MembershipSignup';
@@ -27,6 +27,7 @@ import MembershipUpgrade from './pages/MembershipUpgrade';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
 import { usePageTracking } from './hooks/usePageTracking';
+import { isProduction } from './utils/env';
 
 /**
  * RouteGuard - Checks if user has access to a route and redirects appropriately
@@ -219,8 +220,28 @@ export default function App() {
   // Keep-alive list for employee tabs (home + all page paths)
   const keepAlivePaths = useMemo(() => ['/home', ...pages.map((p: any) => p.path)], [pages]);
 
+  const isProd = isProduction();
+
   return (
     <div>
+      {!isProd && (
+        <div
+          role="banner"
+          aria-live="polite"
+          style={{
+            background: 'linear-gradient(90deg, #b45309 0%, #d97706 100%)',
+            color: '#fff',
+            textAlign: 'center',
+            padding: '6px 12px',
+            fontSize: '13px',
+            fontWeight: 600,
+            letterSpacing: '0.02em',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+          }}
+        >
+          Not production — you are using a development or staging environment
+        </div>
+      )}
       {/* Hide navbar on client portal, login page, create-client page, and reset password */}
       {!(isClient && location.pathname.startsWith('/client-portal')) &&
         location.pathname !== '/login' &&
@@ -284,7 +305,7 @@ export default function App() {
 
           {/* Public auth */}
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/create-client" element={<CreateClientUser />} />
+          <Route path="/create-client" element={isProd ? <CreateClientUser /> : <Navigate to="/login" replace />} />
           <Route path="/request-reset" element={<RequestReset />} />
           <Route path="/auth/request-reset" element={<Navigate to="/request-reset" replace />} />
           <Route path="/requestreset" element={<Navigate to="/request-reset" replace />} />
@@ -348,7 +369,7 @@ export default function App() {
                 p.path === '/admin' ? (
                   <Route key={p.path} path={p.path} element={p.element}>
                     <Route index element={<Navigate to="/admin/survey/results" replace />} />
-                    {ADMIN_TAB_PAGES.map((tab) => (
+                    {getAdminTabPages().map((tab) => (
                       <Route key={tab.path} path={tab.path} element={tab.element} />
                     ))}
                   </Route>
