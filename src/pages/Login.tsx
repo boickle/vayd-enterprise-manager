@@ -3,6 +3,7 @@ import { FormEvent, useState, type CSSProperties } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import { trackEvent } from '../utils/analytics';
+import { isProduction } from '../utils/env';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -430,9 +431,11 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <Link to="/create-client" style={secondaryButtonStyle}>
-          Create User
-        </Link>
+        {isProduction() && (
+          <Link to="/create-client" style={secondaryButtonStyle}>
+            Create User
+          </Link>
+        )}
       </section>
     </div>
   );

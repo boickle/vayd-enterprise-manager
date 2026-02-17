@@ -1,5 +1,6 @@
 // src/app-pages.ts
 import Routing from './pages/Routing';
+import { isProduction } from './utils/env';
 import DoctorDay from './pages/DoctorDay';
 import CreateUser from './pages/CreateUser';
 import PaymentsAnalyticsPage from './pages/PaymentAnalytics';
@@ -151,5 +152,10 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
   const permissionOk = (perm?: string) =>
     !perm || (Array.isArray(abilities) ? abilities.includes(perm) : true);
 
-  return all.filter((p) => permissionOk(p.permission) && matchesRole(p.role, roles));
+  const filtered = all.filter((p) => permissionOk(p.permission) && matchesRole(p.role, roles));
+  // Hide Create User page in non-production
+  if (!isProduction()) {
+    return filtered.filter((p) => p.path !== '/users/create');
+  }
+  return filtered;
 }

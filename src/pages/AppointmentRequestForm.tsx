@@ -18,6 +18,7 @@ import {
   type AppointmentType,
 } from '../api/publicAppointments';
 import { trackEvent } from '../utils/analytics';
+import { isProduction } from '../utils/env';
 
 type FormData = {
   // Intro page
@@ -3017,17 +3018,21 @@ export default function AppointmentRequestForm() {
                   >
                     log in
                   </a>
-                  {' '}or quickly{' '}
-                  <a
-                    href="/create-client"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      navigate('/create-client');
-                    }}
-                    style={{ color: '#d97706', textDecoration: 'underline', fontWeight: 600 }}
-                  >
-                    create an account
-                  </a>
+                  {isProduction() && (
+                    <>
+                      {' '}or quickly{' '}
+                      <a
+                        href="/create-client"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          navigate('/create-client');
+                        }}
+                        style={{ color: '#d97706', textDecoration: 'underline', fontWeight: 600 }}
+                      >
+                        create an account
+                      </a>
+                    </>
+                  )}
                   {' '}using this email to access our Client Portal and request appointments.
                 </div>
               )}
@@ -7481,7 +7486,7 @@ export default function AppointmentRequestForm() {
               >
                 Cancel
               </button>
-              {emailCheckForModal?.hasAccount ? (
+              {emailCheckForModal?.hasAccount || !isProduction() ? (
                 <a
                   href="/login"
                   style={{
