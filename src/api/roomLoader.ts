@@ -681,6 +681,10 @@ export type RoomLoaderSimulateBillPublicResponse = {
   withMembershipTotal: number;
   /** originalTotal - withMembershipTotal (positive = savings). */
   savings: number;
+  /** When pricingOption is monthly: first month's membership charge. Use for "due at visit" (withMembershipVisitSubtotal + monthlyCharge). */
+  monthlyCharge?: number;
+  /** When pricingOption is monthly: optional (e.g. annual equivalent for display). */
+  monthlyMembershipFee?: number;
   /** Per-line adjustments for display (optional). */
   lineItemAdjustments?: Array<{
     name: string;

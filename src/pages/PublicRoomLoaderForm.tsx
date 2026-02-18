@@ -15,6 +15,12 @@ import {
   type RoomLoaderSimulateLineItem,
 } from '../api/roomLoader';
 import { getPatientTreatmentHistory, type TreatmentWithItems } from '../api/treatments';
+import {
+  fetchFormattedSubscriptionPlans,
+  fetchSubscriptionPlanCatalog,
+  type FormattedSubscriptionPlan,
+  type SubscriptionPlanCatalog,
+} from '../api/payments';
 import { DateTime } from 'luxon';
 import jsPDF from 'jspdf';
 
@@ -80,8 +86,101 @@ const VACCINE_SEARCH_QUERIES = {
 
 type VaccineOptKey = keyof typeof VACCINE_SEARCH_QUERIES;
 
+/** Plan card content for room-loader info popover (same as MembershipSignup). Key by base plan id (e.g. foundations, golden). */
+const MEMBERSHIP_PLAN_CARD_DETAILS: Record<string, { name: string; tagLine: string; includes: string[] }> = {
+  foundations: {
+    name: 'Foundations',
+    tagLine: 'Annual Membership Plan',
+    includes: [
+      'One Comprehensive Wellness Exam & Trip Fee',
+      'Annual Vaccinations Recommended for Age and Lifestyle',
+      'Annual "Basic" Lab Panel (CBC, Abbreviated Chemistry)',
+      'Annual Fecal Test',
+      'Heartworm/Tick Test (Dogs)',
+      'FIV / FeLV / Heartworm test (Cats)',
+      'After-hours Online Chat Support via VAYD Client Portal',
+    ],
+  },
+  golden: {
+    name: 'Golden',
+    tagLine: 'Annual Membership Plan',
+    includes: [
+      'Two Comprehensive Wellness Exams & Trip Fees',
+      'Annual Vaccinations Recommended for Age and Lifestyle',
+      'Annual "Advanced" Lab Panel (CBC, Chemistry, Thyroid, Urinalysis)',
+      'Annual Fecal Test',
+      'FeLV/FIV/Heartworm test (Cats)',
+      'Pancreatitis Screening (Cats)',
+      '"4dx" Heartworm/Tick test (Dogs)',
+      'After-hours Online Chat Support via VAYD Client Portal',
+    ],
+  },
+  'comfort-care': {
+    name: 'Comfort Care',
+    tagLine: 'Month-to-Month',
+    includes: [
+      'One Comprehensive Exam & Trip Fee per month',
+      'One office-hours tele-health consult via phone or video',
+      'After-hours Online Chat Support via VAYD Client Portal',
+      '15% off total euthanasia and after-care cost',
+    ],
+  },
+  'plus-addon': {
+    name: 'PLUS Add-on',
+    tagLine: 'Annual Membership Plan',
+    includes: [
+      '50% off all Additional Exams',
+      '10% off Everything We Offer (e.g. Lab Work, Services, Medications)',
+      'One Free Nail Trim Per Year',
+    ],
+  },
+  'starter-addon': {
+    name: 'Puppy / Kitten Add-on',
+    tagLine: 'For Puppies & Kittens',
+    includes: [
+      'Two additional exams (one doctor, one technician) and trip fees to complete the vaccine series.',
+      'All boosters for full protection.',
+      'Microchip scan & placement if needed.',
+    ],
+  },
+};
+
+function getMembershipPlanCardDetails(planId: string): { name: string; tagLine: string; includes: string[] } | null {
+  const baseId = (planId || '').replace(/-cat|-dog$/i, '');
+  return MEMBERSHIP_PLAN_CARD_DETAILS[baseId] ?? MEMBERSHIP_PLAN_CARD_DETAILS[planId] ?? null;
+}
+
 function getItemId(item: SearchableItem): number | undefined {
   return item.inventoryItem?.id ?? (item as any).procedure?.id ?? item.lab?.id;
+}
+
+/** Normalize to backend simulate-bill itemType. Only "lab" | "procedure" | "inventory". */
+function normalizeItemType(t: string | undefined): 'lab' | 'procedure' | 'inventory' {
+  const s = (t ?? '').toLowerCase();
+  if (s === 'lab') return 'lab';
+  if (s === 'inventory') return 'inventory';
+  return 'procedure';
+}
+
+/** Get itemType and itemId for simulate-bill line items (from SearchableItem or display row). Returns null when id is missing. */
+function getItemTypeAndId(
+  item: SearchableItem | { searchableItem?: SearchableItem | null; itemType?: string; type?: string; id?: number; procedure?: { id: number }; lab?: { id: number }; inventoryItem?: { id: number } } | null
+): { itemType: 'lab' | 'procedure' | 'inventory'; itemId: number } | null {
+  if (!item) return null;
+  const si = (item as any).searchableItem;
+  if (si) {
+    const id = getItemId(si);
+    if (id == null) return null;
+    return { itemType: normalizeItemType(si.itemType), itemId: id };
+  }
+  const id =
+    (item as any).id ??
+    (item as any).procedure?.id ??
+    (item as any).lab?.id ??
+    (item as any).inventoryItem?.id;
+  if (id == null) return null;
+  const type = normalizeItemType((item as any).itemType ?? (item as any).type);
+  return { itemType: type, itemId: id };
 }
 
 /** Build a SearchableItem from a row with id, name, price, itemType (for check-item-pricing lookup). */
@@ -783,15 +882,20 @@ export default function PublicRoomLoaderForm() {
   /** When submitStatus === 'completed', we show PDF view; this is the blob URL for the generated PDF. */
   /** Inline validation errors keyed by form field (e.g. pet0_outdoorAccess). Shown below the field instead of alert. */
   const [fieldValidationErrors, setFieldValidationErrors] = useState<Record<string, string>>({});
-  /** Membership comparison on summary: selected plan + option for "see how bill would change". */
+  /** Membership comparison on summary: selected plan (we run simulate for both monthly and annual). */
   const [selectedMembershipSimulate, setSelectedMembershipSimulate] = useState<{
     planId: string;
     planName: string;
-    pricingOption: 'monthly' | 'annual';
     patientIds: number[];
   } | null>(null);
-  const [membershipSimulateResult, setMembershipSimulateResult] = useState<RoomLoaderSimulateBillPublicResponse | null>(null);
+  const [membershipSimulateResultMonthly, setMembershipSimulateResultMonthly] = useState<RoomLoaderSimulateBillPublicResponse | null>(null);
+  const [membershipSimulateResultAnnual, setMembershipSimulateResultAnnual] = useState<RoomLoaderSimulateBillPublicResponse | null>(null);
   const [membershipSimulateLoading, setMembershipSimulateLoading] = useState(false);
+  /** Which plan's info (membership card) popover is open; key is `${patientId}-${planId}`. */
+  const [membershipInfoPlanKey, setMembershipInfoPlanKey] = useState<string | null>(null);
+  /** Formatted subscription plans (for membership comparison plan names); same source as Client Portal signup. */
+  const [formattedSubscriptionPlans, setFormattedSubscriptionPlans] = useState<FormattedSubscriptionPlan[]>([]);
+  const [subscriptionPlanCatalog, setSubscriptionPlanCatalog] = useState<SubscriptionPlanCatalog | null>(null);
 
   const COMMON_ITEMS_CONFIG = [
     { searchQuery: 'Pedicure - Cat', searchQueryDog: 'Pedicure - Dog', displayName: 'Pedicure', dogOnly: false },
@@ -936,6 +1040,59 @@ export default function PublicRoomLoaderForm() {
 
     fetchRoomLoaderData();
   }, [token]);
+
+  // Fetch formatted subscription plans and catalog when we have membership offers (for plan names matching Client Portal signup)
+  useEffect(() => {
+    const plans = data?.availablePlansForPets;
+    if (!Array.isArray(plans) || plans.length === 0) return;
+    let alive = true;
+    Promise.all([fetchFormattedSubscriptionPlans(), fetchSubscriptionPlanCatalog()])
+      .then(([formatted, catalog]) => {
+        if (!alive) return;
+        setFormattedSubscriptionPlans(Array.isArray(formatted) ? formatted : []);
+        setSubscriptionPlanCatalog(catalog && typeof catalog === 'object' ? catalog : null);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setFormattedSubscriptionPlans([]);
+        setSubscriptionPlanCatalog(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [data?.availablePlansForPets]);
+
+  const getFirstPlanIdFromCatalogNode = (node: any): string | null => {
+    if (!node || typeof node !== 'object') return null;
+    if (node.planId && typeof node.planId === 'string') return node.planId;
+    for (const key of Object.keys(node)) {
+      const id = getFirstPlanIdFromCatalogNode(node[key]);
+      if (id) return id;
+    }
+    return null;
+  };
+
+  // Resolve plan display name from formatted plans / catalog (same logic as MembershipSignup)
+  const membershipPlanDisplayName = useMemo(() => {
+    const map: Record<string, string> = {};
+    const formatted = formattedSubscriptionPlans;
+    const catalog = subscriptionPlanCatalog;
+    if (!formatted.length) return map;
+    const byPlanId = (id: string) => formatted.find((p) => p.planId === id)?.planName;
+    if (catalog && typeof catalog === 'object') {
+      for (const slug of Object.keys(catalog)) {
+        const planId = getFirstPlanIdFromCatalogNode(catalog[slug]);
+        if (planId) {
+          const name = byPlanId(planId);
+          if (name) map[slug] = name;
+        }
+      }
+    }
+    formatted.forEach((p) => {
+      if (p.planId && p.planName) map[p.planId] = p.planName;
+    });
+    return map;
+  }, [formattedSubscriptionPlans, subscriptionPlanCatalog]);
 
   // Fetch treatment history per patient for crLyme booster logic (Veterinary Care Plan page)
   useEffect(() => {
@@ -1248,8 +1405,17 @@ export default function PublicRoomLoaderForm() {
       }
     });
 
-    // Build line items with { name, quantity, price } for backend to generate full summary
-    type LineItem = { name: string; quantity: number; price: number; patientId?: number; patientName?: string; category?: string };
+    // Build line items with { name, quantity, price, itemType?, itemId? } for backend summary and simulate-bill
+    type LineItem = {
+      name: string;
+      quantity: number;
+      price: number;
+      patientId?: number;
+      patientName?: string;
+      category?: string;
+      itemType?: 'lab' | 'procedure' | 'inventory';
+      itemId?: number;
+    };
     const summaryLineItems: LineItem[] = [];
 
     remindersByPet.forEach((entry, petIdx) => {
@@ -1260,6 +1426,7 @@ export default function PublicRoomLoaderForm() {
         if (!entry.checked[idx]) return;
         const unitPrice = item.searchableItem != null ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) ?? 0);
         const qty = Number(item.quantity) || 1;
+        const typeAndId = getItemTypeAndId(item);
         summaryLineItems.push({
           name: item.name,
           quantity: qty,
@@ -1267,11 +1434,13 @@ export default function PublicRoomLoaderForm() {
           patientId,
           patientName,
           category: 'reminder',
+          ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
         });
       });
       entry.tripFeeItems.forEach((item: any) => {
         const unitPrice = item.searchableItem != null ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) ?? 0);
         const qty = Number(item.quantity) || 1;
+        const typeAndId = getItemTypeAndId(item);
         summaryLineItems.push({
           name: item.name,
           quantity: qty,
@@ -1279,6 +1448,7 @@ export default function PublicRoomLoaderForm() {
           patientId,
           patientName,
           category: 'tripFee',
+          ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
         });
       });
       const optedIn = optedInVaccinesByPatientId[patientId];
@@ -1286,6 +1456,7 @@ export default function PublicRoomLoaderForm() {
         (Object.values(optedIn).filter(Boolean) as SearchableItem[]).forEach((item) => {
           const p = getClientAdjustedPrice(patientId, item) ?? getSearchItemPrice(item);
           if (p != null) {
+            const typeAndId = getItemTypeAndId(item);
             summaryLineItems.push({
               name: item.name ?? 'Vaccine',
               quantity: 1,
@@ -1293,6 +1464,7 @@ export default function PublicRoomLoaderForm() {
               patientId,
               patientName,
               category: 'vaccine',
+              ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
             });
           }
         });
@@ -1304,38 +1476,126 @@ export default function PublicRoomLoaderForm() {
       const seniorFelineTwoPanelVal = formData[`lab_senior_feline_two_panel_${patientId}`];
       if (earlyDetectionYes && formData[`summary_exclude_lab_early_detection_feline_${patientId}`] !== true) {
         const p = getClientAdjustedPrice(patientId, earlyDetectionFelineItem) ?? getSearchItemPrice(earlyDetectionFelineItem);
-        if (p != null) summaryLineItems.push({ name: 'Early Detection Panel - Feline', quantity: 1, price: p, patientId, patientName, category: 'lab' });
+        if (p != null) {
+          const typeAndId = earlyDetectionFelineItem ? getItemTypeAndId(earlyDetectionFelineItem) : null;
+          summaryLineItems.push({
+            name: 'Early Detection Panel - Feline',
+            quantity: 1,
+            price: p,
+            patientId,
+            patientName,
+            category: 'lab',
+            ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
+          });
+        }
       }
       if (earlyDetectionCanineYes && formData[`summary_exclude_lab_early_detection_canine_${patientId}`] !== true) {
         const p = getClientAdjustedPrice(patientId, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem);
-        if (p != null) summaryLineItems.push({ name: 'Early Detection Panel - Canine', quantity: 1, price: p, patientId, patientName, category: 'lab' });
+        if (p != null) {
+          const typeAndId = earlyDetectionCanineItem ? getItemTypeAndId(earlyDetectionCanineItem) : null;
+          summaryLineItems.push({
+            name: 'Early Detection Panel - Canine',
+            quantity: 1,
+            price: p,
+            patientId,
+            patientName,
+            category: 'lab',
+            ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
+          });
+        }
       }
       if (seniorFelineYes && formData[`summary_exclude_lab_senior_feline_${patientId}`] !== true) {
         const p = getClientAdjustedPrice(patientId, seniorFelineItem) ?? getSearchItemPrice(seniorFelineItem);
-        if (p != null) summaryLineItems.push({ name: 'Senior Screen Feline', quantity: 1, price: p, patientId, patientName, category: 'lab' });
+        if (p != null) {
+          const typeAndId = seniorFelineItem ? getItemTypeAndId(seniorFelineItem) : null;
+          summaryLineItems.push({
+            name: 'Senior Screen Feline',
+            quantity: 1,
+            price: p,
+            patientId,
+            patientName,
+            category: 'lab',
+            ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
+          });
+        }
       }
       if (seniorCaninePanelVal === 'standard' && formData[`summary_exclude_lab_senior_canine_standard_${patientId}`] !== true) {
         const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem);
-        if (p != null) summaryLineItems.push({ name: 'Senior Screen - Standard Comprehensive Panel', quantity: 1, price: p, patientId, patientName, category: 'lab' });
+        if (p != null) {
+          const typeAndId = seniorCanineStandardItem ? getItemTypeAndId(seniorCanineStandardItem) : null;
+          summaryLineItems.push({
+            name: 'Senior Screen - Standard Comprehensive Panel',
+            quantity: 1,
+            price: p,
+            patientId,
+            patientName,
+            category: 'lab',
+            ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
+          });
+        }
       }
       if (seniorCaninePanelVal === 'extended' && formData[`summary_exclude_lab_senior_canine_extended_${patientId}`] !== true) {
         const p = getClientAdjustedPrice(patientId, seniorCanineExtendedItem) ?? getSearchItemPrice(seniorCanineExtendedItem);
-        if (p != null) summaryLineItems.push({ name: 'Senior Screen - Extended Comprehensive Panel', quantity: 1, price: p, patientId, patientName, category: 'lab' });
+        if (p != null) {
+          const typeAndId = seniorCanineExtendedItem ? getItemTypeAndId(seniorCanineExtendedItem) : null;
+          summaryLineItems.push({
+            name: 'Senior Screen - Extended Comprehensive Panel',
+            quantity: 1,
+            price: p,
+            patientId,
+            patientName,
+            category: 'lab',
+            ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
+          });
+        }
       }
       if (seniorFelineTwoPanelVal === 'standard' && formData[`summary_exclude_lab_senior_feline_two_standard_${patientId}`] !== true) {
         const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem);
-        if (p != null) summaryLineItems.push({ name: 'Senior Screen Feline - Standard Panel', quantity: 1, price: p, patientId, patientName, category: 'lab' });
+        if (p != null) {
+          const typeAndId = seniorCanineStandardItem ? getItemTypeAndId(seniorCanineStandardItem) : null;
+          summaryLineItems.push({
+            name: 'Senior Screen Feline - Standard Panel',
+            quantity: 1,
+            price: p,
+            patientId,
+            patientName,
+            category: 'lab',
+            ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
+          });
+        }
       }
       if (seniorFelineTwoPanelVal === 'extended' && formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] !== true) {
         const p = getClientAdjustedPrice(patientId, seniorFelineExtendedItem) ?? getSearchItemPrice(seniorFelineExtendedItem);
-        if (p != null) summaryLineItems.push({ name: 'Senior Screen Feline - Extended Panel', quantity: 1, price: p, patientId, patientName, category: 'lab' });
+        if (p != null) {
+          const typeAndId = seniorFelineExtendedItem ? getItemTypeAndId(seniorFelineExtendedItem) : null;
+          summaryLineItems.push({
+            name: 'Senior Screen Feline - Extended Panel',
+            quantity: 1,
+            price: p,
+            patientId,
+            patientName,
+            category: 'lab',
+            ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
+          });
+        }
       }
       const comprehensiveFecalYes = formData[`lab_comprehensive_fecal_${patientId}`] === 'yes';
       const comprehensiveFecalExcluded = formData[`summary_exclude_lab_comprehensive_fecal_${patientId}`] === true;
       if (comprehensiveFecalYes && !comprehensiveFecalExcluded) {
         const p = getClientAdjustedPrice(patientId, comprehensiveFecalItem) ?? getSearchItemPrice(comprehensiveFecalItem);
         const name = comprehensiveFecalItem?.name ?? 'Comprehensive Fecal';
-        if (p != null) summaryLineItems.push({ name, quantity: 1, price: p, patientId, patientName, category: 'lab' });
+        if (p != null) {
+          const typeAndId = comprehensiveFecalItem ? getItemTypeAndId(comprehensiveFecalItem) : null;
+          summaryLineItems.push({
+            name,
+            quantity: 1,
+            price: p,
+            patientId,
+            patientName,
+            category: 'lab',
+            ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
+          });
+        }
       }
       // Commonly selected items for this pet (checked) – resolve name/price from commonItemsFetched
       const appts = data?.appointments ?? [];
@@ -1371,7 +1631,16 @@ export default function PublicRoomLoaderForm() {
         const commonKey = `summary_common_${patientId}_${itemId}`;
         if (formData[commonKey] === true) {
           const price = getClientAdjustedPrice(patientId, item) ?? getSearchItemPrice(item) ?? 0;
-          summaryLineItems.push({ name: displayName, quantity: 1, price, patientId, patientName, category: 'common' });
+          const typeAndId = getItemTypeAndId(item);
+          summaryLineItems.push({
+            name: displayName,
+            quantity: 1,
+            price,
+            patientId,
+            patientName,
+            category: 'common',
+            ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
+          });
         }
       });
     });
@@ -2211,47 +2480,58 @@ export default function PublicRoomLoaderForm() {
     return { valid: true };
   }
 
-  /** Run membership bill simulation when user selects a plan on the summary page. */
-  async function runMembershipSimulate(
-    planId: string,
-    planName: string,
-    pricingOption: 'monthly' | 'annual',
-    patientIds: number[]
-  ) {
+  /** Run membership bill simulation for both monthly and annual when user selects a plan. */
+  async function runMembershipSimulate(planId: string, planName: string, patientIds: number[]) {
     const tokenValue = token;
     if (!tokenValue || !data) return;
-    setSelectedMembershipSimulate({ planId, planName, pricingOption, patientIds });
-    setMembershipSimulateResult(null);
+    setSelectedMembershipSimulate({ planId, planName, patientIds });
+    // Keep previous results visible so the membership box doesn't collapse while loading
     setMembershipSimulateLoading(true);
     try {
       const snapshot = buildFullFormSnapshot();
       const summaryLineItems = snapshot?.summaryLineItems ?? [];
       const totals = snapshot?.totals ?? {};
-      const lineItems: RoomLoaderSimulateLineItem[] = summaryLineItems.map((li: { name: string; quantity: number; price: number; patientId?: number; patientName?: string; category?: string }) => ({
-        name: li.name,
-        quantity: li.quantity,
-        price: li.price,
-        patientId: li.patientId ?? 0,
-        patientName: li.patientName,
-        category: li.category,
-      }));
+      const lineItems: RoomLoaderSimulateLineItem[] = summaryLineItems.map(
+        (li: {
+          name: string;
+          quantity: number;
+          price: number;
+          patientId?: number;
+          patientName?: string;
+          category?: string;
+          itemType?: 'lab' | 'procedure' | 'inventory';
+          itemId?: number;
+        }) => ({
+          name: li.name,
+          quantity: li.quantity,
+          price: li.price,
+          patientId: li.patientId ?? 0,
+          patientName: li.patientName,
+          category: li.category,
+          ...(li.itemType && li.itemId != null && { itemType: li.itemType, itemId: li.itemId }),
+        })
+      );
       const practiceId = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id;
       const clientId = data?.clientId ?? data?.client?.id ?? data?.patients?.[0]?.clientId ?? (data?.patients?.[0] as any)?.client?.id ?? data?.appointments?.[0]?.client?.id;
-      const result = await simulateBillWithMembershipPublic({
+      const request = {
         token: tokenValue,
         practiceId,
         clientId,
         planId,
-        pricingOption,
         patientIds,
         lineItems,
         storeSubtotal: totals.storeSubtotal,
         storeTax: totals.storeTax,
-      });
-      setMembershipSimulateResult(result);
+      };
+      const [monthlyResult, annualResult] = await Promise.all([
+        simulateBillWithMembershipPublic({ ...request, pricingOption: 'monthly' }),
+        simulateBillWithMembershipPublic({ ...request, pricingOption: 'annual' }),
+      ]);
+      setMembershipSimulateResultMonthly(monthlyResult);
+      setMembershipSimulateResultAnnual(annualResult);
     } catch (err) {
       console.error('Membership simulate error:', err);
-      setMembershipSimulateResult(null);
+      // Keep previous results so the box doesn't collapse
     } finally {
       setMembershipSimulateLoading(false);
     }
@@ -5230,12 +5510,34 @@ export default function PublicRoomLoaderForm() {
               (() => {
                 const availablePlansForPets = data.availablePlansForPets as RoomLoaderAvailablePlansForPet[];
                 return (
-                  <div style={{ marginTop: '28px', padding: '20px', backgroundColor: '#f0f7ff', border: '1px solid #b6d4fe', borderRadius: '10px' }}>
+                  <div
+                    style={{
+                      marginTop: '28px',
+                      padding: '20px',
+                      backgroundColor: '#f0f7ff',
+                      border: '1px solid #b6d4fe',
+                      borderRadius: '10px',
+                      position: 'relative',
+                      zIndex: 10,
+                    }}
+                  >
                     <h4 style={{ margin: '0 0 12px', fontSize: '17px', fontWeight: 700, color: '#084298' }}>
                       See how a membership could change your bill
                     </h4>
                     <p style={{ margin: '0 0 16px', fontSize: '14px', color: '#555', lineHeight: 1.5 }}>
-                      Select a plan below to see your estimated total with membership pricing applied.
+                      With a membership, you only pay your first month&apos;s membership plus your discounted visit at the appointment. The rest is spread over the next 11 months—so your bill on the day of your visit is much lower. Select a plan below to see your estimated total and savings.
+                    </p>
+                    <p style={{ margin: '0 0 16px', fontSize: '14px', color: '#555', lineHeight: 1.5 }}>
+                      You can sign up for a membership before your visit in the{' '}
+                      <a
+                        href={`${typeof window !== 'undefined' ? window.location.origin : ''}/client-portal`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: '#0d6efd', fontWeight: 600, textDecoration: 'underline' }}
+                      >
+                        Client Portal
+                      </a>
+                      {' '}and get these savings.
                     </p>
                     {availablePlansForPets.map((petPlans) => (
                       <div key={petPlans.patientId} style={{ marginBottom: petPlans.plans?.length ? '20px' : 0 }}>
@@ -5245,90 +5547,168 @@ export default function PublicRoomLoaderForm() {
                           </div>
                         )}
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                          {(petPlans.plans ?? []).map((plan) => (
-                            <div
-                              key={`${petPlans.patientId}-${plan.planId}`}
-                              style={{
-                                border: '1px solid #9ec5fe',
-                                borderRadius: '8px',
-                                padding: '12px 14px',
-                                backgroundColor: '#fff',
-                                minWidth: '200px',
-                              }}
-                            >
-                              <div style={{ fontWeight: 600, fontSize: '15px', color: '#212529', marginBottom: '4px' }}>
-                                {plan.planName}
-                              </div>
-                              {plan.tagLine && (
-                                <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>{plan.tagLine}</div>
-                              )}
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                          {(petPlans.plans ?? []).map((plan) => {
+                            const isSelected = selectedMembershipSimulate?.planId === plan.planId && selectedMembershipSimulate?.patientIds?.[0] === petPlans.patientId;
+                            const monthlyDue =
+                              isSelected && membershipSimulateResultMonthly
+                                ? membershipSimulateResultMonthly.monthlyCharge != null
+                                  ? membershipSimulateResultMonthly.withMembershipVisitSubtotal + membershipSimulateResultMonthly.monthlyCharge
+                                  : membershipSimulateResultMonthly.withMembershipTotal
+                                : 0;
+                            const monthlySavings =
+                              isSelected && membershipSimulateResultMonthly
+                                ? membershipSimulateResultMonthly.originalTotal - monthlyDue
+                                : 0;
+                            const annualDue =
+                              isSelected && membershipSimulateResultAnnual ? membershipSimulateResultAnnual.withMembershipTotal : 0;
+                            const annualSavings =
+                              isSelected && membershipSimulateResultAnnual ? membershipSimulateResultAnnual.savings ?? 0 : 0;
+                            const planCardKey = `${petPlans.patientId}-${plan.planId}`;
+                            const cardDetails = getMembershipPlanCardDetails(plan.planId);
+                            return (
+                              <div
+                                key={planCardKey}
+                                style={{
+                                  border: '1px solid #9ec5fe',
+                                  borderRadius: '8px',
+                                  padding: '12px 14px',
+                                  backgroundColor: '#fff',
+                                  minWidth: '200px',
+                                  position: 'relative',
+                                }}
+                              >
+                                {cardDetails && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      aria-label="Plan details"
+                                      onMouseEnter={() => setMembershipInfoPlanKey(planCardKey)}
+                                      onMouseLeave={() => setMembershipInfoPlanKey((k) => (k === planCardKey ? null : k))}
+                                      onClick={() => setMembershipInfoPlanKey((k) => (k === planCardKey ? null : planCardKey))}
+                                      style={{
+                                        position: 'absolute',
+                                        top: '8px',
+                                        right: '8px',
+                                        width: '22px',
+                                        height: '22px',
+                                        borderRadius: '50%',
+                                        border: '1px solid #9ec5fe',
+                                        background: '#f0f7ff',
+                                        color: '#0d6efd',
+                                        fontSize: '12px',
+                                        fontWeight: 700,
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        padding: 0,
+                                      }}
+                                    >
+                                      i
+                                    </button>
+                                    {membershipInfoPlanKey === planCardKey && (
+                                      <div
+                                        onMouseEnter={() => setMembershipInfoPlanKey(planCardKey)}
+                                        onMouseLeave={() => setMembershipInfoPlanKey(null)}
+                                        style={{
+                                          position: 'absolute',
+                                          top: '100%',
+                                          left: 0,
+                                          marginTop: '4px',
+                                          zIndex: 20,
+                                          minWidth: '280px',
+                                          maxWidth: '320px',
+                                          padding: '14px',
+                                          background: '#fff',
+                                          border: '1px solid #0d6efd',
+                                          borderRadius: '8px',
+                                          boxShadow: '0 4px 14px rgba(0,0,0,0.12)',
+                                          fontSize: '13px',
+                                          color: '#212529',
+                                        }}
+                                      >
+                                        <div style={{ fontWeight: 700, fontSize: '15px', marginBottom: '4px' }}>{cardDetails.name}</div>
+                                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '10px' }}>{cardDetails.tagLine}</div>
+                                        <div style={{ fontWeight: 600, marginBottom: '6px' }}>Includes:</div>
+                                        <ul style={{ margin: 0, paddingLeft: '18px' }}>
+                                          {cardDetails.includes.map((item, idx) => (
+                                            <li key={idx} style={{ marginBottom: '4px' }}>
+                                              <span style={{ marginRight: 6 }}>⭐</span>
+                                              <span style={{ color: '#555' }}>{item}</span>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                                <div style={{ fontWeight: 600, fontSize: '15px', color: '#212529', marginBottom: '4px', paddingRight: cardDetails ? '26px' : 0 }}>
+                                  {membershipPlanDisplayName[plan.planId] ?? plan.planName}
+                                </div>
+                                {plan.tagLine && (
+                                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px' }}>{plan.tagLine}</div>
+                                )}
+                                <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>
+                                  Monthly ${plan.monthlyPrice ?? '—'}
+                                  {plan.annualPrice != null && Number(plan.annualPrice) > 0 && (
+                                    <> · Annual ${plan.annualPrice}</>
+                                  )}
+                                </div>
+                                {isSelected && (membershipSimulateResultMonthly != null || membershipSimulateResultAnnual != null) && (
+                                  <div
+                                    style={{
+                                      marginBottom: '10px',
+                                      padding: '8px 10px',
+                                      background: '#d1e7dd',
+                                      border: '1px solid #badbcc',
+                                      borderRadius: '6px',
+                                      fontSize: '13px',
+                                      fontWeight: 700,
+                                      color: '#0f5132',
+                                    }}
+                                  >
+                                    <div style={{ marginBottom: '4px' }}>Save {formatPrice(monthlySavings)} at your visit by signing up for a monthly membership.</div>
+                                    {membershipSimulateResultMonthly != null && (
+                                      <div style={{ fontSize: '11px', fontWeight: 500, opacity: 0.95, lineHeight: 1.35 }}>
+                                        The rest is billed over the next 11 months.
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                {!isSelected && (
+                                  <div style={{ marginBottom: '8px', fontSize: '12px', color: '#666' }}>Click to see your savings</div>
+                                )}
                                 <button
                                   type="button"
                                   disabled={membershipSimulateLoading}
                                   onClick={() =>
-                                    runMembershipSimulate(plan.planId, plan.planName, 'monthly', [petPlans.patientId])
+                                    runMembershipSimulate(plan.planId, plan.planName, [petPlans.patientId])
                                   }
                                   style={{
-                                    padding: '6px 12px',
+                                    padding: '8px 14px',
                                     fontSize: '13px',
                                     fontWeight: 600,
-                                    backgroundColor:
-                                      selectedMembershipSimulate?.planId === plan.planId &&
-                                      selectedMembershipSimulate?.pricingOption === 'monthly'
-                                        ? '#0d6efd'
-                                        : '#e7f1ff',
-                                    color:
-                                      selectedMembershipSimulate?.planId === plan.planId &&
-                                      selectedMembershipSimulate?.pricingOption === 'monthly'
-                                        ? '#fff'
-                                        : '#0d6efd',
+                                    backgroundColor: isSelected ? '#0d6efd' : '#e7f1ff',
+                                    color: isSelected ? '#fff' : '#0d6efd',
                                     border: '1px solid #0d6efd',
                                     borderRadius: '6px',
                                     cursor: membershipSimulateLoading ? 'not-allowed' : 'pointer',
                                   }}
                                 >
-                                  Monthly ${plan.monthlyPrice}
+                                  See your savings
                                 </button>
-                                {plan.annualPrice != null && (
-                                  <button
-                                    type="button"
-                                    disabled={membershipSimulateLoading}
-                                    onClick={() =>
-                                      runMembershipSimulate(plan.planId, plan.planName, 'annual', [petPlans.patientId])
-                                    }
-                                    style={{
-                                      padding: '6px 12px',
-                                      fontSize: '13px',
-                                      fontWeight: 600,
-                                      backgroundColor:
-                                        selectedMembershipSimulate?.planId === plan.planId &&
-                                        selectedMembershipSimulate?.pricingOption === 'annual'
-                                          ? '#0d6efd'
-                                          : '#e7f1ff',
-                                      color:
-                                        selectedMembershipSimulate?.planId === plan.planId &&
-                                        selectedMembershipSimulate?.pricingOption === 'annual'
-                                          ? '#fff'
-                                          : '#0d6efd',
-                                      border: '1px solid #0d6efd',
-                                      borderRadius: '6px',
-                                      cursor: membershipSimulateLoading ? 'not-allowed' : 'pointer',
-                                    }}
-                                  >
-                                    Annual ${plan.annualPrice}
-                                  </button>
-                                )}
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     ))}
-                    {membershipSimulateLoading && (
+                    {membershipSimulateLoading &&
+                      (membershipSimulateResultMonthly == null && membershipSimulateResultAnnual == null) && (
                       <p style={{ margin: '16px 0 0', fontSize: '14px', color: '#666' }}>Calculating...</p>
                     )}
-                    {membershipSimulateResult != null && !membershipSimulateLoading && selectedMembershipSimulate && (
+                    {(membershipSimulateResultMonthly != null || membershipSimulateResultAnnual != null) &&
+                      selectedMembershipSimulate && (
                       <div
                         style={{
                           marginTop: '16px',
@@ -5340,18 +5720,105 @@ export default function PublicRoomLoaderForm() {
                           color: '#0f5132',
                         }}
                       >
-                        <strong>
-                          With {selectedMembershipSimulate.planName} ({selectedMembershipSimulate.pricingOption})
-                        </strong>
-                        : Your total would be{' '}
-                        <strong>{formatPrice(membershipSimulateResult.withMembershipTotal)}</strong>
-                        {membershipSimulateResult.savings > 0 && (
-                          <>
-                            {' '}
-                            — you&apos;d save <strong>{formatPrice(membershipSimulateResult.savings)}</strong>
-                          </>
+                        {membershipSimulateLoading && (
+                          <div style={{ marginBottom: '8px', fontSize: '13px', fontStyle: 'italic', opacity: 0.9 }}>Updating…</div>
                         )}
-                        .
+                        <div style={{ marginBottom: '10px', fontWeight: 600 }}>
+                          Without membership — due at visit:{' '}
+                          <strong>
+                            {formatPrice(
+                              membershipSimulateResultMonthly?.originalTotal ??
+                                membershipSimulateResultAnnual?.originalTotal ??
+                                0
+                            )}
+                          </strong>
+                        </div>
+                        <div style={{ fontWeight: 600, marginBottom: '10px' }}>
+                          With {membershipPlanDisplayName[selectedMembershipSimulate.planId] ?? selectedMembershipSimulate.planName}:
+                        </div>
+                        {membershipSimulateResultMonthly != null && (() => {
+                          const m = membershipSimulateResultMonthly;
+                          const monthlyDueAtVisit =
+                            m.monthlyCharge != null
+                              ? m.withMembershipVisitSubtotal + m.monthlyCharge
+                              : m.withMembershipTotal;
+                          const monthlySavings = m.originalTotal - monthlyDueAtVisit;
+                          return (
+                            <div style={{ marginBottom: '14px', paddingBottom: '14px', borderBottom: '1px solid #badbcc' }}>
+                              <div style={{ marginBottom: '4px' }}>
+                                <strong>Monthly</strong> — due at your visit:{' '}
+                                <strong>{formatPrice(monthlyDueAtVisit)}</strong>
+                              </div>
+                              <div style={{ fontSize: '14px', opacity: 0.95 }}>
+                                First month&apos;s membership
+                                {(m.monthlyCharge != null ? m.monthlyCharge : m.membershipFee) != null &&
+                                  (m.monthlyCharge ?? m.membershipFee) > 0 && (
+                                    <> ({formatPrice(m.monthlyCharge ?? m.membershipFee)})</>
+                                  )}
+                                {' '}plus your discounted visit. The rest is spread over the next 11 months.
+                              </div>
+                              {monthlySavings > 0 && (
+                                <div
+                                  style={{
+                                    marginTop: '8px',
+                                    padding: '8px 12px',
+                                    background: 'rgba(15,81,50,0.15)',
+                                    borderRadius: '6px',
+                                    fontSize: '16px',
+                                    fontWeight: 700,
+                                    color: '#0f5132',
+                                  }}
+                                >
+                                  Monthly savings today: {formatPrice(monthlySavings)}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+                        {membershipSimulateResultAnnual != null && (
+                          <div>
+                            <div style={{ marginBottom: '4px' }}>
+                              <strong>Annual</strong> — due at your visit:{' '}
+                              <strong>{formatPrice(membershipSimulateResultAnnual.withMembershipTotal)}</strong>
+                            </div>
+                            <div style={{ fontSize: '14px', opacity: 0.95 }}>
+                              One payment at your visit (annual membership
+                              {membershipSimulateResultAnnual.membershipFee != null &&
+                                membershipSimulateResultAnnual.membershipFee > 0 && (
+                                  <> {formatPrice(membershipSimulateResultAnnual.membershipFee)}</>
+                                )}
+                              {' '}+ discounted visit). Then you&apos;re covered for the year.
+                            </div>
+                            {membershipSimulateResultAnnual.savings > 0 && (
+                              <div
+                                style={{
+                                  marginTop: '8px',
+                                  padding: '8px 12px',
+                                  background: 'rgba(15,81,50,0.15)',
+                                  borderRadius: '6px',
+                                  fontSize: '16px',
+                                  fontWeight: 700,
+                                  color: '#0f5132',
+                                }}
+                              >
+                                Annual savings today: {formatPrice(membershipSimulateResultAnnual.savings)}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {(membershipSimulateResultMonthly?.lineItemAdjustments?.length ?? 0) > 0 && (
+                          <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #badbcc', fontSize: '13px' }}>
+                            <div style={{ fontWeight: 600, marginBottom: '4px' }}>Items with membership pricing:</div>
+                            <ul style={{ margin: 0, paddingLeft: '18px' }}>
+                              {(membershipSimulateResultMonthly?.lineItemAdjustments ?? []).map((adj, i) => (
+                                <li key={i}>
+                                  {adj.name}: {formatPrice(adj.originalPrice)} → {formatPrice(adj.adjustedPrice)}
+                                  {adj.quantity > 1 && ` (×${adj.quantity})`}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
