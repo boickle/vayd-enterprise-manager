@@ -14,6 +14,7 @@ import {
   fetchPracticeInfo,
   type Vaccination,
   fetchClientInfo,
+  submitReferral,
 } from '../api/clientPortal';
 import { listMembershipTransactions } from '../api/membershipTransactions';
 import { http } from '../api/http';
@@ -211,6 +212,12 @@ export default function ClientPortal() {
   const [allowEmail, setAllowEmail] = useState<boolean | null>(null);
   const [allowText, setAllowText] = useState<boolean | null>(null);
   const [savingPreferences, setSavingPreferences] = useState(false);
+  const [showReferralModal, setShowReferralModal] = useState(false);
+  const [referralEmail, setReferralEmail] = useState('');
+  const [referralName, setReferralName] = useState('');
+  const [referralError, setReferralError] = useState<string | null>(null);
+  const [referralSuccess, setReferralSuccess] = useState(false);
+  const [referralSubmitting, setReferralSubmitting] = useState(false);
 
   // Fetch client info if not available in auth context
   useEffect(() => {
@@ -1107,6 +1114,14 @@ export default function ClientPortal() {
           .cp-pet-img { height: 130px; border-radius: 16px; border: 1px solid rgba(0, 0, 0, 0.06); }
         }
 
+        /* Refer a friend: desktop = next to logo, mobile = below welcome */
+        .cp-referral-btn-desktop { display: none; }
+        .cp-referral-btn-mobile { display: flex; }
+        @media (min-width: 640px) {
+          .cp-referral-btn-desktop { display: inline-flex; }
+          .cp-referral-btn-mobile { display: none !important; }
+        }
+
         /* >= 640px (sm) */
         @media (min-width: 640px) {
           h1.cp-title { font-size: 32px; }
@@ -1484,7 +1499,7 @@ export default function ClientPortal() {
           borderRadius: '16px',
         }}
       >
-        <div style={{ width: '100%', display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
+        <div style={{ width: '100%', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>
           <img
             src="/final_thick_lines_cropped.jpeg"
             alt="Vet At Your Door logo"
@@ -1495,18 +1510,88 @@ export default function ClientPortal() {
               mixBlendMode: 'multiply',
             }}
           />
+          <button
+            type="button"
+            className="cp-referral-btn-desktop"
+            onClick={() => {
+              setShowReferralModal(true);
+              setReferralError(null);
+              setReferralSuccess(false);
+              setReferralEmail('');
+              setReferralName('');
+            }}
+            style={{
+              position: 'absolute',
+              right: 0,
+              alignItems: 'center',
+              gap: '8px',
+              padding: '10px 18px',
+              fontSize: '14px',
+              fontWeight: 600,
+              color: '#0f766e',
+              background: '#ecfff8',
+              border: '1px solid #0f766e',
+              borderRadius: '10px',
+              cursor: 'pointer',
+              boxShadow: '0 0 20px rgba(15, 118, 110, 0.5), 0 0 40px rgba(15, 118, 110, 0.3)',
+            }}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+            Refer a friend
+          </button>
         </div>
         {clientFirstName && (
-          <h1 style={{ 
-            margin: 0, 
-            fontSize: '24px', 
-            fontWeight: 600, 
-            color: '#111827',
-            textAlign: 'center',
-            width: '100%'
-          }}>
-            Welcome, {clientFirstName} to your VAYD Client Portal!
-          </h1>
+          <>
+            <h1 style={{ 
+              margin: 0, 
+              fontSize: '24px', 
+              fontWeight: 600, 
+              color: '#111827',
+              textAlign: 'center',
+              width: '100%'
+            }}>
+              Welcome, {clientFirstName} to your VAYD Client Portal!
+            </h1>
+            <div className="cp-referral-btn-mobile" style={{ display: 'flex', justifyContent: 'center', width: '100%', marginTop: 12 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowReferralModal(true);
+                  setReferralError(null);
+                  setReferralSuccess(false);
+                  setReferralEmail('');
+                  setReferralName('');
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '10px 18px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  color: '#0f766e',
+                  background: '#ecfff8',
+                  border: '1px solid #0f766e',
+                  borderRadius: '10px',
+                  cursor: 'pointer',
+                  boxShadow: '0 0 20px rgba(15, 118, 110, 0.5), 0 0 40px rgba(15, 118, 110, 0.3)',
+                }}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="9" cy="7" r="4"></circle>
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                </svg>
+                Refer a friend
+              </button>
+            </div>
+          </>
         )}
       </div>
 
@@ -2749,6 +2834,269 @@ export default function ClientPortal() {
         </div>
       </footer>
 
+
+      {/* ---------------------------
+          Referral Modal
+      ---------------------------- */}
+      {showReferralModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            padding: '20px',
+          }}
+          onClick={() => {
+            if (!referralSubmitting) {
+              setShowReferralModal(false);
+              setReferralError(null);
+              setReferralSuccess(false);
+              setReferralEmail('');
+              setReferralName('');
+            }
+          }}
+        >
+          <div
+            className="cp-card"
+            style={{
+              maxWidth: '440px',
+              width: '100%',
+              padding: '24px',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+              <h2 className="cp-h2" style={{ margin: 0 }}>
+                {referralSuccess ? 'Thank you' : 'Know someone who would love this way of veterinary care?'}
+              </h2>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!referralSubmitting) {
+                    setShowReferralModal(false);
+                    setReferralError(null);
+                    setReferralSuccess(false);
+                    setReferralEmail('');
+                    setReferralName('');
+                  }
+                }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  fontSize: 24,
+                  cursor: referralSubmitting ? 'not-allowed' : 'pointer',
+                  color: '#6b7280',
+                  padding: '0 8px',
+                }}
+              >
+                ×
+              </button>
+            </div>
+            {referralSuccess ? (
+              <>
+                <p style={{ color: '#0f766e', fontWeight: 600, marginBottom: 12 }}>
+                  Your referral has been sent successfully.
+                </p>
+                <p style={{ color: '#374151', fontSize: 14, marginBottom: 12, lineHeight: 1.5 }}>
+                  Referring a friend is the highest compliment you can give our team. We are grateful for your trust.
+                </p>
+                <p style={{ color: '#374151', fontSize: 14, marginBottom: 24, lineHeight: 1.5 }}>
+                  We will reach out to your friend directly. You will receive a $50 VAYD credit once their appointment is complete, plus an additional $25 credit if they become a member.
+                </p>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReferralError(null);
+                      setReferralSuccess(false);
+                      setReferralEmail('');
+                      setReferralName('');
+                    }}
+                    style={{
+                      background: 'transparent',
+                      color: '#0f766e',
+                      border: '2px solid #0f766e',
+                      padding: '10px 24px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontSize: 14,
+                      fontWeight: 600,
+                    }}
+                  >
+                    Refer another friend
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowReferralModal(false);
+                      setReferralError(null);
+                      setReferralSuccess(false);
+                      setReferralEmail('');
+                      setReferralName('');
+                    }}
+                    style={{
+                      background: '#0f766e',
+                      color: '#fff',
+                      border: 'none',
+                      padding: '10px 24px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontSize: 14,
+                      fontWeight: 600,
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p style={{ color: '#6b7280', fontSize: 14, marginBottom: 12, lineHeight: 1.5 }}>
+                  Share Vet At Your Door with a friend and invite them into the Vet At Your Door veterinary experience.
+                </p>
+                <p style={{ color: '#6b7280', fontSize: 14, marginBottom: 20, lineHeight: 1.5 }}>
+                  You'll receive a <strong>$50 VAYD credit</strong> when your referral completes an appointment, and an <strong>additional $25</strong> if they become a member.
+                </p>
+                {referralError && (
+                  <div
+                    style={{
+                      padding: '12px',
+                      marginBottom: 16,
+                      borderRadius: 8,
+                      background: '#fef2f2',
+                      color: '#b91c1c',
+                      fontSize: 14,
+                    }}
+                  >
+                    {referralError}
+                  </div>
+                )}
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const email = referralEmail.trim();
+                    const name = referralName.trim();
+                    if (!email) {
+                      setReferralError('Please enter an email address.');
+                      return;
+                    }
+                    if (!name) {
+                      setReferralError('Please enter your friend\'s name.');
+                      return;
+                    }
+                    setReferralError(null);
+                    setReferralSubmitting(true);
+                    try {
+                      await submitReferral(email, name);
+                      setReferralSuccess(true);
+                    } catch (err: any) {
+                      const message =
+                        err?.response?.data?.message ??
+                        err?.response?.data?.error ??
+                        err?.message ??
+                        'Something went wrong. Please try again.';
+                      setReferralError(typeof message === 'string' ? message : 'Something went wrong. Please try again.');
+                    } finally {
+                      setReferralSubmitting(false);
+                    }
+                  }}
+                  style={{ display: 'flex', flexDirection: 'column', gap: 16 }}
+                >
+                  <div>
+                    <label htmlFor="referral-email" style={{ display: 'block', fontSize: 14, fontWeight: 500, color: '#374151', marginBottom: 6 }}>
+                      Email <span style={{ color: '#b91c1c' }}>*</span>
+                    </label>
+                    <input
+                      id="referral-email"
+                      type="email"
+                      value={referralEmail}
+                      onChange={(e) => setReferralEmail(e.target.value)}
+                      placeholder="friend@example.com"
+                      required
+                      disabled={referralSubmitting}
+                      style={{
+                        width: '100%',
+                        padding: '10px 12px',
+                        fontSize: 14,
+                        border: '1px solid #d1d5db',
+                        borderRadius: 8,
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="referral-name" style={{ display: 'block', fontSize: 14, fontWeight: 500, color: '#374151', marginBottom: 6 }}>
+                      Name <span style={{ color: '#b91c1c' }}>*</span>
+                    </label>
+                    <input
+                      id="referral-name"
+                      type="text"
+                      value={referralName}
+                      onChange={(e) => setReferralName(e.target.value)}
+                      placeholder="Friend's name"
+                      required
+                      disabled={referralSubmitting}
+                      style={{
+                        width: '100%',
+                        padding: '10px 12px',
+                        fontSize: 14,
+                        border: '1px solid #d1d5db',
+                        borderRadius: 8,
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!referralSubmitting) {
+                          setShowReferralModal(false);
+                          setReferralError(null);
+                          setReferralEmail('');
+                          setReferralName('');
+                        }
+                      }}
+                      style={{
+                        background: '#f3f4f6',
+                        color: '#374151',
+                        border: 'none',
+                        padding: '10px 20px',
+                        borderRadius: '8px',
+                        cursor: referralSubmitting ? 'not-allowed' : 'pointer',
+                        fontSize: 14,
+                        fontWeight: 500,
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={referralSubmitting}
+                      style={{
+                        background: referralSubmitting ? '#9ca3af' : '#0f766e',
+                        color: '#fff',
+                        border: 'none',
+                        padding: '10px 24px',
+                        borderRadius: '8px',
+                        cursor: referralSubmitting ? 'not-allowed' : 'pointer',
+                        fontSize: 14,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {referralSubmitting ? 'Sending…' : 'Send referral'}
+                    </button>
+                  </div>
+                </form>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ---------------------------
           Preferences Modal

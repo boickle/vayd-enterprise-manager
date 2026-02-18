@@ -17,6 +17,12 @@ export type ReminderSettings = {
   'reminders.appointmentWindowDays'?: string;
   'reminders.testRedirectEmail'?: string;
   'reminders.testRedirectPhone'?: string;
+  /** Exclude reminders whose name contains any of these phrases (case-insensitive match is typical on the backend) */
+  'reminders.excludedNamePhrases'?: string[];
+  /** Exclude from SMS only: reminders whose name contains any of these phrases will not be sent via SMS (email still sent if enabled). */
+  'reminders.smsExcludedNamePhrases'?: string[];
+  /** Include only reminders whose type is in this list (reminder type names). Empty = no filter (include all). */
+  'reminders.includedReminderTypes'?: string[];
 };
 
 export type ReminderSettingsForm = {
@@ -27,6 +33,9 @@ export type ReminderSettingsForm = {
   healthCadence: CadenceEntry[];
   testRedirectEmail: string;
   testRedirectPhone: string;
+  excludedNamePhrases: string[];
+  smsExcludedNamePhrases: string[];
+  includedReminderTypes: string[];
 };
 
 const REMINDER_KEYS = {
@@ -37,12 +46,28 @@ const REMINDER_KEYS = {
   appointmentWindowDays: 'reminders.appointmentWindowDays',
   testRedirectEmail: 'reminders.testRedirectEmail',
   testRedirectPhone: 'reminders.testRedirectPhone',
+  excludedNamePhrases: 'reminders.excludedNamePhrases',
+  smsExcludedNamePhrases: 'reminders.smsExcludedNamePhrases',
+  includedReminderTypes: 'reminders.includedReminderTypes',
 } as const;
 
 function ensureCadenceArray(
   value: CadenceEntry[] | string | undefined
 ): CadenceEntry[] {
   if (Array.isArray(value)) return value;
+  return [];
+}
+
+function ensureStringArray(value: string[] | string | undefined): string[] {
+  if (Array.isArray(value)) return value.filter((s) => typeof s === 'string' && s.trim() !== '');
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.filter((s) => typeof s === 'string') : [];
+    } catch {
+      return value.trim() ? [value.trim()] : [];
+    }
+  }
   return [];
 }
 
@@ -85,6 +110,9 @@ export function settingsToForm(settings: ReminderSettings): ReminderSettingsForm
     healthCadence: ensureCadenceArray(settings[REMINDER_KEYS.healthCadence]),
     testRedirectEmail: settings[REMINDER_KEYS.testRedirectEmail] ?? '',
     testRedirectPhone: settings[REMINDER_KEYS.testRedirectPhone] ?? '',
+    excludedNamePhrases: ensureStringArray(settings[REMINDER_KEYS.excludedNamePhrases]),
+    smsExcludedNamePhrases: ensureStringArray(settings[REMINDER_KEYS.smsExcludedNamePhrases]),
+    includedReminderTypes: ensureStringArray(settings[REMINDER_KEYS.includedReminderTypes]),
   };
 }
 
@@ -100,5 +128,8 @@ export function formToSettings(form: ReminderSettingsForm): ReminderSettings {
     [REMINDER_KEYS.healthCadence]: form.healthCadence,
     [REMINDER_KEYS.testRedirectEmail]: form.testRedirectEmail || '',
     [REMINDER_KEYS.testRedirectPhone]: form.testRedirectPhone || '',
+    [REMINDER_KEYS.excludedNamePhrases]: form.excludedNamePhrases.filter((s) => s.trim() !== ''),
+    [REMINDER_KEYS.smsExcludedNamePhrases]: form.smsExcludedNamePhrases.filter((s) => s.trim() !== ''),
+    [REMINDER_KEYS.includedReminderTypes]: form.includedReminderTypes.filter((s) => s.trim() !== ''),
   };
 }

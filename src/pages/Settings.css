@@ -657,3 +657,87 @@
   overflow-y: auto;
 }
 
+/* Schedule overrides calendar (inside modal) */
+.settings-override-calendar-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin: 20px 0 12px;
+}
+
+.settings-override-calendar-month {
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--text);
+  min-width: 160px;
+  text-align: center;
+}
+
+.settings-override-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-bottom: 24px;
+}
+
+.settings-override-calendar-weekday {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: center;
+  padding: 6px 0;
+}
+
+.settings-override-calendar-day {
+  aspect-ratio: 1;
+  min-width: 32px;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.settings-override-calendar-day:hover {
+  background: #ecfdf5;
+  border-color: var(--accent-strong);
+}
+
+.settings-override-calendar-day-pad {
+  cursor: default;
+  background: transparent;
+  border-color: transparent;
+}
+
+.settings-override-calendar-day-pad:hover {
+  background: transparent;
+  border-color: transparent;
+}
+
+.settings-override-calendar-day-has-override {
+  background: #d1fae5;
+  border-color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.settings-override-calendar-day-selected {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: #fff;
+}
+
+.settings-override-form {
+  padding: 16px;
+  background: #f8fdfa;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-top: 8px;
+}
+

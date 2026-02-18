@@ -1,6 +1,6 @@
 // src/pages/PostAppointmentSurvey.tsx
 import React, { useState, useEffect, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import {
   getSurveyForm,
   submitSurvey,
@@ -129,17 +129,20 @@ function QuestionScale({
         {question.questionText}
         {question.required && <span className="survey-required"> *</span>}
       </p>
+      {(fromText || toText) && (
+        <div className="survey-scale-labels-row" aria-hidden>
+          <span className="survey-scale-label-end">{fromText}</span>
+          <span className="survey-scale-label-end">{toText}</span>
+        </div>
+      )}
       <div
         className="survey-scale-row"
         style={{ gridTemplateColumns: `repeat(${options.length}, 1fr)` }}
         role="group"
         aria-label={question.questionText}
       >
-        {options.map((n, idx) => (
+        {options.map((n) => (
           <div key={n} className="survey-scale-cell">
-            <span className="survey-scale-label-top">
-              {idx === 0 ? fromText : idx === options.length - 1 ? toText : ''}
-            </span>
             <label className="survey-scale-option">
               <input
                 type="radio"
@@ -423,8 +426,13 @@ export default function PostAppointmentSurvey() {
         if (cancelled) return;
         const status = err?.response?.status;
         const message = err?.response?.data?.message ?? err?.message;
+        const code = err?.response?.data?.code as string | undefined;
         if (status === 400 || status === 404) {
-          setState('invalid');
+          const isAlreadyUsed =
+            code === 'ALREADY_SUBMITTED' ||
+            code === 'SURVEY_ALREADY_COMPLETED' ||
+            (typeof message === 'string' && /already\s+(been\s+)?used|already\s+submitted|already\s+completed/i.test(message));
+          setState(isAlreadyUsed ? 'success' : 'invalid');
         } else {
           setSubmitError(message || 'Unable to load the survey.');
           setState('error');
@@ -471,6 +479,27 @@ export default function PostAppointmentSurvey() {
 
   const [currentPage, setCurrentPage] = useState(0);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+
+  const surveyTopRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const scrollToTop = () => {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      surveyTopRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' });
+    };
+    scrollToTop();
+    let timeoutId: number;
+    const raf = requestAnimationFrame(() => {
+      scrollToTop();
+      timeoutId = window.setTimeout(scrollToTop, 100);
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timeoutId);
+    };
+  }, [currentPage]);
 
   /** Current page blocks and display nodes (for collapsible sections). Must be called unconditionally. */
   const blocksForCurrentPage = useMemo(() => pageBlocks[currentPage] ?? [], [pageBlocks, currentPage]);
@@ -554,8 +583,8 @@ export default function PostAppointmentSurvey() {
     return (
       <div className="survey-page">
         <div className="survey-card survey-invalid">
-          <h1>Survey link missing</h1>
-          <p>This survey requires a link from your appointment follow-up email. If you lost the link, please contact us.</p>
+          <h1>This link has expired or is invalid</h1>
+          <p>This survey link may have already been used or has expired. If you have questions, please contact us.</p>
         </div>
       </div>
     );
@@ -599,6 +628,15 @@ export default function PostAppointmentSurvey() {
         <div className="survey-card survey-success">
           <h1>Thank you for your feedback</h1>
           <p>Your responses have been submitted. You can close this window.</p>
+          <p className="survey-success-blurb">
+            Please log in to your client portal for all the most up-to-date information.
+          </p>
+          <p className="survey-success-blurb">
+            You can also refer a friend directly from the client portal—we’d love to help more people and their four-legged loved ones.
+          </p>
+          <Link to="/client-portal" className="btn survey-success-cta">
+            Go to Client Portal
+          </Link>
         </div>
       </div>
     );
@@ -646,7 +684,7 @@ export default function PostAppointmentSurvey() {
   };
 
   return (
-    <div className="survey-page">
+    <div className="survey-page" ref={surveyTopRef}>
       <div className="survey-card">
         <form onSubmit={handleSubmit} className="survey-form">
           {formData?.survey?.name && (

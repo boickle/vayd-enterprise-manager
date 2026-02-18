@@ -171,6 +171,29 @@ export type SurveyReportSummary = {
 };
 
 // ---------------------------------------------------------------------------
+// Types (report questions with options – for filter dropdowns)
+// ---------------------------------------------------------------------------
+
+export type SurveyReportQuestionOption = {
+  value: string;
+  label: string;
+};
+
+export type SurveyReportQuestionWithOptions = {
+  id: number;
+  questionKey: string;
+  questionText: string;
+  questionType: string;
+  options: SurveyReportQuestionOption[];
+};
+
+export type SurveyReportQuestionsResponse = {
+  surveyId: number;
+  surveySlug: string;
+  questions: SurveyReportQuestionWithOptions[];
+};
+
+// ---------------------------------------------------------------------------
 // Public (no auth)
 // ---------------------------------------------------------------------------
 
@@ -252,7 +275,8 @@ export async function getSurveyResponse(id: number): Promise<SurveyResponseDetai
 
 /**
  * Get per-question report summary for a date range.
- * GET /survey/reports/summary?surveySlug=post-appointment&from=&to=
+ * GET /survey/reports/summary?surveySlug=post-appointment&from=&to=&questionId=&answerValue=
+ * When questionId and answerValue are set, the summary is limited to responses with that question/answer.
  * Requires: Authorization: Bearer <token>
  */
 export async function getSurveyReportSummary(params: {
@@ -261,13 +285,36 @@ export async function getSurveyReportSummary(params: {
   to: string;
   /** Filter by doctor/employee. Omit for all doctors. */
   employeeId?: number | null;
+  /** Filter to responses that have this question with this answer. Use with answerValue. */
+  questionId?: number | null;
+  /** Exact value for the question (e.g. "5", "Dr. Abigail Messina"). Use with questionId. */
+  answerValue?: string | null;
 }): Promise<SurveyReportSummary> {
-  const { employeeId, ...rest } = params;
+  const { employeeId, questionId, answerValue, ...rest } = params;
   const query: Record<string, unknown> = { ...rest };
   if (employeeId != null && typeof employeeId === 'number') {
     query.employeeId = employeeId;
     query.doctorId = employeeId;
   }
+  if (questionId != null && typeof questionId === 'number') {
+    query.questionId = questionId;
+  }
+  if (answerValue != null && answerValue !== '') {
+    query.answerValue = answerValue;
+  }
   const { data } = await http.get<SurveyReportSummary>('/survey/reports/summary', { params: query, headers: authHeaders() });
+  return data;
+}
+
+/**
+ * Get survey questions and their possible answers (for filter dropdowns).
+ * GET /survey/reports/questions?surveySlug=post-appointment
+ * Requires: Authorization: Bearer <token>
+ */
+export async function getSurveyReportQuestions(surveySlug: string): Promise<SurveyReportQuestionsResponse> {
+  const { data } = await http.get<SurveyReportQuestionsResponse>('/survey/reports/questions', {
+    params: { surveySlug },
+    headers: authHeaders(),
+  });
   return data;
 }
