@@ -1416,9 +1416,10 @@ export default function RoomLoaderPage() {
         }
 
         // Use adjusted price when membership/discount applies (only when no correction; corrections use different item)
+        // Note: discountPricing.priceAdjustedByDiscount is a boolean, not the price; use wellnessPlanPricing.adjustedPrice only
+        const wpAdjusted = reminderWithPrice.wellnessPlanPricing?.adjustedPrice;
         const effectivePrice = !correction?.selectedItem
-          ? ((reminderWithPrice.wellnessPlanPricing?.adjustedPrice ?? reminderWithPrice.discountPricing?.priceAdjustedByDiscount)
-              ?? (finalItem?.price ?? reminderWithPrice.price))
+          ? ((wpAdjusted != null && typeof wpAdjusted === 'number' ? wpAdjusted : null) ?? (finalItem?.price ?? reminderWithPrice.price))
           : (finalItem?.price ?? reminderWithPrice.price);
         if (finalItem && effectivePrice != null) {
           finalItem = { ...finalItem, price: Number(effectivePrice) };
@@ -1446,9 +1447,11 @@ export default function RoomLoaderPage() {
       // Get added items (include wellnessPlanPricing/discountPricing so client can surface why price is discounted)
       const addedItemsList = (addedItems[patient.id] || []).map((item) => {
         const basePrice = item.price != null ? Number(item.price) : null;
-        const adjustedPrice = (item as any).wellnessPlanPricing?.adjustedPrice
-          ?? (item as any).discountPricing?.priceAdjustedByDiscount;
-        const effectivePrice = adjustedPrice != null ? Number(adjustedPrice) : basePrice;
+        // Use wellnessPlanPricing.adjustedPrice only when it's a number; discountPricing.priceAdjustedByDiscount is a boolean
+        const wpAdjusted = (item as any).wellnessPlanPricing?.adjustedPrice;
+        const effectivePrice = (wpAdjusted != null && typeof wpAdjusted === 'number')
+          ? Number(wpAdjusted)
+          : basePrice;
         const payload: any = {
           id: item.inventoryItem?.id || item.lab?.id || (item as any).procedure?.id,
           type: item.itemType,
