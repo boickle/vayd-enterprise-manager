@@ -610,3 +610,93 @@ export async function saveRoomLoaderForm(request: SaveFormRequest): Promise<Room
   const { data } = await http.post<RoomLoader>('/room-loader/save-form', request);
   return data;
 }
+
+// =============================================================================
+// Room loader summary: membership comparison for non-members
+// =============================================================================
+
+/** One membership plan offered for a pet (species-based). Returned by GET /public/room-loader/form when client is not a member. */
+export type RoomLoaderMembershipOffer = {
+  planId: string;
+  planName: string;
+  tagLine?: string;
+  /** Price in dollars per month (monthly billing). */
+  monthlyPrice: number;
+  /** Price in dollars for annual billing (total for the year, or first year). */
+  annualPrice?: number;
+  /** Whether this plan is an add-on (e.g. PLUS, Puppy/Kitten). */
+  isAddOn?: boolean;
+};
+
+/** Per-patient membership offers (plans applicable to this pet's species). Returned by GET /public/room-loader/form. */
+export type RoomLoaderAvailablePlansForPet = {
+  patientId: number;
+  patientName?: string;
+  species?: string;
+  plans: RoomLoaderMembershipOffer[];
+};
+
+/** Line item for simulate-bill: must include enough for backend to re-apply membership pricing (itemType + item id when available). */
+export type RoomLoaderSimulateLineItem = {
+  name: string;
+  quantity: number;
+  /** Current price (non-member) in dollars. */
+  price: number;
+  patientId: number;
+  patientName?: string;
+  category?: string;
+  /** Optional: so backend can look up membership-adjusted price. */
+  itemType?: 'lab' | 'procedure' | 'inventory' | string;
+  /** Optional: id of procedure, lab, or inventory item. */
+  itemId?: number;
+};
+
+export type RoomLoaderSimulateBillPublicRequest = {
+  token: string;
+  practiceId?: number;
+  clientId?: number;
+  /** Plan to simulate (e.g. "foundations", "golden"). */
+  planId: string;
+  /** Billing cadence for the plan. */
+  pricingOption: 'monthly' | 'annual';
+  /** Patient(s) this plan applies to (e.g. single pet for base plan). */
+  patientIds: number[];
+  /** Current summary line items (services/labs/products) so backend can recalc with membership. */
+  lineItems: RoomLoaderSimulateLineItem[];
+  /** Store/additional items subtotal and tax (optional; backend may add to total). */
+  storeSubtotal?: number;
+  storeTax?: number;
+};
+
+export type RoomLoaderSimulateBillPublicResponse = {
+  /** Total without membership (visit services only, no store). */
+  originalVisitSubtotal: number;
+  /** Total without membership (visit + store + tax). */
+  originalTotal: number;
+  /** Visit subtotal if client had this membership (discounts applied). */
+  withMembershipVisitSubtotal: number;
+  /** Membership fee for this plan/cadence (e.g. first month or annual amount). */
+  membershipFee: number;
+  /** Total with membership: withMembershipVisitSubtotal + membershipFee + store (if any). */
+  withMembershipTotal: number;
+  /** originalTotal - withMembershipTotal (positive = savings). */
+  savings: number;
+  /** Per-line adjustments for display (optional). */
+  lineItemAdjustments?: Array<{
+    name: string;
+    patientId: number;
+    originalPrice: number;
+    adjustedPrice: number;
+    quantity: number;
+  }>;
+};
+
+export async function simulateBillWithMembershipPublic(
+  request: RoomLoaderSimulateBillPublicRequest
+): Promise<RoomLoaderSimulateBillPublicResponse> {
+  const { data } = await http.post<RoomLoaderSimulateBillPublicResponse>(
+    '/public/room-loader/simulate-bill-with-membership',
+    request
+  );
+  return data;
+}

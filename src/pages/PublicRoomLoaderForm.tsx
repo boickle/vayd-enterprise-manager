@@ -3,7 +3,17 @@ import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { apiBaseUrl, http } from '../api/http';
 import { getEcwidProducts, type EcwidProduct, type EcwidChoice } from '../api/ecwid';
-import { searchItemsPublic, type SearchableItem, checkItemPricingPublic, type CheckItemPricingResponse, type CheckItemPricingPublicRequest } from '../api/roomLoader';
+import {
+  searchItemsPublic,
+  type SearchableItem,
+  checkItemPricingPublic,
+  type CheckItemPricingResponse,
+  type CheckItemPricingPublicRequest,
+  simulateBillWithMembershipPublic,
+  type RoomLoaderAvailablePlansForPet,
+  type RoomLoaderSimulateBillPublicResponse,
+  type RoomLoaderSimulateLineItem,
+} from '../api/roomLoader';
 import { getPatientTreatmentHistory, type TreatmentWithItems } from '../api/treatments';
 import { DateTime } from 'luxon';
 import jsPDF from 'jspdf';
@@ -773,6 +783,15 @@ export default function PublicRoomLoaderForm() {
   /** When submitStatus === 'completed', we show PDF view; this is the blob URL for the generated PDF. */
   /** Inline validation errors keyed by form field (e.g. pet0_outdoorAccess). Shown below the field instead of alert. */
   const [fieldValidationErrors, setFieldValidationErrors] = useState<Record<string, string>>({});
+  /** Membership comparison on summary: selected plan + option for "see how bill would change". */
+  const [selectedMembershipSimulate, setSelectedMembershipSimulate] = useState<{
+    planId: string;
+    planName: string;
+    pricingOption: 'monthly' | 'annual';
+    patientIds: number[];
+  } | null>(null);
+  const [membershipSimulateResult, setMembershipSimulateResult] = useState<RoomLoaderSimulateBillPublicResponse | null>(null);
+  const [membershipSimulateLoading, setMembershipSimulateLoading] = useState(false);
 
   const COMMON_ITEMS_CONFIG = [
     { searchQuery: 'Pedicure - Cat', searchQueryDog: 'Pedicure - Dog', displayName: 'Pedicure', dogOnly: false },
@@ -2190,6 +2209,52 @@ export default function PublicRoomLoaderForm() {
       return { valid: false, message: Object.values(errors)[0], errors };
     }
     return { valid: true };
+  }
+
+  /** Run membership bill simulation when user selects a plan on the summary page. */
+  async function runMembershipSimulate(
+    planId: string,
+    planName: string,
+    pricingOption: 'monthly' | 'annual',
+    patientIds: number[]
+  ) {
+    const tokenValue = token;
+    if (!tokenValue || !data) return;
+    setSelectedMembershipSimulate({ planId, planName, pricingOption, patientIds });
+    setMembershipSimulateResult(null);
+    setMembershipSimulateLoading(true);
+    try {
+      const snapshot = buildFullFormSnapshot();
+      const summaryLineItems = snapshot?.summaryLineItems ?? [];
+      const totals = snapshot?.totals ?? {};
+      const lineItems: RoomLoaderSimulateLineItem[] = summaryLineItems.map((li: { name: string; quantity: number; price: number; patientId?: number; patientName?: string; category?: string }) => ({
+        name: li.name,
+        quantity: li.quantity,
+        price: li.price,
+        patientId: li.patientId ?? 0,
+        patientName: li.patientName,
+        category: li.category,
+      }));
+      const practiceId = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id;
+      const clientId = data?.clientId ?? data?.client?.id ?? data?.patients?.[0]?.clientId ?? (data?.patients?.[0] as any)?.client?.id ?? data?.appointments?.[0]?.client?.id;
+      const result = await simulateBillWithMembershipPublic({
+        token: tokenValue,
+        practiceId,
+        clientId,
+        planId,
+        pricingOption,
+        patientIds,
+        lineItems,
+        storeSubtotal: totals.storeSubtotal,
+        storeTax: totals.storeTax,
+      });
+      setMembershipSimulateResult(result);
+    } catch (err) {
+      console.error('Membership simulate error:', err);
+      setMembershipSimulateResult(null);
+    } finally {
+      setMembershipSimulateLoading(false);
+    }
   }
 
   async function handleSubmit() {
@@ -5156,6 +5221,142 @@ export default function PublicRoomLoaderForm() {
             <div style={{ marginTop: '24px', paddingTop: '20px', borderTop: '3px solid #e0e0e0', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '16px' }}>
               <span style={{ fontSize: '20px', fontWeight: 700, color: '#212529' }}>Estimated Total Due At Visit: <strong>{formatPrice(grandTotal)}</strong></span>
             </div>
+
+            {/* Membership comparison: show when client is not a member and backend returns plans per pet */}
+            {!readOnly &&
+              !data?.clientHasMembership &&
+              Array.isArray(data?.availablePlansForPets) &&
+              data.availablePlansForPets.length > 0 &&
+              (() => {
+                const availablePlansForPets = data.availablePlansForPets as RoomLoaderAvailablePlansForPet[];
+                return (
+                  <div style={{ marginTop: '28px', padding: '20px', backgroundColor: '#f0f7ff', border: '1px solid #b6d4fe', borderRadius: '10px' }}>
+                    <h4 style={{ margin: '0 0 12px', fontSize: '17px', fontWeight: 700, color: '#084298' }}>
+                      See how a membership could change your bill
+                    </h4>
+                    <p style={{ margin: '0 0 16px', fontSize: '14px', color: '#555', lineHeight: 1.5 }}>
+                      Select a plan below to see your estimated total with membership pricing applied.
+                    </p>
+                    {availablePlansForPets.map((petPlans) => (
+                      <div key={petPlans.patientId} style={{ marginBottom: petPlans.plans?.length ? '20px' : 0 }}>
+                        {petPlans.patientName && (
+                          <div style={{ fontSize: '14px', fontWeight: 600, color: '#333', marginBottom: '8px' }}>
+                            For {petPlans.patientName}
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                          {(petPlans.plans ?? []).map((plan) => (
+                            <div
+                              key={`${petPlans.patientId}-${plan.planId}`}
+                              style={{
+                                border: '1px solid #9ec5fe',
+                                borderRadius: '8px',
+                                padding: '12px 14px',
+                                backgroundColor: '#fff',
+                                minWidth: '200px',
+                              }}
+                            >
+                              <div style={{ fontWeight: 600, fontSize: '15px', color: '#212529', marginBottom: '4px' }}>
+                                {plan.planName}
+                              </div>
+                              {plan.tagLine && (
+                                <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>{plan.tagLine}</div>
+                              )}
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                                <button
+                                  type="button"
+                                  disabled={membershipSimulateLoading}
+                                  onClick={() =>
+                                    runMembershipSimulate(plan.planId, plan.planName, 'monthly', [petPlans.patientId])
+                                  }
+                                  style={{
+                                    padding: '6px 12px',
+                                    fontSize: '13px',
+                                    fontWeight: 600,
+                                    backgroundColor:
+                                      selectedMembershipSimulate?.planId === plan.planId &&
+                                      selectedMembershipSimulate?.pricingOption === 'monthly'
+                                        ? '#0d6efd'
+                                        : '#e7f1ff',
+                                    color:
+                                      selectedMembershipSimulate?.planId === plan.planId &&
+                                      selectedMembershipSimulate?.pricingOption === 'monthly'
+                                        ? '#fff'
+                                        : '#0d6efd',
+                                    border: '1px solid #0d6efd',
+                                    borderRadius: '6px',
+                                    cursor: membershipSimulateLoading ? 'not-allowed' : 'pointer',
+                                  }}
+                                >
+                                  Monthly ${plan.monthlyPrice}
+                                </button>
+                                {plan.annualPrice != null && (
+                                  <button
+                                    type="button"
+                                    disabled={membershipSimulateLoading}
+                                    onClick={() =>
+                                      runMembershipSimulate(plan.planId, plan.planName, 'annual', [petPlans.patientId])
+                                    }
+                                    style={{
+                                      padding: '6px 12px',
+                                      fontSize: '13px',
+                                      fontWeight: 600,
+                                      backgroundColor:
+                                        selectedMembershipSimulate?.planId === plan.planId &&
+                                        selectedMembershipSimulate?.pricingOption === 'annual'
+                                          ? '#0d6efd'
+                                          : '#e7f1ff',
+                                      color:
+                                        selectedMembershipSimulate?.planId === plan.planId &&
+                                        selectedMembershipSimulate?.pricingOption === 'annual'
+                                          ? '#fff'
+                                          : '#0d6efd',
+                                      border: '1px solid #0d6efd',
+                                      borderRadius: '6px',
+                                      cursor: membershipSimulateLoading ? 'not-allowed' : 'pointer',
+                                    }}
+                                  >
+                                    Annual ${plan.annualPrice}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {membershipSimulateLoading && (
+                      <p style={{ margin: '16px 0 0', fontSize: '14px', color: '#666' }}>Calculating...</p>
+                    )}
+                    {membershipSimulateResult != null && !membershipSimulateLoading && selectedMembershipSimulate && (
+                      <div
+                        style={{
+                          marginTop: '16px',
+                          padding: '14px',
+                          backgroundColor: '#d1e7dd',
+                          border: '1px solid #badbcc',
+                          borderRadius: '8px',
+                          fontSize: '15px',
+                          color: '#0f5132',
+                        }}
+                      >
+                        <strong>
+                          With {selectedMembershipSimulate.planName} ({selectedMembershipSimulate.pricingOption})
+                        </strong>
+                        : Your total would be{' '}
+                        <strong>{formatPrice(membershipSimulateResult.withMembershipTotal)}</strong>
+                        {membershipSimulateResult.savings > 0 && (
+                          <>
+                            {' '}
+                            — you&apos;d save <strong>{formatPrice(membershipSimulateResult.savings)}</strong>
+                          </>
+                        )}
+                        .
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
             {fieldValidationErrors._submit && (
               <p style={{ marginTop: '16px', marginBottom: 0, fontSize: '14px', color: '#dc3545' }}>{fieldValidationErrors._submit}</p>
