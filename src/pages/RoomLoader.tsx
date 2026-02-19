@@ -778,23 +778,25 @@ export default function RoomLoaderPage() {
     setVaccineCheckboxes({});
   }
 
-  function handleQuantityChange(reminderId: number, quantity: number) {
-    const parsed = Number(quantity);
+  function handleQuantityChange(reminderId: number, value: number | string) {
+    if (value === '') {
+      setReminderQuantities((prev) => ({ ...prev, [reminderId]: '' }));
+      return;
+    }
+    const parsed = Number(value);
     const validQuantity = Number.isNaN(parsed) || parsed < 0.01 ? 1 : Math.round(parsed * 100) / 100;
-    setReminderQuantities((prev) => ({
-      ...prev,
-      [reminderId]: validQuantity,
-    }));
+    setReminderQuantities((prev) => ({ ...prev, [reminderId]: validQuantity }));
   }
 
-  function handleAddedItemQuantityChange(petId: number, itemIdx: number, quantity: number) {
-    const parsed = Number(quantity);
-    const validQuantity = Number.isNaN(parsed) || parsed < 0.01 ? 1 : Math.round(parsed * 100) / 100;
+  function handleAddedItemQuantityChange(petId: number, itemIdx: number, value: number | string) {
     const key = `${petId}-${itemIdx}`;
-    setAddedItemQuantities((prev) => ({
-      ...prev,
-      [key]: validQuantity,
-    }));
+    if (value === '') {
+      setAddedItemQuantities((prev) => ({ ...prev, [key]: '' }));
+      return;
+    }
+    const parsed = Number(value);
+    const validQuantity = Number.isNaN(parsed) || parsed < 0.01 ? 1 : Math.round(parsed * 100) / 100;
+    setAddedItemQuantities((prev) => ({ ...prev, [key]: validQuantity }));
   }
 
   function handleRemoveReminder(reminderId: number, reminderDescription: string) {
@@ -1026,20 +1028,16 @@ export default function RoomLoaderPage() {
       
       // Clean up quantities for removed items and reindex remaining items
       setAddedItemQuantities((prevQty) => {
-        const newQty: Record<string, number> = {};
+        const newQty: Record<string, number | ''> = {};
         Object.keys(prevQty).forEach((key) => {
           const [keyPetId, keyIdx] = key.split('-').map(Number);
           if (keyPetId === petId) {
             if (keyIdx < index) {
-              // Keep quantities for items before the removed one
               newQty[key] = prevQty[key];
             } else if (keyIdx > index) {
-              // Reindex quantities for items after the removed one
               newQty[`${petId}-${keyIdx - 1}`] = prevQty[key];
             }
-            // Skip the removed item's quantity
           } else {
-            // Keep quantities for other pets
             newQty[key] = prevQty[key];
           }
         });
@@ -1056,10 +1054,11 @@ export default function RoomLoaderPage() {
   // Reminder feedback state
   const [reminderFeedback, setReminderFeedback] = useState<Record<string, 'correct' | 'incorrect' | 'correcting' | null>>({});
   const [reminderCorrections, setReminderCorrections] = useState<Record<string, { searchQuery: string; results: SearchableItem[]; loading: boolean; selectedItem: SearchableItem | null; patientId?: number; scopeChosen?: boolean }>>({});
-  // Store quantities for each reminder (keyed by reminderId)
-  const [reminderQuantities, setReminderQuantities] = useState<Record<number, number>>({});
-  // Store quantities for each added item (keyed by `${petId}-${itemIdx}`)
-  const [addedItemQuantities, setAddedItemQuantities] = useState<Record<string, number>>({});
+  // Store quantities for each reminder (keyed by reminderId). Empty string allows user to clear field to type new number.
+  const [reminderQuantities, setReminderQuantities] = useState<Record<number, number | ''>>({});
+  // Store quantities for each added item (keyed by `${petId}-${itemIdx}`). Empty string allows user to clear field to type new number.
+  const [addedItemQuantities, setAddedItemQuantities] = useState<Record<string, number | ''>>({});
+  const resolveQty = (v: number | '' | undefined): number => (v === '' || v == null ? 1 : v);
   // Store edited reason for appointment for each patient (keyed by patient.id)
   const [appointmentReasons, setAppointmentReasons] = useState<Record<number, string>>({});
   // Store edited arrival window for each patient (keyed by patient.id)
@@ -1378,7 +1377,7 @@ export default function RoomLoaderPage() {
         const reminderId = reminderWithPrice.reminder.id;
         const correctionKey = `reminder-${reminderId}`;
         const correction = reminderCorrections[correctionKey];
-        const quantity = reminderQuantities[reminderId] || 1;
+        const quantity = resolveQty(reminderQuantities[reminderId]);
         
         // Determine the final matched item (either original match or correction)
         let finalItem: any = null;
@@ -2564,7 +2563,7 @@ export default function RoomLoaderPage() {
                                     )}
                                   </div>
                                 ) : null}
-                                {reminderWithPrice.wellnessPlanPricing && reminderWithPrice.wellnessPlanPricing.hasCoverage && (
+                                {(reminderWithPrice.wellnessPlanPricing?.hasCoverage || reminderWithPrice.wellnessPlanPricing?.priceAdjustedByMembership) && (
                                   <div style={{ 
                                     fontSize: '13px', 
                                     color: '#1976d2', 
@@ -2581,10 +2580,15 @@ export default function RoomLoaderPage() {
                                         <strong>Membership Discount:</strong> {reminderWithPrice.wellnessPlanPricing.membershipPlanName || 'Membership Plan'}
                                         {reminderWithPrice.wellnessPlanPricing.membershipDiscountAmount != null && reminderWithPrice.wellnessPlanPricing.membershipDiscountAmount > 0 && (
                                           <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
-                                            Savings: ${reminderWithPrice.wellnessPlanPricing.membershipDiscountAmount.toFixed(2)}
-                                          </span>
+                                            Savings: $
+                                            {(reminderWithPrice.wellnessPlanPricing.includedQuantity == null || reminderWithPrice.wellnessPlanPricing.includedQuantity === 0
+                                              ? reminderWithPrice.wellnessPlanPricing.membershipDiscountAmount * resolveQty(reminderQuantities[reminderId])
+                                              : reminderWithPrice.wellnessPlanPricing.membershipDiscountAmount
+                                            ).toFixed(2)}
+                                            </span>
                                         )}
-                                        {reminderWithPrice.wellnessPlanPricing.usedQuantity != null && reminderWithPrice.wellnessPlanPricing.includedQuantity != null && (
+                                        {reminderWithPrice.wellnessPlanPricing.usedQuantity != null && reminderWithPrice.wellnessPlanPricing.includedQuantity != null &&
+                                         ((reminderWithPrice.wellnessPlanPricing.usedQuantity ?? 0) !== 0 || (reminderWithPrice.wellnessPlanPricing.includedQuantity ?? 0) !== 0 || (reminderWithPrice.wellnessPlanPricing.remainingQuantity ?? 0) !== 0) && (
                                           <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
                                             ({reminderWithPrice.wellnessPlanPricing.usedQuantity} of {reminderWithPrice.wellnessPlanPricing.includedQuantity} used, {reminderWithPrice.wellnessPlanPricing.remainingQuantity} remaining)
                                           </span>
@@ -2595,7 +2599,8 @@ export default function RoomLoaderPage() {
                                         {reminderWithPrice.wellnessPlanPricing.originalPrice !== reminderWithPrice.wellnessPlanPricing.adjustedPrice ? (
                                           <>
                                             <strong>Wellness Plan:</strong> ${reminderWithPrice.wellnessPlanPricing.originalPrice.toFixed(2)} → ${reminderWithPrice.wellnessPlanPricing.adjustedPrice.toFixed(2)}
-                                            {reminderWithPrice.wellnessPlanPricing.isWithinLimit && (
+                                            {reminderWithPrice.wellnessPlanPricing.isWithinLimit &&
+                                             ((reminderWithPrice.wellnessPlanPricing.usedQuantity ?? 0) !== 0 || (reminderWithPrice.wellnessPlanPricing.includedQuantity ?? 0) !== 0 || (reminderWithPrice.wellnessPlanPricing.remainingQuantity ?? 0) !== 0) && (
                                               <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
                                                 ({reminderWithPrice.wellnessPlanPricing.usedQuantity} of {reminderWithPrice.wellnessPlanPricing.includedQuantity} used, {reminderWithPrice.wellnessPlanPricing.remainingQuantity} remaining)
                                               </span>
@@ -2605,9 +2610,11 @@ export default function RoomLoaderPage() {
                                           <>
                                             <strong>Membership Coverage:</strong>
                                             {reminderWithPrice.wellnessPlanPricing.remainingQuantity === 0 || !reminderWithPrice.wellnessPlanPricing.isWithinLimit ? (
-                                              <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#d32f2f', fontWeight: 500 }}>
-                                                Already used ({reminderWithPrice.wellnessPlanPricing.usedQuantity} of {reminderWithPrice.wellnessPlanPricing.includedQuantity} used)
-                                              </span>
+                                              ((reminderWithPrice.wellnessPlanPricing.usedQuantity ?? 0) !== 0 || (reminderWithPrice.wellnessPlanPricing.includedQuantity ?? 0) !== 0) && (
+                                                <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#d32f2f', fontWeight: 500 }}>
+                                                  Already used ({reminderWithPrice.wellnessPlanPricing.usedQuantity} of {reminderWithPrice.wellnessPlanPricing.includedQuantity} used)
+                                                </span>
+                                              )
                                             ) : (
                                               <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
                                                 ({reminderWithPrice.wellnessPlanPricing.usedQuantity} of {reminderWithPrice.wellnessPlanPricing.includedQuantity} used, {reminderWithPrice.wellnessPlanPricing.remainingQuantity} remaining)
@@ -2771,10 +2778,10 @@ export default function RoomLoaderPage() {
                                     min="0.01"
                                     step="0.01"
                                     className="room-loader-qty-input"
-                                    value={reminderQuantities[reminderId] ?? 1}
-                                    onChange={(e) => {
-                                      const qty = parseFloat(e.target.value);
-                                      handleQuantityChange(reminderId, qty);
+                                    value={reminderQuantities[reminderId] === '' ? '' : (reminderQuantities[reminderId] ?? 1)}
+                                    onChange={(e) => handleQuantityChange(reminderId, e.target.value)}
+                                    onBlur={(e) => {
+                                      if (e.target.value === '') handleQuantityChange(reminderId, 1);
                                     }}
                                     style={{
                                       width: '60px',
@@ -2829,7 +2836,7 @@ export default function RoomLoaderPage() {
                                   }
                                   
                                   // Get quantity and apply tiered pricing if available
-                                  const quantity = reminderQuantities[reminderId] || 1;
+                                  const quantity = resolveQty(reminderQuantities[reminderId]);
                                   
                                   // Get tiered price for the current quantity
                                   // Check correction item tiered pricing first, then fall back to reminder tiered pricing
@@ -3411,7 +3418,7 @@ export default function RoomLoaderPage() {
                               <div style={{ fontSize: '14px', color: '#666', marginBottom: '5px' }}>
                                 <strong>Type:</strong> {item.itemType}
                               </div>
-                              {item.wellnessPlanPricing && item.wellnessPlanPricing.hasCoverage && (
+                              {(item.wellnessPlanPricing?.hasCoverage || item.wellnessPlanPricing?.priceAdjustedByMembership) && (
                                 <div style={{ 
                                   fontSize: '13px', 
                                   color: '#1976d2', 
@@ -3427,10 +3434,15 @@ export default function RoomLoaderPage() {
                                       <strong>Membership Discount:</strong> {item.wellnessPlanPricing.membershipPlanName || 'Membership Plan'}
                                       {item.wellnessPlanPricing.membershipDiscountAmount != null && item.wellnessPlanPricing.membershipDiscountAmount > 0 && (
                                         <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
-                                          Savings: ${item.wellnessPlanPricing.membershipDiscountAmount.toFixed(2)}
+                                          Savings: $
+                                          {(item.wellnessPlanPricing.includedQuantity == null || item.wellnessPlanPricing.includedQuantity === 0
+                                            ? item.wellnessPlanPricing.membershipDiscountAmount * resolveQty(addedItemQuantities[`${patient.id}-${itemIdx}`])
+                                            : item.wellnessPlanPricing.membershipDiscountAmount
+                                          ).toFixed(2)}
                                         </span>
                                       )}
-                                      {item.wellnessPlanPricing.usedQuantity != null && item.wellnessPlanPricing.includedQuantity != null && (
+                                      {item.wellnessPlanPricing.usedQuantity != null && item.wellnessPlanPricing.includedQuantity != null &&
+                                       ((item.wellnessPlanPricing.usedQuantity ?? 0) !== 0 || (item.wellnessPlanPricing.includedQuantity ?? 0) !== 0 || (item.wellnessPlanPricing.remainingQuantity ?? 0) !== 0) && (
                                         <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
                                           ({item.wellnessPlanPricing.usedQuantity} of {item.wellnessPlanPricing.includedQuantity} used, {item.wellnessPlanPricing.remainingQuantity} remaining)
                                         </span>
@@ -3441,7 +3453,8 @@ export default function RoomLoaderPage() {
                                       {item.wellnessPlanPricing.originalPrice !== item.wellnessPlanPricing.adjustedPrice ? (
                                         <>
                                           <strong>Wellness Plan:</strong> ${item.wellnessPlanPricing.originalPrice.toFixed(2)} → ${item.wellnessPlanPricing.adjustedPrice.toFixed(2)}
-                                          {item.wellnessPlanPricing.isWithinLimit && (
+                                          {item.wellnessPlanPricing.isWithinLimit &&
+                                           ((item.wellnessPlanPricing.usedQuantity ?? 0) !== 0 || (item.wellnessPlanPricing.includedQuantity ?? 0) !== 0 || (item.wellnessPlanPricing.remainingQuantity ?? 0) !== 0) && (
                                             <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
                                               ({item.wellnessPlanPricing.usedQuantity} of {item.wellnessPlanPricing.includedQuantity} used, {item.wellnessPlanPricing.remainingQuantity} remaining)
                                             </span>
@@ -3451,9 +3464,11 @@ export default function RoomLoaderPage() {
                                         <>
                                           <strong>Membership Coverage:</strong>
                                           {item.wellnessPlanPricing.remainingQuantity === 0 || !item.wellnessPlanPricing.isWithinLimit ? (
-                                            <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#d32f2f', fontWeight: 500 }}>
-                                              Already used ({item.wellnessPlanPricing.usedQuantity} of {item.wellnessPlanPricing.includedQuantity} used)
-                                            </span>
+                                            ((item.wellnessPlanPricing.usedQuantity ?? 0) !== 0 || (item.wellnessPlanPricing.includedQuantity ?? 0) !== 0) && (
+                                              <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#d32f2f', fontWeight: 500 }}>
+                                                Already used ({item.wellnessPlanPricing.usedQuantity} of {item.wellnessPlanPricing.includedQuantity} used)
+                                              </span>
+                                            )
                                           ) : (
                                             <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
                                               ({item.wellnessPlanPricing.usedQuantity} of {item.wellnessPlanPricing.includedQuantity} used, {item.wellnessPlanPricing.remainingQuantity} remaining)
@@ -3528,10 +3543,10 @@ export default function RoomLoaderPage() {
                                   min="0.01"
                                   step="0.01"
                                   className="room-loader-qty-input"
-                                  value={addedItemQuantities[`${patient.id}-${itemIdx}`] ?? 1}
-                                  onChange={(e) => {
-                                    const qty = parseFloat(e.target.value);
-                                    handleAddedItemQuantityChange(patient.id, itemIdx, qty);
+                                  value={addedItemQuantities[`${patient.id}-${itemIdx}`] === '' ? '' : (addedItemQuantities[`${patient.id}-${itemIdx}`] ?? 1)}
+                                  onChange={(e) => handleAddedItemQuantityChange(patient.id, itemIdx, e.target.value)}
+                                  onBlur={(e) => {
+                                    if (e.target.value === '') handleAddedItemQuantityChange(patient.id, itemIdx, 1);
                                   }}
                                   style={{
                                     width: '60px',
@@ -3545,7 +3560,7 @@ export default function RoomLoaderPage() {
                               </div>
                               {/* Price Display */}
                               {(() => {
-                                const quantity = addedItemQuantities[`${patient.id}-${itemIdx}`] || 1;
+                                const quantity = resolveQty(addedItemQuantities[`${patient.id}-${itemIdx}`]);
                                 
                                 // Get the base original price (for qty 1)
                                 const baseOriginalPrice = item.wellnessPlanPricing?.originalPrice ?? 
@@ -3648,7 +3663,7 @@ export default function RoomLoaderPage() {
                           }
                           
                           // Get quantity and apply tiered pricing if available
-                          const quantity = reminderQuantities[reminderId] || 1;
+                          const quantity = resolveQty(reminderQuantities[reminderId]);
                           
                           // Get tiered price for the current quantity
                           // Check correction item tiered pricing first, then fall back to reminder tiered pricing
@@ -3667,7 +3682,7 @@ export default function RoomLoaderPage() {
                           return sum + (tieredFinalPrice * quantity);
                         }, 0) || 0) +
                         (addedItems[patient.id]?.reduce((sum, item, itemIdx) => {
-                          const quantity = addedItemQuantities[`${patient.id}-${itemIdx}`] || 1;
+                          const quantity = resolveQty(addedItemQuantities[`${patient.id}-${itemIdx}`]);
                           
                           // Calculate price with tiered pricing if applicable
                           const baseOriginalPrice = item.wellnessPlanPricing?.originalPrice ?? 
