@@ -649,7 +649,8 @@ export default function OpsAnalyticsPage() {
                     domain={normalize ? [0, 1] : ['auto', 'auto']}
                   />
                   <Tooltip
-                    formatter={(value: number) => {
+                    formatter={(value: number | undefined) => {
+                      if (value == null) return '';
                       if (normalize) return Number(value).toFixed(2);
                       const m = METRICS.find((mm) => mm.key === metric);
                       if (!m) return value;
@@ -745,10 +746,12 @@ export default function OpsAnalyticsPage() {
                           }
                         />
                         <Tooltip
-                          formatter={(value: number) =>
-                            k === 'whitePct'
-                              ? `${Math.round(value)}%`
-                              : Math.round(value).toLocaleString()
+                          formatter={(value: number | undefined) =>
+                            value == null
+                              ? ''
+                              : k === 'whitePct'
+                                ? `${Math.round(value)}%`
+                                : Math.round(value).toLocaleString()
                           }
                           labelFormatter={(l) => dayjs(l).format('MMM D, YYYY')}
                         />
