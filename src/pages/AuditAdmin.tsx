@@ -206,8 +206,12 @@ export default function AuditUsage() {
                   <XAxis dataKey="day" tickFormatter={fmtTick} minTickGap={24} />
                   <YAxis />
                   <Tooltip
-                    formatter={(v: number) => (typeof v === 'number' ? v.toLocaleString() : v)}
-                    labelFormatter={fmtLabel}
+                    formatter={(v: number | undefined) =>
+                      v != null ? (typeof v === 'number' ? v.toLocaleString() : String(v)) : ''
+                    }
+                    labelFormatter={(label) =>
+                      typeof label === 'string' ? fmtLabel(label) : String(label ?? '')
+                    }
                   />
                   <Line type="monotone" dataKey="requests" strokeWidth={2} dot={false} />
                 </LineChart>
