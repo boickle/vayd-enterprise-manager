@@ -1741,7 +1741,7 @@ export default function PublicRoomLoaderForm() {
           lineTotal,
           checked: isChecked,
           uncheckable: false,
-          crossedOut: !isChecked || isFecalReplaced,
+          crossedOut: isFecalReplaced,
           fecalReplacedBy: isFecalReplaced ? fecalReplacedBy.join(' or ') : undefined,
         });
       });
@@ -1819,16 +1819,16 @@ export default function PublicRoomLoaderForm() {
         const itemId = getItemId(item) ?? c.searchQuery;
         const commonKey = `summary_common_${patientId}_${itemId}`;
         const isChecked = formData[commonKey] === true;
+        if (!isChecked) return; // Only include common items when selected
         const price = getClientAdjustedPrice(patientId, item) ?? getSearchItemPrice(item) ?? 0;
-        if (isChecked) petSubtotal += price;
+        petSubtotal += price;
         rows.push({
           type: 'common',
           name: displayName,
           quantity: 1,
           price,
-          lineTotal: isChecked ? price : 0,
-          checked: isChecked,
-          crossedOut: !isChecked,
+          lineTotal: price,
+          checked: true,
         });
       });
 
@@ -4929,13 +4929,13 @@ export default function PublicRoomLoaderForm() {
                             accentColor: canUncheck ? undefined : '#999',
                           }}
                         />
-                        <span style={{ ...((!isChecked || isFecalReplaced) ? { textDecoration: 'line-through', color: '#888' } : { color: '#333' }) }}>
+                        <span style={{ ...(isFecalReplaced ? { textDecoration: 'line-through', color: '#888' } : !isChecked ? { color: '#888' } : { color: '#333' }) }}>
                           {item.name}
                           {qty > 1 && <span style={{ color: '#666', marginLeft: '6px', fontSize: '14px' }}>(Qty: {qty})</span>}
                           {isFecalReplaced && <span style={{ fontSize: '13px', color: '#666', marginLeft: '8px', fontStyle: 'italic' }}>(replaced by {fecalReplacedBy.join(' or ')})</span>}
                         </span>
                       </label>
-                      <span style={{ fontWeight: 700, flexShrink: 0, ...((!isChecked || isFecalReplaced) ? { textDecoration: 'line-through', color: '#888' } : {}) }}>
+                      <span style={{ fontWeight: 700, flexShrink: 0, ...(isFecalReplaced ? { textDecoration: 'line-through', color: '#888' } : !isChecked ? { color: '#888' } : {}) }}>
                         {formatPrice(isChecked && !isFecalReplaced ? lineTotal : 0)}
                       </span>
                     </div>
