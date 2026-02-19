@@ -1820,7 +1820,31 @@ export default function RoomLoaderPage() {
       });
     }
 
-    return Array.from(petMap.values());
+    // Compute which clients have membership and the plan name (from any reminder for their patient)
+    const clientMembershipPlanName = new Map<number, string>();
+    if (selectedRoomLoader.reminders) {
+      selectedRoomLoader.reminders.forEach((reminderWithPrice) => {
+        const wp = reminderWithPrice.wellnessPlanPricing;
+        const planName = wp?.membershipPlanName?.trim() || null;
+        if (wp?.hasCoverage || planName) {
+          const patientId =
+            reminderWithPrice.reminder.patient?.id ??
+            (reminderWithPrice.reminder?.id != null ? reminderIdToPatientId.get(reminderWithPrice.reminder.id) : undefined);
+          if (patientId) {
+            const entry = petMap.get(patientId);
+            if (entry?.client?.id && !clientMembershipPlanName.has(entry.client.id)) {
+              clientMembershipPlanName.set(entry.client.id, planName || 'Membership');
+            }
+          }
+        }
+      });
+    }
+
+    return Array.from(petMap.values()).map((item) => ({
+      ...item,
+      clientHasMembership: item.client?.id != null ? clientMembershipPlanName.has(item.client.id) : false,
+      clientMembershipPlanName: item.client?.id != null ? (clientMembershipPlanName.get(item.client.id) ?? null) : null,
+    }));
   }, [selectedRoomLoader]);
 
   return (
@@ -2130,7 +2154,7 @@ export default function RoomLoaderPage() {
             </div>
           ) : (
             petsWithAppointments.map((item, petIndex) => {
-              const { patient, appointments, client } = item;
+              const { patient, appointments, client, clientHasMembership, clientMembershipPlanName } = item;
               const petAnswersForPet = petAnswers[patient.id] || { mobility: null, labWork: null };
               const firstAppt = appointments[0];
               
@@ -2201,8 +2225,8 @@ export default function RoomLoaderPage() {
                       return null;
                     })()}
                   </h3>
-                  {/* Appointment doctor and address */}
-                  {(firstAppt?.primaryProvider || client?.address1 || client?.city) && (
+                  {/* Appointment doctor, address, and membership */}
+                  {(firstAppt?.primaryProvider || client?.address1 || client?.city || client) && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', marginTop: '12px', fontSize: '14px', color: '#555' }}>
                       {firstAppt?.primaryProvider && (
                         <div>
@@ -2214,6 +2238,12 @@ export default function RoomLoaderPage() {
                         <div>
                           <strong style={{ color: '#333' }}>Address:</strong>{' '}
                           {[client.address1, client.address2, [client.city, client.state].filter(Boolean).join(', '), client.zipcode].filter(Boolean).join(', ') || '—'}
+                        </div>
+                      )}
+                      {client && (
+                        <div>
+                          <strong style={{ color: '#333' }}>Member:</strong>{' '}
+                          {clientHasMembership ? (clientMembershipPlanName || 'Yes') : 'No'}
                         </div>
                       )}
                     </div>
