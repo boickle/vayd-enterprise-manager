@@ -327,8 +327,12 @@ export default function PaymentsAnalyticsPage() {
                     }
                   />
                   <Tooltip
-                    formatter={(value: number) =>
-                      metric === 'revenue' ? fmtUSD(value) : value.toLocaleString()
+                    formatter={(value: number | undefined) =>
+                      value == null
+                        ? ''
+                        : metric === 'revenue'
+                          ? fmtUSD(value)
+                          : value.toLocaleString()
                     }
                     labelFormatter={(l) => dayjs(l).format('ddd, MMM D, YYYY')}
                   />
