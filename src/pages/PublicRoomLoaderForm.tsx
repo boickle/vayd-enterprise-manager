@@ -342,6 +342,21 @@ function hadLymeInLastYear(history: TreatmentWithItems[]): boolean {
   return false;
 }
 
+/** True if patient received Lyme vaccine in the last 15 months. Used for optional vaccine display (show if >15 months or never). */
+function hadLymeInLast15Months(history: TreatmentWithItems[]): boolean {
+  const cutoff = DateTime.now().minus({ months: 15 });
+  for (const tx of history) {
+    for (const item of tx.treatmentItems || []) {
+      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
+      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!isLymeItem(name, code)) continue;
+      const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
+      if (serviceDate && serviceDate >= cutoff) return true;
+    }
+  }
+  return false;
+}
+
 /** True if patient has ever received any Lyme vaccine (crLyme or other) in treatment history (not declined). */
 function everHadAnyLymeVaccine(history: TreatmentWithItems[]): boolean {
   for (const tx of history ?? []) {
@@ -404,6 +419,21 @@ function hadLeptoInLastYear(history: TreatmentWithItems[]): boolean {
   return false;
 }
 
+/** True if patient received Lepto vaccine in the last 15 months. Used for optional vaccine display (show if >15 months or never). */
+function hadLeptoInLast15Months(history: TreatmentWithItems[]): boolean {
+  const cutoff = DateTime.now().minus({ months: 15 });
+  for (const tx of history) {
+    for (const item of tx.treatmentItems || []) {
+      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
+      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!isLeptoItem(name, code)) continue;
+      const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
+      if (serviceDate && serviceDate >= cutoff) return true;
+    }
+  }
+  return false;
+}
+
 /** True if this visit's line items (reminders + added items) include Lepto. */
 function hasLeptoInLineItems(patient: any): boolean {
   if (patient.reminders?.length) {
@@ -454,6 +484,21 @@ function hadBordetellaInLastYear(history: TreatmentWithItems[]): boolean {
   return false;
 }
 
+/** True if patient received Bordetella vaccine in the last 15 months. Used for optional vaccine display (show if >15 months or never). */
+function hadBordetellaInLast15Months(history: TreatmentWithItems[]): boolean {
+  const cutoff = DateTime.now().minus({ months: 15 });
+  for (const tx of history) {
+    for (const item of tx.treatmentItems || []) {
+      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
+      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!isBordetellaItem(name, code)) continue;
+      const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
+      if (serviceDate && serviceDate >= cutoff) return true;
+    }
+  }
+  return false;
+}
+
 /** True if this visit's line items (reminders + added items) include Bordetella. */
 function hasBordetellaInLineItems(patient: any): boolean {
   if (patient.reminders?.length) {
@@ -499,6 +544,33 @@ function hadFeLVInLastYear(history: TreatmentWithItems[]): boolean {
       if (!isFeLVItem(name, code)) continue;
       const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
       if (serviceDate && serviceDate >= oneYearAgo) return true;
+    }
+  }
+  return false;
+}
+
+/** True if patient has ever received FeLV vaccine (any time, not declined). */
+function everHadFeLV(history: TreatmentWithItems[]): boolean {
+  for (const tx of history) {
+    for (const item of tx.treatmentItems || []) {
+      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
+      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (isFeLVItem(name, code) && !item.isDeclined) return true;
+    }
+  }
+  return false;
+}
+
+/** True if patient received FeLV vaccine in the last 15 months. Used for optional vaccine display (show if >15 months or never). */
+function hadFeLVInLast15Months(history: TreatmentWithItems[]): boolean {
+  const cutoff = DateTime.now().minus({ months: 15 });
+  for (const tx of history) {
+    for (const item of tx.treatmentItems || []) {
+      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
+      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!isFeLVItem(name, code)) continue;
+      const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
+      if (serviceDate && serviceDate >= cutoff) return true;
     }
   }
   return false;
@@ -1639,11 +1711,11 @@ export default function PublicRoomLoaderForm() {
       const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
       const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
       const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-      const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
-      const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
-      const showLyme = isDog && patientId != null && !declinedLymeInPast(history) && !hadLymeInLastYear(history) && !hasLymeInLineItems(patient);
+      const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient);
+      const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient);
+      const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient);
       const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-      const showFeLV = isCatPatient && patientId != null && (isUnderOneYear || outdoorAccess) && !declinedFeLVInPast(history) && !hadFeLVInLastYear(history) && !hasFeLVInLineItems(patient);
+      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
       const questions: Qa[] = [];
       const add = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
@@ -1808,11 +1880,11 @@ export default function PublicRoomLoaderForm() {
         const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
         const outdoorAccess = formData[`pet${petIdx}_outdoorAccess`] === 'yes';
         const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-        const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
-        const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
-        const showLyme = isDog && patientId != null && !declinedLymeInPast(history) && !hadLymeInLastYear(history) && !hasLymeInLineItems(patient);
+        const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient);
+        const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient);
+        const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient);
         const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-        const showFeLV = isCatPatient && patientId != null && (isUnderOneYear || outdoorAccess) && !declinedFeLVInPast(history) && !hadFeLVInLastYear(history) && !hasFeLVInLineItems(patient);
+        const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
 
         if (suffix === 'appointmentReason' || suffix === 'generalWellbeing') allowedFormData[key] = value;
         else if (suffix === 'mobilityDetails' && (patientsData[petIdx] as any)?.questions?.mobility === true) allowedFormData[key] = value;
@@ -1919,11 +1991,11 @@ export default function PublicRoomLoaderForm() {
       }
 
       const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-      const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
-      const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
-      const showLyme = isDog && patientId != null && !declinedLymeInPast(history) && !hadLymeInLastYear(history) && !hasLymeInLineItems(patient);
+      const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient);
+      const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient);
+      const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient);
       const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-      const showFeLV = isCatPatient && patientId != null && (isUnderOneYear || outdoorAccess) && !declinedFeLVInPast(history) && !hadFeLVInLastYear(history) && !hasFeLVInLineItems(patient);
+      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
 
       if (showCrLymeBooster && formData[`${petKey}_crLymeBooster`] !== 'yes' && formData[`${petKey}_crLymeBooster`] !== 'no' && formData[`${petKey}_crLymeBooster`] !== 'unsure') {
         errors[`${petKey}_crLymeBooster`] = `Please answer the crLyme booster question for ${petName}.`;
@@ -2161,11 +2233,11 @@ export default function PublicRoomLoaderForm() {
     }
 
     const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-    const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
-    const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
-    const showLyme = isDog && patientId != null && !declinedLymeInPast(history) && !hadLymeInLastYear(history) && !hasLymeInLineItems(patient);
+    const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient);
+    const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient);
+    const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient);
     const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-    const showFeLV = isCatPatient && patientId != null && (isUnderOneYear || outdoorAccess) && !declinedFeLVInPast(history) && !hadFeLVInLastYear(history) && !hasFeLVInLineItems(patient);
+    const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
 
     if (showCrLymeBooster && formData[`${petKey}_crLymeBooster`] !== 'yes' && formData[`${petKey}_crLymeBooster`] !== 'no' && formData[`${petKey}_crLymeBooster`] !== 'unsure') {
       errors[`${petKey}_crLymeBooster`] = `Please answer the crLyme booster question for ${petName} before continuing.`;
@@ -3332,12 +3404,12 @@ export default function PublicRoomLoaderForm() {
             const patientId = patient.patientId ?? patient.patient?.id;
             const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
             const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-            const showLepto = isDog && patientId != null && !declinedLeptoInPast(history) && !hadLeptoInLastYear(history) && !hasLeptoInLineItems(patient);
-            const showBordetella = isDog && patientId != null && !declinedBordetellaInPast(history) && !hadBordetellaInLastYear(history) && !hasBordetellaInLineItems(patient);
-            const showLyme = isDog && patientId != null && !declinedLymeInPast(history) && !hadLymeInLastYear(history) && !hasLymeInLineItems(patient);
+            const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient);
+            const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient);
+            const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient);
             const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
             // FeLV: show if cat and haven't had it before; if <1 yr always show, if 1+ yr only if they answered Yes to outdoor
-            const showFeLV = isCatPatient && patientId != null && (isUnderOneYear || outdoorAccess) && !declinedFeLVInPast(history) && !hadFeLVInLastYear(history) && !hasFeLVInLineItems(patient);
+            const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
             const hasAnyOptionalContent = showCrLymeBooster || showLepto || showBordetella || showLyme || showRabiesCats || showFeLV;
 
             if (!hasAnyOptionalContent) return null;
@@ -3405,15 +3477,14 @@ export default function PublicRoomLoaderForm() {
                   );
                 })()}
 
-                {/* Lyme recommendation (dogs only: not declined, not in last year, not on this visit) */}
+                {/* Lyme recommendation (dogs only: not in last 15 months, not on staff-recommended list) */}
                 {(() => {
                   const patientId = patient.patientId ?? patient.patient?.id;
                   const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
                   const showLyme =
                     isDog &&
                     patientId != null &&
-                    !declinedLymeInPast(history) &&
-                    !hadLymeInLastYear(history) &&
+                    !hadLymeInLast15Months(history) &&
                     !hasLymeInLineItems(patient);
                   if (!showLyme) return null;
                   return (
@@ -3465,15 +3536,14 @@ export default function PublicRoomLoaderForm() {
                   );
                 })()}
 
-                {/* Leptospirosis recommendation (dogs only: not declined, not in last year, not on this visit) */}
+                {/* Leptospirosis recommendation (dogs only: not in last 15 months, not on staff-recommended list) */}
                 {(() => {
                   const patientId = patient.patientId ?? patient.patient?.id;
                   const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
                   const showLepto =
                     isDog &&
                     patientId != null &&
-                    !declinedLeptoInPast(history) &&
-                    !hadLeptoInLastYear(history) &&
+                    !hadLeptoInLast15Months(history) &&
                     !hasLeptoInLineItems(patient);
                   if (!showLepto) return null;
                   return (
@@ -3525,15 +3595,14 @@ export default function PublicRoomLoaderForm() {
                   );
                 })()}
 
-                {/* Bordetella recommendation (dogs only: not declined, not in last year, not on this visit) */}
+                {/* Bordetella recommendation (dogs only: not in last 15 months, not on staff-recommended list) */}
                 {(() => {
                   const patientId = patient.patientId ?? patient.patient?.id;
                   const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
                   const showBordetella =
                     isDog &&
                     patientId != null &&
-                    !declinedBordetellaInPast(history) &&
-                    !hadBordetellaInLastYear(history) &&
+                    !hadBordetellaInLast15Months(history) &&
                     !hasBordetellaInLineItems(patient);
                   if (!showBordetella) return null;
                   return (
@@ -3633,16 +3702,18 @@ export default function PublicRoomLoaderForm() {
                   </div>
                 )}
 
-                {/* FeLV recommendation (cats only: not declined, not in last year, not on this visit) */}
+                {/* FeLV recommendation (cats only: <1yr always; or outdoors + (never had or >15mo since)) */}
                 {(() => {
                   const patientId = patient.patientId ?? patient.patient?.id;
                   const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
+                  const dob = patient?.dob ?? patient?.patient?.dob;
+                  const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
+                  const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
                   const showFeLV =
                     isCatPatient &&
                     patientId != null &&
-                    !declinedFeLVInPast(history) &&
-                    !hadFeLVInLastYear(history) &&
-                    !hasFeLVInLineItems(patient);
+                    !hasFeLVInLineItems(patient) &&
+                    (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
                   if (!showFeLV) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
