@@ -590,7 +590,7 @@ export type CheckItemPricingPublicRequest = {
   };
 };
 
-const CHECK_ITEM_PRICING_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CHECK_ITEM_PRICING_TTL_MS = 60 * 60 * 1000; // 1 hour
 const CHECK_ITEM_PRICING_CACHE_MAX = 500;
 
 type CheckItemPricingCacheEntry = { response: CheckItemPricingResponse; expiresAt: number };
