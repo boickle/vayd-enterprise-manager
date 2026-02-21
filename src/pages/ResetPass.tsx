@@ -3,15 +3,6 @@ import { useLocation, useNavigate, Link, useSearchParams } from 'react-router-do
 import { Field } from '../components/Field';
 import { completePasswordReset, requestPasswordReset } from '../api/users';
 
-function isExpiredOrInvalidToken(err: any): boolean {
-  const status = err?.response?.status;
-  const msg = (err?.response?.data?.message ?? err?.message ?? '').toLowerCase();
-  if (status === 400 || status === 410) return true;
-  if (status === 404 && (msg.includes('token') || msg.includes('reset'))) return true;
-  if (/expired|invalid token|invalid link|link has expired|no longer valid/.test(msg)) return true;
-  return false;
-}
-
 export default function ResetPass() {
   const [search] = useSearchParams();
   const location = useLocation() as any;
@@ -24,8 +15,6 @@ export default function ResetPass() {
 
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  /** When true, show the dedicated "link expired" card instead of the form. */
-  const [linkExpired, setLinkExpired] = useState(false);
 
   // Optional: if you forwarded state like { email, token } when routing to this page
   const forwardedEmail: string | undefined = location?.state?.email;
@@ -121,13 +110,7 @@ export default function ResetPass() {
       setMsg('Password updated. You can now sign in.');
       setTimeout(() => nav('/login', { replace: true }), 700);
     } catch (err: any) {
-      if (isExpiredOrInvalidToken(err)) {
-        setLinkExpired(true);
-        setError(null);
-      } else {
-        const serverMsg = err?.response?.data?.message ?? err?.message;
-        setError(serverMsg && typeof serverMsg === 'string' ? serverMsg : 'We couldn’t reset your password. Please try again or request a new link.');
-      }
+      setError(err?.response?.data?.message || err.message || 'Reset failed');
     } finally {
       setPending(false);
     }
@@ -182,35 +165,6 @@ export default function ResetPass() {
     mixBlendMode: 'multiply',
     display: 'block',
   };
-
-  // Dedicated "link expired" view — no form, clear next step
-  if (linkExpired) {
-    return (
-      <div className="reset-page" style={layoutStyle}>
-        <div style={logoContainerStyle}>
-          <img style={logoStyle} src="/final_thick_lines_cropped.jpeg" alt="Vet At Your Door logo" />
-        </div>
-        <div className="card" style={{ ...cardWrapperStyle, textAlign: 'center' }}>
-          <h2 style={{ marginTop: 0 }}>This reset link has expired</h2>
-          <p style={{ color: '#4b5563', marginBottom: 24 }}>
-            Password reset links are valid for a limited time. Request a new link below and try again.
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center' }}>
-            <Link
-              to="/request-reset"
-              className="btn"
-              style={{ background: '#4FB128', color: '#fff', textDecoration: 'none', padding: '10px 20px', borderRadius: 8 }}
-            >
-              Request a new reset link
-            </Link>
-            <Link to="/login" style={{ color: '#10b981', textDecoration: 'none', fontSize: 14 }}>
-              ← Back to Login
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="reset-page" style={layoutStyle}>
