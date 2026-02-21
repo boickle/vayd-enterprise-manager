@@ -7,6 +7,7 @@ import { searchItemsPublic, type SearchableItem, checkItemPricingPublic, type Ch
 import { getPatientTreatmentHistory, type TreatmentWithItems } from '../api/treatments';
 import { DateTime } from 'luxon';
 import jsPDF from 'jspdf';
+import './PublicRoomLoaderForm.css';
 
 // --- Labs We Recommend helpers ---
 function getAgeYears(patient: { dob?: string | null }): number | null {
@@ -271,6 +272,39 @@ function getSearchItemPrice(item: SearchableItem | null | undefined): number | n
   if (raw == null || raw === '') return null;
   const n = Number(raw);
   return Number.isNaN(n) ? null : n;
+}
+
+/**
+ * Fuzzy score for search: how well `text` matches `query` (0 = no match, 1 = exact).
+ * Used to sort store (Ecwid) search results when the API may not do fuzzy matching.
+ */
+function fuzzyScoreQuery(query: string, text: string): number {
+  const q = (query || '').trim().toLowerCase();
+  const t = (text || '').trim().toLowerCase();
+  if (!q) return 1;
+  if (!t) return 0;
+  if (t.includes(q)) return 1;
+  const qWords = q.split(/\s+/).filter(Boolean);
+  const wordsFound = qWords.filter((w) => t.includes(w)).length;
+  if (wordsFound === qWords.length) return 0.9;
+  if (wordsFound > 0) {
+    const wordScore = (wordsFound / qWords.length) * 0.7;
+    let rest = t;
+    const subsequence = [...q].every((c) => {
+      const i = rest.indexOf(c);
+      if (i === -1) return false;
+      rest = rest.slice(i + 1);
+      return true;
+    });
+    return wordScore + (subsequence ? 0.15 : 0);
+  }
+  let idx = 0;
+  for (const c of q) {
+    const i = t.indexOf(c, idx);
+    if (i === -1) return 0;
+    idx = i + 1;
+  }
+  return 0.3;
 }
 
 /** True if name or code indicates crLyme (recombinant Lyme vaccine). */
@@ -592,6 +626,32 @@ function hasFeLVInLineItems(patient: any): boolean {
   return false;
 }
 
+type OptionalVaccineKey = 'felv' | 'lepto' | 'lyme' | 'bordetella';
+
+function itemMatchesVaccine(vaccine: OptionalVaccineKey, name?: string | null, code?: string | null): boolean {
+  if (vaccine === 'felv') return isFeLVItem(name, code);
+  if (vaccine === 'lepto') return isLeptoItem(name, code);
+  if (vaccine === 'lyme') return isLymeItem(name, code);
+  if (vaccine === 'bordetella') return isBordetellaItem(name, code);
+  return false;
+}
+
+/** True if patient has a reminder for this vaccine that is not yet due (due date in the future). If so, we do not show the optional vaccine question. */
+function hasFutureReminderForVaccine(patient: any, vaccine: OptionalVaccineKey): boolean {
+  const reminders = patient?.reminders;
+  if (!Array.isArray(reminders)) return false;
+  const now = DateTime.now();
+  for (const r of reminders) {
+    const item = r?.item;
+    if (!item || !itemMatchesVaccine(vaccine, item.name, item.code)) continue;
+    const dueStr = r.dueDate ?? r.due_date;
+    if (dueStr == null) continue;
+    const due = DateTime.fromISO(dueStr);
+    if (due.isValid && due > now) return true;
+  }
+  return false;
+}
+
 const PDF_MARGIN = 0.5;
 const PDF_PAGE_WIDTH = 8.5;
 const PDF_PAGE_HEIGHT = 11;
@@ -610,6 +670,7 @@ type PdfOptions = { logoDataUrl?: string; practiceName?: string; logoWidth?: num
 /** Build a jsPDF from responseFromClient (formAnswersForPdf + summaryForPdf) for completed room-loader view. */
 function buildRoomLoaderPdf(responseFromClient: any, options?: PdfOptions): jsPDF {
   const doc = new jsPDF('portrait', 'in', 'letter');
+  doc.setProperties({ title: 'Pre-Visit Check-In' });
   const practiceName = options?.practiceName ?? 'Vet At Your Door';
   let y = PDF_MARGIN;
 
@@ -990,9 +1051,9 @@ export default function PublicRoomLoaderForm() {
     fetchRoomLoaderData();
   }, [token]);
 
-  // Fetch treatment history per patient for crLyme booster logic (Veterinary Care Plan page)
+  // Fetch treatment history per patient when user reaches Care Plan (page 2) or later. Defers N requests until needed for vaccine/lab logic.
   useEffect(() => {
-    if (!data?.patients?.length) return;
+    if (!data?.patients?.length || currentPage < 2) return;
     const patientIds = data.patients
       .map((p: any) => p.patientId ?? p.patient?.id)
       .filter((id: any) => id != null);
@@ -1016,7 +1077,7 @@ export default function PublicRoomLoaderForm() {
     return () => {
       cancelled = true;
     };
-  }, [data?.patients]);
+  }, [data?.patients, currentPage]);
 
   function formatDate(dateStr: string | null | undefined): string {
     if (!dateStr) return 'N/A';
@@ -1626,7 +1687,7 @@ export default function PublicRoomLoaderForm() {
     });
 
     const summaryForPdf = {
-      title: 'Review Your Care Plan & Estimate',
+      title: 'Pre-Visit Check-In',
       instruction: "We've put together a personalized plan based on your pet's needs and our medical recommendations. You can review each item below, make adjustments, and see pricing clearly upfront so you feel informed and confident before your visit.",
       pets: pdfPets,
       additionalItems: {
@@ -1667,7 +1728,6 @@ export default function PublicRoomLoaderForm() {
       const questions: Qa[] = [];
       const addOptional = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
-        if (raw === undefined && valueLabels === undefined) return;
         const val = raw === undefined ? null : raw;
         const label = valueLabels && val != null && typeof val === 'string' ? (valueLabels[val] ?? val) : (typeof val === 'string' ? val : null);
         questions.push({ question, answer: val ?? null, answerLabel: label ?? (val != null ? String(val) : null) });
@@ -1710,19 +1770,18 @@ export default function PublicRoomLoaderForm() {
       const dob = patient?.dob ?? patient?.patient?.dob;
       const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
       const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
-      const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-      const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient);
-      const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient);
-      const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient);
+      const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+      const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
+      const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
+      const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
       const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
+      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || patient.vaccines?.felv === true);
       const questions: Qa[] = [];
       const add = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
-        if (raw === undefined) return;
-        const val = raw;
-        const label = valueLabels && typeof val === 'string' ? (valueLabels[val] ?? val) : (typeof val === 'string' ? val : String(val));
-        questions.push({ question, answer: val, answerLabel: label });
+        const val = raw ?? null;
+        const label = valueLabels && typeof val === 'string' ? (valueLabels[val] ?? val) : (typeof val === 'string' ? val : (val != null ? String(val) : null));
+        questions.push({ question, answer: val, answerLabel: label ?? null });
       };
       if (isCatPatient) {
         add(`Does ${petName} go outdoors or live with a cat who does?`, `${petKey}_outdoorAccess`, { yes: 'Yes', no: 'No' });
@@ -1772,10 +1831,9 @@ export default function PublicRoomLoaderForm() {
       const questions: Qa[] = [];
       const add = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
-        if (raw === undefined) return;
-        const val = raw;
-        const label = valueLabels && typeof val === 'string' ? (valueLabels[val] ?? val) : (typeof val === 'string' ? val : String(val));
-        questions.push({ question, answer: val, answerLabel: label });
+        const val = raw ?? null;
+        const label = valueLabels && typeof val === 'string' ? (valueLabels[val] ?? val) : (typeof val === 'string' ? val : (val != null ? String(val) : null));
+        questions.push({ question, answer: val, answerLabel: label ?? null });
       };
       entry.recommendations.forEach((rec: { code?: string }) => {
         if (rec.code === 'FIL48119999') {
@@ -1879,12 +1937,12 @@ export default function PublicRoomLoaderForm() {
         const dob = patient?.dob ?? patient?.patient?.dob;
         const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
         const outdoorAccess = formData[`pet${petIdx}_outdoorAccess`] === 'yes';
-        const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-        const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient);
-        const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient);
-        const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient);
+        const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+        const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
+        const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
+        const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
         const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-        const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
+        const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || patient.vaccines?.felv === true);
 
         if (suffix === 'appointmentReason' || suffix === 'generalWellbeing') allowedFormData[key] = value;
         else if (suffix === 'mobilityDetails' && (patientsData[petIdx] as any)?.questions?.mobility === true) allowedFormData[key] = value;
@@ -1990,12 +2048,12 @@ export default function PublicRoomLoaderForm() {
         }
       }
 
-      const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-      const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient);
-      const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient);
-      const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient);
+      const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+      const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
+      const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
+      const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
       const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
+      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || patient.vaccines?.felv === true);
 
       if (showCrLymeBooster && formData[`${petKey}_crLymeBooster`] !== 'yes' && formData[`${petKey}_crLymeBooster`] !== 'no' && formData[`${petKey}_crLymeBooster`] !== 'unsure') {
         errors[`${petKey}_crLymeBooster`] = `Please answer the crLyme booster question for ${petName}.`;
@@ -2232,12 +2290,12 @@ export default function PublicRoomLoaderForm() {
       }
     }
 
-    const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-    const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient);
-    const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient);
-    const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient);
+    const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+    const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
+    const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
+    const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
     const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-    const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
+    const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || patient.vaccines?.felv === true);
 
     if (showCrLymeBooster && formData[`${petKey}_crLymeBooster`] !== 'yes' && formData[`${petKey}_crLymeBooster`] !== 'no' && formData[`${petKey}_crLymeBooster`] !== 'unsure') {
       errors[`${petKey}_crLymeBooster`] = `Please answer the crLyme booster question for ${petName} before continuing.`;
@@ -2449,38 +2507,12 @@ export default function PublicRoomLoaderForm() {
     return result;
   }, [patients, appointments, treatmentHistoryByPatientId, formData]);
 
+  /** Single batched effect: fetch all lab-panel items and common items in one Promise.all. Deferred until user reaches Care Plan (page 2) or later to reduce initial load. */
   useEffect(() => {
+    if (!data || currentPage < 2) return;
+    const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
     const hasEarlyFeline = labRecommendationsByPet.some((e) => e.recommendations.some((r) => r.code === 'FIL48119999'));
-    if (!hasEarlyFeline || !data) {
-      setEarlyDetectionFelineItem(null);
-      return;
-    }
-    const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
-    searchItemsPublic({ q: 'Early Detection Panel - Feline', practiceId: pid, limit: 10 })
-      .then((results) => {
-        const first = results[0];
-        setEarlyDetectionFelineItem(first || null);
-      })
-      .catch(() => setEarlyDetectionFelineItem(null));
-  }, [data, labRecommendationsByPet]);
-
-  useEffect(() => {
     const hasEarlyCanine = labRecommendationsByPet.some((e) => e.recommendations.some((r) => r.code === 'FIL48719999'));
-    if (!hasEarlyCanine || !data) {
-      setEarlyDetectionCanineItem(null);
-      return;
-    }
-    const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
-    searchItemsPublic({ q: 'Early Detection Panel - Canine (chem 10, cbc, lytes, fecal Dx, 4dx)', practiceId: pid, limit: 10 })
-      .then((results) => {
-        const first = results[0];
-        setEarlyDetectionCanineItem(first || null);
-      })
-      .catch(() => setEarlyDetectionCanineItem(null));
-  }, [data, labRecommendationsByPet]);
-
-  // Senior panels: fetch Standard (same code for dog and cat) and Extended (canine vs feline by species). Same pattern for both.
-  useEffect(() => {
     const hasSeniorCanine = labRecommendationsByPet.some((e) =>
       e.recommendations.some((r) => r.code === 'FIL25659999' || r.code === 'FIL8659999')
     );
@@ -2488,97 +2520,93 @@ export default function PublicRoomLoaderForm() {
     const hasFIL45129999 = labRecommendationsByPet.some((e) => e.recommendations.some((r) => r.code === 'FIL45129999'));
     const needStandard = hasSeniorCanine || has8659999 || hasFIL45129999;
     const needFelineExtended = has8659999 || hasFIL45129999;
-    if (!needStandard || !data) {
-      setSeniorCanineStandardItem(null);
-      setSeniorFelineExtendedItem(null);
-      if (!hasSeniorCanine) setSeniorCanineExtendedItem(null);
-      return;
-    }
-    const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
-    // Codes: Standard = "Senior Screen (chem 25, CBC, T4, UA)" (same as dog). Feline Extended = "Senior Screen Feline (Fecal Dx, felv/fiv/hw, fPL, chem 25, CBC, T4, UA)".
-    const standardPromise = searchItemsPublic({ q: 'Senior Screen (chem 25, CBC, T4, UA)', practiceId: pid, limit: 10 });
-    const canineExtendedPromise = hasSeniorCanine ? searchItemsPublic({ q: 'Senior Screen Canine (4Dx, Fecal O&P, chem 25, CBC, T4, UA)', practiceId: pid, limit: 10 }) : Promise.resolve([]);
-    const felineExtendedPromise = needFelineExtended ? searchItemsPublic({ q: 'Senior Screen Feline (Fecal Dx, felv/fiv/hw, fPL, chem 25, CBC, T4, UA)', practiceId: pid, limit: 10 }) : Promise.resolve([]);
-    Promise.all([standardPromise, canineExtendedPromise, felineExtendedPromise])
-      .then(([standardRes, canineExtendedRes, felineExtendedRes]) => {
-        const first = (arr: any) => (Array.isArray(arr) ? arr[0] : arr?.data?.[0] ?? arr?.results?.[0] ?? arr?.items?.[0]);
-        setSeniorCanineStandardItem(first(standardRes) || null);
-        setSeniorCanineExtendedItem(hasSeniorCanine ? (first(canineExtendedRes) || null) : null);
-        setSeniorFelineExtendedItem(needFelineExtended ? (first(felineExtendedRes) || null) : null);
-      })
-      .catch(() => {
-        setSeniorCanineStandardItem(null);
-        setSeniorCanineExtendedItem(null);
-        setSeniorFelineExtendedItem(null);
-      });
-  }, [data, labRecommendationsByPet]);
-
-  useEffect(() => {
     const hasSeniorFeline = labRecommendationsByPet.some((e) =>
       e.recommendations.some((r) => r.code === 'FIL45129999' || r.code === 'FIL8659999')
     );
-    if (!hasSeniorFeline || !data) {
-      setSeniorFelineItem(null);
-      return;
-    }
-    const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
-    searchItemsPublic({ q: 'Senior Screen Feline', practiceId: pid, limit: 10 })
-      .then((results) => {
-        setSeniorFelineItem(results[0] || null);
-      })
-      .catch(() => setSeniorFelineItem(null));
-  }, [data, labRecommendationsByPet]);
-
-  useEffect(() => {
     const hasComprehensiveFecal = labRecommendationsByPet.some((e) =>
       e.recommendations.some((r) => r.code === 'COMPREHENSIVE_FECAL')
     );
-    if (!hasComprehensiveFecal || !data) {
-      setComprehensiveFecalItem(null);
-      return;
-    }
-    const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
-    searchItemsPublic({ q: 'comprehensive fecal', practiceId: pid, limit: 10 })
-      .then((results) => {
-        const first = Array.isArray(results) && results[0] ? results[0] : (results as any)?.data?.[0] ?? (results as any)?.results?.[0] ?? (results as any)?.items?.[0];
-        setComprehensiveFecalItem(first || null);
-      })
-      .catch(() => setComprehensiveFecalItem(null));
-  }, [data, labRecommendationsByPet]);
-
-  useEffect(() => {
     const hasSharps = data?.patients?.some((p: any) => p.vaccines?.sharps === true);
-    if (!hasSharps || !data) {
-      setSharpsDisposalItem(null);
+
+    const labQueries: { q: string; type: string }[] = [];
+    if (hasEarlyFeline) labQueries.push({ q: 'Early Detection Panel - Feline', type: 'earlyFeline' });
+    if (hasEarlyCanine) labQueries.push({ q: 'Early Detection Panel - Canine (chem 10, cbc, lytes, fecal Dx, 4dx)', type: 'earlyCanine' });
+    if (needStandard) {
+      labQueries.push({ q: 'Senior Screen (chem 25, CBC, T4, UA)', type: 'seniorStandard' });
+      if (hasSeniorCanine) labQueries.push({ q: 'Senior Screen Canine (4Dx, Fecal O&P, chem 25, CBC, T4, UA)', type: 'seniorCanineExt' });
+      if (needFelineExtended) labQueries.push({ q: 'Senior Screen Feline (Fecal Dx, felv/fiv/hw, fPL, chem 25, CBC, T4, UA)', type: 'seniorFelineExt' });
+    }
+    if (hasSeniorFeline) labQueries.push({ q: 'Senior Screen Feline', type: 'seniorFeline' });
+    if (hasComprehensiveFecal) labQueries.push({ q: 'comprehensive fecal', type: 'comprehensiveFecal' });
+    if (hasSharps) labQueries.push({ q: 'Sharps Disposal', type: 'sharps' });
+
+    const commonQueries: string[] = [];
+    COMMON_ITEMS_CONFIG.forEach((c) => {
+      commonQueries.push(c.searchQuery);
+      if ('searchQueryDog' in c && c.searchQueryDog) commonQueries.push(c.searchQueryDog);
+    });
+
+    const allQueries = [...labQueries.map((x) => x.q), ...commonQueries];
+    if (allQueries.length === 0) {
+      setCommonItemsFetched({});
       return;
     }
-    const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
-    searchItemsPublic({ q: 'Sharps Disposal', practiceId: pid, limit: 10 })
-      .then((results) => {
-        const first = Array.isArray(results) && results[0] ? results[0] : (results as any)?.data?.[0] ?? (results as any)?.results?.[0] ?? (results as any)?.items?.[0];
-        setSharpsDisposalItem(first || null);
-      })
-      .catch(() => setSharpsDisposalItem(null));
-  }, [data]);
 
-  useEffect(() => {
-    if (!data) return;
-    const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
-    const queries: string[] = [];
-    COMMON_ITEMS_CONFIG.forEach((c) => {
-      queries.push(c.searchQuery);
-      if ('searchQueryDog' in c && c.searchQueryDog) queries.push(c.searchQueryDog);
-    });
-    Promise.all(queries.map((q) => searchItemsPublic({ q, practiceId: pid, limit: 5 })))
+    let cancelled = false;
+    Promise.all(
+      allQueries.map((query) => searchItemsPublic({ q: query, practiceId: pid, limit: query.includes('Senior') || query.includes('Early') || query.includes('comprehensive') || query.includes('Sharps') ? 10 : 5 }))
+    )
       .then((results) => {
-        const next: Record<string, SearchableItem | null> = {};
-        queries.forEach((q, i) => {
-          next[q] = Array.isArray(results[i]) && results[i][0] ? results[i][0] : null;
+        if (cancelled) return;
+        const first = (arr: any) => (Array.isArray(arr) && arr[0] ? arr[0] : (arr as any)?.data?.[0] ?? (arr as any)?.results?.[0] ?? (arr as any)?.items?.[0] ?? null);
+        let idx = 0;
+        labQueries.forEach(({ type }) => {
+          const res = results[idx++];
+          const item = first(res) || null;
+          switch (type) {
+            case 'earlyFeline': setEarlyDetectionFelineItem(item); break;
+            case 'earlyCanine': setEarlyDetectionCanineItem(item); break;
+            case 'seniorStandard': setSeniorCanineStandardItem(item); break;
+            case 'seniorCanineExt': setSeniorCanineExtendedItem(item); break;
+            case 'seniorFelineExt': setSeniorFelineExtendedItem(item); break;
+            case 'seniorFeline': setSeniorFelineItem(item); break;
+            case 'comprehensiveFecal': setComprehensiveFecalItem(item); break;
+            case 'sharps': setSharpsDisposalItem(item); break;
+            default: break;
+          }
         });
-        setCommonItemsFetched(next);
+        if (!needStandard) {
+          setSeniorCanineStandardItem(null);
+          setSeniorCanineExtendedItem(null);
+          setSeniorFelineExtendedItem(null);
+        }
+        if (!hasSeniorFeline) setSeniorFelineItem(null);
+        if (!hasEarlyFeline) setEarlyDetectionFelineItem(null);
+        if (!hasEarlyCanine) setEarlyDetectionCanineItem(null);
+        if (!hasComprehensiveFecal) setComprehensiveFecalItem(null);
+        if (!hasSharps) setSharpsDisposalItem(null);
+
+        const nextCommon: Record<string, SearchableItem | null> = {};
+        commonQueries.forEach((q, i) => {
+          const r = results[idx + i];
+          nextCommon[q] = Array.isArray(r) && r[0] ? r[0] : null;
+        });
+        setCommonItemsFetched(nextCommon);
       })
-      .catch(() => setCommonItemsFetched({}));
-  }, [data]);
+      .catch(() => {
+        if (cancelled) return;
+        setEarlyDetectionFelineItem(null);
+        setEarlyDetectionCanineItem(null);
+        setSeniorCanineStandardItem(null);
+        setSeniorCanineExtendedItem(null);
+        setSeniorFelineItem(null);
+        setSeniorFelineExtendedItem(null);
+        setComprehensiveFecalItem(null);
+        setSharpsDisposalItem(null);
+        setCommonItemsFetched({});
+      });
+    return () => { cancelled = true; };
+  }, [data, labRecommendationsByPet, currentPage]);
 
   /** Fetch client-adjusted pricing (discounts/membership) for lab and vaccine items per patient. */
   useEffect(() => {
@@ -2662,11 +2690,12 @@ export default function PublicRoomLoaderForm() {
       seen.add(key);
       return true;
     });
-    toFetch.forEach(({ patientId, item, key }) => {
+    if (toFetch.length === 0) return;
+    const requests = toFetch.map(({ patientId, item, key }) => {
       const payload = buildPricingItemPayload(item);
-      if (!payload) return;
+      if (!payload) return Promise.resolve({ key, res: null as CheckItemPricingResponse | null });
       const itemType = (item.itemType ?? 'procedure').toString();
-      checkItemPricingPublic({
+      return checkItemPricingPublic({
         token: tokenValue,
         patientId,
         practiceId,
@@ -2674,12 +2703,15 @@ export default function PublicRoomLoaderForm() {
         itemType,
         item: payload,
       })
-        .then((res) => {
-          setClientPricingCache((prev) => ({ ...prev, [key]: res }));
-        })
-        .catch(() => {
-          setClientPricingCache((prev) => ({ ...prev, [key]: null }));
-        });
+        .then((res) => ({ key, res }))
+        .catch(() => ({ key, res: null as CheckItemPricingResponse | null }));
+    });
+    Promise.all(requests).then((results) => {
+      const next: Record<string, CheckItemPricingResponse | null> = {};
+      results.forEach(({ key, res }) => {
+        next[key] = res;
+      });
+      setClientPricingCache((prev) => ({ ...prev, ...next }));
     });
   }, [
     token,
@@ -2696,7 +2728,7 @@ export default function PublicRoomLoaderForm() {
     commonItemsFetched,
   ]);
 
-  /** Type-ahead store search: debounced 300ms after typing. */
+  /** Type-ahead store search: debounced 300ms. Fetch with full query and, for multi-word queries, with first word too to improve fuzzy-like results from Ecwid (which may not fuzzy match). */
   useEffect(() => {
     const q = storeSearchQuery.trim();
     if (q.length < 2) {
@@ -2706,9 +2738,24 @@ export default function PublicRoomLoaderForm() {
     }
     setStoreSearchLoading(true);
     const timeoutId = window.setTimeout(() => {
-      getEcwidProducts(q)
-        .then((r) => { setStoreSearchResults(r); setStoreSearchLoading(false); })
-        .catch(() => { setStoreSearchResults([]); setStoreSearchLoading(false); });
+      const firstWord = q.split(/\s+/)[0];
+      const queries = firstWord && firstWord !== q ? [q, firstWord] : [q];
+      Promise.all(queries.map((query) => getEcwidProducts(query)))
+        .then((responses) => {
+          const seen = new Set<string | number>();
+          const merged: EcwidProduct[] = [];
+          for (const r of responses) {
+            for (const p of r || []) {
+              const id = p.id;
+              if (seen.has(id)) continue;
+              seen.add(id);
+              merged.push(p);
+            }
+          }
+          setStoreSearchResults(merged);
+        })
+        .catch(() => setStoreSearchResults([]))
+        .finally(() => setStoreSearchLoading(false));
     }, 300);
     return () => {
       window.clearTimeout(timeoutId);
@@ -2716,16 +2763,24 @@ export default function PublicRoomLoaderForm() {
     };
   }, [storeSearchQuery]);
 
-  /** Group Ecwid results by product name so we show each name once; clicking opens modal to pick variation. */
+  /** Group Ecwid results by product name; sort by fuzzy match to query so best matches appear first (Ecwid may not do fuzzy matching). */
   const storeSearchResultsByName = useMemo(() => {
+    const query = storeSearchQuery.trim().toLowerCase();
+    const sorted = query
+      ? [...storeSearchResults].sort((a, b) => {
+          const textA = `${a.name || ''} ${a.sku || ''}`.trim();
+          const textB = `${b.name || ''} ${b.sku || ''}`.trim();
+          return fuzzyScoreQuery(storeSearchQuery, textB) - fuzzyScoreQuery(storeSearchQuery, textA);
+        })
+      : storeSearchResults;
     const map = new Map<string, EcwidProduct[]>();
-    for (const p of storeSearchResults) {
+    for (const p of sorted) {
       const name = p.name || 'Unnamed';
       if (!map.has(name)) map.set(name, []);
       map.get(name)!.push(p);
     }
     return Array.from(map.entries());
-  }, [storeSearchResults]);
+  }, [storeSearchResults, storeSearchQuery]);
 
   /** Get client-adjusted pricing from cache (discounts/membership). */
   const getClientPricing = (patientId: number, item: SearchableItem | null): CheckItemPricingResponse | null => {
@@ -2789,7 +2844,7 @@ export default function PublicRoomLoaderForm() {
 
   if (loading) {
     return (
-      <div style={{ padding: '40px', textAlign: 'center', fontFamily: 'system-ui, sans-serif' }}>
+      <div className="public-room-loader public-room-loader-loading" style={{ textAlign: 'center', fontFamily: 'system-ui, sans-serif' }}>
         <h2>Loading room loader form...</h2>
       </div>
     );
@@ -2797,7 +2852,7 @@ export default function PublicRoomLoaderForm() {
 
   if (error) {
     return (
-      <div style={{ padding: '40px', textAlign: 'center', fontFamily: 'system-ui, sans-serif' }}>
+      <div className="public-room-loader public-room-loader-error" style={{ textAlign: 'center', fontFamily: 'system-ui, sans-serif' }}>
         <h2 style={{ color: '#dc3545' }}>Error</h2>
         <p>{error}</p>
       </div>
@@ -2806,7 +2861,7 @@ export default function PublicRoomLoaderForm() {
 
   if (!data) {
     return (
-      <div style={{ padding: '40px', textAlign: 'center', fontFamily: 'system-ui, sans-serif' }}>
+      <div className="public-room-loader public-room-loader-error" style={{ textAlign: 'center', fontFamily: 'system-ui, sans-serif' }}>
         <h2>No data available</h2>
       </div>
     );
@@ -2816,8 +2871,8 @@ export default function PublicRoomLoaderForm() {
   if (formAlreadySubmitted && data.responseFromClient) {
     const clientPortalUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/client-portal`;
     return (
-      <div style={{ padding: '48px 24px', maxWidth: '560px', margin: '0 auto', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-        <div style={{ padding: '40px 36px', backgroundColor: '#fff', borderRadius: '16px', boxShadow: '0 4px 24px rgba(0,0,0,0.08)', textAlign: 'center' }}>
+      <div className="public-room-loader public-room-loader-thank-you" style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+        <div className="public-room-loader-thank-you-inner" style={{ backgroundColor: '#fff', borderRadius: '16px', boxShadow: '0 4px 24px rgba(0,0,0,0.08)', textAlign: 'center' }}>
           <div style={{ marginBottom: '24px', fontSize: '48px' }}>✓</div>
           <h1 style={{ margin: '0 0 12px', fontSize: '28px', fontWeight: 700, color: '#1a1a1a' }}>
             Thank you
@@ -2976,14 +3031,7 @@ export default function PublicRoomLoaderForm() {
   const readOnly = formAlreadySubmitted;
 
   return (
-    <div style={{
-      padding: '24px 20px',
-      maxWidth: '1000px',
-      margin: '0 auto',
-      fontFamily: 'system-ui, -apple-system, sans-serif',
-      backgroundColor: '#f9f9f9',
-      minHeight: '100vh',
-    }}>
+    <div className="public-room-loader">
       {readOnly && (
         <div
           style={{
@@ -3003,14 +3051,8 @@ export default function PublicRoomLoaderForm() {
       )}
       {/* Page 1 - Check-in Form */}
       {currentPage === 1 && (
-        <div style={{
-          padding: '24px',
-          backgroundColor: '#fff',
-          border: '2px solid #ddd',
-          borderRadius: '12px',
-          position: 'relative',
-        }}>
-          <div style={{ position: 'absolute', top: '24px', right: '24px', fontSize: '14px', color: '#666' }}>
+        <div className="public-room-loader-form-page">
+          <div className="public-room-loader-page-label" style={{ position: 'absolute', top: '24px', right: '24px', fontSize: '14px', color: '#666' }}>
             PAGE 1
           </div>
 
@@ -3208,11 +3250,7 @@ export default function PublicRoomLoaderForm() {
 
       {/* Veterinary Care Plan — one page per pet when multiple pets */}
       {isCarePlanPage && currentCarePlanPatient != null && (
-        <div style={{
-          padding: '24px',
-          backgroundColor: '#fff',
-          border: '2px solid #ddd',
-          borderRadius: '12px',
+        <div className="public-room-loader-form-page" style={{
           position: 'relative',
         }}>
           <div style={{ position: 'absolute', top: '24px', right: '24px', fontSize: '14px', color: '#666' }}>
@@ -3403,13 +3441,13 @@ export default function PublicRoomLoaderForm() {
 
             const patientId = patient.patientId ?? patient.patient?.id;
             const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
-            const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-            const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient);
-            const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient);
-            const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient);
+            const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+            const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
+            const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
+            const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
             const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
             // FeLV: show if cat and haven't had it before; if <1 yr always show, if 1+ yr only if they answered Yes to outdoor
-            const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
+            const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || patient.vaccines?.felv === true);
             const hasAnyOptionalContent = showCrLymeBooster || showLepto || showBordetella || showLyme || showRabiesCats || showFeLV;
 
             if (!hasAnyOptionalContent) return null;
@@ -3424,7 +3462,7 @@ export default function PublicRoomLoaderForm() {
                 {(() => {
                   const patientId = patient.patientId ?? patient.patient?.id;
                   const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
-                  const showCrLymeBooster = isDog && patientId != null && everHadAnyLymeVaccine(history) && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+                  const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
                   if (!showCrLymeBooster) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
@@ -3485,19 +3523,19 @@ export default function PublicRoomLoaderForm() {
                     isDog &&
                     patientId != null &&
                     !hadLymeInLast15Months(history) &&
-                    !hasLymeInLineItems(patient);
+                    !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
                   if (!showLyme) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
                       <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '12px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>Lyme vaccine</div>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '12px', color: '#555' }}>
-                        Lyme: It looks like {petName} has not yet received the Lyme vaccine.
+                        It looks like {petName} has not received a Lyme vaccine within the past 15 months and may not be fully protected at this time.
                       </p>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '12px', color: '#555' }}>
                         Lyme disease is extremely common in our area due to the high number of ticks. While many dogs can be exposed without symptoms, about 10–15% develop serious issues like painful joints — and in rare cases, life-threatening kidney disease.
                       </p>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '12px', color: '#555' }}>
-                        Because of the risk where we live, Vet At Your Door considers Lyme a core vaccine for all dogs.
+                        Because of the risk where we live, <strong>Vet At Your Door considers Lyme a core vaccine for all dogs.</strong>
                       </p>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
                         To protect {petName}, we recommend starting the vaccine series now. It will involve two vaccines, 3–4 weeks apart, followed by an annual booster.
@@ -3544,19 +3582,19 @@ export default function PublicRoomLoaderForm() {
                     isDog &&
                     patientId != null &&
                     !hadLeptoInLast15Months(history) &&
-                    !hasLeptoInLineItems(patient);
+                    !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
                   if (!showLepto) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
                       <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '12px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>Leptospirosis vaccine</div>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
-                        Leptospirosis: It looks like {petName} has not yet received the Leptospirosis vaccine.
+                        It looks like {petName} has not received a Leptospirosis vaccine within the past 15 months and may not be fully protected at this time.
                       </p>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
                         Leptospirosis is a serious bacterial infection that can be life-threatening for dogs — and can also spread to humans. It's carried in the urine of wild animals, and dogs can contract it simply by drinking from puddles or streams.
                       </p>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
-                        Based on updated veterinary guidelines (from AAHA, ACVIM, and WSAVA) and the risks in our area, Vet At Your Door now considers Leptospirosis a core vaccine for all dogs.
+                        Based on updated veterinary guidelines (from AAHA, ACVIM, and WSAVA) and the risks in our area, <strong>Vet At Your Door now considers Leptospirosis a core vaccine for all dogs.</strong>
                       </p>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
                         To protect {petName}, we recommend starting the vaccine series at your visit. It will involve two vaccines, 3–4 weeks apart, then an annual booster to stay protected.
@@ -3603,7 +3641,7 @@ export default function PublicRoomLoaderForm() {
                     isDog &&
                     patientId != null &&
                     !hadBordetellaInLast15Months(history) &&
-                    !hasBordetellaInLineItems(patient);
+                    !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
                   if (!showBordetella) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
@@ -3712,20 +3750,20 @@ export default function PublicRoomLoaderForm() {
                   const showFeLV =
                     isCatPatient &&
                     patientId != null &&
-                    !hasFeLVInLineItems(patient) &&
-                    (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
+                    !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') &&
+                    (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || patient.vaccines?.felv === true);
                   if (!showFeLV) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
                       <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '12px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>FeLV vaccine</div>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
-                        FeLV (Feline Leukemia Vaccine): It looks like {petName} has not yet received the FeLV vaccine.
+                        It appears that {petName} has either not started the FeLV (Feline Leukemia) vaccine series or is not currently up to date.
                       </p>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
                         FeLV is a contagious and potentially fatal virus spread through close contact between cats, like grooming or sharing food and water bowls.
                       </p>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
-                        Based on updated veterinary guidelines, FeLV is now considered a core vaccine for all kittens under one year old, regardless of whether they live indoors or outdoors. We also highly recommend it for any adult cats who go outside or live with cats who do.
+                        Based on updated veterinary guidelines, <strong>FeLV is now considered a core vaccine for all kittens under one year old, regardless of whether they live indoors or outdoors. We also highly recommend it for any adult cats who go outside or live with cats who do.</strong>
                       </p>
                       <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
                         Do you want us to give the FeLV vaccine? For initial immunity, two vaccines must be given, 3-4 weeks apart. <span style={{ color: '#dc3545' }}>*</span>
@@ -3764,17 +3802,15 @@ export default function PublicRoomLoaderForm() {
             );
           })()}
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '32px', paddingTop: '20px', borderTop: '2px solid #e0e0e0' }}>
+          <div className="public-room-loader-nav-buttons">
             <button
+              type="button"
+              className="public-room-loader-btn"
               onClick={() => setCurrentPage(isFirstCarePlanPet ? 1 : currentPage - 1)}
               style={{
-                padding: '12px 24px',
                 backgroundColor: '#fff',
                 color: '#333',
                 border: '1px solid #ced4da',
-                borderRadius: '6px',
-                fontSize: '16px',
-                fontWeight: 600,
                 cursor: 'pointer',
               }}
             >
@@ -3783,6 +3819,7 @@ export default function PublicRoomLoaderForm() {
             {isLastCarePlanPet ? (
               <button
                 type="button"
+                className="public-room-loader-btn"
                 onClick={() => {
                   const v = validateRequiredForCarePlanPet(carePlanPetIndex);
                   if (!v.valid) {
@@ -3793,13 +3830,9 @@ export default function PublicRoomLoaderForm() {
                   setCurrentPage(labsPageIndex);
                 }}
                 style={{
-                  padding: '12px 28px',
                   backgroundColor: '#0d6efd',
                   color: '#fff',
                   border: 'none',
-                  borderRadius: '6px',
-                  fontSize: '16px',
-                  fontWeight: 600,
                   cursor: 'pointer',
                 }}
               >
@@ -3808,6 +3841,7 @@ export default function PublicRoomLoaderForm() {
             ) : (
               <button
                 type="button"
+                className="public-room-loader-btn"
                 onClick={() => {
                   const v = validateRequiredForCarePlanPet(carePlanPetIndex);
                   if (!v.valid) {
@@ -3818,13 +3852,9 @@ export default function PublicRoomLoaderForm() {
                   setCurrentPage(currentPage + 1);
                 }}
                 style={{
-                  padding: '12px 28px',
                   backgroundColor: '#0d6efd',
                   color: '#fff',
                   border: 'none',
-                  borderRadius: '6px',
-                  fontSize: '16px',
-                  fontWeight: 600,
                   cursor: 'pointer',
                 }}
               >
@@ -3837,7 +3867,7 @@ export default function PublicRoomLoaderForm() {
 
       {/* Labs We Recommend */}
       {isLabsPage && (
-        <div style={{ padding: '24px', backgroundColor: '#fff', border: '2px solid #ddd', borderRadius: '12px', position: 'relative' }}>
+        <div className="public-room-loader-form-page">
           <div style={{ marginBottom: '25px', paddingBottom: '15px', borderBottom: '3px solid #e0e0e0' }}>
             <h1 style={{ margin: 0, color: '#212529', fontSize: '24px', fontWeight: 700 }}>Labs We Recommend</h1>
             <p style={{ fontSize: '16px', lineHeight: '1.6', color: '#555', marginTop: '10px', marginBottom: 0 }}>
@@ -4497,17 +4527,15 @@ export default function PublicRoomLoaderForm() {
             </div>
           ))}
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '32px', paddingTop: '20px', borderTop: '2px solid #e0e0e0' }}>
+          <div className="public-room-loader-nav-buttons">
             <button
+              type="button"
+              className="public-room-loader-btn"
               onClick={() => setCurrentPage(labsPageIndex - 1)}
               style={{
-                padding: '12px 24px',
                 backgroundColor: '#fff',
                 color: '#333',
                 border: '1px solid #ced4da',
-                borderRadius: '6px',
-                fontSize: '16px',
-                fontWeight: 600,
                 cursor: 'pointer',
               }}
             >
@@ -4515,6 +4543,7 @@ export default function PublicRoomLoaderForm() {
             </button>
             <button
               type="button"
+              className="public-room-loader-btn"
               onClick={() => {
                 const v = validateRequiredForLabsPage();
                 if (!v.valid) {
@@ -4525,13 +4554,9 @@ export default function PublicRoomLoaderForm() {
                 setCurrentPage(summaryPageIndex);
               }}
               style={{
-                padding: '12px 28px',
                 backgroundColor: '#0d6efd',
                 color: '#fff',
                 border: 'none',
-                borderRadius: '6px',
-                fontSize: '16px',
-                fontWeight: 600,
                 cursor: 'pointer',
               }}
             >
@@ -4548,7 +4573,7 @@ export default function PublicRoomLoaderForm() {
         const formatPrice = (p: number | null | undefined) => (p != null && !Number.isNaN(Number(p)) ? `$${Number(p).toFixed(2)}` : '$0.00');
         let grandTotal = 0;
         return (
-          <div style={{ padding: '24px', backgroundColor: '#fff', border: '2px solid #ddd', borderRadius: '12px', position: 'relative' }}>
+          <div className="public-room-loader-summary-page">
             <div style={{ marginBottom: '25px', paddingBottom: '15px', borderBottom: '3px solid #e0e0e0' }}>
               <h1 style={{ margin: 0, color: '#212529', fontSize: '24px', fontWeight: 700 }}>Review Your Care Plan & Estimate</h1>
               <p style={{ fontSize: '16px', lineHeight: '1.6', color: '#555', marginTop: '10px', marginBottom: 0 }}>
@@ -5224,44 +5249,38 @@ export default function PublicRoomLoaderForm() {
               );
             })()}
 
-            <div style={{ marginTop: '24px', paddingTop: '20px', borderTop: '3px solid #e0e0e0', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '16px' }}>
+            <div className="public-room-loader-summary-total-row" style={{ marginTop: '24px', paddingTop: '20px', borderTop: '3px solid #e0e0e0' }}>
               <span style={{ fontSize: '20px', fontWeight: 700, color: '#212529' }}>Estimated Total Due At Visit: <strong>{formatPrice(grandTotal)}</strong></span>
             </div>
 
             {fieldValidationErrors._submit && (
               <p style={{ marginTop: '16px', marginBottom: 0, fontSize: '14px', color: '#dc3545' }}>{fieldValidationErrors._submit}</p>
             )}
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '32px', paddingTop: '20px', borderTop: '2px solid #e0e0e0' }}>
+            <div className="public-room-loader-summary-actions">
               <button
+                type="button"
+                className="public-room-loader-btn"
                 onClick={() => setCurrentPage(labsPageIndex)}
                 style={{
-                  padding: '12px 24px',
                   backgroundColor: '#fff',
                   color: '#333',
                   border: '1px solid #ced4da',
-                  borderRadius: '6px',
-                  fontSize: '16px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
                 }}
               >
                 ← Back to Labs
               </button>
               <button
                 type="button"
+                className="public-room-loader-btn"
                 onClick={(e) => {
                   e.preventDefault();
                   handleSubmit();
                 }}
                 disabled={submitting || readOnly}
                 style={{
-                  padding: '12px 28px',
                   backgroundColor: submitting || readOnly ? '#adb5bd' : '#0d6efd',
                   color: '#fff',
                   border: 'none',
-                  borderRadius: '6px',
-                  fontSize: '16px',
-                  fontWeight: 600,
                   cursor: submitting || readOnly ? 'not-allowed' : 'pointer',
                 }}
               >

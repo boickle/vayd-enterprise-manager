@@ -21,6 +21,7 @@ import {
 import { http } from '../api/http';
 import { KeyValue } from '../components/KeyValue';
 import { evetPatientLink, evetClientLink } from '../utils/evet';
+import './RoomLoader.css';
 
 /** True if reminder description or matched item name/code contains any of the substrings (case-insensitive). */
 function reminderContains(r: ReminderWithPrice, ...substrings: string[]): boolean {
@@ -1076,6 +1077,8 @@ export default function RoomLoaderPage() {
   const [reminderValidationErrorIds, setReminderValidationErrorIds] = useState<Set<number>>(new Set());
   // True when Send to Client is blocked: at least one pet must have a reminder containing "Trip Fee"
   const [tripFeeRequiredError, setTripFeeRequiredError] = useState(false);
+  // Duplicate matched items in the order (same item id+type appears more than once per pet); block Send to Client
+  const [duplicateItemsError, setDuplicateItemsError] = useState<{ petName: string; itemName: string }[] | null>(null);
 
   async function handleReminderFeedback(
     reminderId: number,
@@ -1520,6 +1523,7 @@ export default function RoomLoaderPage() {
     setSendValidationErrors({});
     setReminderValidationErrorIds(new Set());
     setTripFeeRequiredError(false);
+    setDuplicateItemsError(null);
 
     // Validate required fields before sending; build inline error state per patient
     const errors: Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean }> = {};
@@ -1588,6 +1592,43 @@ export default function RoomLoaderPage() {
     }
     setTripFeeRequiredError(false);
 
+    // Duplicate items: same matched item (id + type) must not appear more than once per pet
+    const payload = packageDataForClient();
+    const duplicateReports: { petName: string; itemName: string }[] = [];
+    const reported = new Set<string>();
+    if (payload?.formData?.patients) {
+      for (const patient of payload.formData.patients) {
+        const petName = patient.patientName ?? `Pet (ID ${patient.patientId})`;
+        const itemKeys = new Map<string, string>();
+        const addItem = (id: number | undefined, type: string | undefined, name: string | undefined) => {
+          if (id == null && type == null) return;
+          const key = `${id ?? 'null'}-${type ?? 'null'}`;
+          const itemName = (name || 'Unknown item').trim();
+          if (itemKeys.has(key)) {
+            const reportKey = `${petName}:${itemName}`;
+            if (!reported.has(reportKey)) {
+              reported.add(reportKey);
+              duplicateReports.push({ petName, itemName });
+            }
+          } else {
+            itemKeys.set(key, itemName);
+          }
+        };
+        for (const r of patient.reminders || []) {
+          const item = r?.item;
+          if (item) addItem(item.id, item.type, item.name);
+        }
+        for (const a of patient.addedItems || []) {
+          addItem(a.id, a.type, a.name);
+        }
+      }
+    }
+    if (duplicateReports.length > 0) {
+      setDuplicateItemsError(duplicateReports);
+      return;
+    }
+    setDuplicateItemsError(null);
+
     // Warnings: visit/consult per pet from matched item names (not reminder description) or added items (use active list so removed items don't count)
     const warnings: string[] = [];
     petsWithAppointments.forEach((item) => {
@@ -1621,6 +1662,7 @@ export default function RoomLoaderPage() {
     setSendValidationErrors({});
     setReminderValidationErrorIds(new Set());
     setTripFeeRequiredError(false);
+    setDuplicateItemsError(null);
     setSendWarningReasons([]);
     setSendingToClient(true);
     setConfirmAction(null);
@@ -1847,7 +1889,7 @@ export default function RoomLoaderPage() {
   }, [selectedRoomLoader]);
 
   return (
-    <div style={{ padding: '20px' }}>
+    <div className="room-loader-page">
       <style>{`
         .room-loader-qty-input::-webkit-outer-spin-button,
         .room-loader-qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
@@ -1856,9 +1898,9 @@ export default function RoomLoaderPage() {
       <h1>Room Loader</h1>
 
       {/* Filters */}
-      <div style={{ marginBottom: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+      <div className="room-loader-filters">
         {/* Search Box */}
-        <div style={{ flex: '1 1 300px', minWidth: '250px' }}>
+        <div className="room-loader-search-wrap">
           <input
             type="text"
             placeholder="Search by doctor or client name..."
@@ -1934,24 +1976,8 @@ export default function RoomLoaderPage() {
       )}
 
       {/* Table — single table so header and body columns stay aligned */}
-      <div
-        style={{
-          marginBottom: '30px',
-          border: '1px solid #ddd',
-          borderRadius: '4px',
-          overflow: 'auto',
-          maxHeight: '580px',
-        }}
-      >
-        <table
-          style={{
-            width: '100%',
-            borderCollapse: 'collapse',
-            fontSize: '14px',
-            backgroundColor: '#fff',
-            tableLayout: 'fixed',
-          }}
-        >
+      <div className="room-loader-table-wrap">
+        <table className="room-loader-table" style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: '#fff', tableLayout: 'fixed' }}>
           <colgroup>
             <col style={{ width: '10%' }} />
             <col style={{ width: '12%' }} />
@@ -2076,41 +2102,90 @@ export default function RoomLoaderPage() {
         </table>
       </div>
 
+      {/* Mobile: card list (replaces table on small screens for better readability) */}
+      <div className="room-loader-mobile-cards">
+        {loading && filteredTableRows.length === 0 ? (
+          <div style={{ padding: '20px', textAlign: 'center' }}>Loading...</div>
+        ) : filteredTableRows.length === 0 ? (
+          <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+            {tableSearch.trim() ? 'No room loaders match your search' : 'No room loaders found'}
+          </div>
+        ) : (
+          filteredTableRows.map((row, idx) => {
+            const sentBg =
+              row.sentStatus === 'completed'
+                ? '#4caf50'
+                : row.sentStatus === 'sent_2'
+                  ? '#2196f3'
+                  : row.sentStatus === 'sent_1'
+                    ? '#ff9800'
+                    : '#9e9e9e';
+            const dueBg =
+              row.dueStatus === 'past_due' || row.dueStatus === '10_days_past_due'
+                ? '#f44336'
+                : row.dueStatus === 'due'
+                  ? '#ff9800'
+                  : '#4caf50';
+            return (
+              <button
+                type="button"
+                key={`card-${row.roomLoaderId}-${idx}`}
+                className={`room-loader-mobile-card ${selectedRoomLoaderId === row.roomLoaderId ? 'is-selected' : ''}`}
+                onClick={() => handleRowClick(row.roomLoaderId)}
+              >
+                <div className="room-loader-mobile-card-row">
+                  <span className="room-loader-mobile-card-label">Date</span>
+                  <span className="room-loader-mobile-card-value">{row.apptDate ? formatDate(row.apptDate) : 'N/A'}</span>
+                </div>
+                <div className="room-loader-mobile-card-row">
+                  <span className="room-loader-mobile-card-label">Type</span>
+                  <span className="room-loader-mobile-card-value">{row.appointmentType}</span>
+                </div>
+                <div className="room-loader-mobile-card-row">
+                  <span className="room-loader-mobile-card-label">Doctor</span>
+                  <span className="room-loader-mobile-card-value">{row.doctor}</span>
+                </div>
+                <div className="room-loader-mobile-card-row">
+                  <span className="room-loader-mobile-card-label">Client</span>
+                  <span className="room-loader-mobile-card-value">{row.clientName}</span>
+                </div>
+                <div className="room-loader-mobile-card-row">
+                  <span className="room-loader-mobile-card-label">Pets</span>
+                  <span className="room-loader-mobile-card-value">{row.pets.join(', ')}</span>
+                </div>
+                <div className="room-loader-mobile-card-badges">
+                  <span className="room-loader-status-badge" style={{ backgroundColor: sentBg }}>
+                    {row.sentStatus.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
+                  </span>
+                  {row.dueStatus && (
+                    <span className="room-loader-status-badge" style={{ backgroundColor: dueBg }}>
+                      {row.dueStatus.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })
+        )}
+      </div>
+
       {/* Room Loader Details Modal */}
       {isModalOpen && selectedRoomLoader && (
         <div
+          className="room-loader-modal-overlay"
           role="dialog"
           aria-modal="true"
           onClick={handleCloseModal}
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0,0,0,0.45)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-            padding: 16,
-          }}
         >
           <div
-            className="card"
+            className="room-loader-modal card"
             onClick={(e) => e.stopPropagation()}
-            style={{
-              width: 'min(1010px, 95vw)',
-              maxHeight: '90vh',
-              overflow: 'auto',
-              padding: '24px',
-              borderRadius: '12px',
-              background: '#fff',
-            }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+            <div className="room-loader-modal-header">
               <h2 style={{ margin: 0 }}>Room Loader Details</h2>
               <button
+                type="button"
+                className="room-loader-modal-close"
                 onClick={handleCloseModal}
                 style={{
                   background: 'none',
@@ -2118,12 +2193,6 @@ export default function RoomLoaderPage() {
                   fontSize: '24px',
                   cursor: 'pointer',
                   color: '#666',
-                  padding: '0',
-                  width: '32px',
-                  height: '32px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
                 }}
                 aria-label="Close modal"
               >
@@ -2537,11 +2606,18 @@ export default function RoomLoaderPage() {
                                     <strong>Type:</strong> {reminderWithPrice.reminder.reminderType}
                                   </div>
                                 )}
-                                {reminderWithPrice.reminder.dueDate && (
-                                  <div style={{ fontSize: '14px', color: '#666', marginBottom: '5px' }}>
-                                    <strong>Due Date:</strong> {formatDate(reminderWithPrice.reminder.dueDate)}
-                                  </div>
-                                )}
+                                {reminderWithPrice.reminder.dueDate && (() => {
+                                  const dueDt = DateTime.fromISO(reminderWithPrice.reminder.dueDate);
+                                  const isPastDue = dueDt.isValid && dueDt < DateTime.now().startOf('day');
+                                  return (
+                                    <div style={{ fontSize: '14px', color: '#666', marginBottom: '5px' }}>
+                                      <strong>Due Date:</strong>{' '}
+                                      <span style={isPastDue ? { color: '#dc3545', fontWeight: 700 } : undefined}>
+                                        {formatDate(reminderWithPrice.reminder.dueDate)}
+                                      </span>
+                                    </div>
+                                  );
+                                })()}
                                 {feedbackStatus === 'incorrect' && correction?.selectedItem ? (
                                   <div style={{ fontSize: '14px', color: '#666', marginBottom: '5px' }}>
                                     <strong>Corrected to:</strong> {correction.selectedItem.name}
@@ -3864,7 +3940,7 @@ export default function RoomLoaderPage() {
                   This form has been submitted by the client. View only — edits cannot be saved and the form cannot be re-sent.
                 </div>
               )}
-              {(Object.keys(sendValidationErrors).length > 0 || reminderValidationErrorIds.size > 0 || tripFeeRequiredError) && (
+              {(Object.keys(sendValidationErrors).length > 0 || reminderValidationErrorIds.size > 0 || tripFeeRequiredError || (duplicateItemsError && duplicateItemsError.length > 0)) && (
                 <div
                   style={{
                     marginBottom: '16px',
@@ -3878,18 +3954,23 @@ export default function RoomLoaderPage() {
                   }}
                 >
                   {Object.keys(sendValidationErrors).length > 0 && (
-                    <div style={{ marginBottom: reminderValidationErrorIds.size > 0 || tripFeeRequiredError ? '8px' : 0 }}>
+                    <div style={{ marginBottom: reminderValidationErrorIds.size > 0 || tripFeeRequiredError || (duplicateItemsError && duplicateItemsError.length > 0) ? '8px' : 0 }}>
                       Please complete all required fields before sending: Appointment reason, Mobility, and Lab work are required for each pet.
                     </div>
                   )}
                   {reminderValidationErrorIds.size > 0 && (
-                    <div style={{ marginBottom: tripFeeRequiredError ? '8px' : 0 }}>
+                    <div style={{ marginBottom: tripFeeRequiredError || (duplicateItemsError && duplicateItemsError.length > 0) ? '8px' : 0 }}>
                       Please confirm each reminder match (or remove it) before sending. Every reminder needs a matched item and &quot;Confirm match&quot; clicked, or the reminder removed.
                     </div>
                   )}
                   {tripFeeRequiredError && (
-                    <div>
+                    <div style={{ marginBottom: duplicateItemsError && duplicateItemsError.length > 0 ? '8px' : 0 }}>
                       At least one pet must have a reminder or added item containing &quot;Trip Fee&quot; before sending to client.
+                    </div>
+                  )}
+                  {duplicateItemsError && duplicateItemsError.length > 0 && (
+                    <div>
+                      Duplicate items are not allowed. Remove the duplicate before sending: {duplicateItemsError.map(({ petName, itemName }) => `${itemName} (${petName})`).join('; ')}.
                     </div>
                   )}
                 </div>
@@ -3968,30 +4049,18 @@ export default function RoomLoaderPage() {
       {/* Are you sure? modal for Send to Client / Save for Later */}
       {confirmAction && (
         <div
-          style={{
-            position: 'fixed',
-            left: 0,
-            top: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10000,
-          }}
+          className="room-loader-modal-overlay"
+          style={{ zIndex: 10000 }}
           onClick={() => {
             setConfirmAction(null);
             setSendWarningReasons([]);
           }}
         >
           <div
+            className="room-loader-confirm-modal"
             style={{
               backgroundColor: 'white',
-              padding: '30px',
               borderRadius: '8px',
-              maxWidth: '440px',
-              width: '90%',
               boxShadow: '0 4px 6px rgba(0, 0, 0, 0.3)',
             }}
             onClick={(e) => e.stopPropagation()}

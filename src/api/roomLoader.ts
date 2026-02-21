@@ -590,10 +590,44 @@ export type CheckItemPricingPublicRequest = {
   };
 };
 
+const CHECK_ITEM_PRICING_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CHECK_ITEM_PRICING_CACHE_MAX = 500;
+
+type CheckItemPricingCacheEntry = { response: CheckItemPricingResponse; expiresAt: number };
+const checkItemPricingCache = new Map<string, CheckItemPricingCacheEntry>();
+
+function checkItemPricingCacheKey(request: CheckItemPricingPublicRequest): string {
+  return JSON.stringify({
+    token: request.token,
+    patientId: request.patientId,
+    practiceId: request.practiceId,
+    clientId: request.clientId,
+    itemType: request.itemType,
+    item: request.item,
+  });
+}
+
 export async function checkItemPricingPublic(
   request: CheckItemPricingPublicRequest
 ): Promise<CheckItemPricingResponse> {
+  const key = checkItemPricingCacheKey(request);
+  const entry = checkItemPricingCache.get(key);
+  const now = Date.now();
+  if (entry != null && entry.expiresAt > now) {
+    return entry.response;
+  }
+  if (entry != null) {
+    checkItemPricingCache.delete(key);
+  }
   const { data } = await http.post<CheckItemPricingResponse>('/public/room-loader/check-item-pricing', request);
+  if (checkItemPricingCache.size >= CHECK_ITEM_PRICING_CACHE_MAX) {
+    const firstKey = checkItemPricingCache.keys().next().value;
+    if (firstKey != null) checkItemPricingCache.delete(firstKey);
+  }
+  checkItemPricingCache.set(key, {
+    response: data,
+    expiresAt: now + CHECK_ITEM_PRICING_TTL_MS,
+  });
   return data;
 }
 
