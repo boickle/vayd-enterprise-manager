@@ -26,6 +26,7 @@ import MembershipPayment from './pages/MembershipPayment';
 import MembershipUpgrade from './pages/MembershipUpgrade';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
+import ErrorPage from './pages/ErrorPage';
 import { usePageTracking } from './hooks/usePageTracking';
 import { isProduction } from './utils/env';
 
@@ -311,6 +312,7 @@ export default function App() {
           <Route path="/requestreset" element={<Navigate to="/request-reset" replace />} />
           <Route path="/reset-password" element={<ResetPass />} />
           <Route path="/resetpass" element={<ResetPass />} />
+          <Route path="/error" element={<ErrorPage />} />
 
           {/* Client portal (standalone) */}
           <Route
