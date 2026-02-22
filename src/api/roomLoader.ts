@@ -159,6 +159,10 @@ export type Patient = {
     email?: string | null;
     phone1?: string | null;
   }>;
+  /** Explicit membership flag from room loader API (preferred over deriving from reminders). */
+  isMember?: boolean;
+  /** Membership plan name when isMember is true. */
+  membershipName?: string | null;
   breedEntity?: {
     id: number;
     name: string;

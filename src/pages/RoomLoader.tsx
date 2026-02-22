@@ -1861,21 +1861,14 @@ export default function RoomLoaderPage() {
       });
     }
 
-    // Compute which clients have membership and the plan name (from any reminder for their patient)
+    // Compute which clients have membership and the plan name (from explicit patient.isMember / patient.membershipName on room loader API)
     const clientMembershipPlanName = new Map<number, string>();
-    if (selectedRoomLoader.reminders) {
-      selectedRoomLoader.reminders.forEach((reminderWithPrice) => {
-        const wp = reminderWithPrice.wellnessPlanPricing;
-        const planName = wp?.membershipPlanName?.trim() || null;
-        if (wp?.hasCoverage || planName) {
-          const patientId =
-            reminderWithPrice.reminder.patient?.id ??
-            (reminderWithPrice.reminder?.id != null ? reminderIdToPatientId.get(reminderWithPrice.reminder.id) : undefined);
-          if (patientId) {
-            const entry = petMap.get(patientId);
-            if (entry?.client?.id && !clientMembershipPlanName.has(entry.client.id)) {
-              clientMembershipPlanName.set(entry.client.id, planName || 'Membership');
-            }
+    if (selectedRoomLoader.patients?.length) {
+      selectedRoomLoader.patients.forEach((patient) => {
+        if (patient.isMember) {
+          const clientId = patient.clients?.[0]?.id;
+          if (clientId != null && !clientMembershipPlanName.has(clientId)) {
+            clientMembershipPlanName.set(clientId, (patient.membershipName?.trim() || null) ?? 'Membership');
           }
         }
       });
@@ -1984,8 +1977,7 @@ export default function RoomLoaderPage() {
             <col style={{ width: '14%' }} />
             <col style={{ width: '18%' }} />
             <col style={{ width: '22%' }} />
-            <col style={{ width: '10%' }} />
-            <col style={{ width: '6%' }} />
+            <col style={{ width: '14%' }} />
           </colgroup>
           <thead>
             <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
@@ -2007,21 +1999,18 @@ export default function RoomLoaderPage() {
               <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #ddd', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1, backgroundColor: '#f5f5f5' }}>
                 Sent Status
               </th>
-              <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #ddd', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1, backgroundColor: '#f5f5f5' }}>
-                Due Status
-              </th>
             </tr>
           </thead>
           <tbody>
               {loading && filteredTableRows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ padding: '20px', textAlign: 'center' }}>
+                  <td colSpan={6} style={{ padding: '20px', textAlign: 'center' }}>
                     Loading...
                   </td>
                 </tr>
               ) : filteredTableRows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+                  <td colSpan={6} style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
                     {tableSearch.trim() ? 'No room loaders match your search' : 'No room loaders found'}
                   </td>
                 </tr>
@@ -2073,28 +2062,6 @@ export default function RoomLoaderPage() {
                         {row.sentStatus.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
                       </span>
                     </td>
-                    <td style={{ padding: '12px', border: '1px solid #ddd' }}>
-                      {row.dueStatus ? (
-                        <span
-                          style={{
-                            padding: '4px 8px',
-                            borderRadius: '4px',
-                            fontSize: '12px',
-                            backgroundColor:
-                              row.dueStatus === 'past_due' || row.dueStatus === '10_days_past_due'
-                                ? '#f44336'
-                                : row.dueStatus === 'due'
-                                  ? '#ff9800'
-                                  : '#4caf50',
-                            color: '#fff',
-                          }}
-                        >
-                          {row.dueStatus.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
-                        </span>
-                      ) : (
-                        'N/A'
-                      )}
-                    </td>
                   </tr>
                 ))
               )}
@@ -2120,12 +2087,6 @@ export default function RoomLoaderPage() {
                   : row.sentStatus === 'sent_1'
                     ? '#ff9800'
                     : '#9e9e9e';
-            const dueBg =
-              row.dueStatus === 'past_due' || row.dueStatus === '10_days_past_due'
-                ? '#f44336'
-                : row.dueStatus === 'due'
-                  ? '#ff9800'
-                  : '#4caf50';
             return (
               <button
                 type="button"
@@ -2157,11 +2118,6 @@ export default function RoomLoaderPage() {
                   <span className="room-loader-status-badge" style={{ backgroundColor: sentBg }}>
                     {row.sentStatus.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
                   </span>
-                  {row.dueStatus && (
-                    <span className="room-loader-status-badge" style={{ backgroundColor: dueBg }}>
-                      {row.dueStatus.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
-                    </span>
-                  )}
                 </div>
               </button>
             );

@@ -1775,7 +1775,8 @@ export default function PublicRoomLoaderForm() {
       const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
       const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
       const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || patient.vaccines?.felv === true);
+      // FeLV: for cats who never had FeLV, only show after they answer Yes to outdoor (or if under 1 yr). vaccines.felv pre-check only counts when already eligible by age/outdoor.
+      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || (patient.vaccines?.felv === true && (isUnderOneYear || outdoorAccess)));
       const questions: Qa[] = [];
       const add = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
@@ -1942,7 +1943,8 @@ export default function PublicRoomLoaderForm() {
         const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
         const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
         const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-        const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || patient.vaccines?.felv === true);
+        // FeLV: for cats who never had FeLV, only show after Yes to outdoor (or if under 1 yr). vaccines.felv only when already eligible by age/outdoor.
+        const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || (patient.vaccines?.felv === true && (isUnderOneYear || outdoorAccess)));
 
         if (suffix === 'appointmentReason' || suffix === 'generalWellbeing') allowedFormData[key] = value;
         else if (suffix === 'mobilityDetails' && (patientsData[petIdx] as any)?.questions?.mobility === true) allowedFormData[key] = value;
@@ -2053,7 +2055,8 @@ export default function PublicRoomLoaderForm() {
       const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
       const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
       const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || patient.vaccines?.felv === true);
+      // FeLV: for cats who never had FeLV, only show after Yes to outdoor (or if under 1 yr). vaccines.felv only when already eligible by age/outdoor.
+      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || (patient.vaccines?.felv === true && (isUnderOneYear || outdoorAccess)));
 
       if (showCrLymeBooster && formData[`${petKey}_crLymeBooster`] !== 'yes' && formData[`${petKey}_crLymeBooster`] !== 'no' && formData[`${petKey}_crLymeBooster`] !== 'unsure') {
         errors[`${petKey}_crLymeBooster`] = `Please answer the crLyme booster question for ${petName}.`;
@@ -2295,7 +2298,8 @@ export default function PublicRoomLoaderForm() {
     const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
     const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
     const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-    const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || patient.vaccines?.felv === true);
+    // FeLV: for cats who never had FeLV, only show after Yes to outdoor (or if under 1 yr). vaccines.felv only when already eligible by age/outdoor.
+    const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || (patient.vaccines?.felv === true && (isUnderOneYear || outdoorAccess)));
 
     if (showCrLymeBooster && formData[`${petKey}_crLymeBooster`] !== 'yes' && formData[`${petKey}_crLymeBooster`] !== 'no' && formData[`${petKey}_crLymeBooster`] !== 'unsure') {
       errors[`${petKey}_crLymeBooster`] = `Please answer the crLyme booster question for ${petName} before continuing.`;
@@ -2489,8 +2493,8 @@ export default function PublicRoomLoaderForm() {
         recs.push({ code: 'FIL48719999', title: 'Early Detection Panel - Canine', message: msg });
       }
 
-      // Pet < 1 year, new patient, fecal not on list, and they said No to lab work → recommend comprehensive fecal
-      if (age != null && age < 1 && isNewPatient && !listHasFecal && !labWorkYes) {
+      // Pet < 1 year, fecal not on list, and they said No to lab work → recommend comprehensive fecal (all young pets, not only isNewPatient)
+      if (age != null && age < 1 && !listHasFecal && !labWorkYes) {
         recs.push({
           code: 'COMPREHENSIVE_FECAL',
           title: 'Comprehensive Fecal',
@@ -3288,6 +3292,12 @@ export default function PublicRoomLoaderForm() {
               if (displayItems.length === 0) {
                 return <p style={{ color: '#666', fontStyle: 'italic', margin: 0 }}>No recommended items at this time.</p>;
               }
+              const itemCategory = (item: any) => {
+                const t = (item.type ?? item.itemType ?? 'procedure').toString().toLowerCase();
+                if (t === 'lab' || t === 'laboratory') return 'lab';
+                if (t === 'inventory') return 'inventory';
+                return 'procedure';
+              };
               // Sort so uncheckable items (visit/consult, fecal-replaced) appear on top
               const sortedWithOriginalIdx = displayItems
                 .map((item, originalIdx) => ({ item, originalIdx }))
@@ -3298,32 +3308,41 @@ export default function PublicRoomLoaderForm() {
                   if (!aUncheckable && bUncheckable) return 1;
                   return 0;
                 });
+              const procedureItems = sortedWithOriginalIdx.filter(({ item }) => itemCategory(item) === 'procedure');
+              const labItems = sortedWithOriginalIdx.filter(({ item }) => itemCategory(item) === 'lab');
+              const inventoryItems = sortedWithOriginalIdx.filter(({ item }) => itemCategory(item) === 'inventory');
+              const CarePlanSeparator = () => <div style={{ height: '1px', backgroundColor: '#e0e0e0', margin: '12px 0' }} />;
+              const renderRow = ({ item, originalIdx }: { item: any; originalIdx: number }, displayIdx: number, groupLength: number) => {
+                const isVisitOrConsult = hasPhrase(item, 'visit') || hasPhrase(item, 'consult');
+                const isFecalReplacedForItem = hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0;
+                const recKey = `pet${carePlanPetIndex}_rec_${originalIdx}`;
+                const isChecked = isFecalReplacedForItem ? false : (isVisitOrConsult || formData[recKey] !== false);
+                const disabled = isVisitOrConsult || isFecalReplacedForItem;
+                return (
+                  <div key={originalIdx} style={{ display: 'flex', alignItems: 'center', padding: '10px 0', borderBottom: displayIdx < groupLength - 1 ? '1px solid #e0e0e0' : 'none' }}>
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      disabled={disabled}
+                      readOnly={disabled}
+                      style={{ marginRight: '12px', width: '18px', height: '18px', cursor: disabled ? 'default' : 'pointer' }}
+                      onChange={() => {
+                        if (!disabled) handleInputChange(recKey, !isChecked);
+                      }}
+                    />
+                    <span style={{ fontSize: '16px', color: '#333', ...(isFecalReplacedForItem ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{item.name}</span>
+                    {item.quantity > 1 && <span style={{ fontSize: '14px', color: '#666', marginLeft: '8px' }}>(Qty: {item.quantity})</span>}
+                    {isFecalReplacedForItem && <span style={{ fontSize: '13px', color: '#666', marginLeft: '8px', fontStyle: 'italic' }}>(replaced by {fecalReplacedBy.join(' or ')})</span>}
+                  </div>
+                );
+              };
               return (
                 <div style={{ padding: '15px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #ddd' }}>
-                  {sortedWithOriginalIdx.map(({ item, originalIdx }, displayIdx) => {
-                    const isVisitOrConsult = hasPhrase(item, 'visit') || hasPhrase(item, 'consult');
-                    const isFecalReplacedForItem = hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0;
-                    const recKey = `pet${carePlanPetIndex}_rec_${originalIdx}`;
-                    const isChecked = isFecalReplacedForItem ? false : (isVisitOrConsult || formData[recKey] !== false);
-                    const disabled = isVisitOrConsult || isFecalReplacedForItem;
-                    return (
-                      <div key={originalIdx} style={{ display: 'flex', alignItems: 'center', padding: '10px 0', borderBottom: displayIdx < sortedWithOriginalIdx.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          disabled={disabled}
-                          readOnly={disabled}
-                          style={{ marginRight: '12px', width: '18px', height: '18px', cursor: disabled ? 'default' : 'pointer' }}
-                          onChange={() => {
-                            if (!disabled) handleInputChange(recKey, !isChecked);
-                          }}
-                        />
-                        <span style={{ fontSize: '16px', color: '#333', ...(isFecalReplacedForItem ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{item.name}</span>
-                        {item.quantity > 1 && <span style={{ fontSize: '14px', color: '#666', marginLeft: '8px' }}>(Qty: {item.quantity})</span>}
-                        {isFecalReplacedForItem && <span style={{ fontSize: '13px', color: '#666', marginLeft: '8px', fontStyle: 'italic' }}>(replaced by {fecalReplacedBy.join(' or ')})</span>}
-                      </div>
-                    );
-                  })}
+                  {procedureItems.length > 0 && procedureItems.map((entry, i) => renderRow(entry, i, procedureItems.length))}
+                  {procedureItems.length > 0 && (labItems.length > 0 || inventoryItems.length > 0) && <CarePlanSeparator />}
+                  {labItems.length > 0 && labItems.map((entry, i) => renderRow(entry, i, labItems.length))}
+                  {labItems.length > 0 && inventoryItems.length > 0 && <CarePlanSeparator />}
+                  {inventoryItems.length > 0 && inventoryItems.map((entry, i) => renderRow(entry, i, inventoryItems.length))}
                 </div>
               );
             })()}
@@ -3446,8 +3465,8 @@ export default function PublicRoomLoaderForm() {
             const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
             const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
             const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-            // FeLV: show if cat and haven't had it before; if <1 yr always show, if 1+ yr only if they answered Yes to outdoor
-            const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || patient.vaccines?.felv === true);
+            // FeLV: for cats who never had FeLV, only show after Yes to outdoor (or if under 1 yr). vaccines.felv only when already eligible by age/outdoor.
+            const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || (patient.vaccines?.felv === true && (isUnderOneYear || outdoorAccess)));
             const hasAnyOptionalContent = showCrLymeBooster || showLepto || showBordetella || showLyme || showRabiesCats || showFeLV;
 
             if (!hasAnyOptionalContent) return null;
@@ -3747,11 +3766,12 @@ export default function PublicRoomLoaderForm() {
                   const dob = patient?.dob ?? patient?.patient?.dob;
                   const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
                   const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
+                  // FeLV: for cats who never had FeLV, only show after Yes to outdoor (or if under 1 yr). vaccines.felv only when already eligible by age/outdoor.
                   const showFeLV =
                     isCatPatient &&
                     patientId != null &&
                     !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') &&
-                    (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || patient.vaccines?.felv === true);
+                    (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || (patient.vaccines?.felv === true && (isUnderOneYear || outdoorAccess)));
                   if (!showFeLV) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
@@ -5106,7 +5126,11 @@ export default function PublicRoomLoaderForm() {
                     return (
                       <li
                         key={productName}
-                        onClick={() => !readOnly && setStoreOptionModalGroup(items)}
+                        onClick={() => {
+                        if (readOnly) return;
+                        setStoreOptionModalGroup(items);
+                        setStoreSearchQuery('');
+                      }}
                         style={{ padding: '10px 12px', borderBottom: '1px solid #eee', cursor: readOnly ? 'default' : 'pointer', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', ...(readOnly ? { opacity: 0.85 } : {}) }}
                         onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#e7f1ff'; }}
                         onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#fff'; }}
@@ -5176,6 +5200,7 @@ export default function PublicRoomLoaderForm() {
                               if (readOnly) return;
                               setStoreAdditionalItems((prev) => [...prev, item]);
                               setStoreOptionModalGroup(null);
+                              setStoreSearchQuery('');
                             }}
                             style={{
                               padding: '6px 12px',
