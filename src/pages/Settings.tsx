@@ -1629,21 +1629,35 @@ export default function Settings() {
                                   <div className="settings-schedule-field">
                                     <label className="settings-label">Latitude</label>
                                     <input
-                                      type="number"
+                                      type="text"
                                       className="settings-input"
-                                      value={startDepotLat}
-                                      onChange={(e) => updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'startDepotLat', e.target.value ? parseFloat(e.target.value) : undefined)}
-                                      step="any"
+                                      value={startDepotLat === '' ? '' : startDepotLat}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        if (v === '') {
+                                          updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'startDepotLat', undefined);
+                                          return;
+                                        }
+                                        const n = parseFloat(v);
+                                        if (Number.isFinite(n)) updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'startDepotLat', n);
+                                      }}
                                     />
                                   </div>
                                   <div className="settings-schedule-field">
                                     <label className="settings-label">Longitude</label>
                                     <input
-                                      type="number"
+                                      type="text"
                                       className="settings-input"
-                                      value={startDepotLon}
-                                      onChange={(e) => updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'startDepotLon', e.target.value ? parseFloat(e.target.value) : undefined)}
-                                      step="any"
+                                      value={startDepotLon === '' ? '' : startDepotLon}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        if (v === '') {
+                                          updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'startDepotLon', undefined);
+                                          return;
+                                        }
+                                        const n = parseFloat(v);
+                                        if (Number.isFinite(n)) updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'startDepotLon', n);
+                                      }}
                                     />
                                   </div>
                                 </div>
@@ -1655,21 +1669,35 @@ export default function Settings() {
                                   <div className="settings-schedule-field">
                                     <label className="settings-label">Latitude</label>
                                     <input
-                                      type="number"
+                                      type="text"
                                       className="settings-input"
-                                      value={endDepotLat}
-                                      onChange={(e) => updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'endDepotLat', e.target.value ? parseFloat(e.target.value) : undefined)}
-                                      step="any"
+                                      value={endDepotLat === '' ? '' : endDepotLat}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        if (v === '') {
+                                          updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'endDepotLat', undefined);
+                                          return;
+                                        }
+                                        const n = parseFloat(v);
+                                        if (Number.isFinite(n)) updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'endDepotLat', n);
+                                      }}
                                     />
                                   </div>
                                   <div className="settings-schedule-field">
                                     <label className="settings-label">Longitude</label>
                                     <input
-                                      type="number"
+                                      type="text"
                                       className="settings-input"
-                                      value={endDepotLon}
-                                      onChange={(e) => updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'endDepotLon', e.target.value ? parseFloat(e.target.value) : undefined)}
-                                      step="any"
+                                      value={endDepotLon === '' ? '' : endDepotLon}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        if (v === '') {
+                                          updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'endDepotLon', undefined);
+                                          return;
+                                        }
+                                        const n = parseFloat(v);
+                                        if (Number.isFinite(n)) updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'endDepotLon', n);
+                                      }}
                                     />
                                   </div>
                                 </div>
@@ -1865,21 +1893,35 @@ export default function Settings() {
                             <div className="settings-schedule-field">
                               <label className="settings-label">Latitude</label>
                               <input
-                                type="number"
+                                type="text"
                                 className="settings-input"
                                 value={overrideForm.startDepotLat ?? ''}
-                                onChange={(e) => setOverrideForm((f) => (f ? { ...f, startDepotLat: e.target.value ? parseFloat(e.target.value) : undefined } : null))}
-                                step="any"
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v === '') {
+                                    setOverrideForm((f) => (f ? { ...f, startDepotLat: undefined } : null));
+                                    return;
+                                  }
+                                  const n = parseFloat(v);
+                                  if (Number.isFinite(n)) setOverrideForm((f) => (f ? { ...f, startDepotLat: n } : null));
+                                }}
                               />
                             </div>
                             <div className="settings-schedule-field">
                               <label className="settings-label">Longitude</label>
                               <input
-                                type="number"
+                                type="text"
                                 className="settings-input"
                                 value={overrideForm.startDepotLon ?? ''}
-                                onChange={(e) => setOverrideForm((f) => (f ? { ...f, startDepotLon: e.target.value ? parseFloat(e.target.value) : undefined } : null))}
-                                step="any"
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v === '') {
+                                    setOverrideForm((f) => (f ? { ...f, startDepotLon: undefined } : null));
+                                    return;
+                                  }
+                                  const n = parseFloat(v);
+                                  if (Number.isFinite(n)) setOverrideForm((f) => (f ? { ...f, startDepotLon: n } : null));
+                                }}
                               />
                             </div>
                           </div>
@@ -1890,21 +1932,35 @@ export default function Settings() {
                             <div className="settings-schedule-field">
                               <label className="settings-label">Latitude</label>
                               <input
-                                type="number"
+                                type="text"
                                 className="settings-input"
                                 value={overrideForm.endDepotLat ?? ''}
-                                onChange={(e) => setOverrideForm((f) => (f ? { ...f, endDepotLat: e.target.value ? parseFloat(e.target.value) : undefined } : null))}
-                                step="any"
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v === '') {
+                                    setOverrideForm((f) => (f ? { ...f, endDepotLat: undefined } : null));
+                                    return;
+                                  }
+                                  const n = parseFloat(v);
+                                  if (Number.isFinite(n)) setOverrideForm((f) => (f ? { ...f, endDepotLat: n } : null));
+                                }}
                               />
                             </div>
                             <div className="settings-schedule-field">
                               <label className="settings-label">Longitude</label>
                               <input
-                                type="number"
+                                type="text"
                                 className="settings-input"
                                 value={overrideForm.endDepotLon ?? ''}
-                                onChange={(e) => setOverrideForm((f) => (f ? { ...f, endDepotLon: e.target.value ? parseFloat(e.target.value) : undefined } : null))}
-                                step="any"
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v === '') {
+                                    setOverrideForm((f) => (f ? { ...f, endDepotLon: undefined } : null));
+                                    return;
+                                  }
+                                  const n = parseFloat(v);
+                                  if (Number.isFinite(n)) setOverrideForm((f) => (f ? { ...f, endDepotLon: n } : null));
+                                }}
                               />
                             </div>
                           </div>
