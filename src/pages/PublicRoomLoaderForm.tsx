@@ -2277,8 +2277,9 @@ export default function PublicRoomLoaderForm() {
     if (!patient) return { valid: true };
     const petKey = `pet${petIdx}`;
     const petName = patient.patientName || `Pet ${petIdx + 1}`;
-    const patientId = patient.patientId ?? patient.patient?.id ?? petIdx;
-    const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
+    // Use same patientId as Care Plan vaccine section (no petIdx fallback) so we only require vaccine answers when that section is actually shown
+    const patientId = patient.patientId ?? patient.patient?.id;
+    const history = patientId != null ? (treatmentHistoryByPatientId[patientId] ?? []) : [];
     const apptPatient = appts[petIdx]?.patient;
     const speciesParts = [
       patient.species,
@@ -2304,6 +2305,13 @@ export default function PublicRoomLoaderForm() {
       }
     }
 
+    // Same rule as Care Plan UI: hide Optional Vaccines section for QOL Exam unless lab work was said Yes — so don't require vaccine answers in that case
+    const apptForPet = appts[petIdx];
+    const appointmentTypeName = (apptForPet?.appointmentType?.prettyName ?? apptForPet?.appointmentType?.name ?? '').toString().toLowerCase();
+    const isQOLExam = appointmentTypeName.includes('qol');
+    const labWorkYes = formData[`${petKey}_labWork`] === true || formData[`${petKey}_labWork`] === 'yes' || (patient as any)?.questions?.labWork === true;
+    const hideVaccineSectionForQOL = isQOLExam && !labWorkYes;
+
     const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
     const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
     const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
@@ -2312,22 +2320,46 @@ export default function PublicRoomLoaderForm() {
     // FeLV: for cats who never had FeLV, only show after Yes to outdoor (or if under 1 yr). vaccines.felv only when already eligible by age/outdoor.
     const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || (patient.vaccines?.felv === true && (isUnderOneYear || outdoorAccess)));
 
-    if (showCrLymeBooster && formData[`${petKey}_crLymeBooster`] !== 'yes' && formData[`${petKey}_crLymeBooster`] !== 'no' && formData[`${petKey}_crLymeBooster`] !== 'unsure') {
+    console.log('[RoomLoader] validateRequiredForCarePlanPet', {
+      petIdx,
+      petName,
+      patientId,
+      isDog,
+      isCatPatient,
+      historyLength: history?.length ?? 0,
+      isQOLExam,
+      labWorkYes,
+      hideVaccineSectionForQOL,
+      showCrLymeBooster,
+      showLepto,
+      showBordetella,
+      showLyme,
+      showRabiesCats,
+      showFeLV,
+      formValues: {
+        crLymeBooster: formData[`${petKey}_crLymeBooster`],
+        leptoVaccine: formData[`${petKey}_leptoVaccine`],
+        bordetellaVaccine: formData[`${petKey}_bordetellaVaccine`],
+        lymeVaccine: formData[`${petKey}_lymeVaccine`],
+      },
+    });
+
+    if (!hideVaccineSectionForQOL && showCrLymeBooster && formData[`${petKey}_crLymeBooster`] !== 'yes' && formData[`${petKey}_crLymeBooster`] !== 'no' && formData[`${petKey}_crLymeBooster`] !== 'unsure') {
       errors[`${petKey}_crLymeBooster`] = `Please answer the crLyme booster question for ${petName} before continuing.`;
     }
-    if (showLepto && formData[`${petKey}_leptoVaccine`] !== 'yes' && formData[`${petKey}_leptoVaccine`] !== 'no') {
+    if (!hideVaccineSectionForQOL && showLepto && formData[`${petKey}_leptoVaccine`] !== 'yes' && formData[`${petKey}_leptoVaccine`] !== 'no') {
       errors[`${petKey}_leptoVaccine`] = `Please answer the Leptospirosis vaccine question for ${petName} before continuing.`;
     }
-    if (showBordetella && formData[`${petKey}_bordetellaVaccine`] !== 'yes' && formData[`${petKey}_bordetellaVaccine`] !== 'no') {
+    if (!hideVaccineSectionForQOL && showBordetella && formData[`${petKey}_bordetellaVaccine`] !== 'yes' && formData[`${petKey}_bordetellaVaccine`] !== 'no') {
       errors[`${petKey}_bordetellaVaccine`] = `Please answer the Bordetella vaccine question for ${petName} before continuing.`;
     }
-    if (showLyme && formData[`${petKey}_lymeVaccine`] !== 'yes' && formData[`${petKey}_lymeVaccine`] !== 'no') {
+    if (!hideVaccineSectionForQOL && showLyme && formData[`${petKey}_lymeVaccine`] !== 'yes' && formData[`${petKey}_lymeVaccine`] !== 'no') {
       errors[`${petKey}_lymeVaccine`] = `Please answer the Lyme vaccine question for ${petName} before continuing.`;
     }
-    if (showRabiesCats && formData[`${petKey}_rabiesPreference`] !== '1year' && formData[`${petKey}_rabiesPreference`] !== '3year' && formData[`${petKey}_rabiesPreference`] !== 'no') {
+    if (!hideVaccineSectionForQOL && showRabiesCats && formData[`${petKey}_rabiesPreference`] !== '1year' && formData[`${petKey}_rabiesPreference`] !== '3year' && formData[`${petKey}_rabiesPreference`] !== 'no') {
       errors[`${petKey}_rabiesPreference`] = `Please answer the Rabies vaccine preference for ${petName} before continuing.`;
     }
-    if (showFeLV && formData[`${petKey}_felvVaccine`] !== 'yes' && formData[`${petKey}_felvVaccine`] !== 'no') {
+    if (!hideVaccineSectionForQOL && showFeLV && formData[`${petKey}_felvVaccine`] !== 'yes' && formData[`${petKey}_felvVaccine`] !== 'no') {
       errors[`${petKey}_felvVaccine`] = `Please answer the FeLV vaccine question for ${petName} before continuing.`;
     }
 
@@ -2400,6 +2432,11 @@ export default function PublicRoomLoaderForm() {
       const appt = appointments[idx];
       const petKey = `pet${idx}`;
       const labWorkYes = formData[`${petKey}_labWork`] === true || formData[`${petKey}_labWork`] === 'yes' || (patient as any).questions?.labWork === true;
+      const isQOLExam = (appt?.appointmentType?.prettyName ?? appt?.appointmentType?.name ?? '').toString().toLowerCase().includes('qol');
+      if (isQOLExam) {
+        result.push({ patientId, patientName: patient.patientName || `Pet ${idx + 1}`, recommendations: [] });
+        return;
+      }
       const recs: LabRec[] = [];
 
       // Build Care Plan display items for this pet (same as Veterinary Care Plan page) to detect unchecked items
@@ -3859,13 +3896,16 @@ export default function PublicRoomLoaderForm() {
                 type="button"
                 className="public-room-loader-btn"
                 onClick={() => {
+                  console.log('[RoomLoader] Next: Labs clicked', { carePlanPetIndex, labsPageIndex });
                   const v = validateRequiredForCarePlanPet(carePlanPetIndex);
+                  console.log('[RoomLoader] Care plan validation result', { valid: v.valid, errors: v.errors, message: v.message });
                   if (!v.valid) {
                     setFieldValidationErrors(v.errors || {});
                     return;
                   }
                   setFieldValidationErrors({});
                   setCurrentPage(labsPageIndex);
+                  console.log('[RoomLoader] Navigating to Labs page', labsPageIndex);
                 }}
                 style={{
                   backgroundColor: '#0d6efd',
@@ -3881,7 +3921,9 @@ export default function PublicRoomLoaderForm() {
                 type="button"
                 className="public-room-loader-btn"
                 onClick={() => {
+                  console.log('[RoomLoader] Next pet clicked', { carePlanPetIndex });
                   const v = validateRequiredForCarePlanPet(carePlanPetIndex);
+                  console.log('[RoomLoader] Care plan validation result', { valid: v.valid, errors: v.errors });
                   if (!v.valid) {
                     setFieldValidationErrors(v.errors || {});
                     return;
