@@ -88,6 +88,19 @@
   box-sizing: border-box;
 }
 
+.public-room-loader-thank-you-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  align-items: center;
+}
+
+.public-room-loader-thank-you-actions .public-room-loader-thank-you-btn {
+  min-height: 48px;
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* Loading / error states */
 .public-room-loader-loading,
 .public-room-loader-error {
@@ -158,6 +171,15 @@
 
   .public-room-loader-thank-you h1 {
     font-size: 1.5rem !important;
+  }
+
+  .public-room-loader-thank-you-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .public-room-loader-thank-you-actions .public-room-loader-thank-you-btn {
+    width: 100%;
   }
 
   .public-room-loader-loading,

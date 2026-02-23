@@ -305,6 +305,8 @@ export type RoomLoader = {
   savedForm?: Record<string, any> | null;
   /** Payload that was sent to the client (when sentStatus indicates already sent) */
   sentToClient?: SentToClient | null;
+  /** Token for public form/PDF URL (when form has been sent). Used for View PDF link. */
+  token?: string | null;
   created?: string;
   updated?: string;
 };

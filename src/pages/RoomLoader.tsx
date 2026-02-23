@@ -112,6 +112,8 @@ export default function RoomLoaderPage() {
   const [searchQuery, setSearchQuery] = useState<Record<number, string>>({});
   const [searchResults, setSearchResults] = useState<Record<number, SearchableItem[]>>({});
   const [searchLoading, setSearchLoading] = useState<Record<number, boolean>>({});
+  /** Room loader ID currently downloading PDF (for loading state on button). */
+  const [downloadingPdfRoomLoaderId, setDownloadingPdfRoomLoaderId] = useState<number | null>(null);
 
   // Client has already submitted this form (sentStatus === 'completed') — show read-only, grey out all fields, disable Save and Re-send
   const formSubmittedByClient = useMemo(
@@ -604,6 +606,8 @@ export default function RoomLoaderPage() {
       dueStatus: DueStatus | null;
       roomLoader: RoomLoader;
       clientHasNoEmail: boolean;
+      /** Token for public PDF URL when completed */
+      token?: string | null;
     }> = [];
 
     roomLoaders.forEach((rl) => {
@@ -731,6 +735,7 @@ export default function RoomLoaderPage() {
         dueStatus: rl.dueStatus,
         roomLoader: rl,
         clientHasNoEmail,
+        token: rl.token ?? null,
       });
     });
 
@@ -795,6 +800,28 @@ export default function RoomLoaderPage() {
     setAddedItemQuantities({});
     setAppointmentReasons({});
     setVaccineCheckboxes({});
+  }
+
+  async function handleDownloadPdf(roomLoaderId: number, e: React.MouseEvent) {
+    e.stopPropagation();
+    setDownloadingPdfRoomLoaderId(roomLoaderId);
+    try {
+      const res = await http.get(`/room-loader/${roomLoaderId}/pdf`, { responseType: 'blob' });
+      const blob = res.data instanceof Blob ? res.data : new Blob([res.data]);
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = `room-loader-${roomLoaderId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(objectUrl);
+    } catch (err: any) {
+      console.error('Download PDF error:', err);
+      alert(err?.response?.data?.message || err?.message || 'Failed to download PDF. Please try again.');
+    } finally {
+      setDownloadingPdfRoomLoaderId(null);
+    }
   }
 
   function handleQuantityChange(reminderId: number, value: number | string) {
@@ -2078,24 +2105,46 @@ export default function RoomLoaderPage() {
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.clientName}</td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.pets.join(', ')}</td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>
-                      <span
-                        style={{
-                          padding: '4px 8px',
-                          borderRadius: '4px',
-                          fontSize: '12px',
-                          backgroundColor:
-                            row.sentStatus === 'completed'
-                              ? '#4caf50'
-                              : row.sentStatus === 'sent_2'
-                                ? '#2196f3'
-                                : row.sentStatus === 'sent_1'
-                                  ? '#ff9800'
-                                  : '#9e9e9e',
-                          color: '#fff',
-                        }}
-                      >
-                        {row.sentStatus.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
-                      </span>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' }}>
+                        <span
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            backgroundColor:
+                              row.sentStatus === 'completed'
+                                ? '#4caf50'
+                                : row.sentStatus === 'sent_2'
+                                  ? '#2196f3'
+                                  : row.sentStatus === 'sent_1'
+                                    ? '#ff9800'
+                                    : '#9e9e9e',
+                            color: '#fff',
+                          }}
+                        >
+                          {row.sentStatus.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
+                        </span>
+                        {row.sentStatus === 'completed' && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleDownloadPdf(row.roomLoaderId, e)}
+                            disabled={downloadingPdfRoomLoaderId === row.roomLoaderId}
+                            className="room-loader-download-pdf-btn"
+                            style={{
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              color: '#0d6efd',
+                              background: 'none',
+                              border: 'none',
+                              padding: '4px 0',
+                              cursor: downloadingPdfRoomLoaderId === row.roomLoaderId ? 'wait' : 'pointer',
+                              textDecoration: 'underline',
+                            }}
+                          >
+                            {downloadingPdfRoomLoaderId === row.roomLoaderId ? 'Downloading…' : 'Download PDF'}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -2155,6 +2204,31 @@ export default function RoomLoaderPage() {
                     {row.sentStatus.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
                   </span>
                 </div>
+                {row.sentStatus === 'completed' && (
+                  <button
+                    type="button"
+                    onClick={(e) => handleDownloadPdf(row.roomLoaderId, e)}
+                    disabled={downloadingPdfRoomLoaderId === row.roomLoaderId}
+                    className="room-loader-mobile-download-pdf"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      minHeight: '44px',
+                      marginTop: '12px',
+                      padding: '12px 20px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      backgroundColor: '#1a1a1a',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: downloadingPdfRoomLoaderId === row.roomLoaderId ? 'wait' : 'pointer',
+                    }}
+                  >
+                    {downloadingPdfRoomLoaderId === row.roomLoaderId ? 'Downloading…' : 'Download PDF'}
+                  </button>
+                )}
               </button>
             );
           })

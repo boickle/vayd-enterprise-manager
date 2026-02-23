@@ -1731,9 +1731,10 @@ export default function PublicRoomLoaderForm() {
       const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
       const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
       const markedNewByApi = patient.isNewPatient === true || appts[petIdx]?.isNewPatient === true;
-      const explicitlyNotNew = patient.isNewPatient === false;
+      const explicitlyNotNew = patient.isNewPatient === false || appts[petIdx]?.isNewPatient === false;
       const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
-      const isNewPatient = !explicitlyNotNew && !!markedNewByApi && !hasReminders;
+      const treatAsNewWhenNoReminders = patient.isNewPatient !== false && appts[petIdx]?.isNewPatient !== false;
+      const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
       const questions: Qa[] = [];
       const addOptional = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
@@ -1753,7 +1754,9 @@ export default function PublicRoomLoaderForm() {
         addOptional(`Describe ${petName}'s behavior at home, around strangers, and at a typical vet office.`, `${petKey}_newPatientBehavior`);
         addOptional(`What are you feeding ${petName}? (brand, amount, frequency)`, `${petKey}_feeding`);
         addOptional(`Do you or ${petName} have any food allergies? (we like to bribe!)`, `${petKey}_foodAllergies`, { yes: 'Yes', no: 'No' });
-        addOptional('If yes, what are they?', `${petKey}_foodAllergiesDetails`);
+        if (formData[`${petKey}_foodAllergies`] === 'yes') {
+          addOptional('If yes, what are they?', `${petKey}_foodAllergiesDetails`);
+        }
       }
       if (questions.length > 0) {
         page1Sections.push({ sectionLabel: `Pet ${petIdx + 1}: ${petName}`, patientId, patientName: petName, questions });
@@ -1778,7 +1781,7 @@ export default function PublicRoomLoaderForm() {
       const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
       const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
       const isDog = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !isCatPatient);
-      const dob = patient?.dob ?? patient?.patient?.dob;
+      const dob = patient?.dob ?? patient?.patient?.dob ?? appts[petIdx]?.patient?.dob;
       const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
       const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
       const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
@@ -1786,8 +1789,8 @@ export default function PublicRoomLoaderForm() {
       const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
       const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
       const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-      // FeLV: for cats who never had FeLV, only show after they answer Yes to outdoor (or if under 1 yr). vaccines.felv pre-check only counts when already eligible by age/outdoor.
-      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || (patient.vaccines?.felv === true && (isUnderOneYear || outdoorAccess)));
+      // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due)
+      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
       const questions: Qa[] = [];
       const add = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
@@ -1943,10 +1946,11 @@ export default function PublicRoomLoaderForm() {
         const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
         const isDog = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !isCatPatient);
         const markedNewByApi = patient.isNewPatient === true || appts[petIdx]?.isNewPatient === true;
-        const explicitlyNotNew = patient.isNewPatient === false;
+        const explicitlyNotNew = patient.isNewPatient === false || appts[petIdx]?.isNewPatient === false;
         const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
-        const isNewPatient = !explicitlyNotNew && markedNewByApi && !hasReminders;
-        const dob = patient?.dob ?? patient?.patient?.dob;
+        const treatAsNewWhenNoReminders = patient.isNewPatient !== false && appts[petIdx]?.isNewPatient !== false;
+        const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
+        const dob = patient?.dob ?? patient?.patient?.dob ?? appts[petIdx]?.patient?.dob;
         const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
         const outdoorAccess = formData[`pet${petIdx}_outdoorAccess`] === 'yes';
         const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
@@ -1954,8 +1958,8 @@ export default function PublicRoomLoaderForm() {
         const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
         const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
         const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-        // FeLV: for cats who never had FeLV, only show after Yes to outdoor (or if under 1 yr). vaccines.felv only when already eligible by age/outdoor.
-        const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || (patient.vaccines?.felv === true && (isUnderOneYear || outdoorAccess)));
+        // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due)
+        const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
 
         if (suffix === 'appointmentReason' || suffix === 'generalWellbeing') allowedFormData[key] = value;
         else if (suffix === 'mobilityDetails' && (patientsData[petIdx] as any)?.questions?.mobility === true) allowedFormData[key] = value;
@@ -2031,7 +2035,8 @@ export default function PublicRoomLoaderForm() {
       const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
       const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
       const isDog = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !isCatPatient);
-      const isUnderOneYear = patient.dob ? DateTime.now().diff(DateTime.fromISO(patient.dob), 'years').years < 1 : false;
+      const dob = patient?.dob ?? patient?.patient?.dob ?? apptPatient?.dob;
+      const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
       const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
 
       if (isCatPatient) {
@@ -2041,9 +2046,10 @@ export default function PublicRoomLoaderForm() {
         }
       }
       const markedNewByApi = patient.isNewPatient === true || appts[petIdx]?.isNewPatient === true;
-      const explicitlyNotNew = patient.isNewPatient === false;
+      const explicitlyNotNew = patient.isNewPatient === false || appts[petIdx]?.isNewPatient === false;
       const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
-      const isNewPatient = !explicitlyNotNew && markedNewByApi && !hasReminders;
+      const treatAsNewWhenNoReminders = patient.isNewPatient !== false && appts[petIdx]?.isNewPatient !== false;
+      const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
       if (isNewPatient) {
         const behavior = (formData[`${petKey}_newPatientBehavior`] ?? '').toString().trim();
         if (!behavior) {
@@ -2066,8 +2072,8 @@ export default function PublicRoomLoaderForm() {
       const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
       const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
       const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-      // FeLV: for cats who never had FeLV, only show after Yes to outdoor (or if under 1 yr). vaccines.felv only when already eligible by age/outdoor.
-      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || (patient.vaccines?.felv === true && (isUnderOneYear || outdoorAccess)));
+      // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due)
+      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
 
       if (showCrLymeBooster && formData[`${petKey}_crLymeBooster`] !== 'yes' && formData[`${petKey}_crLymeBooster`] !== 'no' && formData[`${petKey}_crLymeBooster`] !== 'unsure') {
         errors[`${petKey}_crLymeBooster`] = `Please answer the crLyme booster question for ${petName}.`;
@@ -2236,9 +2242,10 @@ export default function PublicRoomLoaderForm() {
       const petName = patient.patientName || `Pet ${petIdx + 1}`;
       const isCatPatient = (patient.species ?? '').toLowerCase().includes('cat') || (patient.speciesEntity?.name ?? '').toLowerCase().includes('cat') || (patient.species ?? '').toLowerCase().includes('feline');
       const markedNewByApi = patient.isNewPatient === true || appts[petIdx]?.isNewPatient === true;
-      const explicitlyNotNew = patient.isNewPatient === false;
+      const explicitlyNotNew = patient.isNewPatient === false || appts[petIdx]?.isNewPatient === false;
       const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
-      const isNewPatient = !explicitlyNotNew && markedNewByApi && !hasReminders;
+      const treatAsNewWhenNoReminders = patient.isNewPatient !== false && appts[petIdx]?.isNewPatient !== false;
+      const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
 
       if (isCatPatient) {
         const outdoor = formData[`${petKey}_outdoorAccess`];
@@ -2292,7 +2299,8 @@ export default function PublicRoomLoaderForm() {
     const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
     const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
     const isDog = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !isCatPatient);
-    const isUnderOneYear = patient.dob ? DateTime.now().diff(DateTime.fromISO(patient.dob), 'years').years < 1 : false;
+    const dob = patient?.dob ?? patient?.patient?.dob ?? apptPatient?.dob;
+    const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
     const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
 
     const errors: Record<string, string> = {};
@@ -2317,8 +2325,8 @@ export default function PublicRoomLoaderForm() {
     const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
     const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
     const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-    // FeLV: for cats who never had FeLV, only show after Yes to outdoor (or if under 1 yr). vaccines.felv only when already eligible by age/outdoor.
-    const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || (patient.vaccines?.felv === true && (isUnderOneYear || outdoorAccess)));
+    // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due)
+    const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
 
     console.log('[RoomLoader] validateRequiredForCarePlanPet', {
       petIdx,
@@ -2483,9 +2491,10 @@ export default function PublicRoomLoaderForm() {
       const shouldRecommendSenior = !listHasSenior || uncheckedOnCarePlan('senior screen');
       const shouldRecommendYoungOrEarly = !listHasYoungOrEarly || uncheckedOnCarePlan('young wellness', 'early detection');
       const markedNewByApi = patient.isNewPatient === true || appt?.isNewPatient === true;
-      const explicitlyNotNew = patient.isNewPatient === false;
+      const explicitlyNotNew = patient.isNewPatient === false || appt?.isNewPatient === false;
       const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
-      const isNewPatient = !explicitlyNotNew && !!markedNewByApi && !hasReminders;
+      const treatAsNewWhenNoReminders = patient.isNewPatient !== false && appt?.isNewPatient !== false;
+      const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
 
       if (labWorkYes) {
         recs.push({
@@ -2941,24 +2950,56 @@ export default function PublicRoomLoaderForm() {
           <p style={{ margin: '0 0 24px', fontSize: '15px', color: '#555', lineHeight: 1.6, textAlign: 'left' }}>
             Memberships allow you to turn wellness care into easy monthly payments while giving you priority access to your dedicated One Team and after-hours triage support. You can explore membership options in your Client Portal. To apply membership benefits to this visit, enrollment should be completed before your appointment.
           </p>
-          <a
-            href={clientPortalUrl}
-            style={{
-              display: 'inline-block',
-              padding: '14px 28px',
-              fontSize: '16px',
-              fontWeight: 600,
-              backgroundColor: '#0d6efd',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '10px',
-              cursor: 'pointer',
-              boxShadow: '0 2px 8px rgba(13, 110, 253, 0.35)',
-              textDecoration: 'none',
-            }}
-          >
-            Visit your Client Portal
-          </a>
+          <div className="public-room-loader-thank-you-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'center', alignItems: 'center' }}>
+            {token && (
+              <a
+                href={`${apiBaseUrl}/public/room-loader/pdf?token=${encodeURIComponent(token)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="public-room-loader-thank-you-btn public-room-loader-thank-you-btn-pdf"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minHeight: '48px',
+                  padding: '14px 24px',
+                  fontSize: '16px',
+                  fontWeight: 600,
+                  backgroundColor: '#1a1a1a',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '10px',
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                  textDecoration: 'none',
+                }}
+              >
+                View PDF
+              </a>
+            )}
+            <a
+              href={clientPortalUrl}
+              className="public-room-loader-thank-you-btn"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minHeight: '48px',
+                padding: '14px 28px',
+                fontSize: '16px',
+                fontWeight: 600,
+                backgroundColor: '#0d6efd',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '10px',
+                cursor: 'pointer',
+                boxShadow: '0 2px 8px rgba(13, 110, 253, 0.35)',
+                textDecoration: 'none',
+              }}
+            >
+              Visit your Client Portal
+            </a>
+          </div>
         </div>
       </div>
     );
@@ -3127,11 +3168,12 @@ export default function PublicRoomLoaderForm() {
             const petKey = `pet${petIdx}`;
             const petName = patient.patientName || `Pet ${petIdx + 1}`;
             const isCatPatient = patient.species?.toLowerCase().includes('cat') || patient.speciesEntity?.name?.toLowerCase().includes('cat') || (patient.species ?? '').toLowerCase().includes('feline');
-            // Only show new-patient questions when API marks as new, patient is not explicitly false, and patient is not already established (e.g. has reminders = already in wellness system).
+            // Show new-patient questions when: not explicitly marked as not new, no reminders (not established in wellness), and either API marks as new or neither source says false (treat missing/undefined as possibly new).
             const markedNewByApi = patient.isNewPatient === true || appointments[petIdx]?.isNewPatient === true;
-            const explicitlyNotNew = patient.isNewPatient === false;
+            const explicitlyNotNew = patient.isNewPatient === false || appointments[petIdx]?.isNewPatient === false;
             const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
-            const isNewPatient = !explicitlyNotNew && markedNewByApi && !hasReminders;
+            const treatAsNewWhenNoReminders = patient.isNewPatient !== false && appointments[petIdx]?.isNewPatient !== false;
+            const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
             const appointmentReasonDisplay =
               patient.appointmentReason ??
               (appointments[petIdx] && (appointments[petIdx].description || appointments[petIdx].instructions)) ??
@@ -3509,8 +3551,8 @@ export default function PublicRoomLoaderForm() {
             const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
             // Explicit dog/canine check; when species is missing from API, assume dog so optional dog vaccines still show
             const isDog = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !isCatPatient);
-            const isUnderOneYear = patient.dob ? 
-              DateTime.now().diff(DateTime.fromISO(patient.dob), 'years').years < 1 : false;
+            const dob = patient?.dob ?? patient?.patient?.dob ?? apptPatient?.dob;
+            const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
             const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
 
             const patientId = patient.patientId ?? patient.patient?.id;
@@ -3520,8 +3562,8 @@ export default function PublicRoomLoaderForm() {
             const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
             const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
             const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-            // FeLV: for cats who never had FeLV, only show after Yes to outdoor (or if under 1 yr). vaccines.felv only when already eligible by age/outdoor.
-            const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || (patient.vaccines?.felv === true && (isUnderOneYear || outdoorAccess)));
+            // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due)
+            const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
             const hasAnyOptionalContent = showCrLymeBooster || showLepto || showBordetella || showLyme || showRabiesCats || showFeLV;
 
             if (!hasAnyOptionalContent) return null;
@@ -3818,15 +3860,15 @@ export default function PublicRoomLoaderForm() {
                 {(() => {
                   const patientId = patient.patientId ?? patient.patient?.id;
                   const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
-                  const dob = patient?.dob ?? patient?.patient?.dob;
+                  const dob = patient?.dob ?? patient?.patient?.dob ?? appointments[petIdx]?.patient?.dob;
                   const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
                   const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
-                  // FeLV: for cats who never had FeLV, only show after Yes to outdoor (or if under 1 yr). vaccines.felv only when already eligible by age/outdoor.
+                  // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due)
                   const showFeLV =
                     isCatPatient &&
                     patientId != null &&
                     !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') &&
-                    (isUnderOneYear || (outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))) || (patient.vaccines?.felv === true && (isUnderOneYear || outdoorAccess)));
+                    ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
                   if (!showFeLV) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
@@ -4058,9 +4100,16 @@ export default function PublicRoomLoaderForm() {
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
                         <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '12px', textDecoration: 'underline' }}>Early Detection Screening for {petName}</div>
-                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px' }}>
-                          We recommend an Early Detection Panel as part of routine preventive care. This screening establishes baseline values, helps us monitor trends over time, and can identify subtle changes before pets show symptoms.
-                        </p>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                          <img
+                            src="/early-detection-feline.png"
+                            alt="Early detection baseline and trend"
+                            style={{ width: '180px', height: 'auto', borderRadius: '4px', border: '1px solid #e0e0e0', flexShrink: 0 }}
+                          />
+                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, flex: '1 1 280px' }}>
+                            We recommend an Early Detection Panel as part of routine preventive care. This screening establishes baseline values, helps us monitor trends over time, and can identify subtle changes before pets show symptoms.
+                          </p>
+                        </div>
                         <p style={{ fontSize: '14px', fontWeight: 600, color: '#333', marginBottom: '8px' }}>The Early Detection Panel includes:</p>
                         <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px', paddingLeft: '20px' }}>
                           <li>Chemistry Panel (liver and kidney function)</li>
@@ -4151,9 +4200,16 @@ export default function PublicRoomLoaderForm() {
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
                         <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '12px', textDecoration: 'underline' }}>Early Detection Screening for {petName}</div>
-                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px' }}>
-                          We recommend an Early Detection Panel as part of routine preventive care. This screening establishes baseline values, helps us monitor trends over time, and can identify subtle changes before pets show symptoms.
-                        </p>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                          <img
+                            src="/early-detection-feline.png"
+                            alt="Early detection baseline and trend"
+                            style={{ width: '180px', height: 'auto', borderRadius: '4px', border: '1px solid #e0e0e0', flexShrink: 0 }}
+                          />
+                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, flex: '1 1 280px' }}>
+                            We recommend an Early Detection Panel as part of routine preventive care. This screening establishes baseline values, helps us monitor trends over time, and can identify subtle changes before pets show symptoms.
+                          </p>
+                        </div>
                         <p style={{ fontSize: '14px', fontWeight: 600, color: '#333', marginBottom: '8px' }}>The Early Detection Panel includes:</p>
                         <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px', paddingLeft: '20px' }}>
                           <li>Chemistry Panel (liver and kidney function)</li>
@@ -4265,7 +4321,7 @@ export default function PublicRoomLoaderForm() {
                           <li><strong>Urinalysis</strong>, to look at kidney and urinary health</li>
                         </ul>
                         <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder || has4dxReminder ? '8px' : '12px' }}>
-                          We also offer an <strong>Extended Comprehensive Panel</strong>, which is {seniorCanineDiff != null ? <><strong>${seniorCanineDiff.toFixed(2)}</strong> more{has4dxReminder && hasFecalReminder ? ' than 4Dx + fecal' : has4dxReminder ? ' than 4Dx' : hasFecalReminder ? ' than fecal' : ''}</> : 'a bit more'}. This panel includes everything in the Standard Comprehensive Panel above and also includes a:
+                          We also offer an <strong>Extended Comprehensive Panel</strong>, which is {seniorCanineDiff != null ? <><strong>${seniorCanineDiff.toFixed(2)}</strong> more</> : 'a bit more'}. This panel includes everything in the Standard Comprehensive Panel above and also includes a:
                         </p>
                         <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder || has4dxReminder ? '8px' : '12px', paddingLeft: '20px' }}>
                           <li>Heartworm/tick disease screening test (called &quot;4Dx&quot;)</li>
@@ -4278,7 +4334,7 @@ export default function PublicRoomLoaderForm() {
                               const diff = has4dxReminder && hasFecalReminder ? extendedMinusBoth : has4dxReminder ? extendedMinus4dx : extendedMinusFecal;
                               return diff != null && !Number.isNaN(diff)
                                 ? diff > 0
-                                  ? <> It only costs <strong>${diff.toFixed(2)}</strong> more.</>
+                                  ? <> It costs <strong>${diff.toFixed(2)}</strong> more.</>
                                   : diff < 0
                                     ? <> It saves you <strong>${(-diff).toFixed(2)}</strong>.</>
                                     : ' It\'s the same price.'
@@ -4287,7 +4343,7 @@ export default function PublicRoomLoaderForm() {
                           </p>
                         )}
                         <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '16px' }}>
-                          Conducting annual lab work aligns with the proactive essence of our philosophy we call Vet Med 3.0 by enabling early detection and tailored care strategies, ensuring optimal health outcomes for {petName}.
+                          Conducting annual lab work aligns with the proactive essence of our philosophy by enabling early detection and tailored care strategies, ensuring optimal health outcomes for {petName}.
                         </p>
                         <p style={{ fontSize: '15px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Which panel would you like {petName} to receive?</p>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -4354,6 +4410,13 @@ export default function PublicRoomLoaderForm() {
                             Replacing: <span style={{ textDecoration: 'line-through' }}>{fourDxReminder.item.name}</span> (included in Extended Comprehensive Panel)
                           </p>
                         )}
+                        {seniorPanelValue === 'extended' && (
+                          <p style={{ fontSize: '14px', color: '#333', marginTop: '12px', padding: '12px', backgroundColor: '#e8f5e9', border: '1px solid #81c784', borderRadius: '6px', lineHeight: 1.5 }}>
+                            Great!<br /><br />
+                            <strong>NOTE:</strong> Please try to have a stool sample (non-frozen, fresher is better!) ready for us when we arrive!<br /><br />
+                            Please try to have a urine sample (morning of appointment is best — you can use a clean tupperware or jar to &quot;sneak&quot; it under while they go!)
+                          </p>
+                        )}
                       </div>
                     );
                   }
@@ -4394,7 +4457,7 @@ export default function PublicRoomLoaderForm() {
                             The Extended Comprehensive Panel includes a fecal test, so it would replace the fecal already on your care plan.
                             {seniorFelineExtendedMinusFecal != null && !Number.isNaN(seniorFelineExtendedMinusFecal)
                               ? seniorFelineExtendedMinusFecal > 0
-                                ? <> It only costs <strong>${seniorFelineExtendedMinusFecal.toFixed(2)}</strong> more.</>
+                                ? <> It costs <strong>${seniorFelineExtendedMinusFecal.toFixed(2)}</strong> more.</>
                                 : seniorFelineExtendedMinusFecal < 0
                                   ? <> It saves you <strong>${(-seniorFelineExtendedMinusFecal).toFixed(2)}</strong>.</>
                                   : ' It\'s the same price.'
@@ -4402,7 +4465,7 @@ export default function PublicRoomLoaderForm() {
                           </p>
                         )}
                         <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '16px' }}>
-                          Conducting annual lab work aligns with the proactive essence of our philosophy we call Vet Med 3.0 by enabling early detection and tailored care strategies, ensuring optimal health outcomes for {petName}.
+                          Conducting annual lab work aligns with the proactive essence of our philosophy by enabling early detection and tailored care strategies, ensuring optimal health outcomes for {petName}.
                         </p>
                         <p style={{ fontSize: '15px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Which panel would you like {petName} to receive?</p>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -4463,6 +4526,13 @@ export default function PublicRoomLoaderForm() {
                             Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalReminder.item.name}</span> (included in Extended Comprehensive Panel)
                           </p>
                         )}
+                        {seniorFelineTwoPanelValue === 'extended' && (
+                          <p style={{ fontSize: '14px', color: '#333', marginTop: '12px', padding: '12px', backgroundColor: '#e8f5e9', border: '1px solid #81c784', borderRadius: '6px', lineHeight: 1.5 }}>
+                            Great!<br /><br />
+                            <strong>NOTE:</strong> Please try to have a stool sample (non-frozen, fresher is better!) ready for us when we arrive!<br /><br />
+                            Ideally, please be sure to not let {petName} have access to the litterbox for 2–3 hours before our arrival. That way, we can get a good urine sample.
+                          </p>
+                        )}
                       </div>
                     );
                   }
@@ -4507,7 +4577,7 @@ export default function PublicRoomLoaderForm() {
                             The Extended Comprehensive Panel includes a fecal test, so it would replace the fecal already on your care plan.
                             {seniorFelineExtendedMinusFecal != null && !Number.isNaN(seniorFelineExtendedMinusFecal)
                               ? seniorFelineExtendedMinusFecal > 0
-                                ? <> It only costs <strong>${seniorFelineExtendedMinusFecal.toFixed(2)}</strong> more.</>
+                                ? <> It costs <strong>${seniorFelineExtendedMinusFecal.toFixed(2)}</strong> more.</>
                                 : seniorFelineExtendedMinusFecal < 0
                                   ? <> It saves you <strong>${(-seniorFelineExtendedMinusFecal).toFixed(2)}</strong>.</>
                                   : ' It\'s the same price.'
@@ -4571,6 +4641,13 @@ export default function PublicRoomLoaderForm() {
                         {seniorFelineTwoPanelValue === 'extended' && hasFecalReminder && fecalReminder?.item?.name && (
                           <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
                             Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalReminder.item.name}</span> (included in Extended Comprehensive Panel)
+                          </p>
+                        )}
+                        {seniorFelineTwoPanelValue === 'extended' && (
+                          <p style={{ fontSize: '14px', color: '#333', marginTop: '12px', padding: '12px', backgroundColor: '#e8f5e9', border: '1px solid #81c784', borderRadius: '6px', lineHeight: 1.5 }}>
+                            Great!<br /><br />
+                            <strong>NOTE:</strong> Please try to have a stool sample (non-frozen, fresher is better!) ready for us when we arrive!<br /><br />
+                            Ideally, please be sure to not let {petName} have access to the litterbox for 2–3 hours before our arrival. That way, we can get a good urine sample.
                           </p>
                         )}
                       </div>
