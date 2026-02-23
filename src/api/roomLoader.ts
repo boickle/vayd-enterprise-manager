@@ -430,6 +430,8 @@ export type ItemSearchParams = {
   q: string;
   practiceId: number;
   limit?: number;
+  /** If set, backend may also match items by this code (e.g. same as q to search by name or code). */
+  code?: string;
 };
 
 export async function searchItems(params: ItemSearchParams): Promise<SearchableItem[]> {
@@ -438,6 +440,9 @@ export async function searchItems(params: ItemSearchParams): Promise<SearchableI
   queryParams.append('practiceId', String(params.practiceId));
   if (params.limit) {
     queryParams.append('limit', String(params.limit));
+  }
+  if (params.code != null && params.code !== '') {
+    queryParams.append('code', params.code);
   }
 
   const { data } = await http.get<SearchableItem[]>(`/room-loader/items/search?${queryParams.toString()}`);

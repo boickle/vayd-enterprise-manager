@@ -174,6 +174,7 @@ export default function RoomLoaderPage() {
               q: query,
               practiceId: selectedRoomLoader.practice.id,
               limit: 50,
+              code: query,
             });
             // Check again before setting results
             if (searchQuery[petId] === query) {
@@ -602,6 +603,7 @@ export default function RoomLoaderPage() {
       timesSentToClient: number;
       dueStatus: DueStatus | null;
       roomLoader: RoomLoader;
+      clientHasNoEmail: boolean;
     }> = [];
 
     roomLoaders.forEach((rl) => {
@@ -701,6 +703,21 @@ export default function RoomLoaderPage() {
         clientName = `${client.firstName || ''} ${client.lastName || ''}`.trim() || 'Unknown Client';
       }
 
+      // True if any client in this room loader has no email (so we can grey the row and block send)
+      let clientHasNoEmail = false;
+      rl.appointments.forEach((apt) => {
+        if (apt.client) {
+          const e = apt.client.email;
+          if (e == null || (typeof e === 'string' && e.trim() === '')) clientHasNoEmail = true;
+        }
+      });
+      rl.patients.forEach((p) => {
+        (p.clients || []).forEach((c: any) => {
+          const e = c.email;
+          if (e == null || (typeof e === 'string' && e.trim() === '')) clientHasNoEmail = true;
+        });
+      });
+
       rows.push({
         roomLoaderId: rl.id,
         apptDate,
@@ -713,6 +730,7 @@ export default function RoomLoaderPage() {
         timesSentToClient: rl.timesSentToClient ?? 0,
         dueStatus: rl.dueStatus,
         roomLoader: rl,
+        clientHasNoEmail,
       });
     });
 
@@ -897,6 +915,7 @@ export default function RoomLoaderPage() {
         q: query,
         practiceId: selectedRoomLoader.practice.id,
         limit: 50,
+        code: query,
       });
       setSearchResults((prev) => ({ ...prev, [petId]: results }));
     } catch (err: any) {
@@ -1519,6 +1538,12 @@ export default function RoomLoaderPage() {
   async function handleSendToClient() {
     if (!selectedRoomLoader) return;
 
+    const noEmail = petsWithAppointments.some((item) => {
+      const e = item.client?.email;
+      return e == null || (typeof e === 'string' && e.trim() === '');
+    });
+    if (noEmail) return;
+
     // Clear previous inline validation messages so we only show current errors
     setSendValidationErrors({});
     setReminderValidationErrorIds(new Set());
@@ -1881,6 +1906,15 @@ export default function RoomLoaderPage() {
     }));
   }, [selectedRoomLoader]);
 
+  const hasClientWithNoEmail = useMemo(
+    () =>
+      petsWithAppointments.some((item) => {
+        const e = item.client?.email;
+        return e == null || (typeof e === 'string' && e.trim() === '');
+      }),
+    [petsWithAppointments]
+  );
+
   return (
     <div className="room-loader-page">
       <style>{`
@@ -2021,17 +2055,18 @@ export default function RoomLoaderPage() {
                     onClick={() => handleRowClick(row.roomLoaderId)}
                     style={{
                       cursor: 'pointer',
-                      backgroundColor: selectedRoomLoaderId === row.roomLoaderId ? '#e3f2fd' : 'transparent',
+                      backgroundColor: selectedRoomLoaderId === row.roomLoaderId ? '#e3f2fd' : row.clientHasNoEmail ? '#e9ecef' : 'transparent',
                       borderBottom: '1px solid #ddd',
+                      ...(row.clientHasNoEmail ? { fontStyle: 'italic' } : {}),
                     }}
                     onMouseEnter={(e) => {
                       if (selectedRoomLoaderId !== row.roomLoaderId) {
-                        e.currentTarget.style.backgroundColor = '#f5f5f5';
+                        e.currentTarget.style.backgroundColor = row.clientHasNoEmail ? '#dee2e6' : '#f5f5f5';
                       }
                     }}
                     onMouseLeave={(e) => {
                       if (selectedRoomLoaderId !== row.roomLoaderId) {
-                        e.currentTarget.style.backgroundColor = 'transparent';
+                        e.currentTarget.style.backgroundColor = row.clientHasNoEmail ? '#e9ecef' : 'transparent';
                       }
                     }}
                   >
@@ -2091,8 +2126,9 @@ export default function RoomLoaderPage() {
               <button
                 type="button"
                 key={`card-${row.roomLoaderId}-${idx}`}
-                className={`room-loader-mobile-card ${selectedRoomLoaderId === row.roomLoaderId ? 'is-selected' : ''}`}
+                className={`room-loader-mobile-card ${selectedRoomLoaderId === row.roomLoaderId ? 'is-selected' : ''} ${row.clientHasNoEmail ? 'room-loader-mobile-card-no-email' : ''}`}
                 onClick={() => handleRowClick(row.roomLoaderId)}
+                style={row.clientHasNoEmail && selectedRoomLoaderId !== row.roomLoaderId ? { backgroundColor: '#e9ecef', fontStyle: 'italic' } : row.clientHasNoEmail ? { fontStyle: 'italic' } : undefined}
               >
                 <div className="room-loader-mobile-card-row">
                   <span className="room-loader-mobile-card-label">Date</span>
@@ -2171,6 +2207,23 @@ export default function RoomLoaderPage() {
                   : {}),
               }}
             >
+          {hasClientWithNoEmail && (
+            <div
+              style={{
+                marginBottom: '20px',
+                padding: '14px 18px',
+                backgroundColor: '#f8d7da',
+                border: '1px solid #f5c6cb',
+                borderRadius: '6px',
+                color: '#721c24',
+                fontSize: '16px',
+                fontWeight: 600,
+              }}
+              role="alert"
+            >
+              No email address on file for the client. Please add an email in the practice system before sending to client.
+            </div>
+          )}
           {/* Pet-by-Pet Information */}
           {petsWithAppointments.length === 0 ? (
             <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
@@ -3962,26 +4015,26 @@ export default function RoomLoaderPage() {
               </button>
               <button
                 onClick={handleSendToClient}
-                disabled={sendingToClient || formSubmittedByClient}
+                disabled={sendingToClient || formSubmittedByClient || hasClientWithNoEmail}
                 style={{
                   padding: '12px 24px',
                   fontSize: '16px',
                   fontWeight: 600,
-                  backgroundColor: sendingToClient || formSubmittedByClient ? '#6c757d' : '#007bff',
+                  backgroundColor: sendingToClient || formSubmittedByClient || hasClientWithNoEmail ? '#6c757d' : '#007bff',
                   color: 'white',
                   border: 'none',
                   borderRadius: '6px',
-                  cursor: sendingToClient || formSubmittedByClient ? 'not-allowed' : 'pointer',
+                  cursor: sendingToClient || formSubmittedByClient || hasClientWithNoEmail ? 'not-allowed' : 'pointer',
                   transition: 'background-color 0.2s ease-in-out',
                   boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
                 }}
                 onMouseEnter={(e) => {
-                  if (!sendingToClient && !formSubmittedByClient) {
+                  if (!sendingToClient && !formSubmittedByClient && !hasClientWithNoEmail) {
                     e.currentTarget.style.backgroundColor = '#0056b3';
                   }
                 }}
                 onMouseLeave={(e) => {
-                  if (!sendingToClient && !formSubmittedByClient) {
+                  if (!sendingToClient && !formSubmittedByClient && !hasClientWithNoEmail) {
                     e.currentTarget.style.backgroundColor = '#007bff';
                   }
                 }}
@@ -3990,9 +4043,11 @@ export default function RoomLoaderPage() {
                   ? 'Sending...'
                   : formSubmittedByClient
                     ? 'Submitted by client'
-                    : selectedRoomLoader.sentStatus === 'not_sent'
-                      ? 'Send to Client'
-                      : 'Re-send to Client'}
+                    : hasClientWithNoEmail
+                      ? 'Send to Client (add client email first)'
+                      : selectedRoomLoader.sentStatus === 'not_sent'
+                        ? 'Send to Client'
+                        : 'Re-send to Client'}
               </button>
             </div>
             </div>

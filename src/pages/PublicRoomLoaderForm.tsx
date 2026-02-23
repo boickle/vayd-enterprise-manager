@@ -1270,9 +1270,11 @@ export default function PublicRoomLoaderForm() {
         if (earlyDetectionYes || earlyDetectionCanineYes) fecalReplacedBy.push('Early Detection Panel');
         if (seniorFelineYes) fecalReplacedBy.push('Senior Screen Feline');
         if (seniorCaninePanel === 'extended' || seniorFelineTwoPanel === 'extended') fecalReplacedBy.push('Extended Comprehensive Panel');
+        const fourDxReplacedBy: string[] = seniorCaninePanel === 'extended' || seniorFelineTwoPanel === 'extended' ? ['Extended Comprehensive Panel'] : [];
         const isFecalReplaced = hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0;
+        const is4dxReplaced = (hasPhrase(item, '4dx') || hasPhrase(item, 'heartworm')) && fourDxReplacedBy.length > 0;
         const recKey = `pet${petIdx}_rec_${idx}`;
-        return isFecalReplaced ? false : isVisitOrConsult || formData[recKey] !== false;
+        return (isFecalReplaced || is4dxReplaced) ? false : isVisitOrConsult || formData[recKey] !== false;
       });
       remindersByPet.push({
         patientId,
@@ -1534,6 +1536,7 @@ export default function PublicRoomLoaderForm() {
       if (earlyDetectionYes || earlyDetectionCanineYes) fecalReplacedBy.push('Early Detection Panel');
       if (seniorFelineYes) fecalReplacedBy.push('Senior Screen Feline');
       if (seniorCaninePanelVal === 'extended' || seniorFelineTwoPanelVal === 'extended') fecalReplacedBy.push('Extended Comprehensive Panel');
+      const fourDxReplacedBy: string[] = seniorCaninePanelVal === 'extended' || seniorFelineTwoPanelVal === 'extended' ? ['Extended Comprehensive Panel'] : [];
 
       const displayItems = entry.displayItems;
       const tripFeeItems = entry.tripFeeItems;
@@ -1572,12 +1575,14 @@ export default function PublicRoomLoaderForm() {
       });
       checkableDisplay.forEach(({ item, idx }: { item: any; idx: number }) => {
         const isFecalReplaced = hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0;
+        const is4dxReplaced = (hasPhrase(item, '4dx') || hasPhrase(item, 'heartworm')) && fourDxReplacedBy.length > 0;
         const recKey = `pet${petIdx}_rec_${idx}`;
-        const isChecked = isFecalReplaced ? false : formData[recKey] !== false;
+        const isChecked = (isFecalReplaced || is4dxReplaced) ? false : formData[recKey] !== false;
         const price = item.searchableItem != null ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) ?? 0);
         const qty = Number(item.quantity) || 1;
-        const lineTotal = isChecked && !isFecalReplaced ? price * qty : 0;
-        if (isChecked && !isFecalReplaced) petSubtotal += lineTotal;
+        const isReplaced = isFecalReplaced || is4dxReplaced;
+        const lineTotal = isChecked && !isReplaced ? price * qty : 0;
+        if (isChecked && !isReplaced) petSubtotal += lineTotal;
         rows.push({
           type: 'reminder',
           name: item.name,
@@ -1586,8 +1591,8 @@ export default function PublicRoomLoaderForm() {
           lineTotal,
           checked: isChecked,
           uncheckable: false,
-          crossedOut: isFecalReplaced,
-          fecalReplacedBy: isFecalReplaced ? fecalReplacedBy.join(' or ') : undefined,
+          crossedOut: isReplaced,
+          fecalReplacedBy: isReplaced ? (isFecalReplaced ? fecalReplacedBy.join(' or ') : fourDxReplacedBy.join(' or ')) : undefined,
         });
       });
 
@@ -1707,7 +1712,7 @@ export default function PublicRoomLoaderForm() {
     type PageSection = { pageNumber: number; title: string; sections: Section[] };
     const formAnswersPages: PageSection[] = [];
 
-    // Page 1: Time to Check-in for your Appointment (only include questions that were shown)
+    // Page 1: Time to Check-in for your Appointment (only include questions that were actually shown to the client)
     const page1Sections: Section[] = [];
     const appts = data?.appointments ?? [];
     patientsData.forEach((patient: any, petIdx: number) => {
@@ -1725,6 +1730,10 @@ export default function PublicRoomLoaderForm() {
       ].filter(Boolean) as string[];
       const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
       const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
+      const markedNewByApi = patient.isNewPatient === true || appts[petIdx]?.isNewPatient === true;
+      const explicitlyNotNew = patient.isNewPatient === false;
+      const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
+      const isNewPatient = !explicitlyNotNew && !!markedNewByApi && !hasReminders;
       const questions: Qa[] = [];
       const addOptional = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
@@ -1740,10 +1749,12 @@ export default function PublicRoomLoaderForm() {
       if (isCatPatient) {
         addOptional(`Does ${petName} go outdoors or live with a cat that goes outdoors?`, `${petKey}_outdoorAccess`, { yes: 'Yes', no: 'No' });
       }
-      addOptional(`Describe ${petName}'s behavior at home, around strangers, and at a typical vet office.`, `${petKey}_newPatientBehavior`);
-      addOptional(`What are you feeding ${petName}? (brand, amount, frequency)`, `${petKey}_feeding`);
-      addOptional(`Do you or ${petName} have any food allergies? (we like to bribe!)`, `${petKey}_foodAllergies`, { yes: 'Yes', no: 'No' });
-      addOptional('If yes, what are they?', `${petKey}_foodAllergiesDetails`);
+      if (isNewPatient) {
+        addOptional(`Describe ${petName}'s behavior at home, around strangers, and at a typical vet office.`, `${petKey}_newPatientBehavior`);
+        addOptional(`What are you feeding ${petName}? (brand, amount, frequency)`, `${petKey}_feeding`);
+        addOptional(`Do you or ${petName} have any food allergies? (we like to bribe!)`, `${petKey}_foodAllergies`, { yes: 'Yes', no: 'No' });
+        addOptional('If yes, what are they?', `${petKey}_foodAllergiesDetails`);
+      }
       if (questions.length > 0) {
         page1Sections.push({ sectionLabel: `Pet ${petIdx + 1}: ${petName}`, patientId, patientName: petName, questions });
       }
@@ -1850,7 +1861,7 @@ export default function PublicRoomLoaderForm() {
             no: 'No thank you',
           });
         }
-        if ((rec.code === '8659999' || rec.code === 'FIL45129999') && isCatEntry) {
+        if ((rec.code === '8659999' || rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatEntry) {
           add('Which panel would you like your pet to receive? (Senior Screen — Feline)', `lab_senior_feline_two_panel_${pidStr}`, {
             standard: 'Senior Screen Feline - Standard Panel',
             extended: 'Senior Screen Feline - Extended Panel',
@@ -1895,7 +1906,7 @@ export default function PublicRoomLoaderForm() {
         if (rec.code === 'FIL48119999') shownLabKeys.add(`lab_early_detection_feline_${pidStr}`);
         if (rec.code === 'FIL48719999') shownLabKeys.add(`lab_early_detection_canine_${pidStr}`);
         if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999') && isDogEntry) shownLabKeys.add(`lab_senior_canine_panel_${pidStr}`);
-        if ((rec.code === '8659999' || rec.code === 'FIL45129999') && isCatEntry) shownLabKeys.add(`lab_senior_feline_two_panel_${pidStr}`);
+        if ((rec.code === '8659999' || rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatEntry) shownLabKeys.add(`lab_senior_feline_two_panel_${pidStr}`);
         if (rec.code === 'COMPREHENSIVE_FECAL') shownLabKeys.add(`lab_comprehensive_fecal_${pidStr}`);
       });
     });
@@ -2123,7 +2134,7 @@ export default function PublicRoomLoaderForm() {
             errors[`lab_senior_feline_two_panel_${pidStr}`] = `Please select a panel option for ${petName} before continuing.`;
           }
         }
-        if (rec.code === 'FIL45129999' && isCatEntry) {
+        if ((rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatEntry) {
           const v = formData[`lab_senior_feline_two_panel_${pidStr}`];
           if (v !== 'standard' && v !== 'extended' && v !== 'no') {
             errors[`lab_senior_feline_two_panel_${pidStr}`] = `Please select a panel option for ${petName} before continuing.`;
@@ -2194,7 +2205,7 @@ export default function PublicRoomLoaderForm() {
             errors[`lab_senior_feline_two_panel_${pidStr}`] = `Please select a panel option for ${petName} before continuing.`;
           }
         }
-        if (rec.code === 'FIL45129999' && isCatEntry) {
+        if ((rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatEntry) {
           const v = formData[`lab_senior_feline_two_panel_${pidStr}`];
           if (v !== 'standard' && v !== 'extended' && v !== 'no') {
             errors[`lab_senior_feline_two_panel_${pidStr}`] = `Please select a panel option for ${petName} before continuing.`;
@@ -2522,11 +2533,11 @@ export default function PublicRoomLoaderForm() {
     );
     const has8659999 = labRecommendationsByPet.some((e) => e.recommendations.some((r) => r.code === '8659999'));
     const hasFIL45129999 = labRecommendationsByPet.some((e) => e.recommendations.some((r) => r.code === 'FIL45129999'));
-    const needStandard = hasSeniorCanine || has8659999 || hasFIL45129999;
-    const needFelineExtended = has8659999 || hasFIL45129999;
     const hasSeniorFeline = labRecommendationsByPet.some((e) =>
       e.recommendations.some((r) => r.code === 'FIL45129999' || r.code === 'FIL8659999')
     );
+    const needStandard = hasSeniorCanine || has8659999 || hasFIL45129999 || hasSeniorFeline;
+    const needFelineExtended = has8659999 || hasFIL45129999 || hasSeniorFeline;
     const hasComprehensiveFecal = labRecommendationsByPet.some((e) =>
       e.recommendations.some((r) => r.code === 'COMPREHENSIVE_FECAL')
     );
@@ -3289,6 +3300,7 @@ export default function PublicRoomLoaderForm() {
               if (earlyDetectionYes || earlyDetectionCanineYes) fecalReplacedBy.push('Early Detection Panel');
               if (seniorFelineYes) fecalReplacedBy.push('Senior Screen Feline');
               if (seniorCanineExtended || seniorFelineTwoPanelExtended) fecalReplacedBy.push('Extended Comprehensive Panel');
+              const fourDxReplacedBy: string[] = seniorCanineExtended || seniorFelineTwoPanelExtended ? ['Extended Comprehensive Panel'] : [];
               if (displayItems.length === 0) {
                 return <p style={{ color: '#666', fontStyle: 'italic', margin: 0 }}>No recommended items at this time.</p>;
               }
@@ -3298,12 +3310,15 @@ export default function PublicRoomLoaderForm() {
                 if (t === 'inventory') return 'inventory';
                 return 'procedure';
               };
-              // Sort so uncheckable items (visit/consult, fecal-replaced) appear on top
+              const is4dxItem = (it: any) => hasPhrase(it, '4dx') || hasPhrase(it, 'heartworm');
+              // Sort so uncheckable items (visit/consult, fecal-replaced, 4dx-replaced) appear on top
               const sortedWithOriginalIdx = displayItems
                 .map((item, originalIdx) => ({ item, originalIdx }))
                 .sort((a, b) => {
-                  const aUncheckable = hasPhrase(a.item, 'visit') || hasPhrase(a.item, 'consult') || (hasPhrase(a.item, 'fecal') && fecalReplacedBy.length > 0);
-                  const bUncheckable = hasPhrase(b.item, 'visit') || hasPhrase(b.item, 'consult') || (hasPhrase(b.item, 'fecal') && fecalReplacedBy.length > 0);
+                  const aReplaced = (hasPhrase(a.item, 'fecal') && fecalReplacedBy.length > 0) || (is4dxItem(a.item) && fourDxReplacedBy.length > 0);
+                  const bReplaced = (hasPhrase(b.item, 'fecal') && fecalReplacedBy.length > 0) || (is4dxItem(b.item) && fourDxReplacedBy.length > 0);
+                  const aUncheckable = hasPhrase(a.item, 'visit') || hasPhrase(a.item, 'consult') || aReplaced;
+                  const bUncheckable = hasPhrase(b.item, 'visit') || hasPhrase(b.item, 'consult') || bReplaced;
                   if (aUncheckable && !bUncheckable) return -1;
                   if (!aUncheckable && bUncheckable) return 1;
                   return 0;
@@ -3315,9 +3330,12 @@ export default function PublicRoomLoaderForm() {
               const renderRow = ({ item, originalIdx }: { item: any; originalIdx: number }, displayIdx: number, groupLength: number) => {
                 const isVisitOrConsult = hasPhrase(item, 'visit') || hasPhrase(item, 'consult');
                 const isFecalReplacedForItem = hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0;
+                const is4dxReplacedForItem = is4dxItem(item) && fourDxReplacedBy.length > 0;
+                const isReplacedForItem = isFecalReplacedForItem || is4dxReplacedForItem;
                 const recKey = `pet${carePlanPetIndex}_rec_${originalIdx}`;
-                const isChecked = isFecalReplacedForItem ? false : (isVisitOrConsult || formData[recKey] !== false);
-                const disabled = isVisitOrConsult || isFecalReplacedForItem;
+                const isChecked = isReplacedForItem ? false : (isVisitOrConsult || formData[recKey] !== false);
+                const disabled = isVisitOrConsult || isReplacedForItem;
+                const replacedByLabel = isFecalReplacedForItem ? fecalReplacedBy.join(' or ') : is4dxReplacedForItem ? fourDxReplacedBy.join(' or ') : '';
                 return (
                   <div key={originalIdx} style={{ display: 'flex', alignItems: 'center', padding: '10px 0', borderBottom: displayIdx < groupLength - 1 ? '1px solid #e0e0e0' : 'none' }}>
                     <input
@@ -3330,9 +3348,9 @@ export default function PublicRoomLoaderForm() {
                         if (!disabled) handleInputChange(recKey, !isChecked);
                       }}
                     />
-                    <span style={{ fontSize: '16px', color: '#333', ...(isFecalReplacedForItem ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{item.name}</span>
+                    <span style={{ fontSize: '16px', color: '#333', ...(isReplacedForItem ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{item.name}</span>
                     {item.quantity > 1 && <span style={{ fontSize: '14px', color: '#666', marginLeft: '8px' }}>(Qty: {item.quantity})</span>}
-                    {isFecalReplacedForItem && <span style={{ fontSize: '13px', color: '#666', marginLeft: '8px', fontStyle: 'italic' }}>(replaced by {fecalReplacedBy.join(' or ')})</span>}
+                    {isReplacedForItem && <span style={{ fontSize: '13px', color: '#666', marginLeft: '8px', fontStyle: 'italic' }}>(replaced by {replacedByLabel})</span>}
                   </div>
                 );
               };
@@ -3942,6 +3960,11 @@ export default function PublicRoomLoaderForm() {
                   const entryDisplayItems = (recommendedItemsByPet[idx] ?? []).filter((item: any) => !hasPhrase(item, 'trip fee') && !hasPhrase(item, 'sharps'));
                   const fecalDisplayIdx = entryDisplayItems.findIndex((item: any) => hasPhrase(item, 'fecal'));
                   const fecalRecKey = fecalDisplayIdx >= 0 ? `pet${idx}_rec_${fecalDisplayIdx}` : null;
+                  const fourDxReminder = patientForEntry?.reminders?.find((r: any) => hasPhrase(r?.item, '4dx') || hasPhrase(r?.item, 'heartworm'));
+                  const fourDxPrice = fourDxReminder?.item?.price != null ? Number(fourDxReminder.item.price) : null;
+                  const fourDxDisplayIdx = entryDisplayItems.findIndex((item: any) => hasPhrase(item, '4dx') || hasPhrase(item, 'heartworm'));
+                  const fourDxRecKey = fourDxDisplayIdx >= 0 ? `pet${idx}_rec_${fourDxDisplayIdx}` : null;
+                  const has4dxReminder = !!fourDxReminder;
 
                   const apptForEntry = appointments[idx];
                   const apptPatientEntry = apptForEntry?.patient;
@@ -3958,6 +3981,7 @@ export default function PublicRoomLoaderForm() {
                   const isCatEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
                   const isSeniorCanine = (rec.code === 'FIL25659999' || rec.code === 'FIL8659999') && isDogEntry;
                   const isSeniorFelineWithFecal = rec.code === 'FIL45129999';
+                  const isSeniorFelineFullPanel = (rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatEntry;
                   const isLabWorkYesFelineTwoPanel = rec.code === '8659999' && isCatEntry;
 
                   const formatPrice = (p: number | null | undefined) => (p != null && !Number.isNaN(Number(p)) ? `$${Number(p).toFixed(2)}` : null);
@@ -4169,6 +4193,8 @@ export default function PublicRoomLoaderForm() {
 
                   if (isSeniorCanine) {
                     const extendedMinusFecal = extendedPrice != null && fecalPrice != null ? extendedPrice - fecalPrice : null;
+                    const extendedMinus4dx = extendedPrice != null && fourDxPrice != null ? extendedPrice - fourDxPrice : null;
+                    const extendedMinusBoth = extendedPrice != null && fecalPrice != null && fourDxPrice != null ? extendedPrice - fecalPrice - fourDxPrice : null;
                     const labWorkYesForEntry = formData[`pet${idx}_labWork`] === true || formData[`pet${idx}_labWork`] === 'yes' || (patients[idx] as any)?.questions?.labWork === true;
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
@@ -4196,23 +4222,26 @@ export default function PublicRoomLoaderForm() {
                           <li><strong>Thyroid level</strong>, as this level can go below normal in middle and older aged dogs</li>
                           <li><strong>Urinalysis</strong>, to look at kidney and urinary health</li>
                         </ul>
-                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder ? '8px' : '12px' }}>
-                          We also offer an <strong>Extended Comprehensive Panel</strong>, which is {seniorCanineDiff != null ? <><strong>${seniorCanineDiff.toFixed(2)}</strong> more</> : 'a bit more'}. This panel includes everything in the Standard Comprehensive Panel above and also includes a:
+                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder || has4dxReminder ? '8px' : '12px' }}>
+                          We also offer an <strong>Extended Comprehensive Panel</strong>, which is {seniorCanineDiff != null ? <><strong>${seniorCanineDiff.toFixed(2)}</strong> more{has4dxReminder && hasFecalReminder ? ' than 4Dx + fecal' : has4dxReminder ? ' than 4Dx' : hasFecalReminder ? ' than fecal' : ''}</> : 'a bit more'}. This panel includes everything in the Standard Comprehensive Panel above and also includes a:
                         </p>
-                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder ? '8px' : '12px', paddingLeft: '20px' }}>
+                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder || has4dxReminder ? '8px' : '12px', paddingLeft: '20px' }}>
                           <li>Heartworm/tick disease screening test (called &quot;4Dx&quot;)</li>
                           <li>Stool sample analysis for parasites (&quot;Fecal&quot;)</li>
                         </ul>
-                        {hasFecalReminder && (
+                        {(hasFecalReminder || has4dxReminder) && (
                           <p style={{ fontSize: '14px', color: '#555', marginBottom: '12px' }}>
-                            The Extended Comprehensive Panel includes a fecal test, so it would replace the fecal already on your care plan.
-                            {extendedMinusFecal != null && !Number.isNaN(extendedMinusFecal)
-                              ? extendedMinusFecal > 0
-                                ? <> It only costs <strong>${extendedMinusFecal.toFixed(2)}</strong> more.</>
-                                : extendedMinusFecal < 0
-                                  ? <> It saves you <strong>${(-extendedMinusFecal).toFixed(2)}</strong>.</>
-                                  : ' It\'s the same price.'
-                              : ''}
+                            The Extended Comprehensive Panel includes 4Dx and fecal, so it would replace {has4dxReminder && hasFecalReminder ? 'the 4Dx and fecal' : has4dxReminder ? 'the 4Dx' : 'the fecal'} already on your care plan.
+                            {(() => {
+                              const diff = has4dxReminder && hasFecalReminder ? extendedMinusBoth : has4dxReminder ? extendedMinus4dx : extendedMinusFecal;
+                              return diff != null && !Number.isNaN(diff)
+                                ? diff > 0
+                                  ? <> It only costs <strong>${diff.toFixed(2)}</strong> more.</>
+                                  : diff < 0
+                                    ? <> It saves you <strong>${(-diff).toFixed(2)}</strong>.</>
+                                    : ' It\'s the same price.'
+                                : '';
+                            })()}
                           </p>
                         )}
                         <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '16px' }}>
@@ -4240,6 +4269,7 @@ export default function PublicRoomLoaderForm() {
                               onChange={() => {
                                 handleInputChange(seniorPanelKey, 'extended');
                                 if (fecalRecKey != null) handleInputChange(fecalRecKey, false);
+                                if (fourDxRecKey != null) handleInputChange(fourDxRecKey, false);
                               }}
                               style={{ marginRight: '8px', cursor: 'pointer' }}
                             />
@@ -4275,6 +4305,11 @@ export default function PublicRoomLoaderForm() {
                         {seniorPanelValue === 'extended' && hasFecalReminder && fecalReminder?.item?.name && (
                           <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
                             Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalReminder.item.name}</span> (included in Extended Comprehensive Panel)
+                          </p>
+                        )}
+                        {seniorPanelValue === 'extended' && has4dxReminder && fourDxReminder?.item?.name && (
+                          <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
+                            Replacing: <span style={{ textDecoration: 'line-through' }}>{fourDxReminder.item.name}</span> (included in Extended Comprehensive Panel)
                           </p>
                         )}
                       </div>
@@ -4390,10 +4425,10 @@ export default function PublicRoomLoaderForm() {
                     );
                   }
 
-                  if (isSeniorFelineWithFecal) {
-                    // When labs was answered Yes and patient is due for senior screen, we already show the "With the symptoms you mentioned..." block (8659999). Do not show this generic "For senior cats..." block in that case.
+                  if (isSeniorFelineFullPanel) {
+                    // When labs was answered Yes and patient is due for senior screen, we already show the "With the symptoms you mentioned..." block (8659999). For FIL45129999 only, skip this block so that one doesn't duplicate.
                     const hasLabWorkYesSeniorFeline = entry.recommendations.some((r: any) => r.code === '8659999');
-                    if (hasLabWorkYesSeniorFeline) return null;
+                    if (rec.code === 'FIL45129999' && hasLabWorkYesSeniorFeline) return null;
                     // Same two-panel choice (Standard / Extended / No) as 8659999, using lab_senior_feline_two_panel
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
@@ -4634,10 +4669,12 @@ export default function PublicRoomLoaderForm() {
               if ((earlyDetectionYes && !earlyDetFelineExcluded) || (earlyDetectionCanineYes && !earlyDetCanineExcluded)) fecalReplacedBy.push('Early Detection Panel');
               if (seniorFelineYes && !seniorFelineExcluded) fecalReplacedBy.push('Senior Screen Feline');
               if ((seniorCaninePanel === 'extended' && !seniorCanineExtendedExcluded) || (seniorFelineTwoPanel === 'extended' && !seniorFelineTwoExtendedExcluded)) fecalReplacedBy.push('Extended Comprehensive Panel');
+              const fourDxReplacedBy: string[] = (seniorCaninePanel === 'extended' && !seniorCanineExtendedExcluded) || (seniorFelineTwoPanel === 'extended' && !seniorFelineTwoExtendedExcluded) ? ['Extended Comprehensive Panel'] : [];
+              const is4dxItem = (it: any) => hasPhrase(it, '4dx') || hasPhrase(it, 'heartworm');
 
-              /** When a panel that replaces items (e.g. fecal) is unchecked on summary, re-check those items so they are no longer crossed out. */
+              /** When a panel that replaces items (e.g. fecal, 4Dx) is unchecked on summary, re-check those items so they are no longer crossed out. */
               const replacedItemRecKeys = displayWithIdx
-                .filter(({ item }) => hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0)
+                .filter(({ item }) => (hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0) || (is4dxItem(item) && fourDxReplacedBy.length > 0))
                 .map(({ idx }) => `pet${petIdx}_rec_${idx}`);
               /** Exclude panel from summary (row stays visible, unchecked); restore replaced items when applicable. */
               const excludePanelOnSummary = (summaryExcludeKey: string, shouldRestoreReplaced: boolean) => {
@@ -4660,9 +4697,11 @@ export default function PublicRoomLoaderForm() {
               const renderDisplayRow = (item: any, idx: number) => {
                 const isVisitOrConsult = hasPhrase(item, 'visit') || hasPhrase(item, 'consult');
                 const isFecalReplaced = hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0;
+                const is4dxReplaced = is4dxItem(item) && fourDxReplacedBy.length > 0;
+                const isReplaced = isFecalReplaced || is4dxReplaced;
                 const recKey = `pet${petIdx}_rec_${idx}`;
-                const canUncheck = !isVisitOrConsult && !isFecalReplaced && !readOnly;
-                const isChecked = isFecalReplaced ? false : (isVisitOrConsult || formData[recKey] !== false);
+                const canUncheck = !isVisitOrConsult && !isReplaced && !readOnly;
+                const isChecked = isReplaced ? false : (isVisitOrConsult || formData[recKey] !== false);
                 const searchableItem = item.searchableItem as SearchableItem | null | undefined;
                 // Prefer pricing from API (reminder/addedItem wellnessPlanPricing) when present
                 const hasApiPricing = item.wellnessPlanPricing != null || item.discountPricing != null;
@@ -4673,8 +4712,9 @@ export default function PublicRoomLoaderForm() {
                   ? (Number(item.price) ?? 0)
                   : (searchableItem != null ? (getClientAdjustedPrice(patientId, searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) || 0));
                 const qty = Number(item.quantity) || 1;
-                const lineTotal = isChecked && !isFecalReplaced ? unitPrice * qty : 0;
+                const lineTotal = isChecked && !isReplaced ? unitPrice * qty : 0;
                 petSubtotal += lineTotal;
+                const replacedByLabel = isFecalReplaced ? fecalReplacedBy.join(' or ') : is4dxReplaced ? fourDxReplacedBy.join(' or ') : '';
                 const hasDiscount = displayPricing?.wellnessPlanPricing?.hasCoverage && (displayPricing.wellnessPlanPricing.originalPrice !== displayPricing.wellnessPlanPricing.adjustedPrice) || (displayPricing?.wellnessPlanPricing as any)?.priceAdjustedByMembership || displayPricing?.discountPricing?.priceAdjustedByDiscount;
                 const quantityUsedNote = displayPricing?.wellnessPlanPricing?.hasCoverage && displayPricing.wellnessPlanPricing.isWithinLimit === false;
                 const hasPricingNote = hasDiscount || quantityUsedNote;
@@ -4700,17 +4740,17 @@ export default function PublicRoomLoaderForm() {
                             accentColor: canUncheck ? undefined : '#999',
                           }}
                         />
-                        <span style={{ ...(isFecalReplaced ? { textDecoration: 'line-through', color: '#888' } : !isChecked ? { color: '#888' } : { color: '#333' }) }}>
+                        <span style={{ ...(isReplaced ? { textDecoration: 'line-through', color: '#888' } : !isChecked ? { color: '#888' } : { color: '#333' }) }}>
                           {item.name}
                           {qty > 1 && <span style={{ color: '#666', marginLeft: '6px', fontSize: '14px' }}>(Qty: {qty})</span>}
-                          {isFecalReplaced && <span style={{ fontSize: '13px', color: '#666', marginLeft: '8px', fontStyle: 'italic' }}>(replaced by {fecalReplacedBy.join(' or ')})</span>}
+                          {isReplaced && <span style={{ fontSize: '13px', color: '#666', marginLeft: '8px', fontStyle: 'italic' }}>(replaced by {replacedByLabel})</span>}
                         </span>
                       </label>
-                      <span style={{ fontWeight: 700, flexShrink: 0, ...(isFecalReplaced ? { textDecoration: 'line-through', color: '#888' } : !isChecked ? { color: '#888' } : {}) }}>
-                        {formatPrice(isChecked && !isFecalReplaced ? lineTotal : 0)}
+                      <span style={{ fontWeight: 700, flexShrink: 0, ...(isReplaced ? { textDecoration: 'line-through', color: '#888' } : !isChecked ? { color: '#888' } : {}) }}>
+                        {formatPrice(isChecked && !isReplaced ? lineTotal : 0)}
                       </span>
                     </div>
-                    {isChecked && !isFecalReplaced && hasPricingNote && <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>{displayNote}</div>}
+                    {isChecked && !isReplaced && hasPricingNote && <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>{displayNote}</div>}
                   </div>
                 );
               };
