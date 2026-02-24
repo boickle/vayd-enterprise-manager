@@ -1114,7 +1114,7 @@ export default function ClientPortal() {
           .cp-pet-img { height: 130px; border-radius: 16px; border: 1px solid rgba(0, 0, 0, 0.06); }
         }
 
-        /* Refer a friend: desktop = next to logo, mobile = below welcome */
+        /* Refer a friend, get $75!: desktop = next to logo, mobile = below welcome */
         .cp-referral-btn-desktop { display: none; }
         .cp-referral-btn-mobile { display: flex; }
         @media (min-width: 640px) {
@@ -1542,7 +1542,7 @@ export default function ClientPortal() {
               <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
               <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
             </svg>
-            Refer a friend
+            Refer a friend, get $75!
           </button>
         </div>
         {clientFirstName && (
@@ -1588,7 +1588,7 @@ export default function ClientPortal() {
                   <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
                   <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
                 </svg>
-                Refer a friend
+                Refer a friend, get $75!
               </button>
             </div>
           </>
