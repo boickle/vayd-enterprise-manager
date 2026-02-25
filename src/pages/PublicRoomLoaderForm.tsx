@@ -1884,7 +1884,7 @@ export default function PublicRoomLoaderForm() {
         if (rec.code === 'FIL48719999') {
           add('Would you like us to include this recommended screening today? (Early Detection - Canine)', `lab_early_detection_canine_${pidStr}`, { yes: 'Yes — Include Early Detection Panel', no: 'Not at this time.' });
         }
-        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999') && isDogEntry) {
+        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999' || rec.code === '8659999') && isDogEntry) {
           add('Which panel would you like your pet to receive? (Senior Screen — Canine)', `lab_senior_canine_panel_${pidStr}`, {
             standard: 'Standard Comprehensive Panel',
             extended: 'Extended Comprehensive Panel',
@@ -1935,7 +1935,7 @@ export default function PublicRoomLoaderForm() {
       entry.recommendations.forEach((rec: { code?: string }) => {
         if (rec.code === 'FIL48119999') shownLabKeys.add(`lab_early_detection_feline_${pidStr}`);
         if (rec.code === 'FIL48719999') shownLabKeys.add(`lab_early_detection_canine_${pidStr}`);
-        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999') && isDogEntry) shownLabKeys.add(`lab_senior_canine_panel_${pidStr}`);
+        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999' || rec.code === '8659999') && isDogEntry) shownLabKeys.add(`lab_senior_canine_panel_${pidStr}`);
         if ((rec.code === '8659999' || rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatEntry) shownLabKeys.add(`lab_senior_feline_two_panel_${pidStr}`);
         if (rec.code === 'COMPREHENSIVE_FECAL') shownLabKeys.add(`lab_comprehensive_fecal_${pidStr}`);
       });
@@ -2155,7 +2155,7 @@ export default function PublicRoomLoaderForm() {
             errors[`lab_early_detection_canine_${pidStr}`] = `Please answer the Early Detection Panel question for ${petName} before continuing.`;
           }
         }
-        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999') && isDogEntry) {
+        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999' || rec.code === '8659999') && isDogEntry) {
           const v = formData[`lab_senior_canine_panel_${pidStr}`];
           if (v !== 'standard' && v !== 'extended' && v !== 'no') {
             errors[`lab_senior_canine_panel_${pidStr}`] = `Please select a panel option for ${petName} before continuing.`;
@@ -2226,7 +2226,7 @@ export default function PublicRoomLoaderForm() {
             errors[`lab_early_detection_canine_${pidStr}`] = `Please answer the Early Detection Panel question for ${petName} before continuing.`;
           }
         }
-        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999') && isDogEntry) {
+        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999' || rec.code === '8659999') && isDogEntry) {
           const v = formData[`lab_senior_canine_panel_${pidStr}`];
           if (v !== 'standard' && v !== 'extended' && v !== 'no') {
             errors[`lab_senior_canine_panel_${pidStr}`] = `Please select a panel option for ${petName} before continuing.`;
@@ -2621,7 +2621,7 @@ export default function PublicRoomLoaderForm() {
     if (hasEarlyCanine) labQueries.push({ q: 'Early Detection Panel - Canine (chem 10, cbc, lytes, fecal Dx, 4dx)', type: 'earlyCanine' });
     if (needStandard) {
       labQueries.push({ q: 'Senior Screen (chem 25, CBC, T4, UA)', type: 'seniorStandard' });
-      if (hasSeniorCanine) labQueries.push({ q: 'Senior Screen Canine (4Dx, Fecal O&P, chem 25, CBC, T4, UA)', type: 'seniorCanineExt' });
+      if (hasSeniorCanine || has8659999) labQueries.push({ q: 'Senior Screen Canine (4Dx, Fecal O&P, chem 25, CBC, T4, UA)', type: 'seniorCanineExt' });
       if (needFelineExtended) labQueries.push({ q: 'Senior Screen Feline (Fecal Dx, felv/fiv/hw, fPL, chem 25, CBC, T4, UA)', type: 'seniorFelineExt' });
     }
     if (hasSeniorFeline) labQueries.push({ q: 'Senior Screen Feline', type: 'seniorFeline' });
@@ -4090,7 +4090,9 @@ export default function PublicRoomLoaderForm() {
                   const speciesLowerEntry = speciesPartsEntry.length ? speciesPartsEntry.join(' ').toLowerCase() : '';
                   const isDogEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine') || (speciesLowerEntry === '' && !speciesLowerEntry.includes('cat'));
                   const isCatEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
-                  const isSeniorCanine = (rec.code === 'FIL25659999' || rec.code === 'FIL8659999') && isDogEntry;
+                  // Show full Senior Screen Canine for generic "lab work yes" (8659999) too—when crLyme is Annual we may only get 8659999, so details would otherwise be missing.
+                  const isSeniorCanine = (rec.code === 'FIL25659999' || rec.code === 'FIL8659999' || rec.code === '8659999') && isDogEntry;
+                  const hasLabWorkYesSeniorCanine = entry.recommendations.some((r: any) => r.code === '8659999');
                   const isSeniorFelineWithFecal = rec.code === 'FIL45129999';
                   const isSeniorFelineFullPanel = (rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatEntry;
                   const isLabWorkYesFelineTwoPanel = rec.code === '8659999' && isCatEntry;
@@ -4317,6 +4319,7 @@ export default function PublicRoomLoaderForm() {
                   }
 
                   if (isSeniorCanine) {
+                    if (rec.code === 'FIL8659999' && hasLabWorkYesSeniorCanine) return null;
                     const extendedMinusFecal = extendedPrice != null && fecalPrice != null ? extendedPrice - fecalPrice : null;
                     const extendedMinus4dx = extendedPrice != null && fourDxPrice != null ? extendedPrice - fourDxPrice : null;
                     const extendedMinusBoth = extendedPrice != null && fecalPrice != null && fourDxPrice != null ? extendedPrice - fecalPrice - fourDxPrice : null;
