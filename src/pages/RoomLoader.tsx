@@ -1216,6 +1216,11 @@ export default function RoomLoaderPage() {
           },
         }));
       }
+      // Refetch room loader so the card shows latest discount/membership pricing for the corrected item
+      if (selectedRoomLoaderId != null) {
+        const data = await getRoomLoader(selectedRoomLoaderId);
+        setSelectedRoomLoader(data);
+      }
     } catch (err: any) {
       console.error('Error submitting reminder feedback:', err);
       setReminderFeedback((prev) => ({ ...prev, [key]: null }));
@@ -2956,22 +2961,23 @@ export default function RoomLoaderPage() {
                                 )}
                                 {/* Price Display — always show for all reminder states (matched, confirmed, corrected) */}
                                 {(() => {
-                                  // Backend already calculates final price with all discounts applied
-                                  // Use the price field directly, or corrected item price if available
+                                  // Prefer backend/refetched reminder pricing (includes membership/discount) when available; only use correction item price when reminder has no pricing yet
                                   let finalPrice = 0;
                                   let originalPrice = 0;
                                   const wellnessPricing = reminderWithPrice.wellnessPlanPricing;
                                   const discountPricing = reminderWithPrice.discountPricing;
                                   const hasPrice = reminderWithPrice.price != null;
+                                  const hasWellnessAdjusted = wellnessPricing?.adjustedPrice != null && typeof wellnessPricing.adjustedPrice === 'number';
                                   
-                                  // Get final price (backend-calculated with all discounts)
-                                  if (correction?.selectedItem?.price != null) {
-                                    finalPrice = Number(correction.selectedItem.price);
-                                    originalPrice = finalPrice;
+                                  // Final price: use refetched reminder's adjusted/backend price first so discount shows after correction
+                                  if (hasWellnessAdjusted) {
+                                    finalPrice = wellnessPricing!.adjustedPrice;
                                   } else if (hasPrice) {
                                     finalPrice = Number(reminderWithPrice.price);
+                                  } else if (correction?.selectedItem?.price != null) {
+                                    finalPrice = Number(correction.selectedItem.price);
+                                    originalPrice = finalPrice;
                                   } else {
-                                    // No price available
                                     if (!hasPrice && !correction?.selectedItem && !wellnessPricing) {
                                       return (
                                         <div style={{ fontSize: '14px', color: '#999', fontStyle: 'italic' }}>
@@ -2982,12 +2988,12 @@ export default function RoomLoaderPage() {
                                     finalPrice = 0;
                                   }
                                   
-                                  // Get original price for display (to show strikethrough)
+                                  // Original price for strikethrough when discount applied
                                   let baseOriginalPrice = 0;
-                                  if (correction?.selectedItem?.price != null) {
-                                    baseOriginalPrice = Number(correction.selectedItem.price);
-                                  } else if (wellnessPricing) {
+                                  if (wellnessPricing?.originalPrice != null) {
                                     baseOriginalPrice = wellnessPricing.originalPrice;
+                                  } else if (correction?.selectedItem?.price != null) {
+                                    baseOriginalPrice = Number(correction.selectedItem.price);
                                   } else if (reminderWithPrice.matchedItem?.price) {
                                     baseOriginalPrice = Number(reminderWithPrice.matchedItem.price);
                                   } else {
