@@ -95,6 +95,13 @@ When the user picks a plan and pricing option (monthly vs annual) so you can sho
     adjustedPrice: number;
     quantity: number;
   }>;
+  remainingPlanBenefits?: Array<{   // Optional; plan benefits still available, not used in this visit
+    name: string;
+    remainingQuantity?: number;
+    includedQuantity?: number;
+    price?: number;                 // Plan/membership price per unit (what the member pays when using this benefit)
+    regularPrice?: number;          // Standard (non-member) price per unit, e.g. for "Value $X"
+  }>;
 }
 ```
 
@@ -118,6 +125,7 @@ If both requests return the same `membershipFee` and `withMembershipTotal`, the 
 - "With planName (pricingOption): $withMembershipTotal (includes $membershipFee membership)"
 - "You save $savings"
 - Optionally use `lineItemAdjustments` to show which lines got a lower price.
+- If provided, `remainingPlanBenefits` is shown under "Also included in your plan (not used this visit):" so clients see benefits they still have (e.g. annual fecal, nail trim) that aren't used in this visit.
 
 ---
 

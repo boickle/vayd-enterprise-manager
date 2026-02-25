@@ -1,0 +1,3 @@
+# Disallow all routes from being crawled (private application)
+User-agent: *
+Disallow: /

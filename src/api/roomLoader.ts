@@ -159,6 +159,10 @@ export type Patient = {
     email?: string | null;
     phone1?: string | null;
   }>;
+  /** Explicit membership flag from room loader API (preferred over deriving from reminders). */
+  isMember?: boolean;
+  /** Membership plan name when isMember is true. */
+  membershipName?: string | null;
   breedEntity?: {
     id: number;
     name: string;
@@ -301,6 +305,8 @@ export type RoomLoader = {
   savedForm?: Record<string, any> | null;
   /** Payload that was sent to the client (when sentStatus indicates already sent) */
   sentToClient?: SentToClient | null;
+  /** Token for public form/PDF URL (when form has been sent). Used for View PDF link. */
+  token?: string | null;
   created?: string;
   updated?: string;
 };
@@ -426,6 +432,8 @@ export type ItemSearchParams = {
   q: string;
   practiceId: number;
   limit?: number;
+  /** If set, backend may also match items by this code (e.g. same as q to search by name or code). */
+  code?: string;
 };
 
 export async function searchItems(params: ItemSearchParams): Promise<SearchableItem[]> {
@@ -434,6 +442,9 @@ export async function searchItems(params: ItemSearchParams): Promise<SearchableI
   queryParams.append('practiceId', String(params.practiceId));
   if (params.limit) {
     queryParams.append('limit', String(params.limit));
+  }
+  if (params.code != null && params.code !== '') {
+    queryParams.append('code', params.code);
   }
 
   const { data } = await http.get<SearchableItem[]>(`/room-loader/items/search?${queryParams.toString()}`);
@@ -590,10 +601,44 @@ export type CheckItemPricingPublicRequest = {
   };
 };
 
+const CHECK_ITEM_PRICING_TTL_MS = 60 * 60 * 1000; // 1 hour
+const CHECK_ITEM_PRICING_CACHE_MAX = 500;
+
+type CheckItemPricingCacheEntry = { response: CheckItemPricingResponse; expiresAt: number };
+const checkItemPricingCache = new Map<string, CheckItemPricingCacheEntry>();
+
+function checkItemPricingCacheKey(request: CheckItemPricingPublicRequest): string {
+  return JSON.stringify({
+    token: request.token,
+    patientId: request.patientId,
+    practiceId: request.practiceId,
+    clientId: request.clientId,
+    itemType: request.itemType,
+    item: request.item,
+  });
+}
+
 export async function checkItemPricingPublic(
   request: CheckItemPricingPublicRequest
 ): Promise<CheckItemPricingResponse> {
+  const key = checkItemPricingCacheKey(request);
+  const entry = checkItemPricingCache.get(key);
+  const now = Date.now();
+  if (entry != null && entry.expiresAt > now) {
+    return entry.response;
+  }
+  if (entry != null) {
+    checkItemPricingCache.delete(key);
+  }
   const { data } = await http.post<CheckItemPricingResponse>('/public/room-loader/check-item-pricing', request);
+  if (checkItemPricingCache.size >= CHECK_ITEM_PRICING_CACHE_MAX) {
+    const firstKey = checkItemPricingCache.keys().next().value;
+    if (firstKey != null) checkItemPricingCache.delete(firstKey);
+  }
+  checkItemPricingCache.set(key, {
+    response: data,
+    expiresAt: now + CHECK_ITEM_PRICING_TTL_MS,
+  });
   return data;
 }
 
@@ -692,6 +737,16 @@ export type RoomLoaderSimulateBillPublicResponse = {
     originalPrice: number;
     adjustedPrice: number;
     quantity: number;
+  }>;
+  /** Plan benefits still available to the member that are not used in this visit (optional). Backend may return when simulating. */
+  remainingPlanBenefits?: Array<{
+    name: string;
+    remainingQuantity?: number;
+    includedQuantity?: number;
+    /** Plan/membership price per unit (what the member pays when using this benefit). */
+    price?: number;
+    /** Standard (non-member) price per unit, e.g. for "Value $X". */
+    regularPrice?: number;
   }>;
 };
 

@@ -1,0 +1,268 @@
+/* Room Loader — responsive layout for list and modal */
+
+.room-loader-page {
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.room-loader-filters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.room-loader-search-wrap {
+  flex: 1 1 300px;
+  min-width: 250px;
+}
+
+/* Desktop: table visible. Mobile: table hidden, cards visible */
+.room-loader-table-wrap {
+  margin-bottom: 30px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  overflow: auto;
+  max-height: 580px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.room-loader-mobile-cards {
+  display: none;
+  margin-bottom: 24px;
+  gap: 12px;
+  flex-direction: column;
+}
+
+.room-loader-table {
+  width: 100%;
+  min-width: 700px;
+  border-collapse: collapse;
+  font-size: 14px;
+  background-color: #fff;
+  table-layout: fixed;
+}
+
+/* Status badge — prevent truncation on small screens */
+.room-loader-status-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.room-loader-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 16px;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+.room-loader-modal {
+  width: min(1010px, 95vw);
+  max-height: 90vh;
+  overflow: auto;
+  padding: 24px;
+  border-radius: 12px;
+  background: #fff;
+  -webkit-overflow-scrolling: touch;
+}
+
+.room-loader-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.room-loader-modal-close {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.room-loader-confirm-modal {
+  max-width: 440px;
+  width: 90%;
+  padding: 30px;
+  box-sizing: border-box;
+}
+
+/* Pet card in modal */
+.room-loader-pet-card {
+  margin-bottom: 30px;
+  padding: 20px;
+  background-color: #fff;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
+/* Reminder/added item row with quantity and buttons */
+.room-loader-item-row-actions {
+  min-width: 120px;
+}
+
+@media (max-width: 768px) {
+  .room-loader-page {
+    padding: 12px;
+    padding-left: env(safe-area-inset-left, 12px);
+    padding-right: env(safe-area-inset-right, 12px);
+  }
+
+  .room-loader-filters {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .room-loader-filters label {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .room-loader-filters select {
+    min-height: 44px;
+    padding: 8px 12px;
+    font-size: 16px; /* prevents iOS zoom on focus */
+  }
+
+  .room-loader-filters button {
+    min-height: 44px;
+    padding: 10px 20px;
+    font-size: 16px;
+  }
+
+  .room-loader-search-wrap input {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .room-loader-search-wrap {
+    min-width: 0;
+    width: 100%;
+  }
+
+  /* Mobile: hide table, show cards */
+  .room-loader-table-wrap {
+    display: none !important;
+  }
+
+  .room-loader-mobile-cards {
+    display: flex;
+  }
+
+  .room-loader-mobile-card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 14px 16px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    text-align: left;
+    box-sizing: border-box;
+  }
+
+  .room-loader-mobile-card:active {
+    background: #f5f5f5;
+  }
+
+  .room-loader-mobile-card.is-selected {
+    border-color: #2196f3;
+    background: #e3f2fd;
+  }
+
+  .room-loader-mobile-card-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 8px;
+    font-size: 14px;
+  }
+
+  .room-loader-mobile-card-row:last-child {
+    margin-bottom: 0;
+  }
+
+  .room-loader-mobile-card-label {
+    color: #666;
+    flex-shrink: 0;
+    min-width: 90px;
+  }
+
+  .room-loader-mobile-card-value {
+    font-weight: 500;
+    color: #212529;
+    word-break: break-word;
+    text-align: right;
+  }
+
+  .room-loader-mobile-card-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .room-loader-modal-overlay {
+    padding: 8px;
+    align-items: flex-start;
+    padding-top: env(safe-area-inset-top, 8px);
+  }
+
+  .room-loader-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+    padding: 16px;
+    border-radius: 8px;
+  }
+
+  .room-loader-modal-header h2 {
+    font-size: 1.25rem;
+  }
+
+  .room-loader-pet-card {
+    padding: 14px;
+    margin-bottom: 20px;
+  }
+
+  .room-loader-confirm-modal {
+    width: 100%;
+    max-width: 100%;
+    padding: 20px;
+  }
+}
+
+@media (max-width: 480px) {
+  .room-loader-table {
+    min-width: 600px;
+  }
+
+  .room-loader-modal-close {
+    min-width: 48px;
+    min-height: 48px;
+  }
+}

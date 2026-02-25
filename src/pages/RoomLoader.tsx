@@ -21,6 +21,7 @@ import {
 import { http } from '../api/http';
 import { KeyValue } from '../components/KeyValue';
 import { evetPatientLink, evetClientLink } from '../utils/evet';
+import './RoomLoader.css';
 
 /** True if reminder description or matched item name/code contains any of the substrings (case-insensitive). */
 function reminderContains(r: ReminderWithPrice, ...substrings: string[]): boolean {
@@ -111,6 +112,8 @@ export default function RoomLoaderPage() {
   const [searchQuery, setSearchQuery] = useState<Record<number, string>>({});
   const [searchResults, setSearchResults] = useState<Record<number, SearchableItem[]>>({});
   const [searchLoading, setSearchLoading] = useState<Record<number, boolean>>({});
+  /** Room loader ID currently downloading PDF (for loading state on button). */
+  const [downloadingPdfRoomLoaderId, setDownloadingPdfRoomLoaderId] = useState<number | null>(null);
 
   // Client has already submitted this form (sentStatus === 'completed') — show read-only, grey out all fields, disable Save and Re-send
   const formSubmittedByClient = useMemo(
@@ -173,6 +176,7 @@ export default function RoomLoaderPage() {
               q: query,
               practiceId: selectedRoomLoader.practice.id,
               limit: 50,
+              code: query,
             });
             // Check again before setting results
             if (searchQuery[petId] === query) {
@@ -601,6 +605,9 @@ export default function RoomLoaderPage() {
       timesSentToClient: number;
       dueStatus: DueStatus | null;
       roomLoader: RoomLoader;
+      clientHasNoEmail: boolean;
+      /** Token for public PDF URL when completed */
+      token?: string | null;
     }> = [];
 
     roomLoaders.forEach((rl) => {
@@ -700,6 +707,21 @@ export default function RoomLoaderPage() {
         clientName = `${client.firstName || ''} ${client.lastName || ''}`.trim() || 'Unknown Client';
       }
 
+      // True if any client in this room loader has no email (so we can grey the row and block send)
+      let clientHasNoEmail = false;
+      rl.appointments.forEach((apt) => {
+        if (apt.client) {
+          const e = apt.client.email;
+          if (e == null || (typeof e === 'string' && e.trim() === '')) clientHasNoEmail = true;
+        }
+      });
+      rl.patients.forEach((p) => {
+        (p.clients || []).forEach((c: any) => {
+          const e = c.email;
+          if (e == null || (typeof e === 'string' && e.trim() === '')) clientHasNoEmail = true;
+        });
+      });
+
       rows.push({
         roomLoaderId: rl.id,
         apptDate,
@@ -712,6 +734,8 @@ export default function RoomLoaderPage() {
         timesSentToClient: rl.timesSentToClient ?? 0,
         dueStatus: rl.dueStatus,
         roomLoader: rl,
+        clientHasNoEmail,
+        token: rl.token ?? null,
       });
     });
 
@@ -776,6 +800,28 @@ export default function RoomLoaderPage() {
     setAddedItemQuantities({});
     setAppointmentReasons({});
     setVaccineCheckboxes({});
+  }
+
+  async function handleDownloadPdf(roomLoaderId: number, e: React.MouseEvent) {
+    e.stopPropagation();
+    setDownloadingPdfRoomLoaderId(roomLoaderId);
+    try {
+      const res = await http.get(`/room-loader/${roomLoaderId}/pdf`, { responseType: 'blob' });
+      const blob = res.data instanceof Blob ? res.data : new Blob([res.data]);
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = `room-loader-${roomLoaderId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(objectUrl);
+    } catch (err: any) {
+      console.error('Download PDF error:', err);
+      alert(err?.response?.data?.message || err?.message || 'Failed to download PDF. Please try again.');
+    } finally {
+      setDownloadingPdfRoomLoaderId(null);
+    }
   }
 
   function handleQuantityChange(reminderId: number, value: number | string) {
@@ -896,6 +942,7 @@ export default function RoomLoaderPage() {
         q: query,
         practiceId: selectedRoomLoader.practice.id,
         limit: 50,
+        code: query,
       });
       setSearchResults((prev) => ({ ...prev, [petId]: results }));
     } catch (err: any) {
@@ -1076,6 +1123,8 @@ export default function RoomLoaderPage() {
   const [reminderValidationErrorIds, setReminderValidationErrorIds] = useState<Set<number>>(new Set());
   // True when Send to Client is blocked: at least one pet must have a reminder containing "Trip Fee"
   const [tripFeeRequiredError, setTripFeeRequiredError] = useState(false);
+  // Duplicate matched items in the order (same item id+type appears more than once per pet); block Send to Client
+  const [duplicateItemsError, setDuplicateItemsError] = useState<{ petName: string; itemName: string }[] | null>(null);
 
   async function handleReminderFeedback(
     reminderId: number,
@@ -1516,10 +1565,17 @@ export default function RoomLoaderPage() {
   async function handleSendToClient() {
     if (!selectedRoomLoader) return;
 
+    const noEmail = petsWithAppointments.some((item) => {
+      const e = item.client?.email;
+      return e == null || (typeof e === 'string' && e.trim() === '');
+    });
+    if (noEmail) return;
+
     // Clear previous inline validation messages so we only show current errors
     setSendValidationErrors({});
     setReminderValidationErrorIds(new Set());
     setTripFeeRequiredError(false);
+    setDuplicateItemsError(null);
 
     // Validate required fields before sending; build inline error state per patient
     const errors: Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean }> = {};
@@ -1588,6 +1644,43 @@ export default function RoomLoaderPage() {
     }
     setTripFeeRequiredError(false);
 
+    // Duplicate items: same matched item (id + type) must not appear more than once per pet
+    const payload = packageDataForClient();
+    const duplicateReports: { petName: string; itemName: string }[] = [];
+    const reported = new Set<string>();
+    if (payload?.formData?.patients) {
+      for (const patient of payload.formData.patients) {
+        const petName = patient.patientName ?? `Pet (ID ${patient.patientId})`;
+        const itemKeys = new Map<string, string>();
+        const addItem = (id: number | undefined, type: string | undefined, name: string | undefined) => {
+          if (id == null && type == null) return;
+          const key = `${id ?? 'null'}-${type ?? 'null'}`;
+          const itemName = (name || 'Unknown item').trim();
+          if (itemKeys.has(key)) {
+            const reportKey = `${petName}:${itemName}`;
+            if (!reported.has(reportKey)) {
+              reported.add(reportKey);
+              duplicateReports.push({ petName, itemName });
+            }
+          } else {
+            itemKeys.set(key, itemName);
+          }
+        };
+        for (const r of patient.reminders || []) {
+          const item = r?.item;
+          if (item) addItem(item.id, item.type, item.name);
+        }
+        for (const a of patient.addedItems || []) {
+          addItem(a.id, a.type, a.name);
+        }
+      }
+    }
+    if (duplicateReports.length > 0) {
+      setDuplicateItemsError(duplicateReports);
+      return;
+    }
+    setDuplicateItemsError(null);
+
     // Warnings: visit/consult per pet from matched item names (not reminder description) or added items (use active list so removed items don't count)
     const warnings: string[] = [];
     petsWithAppointments.forEach((item) => {
@@ -1621,6 +1714,7 @@ export default function RoomLoaderPage() {
     setSendValidationErrors({});
     setReminderValidationErrorIds(new Set());
     setTripFeeRequiredError(false);
+    setDuplicateItemsError(null);
     setSendWarningReasons([]);
     setSendingToClient(true);
     setConfirmAction(null);
@@ -1819,21 +1913,14 @@ export default function RoomLoaderPage() {
       });
     }
 
-    // Compute which clients have membership and the plan name (from any reminder for their patient)
+    // Compute which clients have membership and the plan name (from explicit patient.isMember / patient.membershipName on room loader API)
     const clientMembershipPlanName = new Map<number, string>();
-    if (selectedRoomLoader.reminders) {
-      selectedRoomLoader.reminders.forEach((reminderWithPrice) => {
-        const wp = reminderWithPrice.wellnessPlanPricing;
-        const planName = wp?.membershipPlanName?.trim() || null;
-        if (wp?.hasCoverage || planName) {
-          const patientId =
-            reminderWithPrice.reminder.patient?.id ??
-            (reminderWithPrice.reminder?.id != null ? reminderIdToPatientId.get(reminderWithPrice.reminder.id) : undefined);
-          if (patientId) {
-            const entry = petMap.get(patientId);
-            if (entry?.client?.id && !clientMembershipPlanName.has(entry.client.id)) {
-              clientMembershipPlanName.set(entry.client.id, planName || 'Membership');
-            }
+    if (selectedRoomLoader.patients?.length) {
+      selectedRoomLoader.patients.forEach((patient) => {
+        if (patient.isMember) {
+          const clientId = patient.clients?.[0]?.id;
+          if (clientId != null && !clientMembershipPlanName.has(clientId)) {
+            clientMembershipPlanName.set(clientId, (patient.membershipName?.trim() || null) ?? 'Membership');
           }
         }
       });
@@ -1846,8 +1933,17 @@ export default function RoomLoaderPage() {
     }));
   }, [selectedRoomLoader]);
 
+  const hasClientWithNoEmail = useMemo(
+    () =>
+      petsWithAppointments.some((item) => {
+        const e = item.client?.email;
+        return e == null || (typeof e === 'string' && e.trim() === '');
+      }),
+    [petsWithAppointments]
+  );
+
   return (
-    <div style={{ padding: '20px' }}>
+    <div className="room-loader-page">
       <style>{`
         .room-loader-qty-input::-webkit-outer-spin-button,
         .room-loader-qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
@@ -1856,9 +1952,9 @@ export default function RoomLoaderPage() {
       <h1>Room Loader</h1>
 
       {/* Filters */}
-      <div style={{ marginBottom: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+      <div className="room-loader-filters">
         {/* Search Box */}
-        <div style={{ flex: '1 1 300px', minWidth: '250px' }}>
+        <div className="room-loader-search-wrap">
           <input
             type="text"
             placeholder="Search by doctor or client name..."
@@ -1934,32 +2030,15 @@ export default function RoomLoaderPage() {
       )}
 
       {/* Table — single table so header and body columns stay aligned */}
-      <div
-        style={{
-          marginBottom: '30px',
-          border: '1px solid #ddd',
-          borderRadius: '4px',
-          overflow: 'auto',
-          maxHeight: '580px',
-        }}
-      >
-        <table
-          style={{
-            width: '100%',
-            borderCollapse: 'collapse',
-            fontSize: '14px',
-            backgroundColor: '#fff',
-            tableLayout: 'fixed',
-          }}
-        >
+      <div className="room-loader-table-wrap">
+        <table className="room-loader-table" style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: '#fff', tableLayout: 'fixed' }}>
           <colgroup>
             <col style={{ width: '10%' }} />
             <col style={{ width: '12%' }} />
             <col style={{ width: '14%' }} />
             <col style={{ width: '18%' }} />
             <col style={{ width: '22%' }} />
-            <col style={{ width: '10%' }} />
-            <col style={{ width: '6%' }} />
+            <col style={{ width: '14%' }} />
           </colgroup>
           <thead>
             <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
@@ -1981,21 +2060,18 @@ export default function RoomLoaderPage() {
               <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #ddd', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1, backgroundColor: '#f5f5f5' }}>
                 Sent Status
               </th>
-              <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #ddd', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1, backgroundColor: '#f5f5f5' }}>
-                Due Status
-              </th>
             </tr>
           </thead>
           <tbody>
               {loading && filteredTableRows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ padding: '20px', textAlign: 'center' }}>
+                  <td colSpan={6} style={{ padding: '20px', textAlign: 'center' }}>
                     Loading...
                   </td>
                 </tr>
               ) : filteredTableRows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+                  <td colSpan={6} style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
                     {tableSearch.trim() ? 'No room loaders match your search' : 'No room loaders found'}
                   </td>
                 </tr>
@@ -2006,17 +2082,18 @@ export default function RoomLoaderPage() {
                     onClick={() => handleRowClick(row.roomLoaderId)}
                     style={{
                       cursor: 'pointer',
-                      backgroundColor: selectedRoomLoaderId === row.roomLoaderId ? '#e3f2fd' : 'transparent',
+                      backgroundColor: selectedRoomLoaderId === row.roomLoaderId ? '#e3f2fd' : row.clientHasNoEmail ? '#e9ecef' : 'transparent',
                       borderBottom: '1px solid #ddd',
+                      ...(row.clientHasNoEmail ? { fontStyle: 'italic' } : {}),
                     }}
                     onMouseEnter={(e) => {
                       if (selectedRoomLoaderId !== row.roomLoaderId) {
-                        e.currentTarget.style.backgroundColor = '#f5f5f5';
+                        e.currentTarget.style.backgroundColor = row.clientHasNoEmail ? '#dee2e6' : '#f5f5f5';
                       }
                     }}
                     onMouseLeave={(e) => {
                       if (selectedRoomLoaderId !== row.roomLoaderId) {
-                        e.currentTarget.style.backgroundColor = 'transparent';
+                        e.currentTarget.style.backgroundColor = row.clientHasNoEmail ? '#e9ecef' : 'transparent';
                       }
                     }}
                   >
@@ -2028,46 +2105,46 @@ export default function RoomLoaderPage() {
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.clientName}</td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.pets.join(', ')}</td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>
-                      <span
-                        style={{
-                          padding: '4px 8px',
-                          borderRadius: '4px',
-                          fontSize: '12px',
-                          backgroundColor:
-                            row.sentStatus === 'completed'
-                              ? '#4caf50'
-                              : row.sentStatus === 'sent_2'
-                                ? '#2196f3'
-                                : row.sentStatus === 'sent_1'
-                                  ? '#ff9800'
-                                  : '#9e9e9e',
-                          color: '#fff',
-                        }}
-                      >
-                        {row.sentStatus.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
-                      </span>
-                    </td>
-                    <td style={{ padding: '12px', border: '1px solid #ddd' }}>
-                      {row.dueStatus ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' }}>
                         <span
                           style={{
                             padding: '4px 8px',
                             borderRadius: '4px',
                             fontSize: '12px',
                             backgroundColor:
-                              row.dueStatus === 'past_due' || row.dueStatus === '10_days_past_due'
-                                ? '#f44336'
-                                : row.dueStatus === 'due'
-                                  ? '#ff9800'
-                                  : '#4caf50',
+                              row.sentStatus === 'completed'
+                                ? '#4caf50'
+                                : row.sentStatus === 'sent_2'
+                                  ? '#2196f3'
+                                  : row.sentStatus === 'sent_1'
+                                    ? '#ff9800'
+                                    : '#9e9e9e',
                             color: '#fff',
                           }}
                         >
-                          {row.dueStatus.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
+                          {row.sentStatus.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
                         </span>
-                      ) : (
-                        'N/A'
-                      )}
+                        {row.sentStatus === 'completed' && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleDownloadPdf(row.roomLoaderId, e)}
+                            disabled={downloadingPdfRoomLoaderId === row.roomLoaderId}
+                            className="room-loader-download-pdf-btn"
+                            style={{
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              color: '#0d6efd',
+                              background: 'none',
+                              border: 'none',
+                              padding: '4px 0',
+                              cursor: downloadingPdfRoomLoaderId === row.roomLoaderId ? 'wait' : 'pointer',
+                              textDecoration: 'underline',
+                            }}
+                          >
+                            {downloadingPdfRoomLoaderId === row.roomLoaderId ? 'Downloading…' : 'Download PDF'}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -2076,41 +2153,105 @@ export default function RoomLoaderPage() {
         </table>
       </div>
 
+      {/* Mobile: card list (replaces table on small screens for better readability) */}
+      <div className="room-loader-mobile-cards">
+        {loading && filteredTableRows.length === 0 ? (
+          <div style={{ padding: '20px', textAlign: 'center' }}>Loading...</div>
+        ) : filteredTableRows.length === 0 ? (
+          <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+            {tableSearch.trim() ? 'No room loaders match your search' : 'No room loaders found'}
+          </div>
+        ) : (
+          filteredTableRows.map((row, idx) => {
+            const sentBg =
+              row.sentStatus === 'completed'
+                ? '#4caf50'
+                : row.sentStatus === 'sent_2'
+                  ? '#2196f3'
+                  : row.sentStatus === 'sent_1'
+                    ? '#ff9800'
+                    : '#9e9e9e';
+            return (
+              <button
+                type="button"
+                key={`card-${row.roomLoaderId}-${idx}`}
+                className={`room-loader-mobile-card ${selectedRoomLoaderId === row.roomLoaderId ? 'is-selected' : ''} ${row.clientHasNoEmail ? 'room-loader-mobile-card-no-email' : ''}`}
+                onClick={() => handleRowClick(row.roomLoaderId)}
+                style={row.clientHasNoEmail && selectedRoomLoaderId !== row.roomLoaderId ? { backgroundColor: '#e9ecef', fontStyle: 'italic' } : row.clientHasNoEmail ? { fontStyle: 'italic' } : undefined}
+              >
+                <div className="room-loader-mobile-card-row">
+                  <span className="room-loader-mobile-card-label">Date</span>
+                  <span className="room-loader-mobile-card-value">{row.apptDate ? formatDate(row.apptDate) : 'N/A'}</span>
+                </div>
+                <div className="room-loader-mobile-card-row">
+                  <span className="room-loader-mobile-card-label">Type</span>
+                  <span className="room-loader-mobile-card-value">{row.appointmentType}</span>
+                </div>
+                <div className="room-loader-mobile-card-row">
+                  <span className="room-loader-mobile-card-label">Doctor</span>
+                  <span className="room-loader-mobile-card-value">{row.doctor}</span>
+                </div>
+                <div className="room-loader-mobile-card-row">
+                  <span className="room-loader-mobile-card-label">Client</span>
+                  <span className="room-loader-mobile-card-value">{row.clientName}</span>
+                </div>
+                <div className="room-loader-mobile-card-row">
+                  <span className="room-loader-mobile-card-label">Pets</span>
+                  <span className="room-loader-mobile-card-value">{row.pets.join(', ')}</span>
+                </div>
+                <div className="room-loader-mobile-card-badges">
+                  <span className="room-loader-status-badge" style={{ backgroundColor: sentBg }}>
+                    {row.sentStatus.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
+                  </span>
+                </div>
+                {row.sentStatus === 'completed' && (
+                  <button
+                    type="button"
+                    onClick={(e) => handleDownloadPdf(row.roomLoaderId, e)}
+                    disabled={downloadingPdfRoomLoaderId === row.roomLoaderId}
+                    className="room-loader-mobile-download-pdf"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      minHeight: '44px',
+                      marginTop: '12px',
+                      padding: '12px 20px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      backgroundColor: '#1a1a1a',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: downloadingPdfRoomLoaderId === row.roomLoaderId ? 'wait' : 'pointer',
+                    }}
+                  >
+                    {downloadingPdfRoomLoaderId === row.roomLoaderId ? 'Downloading…' : 'Download PDF'}
+                  </button>
+                )}
+              </button>
+            );
+          })
+        )}
+      </div>
+
       {/* Room Loader Details Modal */}
       {isModalOpen && selectedRoomLoader && (
         <div
+          className="room-loader-modal-overlay"
           role="dialog"
           aria-modal="true"
           onClick={handleCloseModal}
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0,0,0,0.45)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-            padding: 16,
-          }}
         >
           <div
-            className="card"
+            className="room-loader-modal card"
             onClick={(e) => e.stopPropagation()}
-            style={{
-              width: 'min(1010px, 95vw)',
-              maxHeight: '90vh',
-              overflow: 'auto',
-              padding: '24px',
-              borderRadius: '12px',
-              background: '#fff',
-            }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+            <div className="room-loader-modal-header">
               <h2 style={{ margin: 0 }}>Room Loader Details</h2>
               <button
+                type="button"
+                className="room-loader-modal-close"
                 onClick={handleCloseModal}
                 style={{
                   background: 'none',
@@ -2118,12 +2259,6 @@ export default function RoomLoaderPage() {
                   fontSize: '24px',
                   cursor: 'pointer',
                   color: '#666',
-                  padding: '0',
-                  width: '32px',
-                  height: '32px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
                 }}
                 aria-label="Close modal"
               >
@@ -2146,6 +2281,23 @@ export default function RoomLoaderPage() {
                   : {}),
               }}
             >
+          {hasClientWithNoEmail && (
+            <div
+              style={{
+                marginBottom: '20px',
+                padding: '14px 18px',
+                backgroundColor: '#f8d7da',
+                border: '1px solid #f5c6cb',
+                borderRadius: '6px',
+                color: '#721c24',
+                fontSize: '16px',
+                fontWeight: 600,
+              }}
+              role="alert"
+            >
+              No email address on file for the client. Please add an email in the practice system before sending to client.
+            </div>
+          )}
           {/* Pet-by-Pet Information */}
           {petsWithAppointments.length === 0 ? (
             <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
@@ -2537,11 +2689,18 @@ export default function RoomLoaderPage() {
                                     <strong>Type:</strong> {reminderWithPrice.reminder.reminderType}
                                   </div>
                                 )}
-                                {reminderWithPrice.reminder.dueDate && (
-                                  <div style={{ fontSize: '14px', color: '#666', marginBottom: '5px' }}>
-                                    <strong>Due Date:</strong> {formatDate(reminderWithPrice.reminder.dueDate)}
-                                  </div>
-                                )}
+                                {reminderWithPrice.reminder.dueDate && (() => {
+                                  const dueDt = DateTime.fromISO(reminderWithPrice.reminder.dueDate);
+                                  const isPastDue = dueDt.isValid && dueDt < DateTime.now().startOf('day');
+                                  return (
+                                    <div style={{ fontSize: '14px', color: '#666', marginBottom: '5px' }}>
+                                      <strong>Due Date:</strong>{' '}
+                                      <span style={isPastDue ? { color: '#dc3545', fontWeight: 700 } : undefined}>
+                                        {formatDate(reminderWithPrice.reminder.dueDate)}
+                                      </span>
+                                    </div>
+                                  );
+                                })()}
                                 {feedbackStatus === 'incorrect' && correction?.selectedItem ? (
                                   <div style={{ fontSize: '14px', color: '#666', marginBottom: '5px' }}>
                                     <strong>Corrected to:</strong> {correction.selectedItem.name}
@@ -3864,7 +4023,7 @@ export default function RoomLoaderPage() {
                   This form has been submitted by the client. View only — edits cannot be saved and the form cannot be re-sent.
                 </div>
               )}
-              {(Object.keys(sendValidationErrors).length > 0 || reminderValidationErrorIds.size > 0 || tripFeeRequiredError) && (
+              {(Object.keys(sendValidationErrors).length > 0 || reminderValidationErrorIds.size > 0 || tripFeeRequiredError || (duplicateItemsError && duplicateItemsError.length > 0)) && (
                 <div
                   style={{
                     marginBottom: '16px',
@@ -3878,18 +4037,23 @@ export default function RoomLoaderPage() {
                   }}
                 >
                   {Object.keys(sendValidationErrors).length > 0 && (
-                    <div style={{ marginBottom: reminderValidationErrorIds.size > 0 || tripFeeRequiredError ? '8px' : 0 }}>
+                    <div style={{ marginBottom: reminderValidationErrorIds.size > 0 || tripFeeRequiredError || (duplicateItemsError && duplicateItemsError.length > 0) ? '8px' : 0 }}>
                       Please complete all required fields before sending: Appointment reason, Mobility, and Lab work are required for each pet.
                     </div>
                   )}
                   {reminderValidationErrorIds.size > 0 && (
-                    <div style={{ marginBottom: tripFeeRequiredError ? '8px' : 0 }}>
+                    <div style={{ marginBottom: tripFeeRequiredError || (duplicateItemsError && duplicateItemsError.length > 0) ? '8px' : 0 }}>
                       Please confirm each reminder match (or remove it) before sending. Every reminder needs a matched item and &quot;Confirm match&quot; clicked, or the reminder removed.
                     </div>
                   )}
                   {tripFeeRequiredError && (
-                    <div>
+                    <div style={{ marginBottom: duplicateItemsError && duplicateItemsError.length > 0 ? '8px' : 0 }}>
                       At least one pet must have a reminder or added item containing &quot;Trip Fee&quot; before sending to client.
+                    </div>
+                  )}
+                  {duplicateItemsError && duplicateItemsError.length > 0 && (
+                    <div>
+                      Duplicate items are not allowed. Remove the duplicate before sending: {duplicateItemsError.map(({ petName, itemName }) => `${itemName} (${petName})`).join('; ')}.
                     </div>
                   )}
                 </div>
@@ -3925,26 +4089,26 @@ export default function RoomLoaderPage() {
               </button>
               <button
                 onClick={handleSendToClient}
-                disabled={sendingToClient || formSubmittedByClient}
+                disabled={sendingToClient || formSubmittedByClient || hasClientWithNoEmail}
                 style={{
                   padding: '12px 24px',
                   fontSize: '16px',
                   fontWeight: 600,
-                  backgroundColor: sendingToClient || formSubmittedByClient ? '#6c757d' : '#007bff',
+                  backgroundColor: sendingToClient || formSubmittedByClient || hasClientWithNoEmail ? '#6c757d' : '#007bff',
                   color: 'white',
                   border: 'none',
                   borderRadius: '6px',
-                  cursor: sendingToClient || formSubmittedByClient ? 'not-allowed' : 'pointer',
+                  cursor: sendingToClient || formSubmittedByClient || hasClientWithNoEmail ? 'not-allowed' : 'pointer',
                   transition: 'background-color 0.2s ease-in-out',
                   boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
                 }}
                 onMouseEnter={(e) => {
-                  if (!sendingToClient && !formSubmittedByClient) {
+                  if (!sendingToClient && !formSubmittedByClient && !hasClientWithNoEmail) {
                     e.currentTarget.style.backgroundColor = '#0056b3';
                   }
                 }}
                 onMouseLeave={(e) => {
-                  if (!sendingToClient && !formSubmittedByClient) {
+                  if (!sendingToClient && !formSubmittedByClient && !hasClientWithNoEmail) {
                     e.currentTarget.style.backgroundColor = '#007bff';
                   }
                 }}
@@ -3953,9 +4117,11 @@ export default function RoomLoaderPage() {
                   ? 'Sending...'
                   : formSubmittedByClient
                     ? 'Submitted by client'
-                    : selectedRoomLoader.sentStatus === 'not_sent'
-                      ? 'Send to Client'
-                      : 'Re-send to Client'}
+                    : hasClientWithNoEmail
+                      ? 'Send to Client (add client email first)'
+                      : selectedRoomLoader.sentStatus === 'not_sent'
+                        ? 'Send to Client'
+                        : 'Re-send to Client'}
               </button>
             </div>
             </div>
@@ -3968,30 +4134,18 @@ export default function RoomLoaderPage() {
       {/* Are you sure? modal for Send to Client / Save for Later */}
       {confirmAction && (
         <div
-          style={{
-            position: 'fixed',
-            left: 0,
-            top: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10000,
-          }}
+          className="room-loader-modal-overlay"
+          style={{ zIndex: 10000 }}
           onClick={() => {
             setConfirmAction(null);
             setSendWarningReasons([]);
           }}
         >
           <div
+            className="room-loader-confirm-modal"
             style={{
               backgroundColor: 'white',
-              padding: '30px',
               borderRadius: '8px',
-              maxWidth: '440px',
-              width: '90%',
               boxShadow: '0 4px 6px rgba(0, 0, 0, 0.3)',
             }}
             onClick={(e) => e.stopPropagation()}
