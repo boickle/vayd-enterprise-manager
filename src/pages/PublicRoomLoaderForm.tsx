@@ -376,11 +376,12 @@ function hadLymeInLastYear(history: TreatmentWithItems[]): boolean {
   return false;
 }
 
-/** True if patient received Lyme vaccine in the last 15 months. Used for optional vaccine display (show if >15 months or never). */
+/** True if patient received Lyme vaccine in the last 15 months (declined items do not count). Used for optional vaccine display (show if >15 months or never). */
 function hadLymeInLast15Months(history: TreatmentWithItems[]): boolean {
   const cutoff = DateTime.now().minus({ months: 15 });
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
+      if (item.isDeclined) continue;
       const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
       const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
       if (!isLymeItem(name, code)) continue;
@@ -453,11 +454,12 @@ function hadLeptoInLastYear(history: TreatmentWithItems[]): boolean {
   return false;
 }
 
-/** True if patient received Lepto vaccine in the last 15 months. Used for optional vaccine display (show if >15 months or never). */
+/** True if patient received Lepto vaccine in the last 15 months (declined items do not count). Used for optional vaccine display (show if >15 months or never). */
 function hadLeptoInLast15Months(history: TreatmentWithItems[]): boolean {
   const cutoff = DateTime.now().minus({ months: 15 });
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
+      if (item.isDeclined) continue;
       const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
       const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
       if (!isLeptoItem(name, code)) continue;
@@ -518,11 +520,12 @@ function hadBordetellaInLastYear(history: TreatmentWithItems[]): boolean {
   return false;
 }
 
-/** True if patient received Bordetella vaccine in the last 15 months. Used for optional vaccine display (show if >15 months or never). */
+/** True if patient received Bordetella vaccine in the last 15 months (declined items do not count). Used for optional vaccine display (show if >15 months or never). */
 function hadBordetellaInLast15Months(history: TreatmentWithItems[]): boolean {
   const cutoff = DateTime.now().minus({ months: 15 });
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
+      if (item.isDeclined) continue;
       const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
       const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
       if (!isBordetellaItem(name, code)) continue;
