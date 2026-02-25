@@ -549,11 +549,20 @@ function hasBordetellaInLineItems(patient: any): boolean {
   return false;
 }
 
-/** True if name or code indicates FeLV (Feline Leukemia) vaccine. */
-function isFeLVItem(name?: string | null, code?: string | null): boolean {
-  const n = (name ?? '').toLowerCase();
-  const c = (code ?? '').toLowerCase();
-  return n.includes('felv') || n.includes('fe lv') || n.includes('feline leukemia') || c.includes('felv');
+/** FeLV vaccine codes (exact match only; no name matching). */
+const FELV_CODES = new Set([
+  'FELV1',
+  'FELV2',
+  'FELVINIT',
+  'CVB-VXCLINICFELV1',
+  'CVB-VXCLINICFELV2',
+  'CVB-VXCLINICFELVINT',
+]);
+
+/** True if code is one of the known FeLV (Feline Leukemia) vaccine codes. Name is not used. */
+function isFeLVItem(_name?: string | null, code?: string | null): boolean {
+  const c = (code ?? '').trim().toUpperCase();
+  return c.length > 0 && FELV_CODES.has(c);
 }
 
 /** True if patient ever declined an FeLV vaccine. */
@@ -598,6 +607,21 @@ function everHadFeLV(history: TreatmentWithItems[]): boolean {
 /** True if patient received FeLV vaccine in the last 15 months. Used for optional vaccine display (show if >15 months or never). */
 function hadFeLVInLast15Months(history: TreatmentWithItems[]): boolean {
   const cutoff = DateTime.now().minus({ months: 15 });
+  for (const tx of history) {
+    for (const item of tx.treatmentItems || []) {
+      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
+      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!isFeLVItem(name, code)) continue;
+      const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
+      if (serviceDate && serviceDate >= cutoff) return true;
+    }
+  }
+  return false;
+}
+
+/** True if patient received FeLV vaccine in the last 24 months. FeLV uses 24-month window (other vaccines use 15). */
+function hadFeLVInLast24Months(history: TreatmentWithItems[]): boolean {
+  const cutoff = DateTime.now().minus({ months: 24 });
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
       const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
@@ -1789,8 +1813,8 @@ export default function PublicRoomLoaderForm() {
       const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
       const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
       const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-      // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due)
-      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
+      // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due); FeLV uses 24-month window
+      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
       const questions: Qa[] = [];
       const add = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
@@ -1958,8 +1982,8 @@ export default function PublicRoomLoaderForm() {
         const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
         const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
         const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-        // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due)
-        const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
+        // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due); FeLV uses 24-month window
+        const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
 
         if (suffix === 'appointmentReason' || suffix === 'generalWellbeing') allowedFormData[key] = value;
         else if (suffix === 'mobilityDetails' && (patientsData[petIdx] as any)?.questions?.mobility === true) allowedFormData[key] = value;
@@ -2072,8 +2096,8 @@ export default function PublicRoomLoaderForm() {
       const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
       const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
       const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-      // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due)
-      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
+      // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due); FeLV uses 24-month window
+      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
 
       if (showCrLymeBooster && formData[`${petKey}_crLymeBooster`] !== 'yes' && formData[`${petKey}_crLymeBooster`] !== 'no' && formData[`${petKey}_crLymeBooster`] !== 'unsure') {
         errors[`${petKey}_crLymeBooster`] = `Please answer the crLyme booster question for ${petName}.`;
@@ -2325,8 +2349,8 @@ export default function PublicRoomLoaderForm() {
     const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
     const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
     const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-    // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due)
-    const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
+    // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due); FeLV uses 24-month window
+    const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
 
     console.log('[RoomLoader] validateRequiredForCarePlanPet', {
       petIdx,
@@ -3563,7 +3587,7 @@ export default function PublicRoomLoaderForm() {
             const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
             const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
             // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due)
-            const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
+            const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
             const hasAnyOptionalContent = showCrLymeBooster || showLepto || showBordetella || showLyme || showRabiesCats || showFeLV;
 
             if (!hasAnyOptionalContent) return null;
@@ -3863,12 +3887,12 @@ export default function PublicRoomLoaderForm() {
                   const dob = patient?.dob ?? patient?.patient?.dob ?? appointments[petIdx]?.patient?.dob;
                   const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
                   const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
-                  // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due)
+                  // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due); FeLV uses 24-month window
                   const showFeLV =
                     isCatPatient &&
                     patientId != null &&
                     !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') &&
-                    ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast15Months(history))));
+                    ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
                   if (!showFeLV) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
