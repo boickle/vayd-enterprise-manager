@@ -38,8 +38,28 @@ function getLineItemNames(patient: any): string {
   return parts.join(' ');
 }
 
+/** Client-visible label for reminders (e.g. "Stool Parasite Check") so we don't treat backend item name "Early Detection Panel..." as "on the list" when the client only sees fecal/stool. */
+function getDisplayLineItemNames(patient: any): string {
+  const parts: string[] = [];
+  (patient?.reminders ?? []).forEach((r: any) => {
+    const n = r?.reminderText ?? r?.description ?? r?.item?.name ?? r?.item?.code;
+    if (n) parts.push(String(n).toLowerCase());
+  });
+  (patient?.addedItems ?? []).forEach((item: any) => {
+    const n = item?.name ?? item?.code;
+    if (n) parts.push(String(n).toLowerCase());
+  });
+  return parts.join(' ');
+}
+
 function listContains(patient: any, ...substrings: string[]): boolean {
   const text = getLineItemNames(patient);
+  return substrings.some((s) => text.includes(s.toLowerCase()));
+}
+
+/** Like listContains but uses client-visible labels (reminderText first) so e.g. "Stool Parasite Check" doesn't count as "early detection". */
+function listContainsDisplay(patient: any, ...substrings: string[]): boolean {
+  const text = getDisplayLineItemNames(patient);
   return substrings.some((s) => text.includes(s.toLowerCase()));
 }
 
@@ -2508,7 +2528,8 @@ export default function PublicRoomLoaderForm() {
       const age = dob != null ? getAgeYears({ dob }) : null;
       const standard = isWellnessVisit(patient);
       const listHasSenior = listContains(patient, 'senior screen');
-      const listHasYoungOrEarly = listContains(patient, 'young wellness', 'early detection');
+      // Use display labels so e.g. reminder "Stool Parasite Check" (item = Early Detection Panel) doesn't suppress recommending the panel
+      const listHasYoungOrEarly = listContainsDisplay(patient, 'young wellness', 'early detection');
       const hadSenior8Mo = hadInLast8Months(history, 'senior screen');
       const hadYoungEarly8Mo = hadInLast8Months(history, 'young wellness', 'early detection');
       const listHasFIVOrFecal = listContains(patient, 'fiv', 'fecal');
