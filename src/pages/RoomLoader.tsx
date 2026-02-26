@@ -76,6 +76,18 @@ function parseArrivalWindowDisplay(
   return { start: startIso, end: endIso };
 }
 
+/** Format arrival window for display: when start and end are the same, show just the time; otherwise "start – end". */
+function formatArrivalWindowDisplay(
+  startLocal: string | null | undefined,
+  endLocal: string | null | undefined
+): string | undefined {
+  if (startLocal == null || endLocal == null) return undefined;
+  const s = String(startLocal).trim();
+  const e = String(endLocal).trim();
+  if (s === e) return s;
+  return `${s} - ${e}`;
+}
+
 /** True if searchable item name or code contains the substring (case-insensitive). */
 function itemContains(item: SearchableItem, substring: string): boolean {
   const text = `${item?.name ?? ''} ${item?.code ?? ''}`.toLowerCase();
@@ -257,8 +269,9 @@ export default function RoomLoaderPage() {
           data?.appointments?.forEach((appt: any) => {
             const patientId = appt.patient?.id;
             const aw = appt.arrivalWindow;
-            if (patientId != null && aw?.windowStartLocal != null && aw?.windowEndLocal != null && merged[patientId] == null) {
-              merged[patientId] = `${aw.windowStartLocal} - ${aw.windowEndLocal}`;
+            if (patientId != null && merged[patientId] == null) {
+              const disp = formatArrivalWindowDisplay(aw?.windowStartLocal, aw?.windowEndLocal);
+              if (disp != null) merged[patientId] = disp;
             }
           });
           setArrivalWindows(merged);
@@ -267,8 +280,9 @@ export default function RoomLoaderPage() {
           data.appointments.forEach((appt: any) => {
             const patientId = appt.patient?.id;
             const aw = appt.arrivalWindow;
-            if (patientId != null && aw?.windowStartLocal != null && aw?.windowEndLocal != null) {
-              initial[patientId] = `${aw.windowStartLocal} - ${aw.windowEndLocal}`;
+            if (patientId != null) {
+              const disp = formatArrivalWindowDisplay(aw?.windowStartLocal, aw?.windowEndLocal);
+              if (disp != null) initial[patientId] = disp;
             }
           });
           setArrivalWindows(initial);
@@ -343,7 +357,9 @@ export default function RoomLoaderPage() {
               const start = DateTime.fromISO(sp.arrivalWindow.start);
               const end = DateTime.fromISO(sp.arrivalWindow.end);
               if (start.isValid && end.isValid) {
-                windows[patientId] = `${start.toFormat('h:mma')} - ${end.toFormat('h:mma')}`;
+                const startStr = start.toFormat('h:mma');
+                const endStr = end.toFormat('h:mma');
+                windows[patientId] = startStr === endStr ? startStr : `${startStr} - ${endStr}`;
               }
             }
             if ((added[patientId] == null || added[patientId].length === 0) && sp.addedItems?.length) {
@@ -376,8 +392,9 @@ export default function RoomLoaderPage() {
           data?.appointments?.forEach((appt: any) => {
             const patientId = appt.patient?.id;
             const aw = appt.arrivalWindow;
-            if (patientId != null && windows[patientId] == null && aw?.windowStartLocal != null && aw?.windowEndLocal != null) {
-              windows[patientId] = `${aw.windowStartLocal} - ${aw.windowEndLocal}`;
+            if (patientId != null && windows[patientId] == null) {
+              const disp = formatArrivalWindowDisplay(aw?.windowStartLocal, aw?.windowEndLocal);
+              if (disp != null) windows[patientId] = disp;
             }
           });
 
@@ -415,7 +432,9 @@ export default function RoomLoaderPage() {
               const start = DateTime.fromISO(sp.arrivalWindow.start);
               const end = DateTime.fromISO(sp.arrivalWindow.end);
               if (start.isValid && end.isValid) {
-                arrivalFromSent[patientId] = `${start.toFormat('h:mma')} - ${end.toFormat('h:mma')}`;
+                const startStr = start.toFormat('h:mma');
+                const endStr = end.toFormat('h:mma');
+                arrivalFromSent[patientId] = startStr === endStr ? startStr : `${startStr} - ${endStr}`;
               }
             }
             if (sp.appointmentReason != null) reasonsFromSent[patientId] = sp.appointmentReason;
@@ -514,8 +533,9 @@ export default function RoomLoaderPage() {
           data.appointments.forEach((appt: any) => {
             const patientId = appt.patient?.id;
             const aw = appt.arrivalWindow;
-            if (patientId != null && aw?.windowStartLocal != null && aw?.windowEndLocal != null) {
-              initial[patientId] = `${aw.windowStartLocal} - ${aw.windowEndLocal}`;
+            if (patientId != null) {
+              const disp = formatArrivalWindowDisplay(aw?.windowStartLocal, aw?.windowEndLocal);
+              if (disp != null) initial[patientId] = disp;
             }
           });
           setArrivalWindows(initial);
@@ -525,8 +545,9 @@ export default function RoomLoaderPage() {
             data?.appointments?.forEach((appt: any) => {
               const patientId = appt.patient?.id;
               const aw = appt.arrivalWindow;
-              if (patientId != null && aw?.windowStartLocal != null && aw?.windowEndLocal != null && next[patientId] == null) {
-                next[patientId] = `${aw.windowStartLocal} - ${aw.windowEndLocal}`;
+              if (patientId != null && next[patientId] == null) {
+                const disp = formatArrivalWindowDisplay(aw?.windowStartLocal, aw?.windowEndLocal);
+                if (disp != null) next[patientId] = disp;
               }
             });
             return next;
@@ -2479,14 +2500,14 @@ export default function RoomLoaderPage() {
                   
                   // Default: use appointment's arrivalWindow from API when present, else ±1 hour around start
                   const aw = firstAppt.arrivalWindow;
-                  const defaultWindow = aw?.windowStartLocal != null && aw?.windowEndLocal != null
-                    ? `${aw.windowStartLocal} - ${aw.windowEndLocal}`
-                    : (() => {
-                        const startTime = DateTime.fromISO(firstAppt.appointmentStart);
-                        const windowStart = startTime.minus({ hours: 1 });
-                        const windowEnd = startTime.plus({ hours: 1 });
-                        return `${windowStart.toFormat('h:mma')} - ${windowEnd.toFormat('h:mma')}`;
-                      })();
+                  const defaultWindow = (() => {
+                    const fromApi = formatArrivalWindowDisplay(aw?.windowStartLocal, aw?.windowEndLocal);
+                    if (fromApi != null) return fromApi;
+                    const startTime = DateTime.fromISO(firstAppt.appointmentStart);
+                    const windowStart = startTime.minus({ hours: 1 });
+                    const windowEnd = startTime.plus({ hours: 1 });
+                    return `${windowStart.toFormat('h:mma')} - ${windowEnd.toFormat('h:mma')}`;
+                  })();
                   const arrivalWindowValue = arrivalWindows[patient.id] ?? defaultWindow;
                   
                   return (

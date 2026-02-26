@@ -3066,8 +3066,13 @@ export default function PublicRoomLoaderForm() {
 
   const petNames = patients.map((p: any) => p.patientName || 'your pet').join(' and ');
   const appointmentDate = firstAppt?.appointmentStart ? formatDate(firstAppt.appointmentStart) : '____';
-  const arrivalWindowStart = firstPatient?.arrivalWindow?.start ? formatTime(firstPatient.arrivalWindow.start) : '____';
-  const arrivalWindowEnd = firstPatient?.arrivalWindow?.end ? formatTime(firstPatient.arrivalWindow.end) : '____';
+  // Support both { start, end } and { windowStartIso, windowEndIso } / { windowStartLocal, windowEndLocal }
+  const aw = firstPatient?.arrivalWindow;
+  const arrivalStartIso = aw?.start ?? aw?.windowStartIso;
+  const arrivalEndIso = aw?.end ?? aw?.windowEndIso;
+  const arrivalWindowStart = arrivalStartIso ? formatTime(arrivalStartIso) : (aw?.windowStartLocal ?? '____');
+  const arrivalWindowEnd = arrivalEndIso ? formatTime(arrivalEndIso) : (aw?.windowEndLocal ?? '____');
+  const arrivalWindowSame = arrivalWindowStart !== '____' && arrivalWindowStart === arrivalWindowEnd;
   const appointmentReason = firstPatient?.appointmentReason || '';
 
   // Get recommended items (reminders + added items) — all pets combined (for any legacy use)
@@ -3205,7 +3210,7 @@ export default function PublicRoomLoaderForm() {
               {doctorName} is looking forward to {petNames}'s appointment on {appointmentDate}.
             </p>
             <p style={{ fontSize: '16px', lineHeight: '1.6', color: '#555', marginBottom: '8px' }}>
-              Window of arrival: {arrivalWindowStart} – {arrivalWindowEnd}
+              Window of arrival: {arrivalWindowSame ? arrivalWindowStart : `${arrivalWindowStart} – ${arrivalWindowEnd}`}
             </p>
             <p style={{ fontSize: '16px', lineHeight: '1.6', color: '#555', marginBottom: '0' }}>
               To best prepare for your appointment, please answer the questions below. We'll give you an estimate of costs after you answer some questions.
