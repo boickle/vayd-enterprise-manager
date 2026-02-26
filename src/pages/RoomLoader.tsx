@@ -33,7 +33,8 @@ function reminderContains(r: ReminderWithPrice, ...substrings: string[]): boolea
 }
 
 /**
- * Parse arrival window display string (e.g. "9:00AM - 10:00AM") into ISO start/end using the appointment date.
+ * Parse arrival window display string into ISO start/end using the appointment date.
+ * Accepts "9:00 AM - 10:00 AM" (range) or "9:30 AM" (single time = same start and end).
  * Returns null if parsing fails.
  */
 function parseArrivalWindowDisplay(
@@ -42,8 +43,7 @@ function parseArrivalWindowDisplay(
 ): { start: string; end: string } | null {
   const trimmed = display?.trim();
   if (!trimmed) return null;
-  const parts = trimmed.split(/\s*-\s*/);
-  if (parts.length < 2) return null;
+  const parts = trimmed.split(/\s*-\s*/).map((p) => p.trim()).filter(Boolean);
   const base = DateTime.fromISO(appointmentStartIso);
   if (!base.isValid) return null;
   const timeFormats = ['h:mma', 'h:mm a', 'ha', 'H:mm', 'h:mm'];
@@ -56,7 +56,7 @@ function parseArrivalWindowDisplay(
     return null;
   };
   const startTime = parseTime(parts[0]);
-  const endTime = parseTime(parts[1]);
+  const endTime = parts.length >= 2 ? parseTime(parts[1]) : startTime;
   if (!startTime?.isValid || !endTime?.isValid) return null;
   const startDt = base.set({
     hour: startTime.hour,
@@ -1139,7 +1139,7 @@ export default function RoomLoaderPage() {
   // Loading state for saving form
   const [savingForm, setSavingForm] = useState(false);
   // Inline validation errors when Send to Client fails (per patient: reason, mobility, labWork)
-  const [sendValidationErrors, setSendValidationErrors] = useState<Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean }>>({});
+  const [sendValidationErrors, setSendValidationErrors] = useState<Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean; arrivalWindow?: boolean }>>({});
   // Reminder IDs that still need "Confirm match" (or match + confirm, or remove) before Send to Client
   const [reminderValidationErrorIds, setReminderValidationErrorIds] = useState<Set<number>>(new Set());
   // True when Send to Client is blocked: at least one pet must have a reminder containing "Trip Fee"
@@ -1604,11 +1604,11 @@ export default function RoomLoaderPage() {
     setDuplicateItemsError(null);
 
     // Validate required fields before sending; build inline error state per patient
-    const errors: Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean }> = {};
+    const errors: Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean; arrivalWindow?: boolean }> = {};
     let hasErrors = false;
     petsWithAppointments.forEach((item) => {
       const pid = item.patient.id;
-      const patientErrors: { reason?: boolean; mobility?: boolean; labWork?: boolean } = {};
+      const patientErrors: { reason?: boolean; mobility?: boolean; labWork?: boolean; arrivalWindow?: boolean } = {};
       if (!(appointmentReasons[pid] || '').trim()) {
         patientErrors.reason = true;
         hasErrors = true;
@@ -1621,6 +1621,18 @@ export default function RoomLoaderPage() {
       if (answers.labWork === null) {
         patientErrors.labWork = true;
         hasErrors = true;
+      }
+      const firstAppt = item.appointments[0];
+      const isFixed = firstAppt && (firstAppt.appointmentType?.name?.toUpperCase() || firstAppt.appointmentType?.prettyName?.toUpperCase() || '') === 'FIXED';
+      if (!isFixed && firstAppt) {
+        const editedDisplay = (arrivalWindows[pid] ?? '').trim();
+        if (editedDisplay) {
+          const parsed = parseArrivalWindowDisplay(editedDisplay, firstAppt.appointmentStart);
+          if (!parsed) {
+            patientErrors.arrivalWindow = true;
+            hasErrors = true;
+          }
+        }
       }
       if (Object.keys(patientErrors).length > 0) {
         errors[pid] = patientErrors;
@@ -2521,19 +2533,33 @@ export default function RoomLoaderPage() {
                               ...prev,
                               [patient.id]: e.target.value,
                             }));
+                            setSendValidationErrors((prev) => {
+                              const next = { ...prev };
+                              if (next[patient.id]) {
+                                const { arrivalWindow, ...rest } = next[patient.id] as { arrivalWindow?: boolean; reason?: boolean; mobility?: boolean; labWork?: boolean };
+                                if (Object.keys(rest).length === 0) delete next[patient.id];
+                                else next[patient.id] = rest;
+                              }
+                              return next;
+                            });
                           }}
-                          placeholder="Enter arrival window..."
+                          placeholder="e.g. 9:30 AM or 9:00 AM - 10:00 AM"
                           style={{
                             width: '100%',
                             minHeight: '60px',
                             padding: '12px',
                             fontSize: '14px',
-                            border: '1px solid #ced4da',
+                            border: sendValidationErrors[patient.id]?.arrivalWindow ? '1px solid #dc3545' : '1px solid #ced4da',
                             borderRadius: '4px',
                             fontFamily: 'inherit',
                             resize: 'vertical',
                           }}
                         />
+                        {sendValidationErrors[patient.id]?.arrivalWindow && (
+                          <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#dc3545' }}>
+                            Enter a valid time (e.g. 9:30 AM) or range (e.g. 9:00 AM - 10:00 AM).
+                          </p>
+                        )}
                       </div>
                     </div>
                   );
