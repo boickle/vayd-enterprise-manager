@@ -33,7 +33,8 @@ function reminderContains(r: ReminderWithPrice, ...substrings: string[]): boolea
 }
 
 /**
- * Parse arrival window display string (e.g. "9:00AM - 10:00AM") into ISO start/end using the appointment date.
+ * Parse arrival window display string into ISO start/end using the appointment date.
+ * Accepts "9:00 AM - 10:00 AM" (range) or "9:30 AM" (single time = same start and end).
  * Returns null if parsing fails.
  */
 function parseArrivalWindowDisplay(
@@ -42,8 +43,7 @@ function parseArrivalWindowDisplay(
 ): { start: string; end: string } | null {
   const trimmed = display?.trim();
   if (!trimmed) return null;
-  const parts = trimmed.split(/\s*-\s*/);
-  if (parts.length < 2) return null;
+  const parts = trimmed.split(/\s*-\s*/).map((p) => p.trim()).filter(Boolean);
   const base = DateTime.fromISO(appointmentStartIso);
   if (!base.isValid) return null;
   const timeFormats = ['h:mma', 'h:mm a', 'ha', 'H:mm', 'h:mm'];
@@ -56,7 +56,7 @@ function parseArrivalWindowDisplay(
     return null;
   };
   const startTime = parseTime(parts[0]);
-  const endTime = parseTime(parts[1]);
+  const endTime = parts.length >= 2 ? parseTime(parts[1]) : startTime;
   if (!startTime?.isValid || !endTime?.isValid) return null;
   const startDt = base.set({
     hour: startTime.hour,
@@ -74,6 +74,18 @@ function parseArrivalWindowDisplay(
   const endIso = endDt.toISO();
   if (!startIso || !endIso) return null;
   return { start: startIso, end: endIso };
+}
+
+/** Format arrival window for display: when start and end are the same, show just the time; otherwise "start – end". */
+function formatArrivalWindowDisplay(
+  startLocal: string | null | undefined,
+  endLocal: string | null | undefined
+): string | undefined {
+  if (startLocal == null || endLocal == null) return undefined;
+  const s = String(startLocal).trim();
+  const e = String(endLocal).trim();
+  if (s === e) return s;
+  return `${s} - ${e}`;
 }
 
 /** True if searchable item name or code contains the substring (case-insensitive). */
@@ -257,8 +269,9 @@ export default function RoomLoaderPage() {
           data?.appointments?.forEach((appt: any) => {
             const patientId = appt.patient?.id;
             const aw = appt.arrivalWindow;
-            if (patientId != null && aw?.windowStartLocal != null && aw?.windowEndLocal != null && merged[patientId] == null) {
-              merged[patientId] = `${aw.windowStartLocal} - ${aw.windowEndLocal}`;
+            if (patientId != null && merged[patientId] == null) {
+              const disp = formatArrivalWindowDisplay(aw?.windowStartLocal, aw?.windowEndLocal);
+              if (disp != null) merged[patientId] = disp;
             }
           });
           setArrivalWindows(merged);
@@ -267,8 +280,9 @@ export default function RoomLoaderPage() {
           data.appointments.forEach((appt: any) => {
             const patientId = appt.patient?.id;
             const aw = appt.arrivalWindow;
-            if (patientId != null && aw?.windowStartLocal != null && aw?.windowEndLocal != null) {
-              initial[patientId] = `${aw.windowStartLocal} - ${aw.windowEndLocal}`;
+            if (patientId != null) {
+              const disp = formatArrivalWindowDisplay(aw?.windowStartLocal, aw?.windowEndLocal);
+              if (disp != null) initial[patientId] = disp;
             }
           });
           setArrivalWindows(initial);
@@ -343,7 +357,9 @@ export default function RoomLoaderPage() {
               const start = DateTime.fromISO(sp.arrivalWindow.start);
               const end = DateTime.fromISO(sp.arrivalWindow.end);
               if (start.isValid && end.isValid) {
-                windows[patientId] = `${start.toFormat('h:mma')} - ${end.toFormat('h:mma')}`;
+                const startStr = start.toFormat('h:mma');
+                const endStr = end.toFormat('h:mma');
+                windows[patientId] = startStr === endStr ? startStr : `${startStr} - ${endStr}`;
               }
             }
             if ((added[patientId] == null || added[patientId].length === 0) && sp.addedItems?.length) {
@@ -376,8 +392,9 @@ export default function RoomLoaderPage() {
           data?.appointments?.forEach((appt: any) => {
             const patientId = appt.patient?.id;
             const aw = appt.arrivalWindow;
-            if (patientId != null && windows[patientId] == null && aw?.windowStartLocal != null && aw?.windowEndLocal != null) {
-              windows[patientId] = `${aw.windowStartLocal} - ${aw.windowEndLocal}`;
+            if (patientId != null && windows[patientId] == null) {
+              const disp = formatArrivalWindowDisplay(aw?.windowStartLocal, aw?.windowEndLocal);
+              if (disp != null) windows[patientId] = disp;
             }
           });
 
@@ -415,7 +432,9 @@ export default function RoomLoaderPage() {
               const start = DateTime.fromISO(sp.arrivalWindow.start);
               const end = DateTime.fromISO(sp.arrivalWindow.end);
               if (start.isValid && end.isValid) {
-                arrivalFromSent[patientId] = `${start.toFormat('h:mma')} - ${end.toFormat('h:mma')}`;
+                const startStr = start.toFormat('h:mma');
+                const endStr = end.toFormat('h:mma');
+                arrivalFromSent[patientId] = startStr === endStr ? startStr : `${startStr} - ${endStr}`;
               }
             }
             if (sp.appointmentReason != null) reasonsFromSent[patientId] = sp.appointmentReason;
@@ -514,8 +533,9 @@ export default function RoomLoaderPage() {
           data.appointments.forEach((appt: any) => {
             const patientId = appt.patient?.id;
             const aw = appt.arrivalWindow;
-            if (patientId != null && aw?.windowStartLocal != null && aw?.windowEndLocal != null) {
-              initial[patientId] = `${aw.windowStartLocal} - ${aw.windowEndLocal}`;
+            if (patientId != null) {
+              const disp = formatArrivalWindowDisplay(aw?.windowStartLocal, aw?.windowEndLocal);
+              if (disp != null) initial[patientId] = disp;
             }
           });
           setArrivalWindows(initial);
@@ -525,8 +545,9 @@ export default function RoomLoaderPage() {
             data?.appointments?.forEach((appt: any) => {
               const patientId = appt.patient?.id;
               const aw = appt.arrivalWindow;
-              if (patientId != null && aw?.windowStartLocal != null && aw?.windowEndLocal != null && next[patientId] == null) {
-                next[patientId] = `${aw.windowStartLocal} - ${aw.windowEndLocal}`;
+              if (patientId != null && next[patientId] == null) {
+                const disp = formatArrivalWindowDisplay(aw?.windowStartLocal, aw?.windowEndLocal);
+                if (disp != null) next[patientId] = disp;
               }
             });
             return next;
@@ -1118,7 +1139,7 @@ export default function RoomLoaderPage() {
   // Loading state for saving form
   const [savingForm, setSavingForm] = useState(false);
   // Inline validation errors when Send to Client fails (per patient: reason, mobility, labWork)
-  const [sendValidationErrors, setSendValidationErrors] = useState<Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean }>>({});
+  const [sendValidationErrors, setSendValidationErrors] = useState<Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean; arrivalWindow?: boolean }>>({});
   // Reminder IDs that still need "Confirm match" (or match + confirm, or remove) before Send to Client
   const [reminderValidationErrorIds, setReminderValidationErrorIds] = useState<Set<number>>(new Set());
   // True when Send to Client is blocked: at least one pet must have a reminder containing "Trip Fee"
@@ -1215,6 +1236,11 @@ export default function RoomLoaderPage() {
             patientId: patientId ?? prev[key]?.patientId,
           },
         }));
+      }
+      // Refetch room loader so the card shows latest discount/membership pricing for the corrected item
+      if (selectedRoomLoaderId != null) {
+        const data = await getRoomLoader(selectedRoomLoaderId);
+        setSelectedRoomLoader(data);
       }
     } catch (err: any) {
       console.error('Error submitting reminder feedback:', err);
@@ -1578,11 +1604,11 @@ export default function RoomLoaderPage() {
     setDuplicateItemsError(null);
 
     // Validate required fields before sending; build inline error state per patient
-    const errors: Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean }> = {};
+    const errors: Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean; arrivalWindow?: boolean }> = {};
     let hasErrors = false;
     petsWithAppointments.forEach((item) => {
       const pid = item.patient.id;
-      const patientErrors: { reason?: boolean; mobility?: boolean; labWork?: boolean } = {};
+      const patientErrors: { reason?: boolean; mobility?: boolean; labWork?: boolean; arrivalWindow?: boolean } = {};
       if (!(appointmentReasons[pid] || '').trim()) {
         patientErrors.reason = true;
         hasErrors = true;
@@ -1595,6 +1621,18 @@ export default function RoomLoaderPage() {
       if (answers.labWork === null) {
         patientErrors.labWork = true;
         hasErrors = true;
+      }
+      const firstAppt = item.appointments[0];
+      const isFixed = firstAppt && (firstAppt.appointmentType?.name?.toUpperCase() || firstAppt.appointmentType?.prettyName?.toUpperCase() || '') === 'FIXED';
+      if (!isFixed && firstAppt) {
+        const editedDisplay = (arrivalWindows[pid] ?? '').trim();
+        if (editedDisplay) {
+          const parsed = parseArrivalWindowDisplay(editedDisplay, firstAppt.appointmentStart);
+          if (!parsed) {
+            patientErrors.arrivalWindow = true;
+            hasErrors = true;
+          }
+        }
       }
       if (Object.keys(patientErrors).length > 0) {
         errors[pid] = patientErrors;
@@ -2474,14 +2512,14 @@ export default function RoomLoaderPage() {
                   
                   // Default: use appointment's arrivalWindow from API when present, else ±1 hour around start
                   const aw = firstAppt.arrivalWindow;
-                  const defaultWindow = aw?.windowStartLocal != null && aw?.windowEndLocal != null
-                    ? `${aw.windowStartLocal} - ${aw.windowEndLocal}`
-                    : (() => {
-                        const startTime = DateTime.fromISO(firstAppt.appointmentStart);
-                        const windowStart = startTime.minus({ hours: 1 });
-                        const windowEnd = startTime.plus({ hours: 1 });
-                        return `${windowStart.toFormat('h:mma')} - ${windowEnd.toFormat('h:mma')}`;
-                      })();
+                  const defaultWindow = (() => {
+                    const fromApi = formatArrivalWindowDisplay(aw?.windowStartLocal, aw?.windowEndLocal);
+                    if (fromApi != null) return fromApi;
+                    const startTime = DateTime.fromISO(firstAppt.appointmentStart);
+                    const windowStart = startTime.minus({ hours: 1 });
+                    const windowEnd = startTime.plus({ hours: 1 });
+                    return `${windowStart.toFormat('h:mma')} - ${windowEnd.toFormat('h:mma')}`;
+                  })();
                   const arrivalWindowValue = arrivalWindows[patient.id] ?? defaultWindow;
                   
                   return (
@@ -2495,19 +2533,33 @@ export default function RoomLoaderPage() {
                               ...prev,
                               [patient.id]: e.target.value,
                             }));
+                            setSendValidationErrors((prev) => {
+                              const next = { ...prev };
+                              if (next[patient.id]) {
+                                const { arrivalWindow, ...rest } = next[patient.id] as { arrivalWindow?: boolean; reason?: boolean; mobility?: boolean; labWork?: boolean };
+                                if (Object.keys(rest).length === 0) delete next[patient.id];
+                                else next[patient.id] = rest;
+                              }
+                              return next;
+                            });
                           }}
-                          placeholder="Enter arrival window..."
+                          placeholder="e.g. 9:30 AM or 9:00 AM - 10:00 AM"
                           style={{
                             width: '100%',
                             minHeight: '60px',
                             padding: '12px',
                             fontSize: '14px',
-                            border: '1px solid #ced4da',
+                            border: sendValidationErrors[patient.id]?.arrivalWindow ? '1px solid #dc3545' : '1px solid #ced4da',
                             borderRadius: '4px',
                             fontFamily: 'inherit',
                             resize: 'vertical',
                           }}
                         />
+                        {sendValidationErrors[patient.id]?.arrivalWindow && (
+                          <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#dc3545' }}>
+                            Enter a valid time (e.g. 9:30 AM) or range (e.g. 9:00 AM - 10:00 AM).
+                          </p>
+                        )}
                       </div>
                     </div>
                   );
@@ -2956,22 +3008,23 @@ export default function RoomLoaderPage() {
                                 )}
                                 {/* Price Display — always show for all reminder states (matched, confirmed, corrected) */}
                                 {(() => {
-                                  // Backend already calculates final price with all discounts applied
-                                  // Use the price field directly, or corrected item price if available
+                                  // Prefer backend/refetched reminder pricing (includes membership/discount) when available; only use correction item price when reminder has no pricing yet
                                   let finalPrice = 0;
                                   let originalPrice = 0;
                                   const wellnessPricing = reminderWithPrice.wellnessPlanPricing;
                                   const discountPricing = reminderWithPrice.discountPricing;
                                   const hasPrice = reminderWithPrice.price != null;
+                                  const hasWellnessAdjusted = wellnessPricing?.adjustedPrice != null && typeof wellnessPricing.adjustedPrice === 'number';
                                   
-                                  // Get final price (backend-calculated with all discounts)
-                                  if (correction?.selectedItem?.price != null) {
-                                    finalPrice = Number(correction.selectedItem.price);
-                                    originalPrice = finalPrice;
+                                  // Final price: use refetched reminder's adjusted/backend price first so discount shows after correction
+                                  if (hasWellnessAdjusted) {
+                                    finalPrice = wellnessPricing!.adjustedPrice;
                                   } else if (hasPrice) {
                                     finalPrice = Number(reminderWithPrice.price);
+                                  } else if (correction?.selectedItem?.price != null) {
+                                    finalPrice = Number(correction.selectedItem.price);
+                                    originalPrice = finalPrice;
                                   } else {
-                                    // No price available
                                     if (!hasPrice && !correction?.selectedItem && !wellnessPricing) {
                                       return (
                                         <div style={{ fontSize: '14px', color: '#999', fontStyle: 'italic' }}>
@@ -2982,12 +3035,12 @@ export default function RoomLoaderPage() {
                                     finalPrice = 0;
                                   }
                                   
-                                  // Get original price for display (to show strikethrough)
+                                  // Original price for strikethrough when discount applied
                                   let baseOriginalPrice = 0;
-                                  if (correction?.selectedItem?.price != null) {
-                                    baseOriginalPrice = Number(correction.selectedItem.price);
-                                  } else if (wellnessPricing) {
+                                  if (wellnessPricing?.originalPrice != null) {
                                     baseOriginalPrice = wellnessPricing.originalPrice;
+                                  } else if (correction?.selectedItem?.price != null) {
+                                    baseOriginalPrice = Number(correction.selectedItem.price);
                                   } else if (reminderWithPrice.matchedItem?.price) {
                                     baseOriginalPrice = Number(reminderWithPrice.matchedItem.price);
                                   } else {
