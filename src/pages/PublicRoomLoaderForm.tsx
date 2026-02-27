@@ -1009,6 +1009,7 @@ export default function PublicRoomLoaderForm() {
             initialFormData[`${petKey}_felvVaccine`] = '';
             initialFormData[`${petKey}_labWork`] = '';
           });
+          initialFormData['anythingElseNotes'] = '';
           if (savedForm && typeof savedForm === 'object') {
             const {
               optedInVaccineItems: _ovi,
@@ -1935,6 +1936,21 @@ export default function PublicRoomLoaderForm() {
     if (labsSections.length > 0) {
       formAnswersPages.push({ pageNumber: labsPageNum, title: 'Labs We Recommend', sections: labsSections });
     }
+
+    // Review page: Anything else you want us to know?
+    const anythingElseNotes = (formData['anythingElseNotes'] ?? '').toString().trim();
+    formAnswersPages.push({
+      pageNumber: labsPageNum + 1,
+      title: 'Review Your Care Plan & Estimate',
+      sections: [{
+        sectionLabel: 'Additional notes',
+        questions: [{
+          question: 'Anything else you want us to know?',
+          answer: anythingElseNotes || null,
+          answerLabel: anythingElseNotes || null,
+        }],
+      }],
+    });
 
     const formAnswersForPdf = { pages: formAnswersPages };
 
@@ -5363,6 +5379,33 @@ export default function PublicRoomLoaderForm() {
                   })}
                 </ul>
               )}
+            </div>
+
+            {/* Anything else you want us to know? */}
+            <div style={{ marginBottom: '24px', padding: '16px', backgroundColor: '#f5f5f5', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+              <div style={{ fontSize: '16px', fontWeight: 600, color: '#212529', marginBottom: '8px' }}>Anything else you want us to know?</div>
+              <p style={{ fontSize: '14px', lineHeight: 1.5, color: '#555', marginBottom: '12px', marginTop: 0 }}>
+                Optional: share any other details you'd like our team to know before your visit.
+              </p>
+              <textarea
+                value={(formData['anythingElseNotes'] ?? '').toString()}
+                onChange={(e) => !readOnly && setFormData((prev) => ({ ...prev, anythingElseNotes: e.target.value }))}
+                readOnly={readOnly}
+                disabled={readOnly}
+                placeholder="e.g. special handling, parking notes, or other requests..."
+                style={{
+                  width: '100%',
+                  minHeight: '80px',
+                  padding: '10px 12px',
+                  border: '1px solid #ced4da',
+                  borderRadius: '6px',
+                  fontSize: '15px',
+                  boxSizing: 'border-box',
+                  resize: 'vertical',
+                  fontFamily: 'inherit',
+                  ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}),
+                }}
+              />
             </div>
 
             {/* Modal: pick a variation of a product (same name, different options/SKU) */}
