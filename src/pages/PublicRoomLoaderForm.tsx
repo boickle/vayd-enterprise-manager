@@ -1813,31 +1813,34 @@ export default function PublicRoomLoaderForm() {
       formAnswersPages.push({ pageNumber: 1, title: 'Time to Check-in for your Appointment', sections: page1Sections });
     }
 
-    // Care Plan pages (one section per pet): only include vaccine/outdoor questions that were shown
+    // Care Plan pages (one section per pet): only include vaccine/outdoor questions that were shown (same species logic as form UI)
     patientsData.forEach((patient: any, petIdx: number) => {
       const petKey = `pet${petIdx}`;
       const patientId = patient.patientId ?? patient.patient?.id ?? petIdx;
       const petName = patient.patientName || `Pet ${petIdx + 1}`;
       const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
+      const apptPatient = appts[petIdx]?.patient;
       const speciesParts = [
         patient.species,
         patient.speciesEntity?.name,
         patient.patient?.species,
         patient.patient?.speciesEntity?.name,
+        apptPatient?.species,
+        apptPatient?.speciesEntity?.name,
       ].filter(Boolean) as string[];
       const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
-      const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
-      const isDog = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !isCatPatient);
+      // Explicit species only: if client didn't see it (wrong species or unknown), don't put it in the PDF
+      const isCatExplicit = speciesLower.includes('cat') || speciesLower.includes('feline');
+      const isDogExplicit = speciesLower.includes('dog') || speciesLower.includes('canine');
       const dob = patient?.dob ?? patient?.patient?.dob ?? appts[petIdx]?.patient?.dob;
       const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
       const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
-      const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-      const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
-      const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
-      const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
-      const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-      // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due); FeLV uses 24-month window
-      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
+      const showCrLymeBooster = isDogExplicit && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+      const showLepto = isDogExplicit && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
+      const showBordetella = isDogExplicit && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
+      const showLyme = isDogExplicit && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
+      const showRabiesCats = isCatExplicit && patient.vaccines?.rabies;
+      const showFeLV = isCatExplicit && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
       const questions: Qa[] = [];
       const add = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
@@ -1845,19 +1848,21 @@ export default function PublicRoomLoaderForm() {
         const label = valueLabels && typeof val === 'string' ? (valueLabels[val] ?? val) : (typeof val === 'string' ? val : (val != null ? String(val) : null));
         questions.push({ question, answer: val, answerLabel: label ?? null });
       };
-      if (isCatPatient) {
+      // Cat-only: only when species is explicitly cat (dog never sees these)
+      if (isCatExplicit && !isDogExplicit) {
         add(`Does ${petName} go outdoors or live with a cat who does?`, `${petKey}_outdoorAccess`, { yes: 'Yes', no: 'No' });
       }
-      if (showCrLymeBooster) add('Do you want us to schedule you a booster appointment after this visit? (crLyme)', `${petKey}_crLymeBooster`, { yes: 'Yes', no: 'No', unsure: "I'm not sure" });
-      if (showLepto) add('Do you want us to give the Lepto vaccine?', `${petKey}_leptoVaccine`, { yes: 'Yes', no: 'No' });
-      if (showBordetella) add('Do you want us to give the Bordetella vaccine?', `${petKey}_bordetellaVaccine`, { yes: 'Yes', no: 'No' });
-      if (showLyme) add('Do you want us to give the Lyme vaccine?', `${petKey}_lymeVaccine`, { yes: 'Yes', no: 'No' });
-      if (showRabiesCats) add('If not a member AND due for rabies AND a cat: we offer two rabies vaccines - a one year or three year - which would you prefer?', `${petKey}_rabiesPreference`, {
+      // Dog-only: only when species is explicitly dog (cat never sees these)
+      if (showCrLymeBooster && isDogExplicit && !isCatExplicit) add('Do you want us to schedule you a booster appointment after this visit? (crLyme)', `${petKey}_crLymeBooster`, { yes: 'Yes', no: 'No', unsure: "I'm not sure" });
+      if (showLepto && isDogExplicit && !isCatExplicit) add('Do you want us to give the Lepto vaccine?', `${petKey}_leptoVaccine`, { yes: 'Yes', no: 'No' });
+      if (showBordetella && isDogExplicit && !isCatExplicit) add('Do you want us to give the Bordetella vaccine?', `${petKey}_bordetellaVaccine`, { yes: 'Yes', no: 'No' });
+      if (showLyme && isDogExplicit && !isCatExplicit) add('Do you want us to give the Lyme vaccine?', `${petKey}_lymeVaccine`, { yes: 'Yes', no: 'No' });
+      if (showRabiesCats && isCatExplicit && !isDogExplicit) add('If not a member AND due for rabies AND a cat: we offer two rabies vaccines - a one year or three year - which would you prefer?', `${petKey}_rabiesPreference`, {
         '1year': 'Purevax Rabies 1 year',
         '3year': 'Purevax Rabies 3 year',
         no: 'No thank you, I do not want a rabies vx administered to my cat.',
       });
-      if (showFeLV) add('Do you want us to give the FeLV vaccine? For initial immunity, two vaccines must be given, 3-4 weeks apart.', `${petKey}_felvVaccine`, { yes: 'Yes', no: 'No' });
+      if (showFeLV && isCatExplicit && !isDogExplicit) add('Do you want us to give the FeLV vaccine? For initial immunity, two vaccines must be given, 3-4 weeks apart.', `${petKey}_felvVaccine`, { yes: 'Yes', no: 'No' });
       if (questions.length > 0) {
         formAnswersPages.push({
           pageNumber: 2 + petIdx,
@@ -1888,8 +1893,9 @@ export default function PublicRoomLoaderForm() {
         apptPatientEntry?.speciesEntity?.name,
       ].filter(Boolean) as string[];
       const speciesLowerEntry = speciesPartsEntry.length ? speciesPartsEntry.join(' ').toLowerCase() : '';
-      const isDogEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine') || (speciesLowerEntry === '' && !speciesLowerEntry.includes('cat'));
-      const isCatEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
+      // Explicit species only: dog never sees cat labs, cat never sees dog labs
+      const isDogExplicitEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine');
+      const isCatExplicitEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
       const questions: Qa[] = [];
       const add = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
@@ -1898,20 +1904,20 @@ export default function PublicRoomLoaderForm() {
         questions.push({ question, answer: val, answerLabel: label ?? null });
       };
       entry.recommendations.forEach((rec: { code?: string }) => {
-        if (rec.code === 'FIL48119999') {
+        if (rec.code === 'FIL48119999' && isCatExplicitEntry && !isDogExplicitEntry) {
           add('Would you like to do the Early Detection Panel? (Feline)', `lab_early_detection_feline_${pidStr}`, { yes: 'Yes', no: 'No' });
         }
-        if (rec.code === 'FIL48719999') {
+        if (rec.code === 'FIL48719999' && isDogExplicitEntry && !isCatExplicitEntry) {
           add('Would you like us to include this recommended screening today? (Early Detection - Canine)', `lab_early_detection_canine_${pidStr}`, { yes: 'Yes — Include Early Detection Panel', no: 'Not at this time.' });
         }
-        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999' || rec.code === '8659999') && isDogEntry) {
+        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999' || rec.code === '8659999') && isDogExplicitEntry && !isCatExplicitEntry) {
           add('Which panel would you like your pet to receive? (Senior Screen — Canine)', `lab_senior_canine_panel_${pidStr}`, {
             standard: 'Standard Comprehensive Panel',
             extended: 'Extended Comprehensive Panel',
             no: 'No thank you',
           });
         }
-        if ((rec.code === '8659999' || rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatEntry) {
+        if ((rec.code === '8659999' || rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatExplicitEntry && !isDogExplicitEntry) {
           add('Which panel would you like your pet to receive? (Senior Screen — Feline)', `lab_senior_feline_two_panel_${pidStr}`, {
             standard: 'Senior Screen Feline - Standard Panel',
             extended: 'Senior Screen Feline - Extended Panel',
@@ -1950,13 +1956,13 @@ export default function PublicRoomLoaderForm() {
         apptPatientEntry?.speciesEntity?.name,
       ].filter(Boolean) as string[];
       const speciesLowerEntry = speciesPartsEntry.length ? speciesPartsEntry.join(' ').toLowerCase() : '';
-      const isDogEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine') || (speciesLowerEntry === '' && !speciesLowerEntry.includes('cat'));
-      const isCatEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
+      const isDogExplicitEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine');
+      const isCatExplicitEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
       entry.recommendations.forEach((rec: { code?: string }) => {
-        if (rec.code === 'FIL48119999') shownLabKeys.add(`lab_early_detection_feline_${pidStr}`);
-        if (rec.code === 'FIL48719999') shownLabKeys.add(`lab_early_detection_canine_${pidStr}`);
-        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999' || rec.code === '8659999') && isDogEntry) shownLabKeys.add(`lab_senior_canine_panel_${pidStr}`);
-        if ((rec.code === '8659999' || rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatEntry) shownLabKeys.add(`lab_senior_feline_two_panel_${pidStr}`);
+        if (rec.code === 'FIL48119999' && isCatExplicitEntry && !isDogExplicitEntry) shownLabKeys.add(`lab_early_detection_feline_${pidStr}`);
+        if (rec.code === 'FIL48719999' && isDogExplicitEntry && !isCatExplicitEntry) shownLabKeys.add(`lab_early_detection_canine_${pidStr}`);
+        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999' || rec.code === '8659999') && isDogExplicitEntry && !isCatExplicitEntry) shownLabKeys.add(`lab_senior_canine_panel_${pidStr}`);
+        if ((rec.code === '8659999' || rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatExplicitEntry && !isDogExplicitEntry) shownLabKeys.add(`lab_senior_feline_two_panel_${pidStr}`);
         if (rec.code === 'COMPREHENSIVE_FECAL') shownLabKeys.add(`lab_comprehensive_fecal_${pidStr}`);
       });
     });
