@@ -12,6 +12,7 @@ import MyMonth from './pages/MyMonth.';
 import MyDayToggle from './pages/MyDayToggle';
 import FillDayPage from './pages/FillDay';
 import Settings from './pages/Settings';
+import RoomLoaderPage from './pages/RoomLoader';
 import SurveyResponsesPage from './pages/SurveyResponses';
 import SurveyResults from './pages/SurveyResults';
 import Admin from './pages/Admin';
@@ -117,6 +118,12 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       path: '/schedule-loader',
       label: 'Schedule Loader',
       element: <FillDayPage />,
+      role: ['employee', 'admin', 'superadmin'],
+    },
+    {
+      path: '/room-loader',
+      label: 'Room Loader',
+      element: <RoomLoaderPage />,
       role: ['employee', 'admin', 'superadmin'],
     },
     {
