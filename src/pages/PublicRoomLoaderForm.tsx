@@ -994,6 +994,8 @@ export default function PublicRoomLoaderForm() {
             // Do not pre-fill "Do you want to share any additional details about the reason for this visit?"
             initialFormData[`${petKey}_appointmentReason`] = '';
             initialFormData[`${petKey}_generalWellbeing`] = '';
+            initialFormData[`${petKey}_eatingDrinkingNormal`] = '';
+            initialFormData[`${petKey}_eatingDrinkingNormalDetails`] = '';
             initialFormData[`${petKey}_outdoorAccess`] = '';
             initialFormData[`${petKey}_specificConcerns`] = '';
             initialFormData[`${petKey}_newPatientBehavior`] = '';
@@ -1791,6 +1793,10 @@ export default function PublicRoomLoaderForm() {
         questions.push({ question, answer: val ?? null, answerLabel: label ?? (val != null ? String(val) : null) });
       };
       addOptional('Do you want to share any additional details about the reason for this visit?', `${petKey}_appointmentReason`);
+      addOptional(`Is ${petName} eating, drinking, defecating, and urinating normally?`, `${petKey}_eatingDrinkingNormal`, { yes: 'Yes', no: 'No' });
+      if (formData[`${petKey}_eatingDrinkingNormal`] === 'no') {
+        addOptional('Please describe.', `${petKey}_eatingDrinkingNormalDetails`);
+      }
       addOptional(`How is ${petName} doing otherwise? Are there any other concerns you'd like us to address during this visit?`, `${petKey}_generalWellbeing`);
       if ((patient as any).questions?.mobility === true) {
         addOptional(`It sounds like you may have some concerns about ${petName}'s mobility. Can you tell us more about what you're noticing?`, `${petKey}_mobilityDetails`);
@@ -2030,7 +2036,7 @@ export default function PublicRoomLoaderForm() {
         // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due); FeLV uses 24-month window
         const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
 
-        if (suffix === 'appointmentReason' || suffix === 'generalWellbeing') allowedFormData[key] = value;
+        if (suffix === 'appointmentReason' || suffix === 'generalWellbeing' || suffix === 'eatingDrinkingNormal' || suffix === 'eatingDrinkingNormalDetails') allowedFormData[key] = value;
         else if (suffix === 'mobilityDetails' && (patientsData[petIdx] as any)?.questions?.mobility === true) allowedFormData[key] = value;
         else if (suffix === 'outdoorAccess' && isCatPatient) allowedFormData[key] = value;
         else if ((suffix === 'newPatientBehavior' || suffix === 'feeding' || suffix === 'foodAllergies' || suffix === 'foodAllergiesDetails') && isNewPatient) allowedFormData[key] = value;
@@ -2322,6 +2328,16 @@ export default function PublicRoomLoaderForm() {
           errors[`${petKey}_outdoorAccess`] = `Please answer whether ${petName} goes outdoors or lives with a cat who does.`;
         }
       }
+      const eatingNormal = formData[`${petKey}_eatingDrinkingNormal`];
+      if (eatingNormal !== 'yes' && eatingNormal !== 'no') {
+        errors[`${petKey}_eatingDrinkingNormal`] = `Please answer whether ${petName} is eating, drinking, defecating, and urinating normally.`;
+      }
+      if (eatingNormal === 'no') {
+        const details = (formData[`${petKey}_eatingDrinkingNormalDetails`] ?? '').toString().trim();
+        if (!details) {
+          errors[`${petKey}_eatingDrinkingNormalDetails`] = `Please describe ${petName}'s eating, drinking, or elimination.`;
+        }
+      }
       if (isNewPatient) {
         const behavior = (formData[`${petKey}_newPatientBehavior`] ?? '').toString().trim();
         if (!behavior) {
@@ -2379,6 +2395,16 @@ export default function PublicRoomLoaderForm() {
       if (outdoor !== 'yes' && outdoor !== 'no') {
         const msg = `Please answer whether ${petName} goes outdoors or lives with a cat who does before continuing.`;
         errors[`${petKey}_outdoorAccess`] = msg;
+      }
+    }
+    const eatingNormalContinue = formData[`${petKey}_eatingDrinkingNormal`];
+    if (eatingNormalContinue !== 'yes' && eatingNormalContinue !== 'no') {
+      errors[`${petKey}_eatingDrinkingNormal`] = `Please answer whether ${petName} is eating, drinking, defecating, and urinating normally before continuing.`;
+    }
+    if (eatingNormalContinue === 'no') {
+      const detailsContinue = (formData[`${petKey}_eatingDrinkingNormalDetails`] ?? '').toString().trim();
+      if (!detailsContinue) {
+        errors[`${petKey}_eatingDrinkingNormalDetails`] = `Please describe ${petName}'s eating, drinking, or elimination before continuing.`;
       }
     }
 
@@ -3308,12 +3334,46 @@ export default function PublicRoomLoaderForm() {
                 <div style={{ marginBottom: '20px' }}>
                   <h4 style={sectionLabelStyle}>General Well-being & Concerns</h4>
                   <label style={questionLabelStyle}>
+                    Is {petName} eating, drinking, defecating, and urinating normally?
+                  </label>
+                  <div style={{ display: 'flex', gap: '20px', marginBottom: '12px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
+                      <input type="radio" name={`${petKey}_eatingDrinkingNormal`} value="yes" checked={formData[`${petKey}_eatingDrinkingNormal`] === 'yes'} onChange={(e) => handleInputChange(`${petKey}_eatingDrinkingNormal`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
+                      Yes
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
+                      <input type="radio" name={`${petKey}_eatingDrinkingNormal`} value="no" checked={formData[`${petKey}_eatingDrinkingNormal`] === 'no'} onChange={(e) => handleInputChange(`${petKey}_eatingDrinkingNormal`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
+                      No
+                    </label>
+                  </div>
+                  {fieldValidationErrors[`${petKey}_eatingDrinkingNormal`] && (
+                    <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_eatingDrinkingNormal`]}</p>
+                  )}
+                  {formData[`${petKey}_eatingDrinkingNormal`] === 'no' && (
+                    <>
+                      <label style={questionLabelStyle}>Please describe. <span style={{ color: '#dc3545' }}>*</span></label>
+                      <textarea
+                        value={formData[`${petKey}_eatingDrinkingNormalDetails`] || ''}
+                        onChange={(e) => handleInputChange(`${petKey}_eatingDrinkingNormalDetails`, e.target.value)}
+                        readOnly={readOnly}
+                        disabled={readOnly}
+                        style={{ ...textareaStyle, minHeight: '100px', ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}) }}
+                        placeholder="Describe any issues with eating, drinking, or elimination..."
+                      />
+                      {fieldValidationErrors[`${petKey}_eatingDrinkingNormalDetails`] && (
+                        <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_eatingDrinkingNormalDetails`]}</p>
+                      )}
+                    </>
+                  )}
+                  <label style={{ ...questionLabelStyle, marginTop: '16px' }}>
                     How is {petName} doing otherwise? Are there any other concerns you'd like us to address during this visit?
                   </label>
                   <textarea
                     value={formData[`${petKey}_generalWellbeing`] || ''}
                     onChange={(e) => handleInputChange(`${petKey}_generalWellbeing`, e.target.value)}
-                    style={textareaStyle}
+                    readOnly={readOnly}
+                    disabled={readOnly}
+                    style={{ ...textareaStyle, ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}) }}
                     placeholder="How is your pet doing? Any other concerns?"
                   />
                 </div>
@@ -5462,7 +5522,13 @@ export default function PublicRoomLoaderForm() {
                             disabled={readOnly}
                             onClick={() => {
                               if (readOnly) return;
-                              setStoreAdditionalItems((prev) => [...prev, item]);
+                              // Show full name (product + option picked) in the Additional items list and PDF
+                              const baseName = (item.name || '').trim();
+                              const fullName =
+                                label && baseName && !baseName.includes(label)
+                                  ? `${baseName} - ${label}`
+                                  : baseName || label || 'Additional item';
+                              setStoreAdditionalItems((prev) => [...prev, { ...item, name: fullName }]);
                               setStoreOptionModalGroup(null);
                               setStoreSearchQuery('');
                             }}
