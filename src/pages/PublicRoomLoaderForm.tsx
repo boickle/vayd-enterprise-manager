@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { apiBaseUrl, http } from '../api/http';
 import { getEcwidProducts, type EcwidProduct, type EcwidChoice } from '../api/ecwid';
 import { searchItemsPublic, type SearchableItem, checkItemPricingPublic, type CheckItemPricingResponse, type CheckItemPricingPublicRequest } from '../api/roomLoader';
-import { getPatientTreatmentHistory, type TreatmentWithItems } from '../api/treatments';
+import { getPatientTreatmentHistoryPublic, type TreatmentWithItems } from '../api/treatments';
 import { DateTime } from 'luxon';
 import jsPDF from 'jspdf';
 import './PublicRoomLoaderForm.css';
@@ -1101,9 +1101,10 @@ export default function PublicRoomLoaderForm() {
     fetchRoomLoaderData();
   }, [token]);
 
-  // Fetch treatment history per patient when user reaches Care Plan (page 2) or later. Defers N requests until needed for vaccine/lab logic.
+  // Fetch treatment history per patient when user reaches Care Plan (page 2) or later. Uses public endpoint with token from form URL.
   useEffect(() => {
-    if (!data?.patients?.length || currentPage < 2) return;
+    const tokenValue = token;
+    if (!tokenValue || !data?.patients?.length || currentPage < 2) return;
     const patientIds = data.patients
       .map((p: any) => p.patientId ?? p.patient?.id)
       .filter((id: any) => id != null);
@@ -1115,7 +1116,7 @@ export default function PublicRoomLoaderForm() {
       patientIds.map(async (patientId: number) => {
         if (cancelled) return;
         try {
-          const history = await getPatientTreatmentHistory(patientId);
+          const history = await getPatientTreatmentHistoryPublic(patientId, tokenValue);
           if (!cancelled) historyByPatient[patientId] = history ?? [];
         } catch (e) {
           if (!cancelled) historyByPatient[patientId] = [];
@@ -1127,7 +1128,7 @@ export default function PublicRoomLoaderForm() {
     return () => {
       cancelled = true;
     };
-  }, [data?.patients, currentPage]);
+  }, [token, data?.patients, currentPage]);
 
   function formatDate(dateStr: string | null | undefined): string {
     if (!dateStr) return 'N/A';
