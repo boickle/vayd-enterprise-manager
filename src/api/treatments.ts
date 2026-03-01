@@ -90,14 +90,28 @@ export type TreatmentWithItems = {
 // ---------------------------------------------------------------------------
 
 /**
- * Get all treatment records (with line items) for a patient.
- * Used e.g. for room-loader client form questions based on treatment history.
+ * Get all treatment records (with line items) for a patient (authenticated).
+ * Used by internal/employee room loader.
  */
 export async function getPatientTreatmentHistory(
   patientId: number
 ): Promise<TreatmentWithItems[]> {
   const { data } = await http.get<TreatmentWithItems[]>(
     `/treatments/patient/${patientId}/history`
+  );
+  return data;
+}
+
+/**
+ * Public room-loader form: get treatment history for a patient using the form URL token.
+ * GET /public/room-loader/patient/:patientId/treatment-history?token=<token>
+ */
+export async function getPatientTreatmentHistoryPublic(
+  patientId: number,
+  token: string
+): Promise<TreatmentWithItems[]> {
+  const { data } = await http.get<TreatmentWithItems[]>(
+    `/public/room-loader/patient/${patientId}/treatment-history?token=${encodeURIComponent(token)}`
   );
   return data;
 }
