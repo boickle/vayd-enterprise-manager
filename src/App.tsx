@@ -11,6 +11,7 @@ import AppTabs from './components/AppTabs';
 import UserMenu from './components/UserMenu';
 import { getAccessiblePages } from './app-pages';
 import { getAdminTabPages } from './admin-tabs';
+import { getAnalyticsTabPages } from './analytics-tabs';
 import CreateClientUser from './pages/CreateClientUser';
 import ClientPortal from './pages/ClientPortal';
 import MembershipSignup from './pages/MembershipSignup';
@@ -84,6 +85,7 @@ function RouteGuard() {
     '/doctor',
     '/doctormonth',
     '/admin',
+    '/analytics',
     '/schedule-loader',
     '/survey/responses',
     '/home',
@@ -381,6 +383,13 @@ export default function App() {
                   <Route key={p.path} path={p.path} element={p.element}>
                     <Route index element={<Navigate to="/admin/survey/results" replace />} />
                     {getAdminTabPages().map((tab) => (
+                      <Route key={tab.path} path={tab.path} element={tab.element} />
+                    ))}
+                  </Route>
+                ) : p.path === '/analytics' ? (
+                  <Route key={p.path} path={p.path} element={p.element}>
+                    <Route index element={<Navigate to="/analytics/vsd" replace />} />
+                    {getAnalyticsTabPages().map((tab) => (
                       <Route key={tab.path} path={tab.path} element={tab.element} />
                     ))}
                   </Route>
