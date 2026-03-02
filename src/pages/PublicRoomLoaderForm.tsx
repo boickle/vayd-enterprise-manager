@@ -14,7 +14,7 @@ import {
   type RoomLoaderSimulateBillPublicResponse,
   type RoomLoaderSimulateLineItem,
 } from '../api/roomLoader';
-import { getPatientTreatmentHistory, type TreatmentWithItems } from '../api/treatments';
+import { getPatientTreatmentHistoryPublic, type TreatmentWithItems } from '../api/treatments';
 import {
   fetchFormattedSubscriptionPlans,
   fetchSubscriptionPlanCatalog,
@@ -1117,6 +1117,8 @@ export default function PublicRoomLoaderForm() {
             // Do not pre-fill "Do you want to share any additional details about the reason for this visit?"
             initialFormData[`${petKey}_appointmentReason`] = '';
             initialFormData[`${petKey}_generalWellbeing`] = '';
+            initialFormData[`${petKey}_eatingDrinkingNormal`] = '';
+            initialFormData[`${petKey}_eatingDrinkingNormalDetails`] = '';
             initialFormData[`${petKey}_outdoorAccess`] = '';
             initialFormData[`${petKey}_specificConcerns`] = '';
             initialFormData[`${petKey}_newPatientBehavior`] = '';
@@ -1132,6 +1134,7 @@ export default function PublicRoomLoaderForm() {
             initialFormData[`${petKey}_felvVaccine`] = '';
             initialFormData[`${petKey}_labWork`] = '';
           });
+          initialFormData['anythingElseNotes'] = '';
           if (savedForm && typeof savedForm === 'object') {
             const {
               optedInVaccineItems: _ovi,
@@ -1274,9 +1277,10 @@ export default function PublicRoomLoaderForm() {
     return map;
   }, [formattedSubscriptionPlans, subscriptionPlanCatalog]);
 
-  // Fetch treatment history per patient when user reaches Care Plan (page 2) or later. Defers N requests until needed for vaccine/lab logic.
+  // Fetch treatment history per patient when user reaches Care Plan (page 2) or later. Uses public endpoint with token; defers N requests until needed for vaccine/lab logic.
   useEffect(() => {
-    if (!data?.patients?.length || currentPage < 2) return;
+    const tokenValue = token;
+    if (!tokenValue || !data?.patients?.length || currentPage < 2) return;
     const patientIds = data.patients
       .map((p: any) => p.patientId ?? p.patient?.id)
       .filter((id: any) => id != null);
@@ -1288,7 +1292,7 @@ export default function PublicRoomLoaderForm() {
       patientIds.map(async (patientId: number) => {
         if (cancelled) return;
         try {
-          const history = await getPatientTreatmentHistory(patientId);
+          const history = await getPatientTreatmentHistoryPublic(patientId, tokenValue);
           if (!cancelled) historyByPatient[patientId] = history ?? [];
         } catch (e) {
           if (!cancelled) historyByPatient[patientId] = [];
@@ -1300,7 +1304,7 @@ export default function PublicRoomLoaderForm() {
     return () => {
       cancelled = true;
     };
-  }, [data?.patients, currentPage]);
+  }, [token, data?.patients, currentPage]);
 
   function formatDate(dateStr: string | null | undefined): string {
     if (!dateStr) return 'N/A';
@@ -2078,6 +2082,10 @@ export default function PublicRoomLoaderForm() {
         questions.push({ question, answer: val ?? null, answerLabel: label ?? (val != null ? String(val) : null) });
       };
       addOptional('Do you want to share any additional details about the reason for this visit?', `${petKey}_appointmentReason`);
+      addOptional(`Is ${petName} eating, drinking, defecating, and urinating normally?`, `${petKey}_eatingDrinkingNormal`, { yes: 'Yes', no: 'No' });
+      if (formData[`${petKey}_eatingDrinkingNormal`] === 'no') {
+        addOptional('Please describe.', `${petKey}_eatingDrinkingNormalDetails`);
+      }
       addOptional(`How is ${petName} doing otherwise? Are there any other concerns you'd like us to address during this visit?`, `${petKey}_generalWellbeing`);
       if ((patient as any).questions?.mobility === true) {
         addOptional(`It sounds like you may have some concerns about ${petName}'s mobility. Can you tell us more about what you're noticing?`, `${petKey}_mobilityDetails`);
@@ -2101,31 +2109,34 @@ export default function PublicRoomLoaderForm() {
       formAnswersPages.push({ pageNumber: 1, title: 'Time to Check-in for your Appointment', sections: page1Sections });
     }
 
-    // Care Plan pages (one section per pet): only include vaccine/outdoor questions that were shown
+    // Care Plan pages (one section per pet): only include vaccine/outdoor questions that were shown (same species logic as form UI)
     patientsData.forEach((patient: any, petIdx: number) => {
       const petKey = `pet${petIdx}`;
       const patientId = patient.patientId ?? patient.patient?.id ?? petIdx;
       const petName = patient.patientName || `Pet ${petIdx + 1}`;
       const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
+      const apptPatient = appts[petIdx]?.patient;
       const speciesParts = [
         patient.species,
         patient.speciesEntity?.name,
         patient.patient?.species,
         patient.patient?.speciesEntity?.name,
+        apptPatient?.species,
+        apptPatient?.speciesEntity?.name,
       ].filter(Boolean) as string[];
       const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
-      const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
-      const isDog = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !isCatPatient);
+      // Explicit species only: if client didn't see it (wrong species or unknown), don't put it in the PDF
+      const isCatExplicit = speciesLower.includes('cat') || speciesLower.includes('feline');
+      const isDogExplicit = speciesLower.includes('dog') || speciesLower.includes('canine');
       const dob = patient?.dob ?? patient?.patient?.dob ?? appts[petIdx]?.patient?.dob;
       const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
       const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
-      const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-      const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
-      const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
-      const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
-      const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-      // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due); FeLV uses 24-month window
-      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
+      const showCrLymeBooster = isDogExplicit && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
+      const showLepto = isDogExplicit && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
+      const showBordetella = isDogExplicit && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
+      const showLyme = isDogExplicit && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
+      const showRabiesCats = isCatExplicit && patient.vaccines?.rabies;
+      const showFeLV = isCatExplicit && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
       const questions: Qa[] = [];
       const add = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
@@ -2133,19 +2144,21 @@ export default function PublicRoomLoaderForm() {
         const label = valueLabels && typeof val === 'string' ? (valueLabels[val] ?? val) : (typeof val === 'string' ? val : (val != null ? String(val) : null));
         questions.push({ question, answer: val, answerLabel: label ?? null });
       };
-      if (isCatPatient) {
+      // Cat-only: only when species is explicitly cat (dog never sees these)
+      if (isCatExplicit && !isDogExplicit) {
         add(`Does ${petName} go outdoors or live with a cat who does?`, `${petKey}_outdoorAccess`, { yes: 'Yes', no: 'No' });
       }
-      if (showCrLymeBooster) add('Do you want us to schedule you a booster appointment after this visit? (crLyme)', `${petKey}_crLymeBooster`, { yes: 'Yes', no: 'No', unsure: "I'm not sure" });
-      if (showLepto) add('Do you want us to give the Lepto vaccine?', `${petKey}_leptoVaccine`, { yes: 'Yes', no: 'No' });
-      if (showBordetella) add('Do you want us to give the Bordetella vaccine?', `${petKey}_bordetellaVaccine`, { yes: 'Yes', no: 'No' });
-      if (showLyme) add('Do you want us to give the Lyme vaccine?', `${petKey}_lymeVaccine`, { yes: 'Yes', no: 'No' });
-      if (showRabiesCats) add('If not a member AND due for rabies AND a cat: we offer two rabies vaccines - a one year or three year - which would you prefer?', `${petKey}_rabiesPreference`, {
+      // Dog-only: only when species is explicitly dog (cat never sees these)
+      if (showCrLymeBooster && isDogExplicit && !isCatExplicit) add('Do you want us to schedule you a booster appointment after this visit? (crLyme)', `${petKey}_crLymeBooster`, { yes: 'Yes', no: 'No', unsure: "I'm not sure" });
+      if (showLepto && isDogExplicit && !isCatExplicit) add('Do you want us to give the Lepto vaccine?', `${petKey}_leptoVaccine`, { yes: 'Yes', no: 'No' });
+      if (showBordetella && isDogExplicit && !isCatExplicit) add('Do you want us to give the Bordetella vaccine?', `${petKey}_bordetellaVaccine`, { yes: 'Yes', no: 'No' });
+      if (showLyme && isDogExplicit && !isCatExplicit) add('Do you want us to give the Lyme vaccine?', `${petKey}_lymeVaccine`, { yes: 'Yes', no: 'No' });
+      if (showRabiesCats && isCatExplicit && !isDogExplicit) add('If not a member AND due for rabies AND a cat: we offer two rabies vaccines - a one year or three year - which would you prefer?', `${petKey}_rabiesPreference`, {
         '1year': 'Purevax Rabies 1 year',
         '3year': 'Purevax Rabies 3 year',
         no: 'No thank you, I do not want a rabies vx administered to my cat.',
       });
-      if (showFeLV) add('Do you want us to give the FeLV vaccine? For initial immunity, two vaccines must be given, 3-4 weeks apart.', `${petKey}_felvVaccine`, { yes: 'Yes', no: 'No' });
+      if (showFeLV && isCatExplicit && !isDogExplicit) add('Do you want us to give the FeLV vaccine? For initial immunity, two vaccines must be given, 3-4 weeks apart.', `${petKey}_felvVaccine`, { yes: 'Yes', no: 'No' });
       if (questions.length > 0) {
         formAnswersPages.push({
           pageNumber: 2 + petIdx,
@@ -2176,8 +2189,9 @@ export default function PublicRoomLoaderForm() {
         apptPatientEntry?.speciesEntity?.name,
       ].filter(Boolean) as string[];
       const speciesLowerEntry = speciesPartsEntry.length ? speciesPartsEntry.join(' ').toLowerCase() : '';
-      const isDogEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine') || (speciesLowerEntry === '' && !speciesLowerEntry.includes('cat'));
-      const isCatEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
+      // Explicit species only: dog never sees cat labs, cat never sees dog labs
+      const isDogExplicitEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine');
+      const isCatExplicitEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
       const questions: Qa[] = [];
       const add = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
@@ -2186,20 +2200,20 @@ export default function PublicRoomLoaderForm() {
         questions.push({ question, answer: val, answerLabel: label ?? null });
       };
       entry.recommendations.forEach((rec: { code?: string }) => {
-        if (rec.code === 'FIL48119999') {
+        if (rec.code === 'FIL48119999' && isCatExplicitEntry && !isDogExplicitEntry) {
           add('Would you like to do the Early Detection Panel? (Feline)', `lab_early_detection_feline_${pidStr}`, { yes: 'Yes', no: 'No' });
         }
-        if (rec.code === 'FIL48719999') {
+        if (rec.code === 'FIL48719999' && isDogExplicitEntry && !isCatExplicitEntry) {
           add('Would you like us to include this recommended screening today? (Early Detection - Canine)', `lab_early_detection_canine_${pidStr}`, { yes: 'Yes — Include Early Detection Panel', no: 'Not at this time.' });
         }
-        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999' || rec.code === '8659999') && isDogEntry) {
+        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999' || rec.code === '8659999') && isDogExplicitEntry && !isCatExplicitEntry) {
           add('Which panel would you like your pet to receive? (Senior Screen — Canine)', `lab_senior_canine_panel_${pidStr}`, {
             standard: 'Standard Comprehensive Panel',
             extended: 'Extended Comprehensive Panel',
             no: 'No thank you',
           });
         }
-        if ((rec.code === '8659999' || rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatEntry) {
+        if ((rec.code === '8659999' || rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatExplicitEntry && !isDogExplicitEntry) {
           add('Which panel would you like your pet to receive? (Senior Screen — Feline)', `lab_senior_feline_two_panel_${pidStr}`, {
             standard: 'Senior Screen Feline - Standard Panel',
             extended: 'Senior Screen Feline - Extended Panel',
@@ -2217,6 +2231,21 @@ export default function PublicRoomLoaderForm() {
     if (labsSections.length > 0) {
       formAnswersPages.push({ pageNumber: labsPageNum, title: 'Labs We Recommend', sections: labsSections });
     }
+
+    // Review page: Anything else you want us to know?
+    const anythingElseNotes = (formData['anythingElseNotes'] ?? '').toString().trim();
+    formAnswersPages.push({
+      pageNumber: labsPageNum + 1,
+      title: 'Review Your Care Plan & Estimate',
+      sections: [{
+        sectionLabel: 'Additional notes',
+        questions: [{
+          question: 'Anything else you want us to know?',
+          answer: anythingElseNotes || null,
+          answerLabel: anythingElseNotes || null,
+        }],
+      }],
+    });
 
     const formAnswersForPdf = { pages: formAnswersPages };
 
@@ -2238,13 +2267,13 @@ export default function PublicRoomLoaderForm() {
         apptPatientEntry?.speciesEntity?.name,
       ].filter(Boolean) as string[];
       const speciesLowerEntry = speciesPartsEntry.length ? speciesPartsEntry.join(' ').toLowerCase() : '';
-      const isDogEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine') || (speciesLowerEntry === '' && !speciesLowerEntry.includes('cat'));
-      const isCatEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
+      const isDogExplicitEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine');
+      const isCatExplicitEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
       entry.recommendations.forEach((rec: { code?: string }) => {
-        if (rec.code === 'FIL48119999') shownLabKeys.add(`lab_early_detection_feline_${pidStr}`);
-        if (rec.code === 'FIL48719999') shownLabKeys.add(`lab_early_detection_canine_${pidStr}`);
-        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999' || rec.code === '8659999') && isDogEntry) shownLabKeys.add(`lab_senior_canine_panel_${pidStr}`);
-        if ((rec.code === '8659999' || rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatEntry) shownLabKeys.add(`lab_senior_feline_two_panel_${pidStr}`);
+        if (rec.code === 'FIL48119999' && isCatExplicitEntry && !isDogExplicitEntry) shownLabKeys.add(`lab_early_detection_feline_${pidStr}`);
+        if (rec.code === 'FIL48719999' && isDogExplicitEntry && !isCatExplicitEntry) shownLabKeys.add(`lab_early_detection_canine_${pidStr}`);
+        if ((rec.code === 'FIL25659999' || rec.code === 'FIL8659999' || rec.code === '8659999') && isDogExplicitEntry && !isCatExplicitEntry) shownLabKeys.add(`lab_senior_canine_panel_${pidStr}`);
+        if ((rec.code === '8659999' || rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatExplicitEntry && !isDogExplicitEntry) shownLabKeys.add(`lab_senior_feline_two_panel_${pidStr}`);
         if (rec.code === 'COMPREHENSIVE_FECAL') shownLabKeys.add(`lab_comprehensive_fecal_${pidStr}`);
       });
     });
@@ -2296,7 +2325,7 @@ export default function PublicRoomLoaderForm() {
         // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due); FeLV uses 24-month window
         const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
 
-        if (suffix === 'appointmentReason' || suffix === 'generalWellbeing') allowedFormData[key] = value;
+        if (suffix === 'appointmentReason' || suffix === 'generalWellbeing' || suffix === 'eatingDrinkingNormal' || suffix === 'eatingDrinkingNormalDetails') allowedFormData[key] = value;
         else if (suffix === 'mobilityDetails' && (patientsData[petIdx] as any)?.questions?.mobility === true) allowedFormData[key] = value;
         else if (suffix === 'outdoorAccess' && isCatPatient) allowedFormData[key] = value;
         else if ((suffix === 'newPatientBehavior' || suffix === 'feeding' || suffix === 'foodAllergies' || suffix === 'foodAllergiesDetails') && isNewPatient) allowedFormData[key] = value;
@@ -2588,6 +2617,16 @@ export default function PublicRoomLoaderForm() {
           errors[`${petKey}_outdoorAccess`] = `Please answer whether ${petName} goes outdoors or lives with a cat who does.`;
         }
       }
+      const eatingNormal = formData[`${petKey}_eatingDrinkingNormal`];
+      if (eatingNormal !== 'yes' && eatingNormal !== 'no') {
+        errors[`${petKey}_eatingDrinkingNormal`] = `Please answer whether ${petName} is eating, drinking, defecating, and urinating normally.`;
+      }
+      if (eatingNormal === 'no') {
+        const details = (formData[`${petKey}_eatingDrinkingNormalDetails`] ?? '').toString().trim();
+        if (!details) {
+          errors[`${petKey}_eatingDrinkingNormalDetails`] = `Please describe ${petName}'s eating, drinking, or elimination.`;
+        }
+      }
       if (isNewPatient) {
         const behavior = (formData[`${petKey}_newPatientBehavior`] ?? '').toString().trim();
         if (!behavior) {
@@ -2645,6 +2684,16 @@ export default function PublicRoomLoaderForm() {
       if (outdoor !== 'yes' && outdoor !== 'no') {
         const msg = `Please answer whether ${petName} goes outdoors or lives with a cat who does before continuing.`;
         errors[`${petKey}_outdoorAccess`] = msg;
+      }
+    }
+    const eatingNormalContinue = formData[`${petKey}_eatingDrinkingNormal`];
+    if (eatingNormalContinue !== 'yes' && eatingNormalContinue !== 'no') {
+      errors[`${petKey}_eatingDrinkingNormal`] = `Please answer whether ${petName} is eating, drinking, defecating, and urinating normally before continuing.`;
+    }
+    if (eatingNormalContinue === 'no') {
+      const detailsContinue = (formData[`${petKey}_eatingDrinkingNormalDetails`] ?? '').toString().trim();
+      if (!detailsContinue) {
+        errors[`${petKey}_eatingDrinkingNormalDetails`] = `Please describe ${petName}'s eating, drinking, or elimination before continuing.`;
       }
     }
 
@@ -3631,12 +3680,46 @@ export default function PublicRoomLoaderForm() {
                 <div style={{ marginBottom: '20px' }}>
                   <h4 style={sectionLabelStyle}>General Well-being & Concerns</h4>
                   <label style={questionLabelStyle}>
+                    Is {petName} eating, drinking, defecating, and urinating normally?
+                  </label>
+                  <div style={{ display: 'flex', gap: '20px', marginBottom: '12px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
+                      <input type="radio" name={`${petKey}_eatingDrinkingNormal`} value="yes" checked={formData[`${petKey}_eatingDrinkingNormal`] === 'yes'} onChange={(e) => handleInputChange(`${petKey}_eatingDrinkingNormal`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
+                      Yes
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
+                      <input type="radio" name={`${petKey}_eatingDrinkingNormal`} value="no" checked={formData[`${petKey}_eatingDrinkingNormal`] === 'no'} onChange={(e) => handleInputChange(`${petKey}_eatingDrinkingNormal`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
+                      No
+                    </label>
+                  </div>
+                  {fieldValidationErrors[`${petKey}_eatingDrinkingNormal`] && (
+                    <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_eatingDrinkingNormal`]}</p>
+                  )}
+                  {formData[`${petKey}_eatingDrinkingNormal`] === 'no' && (
+                    <>
+                      <label style={questionLabelStyle}>Please describe. <span style={{ color: '#dc3545' }}>*</span></label>
+                      <textarea
+                        value={formData[`${petKey}_eatingDrinkingNormalDetails`] || ''}
+                        onChange={(e) => handleInputChange(`${petKey}_eatingDrinkingNormalDetails`, e.target.value)}
+                        readOnly={readOnly}
+                        disabled={readOnly}
+                        style={{ ...textareaStyle, minHeight: '100px', ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}) }}
+                        placeholder="Describe any issues with eating, drinking, or elimination..."
+                      />
+                      {fieldValidationErrors[`${petKey}_eatingDrinkingNormalDetails`] && (
+                        <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_eatingDrinkingNormalDetails`]}</p>
+                      )}
+                    </>
+                  )}
+                  <label style={{ ...questionLabelStyle, marginTop: '16px' }}>
                     How is {petName} doing otherwise? Are there any other concerns you'd like us to address during this visit?
                   </label>
                   <textarea
                     value={formData[`${petKey}_generalWellbeing`] || ''}
                     onChange={(e) => handleInputChange(`${petKey}_generalWellbeing`, e.target.value)}
-                    style={textareaStyle}
+                    readOnly={readOnly}
+                    disabled={readOnly}
+                    style={{ ...textareaStyle, ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}) }}
                     placeholder="How is your pet doing? Any other concerns?"
                   />
                 </div>
@@ -5704,6 +5787,33 @@ export default function PublicRoomLoaderForm() {
               )}
             </div>
 
+            {/* Anything else you want us to know? */}
+            <div style={{ marginBottom: '24px', padding: '16px', backgroundColor: '#f5f5f5', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+              <div style={{ fontSize: '16px', fontWeight: 600, color: '#212529', marginBottom: '8px' }}>Anything else you want us to know?</div>
+              <p style={{ fontSize: '14px', lineHeight: 1.5, color: '#555', marginBottom: '12px', marginTop: 0 }}>
+                Optional: share any other details you'd like our team to know before your visit.
+              </p>
+              <textarea
+                value={(formData['anythingElseNotes'] ?? '').toString()}
+                onChange={(e) => !readOnly && setFormData((prev) => ({ ...prev, anythingElseNotes: e.target.value }))}
+                readOnly={readOnly}
+                disabled={readOnly}
+                placeholder="e.g. special handling, parking notes, or other requests..."
+                style={{
+                  width: '100%',
+                  minHeight: '80px',
+                  padding: '10px 12px',
+                  border: '1px solid #ced4da',
+                  borderRadius: '6px',
+                  fontSize: '15px',
+                  boxSizing: 'border-box',
+                  resize: 'vertical',
+                  fontFamily: 'inherit',
+                  ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}),
+                }}
+              />
+            </div>
+
             {/* Modal: pick a variation of a product (same name, different options/SKU) */}
             {storeOptionModalGroup && storeOptionModalGroup.length > 0 && (
               <div
@@ -5758,7 +5868,13 @@ export default function PublicRoomLoaderForm() {
                             disabled={readOnly}
                             onClick={() => {
                               if (readOnly) return;
-                              setStoreAdditionalItems((prev) => [...prev, item]);
+                              // Show full name (product + option picked) in the Additional items list and PDF
+                              const baseName = (item.name || '').trim();
+                              const fullName =
+                                label && baseName && !baseName.includes(label)
+                                  ? `${baseName} - ${label}`
+                                  : baseName || label || 'Additional item';
+                              setStoreAdditionalItems((prev) => [...prev, { ...item, name: fullName }]);
                               setStoreOptionModalGroup(null);
                               setStoreSearchQuery('');
                             }}
