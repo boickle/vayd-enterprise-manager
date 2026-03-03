@@ -3385,6 +3385,9 @@ export default function AppointmentRequestForm() {
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
                 Is it okay if we contact them to get records?
               </label>
+              <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '12px', lineHeight: 1.5 }}>
+                Access to your pet's prior medical records is important for their safety and continuity of care. Declining to share available records may limit our ability to provide comprehensive care.
+              </p>
               <div style={{ display: 'flex', gap: '16px' }}>
                 {['Yes', 'No'].map((option) => (
                   <label
@@ -4686,6 +4689,9 @@ export default function AppointmentRequestForm() {
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
                     May we ask for records from the above hospitals?
                   </label>
+                  <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '12px', lineHeight: 1.5 }}>
+                    Access to your pet's prior medical records is important for their safety and continuity of care. Declining to share available records may limit our ability to provide comprehensive care.
+                  </p>
                 <div style={{ display: 'flex', gap: '16px' }}>
                   {['Yes', 'No'].map((option) => (
                     <label

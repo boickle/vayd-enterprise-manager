@@ -895,11 +895,11 @@ export default function DoctorDay({
       return sum + durSec(h.startIso, h.endIso);
     }, 0);
 
-    // Points (unchanged)
+    // Points (exclude personal blocks and "Note To Staff")
     const points = appts.reduce((total, a) => {
       if ((a as any)?.isPersonalBlock) return total;
       const type = (a?.appointmentType || '').toLowerCase();
-      // console.log(type, total);
+      if (type.includes('note to staff')) return total;
       if (type === 'euthanasia') return total + 2;
       if (type.includes('tech appointment')) return total + 0.5;
       return total + 1;
@@ -1143,7 +1143,7 @@ export default function DoctorDay({
   const points = appts.reduce((total, a) => {
     if ((a as any)?.isPersonalBlock) return total;
     const type = (a?.appointmentType || '').toLowerCase();
-    // console.log(type, total);
+    if (type.includes('note to staff')) return total;
     if (type === 'euthanasia') return total + 2;
     if (type.includes('tech appointment')) return total + 0.5;
     return total + 1;
