@@ -160,6 +160,8 @@ export type DoctorMonthAppt = {
   endIso: string;
   title?: string;
   serviceMinutes?: number;
+  /** Required for points calculation (1 normal, 0.5 tech, 2 euthanasia). Backend should include in month response. */
+  appointmentType?: string;
 
   // Zones per appointment (same semantics as day API)
   clientZone?: MiniZone;
@@ -201,7 +203,7 @@ export async function fetchDoctorMonth(
 
   const { data } = await http.get('/appointments/doctor/month', { params });
 
-  // Map zones for each appt; gracefully handle servers that don’t send zone fields
+  // Map zones and appointmentType (for VSD points); gracefully handle servers that don’t send zone fields
   const days: DoctorMonthDay[] = (data?.days ?? []).map((d: any) => ({
     date: d?.date,
     timezone: d?.timezone,
@@ -213,6 +215,7 @@ export async function fetchDoctorMonth(
       endIso: a?.endIso,
       title: a?.title,
       serviceMinutes: a?.serviceMinutes,
+      appointmentType: a?.appointmentType?.name ?? a?.appointmentType ?? undefined,
       clientZone: toMiniZone(a?.clientZone),
       effectiveZone: toMiniZone(a?.effectiveZone),
     })),

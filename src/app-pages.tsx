@@ -3,11 +3,8 @@ import Routing from './pages/Routing';
 import { isProduction } from './utils/env';
 import DoctorDay from './pages/DoctorDay';
 import CreateUser from './pages/CreateUser';
-import PaymentsAnalyticsPage from './pages/PaymentAnalytics';
-import OpsAnalyticsPage from './pages/OpsAnalytics';
-import DoctorRevenueAnalyticsPage from './pages/DoctorRevenueAnalytics';
-import AuditAdminPage from './pages/AuditAdmin';
-import SimResults from './pages/SimResults';
+import Admin from './pages/Admin';
+import Analytics from './pages/Analytics';
 import MyMonth from './pages/MyMonth.';
 import MyDayToggle from './pages/MyDayToggle';
 import FillDayPage from './pages/FillDay';
@@ -15,7 +12,6 @@ import Settings from './pages/Settings';
 import RoomLoaderPage from './pages/RoomLoader';
 import SurveyResponsesPage from './pages/SurveyResponses';
 import SurveyResults from './pages/SurveyResults';
-import Admin from './pages/Admin';
 
 export type AppPage = {
   path: string;
@@ -75,44 +71,11 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       showInMainTabs: false,
     },
     {
-      path: '/analytics/payments',
-      label: 'Payments Analytics',
-      element: <PaymentsAnalyticsPage />,
-      permission: 'canSeePaymentsAnalytics',
+      path: '/analytics',
+      label: 'Analytics',
+      element: <Analytics />,
       role: ['admin', 'superadmin'],
-      showInMainTabs: false,
-    },
-    {
-      path: '/analytics/ops',
-      label: 'Ops Analytics',
-      element: <OpsAnalyticsPage />,
-      permission: 'canSeeOpsAnalytics',
-      role: ['admin'],
-      showInMainTabs: false,
-    },
-    {
-      path: '/analytics/revenue/doctor',
-      label: 'Doctor Revenue Analytics',
-      element: <DoctorRevenueAnalyticsPage />,
-      permission: 'canSeeDoctorAnalytics',
-      role: ['admin'],
-      showInMainTabs: false,
-    },
-    {
-      path: '/audit',
-      label: 'Super Admin Audit',
-      element: <AuditAdminPage />,
-      permission: 'superadmin',
-      role: 'superadmin',
-      showInMainTabs: false,
-    },
-    {
-      path: '/simulation',
-      label: 'Simulate Routing',
-      element: <SimResults />,
-      permission: 'superadmin',
-      role: 'superadmin',
-      showInMainTabs: false,
+      showInMainTabs: true,
     },
     {
       path: '/schedule-loader',
