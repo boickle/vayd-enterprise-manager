@@ -143,6 +143,19 @@ function pointsFromMonthDay(day: DoctorMonthDay): number {
   return pointsFromAppts([...apptsWithType, ...blocksAsPersonal]);
 }
 
+/** Time at appointments for one day: sum of (end - start) in minutes; uses serviceMinutes when present. */
+function serviceMinutesFromMonthDay(day: DoctorMonthDay): number {
+  return (day.appts ?? []).reduce((sum, a) => {
+    if (Number.isFinite(a.serviceMinutes)) return sum + a.serviceMinutes!;
+    if (a.startIso && a.endIso) {
+      const start = dayjs(a.startIso);
+      const end = dayjs(a.endIso);
+      if (start.isValid() && end.isValid()) return sum + Math.max(0, end.diff(start, 'minute'));
+    }
+    return sum;
+  }, 0);
+}
+
 /** Unique (year, month) pairs that span [start, end] (month 1-based). */
 function monthsInRange(start: Dayjs, end: Dayjs): { year: number; month: number }[] {
   const out: { year: number; month: number }[] = [];
@@ -215,6 +228,9 @@ export default function VeterinaryServicesDeliveredPage() {
   const [graphSelection, setGraphSelection] = useState<string>(PRACTICE_TOTAL_ID);
   const [excludeZeroRevenueDays, setExcludeZeroRevenueDays] = useState(false);
   const [pointsByDoctorByDate, setPointsByDoctorByDate] = useState<
+    Record<string, Record<string, number>>
+  >({});
+  const [serviceMinutesByDoctorByDate, setServiceMinutesByDoctorByDate] = useState<
     Record<string, Record<string, number>>
   >({});
   const [pointsLoading, setPointsLoading] = useState(false);
@@ -293,6 +309,7 @@ export default function VeterinaryServicesDeliveredPage() {
   useEffect(() => {
     if (isSingleDay || !providers.length) {
       setPointsByDoctorByDate({});
+      setServiceMinutesByDoctorByDate({});
       setPointsLoading(false);
       return;
     }
@@ -312,18 +329,25 @@ export default function VeterinaryServicesDeliveredPage() {
         );
         if (!alive) return;
         const byDoctorByDate: Record<string, Record<string, number>> = {};
+        const serviceMinByDoctorByDate: Record<string, Record<string, number>> = {};
         for (const { doctorId, days } of results) {
           if (!byDoctorByDate[doctorId]) byDoctorByDate[doctorId] = {};
+          if (!serviceMinByDoctorByDate[doctorId]) serviceMinByDoctorByDate[doctorId] = {};
           for (const day of days) {
             const date = day?.date?.slice(0, 10);
-            if (date) byDoctorByDate[doctorId][date] = pointsFromMonthDay(day);
+            if (date) {
+              byDoctorByDate[doctorId][date] = pointsFromMonthDay(day);
+              serviceMinByDoctorByDate[doctorId][date] = serviceMinutesFromMonthDay(day);
+            }
           }
         }
         setPointsByDoctorByDate(byDoctorByDate);
+        setServiceMinutesByDoctorByDate(serviceMinByDoctorByDate);
       } catch (e) {
         if (!alive) return;
         console.error('Points (appointments) fetch failed:', e);
         setPointsByDoctorByDate({});
+        setServiceMinutesByDoctorByDate({});
       } finally {
         if (alive) setPointsLoading(false);
       }
@@ -396,6 +420,37 @@ export default function VeterinaryServicesDeliveredPage() {
     }
     return map;
   }, [graphSelection, pointsByDoctorByDate, start, end, providers]);
+
+  /** Time at appointments (minutes) per date for current graph selection. */
+  const timeAtApptsPerDateForSelection = useMemo(() => {
+    const map = new Map<string, number>();
+    const dates = dateRange(start, end);
+    if (graphSelection === PRACTICE_TOTAL_ID) {
+      for (const date of dates) {
+        let sum = 0;
+        for (const p of providers) {
+          const id = String(p.id);
+          sum += serviceMinutesByDoctorByDate[id]?.[date] ?? 0;
+        }
+        map.set(date, sum);
+      }
+    } else {
+      const doc = serviceMinutesByDoctorByDate[graphSelection];
+      for (const date of dates) {
+        map.set(date, doc?.[date] ?? 0);
+      }
+    }
+    return map;
+  }, [graphSelection, serviceMinutesByDoctorByDate, start, end, providers]);
+
+  const timeAtApptsChartData = useMemo(() => {
+    return addLinearTrend(
+      dateRange(start, end).map((date) => ({
+        date,
+        total: timeAtApptsPerDateForSelection.get(date) ?? 0,
+      }))
+    );
+  }, [start, end, timeAtApptsPerDateForSelection]);
 
   /** VSD per point by date (revenue / points; 0 when no points). Same structure as chartData. */
   const vsdPerPointChartData = useMemo(() => {
@@ -643,6 +698,51 @@ export default function VeterinaryServicesDeliveredPage() {
                       strokeWidth={2}
                       dot={false}
                       name="VSD per point"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="trend"
+                      stroke="#ed6c02"
+                      strokeWidth={1.5}
+                      strokeDasharray="5 5"
+                      dot={false}
+                      name="Trend"
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </Box>
+              <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 2, mb: 1 }}>
+                Time at appointments (appointment start → end, minutes per day)
+              </Typography>
+              <Box sx={{ width: '100%', height: 320 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={timeAtApptsChartData}
+                    margin={{ top: 8, right: 24, left: 8, bottom: 8 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                    <YAxis
+                      tick={{ fontSize: 11 }}
+                      tickFormatter={(v) => (Number(v) >= 60 ? `${Math.round(Number(v) / 60)}h` : `${v}`)}
+                    />
+                    <Tooltip
+                      formatter={(value: number | undefined, name: string | undefined) => {
+                        const min = Number(value) ?? 0;
+                        const label =
+                          min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
+                        return [label, name === 'total' ? 'Minutes' : name ?? ''];
+                      }}
+                      labelFormatter={(label) => String(label)}
+                    />
+                    <Legend />
+                    <Line
+                      type="monotone"
+                      dataKey="total"
+                      stroke="#7b1fa2"
+                      strokeWidth={2}
+                      dot={false}
+                      name="Minutes at appointments"
                     />
                     <Line
                       type="monotone"
