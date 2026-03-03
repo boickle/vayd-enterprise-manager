@@ -11,7 +11,7 @@ export type AnalyticsTabPage = {
 
 export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
   { path: 'payments', label: 'Payments', element: <PaymentsAnalyticsPage />, role: ['admin', 'superadmin'] },
-  { path: 'vsd', label: 'Veterinary Services Delivered', element: <VeterinaryServicesDeliveredPage />, role: ['employee', 'admin', 'superadmin'] },
+  { path: 'vsd', label: 'Veterinary Services Delivered', element: <VeterinaryServicesDeliveredPage />, role: ['admin', 'superadmin'] },
 ];
 
 export function getAnalyticsTabPages(): AnalyticsTabPage[] {

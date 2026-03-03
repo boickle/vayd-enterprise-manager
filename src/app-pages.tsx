@@ -74,7 +74,7 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       path: '/analytics',
       label: 'Analytics',
       element: <Analytics />,
-      role: ['employee', 'admin', 'superadmin'],
+      role: ['admin', 'superadmin'],
       showInMainTabs: true,
     },
     {

@@ -18,16 +18,25 @@ export default function Analytics() {
   const navigate = useNavigate();
   const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
   const normalizedRoles = roles.map((r) => String(r).toLowerCase().trim()).filter(Boolean);
+  const isAdmin = normalizedRoles.some((r) => ['admin', 'superadmin'].includes(r));
 
   const visibleTabs = getAnalyticsTabPages().filter((tab) => matchesRole(tab.role, normalizedRoles));
   const canSeePayments = visibleTabs.some((t) => t.path === 'payments');
 
-  // Redirect employees away from /analytics/payments to VSD
+  // Analytics is admin-only: redirect non-admins away
   useEffect(() => {
+    if (!isAdmin) {
+      navigate('/routing', { replace: true });
+      return;
+    }
     if (location.pathname === '/analytics/payments' && !canSeePayments) {
       navigate('/analytics/vsd', { replace: true });
     }
-  }, [location.pathname, canSeePayments, navigate]);
+  }, [isAdmin, location.pathname, canSeePayments, navigate]);
+
+  if (!isAdmin) {
+    return null;
+  }
 
   return (
     <div className="container">
