@@ -124,9 +124,18 @@ export async function fetchOpsStatsAnalytics(params: {
  * GET /analytics/ops/revenue/doctor/series
  * ========================= */
 
+export type DoctorRevenueSeriesItem = {
+  treatmentItemId: number;
+  cost: number;
+  description: string | null;
+  patientName?: string | null;
+  clientName?: string | null;
+};
+
 export type DoctorRevenuePoint = {
   date: string;
   total: number;
+  items?: DoctorRevenueSeriesItem[];
 };
 
 export type DoctorRevenueSeriesResponse = {
@@ -165,6 +174,15 @@ export async function fetchDoctorRevenueSeries(params: {
     series: series.map((r: any) => ({
       date: String(r?.date ?? ''),
       total: Number(r?.total ?? 0),
+      items: Array.isArray(r?.items)
+        ? (r.items as any[]).map((i: any) => ({
+            treatmentItemId: Number(i?.treatmentItemId ?? 0),
+            cost: Number(i?.cost ?? 0),
+            description: i?.description ?? null,
+            patientName: i?.patientName ?? null,
+            clientName: i?.clientName ?? null,
+          }))
+        : undefined,
     })),
   };
 }

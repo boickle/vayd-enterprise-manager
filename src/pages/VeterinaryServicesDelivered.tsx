@@ -5,16 +5,24 @@ import {
   CardContent,
   CardHeader,
   Checkbox,
+  Dialog,
+  DialogTitle,
+  DialogContent,
   FormControl,
   FormControlLabel,
   IconButton,
   InputLabel,
-  MenuItem,
-  Select,
-  Typography,
   List,
   ListItem,
   ListItemText,
+  MenuItem,
+  Select,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  Typography,
   Backdrop,
   CircularProgress,
   Alert,
@@ -40,6 +48,7 @@ import {
   fetchDoctorRevenueSeries,
   type DoctorRevenuePoint,
   type DoctorRevenueSeriesResponse,
+  type DoctorRevenueSeriesItem,
 } from '../api/opsStats';
 import {
   fetchDoctorMonth,
@@ -209,6 +218,10 @@ export default function VeterinaryServicesDeliveredPage() {
     Record<string, Record<string, number>>
   >({});
   const [pointsLoading, setPointsLoading] = useState(false);
+  const [itemsModalOpen, setItemsModalOpen] = useState(false);
+  const [itemsModalDoctor, setItemsModalDoctor] = useState<{ id: string; name: string } | null>(null);
+  const [itemsModalData, setItemsModalData] = useState<DoctorRevenueSeriesResponse | null>(null);
+  const [itemsModalLoading, setItemsModalLoading] = useState(false);
 
   const start = range.from.startOf('day');
   const end = range.to.startOf('day');
@@ -419,6 +432,21 @@ export default function VeterinaryServicesDeliveredPage() {
     });
     return options;
   }, [doctorResponses]);
+
+  const handleDoctorNameClick = (doctorId: string, doctorName: string) => {
+    setItemsModalDoctor({ id: doctorId, name: doctorName });
+    setItemsModalOpen(true);
+    setItemsModalData(null);
+    setItemsModalLoading(true);
+    fetchDoctorRevenueSeries({
+      start: startStr,
+      end: endStr,
+      doctorId,
+    })
+      .then((data) => setItemsModalData(data))
+      .catch(() => setItemsModalData(null))
+      .finally(() => setItemsModalLoading(false));
+  };
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -653,7 +681,27 @@ export default function VeterinaryServicesDeliveredPage() {
                     disablePadding
                     sx={{ py: 0.5, display: 'flex', justifyContent: 'space-between' }}
                   >
-                    <ListItemText primary={r.name} primaryTypographyProps={{ variant: 'body2' }} />
+                    <ListItemText
+                      primary={
+                        <Typography
+                          variant="body2"
+                          component="button"
+                          onClick={() => handleDoctorNameClick(r.doctorId, r.name)}
+                          sx={{
+                            background: 'none',
+                            border: 'none',
+                            padding: 0,
+                            cursor: 'pointer',
+                            color: 'primary.main',
+                            textDecoration: 'underline',
+                            textAlign: 'left',
+                            font: 'inherit',
+                          }}
+                        >
+                          {r.name}
+                        </Typography>
+                      }
+                    />
                     <Typography variant="body2" fontWeight={500}>
                       {fmtUSD(Number(r.response.total ?? 0))}
                     </Typography>
@@ -662,6 +710,69 @@ export default function VeterinaryServicesDeliveredPage() {
             </List>
           </CardContent>
         </Card>
+
+        <Dialog
+          open={itemsModalOpen}
+          onClose={() => setItemsModalOpen(false)}
+          maxWidth="md"
+          fullWidth
+          PaperProps={{ sx: { maxHeight: '85vh' } }}
+        >
+          <DialogTitle>
+            {itemsModalDoctor?.name ?? 'Doctor'} — items contributing to total
+          </DialogTitle>
+          <DialogContent dividers>
+            {itemsModalLoading && (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                <CircularProgress />
+              </Box>
+            )}
+            {!itemsModalLoading && itemsModalData && (
+              <Box>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Total: {fmtUSD(itemsModalData.total)} ({startStr} – {endStr})
+                </Typography>
+                {itemsModalData.series
+                  .filter((pt) => Array.isArray(pt.items) && pt.items.length > 0)
+                  .map((pt) => (
+                    <Box key={pt.date} sx={{ mb: 3 }}>
+                      <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                        {pt.date} — {fmtUSD(pt.total)}
+                      </Typography>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Description</TableCell>
+                            <TableCell>Client</TableCell>
+                            <TableCell>Patient</TableCell>
+                            <TableCell align="right">Cost</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {(pt.items ?? []).map((item: DoctorRevenueSeriesItem) => (
+                            <TableRow key={item.treatmentItemId}>
+                              <TableCell>
+                                {item.description ?? `Item ${item.treatmentItemId}`}
+                              </TableCell>
+                              <TableCell>{item.clientName ?? '—'}</TableCell>
+                              <TableCell>{item.patientName ?? '—'}</TableCell>
+                              <TableCell align="right">{fmtUSD(item.cost)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </Box>
+                  ))}
+                {(!itemsModalData.series.length ||
+                  itemsModalData.series.every((pt) => !pt.items?.length)) && (
+                  <Typography variant="body2" color="text.secondary">
+                    No item breakdown available for this range.
+                  </Typography>
+                )}
+              </Box>
+            )}
+          </DialogContent>
+        </Dialog>
 
         <Backdrop
           open={loading || pointsLoading}
