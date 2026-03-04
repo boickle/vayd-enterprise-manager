@@ -298,7 +298,12 @@ export default function TimeSpentAnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rawDays, setRawDays] = useState<{ date: string; appts: DoctorMonthDay['appts'] }[]>([]);
-  const [driveTimeData, setDriveTimeData] = useState<{ date: string; driveMinutes: number }[]>([]);
+  const [driveTimeRawData, setDriveTimeRawData] = useState<
+    { date: string; totalDriveMinutes: number; averageDriveMinutes: number | null }[]
+  >([]);
+  const [driveTimeMetric, setDriveTimeMetric] = useState<'total' | 'average'>('total');
+  const [driveTimeDoctorId, setDriveTimeDoctorId] = useState<string>(ALL_DVMS);
+  const [driveTimeGroupBy, setDriveTimeGroupBy] = useState<GroupByOption>('day');
   const [driveTimeLoading, setDriveTimeLoading] = useState(false);
 
   const start = range.from.startOf('day');
@@ -398,7 +403,7 @@ export default function TimeSpentAnalyticsPage() {
   useEffect(() => {
     const dates = dateRange(start, end);
     setDriveTimeLoading(true);
-    setDriveTimeData([]);
+    setDriveTimeRawData([]);
     let alive = true;
 
     (async () => {
@@ -414,21 +419,36 @@ export default function TimeSpentAnalyticsPage() {
         );
         if (!alive) return;
 
-        const rows: { date: string; driveMinutes: number }[] = dates.map((date, i) => {
+        const rows: { date: string; totalDriveMinutes: number; averageDriveMinutes: number | null }[] = dates.map((date, i) => {
           const res = results[i];
-          if (doctorId === ALL_DVMS) {
-            return { date, driveMinutes: res?.totalDriveMinutes ?? 0 };
+          if (driveTimeDoctorId === ALL_DVMS) {
+            const total = res?.totalDriveMinutes ?? 0;
+            const byDoctor = res?.byDoctor ?? [];
+            const withDrive = byDoctor.filter((d) => (d.driveMinutes ?? 0) > 0);
+            const avg =
+              withDrive.length > 0
+                ? withDrive.reduce(
+                    (sum, d) => sum + (d.averageDriveMinutesBetweenAppointments ?? 0),
+                    0
+                  ) / withDrive.length
+                : null;
+            return { date, totalDriveMinutes: total, averageDriveMinutes: avg };
           }
           const doc = (res?.byDoctor ?? []).find(
-            (d) => String(d.doctorId) === doctorId || String(d.pimsId) === doctorId
+            (d) => String(d.doctorId) === driveTimeDoctorId || String(d.pimsId) === driveTimeDoctorId
           );
-          return { date, driveMinutes: doc?.driveMinutes ?? 0 };
+          const total = doc?.driveMinutes ?? 0;
+          const avg =
+            total > 0 && doc?.averageDriveMinutesBetweenAppointments != null
+              ? doc.averageDriveMinutesBetweenAppointments
+              : null;
+          return { date, totalDriveMinutes: total, averageDriveMinutes: avg };
         });
-        setDriveTimeData(rows);
+        setDriveTimeRawData(rows);
       } catch (e) {
         if (!alive) return;
         console.error('Drive time fetch failed:', e);
-        setDriveTimeData([]);
+        setDriveTimeRawData([]);
       } finally {
         if (alive) setDriveTimeLoading(false);
       }
@@ -437,7 +457,7 @@ export default function TimeSpentAnalyticsPage() {
     return () => {
       alive = false;
     };
-  }, [startStr, endStr, doctorId]);
+  }, [startStr, endStr, driveTimeDoctorId]);
 
   const chartData = useMemo(() => {
     if (groupBy === 'week') return buildAvgMinutesByWeekByType(start, end, rawDays);
@@ -452,6 +472,33 @@ export default function TimeSpentAnalyticsPage() {
 
   const slotIndices = useMemo(() => Array.from({ length: maxSlots }, (_, i) => i), [maxSlots]);
 
+  /** Average minutes per appointment by type for the selected period, sorted by average most to least (types with >0 only). */
+  const timeSpentSummaryByType = useMemo(() => {
+    const totalByType = new Map<string, number>();
+    const countByType = new Map<string, number>();
+    for (const day of rawDays) {
+      for (const a of day.appts ?? []) {
+        const typeName = normalizeAppointmentType(a.appointmentType);
+        const mins = Number.isFinite(a.serviceMinutes) ? a.serviceMinutes! : 0;
+        totalByType.set(typeName, (totalByType.get(typeName) ?? 0) + mins);
+        countByType.set(typeName, (countByType.get(typeName) ?? 0) + 1);
+      }
+    }
+    const list = Array.from(totalByType.entries())
+      .filter(([typeName]) => (countByType.get(typeName) ?? 0) > 0)
+      .map(([typeName, total]) => {
+        const count = countByType.get(typeName) ?? 0;
+        const avgMinutes = count > 0 ? total / count : 0;
+        return { typeName, avgMinutes, count };
+      })
+      .filter((x) => x.avgMinutes > 0)
+      .sort((a, b) => b.avgMinutes - a.avgMinutes);
+    const grandTotal = list.reduce((sum, x) => sum + x.avgMinutes * x.count, 0);
+    const grandCount = list.reduce((sum, x) => sum + x.count, 0);
+    const overallAvg = grandCount > 0 ? grandTotal / grandCount : 0;
+    return { list, grandTotal, grandCount, overallAvg };
+  }, [rawDays]);
+
   const doctorOptions = useMemo(() => {
     const list: { id: string; label: string }[] = [{ id: ALL_DVMS, label: 'All DVMs' }];
     for (const p of providers) {
@@ -459,6 +506,56 @@ export default function TimeSpentAnalyticsPage() {
     }
     return list;
   }, [providers]);
+
+  const driveTimeData = useMemo(() => {
+    const daily = driveTimeRawData
+      .filter((row) => row.totalDriveMinutes > 0)
+      .map((row) => ({
+        date: row.date,
+        totalDriveMinutes: row.totalDriveMinutes,
+        averageDriveMinutes: row.averageDriveMinutes,
+        driveMinutes:
+          driveTimeMetric === 'average' && row.averageDriveMinutes != null
+            ? row.averageDriveMinutes
+            : row.totalDriveMinutes,
+      }));
+    if (driveTimeGroupBy === 'day') {
+      return daily.map((d) => ({ date: d.date, driveMinutes: d.driveMinutes }));
+    }
+    const periodKey = (dateStr: string) => {
+      const d = dayjs(dateStr);
+      if (driveTimeGroupBy === 'week') return d.startOf('isoWeek').format('YYYY-MM-DD');
+      return d.format('YYYY-MM');
+    };
+    const periodLabel = (key: string) => {
+      if (driveTimeGroupBy === 'month') {
+        const [y, m] = key.split('-').map(Number);
+        return dayjs().year(y).month((m ?? 1) - 1).format('MMM YYYY');
+      }
+      const start = dayjs(key);
+      const end = start.add(6, 'day');
+      return `${start.format('MMM D')} – ${end.format('MMM D')}`;
+    };
+    const byPeriod = new Map<string, { total: number; avgSum: number; avgCount: number }>();
+    daily.forEach((d) => {
+      const key = periodKey(d.date);
+      const cur = byPeriod.get(key) ?? { total: 0, avgSum: 0, avgCount: 0 };
+      cur.total += d.totalDriveMinutes;
+      if (d.averageDriveMinutes != null) {
+        cur.avgSum += d.averageDriveMinutes;
+        cur.avgCount += 1;
+      }
+      byPeriod.set(key, cur);
+    });
+    const entries = Array.from(byPeriod.entries()).sort(([a], [b]) => a.localeCompare(b));
+    return entries.map(([key, agg]) => ({
+      date: periodLabel(key),
+      driveMinutes:
+        driveTimeMetric === 'average' && agg.avgCount > 0
+          ? agg.avgSum / agg.avgCount
+          : agg.total,
+    }));
+  }, [driveTimeRawData, driveTimeMetric, driveTimeGroupBy]);
 
   const driveTimeDataWithTrend = useMemo(
     () => addLinearTrend(driveTimeData),
@@ -636,6 +733,61 @@ export default function TimeSpentAnalyticsPage() {
                 </ResponsiveContainer>
               </Box>
             )}
+
+            {!loading && timeSpentSummaryByType.list.length > 0 && (
+              <Box sx={{ mt: 3, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600, color: 'text.secondary' }}>
+                  Average time per appointment by type (selected period)
+                </Typography>
+                <Box
+                  component="ul"
+                  sx={{
+                    m: 0,
+                    p: 0,
+                    listStyle: 'none',
+                    '& li': {
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      py: 0.75,
+                      px: 0,
+                      borderBottom: '1px solid',
+                      borderColor: 'divider',
+                      '&:last-of-type': { borderBottom: 'none' },
+                    },
+                  }}
+                >
+                  {timeSpentSummaryByType.list.map(({ typeName, avgMinutes, count }) => (
+                    <li key={typeName}>
+                      <Typography variant="body2">
+                        {typeName}
+                        <Typography component="span" variant="caption" sx={{ ml: 0.5, color: 'text.secondary' }}>
+                          ({count} appt{count !== 1 ? 's' : ''})
+                        </Typography>
+                      </Typography>
+                      <Typography variant="body2" fontWeight={500}>
+                        {avgMinutes >= 60
+                          ? `${Math.floor(avgMinutes / 60)} hr ${Math.round(avgMinutes % 60)} min`
+                          : `${Math.round(avgMinutes * 10) / 10} min`}
+                      </Typography>
+                    </li>
+                  ))}
+                  <li>
+                    <Typography variant="body2" fontWeight={700}>
+                      Overall average
+                      <Typography component="span" variant="caption" sx={{ ml: 0.5, color: 'text.secondary' }}>
+                        ({timeSpentSummaryByType.grandCount} appts)
+                      </Typography>
+                    </Typography>
+                    <Typography variant="body2" fontWeight={700}>
+                      {timeSpentSummaryByType.overallAvg >= 60
+                        ? `${Math.floor(timeSpentSummaryByType.overallAvg / 60)} hr ${Math.round(timeSpentSummaryByType.overallAvg % 60)} min`
+                        : `${Math.round(timeSpentSummaryByType.overallAvg * 10) / 10} min`}
+                    </Typography>
+                  </li>
+                </Box>
+              </Box>
+            )}
           </CardContent>
         </Card>
 
@@ -643,12 +795,80 @@ export default function TimeSpentAnalyticsPage() {
           <CardHeader
             title="Drive time"
             subheader={
-              doctorId === ALL_DVMS
-                ? 'Total drive minutes per day for the entire practice.'
-                : 'Drive minutes per day for the selected doctor.'
+              driveTimeMetric === 'total'
+                ? driveTimeDoctorId === ALL_DVMS
+                  ? `Total drive minutes ${driveTimeGroupBy === 'day' ? 'per day' : driveTimeGroupBy === 'week' ? 'per week' : 'per month'} for the entire practice. Days with no drive time are excluded.`
+                  : `Drive minutes ${driveTimeGroupBy === 'day' ? 'per day' : driveTimeGroupBy === 'week' ? 'per week' : 'per month'} for the selected doctor. Days with no drive time are excluded.`
+                : driveTimeDoctorId === ALL_DVMS
+                  ? `Average drive minutes between appointments ${driveTimeGroupBy === 'day' ? 'per day' : driveTimeGroupBy === 'week' ? 'per week' : 'per month'} (practice). Days with no drive time are excluded.`
+                  : `Average drive minutes between appointments ${driveTimeGroupBy === 'day' ? 'per day' : driveTimeGroupBy === 'week' ? 'per week' : 'per month'} for the selected doctor. Days with no drive time are excluded.`
+            }
+            action={
+              <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => setDriveTimeMetric('total')}
+                  style={{
+                    padding: '6px 12px',
+                    fontSize: '13px',
+                    border: `1px solid ${driveTimeMetric === 'total' ? '#1976d2' : '#ccc'}`,
+                    borderRadius: 4,
+                    background: driveTimeMetric === 'total' ? '#e3f2fd' : '#fff',
+                    cursor: 'pointer',
+                    fontWeight: driveTimeMetric === 'total' ? 600 : 400,
+                  }}
+                >
+                  Total
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDriveTimeMetric('average')}
+                  style={{
+                    padding: '6px 12px',
+                    fontSize: '13px',
+                    border: `1px solid ${driveTimeMetric === 'average' ? '#1976d2' : '#ccc'}`,
+                    borderRadius: 4,
+                    background: driveTimeMetric === 'average' ? '#e3f2fd' : '#fff',
+                    cursor: 'pointer',
+                    fontWeight: driveTimeMetric === 'average' ? 600 : 400,
+                  }}
+                >
+                  Avg between appointments
+                </button>
+              </Box>
             }
           />
           <CardContent>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2, mb: 2 }}>
+              <FormControl size="small" sx={{ minWidth: 200 }}>
+                <InputLabel id="drive-time-doctor-label">Doctor</InputLabel>
+                <Select
+                  labelId="drive-time-doctor-label"
+                  value={driveTimeDoctorId}
+                  label="Doctor"
+                  onChange={(e) => setDriveTimeDoctorId(e.target.value)}
+                >
+                  {doctorOptions.map((opt) => (
+                    <MenuItem key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl size="small" sx={{ minWidth: 180 }}>
+                <InputLabel id="drive-time-group-label">Group by</InputLabel>
+                <Select
+                  labelId="drive-time-group-label"
+                  value={driveTimeGroupBy}
+                  label="Group by"
+                  onChange={(e) => setDriveTimeGroupBy(e.target.value as GroupByOption)}
+                >
+                  <MenuItem value="day">By day</MenuItem>
+                  <MenuItem value="week">By week</MenuItem>
+                  <MenuItem value="month">By month</MenuItem>
+                </Select>
+              </FormControl>
+            </Box>
             {driveTimeLoading ? (
               <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
                 <CircularProgress />
@@ -669,7 +889,7 @@ export default function TimeSpentAnalyticsPage() {
                     <Tooltip
                       formatter={(value: number | undefined, name: string | undefined) => [
                         value != null ? `${Number(value).toFixed(1)} mins` : '0 mins',
-                        (name ?? '') === 'trend' ? 'Trend' : 'Drive time',
+                        (name ?? '').includes('Trend') ? 'Trend line (smoothed)' : driveTimeMetric === 'total' ? 'Drive time' : 'Avg between appointments',
                       ]}
                       labelFormatter={(label) => String(label)}
                     />
@@ -679,7 +899,7 @@ export default function TimeSpentAnalyticsPage() {
                       stroke="#636363"
                       strokeWidth={2}
                       dot={{ r: 3 }}
-                      name="Drive time"
+                      name={driveTimeMetric === 'total' ? 'Drive time' : 'Avg between appointments'}
                     />
                     <Line
                       type="monotone"
@@ -688,7 +908,7 @@ export default function TimeSpentAnalyticsPage() {
                       strokeWidth={1.5}
                       strokeDasharray="5 5"
                       dot={false}
-                      name="Trend"
+                      name="Trend line (smoothed)"
                     />
                   </LineChart>
                 </ResponsiveContainer>

@@ -5,6 +5,8 @@ export type DriveTimeByDoctor = {
   pimsId: string;
   doctorName: string;
   driveMinutes: number;
+  /** Average drive minutes between consecutive appointments (only when driveMinutes > 0). */
+  averageDriveMinutesBetweenAppointments?: number;
 };
 
 export type DriveTimeResponse = {
