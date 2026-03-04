@@ -917,6 +917,117 @@ export default function RoomLoaderPage() {
     setReminderToRemove(null);
   }
 
+  /**
+   * Pre-discount price for 1 unit (base to apply discounts to).
+   * Lab: item.price; Procedure: price + serviceFee; Inventory: max(minimumPrice, price + serviceFee) when minimumPrice > 0.
+   */
+  function getPreDiscountForOneUnit(item: SearchableItem | any): number {
+    const t = ((item?.itemType ?? '') as string).toLowerCase();
+    if (t === 'lab') {
+      const p = Number(item?.lab?.price ?? item?.price ?? 0);
+      return p;
+    }
+    if (t === 'procedure') {
+      const p = Number(item?.procedure?.price ?? item?.price ?? 0);
+      const sf = Number(item?.procedure?.serviceFee ?? 0);
+      return p + sf;
+    }
+    if (t === 'inventory') {
+      const p = Number(item?.inventoryItem?.price ?? item?.price ?? 0);
+      const sf = Number(item?.inventoryItem?.serviceFee ?? 0);
+      const calculated = p + sf;
+      const minP = item?.inventoryItem?.minimumPrice != null ? Number(item.inventoryItem.minimumPrice) : 0;
+      if (minP > 0) return Math.max(minP, calculated);
+      return calculated;
+    }
+    return Number(item?.price ?? 0);
+  }
+
+  /**
+   * Total pre-discount for quantity. Price scales with qty; service fee stays the same (procedure/inventory).
+   * When tieredPricing exists, uses tiered unit price for that quantity tier.
+   */
+  function getTotalPreDiscountForQuantity(item: SearchableItem | any, quantity: number): number {
+    const q = Math.max(0, Number(quantity) || 0);
+    const preDiscount1 = getPreDiscountForOneUnit(item);
+    if (item?.tieredPricing?.hasTieredPricing) {
+      const tieredUnit = getTieredPrice(item.tieredPricing, q, preDiscount1);
+      return tieredUnit * q;
+    }
+    const t = ((item?.itemType ?? '') as string).toLowerCase();
+    if (t === 'lab') {
+      const p = Number(item?.lab?.price ?? item?.price ?? 0);
+      return p * q;
+    }
+    if (t === 'procedure') {
+      const p = Number(item?.procedure?.price ?? item?.price ?? 0);
+      const sf = Number(item?.procedure?.serviceFee ?? 0);
+      return p * q + sf;
+    }
+    if (t === 'inventory') {
+      const p = Number(item?.inventoryItem?.price ?? item?.price ?? 0);
+      const sf = Number(item?.inventoryItem?.serviceFee ?? item?.serviceFee ?? 0);
+      const minP = item?.inventoryItem?.minimumPrice != null ? Number(item.inventoryItem.minimumPrice) : (item?.minimumPrice != null ? Number(item.minimumPrice) : 0);
+      // Total = price*qty + serviceFee (once). Only increase above minimum when that sum exceeds minimumPrice.
+      const calculated = p * q + sf;
+      if (minP > 0) return Math.max(minP, calculated);
+      return calculated;
+    }
+    return Number(item?.price ?? 0) * q;
+  }
+
+  /**
+   * Normalize a reminder (and optional correction) into the same shape as an added item so we can reuse getPreDiscountForOneUnit / getTotalPreDiscountForQuantity / getAddedItemFinalPrice.
+   * Reads price, serviceFee, minimumPrice from reminder.matchedItem (or correction.selectedItem) so quantity scaling matches added items.
+   */
+  function reminderToPricingItem(r: ReminderWithPrice, correction?: { selectedItem?: SearchableItem | any } | null): any {
+    const itemType = (correction?.selectedItem?.itemType ?? r.itemType ?? 'procedure').toString().toLowerCase();
+    const base: any = {
+      itemType,
+      price: r.price ?? 0,
+      originalPrice: r.wellnessPlanPricing?.originalPrice,
+      wellnessPlanPricing: r.wellnessPlanPricing,
+      discountPricing: r.discountPricing,
+      tieredPricing: correction?.selectedItem?.tieredPricing ?? r.tieredPricing,
+    };
+    if (itemType === 'inventory') {
+      base.inventoryItem = correction?.selectedItem?.inventoryItem ?? {
+        price: r.matchedItem?.price ?? 0,
+        serviceFee: r.matchedItem?.serviceFee ?? 0,
+        minimumPrice: (r.matchedItem as any)?.minimumPrice,
+      };
+    } else if (itemType === 'lab') {
+      base.lab = correction?.selectedItem?.lab ?? { price: r.matchedItem?.price ?? 0 };
+    } else {
+      base.procedure = correction?.selectedItem?.procedure ?? {
+        price: r.matchedItem?.price ?? 0,
+        serviceFee: (r.matchedItem as any)?.serviceFee ?? 0,
+      };
+    }
+    return base;
+  }
+
+  /**
+   * Final price (after discounts) for an added item at a given quantity.
+   * Pre-discount from formula (Lab = price; Procedure/Inventory = price + serviceFee, min for inventory); then apply wellness/client discount and use the better (lower) result. Service fee does not scale with qty.
+   */
+  function getAddedItemFinalPrice(item: SearchableItem | any, quantity: number): { totalFinal: number; totalOriginal: number; unitFinal: number; unitOriginal: number } {
+    const preDiscount1 = getPreDiscountForOneUnit(item);
+    const totalPreDiscount = getTotalPreDiscountForQuantity(item, quantity);
+    const q = Math.max(0, Number(quantity) || 1);
+    const unitOriginal = preDiscount1;
+
+    const adjustedFromApi = Number(item?.price ?? 0);
+    const originalFromApi = Number(item?.originalPrice ?? item?.wellnessPlanPricing?.originalPrice ?? preDiscount1);
+    const discountRatio = originalFromApi > 0 ? adjustedFromApi / originalFromApi : 1;
+
+    const totalFinal = totalPreDiscount * discountRatio;
+    const totalOriginal = totalPreDiscount;
+    const unitFinal = q > 0 ? totalFinal / q : adjustedFromApi;
+
+    return { totalFinal, totalOriginal, unitFinal, unitOriginal };
+  }
+
   // Helper function to get tiered price for a given quantity
   function getTieredPrice(tieredPricing: any, quantity: number, basePrice: number): number {
     if (!tieredPricing?.hasTieredPricing || !tieredPricing.priceBreaks || tieredPricing.priceBreaks.length === 0) {
@@ -1002,52 +1113,19 @@ export default function RoomLoaderPage() {
     try {
       // Construct the item object based on itemType
       const itemPayload: any = {};
+      // Pass the full item object (from search) so backend has all fields
       if (item.itemType === 'lab' && item.lab) {
-        itemPayload.lab = {
-          id: item.lab.id || 0,
-          name: item.name,
-          price: String(item.price || 0),
-          code: item.code || '',
-        };
+        itemPayload.lab = item.lab;
       } else if (item.itemType === 'procedure' && (item as any).procedure) {
-        itemPayload.procedure = {
-          id: (item as any).procedure.id || 0,
-          name: item.name,
-          price: String(item.price || 0),
-          code: item.code || '',
-        };
+        itemPayload.procedure = (item as any).procedure;
       } else if (item.itemType === 'inventory' && item.inventoryItem) {
-        itemPayload.inventoryItem = {
-          id: item.inventoryItem.id || 0,
-          name: item.name,
-          price: String(item.price || 0),
-          code: item.code || '',
-        };
-      } else {
-        // Fallback: try to extract ID from the item object
-        const itemId = (item.lab?.id || (item as any).procedure?.id || item.inventoryItem?.id || 0);
-        if (item.itemType === 'lab') {
-          itemPayload.lab = {
-            id: itemId,
-            name: item.name,
-            price: String(item.price || 0),
-            code: item.code || '',
-          };
-        } else if (item.itemType === 'procedure') {
-          itemPayload.procedure = {
-            id: itemId,
-            name: item.name,
-            price: String(item.price || 0),
-            code: item.code || '',
-          };
-        } else if (item.itemType === 'inventory') {
-          itemPayload.inventoryItem = {
-            id: itemId,
-            name: item.name,
-            price: String(item.price || 0),
-            code: item.code || '',
-          };
-        }
+        itemPayload.inventoryItem = item.inventoryItem;
+      } else if (item.lab) {
+        itemPayload.lab = item.lab;
+      } else if ((item as any).procedure) {
+        itemPayload.procedure = (item as any).procedure;
+      } else if (item.inventoryItem) {
+        itemPayload.inventoryItem = item.inventoryItem;
       }
 
       const pricingResponse = await checkItemPricing({
@@ -3006,76 +3084,27 @@ export default function RoomLoaderPage() {
                                 </div>
                                   </>
                                 )}
-                                {/* Price Display — always show for all reminder states (matched, confirmed, corrected) */}
+                                {/* Price Display — same formula as added items: pre-discount (Lab/Procedure/Inventory + min), then discount; service fee once for procedure/inventory */}
                                 {(() => {
-                                  // Prefer backend/refetched reminder pricing (includes membership/discount) when available; only use correction item price when reminder has no pricing yet
-                                  let finalPrice = 0;
-                                  let originalPrice = 0;
                                   const wellnessPricing = reminderWithPrice.wellnessPlanPricing;
                                   const discountPricing = reminderWithPrice.discountPricing;
                                   const hasPrice = reminderWithPrice.price != null;
                                   const hasWellnessAdjusted = wellnessPricing?.adjustedPrice != null && typeof wellnessPricing.adjustedPrice === 'number';
-                                  
-                                  // Final price: use refetched reminder's adjusted/backend price first so discount shows after correction
-                                  if (hasWellnessAdjusted) {
-                                    finalPrice = wellnessPricing!.adjustedPrice;
-                                  } else if (hasPrice) {
-                                    finalPrice = Number(reminderWithPrice.price);
-                                  } else if (correction?.selectedItem?.price != null) {
-                                    finalPrice = Number(correction.selectedItem.price);
-                                    originalPrice = finalPrice;
-                                  } else {
-                                    if (!hasPrice && !correction?.selectedItem && !wellnessPricing) {
-                                      return (
-                                        <div style={{ fontSize: '14px', color: '#999', fontStyle: 'italic' }}>
-                                          No price available
-                                        </div>
-                                      );
-                                    }
-                                    finalPrice = 0;
+                                  if (!hasPrice && !correction?.selectedItem && !wellnessPricing) {
+                                    return (
+                                      <div style={{ fontSize: '14px', color: '#999', fontStyle: 'italic' }}>
+                                        No price available
+                                      </div>
+                                    );
                                   }
-                                  
-                                  // Original price for strikethrough when discount applied
-                                  let baseOriginalPrice = 0;
-                                  if (wellnessPricing?.originalPrice != null) {
-                                    baseOriginalPrice = wellnessPricing.originalPrice;
-                                  } else if (correction?.selectedItem?.price != null) {
-                                    baseOriginalPrice = Number(correction.selectedItem.price);
-                                  } else if (reminderWithPrice.matchedItem?.price) {
-                                    baseOriginalPrice = Number(reminderWithPrice.matchedItem.price);
-                                  } else {
-                                    baseOriginalPrice = finalPrice;
-                                  }
-                                  
-                                  // Get quantity and apply tiered pricing if available
                                   const quantity = resolveQty(reminderQuantities[reminderId]);
-                                  
-                                  // Get tiered price for the current quantity
-                                  // Check correction item tiered pricing first, then fall back to reminder tiered pricing
-                                  let tieredOriginalPrice = baseOriginalPrice;
-                                  const tieredPricing = correction?.selectedItem?.tieredPricing || reminderWithPrice.tieredPricing;
-                                  if (tieredPricing?.hasTieredPricing) {
-                                    tieredOriginalPrice = getTieredPrice(tieredPricing, quantity, baseOriginalPrice);
-                                  }
-                                  
-                                  // Calculate the discount ratio from the backend response (for qty 1)
-                                  const backendOriginalPrice = baseOriginalPrice;
-                                  const backendAdjustedPrice = finalPrice;
-                                  const discountRatio = backendOriginalPrice > 0 ? backendAdjustedPrice / backendOriginalPrice : 1;
-                                  
-                                  // Apply the same discount ratio to the tiered price
-                                  const tieredFinalPrice = tieredOriginalPrice * discountRatio;
-                                  
-                                  const totalFinalPrice = tieredFinalPrice * quantity;
-                                  const totalOriginalPrice = tieredOriginalPrice * quantity;
-                                  
-                                  // Show original price if there's any discount applied
-                                  const hasAnyDiscount = (wellnessPricing && wellnessPricing.originalPrice !== wellnessPricing.adjustedPrice) || 
+                                  const pricingItem = reminderToPricingItem(reminderWithPrice, correction);
+                                  const { totalFinal: totalFinalPrice, totalOriginal: totalOriginalPrice, unitFinal } = getAddedItemFinalPrice(pricingItem, quantity);
+                                  const hasAnyDiscount = (wellnessPricing && wellnessPricing.originalPrice !== wellnessPricing.adjustedPrice) ||
                                                          discountPricing?.priceAdjustedByDiscount;
-                                  
                                   return (
                                     <>
-                                      {hasAnyDiscount && totalOriginalPrice !== totalFinalPrice && (
+                                      {hasAnyDiscount && totalOriginalPrice !== totalFinalPrice && totalOriginalPrice > totalFinalPrice && (
                                         <div style={{ fontSize: '12px', color: '#999', textDecoration: 'line-through', marginBottom: '4px' }}>
                                           ${totalOriginalPrice.toFixed(2)}
                                         </div>
@@ -3083,9 +3112,9 @@ export default function RoomLoaderPage() {
                                       <div style={{ fontSize: '20px', fontWeight: 700, color: '#2e7d32' }}>
                                         ${totalFinalPrice.toFixed(2)}
                                       </div>
-                                      {tieredPricing?.hasTieredPricing && quantity > 1 && (
+                                      {quantity > 1 && (
                                         <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-                                          ${tieredFinalPrice.toFixed(2)} each
+                                          ${unitFinal.toFixed(2)} each
                                         </div>
                                       )}
                                     </>
@@ -3770,53 +3799,25 @@ export default function RoomLoaderPage() {
                                   }}
                                 />
                               </div>
-                              {/* Price Display */}
+                              {/* Price Display: pre-discount formula (Lab = price; Procedure/Inventory = price + serviceFee, min for inventory), then discounts; service fee stays same when qty changes */}
                               {(() => {
                                 const quantity = resolveQty(addedItemQuantities[`${patient.id}-${itemIdx}`]);
-                                
-                                // Get the base original price (for qty 1)
-                                const baseOriginalPrice = item.wellnessPlanPricing?.originalPrice ?? 
-                                                         item.originalPrice ?? 
-                                                         (item.price != null ? Number(item.price) : 0);
-                                
-                                // Get tiered price for the current quantity
-                                let tieredOriginalPrice = baseOriginalPrice;
-                                if (item.tieredPricing?.hasTieredPricing) {
-                                  tieredOriginalPrice = getTieredPrice(item.tieredPricing, quantity, baseOriginalPrice);
-                                }
-                                
-                                // Calculate the discount ratio from the backend response (for qty 1)
-                                // The backend gives us adjustedPrice and originalPrice for qty 1
-                                const backendOriginalPrice = item.originalPrice ?? baseOriginalPrice;
-                                const backendAdjustedPrice = item.price ?? 0;
-                                const discountRatio = backendOriginalPrice > 0 ? backendAdjustedPrice / backendOriginalPrice : 1;
-                                
-                                // Apply the same discount ratio to the tiered price
-                                let finalPrice = tieredOriginalPrice * discountRatio;
-                                
-                                // Get original price for display (tiered price before discounts)
-                                const originalPrice = tieredOriginalPrice;
-                                
-                                const totalFinalPrice = finalPrice * quantity;
-                                const totalOriginalPrice = originalPrice * quantity;
-                                
-                                // Show original price if there's any discount applied
-                                const hasAnyDiscount = (item.wellnessPlanPricing && item.wellnessPlanPricing.originalPrice !== item.wellnessPlanPricing.adjustedPrice) || 
+                                const { totalFinal, totalOriginal, unitFinal } = getAddedItemFinalPrice(item, quantity);
+                                const hasAnyDiscount = (item.wellnessPlanPricing && item.wellnessPlanPricing.originalPrice !== item.wellnessPlanPricing.adjustedPrice) ||
                                                        item.discountPricing?.priceAdjustedByDiscount;
-                                
                                 return (
                                   <>
-                                    {hasAnyDiscount && totalOriginalPrice !== totalFinalPrice && totalOriginalPrice > totalFinalPrice && (
+                                    {hasAnyDiscount && totalOriginal !== totalFinal && totalOriginal > totalFinal && (
                                       <div style={{ fontSize: '12px', color: '#999', textDecoration: 'line-through', marginBottom: '4px' }}>
-                                        ${totalOriginalPrice.toFixed(2)}
+                                        ${totalOriginal.toFixed(2)}
                                       </div>
                                     )}
                                     <div style={{ fontSize: '20px', fontWeight: 700, color: '#2e7d32' }}>
-                                      ${totalFinalPrice.toFixed(2)}
+                                      ${totalFinal.toFixed(2)}
                                     </div>
-                                    {item.tieredPricing?.hasTieredPricing && quantity > 1 && (
+                                    {quantity > 1 && (
                                       <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-                                        ${finalPrice.toFixed(2)} each
+                                        ${unitFinal.toFixed(2)} each
                                       </div>
                                     )}
                                   </>
@@ -3856,65 +3857,18 @@ export default function RoomLoaderPage() {
                             return id && !removedReminders.has(id);
                           })
                           .reduce((sum, r) => {
-                            // For reminders with selected/corrected items, use selected item price
                             const reminderId = r.reminder.id;
                             const correctionKey = `reminder-${reminderId}`;
                             const correction = reminderCorrections[correctionKey];
-                          
-                          // Get base price
-                          let basePrice = 0;
-                          let baseOriginalPrice = 0;
-                          
-                          if (correction?.selectedItem?.price != null) {
-                            basePrice = Number(correction.selectedItem.price);
-                            baseOriginalPrice = basePrice;
-                          } else if (r.price != null) {
-                            basePrice = Number(r.price);
-                            baseOriginalPrice = r.wellnessPlanPricing?.originalPrice ?? 
-                                              (r.matchedItem?.price ? Number(r.matchedItem.price) : basePrice);
-                          }
-                          
-                          // Get quantity and apply tiered pricing if available
-                          const quantity = resolveQty(reminderQuantities[reminderId]);
-                          
-                          // Get tiered price for the current quantity
-                          // Check correction item tiered pricing first, then fall back to reminder tiered pricing
-                          let tieredOriginalPrice = baseOriginalPrice;
-                          const tieredPricing = correction?.selectedItem?.tieredPricing || r.tieredPricing;
-                          if (tieredPricing?.hasTieredPricing) {
-                            tieredOriginalPrice = getTieredPrice(tieredPricing, quantity, baseOriginalPrice);
-                          }
-                          
-                          // Calculate the discount ratio from the backend response (for qty 1)
-                          const discountRatio = baseOriginalPrice > 0 ? basePrice / baseOriginalPrice : 1;
-                          
-                          // Apply the same discount ratio to the tiered price
-                          const tieredFinalPrice = tieredOriginalPrice * discountRatio;
-                          
-                          return sum + (tieredFinalPrice * quantity);
-                        }, 0) || 0) +
+                            const quantity = resolveQty(reminderQuantities[reminderId]);
+                            const pricingItem = reminderToPricingItem(r, correction);
+                            const { totalFinal } = getAddedItemFinalPrice(pricingItem, quantity);
+                            return sum + totalFinal;
+                          }, 0) || 0) +
                         (addedItems[patient.id]?.reduce((sum, item, itemIdx) => {
                           const quantity = resolveQty(addedItemQuantities[`${patient.id}-${itemIdx}`]);
-                          
-                          // Calculate price with tiered pricing if applicable
-                          const baseOriginalPrice = item.wellnessPlanPricing?.originalPrice ?? 
-                                                   item.originalPrice ?? 
-                                                   (item.price != null ? Number(item.price) : 0);
-                          
-                          let tieredOriginalPrice = baseOriginalPrice;
-                          if (item.tieredPricing?.hasTieredPricing) {
-                            tieredOriginalPrice = getTieredPrice(item.tieredPricing, quantity, baseOriginalPrice);
-                          }
-                          
-                          // Calculate the discount ratio from the backend response (for qty 1)
-                          const backendOriginalPrice = item.originalPrice ?? baseOriginalPrice;
-                          const backendAdjustedPrice = item.price ?? 0;
-                          const discountRatio = backendOriginalPrice > 0 ? backendAdjustedPrice / backendOriginalPrice : 1;
-                          
-                          // Apply the same discount ratio to the tiered price
-                          const finalPrice = tieredOriginalPrice * discountRatio;
-                          
-                          return sum + (finalPrice * quantity);
+                          const { totalFinal } = getAddedItemFinalPrice(item, quantity);
+                          return sum + totalFinal;
                         }, 0) || 0)
                       ).toFixed(2)}
                       </div>
