@@ -846,24 +846,12 @@ export default function RoomLoaderPage() {
   }
 
   function handleQuantityChange(reminderId: number, value: number | string) {
-    if (value === '') {
-      setReminderQuantities((prev) => ({ ...prev, [reminderId]: '' }));
-      return;
-    }
-    const parsed = Number(value);
-    const validQuantity = Number.isNaN(parsed) || parsed < 0.01 ? 1 : Math.round(parsed * 100) / 100;
-    setReminderQuantities((prev) => ({ ...prev, [reminderId]: validQuantity }));
+    setReminderQuantities((prev) => ({ ...prev, [reminderId]: value }));
   }
 
   function handleAddedItemQuantityChange(petId: number, itemIdx: number, value: number | string) {
     const key = `${petId}-${itemIdx}`;
-    if (value === '') {
-      setAddedItemQuantities((prev) => ({ ...prev, [key]: '' }));
-      return;
-    }
-    const parsed = Number(value);
-    const validQuantity = Number.isNaN(parsed) || parsed < 0.01 ? 1 : Math.round(parsed * 100) / 100;
-    setAddedItemQuantities((prev) => ({ ...prev, [key]: validQuantity }));
+    setAddedItemQuantities((prev) => ({ ...prev, [key]: value }));
   }
 
   function handleRemoveReminder(reminderId: number, reminderDescription: string) {
@@ -1174,7 +1162,7 @@ export default function RoomLoaderPage() {
       
       // Clean up quantities for removed items and reindex remaining items
       setAddedItemQuantities((prevQty) => {
-        const newQty: Record<string, number | ''> = {};
+        const newQty: Record<string, number | string> = {};
         Object.keys(prevQty).forEach((key) => {
           const [keyPetId, keyIdx] = key.split('-').map(Number);
           if (keyPetId === petId) {
@@ -1200,11 +1188,15 @@ export default function RoomLoaderPage() {
   // Reminder feedback state
   const [reminderFeedback, setReminderFeedback] = useState<Record<string, 'correct' | 'incorrect' | 'correcting' | null>>({});
   const [reminderCorrections, setReminderCorrections] = useState<Record<string, { searchQuery: string; results: SearchableItem[]; loading: boolean; selectedItem: SearchableItem | null; patientId?: number; scopeChosen?: boolean }>>({});
-  // Store quantities for each reminder (keyed by reminderId). Empty string allows user to clear field to type new number.
-  const [reminderQuantities, setReminderQuantities] = useState<Record<number, number | ''>>({});
-  // Store quantities for each added item (keyed by `${petId}-${itemIdx}`). Empty string allows user to clear field to type new number.
-  const [addedItemQuantities, setAddedItemQuantities] = useState<Record<string, number | ''>>({});
-  const resolveQty = (v: number | '' | undefined): number => (v === '' || v == null ? 1 : v);
+  // Store quantities for each reminder (keyed by reminderId). Number | string allows typing e.g. "0.45" or "0." without forcing to 1.
+  const [reminderQuantities, setReminderQuantities] = useState<Record<number, number | string>>({});
+  // Store quantities for each added item (keyed by `${petId}-${itemIdx}`). Number | string allows typing e.g. "0.45" or "0." without forcing to 1.
+  const [addedItemQuantities, setAddedItemQuantities] = useState<Record<string, number | string>>({});
+  const resolveQty = (v: number | string | undefined): number => {
+    if (v === '' || v == null) return 1;
+    const n = Number(v);
+    return Number.isNaN(n) ? 1 : Math.max(0.01, n);
+  };
   // Store edited reason for appointment for each patient (keyed by patient.id)
   const [appointmentReasons, setAppointmentReasons] = useState<Record<number, string>>({});
   // Store edited arrival window for each patient (keyed by patient.id)
@@ -2001,7 +1993,7 @@ export default function RoomLoaderPage() {
     }
 
     // Add reminders - match them to patients by patient ID (from reminder.patient or sentToClient map)
-    if (selectedRoomLoader.reminders) {
+    if (selectedRoomLoader.reminders && selectedRoomLoader.reminders.length > 0) {
       selectedRoomLoader.reminders.forEach((reminderWithPrice) => {
         const reminderId = reminderWithPrice.reminder?.id;
         const patientId =
@@ -2026,6 +2018,41 @@ export default function RoomLoaderPage() {
             }
           }
         }
+      });
+    } else if (sentPatients?.length) {
+      // Form already sent and API returned empty reminders[] — show what was sent to the client from sentToClient.patients
+      sentPatients.forEach((sp) => {
+        const patientId = sp.patientId;
+        const existing = patientId != null ? petMap.get(patientId) : undefined;
+        if (!existing || !sp.reminders?.length) return;
+        sp.reminders.forEach((r: any) => {
+          const item = r.item || {};
+          const reminderId = r.reminderId ?? item.id;
+          const reminderWithPrice: ReminderWithPrice = {
+            reminder: {
+              id: reminderId,
+              isActive: true,
+              isDeleted: false,
+              description: r.reminderText ?? item.name ?? 'Reminder',
+              dueDate: r.dueDate ?? null,
+              reminderType: r.reminderType ?? null,
+              patient: { id: patientId },
+            },
+            confidence: typeof r.confidence === 'number' ? r.confidence : 1,
+            price: item.price != null ? Number(item.price) : null,
+            itemType: (item.type || 'procedure') as string,
+            matchedItem: {
+              id: item.id,
+              code: item.code,
+              name: item.name,
+              price: item.price != null ? String(item.price) : undefined,
+            },
+            wellnessPlanPricing: r.wellnessPlanPricing,
+            discountPricing: r.discountPricing,
+            tieredPricing: r.tieredPricing,
+          };
+          existing.reminders.push(reminderWithPrice);
+        });
       });
     }
 
@@ -3070,7 +3097,15 @@ export default function RoomLoaderPage() {
                                     value={reminderQuantities[reminderId] === '' ? '' : (reminderQuantities[reminderId] ?? 1)}
                                     onChange={(e) => handleQuantityChange(reminderId, e.target.value)}
                                     onBlur={(e) => {
-                                      if (e.target.value === '') handleQuantityChange(reminderId, 1);
+                                      const val = e.target.value.trim();
+                                      if (val === '') {
+                                        handleQuantityChange(reminderId, 1);
+                                        return;
+                                      }
+                                      const n = Number(val);
+                                      if (Number.isNaN(n)) handleQuantityChange(reminderId, 1);
+                                      else if (n < 0.01) handleQuantityChange(reminderId, 0.01);
+                                      else handleQuantityChange(reminderId, Math.round(n * 100) / 100);
                                     }}
                                     style={{
                                       width: '60px',
@@ -3099,7 +3134,7 @@ export default function RoomLoaderPage() {
                                   }
                                   const quantity = resolveQty(reminderQuantities[reminderId]);
                                   const pricingItem = reminderToPricingItem(reminderWithPrice, correction);
-                                  const { totalFinal: totalFinalPrice, totalOriginal: totalOriginalPrice, unitFinal } = getAddedItemFinalPrice(pricingItem, quantity);
+                                  const { totalFinal: totalFinalPrice, totalOriginal: totalOriginalPrice } = getAddedItemFinalPrice(pricingItem, quantity);
                                   const hasAnyDiscount = (wellnessPricing && wellnessPricing.originalPrice !== wellnessPricing.adjustedPrice) ||
                                                          discountPricing?.priceAdjustedByDiscount;
                                   return (
@@ -3112,11 +3147,6 @@ export default function RoomLoaderPage() {
                                       <div style={{ fontSize: '20px', fontWeight: 700, color: '#2e7d32' }}>
                                         ${totalFinalPrice.toFixed(2)}
                                       </div>
-                                      {quantity > 1 && (
-                                        <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-                                          ${unitFinal.toFixed(2)} each
-                                        </div>
-                                      )}
                                     </>
                                   );
                                 })()}
@@ -3787,7 +3817,15 @@ export default function RoomLoaderPage() {
                                   value={addedItemQuantities[`${patient.id}-${itemIdx}`] === '' ? '' : (addedItemQuantities[`${patient.id}-${itemIdx}`] ?? 1)}
                                   onChange={(e) => handleAddedItemQuantityChange(patient.id, itemIdx, e.target.value)}
                                   onBlur={(e) => {
-                                    if (e.target.value === '') handleAddedItemQuantityChange(patient.id, itemIdx, 1);
+                                    const val = e.target.value.trim();
+                                    if (val === '') {
+                                      handleAddedItemQuantityChange(patient.id, itemIdx, 1);
+                                      return;
+                                    }
+                                    const n = Number(val);
+                                    if (Number.isNaN(n)) handleAddedItemQuantityChange(patient.id, itemIdx, 1);
+                                    else if (n < 0.01) handleAddedItemQuantityChange(patient.id, itemIdx, 0.01);
+                                    else handleAddedItemQuantityChange(patient.id, itemIdx, Math.round(n * 100) / 100);
                                   }}
                                   style={{
                                     width: '60px',
@@ -3802,7 +3840,7 @@ export default function RoomLoaderPage() {
                               {/* Price Display: pre-discount formula (Lab = price; Procedure/Inventory = price + serviceFee, min for inventory), then discounts; service fee stays same when qty changes */}
                               {(() => {
                                 const quantity = resolveQty(addedItemQuantities[`${patient.id}-${itemIdx}`]);
-                                const { totalFinal, totalOriginal, unitFinal } = getAddedItemFinalPrice(item, quantity);
+                                const { totalFinal, totalOriginal } = getAddedItemFinalPrice(item, quantity);
                                 const hasAnyDiscount = (item.wellnessPlanPricing && item.wellnessPlanPricing.originalPrice !== item.wellnessPlanPricing.adjustedPrice) ||
                                                        item.discountPricing?.priceAdjustedByDiscount;
                                 return (
@@ -3815,11 +3853,6 @@ export default function RoomLoaderPage() {
                                     <div style={{ fontSize: '20px', fontWeight: 700, color: '#2e7d32' }}>
                                       ${totalFinal.toFixed(2)}
                                     </div>
-                                    {quantity > 1 && (
-                                      <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-                                        ${unitFinal.toFixed(2)} each
-                                      </div>
-                                    )}
                                   </>
                                 );
                               })()}
