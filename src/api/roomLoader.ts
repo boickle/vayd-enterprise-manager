@@ -501,31 +501,16 @@ export async function submitReminderFeedback(request: ReminderMappingFeedbackReq
   return data;
 }
 
-// Check item pricing for a patient
+// Check item pricing for a patient. Pass the full item object (e.g. from search) so backend has all fields.
 export type CheckItemPricingRequest = {
   patientId: number;
   practiceId: number;
   clientId: number;
   itemType: 'lab' | 'procedure' | 'inventory' | string;
   item: {
-    lab?: {
-      id: number;
-      name: string;
-      price: string;
-      code?: string;
-    };
-    procedure?: {
-      id: number;
-      name: string;
-      price: string;
-      code?: string;
-    };
-    inventoryItem?: {
-      id: number;
-      name: string;
-      price: string;
-      code?: string;
-    };
+    lab?: Record<string, unknown>;
+    procedure?: Record<string, unknown>;
+    inventoryItem?: Record<string, unknown>;
   };
 };
 
@@ -585,7 +570,7 @@ export async function checkItemPricing(request: CheckItemPricingRequest): Promis
   return data;
 }
 
-/** Public (client) form: get adjusted price for an item with client/membership discounts applied. Same shape as employee check-item-pricing where possible (clientId, practiceId) so backend can apply client discounts. */
+/** Public (client) form: get adjusted price for an item with client/membership discounts applied. Pass the full item object (e.g. from search) so backend has all fields. */
 export type CheckItemPricingPublicRequest = {
   token: string;
   patientId: number;
@@ -595,9 +580,9 @@ export type CheckItemPricingPublicRequest = {
   clientId?: number;
   itemType: 'lab' | 'procedure' | 'inventory' | string;
   item: {
-    lab?: { id: number; name: string; price: string; code?: string };
-    procedure?: { id: number; name: string; price: string; code?: string };
-    inventoryItem?: { id: number; name: string; price: string; code?: string };
+    lab?: Record<string, unknown>;
+    procedure?: Record<string, unknown>;
+    inventoryItem?: Record<string, unknown>;
   };
 };
 
