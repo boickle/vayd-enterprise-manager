@@ -21,13 +21,17 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
+  Cell,
 } from 'recharts';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { fetchDoctorMonth, type DoctorMonthDay } from '../api/appointments';
+import { fetchDriveTime } from '../api/driveTime';
 
 dayjs.extend(utc);
 dayjs.extend(isoWeek);
@@ -60,6 +64,9 @@ function monthsInRange(start: Dayjs, end: Dayjs): { year: number; month: number 
 }
 
 type ChartRow = { period: string; [typeName: string]: number | string };
+
+/** Row for stacked chart with segments ordered by value (largest at bottom) per period. */
+export type ChartRowOrdered = { period: string; [key: string]: number | string | undefined };
 
 /** Appointment types to lump into "Other" (case-insensitive match). */
 const OTHER_APPT_TYPES = new Set([
@@ -237,7 +244,48 @@ function getColorForType(typeName: string, index: number): string {
   return TYPE_COLORS[typeName] ?? palette[index % palette.length];
 }
 
+/** For each row, sort types by value descending and output pos0, pos1, ... and type0, type1, ... so largest is bottom. */
+function orderChartRowsByValuePerPeriod(rows: ChartRow[]): { data: ChartRowOrdered[]; maxSlots: number } {
+  let maxSlots = 0;
+  const data: ChartRowOrdered[] = rows.map((row) => {
+    const entries = Object.entries(row)
+      .filter(([k, v]) => k !== 'period' && typeof v === 'number' && v > 0)
+      .sort(([, a], [, b]) => (b as number) - (a as number));
+    maxSlots = Math.max(maxSlots, entries.length);
+    const out: ChartRowOrdered = { period: row.period };
+    entries.forEach(([typeName, value], i) => {
+      out[`pos${i}`] = value as number;
+      out[`type${i}`] = typeName;
+    });
+    return out;
+  });
+  return { data, maxSlots };
+}
+
+/** Linear regression trend for a series (index vs value). */
+function addLinearTrend<T extends { driveMinutes: number }>(data: T[]): (T & { trend: number })[] {
+  if (!data.length) return [];
+  const n = data.length;
+  let sumX = 0;
+  let sumY = 0;
+  let sumXY = 0;
+  let sumXX = 0;
+  for (let i = 0; i < n; i++) {
+    const x = i;
+    const y = Number(data[i]?.driveMinutes ?? 0);
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumXX += x * x;
+  }
+  const slope =
+    n * sumXX - sumX * sumX !== 0 ? (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX) : 0;
+  const intercept = sumY / n - slope * (sumX / n);
+  return data.map((row, i) => ({ ...row, trend: intercept + slope * i }));
+}
+
 const ALL_DVMS = '';
+const DEFAULT_PRACTICE_ID = 1;
 
 export type GroupByOption = 'day' | 'week' | 'month';
 
@@ -250,6 +298,8 @@ export default function TimeSpentAnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rawDays, setRawDays] = useState<{ date: string; appts: DoctorMonthDay['appts'] }[]>([]);
+  const [driveTimeData, setDriveTimeData] = useState<{ date: string; driveMinutes: number }[]>([]);
+  const [driveTimeLoading, setDriveTimeLoading] = useState(false);
 
   const start = range.from.startOf('day');
   const end = range.to.startOf('day');
@@ -345,31 +395,62 @@ export default function TimeSpentAnalyticsPage() {
     };
   }, [startStr, endStr, doctorId, monthPairs.length, providers.length]);
 
+  useEffect(() => {
+    const dates = dateRange(start, end);
+    setDriveTimeLoading(true);
+    setDriveTimeData([]);
+    let alive = true;
+
+    (async () => {
+      try {
+        const results = await Promise.all(
+          dates.map((date) =>
+            fetchDriveTime({
+              practiceId: DEFAULT_PRACTICE_ID,
+              startDate: date,
+              endDate: date,
+            })
+          )
+        );
+        if (!alive) return;
+
+        const rows: { date: string; driveMinutes: number }[] = dates.map((date, i) => {
+          const res = results[i];
+          if (doctorId === ALL_DVMS) {
+            return { date, driveMinutes: res?.totalDriveMinutes ?? 0 };
+          }
+          const doc = (res?.byDoctor ?? []).find(
+            (d) => String(d.doctorId) === doctorId || String(d.pimsId) === doctorId
+          );
+          return { date, driveMinutes: doc?.driveMinutes ?? 0 };
+        });
+        setDriveTimeData(rows);
+      } catch (e) {
+        if (!alive) return;
+        console.error('Drive time fetch failed:', e);
+        setDriveTimeData([]);
+      } finally {
+        if (alive) setDriveTimeLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [startStr, endStr, doctorId]);
+
   const chartData = useMemo(() => {
     if (groupBy === 'week') return buildAvgMinutesByWeekByType(start, end, rawDays);
     if (groupBy === 'month') return buildAvgMinutesByMonthByType(start, end, rawDays);
     return buildAvgMinutesByDayByType(start, end, rawDays);
   }, [start, end, rawDays, groupBy]);
 
-  const typeKeys = useMemo(() => {
-    if (chartData.length === 0) return [];
-    const keys = new Set<string>();
-    for (const row of chartData) {
-      for (const k of Object.keys(row)) {
-        if (k !== 'period') keys.add(k);
-      }
-    }
-    const totals = new Map<string, number>();
-    for (const key of keys) {
-      let sum = 0;
-      for (const row of chartData) {
-        const v = row[key];
-        if (typeof v === 'number' && v > 0) sum += v;
-      }
-      totals.set(key, sum);
-    }
-    return Array.from(keys).sort((a, b) => (totals.get(b) ?? 0) - (totals.get(a) ?? 0));
-  }, [chartData]);
+  const { data: chartDataOrdered, maxSlots } = useMemo(
+    () => orderChartRowsByValuePerPeriod(chartData),
+    [chartData]
+  );
+
+  const slotIndices = useMemo(() => Array.from({ length: maxSlots }, (_, i) => i), [maxSlots]);
 
   const doctorOptions = useMemo(() => {
     const list: { id: string; label: string }[] = [{ id: ALL_DVMS, label: 'All DVMs' }];
@@ -378,6 +459,11 @@ export default function TimeSpentAnalyticsPage() {
     }
     return list;
   }, [providers]);
+
+  const driveTimeDataWithTrend = useMemo(
+    () => addLinearTrend(driveTimeData),
+    [driveTimeData]
+  );
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -497,29 +583,114 @@ export default function TimeSpentAnalyticsPage() {
               <Box sx={{ width: '100%', height: 400 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
-                    data={chartData}
+                    data={chartDataOrdered}
                     margin={{ top: 8, right: 24, left: 8, bottom: 8 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="period" tick={{ fontSize: 11 }} />
                     <YAxis label={{ value: 'Minutes', angle: -90, position: 'insideLeft' }} tick={{ fontSize: 11 }} />
                     <Tooltip
+                      content={({ active, payload, label }) => {
+                        if (!active || !payload?.length || !label) return null;
+                        const row = payload[0]?.payload as ChartRowOrdered;
+                        const items = slotIndices
+                          .map((i) => ({
+                            type: row[`type${i}`] as string | undefined,
+                            value: row[`pos${i}`] as number | undefined,
+                          }))
+                          .filter((x) => x.type && (x.value ?? 0) > 0);
+                        return (
+                          <Box
+                            sx={{
+                              bgcolor: 'background.paper',
+                              border: '1px solid',
+                              borderColor: 'divider',
+                              borderRadius: 1,
+                              p: 1.5,
+                              boxShadow: 1,
+                            }}
+                          >
+                            <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
+                              {String(label)}
+                            </Typography>
+                            {items.map(({ type, value }) => (
+                              <Typography key={type} variant="body2">
+                                {type}: {value != null ? `${Number(value)} mins` : '0 mins'}
+                              </Typography>
+                            ))}
+                          </Box>
+                        );
+                      }}
+                    />
+                    {slotIndices.map((i) => (
+                      <Bar key={i} dataKey={`pos${i}`} stackId="time" name={`Slot ${i}`} isAnimationActive={false}>
+                        {chartDataOrdered.map((entry, idx) => (
+                          <Cell
+                            key={`cell-${i}-${idx}`}
+                            fill={getColorForType((entry[`type${i}`] as string) ?? '', i)}
+                          />
+                        ))}
+                      </Bar>
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card sx={{ mt: 3 }}>
+          <CardHeader
+            title="Drive time"
+            subheader={
+              doctorId === ALL_DVMS
+                ? 'Total drive minutes per day for the entire practice.'
+                : 'Drive minutes per day for the selected doctor.'
+            }
+          />
+          <CardContent>
+            {driveTimeLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                <CircularProgress />
+              </Box>
+            ) : (
+              <Box sx={{ width: '100%', height: 320 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={driveTimeDataWithTrend}
+                    margin={{ top: 8, right: 24, left: 8, bottom: 8 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                    <YAxis
+                      label={{ value: 'Minutes', angle: -90, position: 'insideLeft' }}
+                      tick={{ fontSize: 11 }}
+                    />
+                    <Tooltip
                       formatter={(value: number | undefined, name: string | undefined) => [
-                        value != null ? `${Number(value)} mins` : '0 mins',
-                        name ?? '',
+                        value != null ? `${Number(value).toFixed(1)} mins` : '0 mins',
+                        (name ?? '') === 'trend' ? 'Trend' : 'Drive time',
                       ]}
                       labelFormatter={(label) => String(label)}
                     />
-                    {typeKeys.map((dataKey, i) => (
-                      <Bar
-                        key={dataKey}
-                        dataKey={dataKey}
-                        stackId="time"
-                        fill={getColorForType(dataKey, i)}
-                        name={dataKey}
-                      />
-                    ))}
-                  </BarChart>
+                    <Line
+                      type="monotone"
+                      dataKey="driveMinutes"
+                      stroke="#636363"
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                      name="Drive time"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="trend"
+                      stroke="#636363"
+                      strokeWidth={1.5}
+                      strokeDasharray="5 5"
+                      dot={false}
+                      name="Trend"
+                    />
+                  </LineChart>
                 </ResponsiveContainer>
               </Box>
             )}
