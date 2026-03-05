@@ -171,6 +171,39 @@ function getMembershipPlanCardDetails(planId: string): { name: string; tagLine: 
   return MEMBERSHIP_PLAN_CARD_DETAILS[baseId] ?? MEMBERSHIP_PLAN_CARD_DETAILS[planId] ?? null;
 }
 
+/** All plan IDs used in membership flow (base + add-ons). Filter per pet using same logic as MembershipSignup. */
+const ALL_MEMBERSHIP_PLAN_IDS = ['foundations', 'golden', 'comfort-care', 'plus-addon', 'starter-addon'] as const;
+
+/** Pet details for membership plan filtering (same logic as MembershipSignup: kind + ageYears). */
+function getPetDetailsForMembership(p: any): { kind: 'dog' | 'cat' | null; ageYears: number | null } {
+  const patient = p?.patient ?? p;
+  const speciesSource = (patient?.species ?? patient?.breed ?? patient?.speciesEntity?.name ?? p?.species ?? '').toString().toLowerCase();
+  const kind: 'dog' | 'cat' | null =
+    speciesSource.includes('dog') || speciesSource.includes('canine')
+      ? 'dog'
+      : speciesSource.includes('cat') || speciesSource.includes('feline')
+        ? 'cat'
+        : null;
+  const ageYears = getAgeYears(patient ?? {});
+  return { kind, ageYears };
+}
+
+/** Which plan IDs to show for a pet (same logic as Client Portal: Golden for 9+ only, Starter for puppy/kitten). */
+function getPlanIdsForPet(petDetails: { kind: 'dog' | 'cat' | null; ageYears: number | null }): string[] {
+  const { kind, ageYears } = petDetails;
+  const meetsGolden = kind != null && ageYears != null && ageYears >= 9;
+  const shouldShowStarter = ageYears != null && ageYears <= 1.5 && (kind === 'dog' || kind === 'cat');
+  const planIds: string[] = ['foundations'];
+  if (meetsGolden) planIds.push('golden');
+  planIds.push('comfort-care');
+  planIds.push('plus-addon');
+  if (shouldShowStarter) planIds.push('starter-addon');
+  return planIds;
+}
+
+type RoomLoaderPlanForDisplay = { planId: string; planName: string; tagLine: string };
+type RoomLoaderPlansForPetForDisplay = { patientId: number; patientName: string; plans: RoomLoaderPlanForDisplay[] };
+
 function getItemId(item: SearchableItem): number | undefined {
   return item.inventoryItem?.id ?? (item as any).procedure?.id ?? item.lab?.id;
 }
@@ -1067,6 +1100,8 @@ export default function PublicRoomLoaderForm() {
   const [membershipSimulateLoading, setMembershipSimulateLoading] = useState(false);
   /** Which plan's info (membership card) popover is open; key is `${patientId}-${planId}`. */
   const [membershipInfoPlanKey, setMembershipInfoPlanKey] = useState<string | null>(null);
+  /** "See how a membership could change your bill" modal (only for non-members). */
+  const [membershipModalOpen, setMembershipModalOpen] = useState(false);
   /** Formatted subscription plans (for membership comparison plan names); same source as Client Portal signup. */
   const [formattedSubscriptionPlans, setFormattedSubscriptionPlans] = useState<FormattedSubscriptionPlan[]>([]);
   const [subscriptionPlanCatalog, setSubscriptionPlanCatalog] = useState<SubscriptionPlanCatalog | null>(null);
@@ -1218,10 +1253,10 @@ export default function PublicRoomLoaderForm() {
     fetchRoomLoaderData();
   }, [token]);
 
-  // Fetch formatted subscription plans and catalog when we have membership offers (for plan names matching Client Portal signup)
+  // Fetch formatted subscription plans and catalog when client is non-member with patients (same source as Client Portal for plan names/display)
   useEffect(() => {
-    const plans = data?.availablePlansForPets;
-    if (!Array.isArray(plans) || plans.length === 0) return;
+    const hasPatients = Array.isArray(data?.patients) && data.patients.length > 0;
+    if (!hasPatients || data?.clientHasMembership) return;
     let alive = true;
     Promise.all([fetchFormattedSubscriptionPlans(), fetchSubscriptionPlanCatalog()])
       .then(([formatted, catalog]) => {
@@ -1237,7 +1272,7 @@ export default function PublicRoomLoaderForm() {
     return () => {
       alive = false;
     };
-  }, [data?.availablePlansForPets]);
+  }, [data?.patients, data?.clientHasMembership]);
 
   const getFirstPlanIdFromCatalogNode = (node: any): string | null => {
     if (!node || typeof node !== 'object') return null;
@@ -1270,6 +1305,27 @@ export default function PublicRoomLoaderForm() {
     });
     return map;
   }, [formattedSubscriptionPlans, subscriptionPlanCatalog]);
+
+  // Build plans per pet using same logic as Client Portal: Golden only for 9+, Plus always, Puppy/Kitten when age <= 1.5
+  const availablePlansForPetsForDisplay = useMemo((): RoomLoaderPlansForPetForDisplay[] => {
+    if (!data?.patients?.length || data?.clientHasMembership) return [];
+    return data.patients.map((p: any) => {
+      const patientId = p.patientId ?? p.patient?.id ?? p.id;
+      if (patientId == null) return null;
+      const patientName = p.patientName ?? p.patient?.name ?? p.name ?? 'Pet';
+      const petDetails = getPetDetailsForMembership(p);
+      const planIds = getPlanIdsForPet(petDetails);
+      const plans: RoomLoaderPlanForDisplay[] = planIds.map((planId) => {
+        const details = getMembershipPlanCardDetails(planId);
+        return {
+          planId,
+          planName: membershipPlanDisplayName[planId] ?? details?.name ?? planId,
+          tagLine: details?.tagLine ?? '',
+        };
+      });
+      return { patientId: Number(patientId), patientName, plans };
+    }).filter((x: RoomLoaderPlansForPetForDisplay | null): x is RoomLoaderPlansForPetForDisplay => x != null);
+  }, [data?.patients, data?.clientHasMembership, membershipPlanDisplayName]);
 
   // Fetch treatment history per patient when user reaches Care Plan (page 2) or later. Uses public endpoint with token; defers N requests until needed for vaccine/lab logic.
   useEffect(() => {
@@ -5944,29 +6000,79 @@ export default function PublicRoomLoaderForm() {
               );
             })()}
 
-            <div className="public-room-loader-summary-total-row" style={{ marginTop: '24px', paddingTop: '20px', borderTop: '3px solid #e0e0e0' }}>
+            <div className="public-room-loader-summary-total-row" style={{ marginTop: '24px', paddingTop: '20px', borderTop: '3px solid #e0e0e0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+              {!readOnly && availablePlansForPetsForDisplay.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setMembershipModalOpen(true)}
+                    style={{
+                      padding: '10px 16px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      color: '#084298',
+                      backgroundColor: '#f0f7ff',
+                      border: '1px solid #b6d4fe',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    See how a membership could change your bill
+                  </button>
+                )}
               <span style={{ fontSize: '20px', fontWeight: 700, color: '#212529' }}>Estimated Total Due At Visit: <strong>{formatPrice(grandTotal)}</strong></span>
             </div>
 
-            {/* Membership comparison: show when client is not a member and backend returns plans per pet */}
-            {!readOnly &&
-              !data?.clientHasMembership &&
-              Array.isArray(data?.availablePlansForPets) &&
-              data.availablePlansForPets.length > 0 &&
+            {/* Membership modal: plans built from same logic as Client Portal (foundations, golden, comfort-care) */}
+            {membershipModalOpen &&
+              !readOnly &&
+              availablePlansForPetsForDisplay.length > 0 &&
               (() => {
-                const availablePlansForPets = data.availablePlansForPets as RoomLoaderAvailablePlansForPet[];
+                const availablePlansForPets = availablePlansForPetsForDisplay;
                 return (
                   <div
                     style={{
-                      marginTop: '28px',
+                      position: 'fixed',
+                      inset: 0,
+                      backgroundColor: 'rgba(0,0,0,0.5)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      zIndex: 9999,
                       padding: '20px',
-                      backgroundColor: '#f0f7ff',
-                      border: '1px solid #b6d4fe',
-                      borderRadius: '10px',
-                      position: 'relative',
-                      zIndex: 10,
                     }}
+                    onClick={() => setMembershipModalOpen(false)}
                   >
+                    <div
+                      style={{
+                        backgroundColor: '#f0f7ff',
+                        border: '1px solid #b6d4fe',
+                        borderRadius: '10px',
+                        padding: '20px',
+                        maxWidth: '640px',
+                        maxHeight: '90vh',
+                        overflow: 'auto',
+                        position: 'relative',
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+                        <button
+                          type="button"
+                          onClick={() => setMembershipModalOpen(false)}
+                          style={{
+                            padding: '6px 14px',
+                            fontSize: '14px',
+                            fontWeight: 600,
+                            color: '#333',
+                            backgroundColor: '#fff',
+                            border: '1px solid #b6d4fe',
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Close
+                        </button>
+                      </div>
                     <h4 style={{ margin: '0 0 12px', fontSize: '17px', fontWeight: 700, color: '#084298' }}>
                       See how a membership could change your bill
                     </h4>
@@ -6012,7 +6118,7 @@ export default function PublicRoomLoaderForm() {
                               isSelected && membershipSimulateResultAnnual ? membershipSimulateResultAnnual.withMembershipTotal : 0;
                             const annualSavings =
                               isSelected && membershipSimulateResultAnnual ? membershipSimulateResultAnnual.savings ?? 0 : 0;
-                            const planCardKey = `${petPlans.patientId}-${plan.planId}`;
+                            const planCardKey = `modal-${petPlans.patientId}-${plan.planId}`;
                             const cardDetails = getMembershipPlanCardDetails(plan.planId);
                             return (
                               <div
@@ -6097,12 +6203,6 @@ export default function PublicRoomLoaderForm() {
                                 {plan.tagLine && (
                                   <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px' }}>{plan.tagLine}</div>
                                 )}
-                                <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>
-                                  Monthly ${plan.monthlyPrice ?? '—'}
-                                  {plan.annualPrice != null && Number(plan.annualPrice) > 0 && (
-                                    <> · Annual ${plan.annualPrice}</>
-                                  )}
-                                </div>
                                 {isSelected && (membershipSimulateResultMonthly != null || membershipSimulateResultAnnual != null) && (
                                   <div
                                     style={{
@@ -6350,6 +6450,19 @@ export default function PublicRoomLoaderForm() {
                         )}
                       </div>
                     )}
+                    <p style={{ margin: '16px 0 0', fontSize: '16px', fontWeight: 700, color: '#333', lineHeight: 1.5 }}>
+                      Sign up for a membership in the{' '}
+                      <a
+                        href={`${typeof window !== 'undefined' ? window.location.origin : ''}/client-portal`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: '#0d6efd', fontWeight: 700, textDecoration: 'underline' }}
+                      >
+                        client portal
+                      </a>
+                      {' '}before your appointment to get these savings.
+                    </p>
+                    </div>
                   </div>
                 );
               })()}
