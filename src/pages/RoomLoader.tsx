@@ -327,15 +327,19 @@ export default function RoomLoaderPage() {
           });
         }
 
-        // Multi-pet: fill missing patients from sentToClient (savedForm may only have partial data per pet)
+        // Multi-pet: fill missing patients from sentToClient (savedForm may only have partial data per pet).
+        // When room loader has already been sent, use sentToClient as source of truth for reminders and added items (show only what was sent).
         const sentPatients = data?.sentToClient?.patients;
+        const hasBeenSent = data?.sentStatus !== 'not_sent' || (data?.timesSentToClient ?? 0) > 0;
         if (sentPatients?.length) {
           const vaccines = { ...savedForm.vaccineCheckboxes } as Record<number, { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean; sharps: boolean }>;
           const reasons = { ...(savedForm.appointmentReasons || {}) } as Record<number, string>;
           const windows = { ...(savedForm.arrivalWindows || {}) } as Record<number, string>;
-          const added = { ...(savedForm.addedItems || {}) } as Record<number, SearchableItem[]>;
+          const added = hasBeenSent ? {} as Record<number, SearchableItem[]> : { ...(savedForm.addedItems || {}) } as Record<number, SearchableItem[]>;
           const answers = { ...(savedForm.petAnswers || {}) } as Record<number, { mobility: boolean | null; labWork: boolean | null }>;
-          const addedQty = { ...(savedForm.addedItemQuantities || {}) } as Record<string, number>;
+          const addedQty = hasBeenSent ? {} as Record<string, number> : { ...(savedForm.addedItemQuantities || {}) } as Record<string, number>;
+          let reminderQtyFromSent: Record<number, number> = {};
+          const confirmedFromSent = new Set<number>();
 
           sentPatients.forEach((sp) => {
             const patientId = sp.patientId;
@@ -361,6 +365,14 @@ export default function RoomLoaderPage() {
                 const endStr = end.toFormat('h:mma');
                 windows[patientId] = startStr === endStr ? startStr : `${startStr} - ${endStr}`;
               }
+            }
+            if (hasBeenSent) {
+              (sp.reminders || []).forEach((r: any) => {
+                if (r.reminderId != null) {
+                  reminderQtyFromSent[r.reminderId] = r.quantity ?? 1;
+                  confirmedFromSent.add(r.reminderId);
+                }
+              });
             }
             if ((added[patientId] == null || added[patientId].length === 0) && sp.addedItems?.length) {
               const items = sp.addedItems.map((item: any) => {
@@ -404,6 +416,11 @@ export default function RoomLoaderPage() {
           setAddedItems(added);
           setPetAnswers(answers);
           setAddedItemQuantities(addedQty);
+          if (hasBeenSent) {
+            setReminderQuantities(reminderQtyFromSent);
+            setRemovedReminders(new Set());
+            setConfirmedMatchReminders(confirmedFromSent);
+          }
         }
       } else {
         // No saved form - initialize from sentToClient (if already sent) or defaults
@@ -1992,8 +2009,47 @@ export default function RoomLoaderPage() {
       });
     }
 
-    // Add reminders - match them to patients by patient ID (from reminder.patient or sentToClient map)
-    if (selectedRoomLoader.reminders && selectedRoomLoader.reminders.length > 0) {
+    // When already sent to client, show only what was sent (sentToClient). Otherwise show API reminders (or sentToClient if API returned empty).
+    const hasBeenSent =
+      selectedRoomLoader.sentStatus !== 'not_sent' || (selectedRoomLoader.timesSentToClient ?? 0) > 0;
+
+    if (hasBeenSent && sentPatients?.length) {
+      // Only show what was actually sent to the client — reminders from sentToClient.patients (may be empty if all were removed)
+      sentPatients.forEach((sp) => {
+        const patientId = sp.patientId;
+        const existing = patientId != null ? petMap.get(patientId) : undefined;
+        if (!existing) return;
+        (sp.reminders || []).forEach((r: any) => {
+          const item = r.item || {};
+          const reminderId = r.reminderId ?? item.id;
+          const reminderWithPrice: ReminderWithPrice = {
+            reminder: {
+              id: reminderId,
+              isActive: true,
+              isDeleted: false,
+              description: r.reminderText ?? item.name ?? 'Reminder',
+              dueDate: r.dueDate ?? null,
+              reminderType: r.reminderType ?? null,
+              patient: { id: patientId },
+            },
+            confidence: typeof r.confidence === 'number' ? r.confidence : 1,
+            price: item.price != null ? Number(item.price) : null,
+            itemType: (item.type || 'procedure') as string,
+            matchedItem: {
+              id: item.id,
+              code: item.code,
+              name: item.name,
+              price: item.price != null ? String(item.price) : undefined,
+            },
+            wellnessPlanPricing: r.wellnessPlanPricing,
+            discountPricing: r.discountPricing,
+            tieredPricing: r.tieredPricing,
+          };
+          existing.reminders.push(reminderWithPrice);
+        });
+      });
+    } else if (selectedRoomLoader.reminders && selectedRoomLoader.reminders.length > 0) {
+      // Not yet sent — use API reminders and match to patients
       selectedRoomLoader.reminders.forEach((reminderWithPrice) => {
         const reminderId = reminderWithPrice.reminder?.id;
         const patientId =
@@ -2004,7 +2060,6 @@ export default function RoomLoaderPage() {
           if (existing) {
             existing.reminders.push(reminderWithPrice);
           } else {
-            // Patient not in map yet, add them (use reminder.patient or look up from room loader patients)
             const patient =
               (reminderWithPrice.reminder.patient as Patient | undefined) ??
               selectedRoomLoader.patients?.find((p) => p.id === patientId);
@@ -2020,12 +2075,12 @@ export default function RoomLoaderPage() {
         }
       });
     } else if (sentPatients?.length) {
-      // Form already sent and API returned empty reminders[] — show what was sent to the client from sentToClient.patients
+      // API returned empty reminders[] but we have sentToClient (e.g. pre-send state) — show sent payload
       sentPatients.forEach((sp) => {
         const patientId = sp.patientId;
         const existing = patientId != null ? petMap.get(patientId) : undefined;
-        if (!existing || !sp.reminders?.length) return;
-        sp.reminders.forEach((r: any) => {
+        if (!existing) return;
+        (sp.reminders || []).forEach((r: any) => {
           const item = r.item || {};
           const reminderId = r.reminderId ?? item.id;
           const reminderWithPrice: ReminderWithPrice = {
