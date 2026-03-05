@@ -222,23 +222,17 @@ function rowToSearchableItem(row: { id?: number | null; name?: string; price?: n
   return { ...base, procedure: entry } as SearchableItem;
 }
 
-/** Build item payload for public check-item-pricing from a SearchableItem. */
+/** Build item payload for public check-item-pricing from a SearchableItem. Passes the full item object (inventoryItem, lab, or procedure) like from search. */
 function buildPricingItemPayload(item: SearchableItem | null | undefined): CheckItemPricingPublicRequest['item'] | null {
   if (!item) return null;
-  const id = getItemId(item);
-  const name = item.name ?? '';
-  const price = (item as any).price ?? item.inventoryItem?.price ?? (item as any).lab?.price ?? (item as any).procedure?.price ?? '';
-  const code = item.code ?? item.inventoryItem?.code ?? (item as any).lab?.code ?? (item as any).procedure?.code;
-  if (id == null) return null;
-  const entry = { id, name, price: String(price ?? ''), code };
   const t = (item.itemType ?? '').toLowerCase();
-  if (t === 'lab') return { lab: entry };
-  if (t === 'procedure') return { procedure: entry };
-  if (t === 'inventory') return { inventoryItem: entry };
-  if ((item as any).lab) return { lab: entry };
-  if ((item as any).procedure) return { procedure: entry };
-  if (item.inventoryItem) return { inventoryItem: entry };
-  return { procedure: entry };
+  if (t === 'lab' && item.lab) return { lab: item.lab };
+  if (t === 'procedure' && (item as any).procedure) return { procedure: (item as any).procedure };
+  if (t === 'inventory' && item.inventoryItem) return { inventoryItem: item.inventoryItem };
+  if (item.lab) return { lab: item.lab };
+  if ((item as any).procedure) return { procedure: (item as any).procedure };
+  if (item.inventoryItem) return { inventoryItem: item.inventoryItem };
+  return null;
 }
 
 /** True if text looks like a question to ignore (e.g. "What/Which pet is this for?", prescription disclaimer). */
