@@ -95,6 +95,29 @@
   min-width: 180px;
 }
 
+/* Loading spinner */
+.dd-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  color: var(--muted, #6b7280);
+}
+.dd-spinner {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border: 3px solid #e5e7eb;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: dd-spin 1s linear infinite;
+}
+@keyframes dd-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Pills */
 .pill {
   display: inline-block;

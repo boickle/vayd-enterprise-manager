@@ -220,7 +220,7 @@ export default function DoctorDayVisual({
   initialDoctorId,
   virtualAppt,
 }: DoctorDayProps) {
-  const { userEmail } = useAuth() as { userEmail?: string };
+  const { userEmail, doctorId: userDoctorId } = useAuth() as { userEmail?: string; doctorId?: string | null };
 
   // base state
   const [date, setDate] = useState<string>(() => initialDate || DateTime.local().toISODate() || '');
@@ -250,6 +250,9 @@ export default function DoctorDayVisual({
   // pretty depot addresses
   const [startDepotAddr, setStartDepotAddr] = useState<string | null>(null);
   const [endDepotAddr, setEndDepotAddr] = useState<string | null>(null);
+
+  // Toggle: position blocks by drive time (ETA/ETD) or by appointment start/end
+  const [showByDriveTime, setShowByDriveTime] = useState<boolean>(true);
 
   // hover card (global, mouse-anchored)
   const [hoverCard, setHoverCard] = useState<{
@@ -297,7 +300,23 @@ export default function DoctorDayVisual({
   }, [userEmail]);
 
   useEffect(() => {
-    if (didInitDoctor.current || !providers.length || !userEmail || initialDoctorId) return;
+    if (didInitDoctor.current || !providers.length || initialDoctorId) return;
+    const idToSet =
+      userDoctorId != null && String(userDoctorId).trim() !== ''
+        ? (() => {
+            const match = providers.find(
+              (p: any) =>
+                String(p?.id) === String(userDoctorId) || String(p?.pimsId ?? '') === String(userDoctorId)
+            );
+            return match != null ? String(match.id) : null;
+          })()
+        : null;
+    if (idToSet != null) {
+      setSelectedDoctorId(idToSet);
+      didInitDoctor.current = true;
+      return;
+    }
+    if (!userEmail) return;
     const me = providers.find(
       (p: any) => (p?.email || '').toLowerCase() === userEmail.toLowerCase()
     );
@@ -305,7 +324,7 @@ export default function DoctorDayVisual({
       setSelectedDoctorId(String(me.id));
       didInitDoctor.current = true;
     }
-  }, [providers, userEmail, initialDoctorId]);
+  }, [providers, userEmail, userDoctorId, initialDoctorId]);
 
   /* ---------- Depot reverse geocode ---------- */
   useEffect(() => {
@@ -1133,7 +1152,9 @@ export default function DoctorDayVisual({
     <div className="card" style={{ paddingBottom: 16 }}>
       <h2>My Day — Visual</h2>
       <p className="muted">
-        Blocks are positioned by <b>projected ETA</b> (server-calculated), not scheduled start.
+        {showByDriveTime
+          ? 'Blocks are positioned by projected ETA/ETD (drive time).'
+          : 'Blocks are positioned by appointment start/end time.'}
       </p>
 
       <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1164,6 +1185,27 @@ export default function DoctorDayVisual({
             </option>
           ))}
         </select>
+        <span className="muted" style={{ marginLeft: 8 }}>Show blocks by:</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input
+              type="radio"
+              name="vdd-drive-toggle"
+              checked={showByDriveTime}
+              onChange={() => setShowByDriveTime(true)}
+            />
+            Actual time (arrive/leave)
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input
+              type="radio"
+              name="vdd-drive-toggle"
+              checked={!showByDriveTime}
+              onChange={() => setShowByDriveTime(false)}
+            />
+            Appointment time (start/end)
+          </label>
+        </div>
         {providersErr && (
           <div className="error" style={{ marginTop: 4 }}>
             {providersErr}
@@ -1234,7 +1276,12 @@ export default function DoctorDayVisual({
         </div>
       </div>
 
-      {loading && <p>Loading…</p>}
+      {loading && (
+        <div className="dd-loading">
+          <div className="dd-spinner" aria-hidden />
+          <span>Loading…</span>
+        </div>
+      )}
       {err && <p className="error">{err}</p>}
       {etaErr && <p className="error">{etaErr}</p>}
 
@@ -1316,15 +1363,19 @@ export default function DoctorDayVisual({
               primaryTypeLower === 'fixed time' || 
               firstPatientType === 'fixed time';
 
-            // ---- Positioning: For fixed time, use scheduled start; otherwise use ETA ----
+            // ---- Positioning: drive time (ETA/ETD) vs appointment time (start/end) ----
             const etaIso = timeline[idx]?.eta ?? null;
             const etdIso = timeline[idx]?.etd ?? null;
-            
-            // Fixed time appointments should be positioned at their scheduled start time, not ETA
-            const anchorIso = isFixedTime ? h.startIso! : (etaIso ?? h.startIso!);
+            const useDriveTime = showByDriveTime && !isFixedTime && (etaIso ?? etdIso);
+            const anchorIso = isFixedTime ? h.startIso! : (useDriveTime ? (etaIso ?? h.startIso!) : h.startIso!);
+            const endIsoForHeight = useDriveTime && etdIso ? etdIso : h.endIso!;
+            const durMinForHeight = Math.max(
+              1,
+              Math.round(DateTime.fromISO(endIsoForHeight).diff(DateTime.fromISO(anchorIso)).as('minutes'))
+            );
             const top =
               Math.max(0, Math.round(DateTime.fromISO(anchorIso).diff(t0).as('minutes'))) * PPM;
-            const height = Math.max(22, durMin * PPM);
+            const height = Math.max(22, durMinForHeight * PPM);
 
             // adjusted window for tooltip (only for non-fixed-time appointments)
             const { winStartIso, winEndIso } = isFixedTime 
