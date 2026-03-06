@@ -5,7 +5,7 @@ import DoctorDay from './pages/DoctorDay';
 import CreateUser from './pages/CreateUser';
 import Admin from './pages/Admin';
 import Analytics from './pages/Analytics';
-import MyMonth from './pages/MyMonth.';
+import MyWeek from './pages/MyWeek';
 import MyDayToggle from './pages/MyDayToggle';
 import FillDayPage from './pages/FillDay';
 import Settings from './pages/Settings';
@@ -49,10 +49,10 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       role: ['employee', 'admin'],
     },
     {
-      path: '/doctormonth',
-      label: 'My Month',
-      element: <MyMonth />,
-      permission: 'canSeeDoctorMonth',
+      path: '/doctorweek',
+      label: 'My Week',
+      element: <MyWeek />,
+      permission: 'canSeeDoctorDay',
       role: ['employee', 'admin'],
     },
     {

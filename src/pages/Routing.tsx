@@ -5,6 +5,7 @@ import { Field } from '../components/Field';
 import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
 import { PreviewMyDayModal } from '../components/PreviewMyDayModal';
+import { PreviewMyWeekModal } from '../components/PreviewMyWeekModal';
 import { validateAddress } from '../api/geo';
 // Removed fetchPrimaryProviders import - now using /employees/veterinarians endpoint directly
 
@@ -492,6 +493,7 @@ export default function Routing() {
   const doctorNameReqs = useRef<Record<string, Promise<string>>>({});
 
   const [myDayOpen, setMyDayOpen] = useState(false);
+  const [myWeekOpen, setMyWeekOpen] = useState(false);
   const [previewOpt, setPreviewOpt] = useState<UnifiedOption | null>(null);
   const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({});
   const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(null); // 👈 NEW
@@ -555,10 +557,38 @@ export default function Routing() {
 
     // Pass INTERNAL id via the same property your Preview/DoctorDay read
     setPreviewOpt({ ...opt, doctorPimsId: internalId });
+    setMyWeekOpen(false);
     setMyDayOpen(true);
   }
   function closeMyDay() {
     setMyDayOpen(false);
+    setPreviewOpt(null);
+  }
+
+  async function openMyWeek(opt: UnifiedOption) {
+    let internalId: string | undefined = doctorIdByPims[opt.doctorPimsId];
+    if (!internalId) {
+      try {
+        const { data } = await http.get(`/employees/pims/${encodeURIComponent(opt.doctorPimsId)}`);
+        const emp = Array.isArray(data) ? data[0] : data;
+        const resolvedId =
+          (emp?.id != null ? String(emp.id) : undefined) ??
+          (emp?.employee?.id != null ? String(emp.employee.id) : undefined);
+        if (resolvedId) {
+          internalId = resolvedId;
+          setDoctorIdByPims((m) => ({ ...m, [opt.doctorPimsId]: resolvedId }));
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!internalId) return;
+    setPreviewOpt({ ...opt, doctorPimsId: internalId });
+    setMyDayOpen(false);
+    setMyWeekOpen(true);
+  }
+  function closeMyWeek() {
+    setMyWeekOpen(false);
     setPreviewOpt(null);
   }
 
@@ -1852,8 +1882,7 @@ export default function Routing() {
                   <div
                     key={`${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${idx}`}
                     className="card"
-                    style={{ position: 'relative', paddingTop: 48, cursor: 'pointer' }}
-                    onClick={() => openMyDay(opt)}
+                    style={{ position: 'relative', paddingTop: 48 }}
                   >
                     <div
                       style={{
@@ -1973,9 +2002,25 @@ export default function Routing() {
                       style={{
                         marginTop: 16,
                         display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 8,
                         justifyContent: 'flex-end',
                       }}
                     >
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        onClick={() => openMyDay(opt)}
+                      >
+                        My Day
+                      </button>
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        onClick={() => openMyWeek(opt)}
+                      >
+                        My Week
+                      </button>
                       <button
                         type="button"
                         className="btn"
@@ -2001,6 +2046,19 @@ export default function Routing() {
         <PreviewMyDayModal
           option={previewOpt}
           onClose={closeMyDay}
+          serviceMinutes={form.newAppt.serviceMinutes}
+          newApptMeta={{
+            clientId: form.newAppt.clientId,
+            address: form.newAppt.address,
+            lat: form.newAppt.lat,
+            lon: form.newAppt.lon,
+          }}
+        />
+      )}
+      {myWeekOpen && previewOpt && (
+        <PreviewMyWeekModal
+          option={previewOpt}
+          onClose={closeMyWeek}
           serviceMinutes={form.newAppt.serviceMinutes}
           newApptMeta={{
             clientId: form.newAppt.clientId,

@@ -196,7 +196,7 @@ export default function DoctorDay({
   initialDoctorId,
   virtualAppt,
 }: DoctorDayProps) {
-  const { userEmail } = useAuth() as { userEmail?: string };
+  const { userEmail, doctorId: userDoctorId } = useAuth() as { userEmail?: string; doctorId?: string | null };
 
   // state
   const [date, setDate] = useState<string>(() => initialDate || DateTime.local().toISODate() || '');
@@ -283,15 +283,31 @@ export default function DoctorDay({
   }, [userEmail]);
 
   useEffect(() => {
-    if (didInitDoctor.current || !providers.length || !userEmail) return;
+    if (didInitDoctor.current || !providers.length || initialDoctorId) return;
+    const idToSet =
+      userDoctorId != null && String(userDoctorId).trim() !== ''
+        ? (() => {
+            const match = providers.find(
+              (p: any) =>
+                String(p?.id) === String(userDoctorId) || String(p?.pimsId ?? '') === String(userDoctorId)
+            );
+            return match != null ? String(match.id) : null;
+          })()
+        : null;
+    if (idToSet != null) {
+      setSelectedDoctorId(idToSet);
+      didInitDoctor.current = true;
+      return;
+    }
+    if (!userEmail) return;
     const me = providers.find(
       (p: any) => (p?.email || '').toLowerCase() === userEmail.toLowerCase()
     );
-    if (me?.id != null && !initialDoctorId) {
+    if (me?.id != null) {
       setSelectedDoctorId(String(me.id));
       didInitDoctor.current = true;
     }
-  }, [providers, userEmail, initialDoctorId]);
+  }, [providers, userEmail, userDoctorId, initialDoctorId]);
 
   /* ---------- Load the day (+ optional preview appt) ---------- */
   useEffect(() => {
@@ -1277,7 +1293,12 @@ export default function DoctorDay({
         {/* Households */}
         <div className="card">
           <h3>Households ({households.length})</h3>
-          {loading && <p>Loading…</p>}
+          {loading && (
+            <div className="dd-loading">
+              <div className="dd-spinner" aria-hidden />
+              <span>Loading…</span>
+            </div>
+          )}
           {err && <p className="error">{err}</p>}
           {etaErr && <p className="error">{etaErr}</p>}
           {!loading && !err && households.length === 0 && (
