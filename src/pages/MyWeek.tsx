@@ -103,6 +103,8 @@ export type WeekHousehold = {
   isPreview?: boolean;
   patients: PatientBadge[];
   primary: DoctorDayAppt;
+  /** Backend effectiveWindow when available (from primary) */
+  effectiveWindow?: { startIso: string; endIso: string };
 };
 
 function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
@@ -145,6 +147,10 @@ function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
         isPreview,
         patients: isPersonalBlock ? [] : [patient],
         primary: a,
+        effectiveWindow:
+          a?.effectiveWindow?.startIso && a?.effectiveWindow?.endIso
+            ? { startIso: a.effectiveWindow.startIso, endIso: a.effectiveWindow.endIso }
+            : undefined,
       });
     } else {
       const h = m.get(key)!;

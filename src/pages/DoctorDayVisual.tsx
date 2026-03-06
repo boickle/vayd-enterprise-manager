@@ -269,6 +269,8 @@ export default function DoctorDayVisual({
     sIso: string;
     eIso: string;
     patients: PatientBadge[];
+    /** Backend effectiveWindow when available; used for Window display */
+    effectiveWindow?: { startIso: string; endIso: string };
   } | null>(null);
 
   /* ------------ load providers ------------ */
@@ -641,12 +643,14 @@ export default function DoctorDayVisual({
         for (let i = 0; i < ordered.length; i++) {
           const { h, viewIdx } = ordered[i];
 
-          // ETA fallback
+          // ETA fallback: prefer backend effectiveWindow when available
           if (!tl[viewIdx].eta && h.startIso) {
             if (h.isPersonalBlock) {
               tl[viewIdx].eta = h.startIso;
             } else {
-              const { winStartIso } = adjustedWindowForStart(date, h.startIso, schedStartIso);
+              const winStartIso =
+                h.primary?.effectiveWindow?.startIso ??
+                adjustedWindowForStart(date, h.startIso, schedStartIso).winStartIso;
               tl[viewIdx].eta = winStartIso;
             }
           }
@@ -1377,10 +1381,13 @@ export default function DoctorDayVisual({
               Math.max(0, Math.round(DateTime.fromISO(anchorIso).diff(t0).as('minutes'))) * PPM;
             const height = Math.max(22, durMinForHeight * PPM);
 
-            // adjusted window for tooltip (only for non-fixed-time appointments)
-            const { winStartIso, winEndIso } = isFixedTime 
-              ? { winStartIso: h.startIso!, winEndIso: h.endIso! } // Use scheduled times for fixed time
-              : adjustedWindowForStart(date, h.startIso!, schedStartIso);
+            // Window for tooltip: backend effectiveWindow when available, else frontend-calculated
+            const ew = h.primary?.effectiveWindow;
+            const { winStartIso, winEndIso } = isFixedTime
+              ? { winStartIso: h.startIso!, winEndIso: h.endIso! }
+              : ew?.startIso && ew?.endIso
+                ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
+                : adjustedWindowForStart(date, h.startIso!, schedStartIso);
 
             const patientsPreview = h.patients
               .map((p) => p.name)
@@ -1410,6 +1417,7 @@ export default function DoctorDayVisual({
                     patients: h.patients || [],
                     clientAlert: h?.clientAlert,
                     isFixedTime,
+                    effectiveWindow: h.primary?.effectiveWindow,
                   });
                 }}
                 onMouseMove={(ev) => {
@@ -1694,10 +1702,13 @@ export default function DoctorDayVisual({
             const s = DateTime.fromISO(hoverCard.sIso);
             const e = DateTime.fromISO(hoverCard.eIso);
 
-            // adjusted visual window (for hover) - only calculate if not fixed time
+            // Window for hover card: backend effectiveWindow when available, else frontend-calculated
+            const ew = hoverCard.effectiveWindow;
             const { winStartIso, winEndIso } = hoverCard.isFixedTime
-              ? { winStartIso: hoverCard.sIso, winEndIso: hoverCard.eIso } // Use scheduled times for fixed time
-              : adjustedWindowForStart(date, hoverCard.sIso, schedStartIso);
+              ? { winStartIso: hoverCard.sIso, winEndIso: hoverCard.eIso }
+              : ew?.startIso && ew?.endIso
+                ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
+                : adjustedWindowForStart(date, hoverCard.sIso, schedStartIso);
             return (
               <div
                 style={{

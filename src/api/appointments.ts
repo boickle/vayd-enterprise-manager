@@ -41,7 +41,10 @@ export type DoctorDayAppt = {
   // Zones
   clientZone?: MiniZone;
   effectiveZone?: MiniZone;
-};
+
+  /** Appointment window from backend (when available); use instead of frontend-calculated window */
+  effectiveWindow?: { startIso: string; endIso: string };
+}
 
 export type DoctorDayResponse = {
   date?: string;
@@ -117,6 +120,11 @@ export async function fetchDoctorDay(
 
       clientZone: toMiniZone(a?.clientZone),
       effectiveZone: toMiniZone(a?.effectiveZone),
+
+      effectiveWindow:
+        a?.effectiveWindow?.startIso && a?.effectiveWindow?.endIso
+          ? { startIso: a.effectiveWindow.startIso, endIso: a.effectiveWindow.endIso }
+          : undefined,
     };
   });
 

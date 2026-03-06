@@ -786,7 +786,10 @@ export default function DoctorDay({
             if (isBlock) {
               tl[viewIdx].eta = h.startIso;
             } else {
-              const { winStartIso } = adjustedWindowForStart(date, h.startIso, schedStartIso);
+              // Prefer backend effectiveWindow when available
+              const winStartIso =
+                h.primary?.effectiveWindow?.startIso ??
+                adjustedWindowForStart(date, h.startIso, schedStartIso).winStartIso;
               tl[viewIdx].eta = winStartIso;
             }
           }
@@ -1129,9 +1132,14 @@ export default function DoctorDay({
     if (!iso) return '';
     return DateTime.fromISO(iso).toLocaleString(DateTime.TIME_SIMPLE);
   }
-  function windowTextFromStart(iso?: string | null) {
-    if (!iso) return '';
-    const { winStartIso, winEndIso } = adjustedWindowForStart(date, iso, schedStartIso);
+  /** Window text: use backend effectiveWindow when available, else frontend-calculated. */
+  function windowTextForHousehold(h: Household): string {
+    const ew = h.primary?.effectiveWindow;
+    if (ew?.startIso && ew?.endIso) {
+      return `${DateTime.fromISO(ew.startIso).toLocaleString(DateTime.TIME_SIMPLE)} – ${DateTime.fromISO(ew.endIso).toLocaleString(DateTime.TIME_SIMPLE)}`;
+    }
+    if (!h.startIso) return '';
+    const { winStartIso, winEndIso } = adjustedWindowForStart(date, h.startIso, schedStartIso);
     const start = DateTime.fromISO(winStartIso).toLocaleString(DateTime.TIME_SIMPLE);
     const end = DateTime.fromISO(winEndIso).toLocaleString(DateTime.TIME_SIMPLE);
     return `${start} – ${end}`;
@@ -1458,7 +1466,7 @@ export default function DoctorDay({
                                   <strong style={{ color: '#dc2626' }}>FIXED TIME</strong>
                                 ) : (
                                   <>
-                                    <strong>Window:</strong> {windowTextFromStart(h.startIso)}
+                                    <strong>Window:</strong> {windowTextForHousehold(h)}
                                   </>
                                 )}
                               </>
