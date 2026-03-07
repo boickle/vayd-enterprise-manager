@@ -31,6 +31,8 @@ type Slot = 'early' | 'mid' | 'late';
 type Winner = {
   date: string;
   insertionIndex: number;
+  /** 1-based visit order (1 = first, 2 = second, ...). positionInDay === insertionIndex + 1 */
+  positionInDay?: number;
   addedDriveSeconds: number;
   currentDriveSeconds: number;
   projectedDriveSeconds: number;
@@ -65,6 +67,13 @@ type Winner = {
   appointmentId?: number;
   // v2 multi-doctor support
   doctorId?: string; // PIMS ID of the doctor this candidate belongs to
+  // Arrival window from backend
+  arrivalWindow?: {
+    windowStartSec?: number;
+    windowEndSec?: number;
+    windowStartIso?: string;
+    windowEndIso?: string;
+  };
 };
 
 type UnifiedOption = Winner & {
@@ -1297,9 +1306,11 @@ export default function Routing() {
       // Force index look nice for EMPTY day
       const empty = isEmptyDay(r);
       const displayInsertionIndex = empty ? 1 : (r.insertionIndex ?? 0) + 1;
+      const positionInDay = r.positionInDay ?? displayInsertionIndex;
       return {
         ...r,
         displayInsertionIndex,
+        positionInDay,
         routingRequestId: r.routingRequestId ?? requestIdFromResult,
         candidateIndex: r.candidateIndex ?? idx,
       };
@@ -1972,8 +1983,8 @@ export default function Routing() {
 
                     <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                       <KeyValue
-                        k="Insertion Index"
-                        v={String((opt as any).displayInsertionIndex ?? opt.insertionIndex + 1)}
+                        k="Visit #"
+                        v={String((opt as any).positionInDay ?? (opt as any).displayInsertionIndex ?? opt.insertionIndex + 1)}
                       />
                       <KeyValue k="Start Time" v={isoToTime(opt.suggestedStartIso)} />
                       <KeyValue

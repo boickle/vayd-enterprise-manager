@@ -5,6 +5,7 @@ import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
 import {
   fetchDoctorDay,
+  clientDisplayName,
   type DoctorDayAppt,
   type Depot,
   type DoctorDayResponse,
@@ -26,6 +27,8 @@ export type DoctorDayProps = {
   virtualAppt?: {
     date: string;
     insertionIndex: number;
+    /** 1-based visit order; use for # display and ordering (no sort by time) */
+    positionInDay?: number;
     suggestedStartIso: string;
     serviceMinutes: number;
     clientName?: string;
@@ -41,6 +44,12 @@ export type DoctorDayProps = {
     effectiveEndLocal?: string;
     bookedServiceSeconds?: number;
     whitespaceAfterBookingSeconds?: number;
+    arrivalWindow?: {
+      windowStartSec?: number;
+      windowEndSec?: number;
+      windowStartIso?: string;
+      windowEndIso?: string;
+    };
   };
 };
 
@@ -183,6 +192,8 @@ type Household = {
   isPreview?: boolean;
   isNoLocation?: boolean;
   isPersonalBlock?: boolean;
+  /** Min index in appts array (for visit-order sort when preview is present; ETA payload must match) */
+  firstApptIndex?: number;
 };
 /** one row per rendered household */
 type DisplaySlot = { eta?: string | null; etd?: string | null };
@@ -319,41 +330,28 @@ export default function DoctorDay({
         const resp: DoctorDayResponse = await fetchDoctorDay(date, selectedDoctorId || undefined);
         if (!on) return;
 
-        const sorted = [...resp.appointments].sort((a, b) => {
-          const sa = getStartISO(a);
-          const sb = getStartISO(b);
-          if (!sa && !sb) return 0;
-          if (!sa) return 1; // Put appointments without start time at the end
-          if (!sb) return -1; // Put appointments without start time at the end
-          const da = DateTime.fromISO(sa);
-          const db = DateTime.fromISO(sb);
-          if (!da.isValid && !db.isValid) return 0;
-          if (!da.isValid) return 1; // Put invalid dates at the end
-          if (!db.isValid) return -1; // Put invalid dates at the end
-          const ta = da.toMillis();
-          const tb = db.toMillis();
-          return ta - tb;
-        });
+        // Day API returns appointments in route order (visit order). Do not re-sort by startIso.
+        const inVisitOrder = [...(resp.appointments ?? [])];
 
         const finalAppts = (() => {
-          if (!virtualAppt || virtualAppt.date !== date) return sorted;
+          if (!virtualAppt || virtualAppt.date !== date) return inVisitOrder;
           const start = DateTime.fromISO(virtualAppt.suggestedStartIso);
           if (!start.isValid) {
             console.warn('Invalid suggestedStartIso for virtual appointment:', virtualAppt.suggestedStartIso);
-            return sorted;
+            return inVisitOrder;
           }
           const end = start.plus({ minutes: Math.max(0, virtualAppt.serviceMinutes || 0) });
           const startIso = start.toISO();
           const endIso = end.toISO();
           if (!startIso || !endIso) {
             console.warn('Failed to convert virtual appointment time to ISO:', { startIso, endIso });
-            return sorted;
+            return inVisitOrder;
           }
 
           let lat = virtualAppt.lat;
           let lon = virtualAppt.lon;
-          if ((lat == null || lon == null) && sorted.length > 0) {
-            const mid = sorted[Math.floor(sorted.length / 2)];
+          if ((lat == null || lon == null) && inVisitOrder.length > 0) {
+            const mid = inVisitOrder[Math.floor(inVisitOrder.length / 2)];
             lat = (mid as any)?.lat;
             lon = (mid as any)?.lon;
           }
@@ -376,51 +374,24 @@ export default function DoctorDay({
             startIso,
             endIso,
             providerPimsId:
-              selectedDoctorId || initialDoctorId || (sorted[0] as any)?.providerPimsId,
-            providerName: (sorted[0] as any)?.providerName ?? (sorted[0] as any)?.doctorName ?? '',
+              selectedDoctorId || initialDoctorId || (inVisitOrder[0] as any)?.providerPimsId,
+            providerName: (inVisitOrder[0] as any)?.providerName ?? (inVisitOrder[0] as any)?.doctorName ?? '',
             mins: Math.max(1, Math.round(end.diff(start).as('minutes'))),
             isPreview: true as any,
+            // Visit number from routing API for correct #N display
+            positionInDay: virtualAppt.positionInDay ?? virtualAppt.insertionIndex + 1,
+            // Use arrivalWindow from backend if available
+            effectiveWindow: virtualAppt.arrivalWindow?.windowStartIso && virtualAppt.arrivalWindow?.windowEndIso
+              ? {
+                  startIso: virtualAppt.arrivalWindow.windowStartIso,
+                  endIso: virtualAppt.arrivalWindow.windowEndIso,
+                }
+              : undefined,
           } as any;
 
-          const idx = Math.max(0, Math.min(sorted.length, virtualAppt.insertionIndex));
-          const withPreview = [...sorted.slice(0, idx), previewAppt, ...sorted.slice(idx)];
-          // Re-sort by time to ensure virtual appointment appears in correct chronological position
-          const finalSorted = withPreview.sort((a, b) => {
-            const sa = getStartISO(a);
-            const sb = getStartISO(b);
-            if (!sa && !sb) return 0;
-            if (!sa) return 1; // Put appointments without start time at the end
-            if (!sb) return -1; // Put appointments without start time at the end
-            const da = DateTime.fromISO(sa);
-            const db = DateTime.fromISO(sb);
-            if (!da.isValid && !db.isValid) return 0;
-            if (!da.isValid) return 1; // Put invalid dates at the end
-            if (!db.isValid) return -1; // Put invalid dates at the end
-            const ta = da.toMillis();
-            const tb = db.toMillis();
-            // Stable sort: if times are equal, preserve original order (preview appointments should maintain their position relative to same-time appointments)
-            if (ta === tb) {
-              // If one is preview and one isn't, put preview after regular appointments at same time
-              const aIsPreview = (a as any)?.isPreview === true;
-              const bIsPreview = (b as any)?.isPreview === true;
-              if (aIsPreview && !bIsPreview) return 1;
-              if (!aIsPreview && bIsPreview) return -1;
-              return 0;
-            }
-            return ta - tb;
-          });
-          
-          // Debug: Log the sorted order to verify virtual appointment position
-          if (import.meta.env.DEV) {
-            console.log('Virtual appointment sort order:', finalSorted.map((a, i) => ({
-              index: i,
-              client: (a as any)?.clientName || 'Unknown',
-              time: getStartISO(a),
-              isPreview: (a as any)?.isPreview,
-            })));
-          }
-          
-          return finalSorted;
+          const idx = Math.max(0, Math.min(inVisitOrder.length, virtualAppt.insertionIndex));
+          // Build day in visit order: [existing before slot] + [suggested slot] + [existing after slot]
+          return [...inVisitOrder.slice(0, idx), previewAppt, ...inVisitOrder.slice(idx)];
         })();
 
         setAppts(finalAppts);
@@ -555,9 +526,11 @@ export default function DoctorDay({
           isPreview: apptIsPreview,
           isNoLocation: !hasGeo,
           isPersonalBlock,
+          firstApptIndex: idx,
         });
       } else {
         const h = map.get(key)!;
+        h.firstApptIndex = Math.min(h.firstApptIndex ?? idx, idx);
         if (!isPersonalBlock) {
           const exists = h.patients.some(
             (p) =>
@@ -604,7 +577,11 @@ export default function DoctorDay({
       }
     }
 
+    // Preserve visit order (from day API or after insert): use firstApptIndex so display and ETA match.
     return Array.from(map.values()).sort((a, b) => {
+      if (a.firstApptIndex != null && b.firstApptIndex != null) {
+        return a.firstApptIndex - b.firstApptIndex;
+      }
       if (!a.startIso && !b.startIso) return 0;
       if (!a.startIso) return 1; // Put households without start time at the end
       if (!b.startIso) return -1; // Put households without start time at the end
@@ -786,7 +763,10 @@ export default function DoctorDay({
             if (isBlock) {
               tl[viewIdx].eta = h.startIso;
             } else {
-              const { winStartIso } = adjustedWindowForStart(date, h.startIso, schedStartIso);
+              // Prefer backend effectiveWindow when available
+              const winStartIso =
+                h.primary?.effectiveWindow?.startIso ??
+                adjustedWindowForStart(date, h.startIso, schedStartIso).winStartIso;
               tl[viewIdx].eta = winStartIso;
             }
           }
@@ -849,7 +829,7 @@ export default function DoctorDay({
         .map((h) => ({
           lat: h.lat,
           lon: h.lon,
-          label: h.primary.clientName,
+          label: clientDisplayName(h.primary),
           address: h.addressDisplay,
         })),
     [households]
@@ -911,14 +891,15 @@ export default function DoctorDay({
       return sum + durSec(h.startIso, h.endIso);
     }, 0);
 
-    // Points (exclude personal blocks and "Note To Staff")
-    const points = appts.reduce((total, a) => {
-      if ((a as any)?.isPersonalBlock) return total;
-      const type = (a?.appointmentType || '').toLowerCase();
+    // Points per patient (exclude personal blocks and "Note To Staff"): 1 standard, 0.5 tech, 2 euthanasia
+    const points = households.reduce((total, h) => {
+      if ((h as any)?.isPersonalBlock) return total;
+      const type = (h.primary?.appointmentType || '').toLowerCase();
       if (type.includes('note to staff')) return total;
-      if (type === 'euthanasia') return total + 2;
-      if (type.includes('tech appointment')) return total + 0.5;
-      return total + 1;
+      const n = Math.max(1, h.patients?.length ?? 1);
+      if (type === 'euthanasia') return total + 2 * n;
+      if (type.includes('tech appointment')) return total + 0.5 * n;
+      return total + 1 * n;
     }, 0);
 
     // ---------- Prefer authoritative fields from Routing winner ----------
@@ -1129,9 +1110,14 @@ export default function DoctorDay({
     if (!iso) return '';
     return DateTime.fromISO(iso).toLocaleString(DateTime.TIME_SIMPLE);
   }
-  function windowTextFromStart(iso?: string | null) {
-    if (!iso) return '';
-    const { winStartIso, winEndIso } = adjustedWindowForStart(date, iso, schedStartIso);
+  /** Window text: use backend effectiveWindow when available, else frontend-calculated. */
+  function windowTextForHousehold(h: Household): string {
+    const ew = h.primary?.effectiveWindow;
+    if (ew?.startIso && ew?.endIso) {
+      return `${DateTime.fromISO(ew.startIso).toLocaleString(DateTime.TIME_SIMPLE)} – ${DateTime.fromISO(ew.endIso).toLocaleString(DateTime.TIME_SIMPLE)}`;
+    }
+    if (!h.startIso) return '';
+    const { winStartIso, winEndIso } = adjustedWindowForStart(date, h.startIso, schedStartIso);
     const start = DateTime.fromISO(winStartIso).toLocaleString(DateTime.TIME_SIMPLE);
     const end = DateTime.fromISO(winEndIso).toLocaleString(DateTime.TIME_SIMPLE);
     return `${start} – ${end}`;
@@ -1156,13 +1142,15 @@ export default function DoctorDay({
 
   const whitePctText = Number.isFinite(whitePct) ? `${whitePct.toFixed(0)}%` : '—';
 
-  const points = appts.reduce((total, a) => {
-    if ((a as any)?.isPersonalBlock) return total;
-    const type = (a?.appointmentType || '').toLowerCase();
+  // Points per patient: 1 standard, 0.5 tech, 2 euthanasia
+  const points = households.reduce((total, h) => {
+    if ((h as any)?.isPersonalBlock) return total;
+    const type = (h.primary?.appointmentType || '').toLowerCase();
     if (type.includes('note to staff')) return total;
-    if (type === 'euthanasia') return total + 2;
-    if (type.includes('tech appointment')) return total + 0.5;
-    return total + 1;
+    const n = Math.max(1, h.patients?.length ?? 1);
+    if (type === 'euthanasia') return total + 2 * n;
+    if (type.includes('tech appointment')) return total + 0.5 * n;
+    return total + 1 * n;
   }, 0);
 
   /* ---------- Render ---------- */
@@ -1368,7 +1356,7 @@ export default function DoctorDay({
                             target="_blank"
                             rel="noreferrer"
                           >
-                            #{i + 1} {a.clientName}
+                            #{(a as any)?.positionInDay ?? i + 1} {clientDisplayName(a)}
                           </a>
                           {a?.clientAlert && (
                             <div style={{ color: '#dc2626' }}>Alert: {a.clientAlert}</div>
@@ -1377,7 +1365,7 @@ export default function DoctorDay({
                       ) : (
                         <>
                           <div className="dd-title">
-                            #{i + 1} {a.clientName}
+                            #{(a as any)?.positionInDay ?? i + 1} {clientDisplayName(a)}
                           </div>
                         </>
                       )}
@@ -1458,7 +1446,7 @@ export default function DoctorDay({
                                   <strong style={{ color: '#dc2626' }}>FIXED TIME</strong>
                                 ) : (
                                   <>
-                                    <strong>Window:</strong> {windowTextFromStart(h.startIso)}
+                                    <strong>Window:</strong> {windowTextForHousehold(h)}
                                   </>
                                 )}
                               </>

@@ -29,6 +29,8 @@ export type EtaResponse = {
   backToDepotIso?: string | null;
   etaByKey?: Record<string, string>; // optional (server-built)
   workStartIso?: string;
+  /** Minutes after ETD before next appointment can start (same location) or before drive starts (another stop). Default 5. */
+  appointmentBufferMinutes?: number;
 };
 
 export type EtaResult = {
@@ -39,6 +41,8 @@ export type EtaResult = {
   backToDepotSec?: number | null;
   backToDepotIso?: string | null;
   workStartIso?: string;
+  /** Minutes after ETD before next appointment can start (same location) or before drive starts (another stop). Default 5. */
+  appointmentBufferMinutes?: number;
 };
 
 export async function fetchEtas(payload: EtaRequest): Promise<EtaResult> {
@@ -66,6 +70,7 @@ export async function fetchEtas(payload: EtaRequest): Promise<EtaResult> {
     backToDepotSec: data?.backToDepotSec ?? null,
     backToDepotIso: data?.backToDepotIso ?? null,
     workStartIso: data?.workStartIso,
+    appointmentBufferMinutes: data?.appointmentBufferMinutes ?? 5,
   };
 }
 
@@ -149,6 +154,8 @@ export type FillDayCandidate = {
   finalScore: number;
   holeIndex: number;
   myDayPreviewLink: string;
+  /** Minutes after ETD before next appointment can start (same location) or before drive starts (another stop). Default 5. */
+  appointmentBufferMinutes?: number;
 };
 
 export type FillDayStats = {

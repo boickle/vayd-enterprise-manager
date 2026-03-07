@@ -5,6 +5,7 @@ import { DateTime } from 'luxon';
 import type { DoctorDayProps } from './DoctorDay';
 import {
   fetchDoctorDay,
+  clientDisplayName,
   type DoctorDayAppt,
   type DoctorDayResponse,
   type Depot,
@@ -129,6 +130,8 @@ type Household = {
   isPersonalBlock?: boolean;
   patients: PatientBadge[];
   primary: DoctorDayAppt; // Store primary appointment for checking appointment type
+  /** Min index in appts array (for visit-order sort when preview is present) */
+  firstApptIndex?: number;
 };
 
 /* ----------------- schedule bounds (for work start) ----------------- */
@@ -241,6 +244,7 @@ export default function DoctorDayVisual({
   const [driveSecondsArr, setDriveSecondsArr] = useState<number[] | null>(null);
   const [backToDepotSec, setBackToDepotSec] = useState<number | null>(null);
   const [backToDepotIso, setBackToDepotIso] = useState<string | null>(null);
+  const [appointmentBufferMinutes, setAppointmentBufferMinutes] = useState<number>(5);
   const [etaErr, setEtaErr] = useState<string | null>(null);
 
   // schedule bounds for visual work start
@@ -269,6 +273,8 @@ export default function DoctorDayVisual({
     sIso: string;
     eIso: string;
     patients: PatientBadge[];
+    /** Backend effectiveWindow when available; used for Window display */
+    effectiveWindow?: { startIso: string; endIso: string };
   } | null>(null);
 
   /* ------------ load providers ------------ */
@@ -359,20 +365,16 @@ export default function DoctorDayVisual({
       try {
         const resp: DoctorDayResponse = await fetchDoctorDay(date, selectedDoctorId || undefined);
         if (!on) return;
-        const sorted = [...resp.appointments].sort((a, b) => {
-          const sa = getStartISO(a);
-          const sb = getStartISO(b);
-          return (
-            (sa ? DateTime.fromISO(sa).toMillis() : 0) - (sb ? DateTime.fromISO(sb).toMillis() : 0)
-          );
-        });
 
-        // inject preview if provided
+        // Day API returns appointments in route order (visit order). Do not re-sort by startIso.
+        const inVisitOrder = [...(resp.appointments ?? [])];
+
+        // inject preview if provided — keep visit order (insert at insertionIndex)
         const final = (() => {
-          if (!virtualAppt || virtualAppt.date !== date) return sorted;
+          if (!virtualAppt || virtualAppt.date !== date) return inVisitOrder;
           const start = DateTime.fromISO(virtualAppt.suggestedStartIso);
           const end = start.plus({ minutes: Math.max(0, virtualAppt.serviceMinutes || 0) });
-          const mid = sorted[Math.floor(sorted.length / 2)];
+          const mid = inVisitOrder[Math.floor(inVisitOrder.length / 2)];
           const prev = {
             id: `virtual-${start.toMillis()}`,
             clientName: virtualAppt.clientName || 'New Appointment',
@@ -385,17 +387,17 @@ export default function DoctorDayVisual({
             appointmentStart: start.toISO(),
             appointmentEnd: end.toISO(),
             isPreview: true as any,
+            positionInDay: virtualAppt.positionInDay ?? virtualAppt.insertionIndex + 1,
+            // Use arrivalWindow from backend if available
+            effectiveWindow: virtualAppt.arrivalWindow?.windowStartIso && virtualAppt.arrivalWindow?.windowEndIso
+              ? {
+                  startIso: virtualAppt.arrivalWindow.windowStartIso,
+                  endIso: virtualAppt.arrivalWindow.windowEndIso,
+                }
+              : undefined,
           } as any as DoctorDayAppt;
-          const idx = Math.max(0, Math.min(sorted.length, virtualAppt.insertionIndex));
-          const withPreview = [...sorted.slice(0, idx), prev, ...sorted.slice(idx)];
-          // Re-sort by time to ensure virtual appointment appears in correct chronological position
-          return withPreview.sort((a, b) => {
-            const sa = getStartISO(a);
-            const sb = getStartISO(b);
-            return (
-              (sa ? DateTime.fromISO(sa).toMillis() : 0) - (sb ? DateTime.fromISO(sb).toMillis() : 0)
-            );
-          });
+          const idx = Math.max(0, Math.min(inVisitOrder.length, virtualAppt.insertionIndex));
+          return [...inVisitOrder.slice(0, idx), prev, ...inVisitOrder.slice(idx)];
         })();
 
         setAppts(final);
@@ -456,7 +458,7 @@ export default function DoctorDayVisual({
       if (!m.has(key)) {
         m.set(key, {
           key,
-          client: (a as any)?.clientName ?? 'Client',
+          client: clientDisplayName(a),
           clientAlert: (a as any)?.clientAlert ?? null,
           address: formatAddress(a),
           lat,
@@ -468,9 +470,11 @@ export default function DoctorDayVisual({
           isPersonalBlock,
           patients: isPersonalBlock ? [] : [patient],
           primary: a, // Store primary appointment
+          firstApptIndex: idx,
         });
       } else {
         const h = m.get(key)!;
+        h.firstApptIndex = Math.min(h.firstApptIndex ?? idx, idx);
 
         // time window expand
         const s = getStartISO(a);
@@ -494,11 +498,16 @@ export default function DoctorDayVisual({
         }
       }
     }
-    return Array.from(m.values()).sort(
-      (a, b) =>
+    // Preserve visit order (from day API or after insert): use firstApptIndex so display and ETA match.
+    return Array.from(m.values()).sort((a, b) => {
+      if (a.firstApptIndex != null && b.firstApptIndex != null) {
+        return a.firstApptIndex - b.firstApptIndex;
+      }
+      return (
         (a.startIso ? DateTime.fromISO(a.startIso).toMillis() : 0) -
         (b.startIso ? DateTime.fromISO(b.startIso).toMillis() : 0)
-    );
+      );
+    });
   }, [appts]);
 
   /* =========================================================================
@@ -641,12 +650,14 @@ export default function DoctorDayVisual({
         for (let i = 0; i < ordered.length; i++) {
           const { h, viewIdx } = ordered[i];
 
-          // ETA fallback
+          // ETA fallback: prefer backend effectiveWindow when available
           if (!tl[viewIdx].eta && h.startIso) {
             if (h.isPersonalBlock) {
               tl[viewIdx].eta = h.startIso;
             } else {
-              const { winStartIso } = adjustedWindowForStart(date, h.startIso, schedStartIso);
+              const winStartIso =
+                h.primary?.effectiveWindow?.startIso ??
+                adjustedWindowForStart(date, h.startIso, schedStartIso).winStartIso;
               tl[viewIdx].eta = winStartIso;
             }
           }
@@ -676,12 +687,15 @@ export default function DoctorDayVisual({
           }
         }
 
-        // 6) store drive/depot fields
+        // 6) store drive/depot/buffer fields
         setDriveSecondsArr(Array.isArray(result?.driveSeconds) ? result.driveSeconds : null);
         setBackToDepotSec(
           typeof result?.backToDepotSec === 'number' ? result.backToDepotSec : null
         );
         setBackToDepotIso(result?.backToDepotIso ?? null);
+        setAppointmentBufferMinutes(
+          typeof result?.appointmentBufferMinutes === 'number' ? result.appointmentBufferMinutes : 5
+        );
 
         if (on) setTimeline(tl);
       } catch (e: any) {
@@ -690,6 +704,7 @@ export default function DoctorDayVisual({
           setDriveSecondsArr(null);
           setBackToDepotSec(null);
           setBackToDepotIso(null);
+          setAppointmentBufferMinutes(5);
         }
       }
     })();
@@ -820,22 +835,28 @@ export default function DoctorDayVisual({
     });
   }, [households, timeline, t0]);
 
-  // Vertical connectors between consecutive blocks
+  // Vertical connectors between consecutive blocks (drive only; buffer is white above)
   const vConnectors = useMemo(() => {
     const out: Array<{ top: number; height: number; mins: number }> = [];
+    const bufferPx = appointmentBufferMinutes * PPM;
     for (let i = 0; i < households.length - 1; i++) {
       const a = blockGeom[i];
       const b = blockGeom[i + 1];
       if (!a || !b) continue;
-      const y1 = a.top + a.height;
-      const y2 = b.top;
-      const height = Math.max(0, y2 - y1);
-      if (height <= 0) continue; // overlapping or abutting — no connector
+      const etdIso = timeline[i]?.etd;
+      const blockEndY =
+        etdIso && DateTime.fromISO(etdIso).isValid
+          ? Math.max(0, Math.round(DateTime.fromISO(etdIso).diff(t0).as('minutes'))) * PPM
+          : a.top + a.height;
+      const driveStartY = blockEndY + bufferPx;
+      const nextBlockTop = b.top;
+      const driveHeight = Math.max(0, nextBlockTop - driveStartY);
+      if (driveHeight <= 0) continue;
       const mins = Math.max(0, driveBetweenMin[i] || 0);
-      out.push({ top: y1, height, mins });
+      out.push({ top: driveStartY, height: driveHeight, mins });
     }
     return out;
-  }, [blockGeom, households.length, driveBetweenMin]);
+  }, [blockGeom, timeline, t0, households.length, driveBetweenMin, appointmentBufferMinutes]);
 
   /* ------------ depot chips ------------ */
   const fromDepotMin = useMemo(() => {
@@ -928,14 +949,15 @@ export default function DoctorDayVisual({
       return sum + durSec(h.startIso, h.endIso);
     }, 0);
 
-    // Points (exclude personal blocks and "Note To Staff")
-    const points = appts.reduce((total, a) => {
-      if ((a as any)?.isPersonalBlock) return total;
-      const type = (a?.appointmentType || '').toLowerCase();
+    // Points per patient (exclude personal blocks and "Note To Staff"): 1 standard, 0.5 tech, 2 euthanasia
+    const points = households.reduce((total, h) => {
+      if ((h as any)?.isPersonalBlock) return total;
+      const type = (h.primary?.appointmentType || '').toLowerCase();
       if (type.includes('note to staff')) return total;
-      if (type === 'euthanasia') return total + 2;
-      if (type.includes('tech appointment')) return total + 0.5;
-      return total + 1;
+      const n = Math.max(1, h.patients?.length ?? 1);
+      if (type === 'euthanasia') return total + 2 * n;
+      if (type.includes('tech appointment')) return total + 0.5 * n;
+      return total + 1 * n;
     }, 0);
 
     // ---------- Prefer authoritative fields from Routing winner ----------
@@ -1377,10 +1399,13 @@ export default function DoctorDayVisual({
               Math.max(0, Math.round(DateTime.fromISO(anchorIso).diff(t0).as('minutes'))) * PPM;
             const height = Math.max(22, durMinForHeight * PPM);
 
-            // adjusted window for tooltip (only for non-fixed-time appointments)
-            const { winStartIso, winEndIso } = isFixedTime 
-              ? { winStartIso: h.startIso!, winEndIso: h.endIso! } // Use scheduled times for fixed time
-              : adjustedWindowForStart(date, h.startIso!, schedStartIso);
+            // Window for tooltip: backend effectiveWindow when available, else frontend-calculated
+            const ew = h.primary?.effectiveWindow;
+            const { winStartIso, winEndIso } = isFixedTime
+              ? { winStartIso: h.startIso!, winEndIso: h.endIso! }
+              : ew?.startIso && ew?.endIso
+                ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
+                : adjustedWindowForStart(date, h.startIso!, schedStartIso);
 
             const patientsPreview = h.patients
               .map((p) => p.name)
@@ -1410,6 +1435,7 @@ export default function DoctorDayVisual({
                     patients: h.patients || [],
                     clientAlert: h?.clientAlert,
                     isFixedTime,
+                    effectiveWindow: h.primary?.effectiveWindow,
                   });
                 }}
                 onMouseMove={(ev) => {
@@ -1461,7 +1487,10 @@ export default function DoctorDayVisual({
                 }
               >
                 <div style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>
-                  #{idx + 1} {h.client}
+                  #{h.primary && (h.primary as any)?.positionInDay != null
+                    ? (h.primary as any).positionInDay
+                    : idx + 1}{' '}
+                  {h.client}
                 </div>
                 <div
                   className="muted"
@@ -1694,10 +1723,13 @@ export default function DoctorDayVisual({
             const s = DateTime.fromISO(hoverCard.sIso);
             const e = DateTime.fromISO(hoverCard.eIso);
 
-            // adjusted visual window (for hover) - only calculate if not fixed time
+            // Window for hover card: backend effectiveWindow when available, else frontend-calculated
+            const ew = hoverCard.effectiveWindow;
             const { winStartIso, winEndIso } = hoverCard.isFixedTime
-              ? { winStartIso: hoverCard.sIso, winEndIso: hoverCard.eIso } // Use scheduled times for fixed time
-              : adjustedWindowForStart(date, hoverCard.sIso, schedStartIso);
+              ? { winStartIso: hoverCard.sIso, winEndIso: hoverCard.eIso }
+              : ew?.startIso && ew?.endIso
+                ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
+                : adjustedWindowForStart(date, hoverCard.sIso, schedStartIso);
             return (
               <div
                 style={{

@@ -623,6 +623,13 @@ This spot is also being offered to other clients. If you'd like to book it for $
       projectedDriveSeconds: candidate.addedDriveSeconds,
       currentDriveSeconds: candidate.addedDriveSeconds, // FillDay uses addedDriveSeconds for both
       clientName: candidate.clientName, // Pass client name so virtual appointment shows correct name
+      // Convert FillDayCandidate arrivalWindow format to PreviewMyDayOption format
+      arrivalWindow: candidate.arrivalWindow
+        ? {
+            windowStartIso: candidate.arrivalWindow.start,
+            windowEndIso: candidate.arrivalWindow.end,
+          }
+        : undefined,
       // Note: Optional fields like workStartLocal, effectiveEndLocal, bookedServiceSeconds
       // are not available from FillDayCandidate, but DoctorDay will work without them
     };
