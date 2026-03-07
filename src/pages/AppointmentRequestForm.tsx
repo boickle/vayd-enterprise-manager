@@ -6465,6 +6465,25 @@ export default function AppointmentRequestForm() {
                 </div>
               </div>
             )}
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                How did you hear about us?
+              </label>
+              <textarea
+                value={formData.howDidYouHearAboutUs || ''}
+                onChange={(e) => updateFormData('howDidYouHearAboutUs', e.target.value)}
+                rows={4}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontFamily: 'inherit',
+                }}
+              />
+            </div>
           </div>
         );
 
@@ -6903,27 +6922,6 @@ export default function AppointmentRequestForm() {
               </>
             )}
 
-            {/* Only show "How did you hear about us" for new clients */}
-            {(!isLoggedIn && formData.haveUsedServicesBefore === 'No') && (
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                  How did you hear about us?
-                </label>
-                <input
-                  type="text"
-                  value={formData.howDidYouHearAboutUs || ''}
-                  onChange={(e) => updateFormData('howDidYouHearAboutUs', e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '12px',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                  }}
-                />
-              </div>
-            )}
-
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
                 Anything else you want us to know?
@@ -7001,6 +6999,25 @@ export default function AppointmentRequestForm() {
                 </div>
               </div>
             )}
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                How did you hear about us?
+              </label>
+              <textarea
+                value={formData.howDidYouHearAboutUs || ''}
+                onChange={(e) => updateFormData('howDidYouHearAboutUs', e.target.value)}
+                rows={4}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontFamily: 'inherit',
+                }}
+              />
+            </div>
           </div>
         );
 
