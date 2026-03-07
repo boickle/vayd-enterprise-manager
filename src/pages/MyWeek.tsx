@@ -82,12 +82,14 @@ function addressKeyForAppt(a: DoctorDayAppt): string | null {
 type PatientBadge = {
   name: string;
   type?: string | null;
+  alerts?: string | null;
 };
 function makePatientBadge(a: any): PatientBadge {
   const name =
     str(a, 'patientName') || str(a, 'petName') || str(a, 'animalName') || str(a, 'name') || 'Patient';
   const type = str(a, 'appointmentType') || str(a, 'appointmentTypeName') || str(a, 'serviceName') || null;
-  return { name, type };
+  const alerts = str(a, 'alerts') || null;
+  return { name, type, alerts };
 }
 
 export type WeekHousehold = {
@@ -98,6 +100,9 @@ export type WeekHousehold = {
   lon: number;
   startIso: string | null;
   endIso: string | null;
+  /** Window of arrival from effectiveWindow (startIso/endIso) when present on the appointment */
+  windowStartIso?: string | null;
+  windowEndIso?: string | null;
   isNoLocation?: boolean;
   isPersonalBlock?: boolean;
   isPreview?: boolean;
@@ -131,6 +136,10 @@ function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
     const isPreview = (a as any)?.isPreview === true;
     const patient = makePatientBadge(a);
 
+    const effectiveWindow = (a as any)?.effectiveWindow;
+    const windowStartIso = effectiveWindow?.startIso ?? null;
+    const windowEndIso = effectiveWindow?.endIso ?? null;
+
     if (!m.has(key)) {
       m.set(key, {
         key,
@@ -140,6 +149,8 @@ function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
         lon,
         startIso: getStartISO(a) ?? null,
         endIso: getEndISO(a) ?? null,
+        windowStartIso: windowStartIso ?? undefined,
+        windowEndIso: windowEndIso ?? undefined,
         isNoLocation: !hasGeo,
         isPersonalBlock,
         isPreview,
@@ -276,6 +287,8 @@ export default function MyWeek(props: MyWeekProps = {}) {
     durMin: number;
     etaIso?: string | null;
     etdIso?: string | null;
+    windowStartIso?: string | null;
+    windowEndIso?: string | null;
     isFixedTime: boolean;
     isPersonalBlock?: boolean;
     isNoLocation?: boolean;
@@ -1042,6 +1055,8 @@ export default function MyWeek(props: MyWeekProps = {}) {
                             durMin,
                             etaIso: showByDriveTime ? etaIso : null,
                             etdIso: showByDriveTime ? etdIso : null,
+                            windowStartIso: h.windowStartIso ?? null,
+                            windowEndIso: h.windowEndIso ?? null,
                             isFixedTime,
                             isPersonalBlock: h.isPersonalBlock,
                             isNoLocation: h.isNoLocation,
@@ -1162,6 +1177,18 @@ export default function MyWeek(props: MyWeekProps = {}) {
                         : '—'}
                     </span>
                   )}
+                  {(hoverCard.windowStartIso || hoverCard.windowEndIso) && (
+                    <span>
+                      <b>Window of arrival:</b>{' '}
+                      {hoverCard.windowStartIso
+                        ? DateTime.fromISO(hoverCard.windowStartIso).toFormat('t')
+                        : '—'}
+                      {' – '}
+                      {hoverCard.windowEndIso
+                        ? DateTime.fromISO(hoverCard.windowEndIso).toFormat('t')
+                        : '—'}
+                    </span>
+                  )}
                   {hoverCard.isFixedTime && (
                     <span style={{ color: '#dc2626', fontWeight: 600 }}>FIXED TIME</span>
                   )}
@@ -1177,10 +1204,15 @@ export default function MyWeek(props: MyWeekProps = {}) {
                     <div style={{ fontWeight: 700, marginBottom: 6 }}>Patients</div>
                     <ul style={{ margin: 0, paddingLeft: 18 }}>
                       {hoverCard.patients.map((p, i) => (
-                        <li key={i} style={{ marginBottom: 4 }}>
+                        <li key={i} style={{ marginBottom: 8 }}>
                           <span style={{ fontWeight: 600 }}>{p.name}</span>
                           {p.type && (
                             <span style={{ color: '#475569', marginLeft: 6 }}>— {p.type}</span>
+                          )}
+                          {p.alerts && (
+                            <div style={{ marginTop: 4, fontSize: 12, color: '#dc2626' }}>
+                              Alert: {p.alerts}
+                            </div>
                           )}
                         </li>
                       ))}
