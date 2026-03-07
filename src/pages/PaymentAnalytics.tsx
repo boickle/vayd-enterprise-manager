@@ -6,8 +6,6 @@ import {
   CardContent,
   Typography,
   Button,
-  Tabs,
-  Tab,
   Popover,
   Stack,
   Divider,
@@ -27,6 +25,7 @@ import {
   YAxis,
   Tooltip,
   Line,
+  Legend,
 } from 'recharts';
 import { fetchPaymentsAnalytics, type PaymentPoint } from '../api/payments';
 
@@ -70,7 +69,6 @@ export default function PaymentsAnalyticsPage() {
   const [range, setRange] = useState<DateRange>(PRESETS['30D']());
   const [series, setSeries] = useState<PaymentPoint[]>([]);
   const [seriesAll, setSeriesAll] = useState<PaymentPoint[] | null>(null); // all-time for leaderboards
-  const [metric, setMetric] = useState<'revenue' | 'count'>('revenue');
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
   const open = Boolean(anchorEl);
@@ -122,10 +120,23 @@ export default function PaymentsAnalyticsPage() {
 
   const totals = useMemo(() => {
     const revenue = series.reduce((s, p) => s + p.revenue, 0);
-    const count = series.reduce((s, p) => s + p.count, 0);
-    const avg = series.length ? revenue / series.length : 0;
-    return { revenue, count, avg };
+    const subscriptionRevenue = series.reduce(
+      (s, p) => s + (p.subscriptionRevenue ?? 0),
+      0
+    );
+    const total = revenue + subscriptionRevenue;
+    const avg = series.length ? total / series.length : 0;
+    return { revenue, subscriptionRevenue, total, avg };
   }, [series]);
+
+  const chartData = useMemo(
+    () =>
+      series.map((p) => ({
+        ...p,
+        totalRevenue: p.revenue + (p.subscriptionRevenue ?? 0),
+      })),
+    [series]
+  );
 
   // ---------- Leaderboards + Today's revenue ----------
   const dataset = seriesAll ?? series; // prefer all-time; fallback to current selection
@@ -236,11 +247,11 @@ export default function PaymentsAnalyticsPage() {
 
         {/* Summary cards */}
         <Grid container spacing={2}>
-          <Grid item xs={12} sm={4}>
+          <Grid item xs={12} sm={6} md={4}>
             <Card variant="outlined">
               <CardHeader
                 titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
-                title="Total Revenue (range)"
+                title="Revenue (range)"
               />
               <CardContent>
                 <Typography variant="h5" fontWeight={700}>
@@ -252,15 +263,15 @@ export default function PaymentsAnalyticsPage() {
               </CardContent>
             </Card>
           </Grid>
-          <Grid item xs={12} sm={4}>
+          <Grid item xs={12} sm={6} md={4}>
             <Card variant="outlined">
               <CardHeader
                 titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
-                title="Payments (range)"
+                title="Subscription Revenue (range)"
               />
               <CardContent>
                 <Typography variant="h5" fontWeight={700}>
-                  {totals.count.toLocaleString()}
+                  {fmtUSD(totals.subscriptionRevenue)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
                   {series.length} days
@@ -268,7 +279,23 @@ export default function PaymentsAnalyticsPage() {
               </CardContent>
             </Card>
           </Grid>
-          <Grid item xs={12} sm={4}>
+          <Grid item xs={12} sm={6} md={4}>
+            <Card variant="outlined">
+              <CardHeader
+                titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
+                title="Total (range)"
+              />
+              <CardContent>
+                <Typography variant="h5" fontWeight={700}>
+                  {fmtUSD(totals.total)}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  revenue + subscription · {series.length} days
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid item xs={12} sm={6} md={4}>
             <Card variant="outlined">
               <CardHeader
                 titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
@@ -279,7 +306,7 @@ export default function PaymentsAnalyticsPage() {
                   {fmtUSD(totals.avg)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  avg revenue / day
+                  avg total / day
                 </Typography>
               </CardContent>
             </Card>
@@ -301,19 +328,14 @@ export default function PaymentsAnalyticsPage() {
 
         {/* Chart */}
         <Card variant="outlined">
-          <CardHeader
-            title="Trend"
-            action={
-              <Tabs value={metric} onChange={(_, v) => setMetric(v as 'revenue' | 'count')}>
-                <Tab value="revenue" label="Revenue" />
-                <Tab value="count" label="Count" />
-              </Tabs>
-            }
-          />
+          <CardHeader title="Trend" />
           <CardContent>
             <Box height={320} minHeight={320}>
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={series} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
+                <LineChart
+                  data={chartData}
+                  margin={{ left: 8, right: 16, top: 8, bottom: 8 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis
                     dataKey="date"
@@ -322,24 +344,41 @@ export default function PaymentsAnalyticsPage() {
                   />
                   <YAxis
                     yAxisId="left"
-                    tickFormatter={(v) =>
-                      metric === 'revenue' ? fmtUSD(v) : Math.round(v).toString()
-                    }
+                    tickFormatter={(v) => fmtUSD(v)}
                   />
                   <Tooltip
                     formatter={(value: number | undefined) =>
-                      value == null
-                        ? ''
-                        : metric === 'revenue'
-                          ? fmtUSD(value)
-                          : value.toLocaleString()
+                      value == null ? '' : fmtUSD(value)
                     }
                     labelFormatter={(l) => dayjs(l).format('ddd, MMM D, YYYY')}
+                  />
+                  <Legend />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="revenue"
+                    name="Revenue"
+                    stroke="#1976d2"
+                    strokeWidth={2}
+                    dot={false}
+                    isAnimationActive
                   />
                   <Line
                     yAxisId="left"
                     type="monotone"
-                    dataKey={metric}
+                    dataKey="subscriptionRevenue"
+                    name="Subscription Revenue"
+                    stroke="#2e7d32"
+                    strokeWidth={2}
+                    dot={false}
+                    isAnimationActive
+                  />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="totalRevenue"
+                    name="Total"
+                    stroke="#ed6c02"
                     strokeWidth={2}
                     dot={false}
                     isAnimationActive
