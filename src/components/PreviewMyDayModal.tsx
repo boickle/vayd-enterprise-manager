@@ -16,6 +16,12 @@ export type PreviewMyDayOption = {
   effectiveEndLocal?: string;
   bookedServiceSeconds?: number;
   whitespaceAfterBookingSeconds?: number;
+  arrivalWindow?: {
+    windowStartSec?: number;
+    windowEndSec?: number;
+    windowStartIso?: string;
+    windowEndIso?: string;
+  };
 };
 
 type Props = {
@@ -70,6 +76,8 @@ export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose
     bookedServiceSeconds: option.bookedServiceSeconds,
     // If backend returned this on the option, forward it too:
     whitespaceAfterBookingSeconds: (option as any).whitespaceAfterBookingSeconds,
+    // Arrival window from backend
+    arrivalWindow: option.arrivalWindow,
   };
 
   const commonProps = {

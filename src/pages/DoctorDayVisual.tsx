@@ -387,6 +387,13 @@ export default function DoctorDayVisual({
             appointmentStart: start.toISO(),
             appointmentEnd: end.toISO(),
             isPreview: true as any,
+            // Use arrivalWindow from backend if available
+            effectiveWindow: virtualAppt.arrivalWindow?.windowStartIso && virtualAppt.arrivalWindow?.windowEndIso
+              ? {
+                  startIso: virtualAppt.arrivalWindow.windowStartIso,
+                  endIso: virtualAppt.arrivalWindow.windowEndIso,
+                }
+              : undefined,
           } as any as DoctorDayAppt;
           const idx = Math.max(0, Math.min(sorted.length, virtualAppt.insertionIndex));
           const withPreview = [...sorted.slice(0, idx), prev, ...sorted.slice(idx)];

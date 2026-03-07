@@ -201,6 +201,12 @@ export type MyWeekVirtualAppt = {
   city?: string;
   state?: string;
   zip?: string;
+  arrivalWindow?: {
+    windowStartSec?: number;
+    windowEndSec?: number;
+    windowStartIso?: string;
+    windowEndIso?: string;
+  };
 };
 
 export type MyWeekProps = {

@@ -41,6 +41,12 @@ export type DoctorDayProps = {
     effectiveEndLocal?: string;
     bookedServiceSeconds?: number;
     whitespaceAfterBookingSeconds?: number;
+    arrivalWindow?: {
+      windowStartSec?: number;
+      windowEndSec?: number;
+      windowStartIso?: string;
+      windowEndIso?: string;
+    };
   };
 };
 
@@ -380,6 +386,13 @@ export default function DoctorDay({
             providerName: (sorted[0] as any)?.providerName ?? (sorted[0] as any)?.doctorName ?? '',
             mins: Math.max(1, Math.round(end.diff(start).as('minutes'))),
             isPreview: true as any,
+            // Use arrivalWindow from backend if available
+            effectiveWindow: virtualAppt.arrivalWindow?.windowStartIso && virtualAppt.arrivalWindow?.windowEndIso
+              ? {
+                  startIso: virtualAppt.arrivalWindow.windowStartIso,
+                  endIso: virtualAppt.arrivalWindow.windowEndIso,
+                }
+              : undefined,
           } as any;
 
           const idx = Math.max(0, Math.min(sorted.length, virtualAppt.insertionIndex));

@@ -65,6 +65,13 @@ type Winner = {
   appointmentId?: number;
   // v2 multi-doctor support
   doctorId?: string; // PIMS ID of the doctor this candidate belongs to
+  // Arrival window from backend
+  arrivalWindow?: {
+    windowStartSec?: number;
+    windowEndSec?: number;
+    windowStartIso?: string;
+    windowEndIso?: string;
+  };
 };
 
 type UnifiedOption = Winner & {

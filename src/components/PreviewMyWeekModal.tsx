@@ -47,6 +47,7 @@ export function PreviewMyWeekModal({ option, serviceMinutes, newApptMeta, onClos
     city: parts.city ?? newApptMeta?.city,
     state: parts.state ?? newApptMeta?.state,
     zip: parts.zip ?? newApptMeta?.zip,
+    arrivalWindow: option.arrivalWindow,
   };
 
   const initialWeekStart = weekStartSunday(option.date);
