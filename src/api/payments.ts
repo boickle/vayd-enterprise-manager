@@ -5,6 +5,7 @@ export type PaymentPoint = {
   date: string; // "YYYY-MM-DD"
   revenue: number; // daily total
   count: number; // number of payments
+  subscriptionRevenue?: number; // daily subscription revenue
 };
 
 export type PaymentProviderType = 'square';
@@ -109,6 +110,7 @@ export async function fetchPaymentsAnalytics(params: {
     date: String(r.date),
     revenue: Number(r.revenue ?? 0),
     count: Number(r.count ?? 0),
+    subscriptionRevenue: Number(r.subscriptionRevenue ?? 0),
   }));
 }
 
