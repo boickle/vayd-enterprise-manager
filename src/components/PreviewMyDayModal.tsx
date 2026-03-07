@@ -7,6 +7,8 @@ import DoctorDayVisual from '../pages/DoctorDayVisual';
 export type PreviewMyDayOption = {
   date: string; // YYYY-MM-DD
   insertionIndex: number;
+  /** 1-based visit order from routing API; use for display (#N) and ordering */
+  positionInDay?: number;
   suggestedStartIso: string;
   doctorPimsId: string; // already mapped to INTERNAL id earlier
   doctorName: string;
@@ -57,6 +59,7 @@ export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose
   const virtualAppt = {
     date: option.date,
     insertionIndex: option.insertionIndex,
+    positionInDay: option.positionInDay ?? option.insertionIndex + 1,
     suggestedStartIso: option.suggestedStartIso,
     serviceMinutes: Math.max(1, Math.floor(serviceMinutes)),
     clientName: (option as any).clientName || 'New Appointment', // Use clientName from option if provided (FillDay passes this)
@@ -167,7 +170,7 @@ export function PreviewMyDayModal({ option, serviceMinutes, newApptMeta, onClose
               </button>
             </div>
             <div className="muted" style={{ fontSize: 12 }}>
-              Insert at index {option.insertionIndex}
+              Visit #{option.positionInDay ?? option.insertionIndex + 1}
             </div>
             <button className="btn" onClick={onClose}>
               Close

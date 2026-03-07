@@ -38,6 +38,8 @@ export function PreviewMyWeekModal({ option, serviceMinutes, newApptMeta, onClos
   const parts = splitAddress(newApptMeta?.address);
   const virtualAppt: MyWeekVirtualAppt = {
     date: option.date,
+    insertionIndex: option.insertionIndex,
+    positionInDay: option.positionInDay ?? option.insertionIndex + 1,
     suggestedStartIso: option.suggestedStartIso,
     serviceMinutes: Math.max(1, Math.floor(serviceMinutes)),
     clientName: (option as any).clientName || 'New Appointment',

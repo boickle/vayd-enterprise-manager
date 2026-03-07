@@ -27,6 +27,7 @@ export type DoctorDayAppt = {
   zip?: string;
 
   description?: string;
+  visitReason?: string;
   statusName?: string;
 
   expectedArrivalIso?: string;
@@ -64,6 +65,36 @@ const toMiniZone = (z: any): MiniZone => {
   }
   return { id: z, name: null };
 };
+
+/** From full zone name like "Zone 3E (Home)" or "2E:" return short label "3E" / "2E" only. */
+function shortZoneLabel(fullName: string | null | undefined): string | null {
+  const s = fullName?.trim();
+  if (!s) return null;
+  // Strip "Zone " prefix and any trailing " (Something)" to get e.g. "3E"
+  let out = s.replace(/^Zone\s+/i, '').trim();
+  out = out.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  // Strip trailing colon if backend sends e.g. "2E:"
+  out = out.replace(/:+$/, '').trim();
+  return out || s.replace(/:+$/, '').trim();
+}
+
+/** Display client name with zone or city in parentheses when available, e.g. "Martha Fogler (3E)" or "Martha Fogler (Boston)". Zone shows short label only (e.g. "3E"), not "Zone 3E (Home)". */
+export function clientDisplayName(a: {
+  clientName?: string | null;
+  clientZone?: MiniZone;
+  effectiveZone?: MiniZone;
+  city?: string | null;
+} | null): string {
+  const name = (a?.clientName ?? 'Client').trim();
+  if (!name) return 'Client';
+  const fullZoneName =
+    (a?.effectiveZone?.name ?? a?.clientZone?.name)?.trim() ||
+    (a as any)?.zoneName?.trim();
+  const zoneLabel = fullZoneName ? shortZoneLabel(fullZoneName) : null;
+  const city = (a?.city ?? (a as any)?.city)?.trim();
+  const suffix = zoneLabel || city;
+  return suffix ? `${name} (${suffix})` : name;
+}
 
 export async function fetchDoctorDay(
   dateISO: string,
@@ -107,6 +138,7 @@ export async function fetchDoctorDay(
       zip: a?.zip ?? undefined,
 
       description: a?.description,
+      visitReason: a?.visitReason,
       statusName: a?.statusName,
 
       expectedArrivalIso: a?.expectedArrivalIso ?? undefined,
@@ -168,7 +200,7 @@ export type DoctorMonthAppt = {
   endIso: string;
   title?: string;
   serviceMinutes?: number;
-  /** Required for points calculation (1 normal, 0.5 tech, 2 euthanasia). Backend should include in month response. */
+  /** Required for points calculation (per patient: 1 standard, 0.5 tech, 2 euthanasia). Backend should include in month response. */
   appointmentType?: string;
 
   // Zones per appointment (same semantics as day API)
