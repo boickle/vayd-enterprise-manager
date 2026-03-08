@@ -58,6 +58,7 @@ import {
 dayjs.extend(utc);
 
 const PRACTICE_TOTAL_ID = '__practice__';
+const NOT_SPECIFIED_DOCTOR_ID = '__not_specified__';
 
 /** Format date as YYYY-MM-DD in local time (for API and chart consistency). */
 function toLocalDateStr(d: Dayjs) {
@@ -266,29 +267,32 @@ export default function VeterinaryServicesDeliveredPage() {
     };
   }, []);
 
-  // Load each doctor's revenue series for the date range
+  // Load each doctor's revenue series for the date range, plus "Not Specified" (doctorId null/empty)
   useEffect(() => {
-    if (!providers.length) {
-      setDoctorResponses([]);
-      setLoading(false);
-      return;
-    }
     let alive = true;
     setLoading(true);
     setError(null);
     (async () => {
       try {
-        const results = await Promise.all(
-          providers.map(async (p) => {
-            const id = String(p.id);
-            const response = await fetchDoctorRevenueSeries({
-              start: startStr,
-              end: endStr,
-              doctorId: id,
-            });
-            return { doctorId: id, name: p.name, response };
-          })
-        );
+        const providerPromises = providers.map(async (p) => {
+          const id = String(p.id);
+          const response = await fetchDoctorRevenueSeries({
+            start: startStr,
+            end: endStr,
+            doctorId: id,
+          });
+          return { doctorId: id, name: p.name, response };
+        });
+        const notSpecifiedPromise = fetchDoctorRevenueSeries({
+          start: startStr,
+          end: endStr,
+          doctorId: '',
+        }).then((response) => ({
+          doctorId: NOT_SPECIFIED_DOCTOR_ID,
+          name: 'Not Specified',
+          response,
+        }));
+        const results = await Promise.all([...providerPromises, notSpecifiedPromise]);
         if (!alive) return;
         setDoctorResponses(results);
       } catch (e) {
@@ -499,10 +503,12 @@ export default function VeterinaryServicesDeliveredPage() {
     setItemsModalOpen(true);
     setItemsModalData(null);
     setItemsModalLoading(true);
+    const apiDoctorId =
+      doctorId === NOT_SPECIFIED_DOCTOR_ID ? '' : doctorId;
     fetchDoctorRevenueSeries({
       start: startStr,
       end: endStr,
-      doctorId,
+      doctorId: apiDoctorId,
     })
       .then((data) => setItemsModalData(data))
       .catch(() => setItemsModalData(null))
