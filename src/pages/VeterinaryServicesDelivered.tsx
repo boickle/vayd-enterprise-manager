@@ -194,6 +194,10 @@ function buildPracticeSeries(
 
 /** Presets use local time; "now" is evaluated when the preset is applied. */
 const PRESETS: Record<string, () => { from: Dayjs; to: Dayjs }> = {
+  Today: () => {
+    const today = dayjs().startOf('day');
+    return { from: today, to: today };
+  },
   '7D': () => {
     const now = dayjs().startOf('day');
     return { from: now.subtract(6, 'day'), to: now };
@@ -213,8 +217,8 @@ const PRESETS: Record<string, () => { from: Dayjs; to: Dayjs }> = {
 };
 
 export default function VeterinaryServicesDeliveredPage() {
-  const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['7D']());
-  const [preset, setPreset] = useState<string>('7D');
+  const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['Today']());
+  const [preset, setPreset] = useState<string>('Today');
   const [providers, setProviders] = useState<Provider[]>([]);
   const [doctorResponses, setDoctorResponses] = useState<
     { doctorId: string; name: string; response: DoctorRevenueSeriesResponse }[]
