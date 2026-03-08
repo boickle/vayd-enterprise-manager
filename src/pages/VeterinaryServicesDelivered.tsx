@@ -194,10 +194,6 @@ function buildPracticeSeries(
 
 /** Presets use local time; "now" is evaluated when the preset is applied. */
 const PRESETS: Record<string, () => { from: Dayjs; to: Dayjs }> = {
-  Today: () => {
-    const today = dayjs().startOf('day');
-    return { from: today, to: today };
-  },
   '7D': () => {
     const now = dayjs().startOf('day');
     return { from: now.subtract(6, 'day'), to: now };
@@ -217,8 +213,8 @@ const PRESETS: Record<string, () => { from: Dayjs; to: Dayjs }> = {
 };
 
 export default function VeterinaryServicesDeliveredPage() {
-  const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['30D']());
-  const [preset, setPreset] = useState<string>('30D');
+  const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['7D']());
+  const [preset, setPreset] = useState<string>('7D');
   const [providers, setProviders] = useState<Provider[]>([]);
   const [doctorResponses, setDoctorResponses] = useState<
     { doctorId: string; name: string; response: DoctorRevenueSeriesResponse }[]
@@ -357,15 +353,14 @@ export default function VeterinaryServicesDeliveredPage() {
     };
   }, [isSingleDay, providers.length, startStr, endStr]);
 
-  const practiceSeries = useMemo(
-    () =>
-      buildPracticeSeries(
-        start,
-        end,
-        doctorResponses.map((r) => ({ doctorId: r.doctorId, response: r.response }))
-      ),
-    [start, end, doctorResponses]
-  );
+  const practiceSeries = useMemo(() => {
+    if (loading) return [];
+    return buildPracticeSeries(
+      start,
+      end,
+      doctorResponses.map((r) => ({ doctorId: r.doctorId, response: r.response }))
+    );
+  }, [loading, start, end, doctorResponses]);
 
   const practiceTotal = useMemo(
     () => practiceSeries.reduce((s, p) => s + Number(p.total), 0),
@@ -373,6 +368,7 @@ export default function VeterinaryServicesDeliveredPage() {
   );
 
   const chartData = useMemo(() => {
+    if (loading) return [];
     let data: { date: string; total: number }[];
     if (graphSelection === PRACTICE_TOTAL_ID) {
       data = practiceSeries;
@@ -389,18 +385,20 @@ export default function VeterinaryServicesDeliveredPage() {
       }
     }
     return addLinearTrend(data);
-  }, [graphSelection, doctorResponses, practiceSeries, start, end]);
+  }, [loading, graphSelection, doctorResponses, practiceSeries, start, end]);
 
   const chartDisplayData = useMemo(() => {
+    if (loading || !chartData.length) return chartData;
     if (!excludeZeroRevenueDays) return chartData;
     const filtered = chartData
       .filter((d) => Number(d.total) !== 0)
       .map((d) => ({ date: d.date, total: d.total }));
     return addLinearTrend(filtered);
-  }, [chartData, excludeZeroRevenueDays]);
+  }, [loading, chartData, excludeZeroRevenueDays]);
 
   /** Points per date for current graph selection (practice = sum over doctors; one doctor = that doctor). */
   const pointsPerDateForSelection = useMemo(() => {
+    if (loading) return new Map<string, number>();
     const map = new Map<string, number>();
     const dates = dateRange(start, end);
     if (graphSelection === PRACTICE_TOTAL_ID) {
@@ -419,10 +417,11 @@ export default function VeterinaryServicesDeliveredPage() {
       }
     }
     return map;
-  }, [graphSelection, pointsByDoctorByDate, start, end, providers]);
+  }, [loading, graphSelection, pointsByDoctorByDate, start, end, providers]);
 
   /** Time at appointments (minutes) per date for current graph selection. */
   const timeAtApptsPerDateForSelection = useMemo(() => {
+    if (loading) return new Map<string, number>();
     const map = new Map<string, number>();
     const dates = dateRange(start, end);
     if (graphSelection === PRACTICE_TOTAL_ID) {
@@ -441,28 +440,31 @@ export default function VeterinaryServicesDeliveredPage() {
       }
     }
     return map;
-  }, [graphSelection, serviceMinutesByDoctorByDate, start, end, providers]);
+  }, [loading, graphSelection, serviceMinutesByDoctorByDate, start, end, providers]);
 
   const timeAtApptsChartData = useMemo(() => {
+    if (loading) return [];
     return addLinearTrend(
       dateRange(start, end).map((date) => ({
         date,
         total: timeAtApptsPerDateForSelection.get(date) ?? 0,
       }))
     );
-  }, [start, end, timeAtApptsPerDateForSelection]);
+  }, [loading, start, end, timeAtApptsPerDateForSelection]);
 
   /** VSD per point by date (revenue / points; 0 when no points). Same structure as chartData. */
   const vsdPerPointChartData = useMemo(() => {
+    if (loading || !chartData.length) return [];
     const pointsMap = pointsPerDateForSelection;
     return chartData.map((row) => {
       const pts = pointsMap.get(row.date) ?? 0;
       const vsdPerPoint = pts > 0 ? Number(row.total) / pts : 0;
       return { ...row, points: pts, vsdPerPoint };
     });
-  }, [chartData, pointsPerDateForSelection]);
+  }, [loading, chartData, pointsPerDateForSelection]);
 
   const vsdPerPointDisplayData = useMemo(() => {
+    if (loading || !vsdPerPointChartData.length) return [];
     const base =
       excludeZeroRevenueDays
         ? vsdPerPointChartData.filter((d) => Number(d.total) !== 0)
@@ -476,7 +478,7 @@ export default function VeterinaryServicesDeliveredPage() {
       trend: row.trend,
       points: base[i]?.points ?? 0,
     }));
-  }, [vsdPerPointChartData, excludeZeroRevenueDays]);
+  }, [loading, vsdPerPointChartData, excludeZeroRevenueDays]);
 
   const graphOptions = useMemo(() => {
     const options: { id: string; label: string }[] = [
@@ -502,6 +504,17 @@ export default function VeterinaryServicesDeliveredPage() {
       .catch(() => setItemsModalData(null))
       .finally(() => setItemsModalLoading(false));
   };
+
+  // When loading, render only the spinner so first paint is immediate (no heavy tree).
+  if (loading || pointsLoading) {
+    return (
+      <LocalizationProvider dateAdapter={AdapterDayjs}>
+        <Box sx={{ pb: 3, minHeight: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <CircularProgress />
+        </Box>
+      </LocalizationProvider>
+    );
+  }
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -873,13 +886,6 @@ export default function VeterinaryServicesDeliveredPage() {
             )}
           </DialogContent>
         </Dialog>
-
-        <Backdrop
-          open={loading || pointsLoading}
-          sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}
-        >
-          <CircularProgress color="inherit" />
-        </Backdrop>
       </Box>
     </LocalizationProvider>
   );

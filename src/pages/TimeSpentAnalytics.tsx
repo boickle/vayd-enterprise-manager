@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Backdrop,
   Box,
   Card,
   CardContent,
@@ -290,8 +291,8 @@ const DEFAULT_PRACTICE_ID = 1;
 export type GroupByOption = 'day' | 'week' | 'month';
 
 export default function TimeSpentAnalyticsPage() {
-  const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['30D']());
-  const [preset, setPreset] = useState<string>('30D');
+  const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['7D']());
+  const [preset, setPreset] = useState<string>('7D');
   const [doctorId, setDoctorId] = useState<string>(ALL_DVMS);
   const [groupBy, setGroupBy] = useState<GroupByOption>('day');
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -460,10 +461,11 @@ export default function TimeSpentAnalyticsPage() {
   }, [startStr, endStr, driveTimeDoctorId]);
 
   const chartData = useMemo(() => {
+    if (loading) return [];
     if (groupBy === 'week') return buildAvgMinutesByWeekByType(start, end, rawDays);
     if (groupBy === 'month') return buildAvgMinutesByMonthByType(start, end, rawDays);
     return buildAvgMinutesByDayByType(start, end, rawDays);
-  }, [start, end, rawDays, groupBy]);
+  }, [loading, start, end, rawDays, groupBy]);
 
   const { data: chartDataOrdered, maxSlots } = useMemo(
     () => orderChartRowsByValuePerPeriod(chartData),
@@ -561,6 +563,17 @@ export default function TimeSpentAnalyticsPage() {
     () => addLinearTrend(driveTimeData),
     [driveTimeData]
   );
+
+  // When loading, render only the spinner so first paint is immediate (no heavy tree).
+  if (loading) {
+    return (
+      <LocalizationProvider dateAdapter={AdapterDayjs}>
+        <Box sx={{ pb: 3, minHeight: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <CircularProgress />
+        </Box>
+      </LocalizationProvider>
+    );
+  }
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
