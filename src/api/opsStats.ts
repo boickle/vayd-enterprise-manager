@@ -139,7 +139,7 @@ export type DoctorRevenuePoint = {
 };
 
 export type DoctorRevenueSeriesResponse = {
-  doctorId: number;
+  doctorId: number | null;
   start: string;
   end: string;
   total: number;
@@ -149,25 +149,35 @@ export type DoctorRevenueSeriesResponse = {
 /**
  * GET /analytics/ops/revenue/doctor/series
  * One doctor: daily revenue over a date range + sum. Days with no revenue may be omitted from series.
- * Query: start (YYYY-MM-DD), end (YYYY-MM-DD), doctorId (required for admins; non-admins may omit = own doctor).
+ * Query: start (YYYY-MM-DD), end (YYYY-MM-DD), doctorId (optional: omit = own doctor; pass '' or null for revenue with no doctor).
  */
 export async function fetchDoctorRevenueSeries(params: {
   start: string;
   end: string;
-  doctorId?: string | number;
+  doctorId?: string | number | null;
 }): Promise<DoctorRevenueSeriesResponse> {
   const query: Record<string, string> = {
     start: params.start,
     end: params.end,
   };
-  if (params.doctorId != null) query.doctorId = String(params.doctorId);
+  // Send doctorId when explicitly requested (including '' for "Not Specified" / no-doctor revenue)
+  if (params.doctorId !== undefined) {
+    query.doctorId = params.doctorId === null || params.doctorId === '' ? '' : String(params.doctorId);
+  }
 
   const { data } = await http.get('/analytics/ops/revenue/doctor/series', { params: query });
 
   const resp = data ?? {};
   const series = Array.isArray(resp.series) ? resp.series : [];
+  const isUnspecified =
+    params.doctorId === null || params.doctorId === '';
   return {
-    doctorId: Number(resp.doctorId ?? params.doctorId ?? 0),
+    doctorId:
+      resp.doctorId != null
+        ? Number(resp.doctorId)
+        : isUnspecified
+          ? null
+          : Number(params.doctorId ?? 0),
     start: String(resp.start ?? params.start),
     end: String(resp.end ?? params.end),
     total: Number(resp.total ?? series.reduce((s: number, r: any) => s + Number(r?.total || 0), 0)),
