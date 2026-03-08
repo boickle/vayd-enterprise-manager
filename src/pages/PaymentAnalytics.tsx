@@ -9,6 +9,7 @@ import {
   Popover,
   Stack,
   Divider,
+  CircularProgress,
 } from '@mui/material';
 import Alert from '@mui/material/Alert';
 import Grid from '@mui/material/Grid';
@@ -52,6 +53,8 @@ function daysBetween(a: Dayjs, b: Dayjs) {
   return Math.max(1, b.startOf('day').diff(a.startOf('day'), 'day') + 1);
 }
 const dayKeyUTC = (d: string | Date | dayjs.Dayjs) => dayjs.utc(d).format('YYYY-MM-DD');
+/** Today's date in the user's local timezone (YYYY-MM-DD) for "today" revenue. */
+const todayLocalKey = () => dayjs().format('YYYY-MM-DD');
 
 // Presets
 const now = dayjs();
@@ -66,17 +69,19 @@ const PRESETS: Record<string, () => DateRange> = {
 // Main component
 // ----------------------------------
 export default function PaymentsAnalyticsPage() {
-  const [range, setRange] = useState<DateRange>(PRESETS['30D']());
+  const [range, setRange] = useState<DateRange>(PRESETS['7D']());
   const [series, setSeries] = useState<PaymentPoint[]>([]);
   const [seriesAll, setSeriesAll] = useState<PaymentPoint[] | null>(null); // all-time for leaderboards
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
+  const [loading, setLoading] = useState(true);
   const open = Boolean(anchorEl);
 
   // Fetch selected-range series (for chart + header totals)
   useEffect(() => {
     let alive = true;
     setUnauthorized(false);
+    setLoading(true);
     (async () => {
       try {
         const data = await fetchPaymentsAnalytics({
@@ -90,6 +95,8 @@ export default function PaymentsAnalyticsPage() {
         console.error('Payments analytics request failed:', err);
         setUnauthorized(true);
         setSeries([]);
+      } finally {
+        if (alive) setLoading(false);
       }
     })();
     return () => {
@@ -140,16 +147,17 @@ export default function PaymentsAnalyticsPage() {
 
   // ---------- Leaderboards + Today's revenue ----------
   const dataset = seriesAll ?? series; // prefer all-time; fallback to current selection
-  const todayISO = toISODate(now.startOf('day'));
-  const todaysRevenue = useMemo(() => {
-    const key = dayKeyUTC(dayjs()); // today in UTC (YYYY-MM-DD)
-
-    // Try the current range first (series), then fall back to all-time if present
-    const rowFromRange = series.find((p) => dayKeyUTC(p.date) === key);
-    const rowFromAll = (seriesAll ?? []).find((p) => dayKeyUTC(p.date) === key);
-
-    return (rowFromRange ?? rowFromAll)?.revenue ?? 0;
+  /** Today's revenue row. Match by local date or UTC date so we find the row regardless of API timezone. */
+  const todaysRow = useMemo(() => {
+    const localKey = todayLocalKey();
+    const utcKey = dayjs().utc().format('YYYY-MM-DD');
+    const matches = (p: PaymentPoint) => p.date === localKey || p.date === utcKey || dayKeyUTC(p.date) === utcKey;
+    return series.find(matches) ?? (seriesAll ?? []).find(matches) ?? null;
   }, [series, seriesAll]);
+  const todaysRevenue = todaysRow?.revenue ?? 0;
+  const todaysSubscriptionRevenue = todaysRow?.subscriptionRevenue ?? 0;
+  const todaysTotalRevenue = todaysRevenue + todaysSubscriptionRevenue;
+  const todayLabel = dayjs().format('dddd, MMM D, YYYY');
 
   const topDays = useMemo(() => {
     const copy = [...dataset];
@@ -245,6 +253,12 @@ export default function PaymentsAnalyticsPage() {
           </Grid>
         </Grid>
 
+        {loading ? (
+          <Box display="flex" justifyContent="center" alignItems="center" minHeight={320} p={4}>
+            <CircularProgress />
+          </Box>
+        ) : (
+          <>
         {/* Summary cards */}
         <Grid container spacing={2}>
           <Grid item xs={12} sm={6} md={4}>
@@ -313,15 +327,39 @@ export default function PaymentsAnalyticsPage() {
           </Grid>
         </Grid>
 
-        {/* Today's revenue */}
+        {/* Today's revenue (current day in user's local timezone) */}
         <Card variant="outlined">
           <CardHeader title="Today's Revenue" />
           <CardContent>
-            <Typography variant="h4" fontWeight={800}>
-              {fmtUSD(todaysRevenue)}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {dayjs(todayISO).format('dddd, MMM D, YYYY')}
+            <Stack spacing={0.5}>
+              <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                <Typography variant="body2" color="text.secondary">
+                  Payments revenue
+                </Typography>
+                <Typography variant="body1" fontWeight={600}>
+                  {fmtUSD(todaysRevenue)}
+                </Typography>
+              </Box>
+              <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                <Typography variant="body2" color="text.secondary">
+                  Subscription revenue
+                </Typography>
+                <Typography variant="body1" fontWeight={600}>
+                  {fmtUSD(todaysSubscriptionRevenue)}
+                </Typography>
+              </Box>
+              <Divider sx={{ my: 0.5 }} />
+              <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                <Typography variant="body2" fontWeight={600} color="text.secondary">
+                  Total
+                </Typography>
+                <Typography variant="h5" fontWeight={800}>
+                  {fmtUSD(todaysTotalRevenue)}
+                </Typography>
+              </Box>
+            </Stack>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              {todayLabel}
             </Typography>
           </CardContent>
         </Card>
@@ -566,6 +604,8 @@ export default function PaymentsAnalyticsPage() {
             </Stack>
           </Stack>
         </Popover>
+          </>
+        )}
       </Box>
     </LocalizationProvider>
   );

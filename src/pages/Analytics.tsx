@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Box, CircularProgress } from '@mui/material';
 import { useAuth } from '../auth/useAuth';
 import { getAnalyticsTabPages, type AnalyticsTabPage } from '../analytics-tabs';
 import './Settings.css';
@@ -22,6 +23,21 @@ export default function Analytics() {
 
   const visibleTabs = getAnalyticsTabPages().filter((tab) => matchesRole(tab.role, normalizedRoles));
   const canSeePayments = visibleTabs.some((t) => t.path === 'payments');
+
+  // When pathname changes, render only spinner first so it paints before the heavy child mounts.
+  const pathnameRef = useRef(location.pathname);
+  const pathJustChanged =
+    location.pathname.startsWith('/analytics') && location.pathname !== pathnameRef.current;
+  if (pathJustChanged) pathnameRef.current = location.pathname;
+  const showOutlet = !pathJustChanged;
+
+  const [, setOutletTick] = useState(0);
+  useEffect(() => {
+    if (pathJustChanged) {
+      const id = requestAnimationFrame(() => setOutletTick((t) => t + 1));
+      return () => cancelAnimationFrame(id);
+    }
+  }, [pathJustChanged]);
 
   // Analytics is admin-only: redirect non-admins away
   useEffect(() => {
@@ -59,8 +75,37 @@ export default function Analytics() {
         </div>
         {visibleTabs.length === 0 ? (
           <p className="settings-muted">You don&apos;t have access to any analytics pages.</p>
+        ) : showOutlet ? (
+          <Box sx={{ position: 'relative', minHeight: 320 }}>
+            <Suspense
+              fallback={
+                <Box
+                  sx={{
+                    minHeight: 320,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <CircularProgress />
+                </Box>
+              }
+            >
+              <Outlet />
+            </Suspense>
+          </Box>
         ) : (
-          <Outlet />
+          <Box
+            sx={{
+              minHeight: 320,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              bgcolor: 'background.paper',
+            }}
+          >
+            <CircularProgress />
+          </Box>
         )}
       </div>
     </div>
