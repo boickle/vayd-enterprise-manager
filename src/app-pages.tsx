@@ -1,5 +1,6 @@
 // src/app-pages.ts
 import Routing from './pages/Routing';
+import PIMSPage from './pages/PIMS';
 import { isProduction } from './utils/env';
 import DoctorDay from './pages/DoctorDay';
 import CreateUser from './pages/CreateUser';
@@ -38,6 +39,13 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       path: '/routing',
       label: 'Routing',
       element: <Routing />,
+      permission: 'canSeeRouting',
+      role: ['employee', 'admin'],
+    },
+    {
+      path: '/pims',
+      label: 'PIMS',
+      element: <PIMSPage />,
       permission: 'canSeeRouting',
       role: ['employee', 'admin'],
     },

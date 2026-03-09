@@ -26,6 +26,17 @@ export async function getLatestModifiedPatient() {
   return http.get('/patients/latest-modified');
 }
 
+// Get patient by internal id (may include clientId for navigation)
+export async function getPatientById(patientId: number | string) {
+  return http.get(`/patients/${patientId}`);
+}
+
+// Get full medical record for a patient (patient, practice, medicalRecord, labOrders, exams, medications, etc.)
+export async function getPatientFullMedicalRecord(patientId: number | string) {
+  const { data } = await http.get(`/patients/${patientId}/medical-record/full`);
+  return data;
+}
+
 // ---------------------------
 // Create / Upsert / Save
 // ---------------------------

@@ -82,6 +82,7 @@ function RouteGuard() {
   // Get all possible pages (not filtered by user access) to check if route exists
   const allPages = [
     '/routing',
+    '/pims',
     '/doctor',
     '/doctormonth',
     '/admin',

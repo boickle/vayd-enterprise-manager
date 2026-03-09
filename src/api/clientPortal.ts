@@ -612,6 +612,27 @@ export async function fetchClientMessages(clientId: number | string): Promise<Cl
   return data;
 }
 
+/** ---------- Client search (for PIMS / employee use) ----------
+ * GET /clients/search?q=...
+ */
+export async function searchClients(q: string): Promise<any[]> {
+  const { data } = await http.get('/clients/search', { params: { q: q.trim() } });
+  return Array.isArray(data) ? data : [];
+}
+
+/** ---------- Get client's patients (for PIMS) ----------
+ * GET /clients/:id/patients - returns list of patients for the client.
+ * Backend may alternatively include patients on GET /clients/:id.
+ */
+export async function getClientPatients(clientId: string | number): Promise<any[]> {
+  try {
+    const { data } = await http.get(`/clients/${encodeURIComponent(clientId)}/patients`);
+    return Array.isArray(data) ? data : data?.patients ?? [];
+  } catch {
+    return [];
+  }
+}
+
 /** ---------- Get current client information ----------
  * Fetches the logged-in client's information by ID
  * Endpoint: GET /clients/:id
