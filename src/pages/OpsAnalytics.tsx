@@ -649,14 +649,15 @@ export default function OpsAnalyticsPage() {
                     domain={normalize ? [0, 1] : ['auto', 'auto']}
                   />
                   <Tooltip
-                    formatter={(value: number | undefined) => {
+                    formatter={(value: unknown) => {
                       if (value == null) return '';
-                      if (normalize) return Number(value).toFixed(2);
+                      const n = Number(value);
+                      if (normalize) return n.toFixed(2);
                       const m = METRICS.find((mm) => mm.key === metric);
-                      if (!m) return value;
-                      if (m.axis === 'pct') return `${Math.round(value)}%`;
-                      if (m.axis === 'ratio') return Number(value).toFixed(2);
-                      return Math.round(value).toLocaleString();
+                      if (!m) return String(value);
+                      if (m.axis === 'pct') return `${Math.round(n)}%`;
+                      if (m.axis === 'ratio') return n.toFixed(2);
+                      return Math.round(n).toLocaleString();
                     }}
                     labelFormatter={(l) => dayjs(l).format('ddd, MMM D, YYYY')}
                   />
@@ -746,12 +747,12 @@ export default function OpsAnalyticsPage() {
                           }
                         />
                         <Tooltip
-                          formatter={(value: number | undefined) =>
+                          formatter={(value: unknown) =>
                             value == null
                               ? ''
                               : k === 'whitePct'
-                                ? `${Math.round(value)}%`
-                                : Math.round(value).toLocaleString()
+                                ? `${Math.round(Number(value))}%`
+                                : Math.round(Number(value)).toLocaleString()
                           }
                           labelFormatter={(l) => dayjs(l).format('MMM D, YYYY')}
                         />

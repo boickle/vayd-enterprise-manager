@@ -347,8 +347,8 @@ export default function PaymentsAnalyticsPage() {
                     tickFormatter={(v) => fmtUSD(v)}
                   />
                   <Tooltip
-                    formatter={(value: number | undefined) =>
-                      value == null ? '' : fmtUSD(value)
+                    formatter={(value: unknown) =>
+                      value == null ? '' : fmtUSD(Number(value))
                     }
                     labelFormatter={(l) => dayjs(l).format('ddd, MMM D, YYYY')}
                   />

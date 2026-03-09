@@ -644,9 +644,9 @@ export default function VeterinaryServicesDeliveredPage() {
                     <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                     <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
                     <Tooltip
-                      formatter={(value: number | undefined, name: string | undefined) => [
-                        fmtUSD(value ?? 0),
-                        name ?? '',
+                      formatter={(value: unknown, name: unknown) => [
+                        fmtUSD(Number(value ?? 0)),
+                        String(name ?? ''),
                       ]}
                       labelFormatter={(label) => String(label)}
                     />
@@ -684,9 +684,9 @@ export default function VeterinaryServicesDeliveredPage() {
                     <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                     <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
                     <Tooltip
-                      formatter={(value: number | undefined, name: string | undefined) => [
-                        fmtUSD(value ?? 0),
-                        name ?? '',
+                      formatter={(value: unknown, name: unknown) => [
+                        fmtUSD(Number(value ?? 0)),
+                        String(name ?? ''),
                       ]}
                       labelFormatter={(label) => String(label)}
                     />
@@ -727,11 +727,11 @@ export default function VeterinaryServicesDeliveredPage() {
                       tickFormatter={(v) => (Number(v) >= 60 ? `${Math.round(Number(v) / 60)}h` : `${v}`)}
                     />
                     <Tooltip
-                      formatter={(value: number | undefined, name: string | undefined) => {
+                      formatter={(value: unknown, name: unknown) => {
                         const min = Number(value) ?? 0;
                         const label =
                           min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
-                        return [label, name === 'total' ? 'Minutes' : name ?? ''];
+                        return [label, name === 'total' ? 'Minutes' : String(name ?? '')];
                       }}
                       labelFormatter={(label) => String(label)}
                     />

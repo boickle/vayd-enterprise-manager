@@ -887,9 +887,9 @@ export default function TimeSpentAnalyticsPage() {
                       tick={{ fontSize: 11 }}
                     />
                     <Tooltip
-                      formatter={(value: number | undefined, name: string | undefined) => [
+                      formatter={(value: unknown, name: unknown) => [
                         value != null ? `${Number(value).toFixed(1)} mins` : '0 mins',
-                        (name ?? '').includes('Trend') ? 'Trend line (smoothed)' : driveTimeMetric === 'total' ? 'Drive time' : 'Avg between appointments',
+                        String(name ?? '').includes('Trend') ? 'Trend line (smoothed)' : driveTimeMetric === 'total' ? 'Drive time' : 'Avg between appointments',
                       ]}
                       labelFormatter={(label) => String(label)}
                     />
