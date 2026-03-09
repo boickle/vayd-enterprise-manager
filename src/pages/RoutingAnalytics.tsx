@@ -273,7 +273,7 @@ export default function RoutingAnalyticsPage() {
                       allowDecimals={false}
                     />
                     <Tooltip
-                      formatter={(value: number | undefined, name: string | undefined) => [
+                      formatter={(value: unknown, name: unknown) => [
                         value != null ? `${Number(value).toFixed(1)} requests` : '0',
                         (name ?? '') === 'trend' ? 'Trend' : 'Requests',
                       ]}
