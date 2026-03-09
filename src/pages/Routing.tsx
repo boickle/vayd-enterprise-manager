@@ -1986,7 +1986,16 @@ export default function Routing() {
                         k="Visit #"
                         v={String((opt as any).positionInDay ?? (opt as any).displayInsertionIndex ?? opt.insertionIndex + 1)}
                       />
-                      <KeyValue k="Start Time" v={isoToTime(opt.suggestedStartIso)} />
+                      <KeyValue
+                        k="Visit Window"
+                        v={
+                          <strong>
+                            {opt.arrivalWindow?.windowStartIso && opt.arrivalWindow?.windowEndIso
+                              ? `${isoToTime(opt.arrivalWindow.windowStartIso)} – ${isoToTime(opt.arrivalWindow.windowEndIso)}`
+                              : isoToTime(opt.suggestedStartIso)}
+                          </strong>
+                        }
+                      />
                       <KeyValue
                         k="Added Drive"
                         v={opt.addedDrivePretty ?? secsToPretty(opt.addedDriveSeconds)}

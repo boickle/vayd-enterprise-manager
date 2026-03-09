@@ -34,6 +34,18 @@ export type DoctorDayAppt = {
   routingAvailable?: boolean;
   isNoLocation?: boolean;
 
+  // Block fields (doctor-day merged list + ETA byIndex)
+  /** Doctor-day merged list: 'appointment' | 'block'. ETA byIndex may also set this. */
+  type?: 'appointment' | 'block';
+  /** Set on both doctor-day and ETA byIndex for blocks. */
+  isBlock?: boolean;
+  /** Legacy/alternative block flag; same meaning as type === 'block' / isBlock. */
+  isPersonalBlock?: boolean;
+  /** Prefer this for block label (e.g. "Block", "Personal block"); else title, else "Block". */
+  blockLabel?: string;
+  /** Title for blocks when blockLabel is not set. */
+  title?: string;
+
   // Fixed time appointment (no flexible window)
   isFixed?: boolean;
   fixedTime?: boolean;
@@ -45,6 +57,30 @@ export type DoctorDayAppt = {
 
   /** Appointment window from backend (when available); use instead of frontend-calculated window */
   effectiveWindow?: { startIso: string; endIso: string };
+}
+
+/** Item may be an appointment (doctor-day) or ETA byIndex row (has key). */
+export function isBlockEntry(item: {
+  type?: string;
+  isBlock?: boolean;
+  isPersonalBlock?: boolean;
+  key?: string;
+} | null | undefined): boolean {
+  if (!item) return false;
+  if (item.type === 'block') return true;
+  if (item.isBlock === true) return true;
+  if (item.isPersonalBlock === true) return true;
+  if (typeof item.key === 'string' && item.key.startsWith('noloc:')) return true;
+  return false;
+}
+
+/** Label for a block entry: blockLabel ?? title ?? 'Personal Block'. Never use client/patient name for blocks. */
+export function blockDisplayLabel(item: { blockLabel?: string; title?: string } | null | undefined): string {
+  if (!item) return 'Personal Block';
+  const label = (item.blockLabel ?? item.title ?? '').trim();
+  if (!label) return 'Personal Block';
+  if (label.toLowerCase() === 'client') return 'Personal Block';
+  return label;
 }
 
 export type DoctorDayResponse = {
@@ -160,21 +196,23 @@ export async function fetchDoctorDay(
     };
   });
 
-  // --- NEW: map personal blocks coming from the server ---
+  // --- Map personal blocks from the server (doctor-day merged visit order) ---
   const blockRows: any[] = Array.isArray(data?.personalBlocks) ? data.personalBlocks : [];
   const blockAppts: DoctorDayAppt[] = blockRows.map((b) => ({
     id: b?.id ?? `block-${String(b?.startIso || b?.appointmentStart || '')}`,
-    clientName: b?.title ?? 'Personal Block',
-    appointmentType: 'Personal Block',
+    clientName: b?.title ?? 'Block',
+    appointmentType: b?.blockLabel ?? b?.title ?? 'Block',
     description: b?.description,
     // never routable, no coordinates:
     routingAvailable: false,
     isNoLocation: true,
-    // carry schedule/time fields so UI can place them on the timeline
     startIso: b?.startIso ?? b?.appointmentStart ?? undefined,
     endIso: b?.endIso ?? b?.appointmentEnd ?? undefined,
-    // flag for UI behavior
+    type: 'block',
+    isBlock: true,
     isPersonalBlock: true,
+    blockLabel: b?.blockLabel ?? b?.title,
+    title: b?.title,
   }));
 
   // Combine & let the page sort by start time as usual

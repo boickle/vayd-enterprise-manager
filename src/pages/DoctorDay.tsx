@@ -6,6 +6,8 @@ import { evetClientLink, evetPatientLink } from '../utils/evet';
 import {
   fetchDoctorDay,
   clientDisplayName,
+  isBlockEntry,
+  blockDisplayLabel,
   type DoctorDayAppt,
   type Depot,
   type DoctorDayResponse,
@@ -219,12 +221,16 @@ export default function DoctorDay({
 
   // routing
   const [driveSecondsArr, setDriveSecondsArr] = useState<number[] | null>(null);
+  /** Drive from depot to first stop (sec). From byIndex[0].driveFromPrevMinutes/driveFromPrevSec when backend provides it. */
+  const [depotToFirstSec, setDepotToFirstSec] = useState<number | null>(null);
   const [backToDepotSec, setBackToDepotSec] = useState<number | null>(null);
   const [backToDepotIso, setBackToDepotIso] = useState<string | null>(null);
   const [etaErr, setEtaErr] = useState<string | null>(null);
 
   // authoritative display timeline (index-aligned to households)
   const [timeline, setTimeline] = useState<DisplaySlot[]>([]);
+  /** When set, render in byIndex order: displayHouseholds[i] = households[routingOrderIndices[i]]. From ETA response. */
+  const [routingOrderIndices, setRoutingOrderIndices] = useState<number[] | null>(null);
 
   // providers
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -511,7 +517,7 @@ export default function DoctorDay({
       };
 
       const apptIsPreview = (a as any)?.isPreview === true;
-      const isPersonalBlock = (a as any)?.isPersonalBlock === true;
+      const isPersonalBlock = isBlockEntry({ ...a, key });
 
       if (!map.has(key)) {
         map.set(key, {
@@ -605,8 +611,10 @@ export default function DoctorDay({
     (async () => {
       setEtaErr(null);
       setDriveSecondsArr(null);
+      setDepotToFirstSec(null);
       setBackToDepotSec(null);
       setBackToDepotIso(null);
+      setRoutingOrderIndices(null);
       setTimeline(households.map(() => ({ eta: null, etd: null })));
 
       if (households.length === 0) return;
@@ -627,7 +635,7 @@ export default function DoctorDay({
 
       // Build payload: include ALL rows, but only provide lat/lon when routable
       const householdsPayload = ordered.map(({ h }) => {
-        const isBlock = (h as any)?.isPersonalBlock === true;
+        const isBlock = isBlockEntry({ ...h.primary, key: h.key });
         const isRoutable =
           !isBlock && !h.isNoLocation && Number.isFinite(h.lat) && Number.isFinite(h.lon);
 
@@ -676,21 +684,37 @@ export default function DoctorDay({
         const validIso = (s?: string | null) => !!(s && DateTime.fromISO(s).isValid);
 
         // ----------------------------
-        // 1) byIndex is now 1:1 with "ordered" (includes blocks)
+        // 1) byIndex is 1:1 with ordered (includes blocks). Render in byIndex order; match by key for name/address.
         // ----------------------------
-        const byIndex: Array<{ etaIso?: string; etdIso?: string }> = Array.isArray(result?.byIndex)
-          ? result.byIndex
-          : [];
+        const byIndex: Array<{
+          key?: string;
+          etaIso?: string;
+          etdIso?: string;
+          driveFromPrevMinutes?: number;
+          driveFromPrevSec?: number;
+          bufferAfterMinutes?: number;
+          earlyClamped?: boolean;
+        }> = Array.isArray(result?.byIndex) ? result.byIndex : [];
 
         for (let i = 0; i < ordered.length; i++) {
-          const { viewIdx } = ordered[i];
+          const { h, viewIdx } = ordered[i];
           const row = byIndex[i] || {};
-          if (validIso(row.etaIso)) {
-            tl[viewIdx].eta = row.etaIso!;
+          let eta = row.etaIso;
+          let etd = row.etdIso;
+          if ((h as any)?.isPersonalBlock === true && h.startIso && validIso(eta)) {
+            const rowEta = DateTime.fromISO(eta!);
+            const blockStart = DateTime.fromISO(h.startIso);
+            if (rowEta.isValid && blockStart.isValid && rowEta < blockStart.minus({ minutes: 30 })) {
+              eta = h.startIso;
+              etd = h.endIso ?? etd;
+            }
+          }
+          if (validIso(eta)) {
+            tl[viewIdx].eta = eta!;
             serverETA[viewIdx] = true;
           }
-          if (validIso(row.etdIso)) {
-            tl[viewIdx].etd = row.etdIso!;
+          if (validIso(etd)) {
+            tl[viewIdx].etd = etd!;
             serverETD[viewIdx] = true;
           }
         }
@@ -799,19 +823,48 @@ export default function DoctorDay({
           }
         }
 
-        // 6) store drive/depot fields
+        // 6) store drive/depot fields. First segment = drive from depot (byIndex[0].driveFromPrev*).
         setDriveSecondsArr(Array.isArray(result?.driveSeconds) ? result.driveSeconds : null);
+        const firstRow = byIndex[0] as { driveFromPrevMinutes?: number; driveFromPrevSec?: number } | undefined;
+        const toFirstSec =
+          typeof firstRow?.driveFromPrevSec === 'number'
+            ? firstRow.driveFromPrevSec
+            : typeof firstRow?.driveFromPrevMinutes === 'number'
+              ? firstRow.driveFromPrevMinutes * 60
+              : null;
+        setDepotToFirstSec(toFirstSec != null && toFirstSec > 0 ? toFirstSec : null);
         setBackToDepotSec(
           typeof result?.backToDepotSec === 'number' ? result.backToDepotSec : null
         );
         setBackToDepotIso(result?.backToDepotIso ?? null);
 
+        // Render in byIndex order: compute display order from keys (or positionInDay)
+        if (Array.isArray(result?.byIndex) && result.byIndex.length === households.length) {
+          const keyToIndex: Record<string, number> = {};
+          households.forEach((h, idx) => {
+            keyToIndex[h.key] = idx;
+          });
+          const order = result.byIndex.map(
+            (row: { key?: string; positionInDay?: number }, i: number) =>
+              row.key != null && keyToIndex[row.key] !== undefined
+                ? keyToIndex[row.key]
+                : typeof row.positionInDay === 'number'
+                  ? row.positionInDay - 1
+                  : i
+          );
+          setRoutingOrderIndices(order);
+        } else {
+          setRoutingOrderIndices(null);
+        }
+
         if (on) setTimeline(tl);
       } catch (e: any) {
         if (on) {
           setEtaErr(e?.message ?? 'Failed to compute ETAs');
+          setDepotToFirstSec(null);
           setBackToDepotSec(null);
           setBackToDepotIso(null);
+          setRoutingOrderIndices(null);
         }
       }
     })();
@@ -821,18 +874,34 @@ export default function DoctorDay({
     };
   }, [households, startDepot, endDepot, date, selectedDoctorId, schedStartIso]);
 
+  /* ---------- Display order: byIndex order when ETA returned it ---------- */
+  const displayHouseholds = useMemo(
+    () =>
+      routingOrderIndices && routingOrderIndices.length === households.length
+        ? routingOrderIndices.map((i) => households[i])
+        : households,
+    [households, routingOrderIndices]
+  );
+  const displayTimeline = useMemo(
+    () =>
+      routingOrderIndices && routingOrderIndices.length === timeline.length
+        ? routingOrderIndices.map((i) => timeline[i])
+        : timeline,
+    [timeline, routingOrderIndices]
+  );
+
   /* ---------- Maps links ---------- */
   const stops: Stop[] = useMemo(
     () =>
-      households
+      displayHouseholds
         .filter((h) => !h.isNoLocation)
         .map((h) => ({
           lat: h.lat,
           lon: h.lon,
-          label: clientDisplayName(h.primary),
+          label: isBlockEntry(h.primary) ? blockDisplayLabel(h.primary) : clientDisplayName(h.primary),
           address: h.addressDisplay,
         })),
-    [households]
+    [displayHouseholds]
   );
   const links = useMemo(
     () =>
@@ -852,7 +921,7 @@ export default function DoctorDay({
   /* ---------- Stats (uses server times if present) ---------- */
   /* ---------- Stats (prefer Routing winner fields; fall back to derivation) ---------- */
   const stats = useMemo(() => {
-    if (!households.length) {
+    if (!displayHouseholds.length) {
       return {
         driveMin: 0,
         householdMin: 0,
@@ -885,14 +954,14 @@ export default function DoctorDay({
         : 0;
 
     // Fallback booked-service (excludes preview & blocks)
-    const bookedServiceSecFallback = households.reduce((sum, h) => {
+    const bookedServiceSecFallback = displayHouseholds.reduce((sum, h) => {
       if ((h as any)?.isPersonalBlock === true) return sum;
       if ((h as any)?.isPreview === true) return sum;
       return sum + durSec(h.startIso, h.endIso);
     }, 0);
 
     // Points per patient (exclude personal blocks and "Note To Staff"): 1 standard, 0.5 tech, 2 euthanasia
-    const points = households.reduce((total, h) => {
+    const points = displayHouseholds.reduce((total, h) => {
       if ((h as any)?.isPersonalBlock) return total;
       const type = (h.primary?.appointmentType || '').toLowerCase();
       if (type.includes('note to staff')) return total;
@@ -962,8 +1031,8 @@ export default function DoctorDay({
     }
 
     // ---------- Fallback to your existing derivation (when winner fields not present) ----------
-    const first = households[0];
-    const last = households[households.length - 1];
+    const first = displayHouseholds[0];
+    const last = displayHouseholds[displayHouseholds.length - 1];
 
     const firstArriveMs =
       (timeline[0]?.eta ? DateTime.fromISO(timeline[0].eta!).toMillis() : null) ??
@@ -979,21 +1048,25 @@ export default function DoctorDay({
             ? DateTime.fromISO(last.endIso).toMillis()
             : 0;
 
-    const N = households.length;
+    const N = displayHouseholds.length;
     let apiToFirstSec: number | null = null;
     let apiBetweenSecs: number[] = [];
     let apiBackSec: number | null = null;
 
+    // Prefer depot-to-first from byIndex[0] when backend provided it
+    if (depotToFirstSec != null && depotToFirstSec > 0) {
+      apiToFirstSec = depotToFirstSec;
+    }
     if (Array.isArray(driveSecondsArr)) {
       if (driveSecondsArr.length === N - 1) {
         apiBetweenSecs = driveSecondsArr;
       } else if (driveSecondsArr.length === N + 1) {
-        apiToFirstSec = driveSecondsArr[0] ?? null;
+        if (apiToFirstSec == null) apiToFirstSec = driveSecondsArr[0] ?? null;
         apiBetweenSecs = driveSecondsArr.slice(1, N) ?? [];
         apiBackSec = driveSecondsArr[N] ?? null;
       } else if (driveSecondsArr.length === N) {
         if (startDepot) {
-          apiToFirstSec = driveSecondsArr[0] ?? null;
+          if (apiToFirstSec == null) apiToFirstSec = driveSecondsArr[0] ?? null;
           apiBetweenSecs = driveSecondsArr.slice(1) ?? [];
         } else if (endDepot) {
           apiBetweenSecs = driveSecondsArr.slice(0, N - 1) ?? [];
@@ -1030,8 +1103,8 @@ export default function DoctorDay({
     const interDriveSec =
       apiBetweenSecs.length === Math.max(0, N - 1)
         ? apiBetweenSecs.reduce((s, v) => s + Math.max(0, v || 0), 0)
-        : households.slice(1).reduce((s, curr, i) => {
-            const prev = households[i];
+        : displayHouseholds.slice(1).reduce((s, curr, i) => {
+            const prev = displayHouseholds[i];
             return (
               s +
               fallbackDriveSec({ lat: prev.lat, lon: prev.lon }, { lat: curr.lat, lon: curr.lon })
@@ -1091,12 +1164,13 @@ export default function DoctorDay({
       backToDepotIso: backToDepotIsoFinal,
     };
   }, [
-    households,
+    displayHouseholds,
     appts,
     timeline,
     startDepot,
     endDepot,
     driveSecondsArr,
+    depotToFirstSec,
     backToDepotSec,
     backToDepotIso,
     schedStartIso,
@@ -1143,7 +1217,7 @@ export default function DoctorDay({
   const whitePctText = Number.isFinite(whitePct) ? `${whitePct.toFixed(0)}%` : '—';
 
   // Points per patient: 1 standard, 0.5 tech, 2 euthanasia
-  const points = households.reduce((total, h) => {
+  const points = displayHouseholds.reduce((total, h) => {
     if ((h as any)?.isPersonalBlock) return total;
     const type = (h.primary?.appointmentType || '').toLowerCase();
     if (type.includes('note to staff')) return total;
@@ -1240,7 +1314,13 @@ export default function DoctorDay({
             {stats.shiftMin > 0 && <> ({whitePctText})</>}
           </span>
           <span className="muted">Shift: {formatHM(stats.shiftMin)}</span>
-          <span>
+          <span
+            title={
+              stats.backToDepotIso
+                ? `Arrival: ${fmtTime(stats.backToDepotIso)}`
+                : undefined
+            }
+          >
             <strong>Back to depot:</strong> {fmtTime(stats.backToDepotIso) || '—'}
           </span>
         </div>
@@ -1280,7 +1360,7 @@ export default function DoctorDay({
 
         {/* Households */}
         <div className="card">
-          <h3>Households ({households.length})</h3>
+          <h3>Households ({displayHouseholds.length})</h3>
           {loading && (
             <div className="dd-loading">
               <div className="dd-spinner" aria-hidden />
@@ -1289,13 +1369,13 @@ export default function DoctorDay({
           )}
           {err && <p className="error">{err}</p>}
           {etaErr && <p className="error">{etaErr}</p>}
-          {!loading && !err && households.length === 0 && (
+          {!loading && !err && displayHouseholds.length === 0 && (
             <p className="muted">No appointments for this date.</p>
           )}
 
-          {households.length > 0 && (
+          {displayHouseholds.length > 0 && (
             <ul className="dd-list">
-              {households.map((h, i) => {
+              {displayHouseholds.map((h, i) => {
                 const a = h.primary;
                 const clientHref = str(a, 'clientPimsId')
                   ? evetClientLink(str(a, 'clientPimsId') as string)
@@ -1309,8 +1389,8 @@ export default function DoctorDay({
                   if (mins > 0) lengthText = `${mins}m`;
                 }
 
-                const etaIso = timeline[i]?.eta ?? null;
-                const etdIso = timeline[i]?.etd ?? null;
+                const etaIso = displayTimeline[i]?.eta ?? null;
+                const etdIso = displayTimeline[i]?.etd ?? null;
 
                 return (
                   <li
@@ -1356,7 +1436,8 @@ export default function DoctorDay({
                             target="_blank"
                             rel="noreferrer"
                           >
-                            #{(a as any)?.positionInDay ?? i + 1} {clientDisplayName(a)}
+                            #{(a as any)?.positionInDay ?? i + 1}{' '}
+                            {isBlockEntry(a) ? blockDisplayLabel(a) : clientDisplayName(a)}
                           </a>
                           {a?.clientAlert && (
                             <div style={{ color: '#dc2626' }}>Alert: {a.clientAlert}</div>
@@ -1365,7 +1446,8 @@ export default function DoctorDay({
                       ) : (
                         <>
                           <div className="dd-title">
-                            #{(a as any)?.positionInDay ?? i + 1} {clientDisplayName(a)}
+                            #{(a as any)?.positionInDay ?? i + 1}{' '}
+                            {isBlockEntry(a) ? blockDisplayLabel(a) : clientDisplayName(a)}
                           </div>
                         </>
                       )}
@@ -1382,7 +1464,7 @@ export default function DoctorDay({
                               borderRadius: 999,
                             }}
                           >
-                            Personal Block
+                            {blockDisplayLabel(a)}
                           </span>
                         ) : (
                           h.isNoLocation && (

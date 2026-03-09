@@ -5,6 +5,8 @@ import { DateTime } from 'luxon';
 import {
   fetchDoctorDay,
   clientDisplayName,
+  isBlockEntry,
+  blockDisplayLabel,
   type DoctorDayAppt,
   type DoctorDayResponse,
   type Depot,
@@ -14,6 +16,8 @@ import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { getZonePercentagesForProvider } from '../api/patients';
 import { fetchEtas } from '../api/routing';
 import { useAuth } from '../auth/useAuth';
+import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
+import { colorForDrive } from '../utils/statsFormat';
 import './DoctorDay.css';
 
 type ZonePatientStat = {
@@ -163,7 +167,7 @@ function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
     const addrKey = hasGeo ? null : addressKeyForAppt(a);
     const idPart = (a as any)?.id != null ? String((a as any).id) : String(idx);
     const key = hasGeo ? keyFor(lat, lon, 6) : addrKey ? `addr:${addrKey}` : `noloc:${idPart}`;
-    const isPersonalBlock = (a as any)?.isPersonalBlock === true;
+    const isPersonalBlock = isBlockEntry({ ...a, key });
     const isPreview = (a as any)?.isPreview === true;
     const patient = makePatientBadge(a);
 
@@ -174,7 +178,7 @@ function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
     if (!m.has(key)) {
       m.set(key, {
         key,
-        client: clientDisplayName(a),
+        client: isBlockEntry(a) ? blockDisplayLabel(a) : clientDisplayName(a),
         address: formatAddress(a),
         lat,
         lon,
@@ -231,12 +235,16 @@ type DayData = {
   startDepotTime: string | null;
   /** Time-of-day "HH:mm" or "HH:mm:ss" when doctor returns to depot */
   endDepotTime: string | null;
-  /** Drive durations in seconds: [toFirst, between..., back] from ETA API */
+  /** Drive durations in seconds: [toFirst, between..., back] from ETA API (byIndex when present). */
   driveSeconds?: number[] | null;
+  /** Drive from depot to first routable stop (used only when first stop is not a block, to normalize ds[0]). */
+  depotToFirstRoutableSec?: number | null;
   /** Back-to-depot drive seconds when not in driveSeconds array */
   backToDepotSec?: number | null;
   /** Minutes after ETD before next appointment can start or drive starts. Use only for next-available/block end; ETD is appointment end. Default 5. */
   appointmentBufferMinutes?: number;
+  /** When set, render in byIndex order: displayHouseholds[i] = households[routingOrderIndices[i]]. */
+  routingOrderIndices?: number[] | null;
 };
 
 /** Sunday of the week containing the given date (YYYY-MM-DD). */
@@ -358,18 +366,47 @@ function depotTimeToPx(
   return clamped * PPM;
 }
 
+const MYWEEK_STORAGE_KEY = 'myweek-state';
+
+function getMyWeekStoredState(): {
+  weekStart?: string;
+  selectedDoctorId?: string;
+  showByDriveTime?: boolean;
+  zoneFillOpen?: boolean;
+} | null {
+  try {
+    const raw = sessionStorage.getItem(MYWEEK_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      weekStart: typeof parsed.weekStart === 'string' ? parsed.weekStart : undefined,
+      selectedDoctorId: typeof parsed.selectedDoctorId === 'string' ? parsed.selectedDoctorId : undefined,
+      showByDriveTime: typeof parsed.showByDriveTime === 'boolean' ? parsed.showByDriveTime : undefined,
+      zoneFillOpen: typeof parsed.zoneFillOpen === 'boolean' ? parsed.zoneFillOpen : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default function MyWeek(props: MyWeekProps = {}) {
   const { readOnly, initialWeekStart, initialDoctorId, virtualAppt } = props;
   const { userEmail, doctorId: userDoctorId } = useAuth() as { userEmail?: string; doctorId?: string | null };
+  const stored = readOnly ? null : getMyWeekStoredState();
   const [weekStart, setWeekStart] = useState<string>(() => {
     if (initialWeekStart) return initialWeekStart;
+    if (stored?.weekStart) return stored.weekStart;
     const today = DateTime.local().toISODate() ?? '';
     return weekStartSunday(today);
   });
   const [providers, setProviders] = useState<Provider[]>([]);
   const [providersLoading, setProvidersLoading] = useState(false);
-  const [selectedDoctorId, setSelectedDoctorId] = useState<string>(initialDoctorId ?? '');
-  const [showByDriveTime, setShowByDriveTime] = useState<boolean>(true);
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string>(() => {
+    if (initialDoctorId) return initialDoctorId;
+    if (stored?.selectedDoctorId) return stored.selectedDoctorId;
+    return '';
+  });
+  const [showByDriveTime, setShowByDriveTime] = useState<boolean>(stored?.showByDriveTime ?? true);
   const [dayDataList, setDayDataList] = useState<DayData[]>([]);
   const [loading, setLoading] = useState(false);
   const [etaLoading, setEtaLoading] = useState(false);
@@ -377,7 +414,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
   const [patientZoneMix, setPatientZoneMix] = useState<ZonePatientStat[] | null>(null);
   const [patientZoneMixLoading, setPatientZoneMixLoading] = useState(false);
   const [patientZoneMixErr, setPatientZoneMixErr] = useState<string | null>(null);
-  const [zoneFillOpen, setZoneFillOpen] = useState(true);
+  const [zoneFillOpen, setZoneFillOpen] = useState(stored?.zoneFillOpen ?? true);
   const [zoneHoverKey, setZoneHoverKey] = useState<string | null>(null);
   const [zoneHoverPos, setZoneHoverPos] = useState<{ x: number; y: number } | null>(null);
   const [hoverCard, setHoverCard] = useState<{
@@ -437,6 +474,21 @@ export default function MyWeek(props: MyWeekProps = {}) {
 
   useEffect(() => {
     if (didInitDoctor.current || !providers.length || initialDoctorId) return;
+    // Prefer restored doctor from sessionStorage when standalone (so Schedule Loader → back keeps state)
+    if (!readOnly) {
+      const stored = getMyWeekStoredState();
+      if (
+        stored?.selectedDoctorId &&
+        providers.some(
+          (p: any) =>
+            String(p?.id) === stored.selectedDoctorId ||
+            String(p?.pimsId ?? '') === stored.selectedDoctorId
+        )
+      ) {
+        didInitDoctor.current = true;
+        return;
+      }
+    }
     const idToSet =
       userDoctorId != null && String(userDoctorId).trim() !== ''
         ? (() => {
@@ -458,7 +510,21 @@ export default function MyWeek(props: MyWeekProps = {}) {
       setSelectedDoctorId(String(me.id));
       didInitDoctor.current = true;
     }
-  }, [providers, userEmail, userDoctorId, initialDoctorId]);
+  }, [providers, userEmail, userDoctorId, initialDoctorId, readOnly]);
+
+  // Persist My Week state so returning from Schedule Loader (or tab switch) restores where you left off
+  useEffect(() => {
+    if (readOnly) return;
+    sessionStorage.setItem(
+      MYWEEK_STORAGE_KEY,
+      JSON.stringify({
+        weekStart,
+        selectedDoctorId,
+        showByDriveTime,
+        zoneFillOpen,
+      })
+    );
+  }, [readOnly, weekStart, selectedDoctorId, showByDriveTime, zoneFillOpen]);
 
   // Fetch patient zone mix for selected provider (for zone bars)
   useEffect(() => {
@@ -589,14 +655,22 @@ export default function MyWeek(props: MyWeekProps = {}) {
               useTraffic: false,
             } as any;
             const result: any = await fetchEtas(payload);
-            const tl = day.households.map((_, i) => {
-              const row = Array.isArray(result?.byIndex) ? result.byIndex[i] : {};
-              const etaIso = row?.etaIso ?? (Array.isArray(result?.etaIso) ? result.etaIso[i] : null);
-              const etdIso = row?.etdIso ?? (Array.isArray(result?.etdIso) ? result.etdIso[i] : null);
-              const valid = (s?: string | null) => !!(s && DateTime.fromISO(s).isValid);
-              let eta = valid(etaIso) ? etaIso : null;
-              let etd = valid(etdIso) ? etdIso : null;
-              const h = day.households[i];
+            const valid = (s?: string | null) => !!(s && DateTime.fromISO(s).isValid);
+            // Build key -> { eta, etd } from byIndex so we match by key (households and byIndex can be in different orders)
+            const keyToSlot: Record<string, { eta: string | null; etd: string | null }> = {};
+            if (Array.isArray(result?.byIndex)) {
+              for (const row of result.byIndex as { key?: string; etaIso?: string; etdIso?: string }[]) {
+                const k = row?.key;
+                if (k == null) continue;
+                const eta = valid(row?.etaIso) ? row.etaIso! : null;
+                const etd = valid(row?.etdIso) ? row.etdIso! : null;
+                keyToSlot[k] = { eta, etd };
+              }
+            }
+            const tl = day.households.map((h, i) => {
+              const slot = h.key ? keyToSlot[h.key] : undefined;
+              let eta = slot?.eta ?? null;
+              let etd = slot?.etd ?? null;
               if (!eta && h?.startIso) eta = h.startIso;
               if (!etd && eta && h?.endIso) {
                 const dur = h.startIso && h.endIso
@@ -606,17 +680,70 @@ export default function MyWeek(props: MyWeekProps = {}) {
               }
               return { eta: eta ?? undefined, etd: etd ?? undefined };
             });
-            const driveSeconds = Array.isArray(result?.driveSeconds) ? result.driveSeconds : null;
+            let driveSeconds: number[] | null = Array.isArray(result?.driveSeconds) ? result.driveSeconds : null;
+            let depotToFirstRoutableSec: number | null = null;
+            if (Array.isArray(result?.byIndex)) {
+              const firstRoutableRow = result.byIndex.find(
+                (r: any) => (r?.driveFromPrevSec ?? r?.driveFromPrevMinutes ?? 0) > 0 && r?.key != null && !String(r.key).startsWith('noloc:')
+              );
+              const row = firstRoutableRow ?? result.byIndex[0];
+              if (row != null) {
+                const sec = (row as any).driveFromPrevSec;
+                const min = (row as any).driveFromPrevMinutes;
+                depotToFirstRoutableSec =
+                  typeof sec === 'number' ? sec : typeof min === 'number' ? min * 60 : null;
+              }
+            }
+            const firstH = day.households[0];
+            const firstIsBlock = (firstH as any)?.isPersonalBlock === true || firstH?.isNoLocation === true;
+            // When first stop is a personal block, keep driveSeconds from ETA (byIndex): ds[0] = depot→block (e.g. 42 min).
+            // Do not overwrite with depotToFirstRoutableSec (drive to first routable stop), or we lose the depot→block segment.
+            if (!firstIsBlock && driveSeconds && depotToFirstRoutableSec != null && depotToFirstRoutableSec > 0) {
+              driveSeconds = [depotToFirstRoutableSec, ...driveSeconds.slice(1)];
+            }
             const backToDepotSec =
               typeof result?.backToDepotSec === 'number' ? result.backToDepotSec : null;
             const appointmentBufferMinutes =
               typeof result?.appointmentBufferMinutes === 'number' ? result.appointmentBufferMinutes : 5;
+            // Display in positionInDay order from ETA byIndex (route order), same as My Day
+            const N = day.households.length;
+            let routingOrderIndices: number[];
+            if (Array.isArray(result?.byIndex) && result.byIndex.length === N) {
+              const keyToPositionInDay: Record<string, number> = {};
+              result.byIndex.forEach((row: { key?: string; positionInDay?: number }, i: number) => {
+                const pos = typeof row.positionInDay === 'number' ? row.positionInDay : i + 1;
+                if (row.key != null) keyToPositionInDay[row.key] = pos;
+              });
+              const getPositionInDay = (householdIndex: number): number => {
+                const h = day.households[householdIndex];
+                const pos = keyToPositionInDay[h.key];
+                if (pos != null) return pos;
+                if (Number.isFinite(h.lat) && Number.isFinite(h.lon)) {
+                  const k6 = `${(h.lat as number).toFixed(6)},${(h.lon as number).toFixed(6)}`;
+                  const p6 = keyToPositionInDay[k6];
+                  if (p6 != null) return p6;
+                }
+                return 999;
+              };
+              routingOrderIndices = Array.from({ length: N }, (_, i) => i).sort(
+                (a, b) => getPositionInDay(a) - getPositionInDay(b)
+              );
+            } else {
+              const chronologicalOrder = Array.from({ length: N }, (_, i) => i).sort((a, b) => {
+                const anchorA = tl[a]?.eta ?? tl[a]?.etd ?? day.households[a]?.startIso ?? '';
+                const anchorB = tl[b]?.eta ?? tl[b]?.etd ?? day.households[b]?.startIso ?? '';
+                return anchorA.localeCompare(anchorB);
+              });
+              routingOrderIndices = chronologicalOrder;
+            }
             return {
               ...day,
               timeline: tl,
               driveSeconds: driveSeconds ?? undefined,
+              depotToFirstRoutableSec: depotToFirstRoutableSec ?? undefined,
               backToDepotSec: backToDepotSec ?? undefined,
               appointmentBufferMinutes,
+              routingOrderIndices,
             };
           })
         );
@@ -846,6 +973,23 @@ export default function MyWeek(props: MyWeekProps = {}) {
               type="date"
               value={weekStart}
               onChange={(e) => setWeekStart(weekStartSunday(e.target.value))}
+              onBlur={(e) => {
+                const v = e.target.value;
+                if (v) {
+                  const dt = DateTime.fromISO(v);
+                  if (dt.isValid) setWeekStart(weekStartSunday(v));
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  const v = (e.target as HTMLInputElement).value;
+                  if (v) {
+                    const dt = DateTime.fromISO(v);
+                    if (dt.isValid) setWeekStart(weekStartSunday(v));
+                  }
+                }
+              }}
               disabled={readOnly}
             />
           </>
@@ -1147,11 +1291,10 @@ export default function MyWeek(props: MyWeekProps = {}) {
         }}
       >
         <div style={{ display: 'flex', minWidth: 800 }}>
-          {/* Time column — header height matches day column (day name + date + points) so labels align with grid lines */}
+          {/* Time column — header height matches day column (day name + date + points/buttons) so labels align with grid lines */}
           <div style={{ width: 56, flexShrink: 0, position: 'sticky', left: 0, background: '#f9fafb', zIndex: 2 }}>
-            <div style={{ minHeight: 32 }} />
-            <div style={{ fontSize: 11, color: '#6b7280', textAlign: 'center', marginTop: -8, marginBottom: 2 }} aria-hidden>&nbsp;</div>
-            <div style={{ minHeight: 32, marginBottom: 4 }} aria-hidden />
+            <div style={{ minHeight: 28 }} aria-hidden />
+            <div style={{ height: 48, marginBottom: 4 }} aria-hidden />
             <div style={{ position: 'relative', height: weekGrid.totalMinutes * PPM }}>
               {/* Time labels aligned with hour lines: center of label on the line */}
               {hours.map((h, i) => (
@@ -1182,8 +1325,8 @@ export default function MyWeek(props: MyWeekProps = {}) {
               <div
                 key={dateIso}
                 style={{
-                  width: 140,
-                  minWidth: 140,
+                  width: (dayData?.households?.length ?? 0) > 0 ? 220 : 70,
+                  minWidth: (dayData?.households?.length ?? 0) > 0 ? 220 : 70,
                   flexShrink: 0,
                   borderLeft: '1px solid #e5e7eb',
                   background: isToday ? '#fefce8' : undefined,
@@ -1191,29 +1334,20 @@ export default function MyWeek(props: MyWeekProps = {}) {
               >
                 <div
                   style={{
-                    minHeight: 32,
+                    minHeight: 28,
                     display: 'flex',
-                    flexDirection: 'column',
+                    flexDirection: 'row',
                     justifyContent: 'center',
                     alignItems: 'center',
+                    gap: 6,
                     fontWeight: 600,
                     fontSize: 12,
                   }}
                 >
-                  {dt.toFormat('ccc')}
+                  <span>{dt.toFormat('ccc')}</span>
+                  <span style={{ fontSize: 11, color: '#6b7280', fontWeight: 500 }}>{dt.toFormat('M/d')}</span>
                 </div>
-                <div
-                  style={{
-                    fontSize: 11,
-                    color: '#6b7280',
-                    textAlign: 'center',
-                    marginTop: -8,
-                    marginBottom: 2,
-                  }}
-                >
-                  {dt.toFormat('M/d')}
-                </div>
-                {/* Points and total driving time at top of each day; fixed min-height so empty days align with the time axis */}
+                {/* Points and total driving time at top of each day; fixed height so all day columns align (no column sits higher) */}
                 <div
                   style={{
                     fontSize: 10,
@@ -1221,7 +1355,13 @@ export default function MyWeek(props: MyWeekProps = {}) {
                     textAlign: 'center',
                     marginBottom: 4,
                     lineHeight: 1.3,
-                    minHeight: 32,
+                    minHeight: 24,
+                    height: 48,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    gap: 4,
                   }}
                 >
                   {dayData ? (
@@ -1229,11 +1369,66 @@ export default function MyWeek(props: MyWeekProps = {}) {
                       const pts = dayPoints(dayData.households);
                       const driveSec = dayTotalDriveSeconds(dayData);
                       const driveMin = Math.round(driveSec / 60);
+                      const driveColor = colorForDrive(driveMin);
+                      const hasAppts = (dayData.households?.length ?? 0) > 0;
+                      const mapsLinks = hasAppts && dayData.households
+                        ? (() => {
+                            const stops: Stop[] = dayData.households
+                              .filter((h) => !h.isNoLocation && Number.isFinite(h.lat) && Number.isFinite(h.lon))
+                              .map((h) => ({
+                                lat: h.lat,
+                                lon: h.lon,
+                                label: h.client,
+                                address: h.address,
+                              }));
+                            return buildGoogleMapsLinksForDay(stops, {
+                              start: dayData.startDepot
+                                ? { lat: dayData.startDepot.lat, lon: dayData.startDepot.lon }
+                                : undefined,
+                              end: dayData.endDepot
+                                ? { lat: dayData.endDepot.lat, lon: dayData.endDepot.lon }
+                                : undefined,
+                            });
+                          })()
+                        : [];
+                      const scheduleLoaderHref = selectedDoctorId && hasAppts
+                        ? `/schedule-loader?targetDate=${dateIso}&doctorId=${encodeURIComponent(selectedDoctorId)}`
+                        : null;
                       return (
                         <>
-                          {pts > 0 && <div><strong>Points:</strong> {pts}</div>}
-                          {showByDriveTime && driveMin > 0 && (
-                            <div><strong>Drive:</strong> {driveMin} min</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '4px 8px' }}>
+                            {pts > 0 && <span><strong>Points:</strong> {pts}</span>}
+                            {showByDriveTime && driveMin > 0 && (
+                              <span style={driveColor ? { color: driveColor } : undefined}>
+                                <strong>Drive:</strong> {driveMin} min
+                              </span>
+                            )}
+                          </div>
+                          {hasAppts && (
+                            <div style={{ display: 'flex', flexDirection: 'row', gap: 4, justifyContent: 'center', flexWrap: 'wrap' }}>
+                              {scheduleLoaderHref && (
+                                <a
+                                  href={scheduleLoaderHref}
+                                  className="btn"
+                                  style={{ fontSize: 10, padding: '4px 8px', whiteSpace: 'nowrap' }}
+                                  title={`Open Schedule Loader for ${dateIso}`}
+                                >
+                                  Schedule Loader
+                                </a>
+                              )}
+                              {mapsLinks.length > 0 && (
+                                <a
+                                  href={mapsLinks[0]}
+                                  className="btn"
+                                  style={{ fontSize: 10, padding: '4px 8px', whiteSpace: 'nowrap' }}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title={mapsLinks.length > 1 ? `Open segment 1 of ${mapsLinks.length} in Google Maps` : 'Open this day in Google Maps'}
+                                >
+                                  Maps
+                                </a>
+                              )}
+                            </div>
                           )}
                         </>
                       );
@@ -1303,6 +1498,13 @@ export default function MyWeek(props: MyWeekProps = {}) {
                     (() => {
                       const N = dayData.households.length;
                       const tl = dayData.timeline ?? [];
+                      const order = dayData.routingOrderIndices;
+                      const displayHouseholds =
+                        order && order.length === N
+                          ? order.map((i) => dayData.households[i])
+                          : dayData.households;
+                      const displayTimeline =
+                        order && order.length === N ? order.map((i) => tl[i]) : tl;
                       const ds = dayData.driveSeconds ?? [];
                       const backSec = dayData.backToDepotSec ?? null;
                       const bufferMin = dayData.appointmentBufferMinutes ?? 5;
@@ -1317,11 +1519,26 @@ export default function MyWeek(props: MyWeekProps = {}) {
                       const toPx = (min: number) =>
                         Math.max(0, Math.min(weekGrid.totalMinutes, min)) * PPM;
                       const driveLabel = (min: number, kind: string) =>
-                        `${kind}: ${min} min drive`;
+                        kind === 'Drive from depot' || kind === 'Drive back to depot'
+                          ? `${kind}: ${min} min`
+                          : `${kind}: ${min} min drive`;
+                      // Index of chronologically first stop (depot segment ends there)
+                      let firstByTimeIdx = 0;
+                      let firstByTimeIso = displayTimeline[0]?.eta ?? displayTimeline[0]?.etd ?? displayHouseholds[0]?.startIso;
+                      if (firstByTimeIso) {
+                        for (let j = 1; j < N; j++) {
+                          const slotJ = displayTimeline[j];
+                          const anchorJ = slotJ?.eta ?? slotJ?.etd ?? displayHouseholds[j]?.startIso;
+                          if (anchorJ && anchorJ < firstByTimeIso) {
+                            firstByTimeIso = anchorJ;
+                            firstByTimeIdx = j;
+                          }
+                        }
+                      }
 
                       for (let i = 0; i < N; i++) {
-                        const h = dayData.households[i];
-                        const slot = tl[i];
+                        const h = displayHouseholds[i];
+                        const slot = displayTimeline[i];
                         const useEta = slot?.eta ?? slot?.etd;
                         const anchorIso = useEta ? (slot?.eta ?? h.startIso!) : h.startIso!;
                         const endIsoForHeight =
@@ -1329,76 +1546,124 @@ export default function MyWeek(props: MyWeekProps = {}) {
                         const topMin = toMin(anchorIso);
                         const endMin = toMin(endIsoForHeight);
                         const durMin = Math.max(1, endMin - topMin);
-                        if (i === 0 && (dayData.startDepotTime || ds.length > 0)) {
+                        const curIsBlock = (h as any)?.isPersonalBlock === true || (h as any)?.isNoLocation === true;
+                        // Depot → first stop: draw once, ending at chronologically first stop
+                        if (i === 0 && (dayData.startDepotTime || ds.length > 0) && firstByTimeIdx === 0) {
                           const firstEta = slot?.eta ?? h.startIso!;
-                          const startPx = dayData.startDepotTime
-                            ? depotTimeToPx(
-                                weekGrid.gridStartMinutesFromMidnight,
-                                weekGrid.totalMinutes,
-                                dayData.startDepotTime
-                              )
-                            : 0;
-                          if (typeof ds[0] === 'number' && ds[0] > 0) {
+                          const firstIsBlock = curIsBlock;
+                          let toFirstSec = typeof ds[0] === 'number' ? ds[0] : 0;
+                          if (firstIsBlock && toFirstSec <= 0 && typeof ds[1] === 'number' && ds[1] > 0) {
+                            toFirstSec = ds[1];
+                          }
+                          if (toFirstSec > 0) {
                             const startIso = DateTime.fromISO(firstEta)
-                              .minus({ seconds: ds[0] })
+                              .minus({ seconds: toFirstSec })
                               .toISO()!;
                             const segTop = toPx(toMin(startIso));
-                            const segH = Math.max(4, (ds[0] / 60) * PPM);
-                            const min = Math.round(ds[0] / 60);
-                            segs.push({ top: segTop, height: segH, title: driveLabel(min, 'Depot → first stop') });
-                          } else {
+                            const segH = Math.max(4, (toFirstSec / 60) * PPM);
+                            const min = Math.round(toFirstSec / 60);
+                            segs.push({ top: segTop, height: segH, title: driveLabel(min, 'Drive from depot') });
+                          } else if (!firstIsBlock) {
+                            const startPx = dayData.startDepotTime
+                              ? depotTimeToPx(
+                                  weekGrid.gridStartMinutesFromMidnight,
+                                  weekGrid.totalMinutes,
+                                  dayData.startDepotTime
+                                )
+                              : 0;
                             const segTop = startPx;
                             const segH = Math.max(4, topMin * PPM - startPx);
                             if (segH > 2) {
                               const min = Math.round(segH / PPM);
-                              segs.push({ top: segTop, height: segH, title: driveLabel(min, 'Depot → first stop') });
+                              segs.push({ top: segTop, height: segH, title: driveLabel(min, 'Drive from depot') });
                             }
                           }
                         }
-                        if (i < N - 1) {
-                          const etdIso = slot?.etd ?? DateTime.fromISO(anchorIso).plus({ minutes: durMin }).toISO()!;
-                          if (typeof ds[i + 1] === 'number' && ds[i + 1] > 0) {
-                            // Drive segment starts after buffer (ETD + buffer = white; then drive = shaded)
-                            const driveStartMin = toMin(etdIso) + bufferMin;
-                            const segTop = toPx(driveStartMin);
-                            const segH = Math.max(4, (ds[i + 1] / 60) * PPM);
-                            const min = Math.round(ds[i + 1] / 60);
-                            segs.push({ top: segTop, height: segH, title: driveLabel(min, 'Drive to next stop') });
-                          } else {
-                            const nextSlot = tl[i + 1];
-                            const nextH = dayData.households[i + 1];
-                            const nextAnchor = nextSlot?.eta ?? nextSlot?.etd ?? nextH.startIso!;
-                            const nextStartMin = toMin(nextAnchor);
-                            const driveStartMin = endMin + bufferMin;
-                            const gapH = Math.max(4, (nextStartMin - driveStartMin) * PPM);
-                            if (gapH > 2) {
-                              const min = Math.round(gapH / PPM);
-                              segs.push({ top: toPx(driveStartMin), height: gapH, title: driveLabel(min, 'Drive to next stop') });
-                            }
+                        // When chronologically first stop is not at index 0 (e.g. block first by time), draw depot segment before it here
+                        if (i === firstByTimeIdx && i > 0) {
+                          const depotSec = dayData.depotToFirstRoutableSec ?? (typeof ds[0] === 'number' ? ds[0] : 0);
+                          if (depotSec > 0) {
+                            const startIso = DateTime.fromISO(anchorIso).minus({ seconds: depotSec }).toISO()!;
+                            const segTop = toPx(toMin(startIso));
+                            const segH = Math.max(4, (depotSec / 60) * PPM);
+                            const min = Math.round(depotSec / 60);
+                            segs.push({ top: segTop, height: segH, title: driveLabel(min, 'Drive from depot') });
                           }
-                        } else if (dayData.endDepotTime || typeof ds[N] === 'number' || backSec != null) {
+                        }
+                        if (i < N - 1) {
+                          const nextH = displayHouseholds[i + 1];
+                          const nextSlot = displayTimeline[i + 1];
+                          const nextAnchorIso = nextSlot?.eta ?? nextSlot?.etd ?? nextH.startIso;
                           const etdIso = slot?.etd ?? DateTime.fromISO(anchorIso).plus({ minutes: durMin }).toISO()!;
-                          const driveStartMin = toMin(etdIso) + bufferMin;
-                          const blockEndPx = endMin * PPM;
+                          const curIsBlock = (h as any)?.isPersonalBlock === true || (h as any)?.isNoLocation === true;
+                          const usedFirstForDepot = i === 0 && curIsBlock && (typeof ds[0] !== 'number' || ds[0] <= 0) && (typeof ds[1] === 'number' && ds[1] > 0);
+                          // Segment between stop i and i+1: use ds[i+1] (drive to stop i+1). Position so it hugs the next block (segment bottom = next block top in px).
+                          const driveSec = usedFirstForDepot ? (typeof ds[2] === 'number' ? ds[2] : 0) : (typeof ds[i + 1] === 'number' ? ds[i + 1] : 0);
+                          if (driveSec > 0 && nextAnchorIso) {
+                            const segH = Math.max(4, (driveSec / 60) * PPM);
+                            const nextBlockTopPx = toPx(toMin(nextAnchorIso));
+                            const segTop = nextBlockTopPx - segH;
+                            const min = Math.round(driveSec / 60);
+                            segs.push({ top: segTop, height: segH, title: driveLabel(min, 'Drive to next stop') });
+                          }
+                          // When drive is 0 (e.g. to personal block), don't paint the gap as "drive" — leave it as whitespace
+                        } else if (dayData.endDepotTime || typeof ds[N] === 'number' || backSec != null) {
+                          const lastIsNoAddressBlock = (h as any)?.isPersonalBlock === true || (h as any)?.isNoLocation === true;
+                          let driveStartMin: number;
+                          if (lastIsNoAddressBlock) {
+                            let lastRoutableIdx = -1;
+                            for (let j = displayHouseholds.length - 1; j >= 0; j--) {
+                              const hh = displayHouseholds[j];
+                              if (!(hh as any)?.isPersonalBlock && !(hh as any)?.isNoLocation) {
+                                lastRoutableIdx = j;
+                                break;
+                              }
+                            }
+                            if (lastRoutableIdx < 0) {
+                              driveStartMin = toMin(slot?.etd ?? DateTime.fromISO(anchorIso).plus({ minutes: durMin }).toISO()!) + bufferMin;
+                            } else {
+                              const lastRoutable = displayHouseholds[lastRoutableIdx];
+                              const lastSlot = displayTimeline[lastRoutableIdx];
+                              const lastUseEta = lastSlot?.eta ?? lastSlot?.etd;
+                              const lastAnchorIso = lastUseEta ? (lastSlot?.eta ?? lastRoutable.startIso!) : lastRoutable.startIso!;
+                              const lastEndIso = lastUseEta && lastSlot?.etd ? lastSlot.etd : lastRoutable.endIso!;
+                              const lastDurMin = Math.max(
+                                1,
+                                Math.round(DateTime.fromISO(lastEndIso).diff(DateTime.fromISO(lastAnchorIso)).as('minutes'))
+                              );
+                              const lastEtdIso = lastSlot?.etd ?? DateTime.fromISO(lastAnchorIso).plus({ minutes: lastDurMin }).toISO()!;
+                              driveStartMin = toMin(lastEtdIso) + bufferMin;
+                            }
+                          } else {
+                            const etdIso = slot?.etd ?? DateTime.fromISO(anchorIso).plus({ minutes: durMin }).toISO()!;
+                            driveStartMin = toMin(etdIso) + bufferMin;
+                          }
                           const driveStartPx = toPx(driveStartMin);
-                          const endDepotPx = dayData.endDepotTime
-                            ? depotTimeToPx(
-                                weekGrid.gridStartMinutesFromMidnight,
-                                weekGrid.totalMinutes,
-                                dayData.endDepotTime
-                              )
-                            : weekGrid.totalMinutes * PPM;
-                          const sec = typeof ds[N] === 'number' ? ds[N] : backSec;
-                          if (typeof sec === 'number' && sec > 0) {
+                          const sec = (typeof ds[N] === 'number' && ds[N] > 0) ? ds[N] : (backSec ?? 0);
+                          const gridBaseIso = dayBaseIso(weekGrid.gridStartMinutesFromMidnight, dateIso);
+                          const arrivalTitle = (arrivalIso: string) =>
+                            ` — Arrival: ${DateTime.fromISO(arrivalIso).toLocaleString(DateTime.TIME_SIMPLE)}`;
+                          if (sec > 0) {
                             const min = Math.round(sec / 60);
+                            const driveDurationMin = sec / 60;
+                            const arrivalIso = DateTime.fromISO(gridBaseIso).plus({ minutes: driveStartMin + driveDurationMin }).toISO()!;
                             segs.push({
                               top: driveStartPx,
                               height: Math.max(4, (sec / 60) * PPM),
-                              title: driveLabel(min, 'Last stop → depot'),
+                              title: driveLabel(min, 'Drive back to depot') + arrivalTitle(arrivalIso),
                             });
-                          } else {
+                          } else if (!lastIsNoAddressBlock) {
+                            const endDepotPx = dayData.endDepotTime
+                              ? depotTimeToPx(
+                                  weekGrid.gridStartMinutesFromMidnight,
+                                  weekGrid.totalMinutes,
+                                  dayData.endDepotTime
+                                )
+                              : weekGrid.totalMinutes * PPM;
                             const segH = Math.max(4, endDepotPx - driveStartPx);
-                            if (segH > 2) segs.push({ top: driveStartPx, height: segH, title: driveLabel(Math.round(segH / PPM), 'Last stop → depot') });
+                            const driveDurationMin = segH / PPM;
+                            const arrivalIso = DateTime.fromISO(gridBaseIso).plus({ minutes: driveStartMin + driveDurationMin }).toISO()!;
+                            if (segH > 2) segs.push({ top: driveStartPx, height: segH, title: driveLabel(Math.round(segH / PPM), 'Drive back to depot') + arrivalTitle(arrivalIso) });
                           }
                         }
                       }
@@ -1442,11 +1707,21 @@ export default function MyWeek(props: MyWeekProps = {}) {
                         />
                       ));
                     })()}
-                  {dayData?.households?.map((h, idx) => {
+                  {(() => {
+                    const households = dayData?.households ?? [];
+                    const tl = dayData?.timeline ?? [];
+                    const order = dayData?.routingOrderIndices;
+                    const displayHouseholds =
+                      order && order.length === households.length
+                        ? order.map((i) => households[i])
+                        : households;
+                    const displayTimeline =
+                      order && order.length === tl.length ? order.map((i) => tl[i]) : tl;
+                    return displayHouseholds.map((h, idx) => {
                     const startIso = h.startIso;
                     const endIso = h.endIso;
                     if (!startIso || !endIso) return null;
-                    const slot = dayData.timeline[idx];
+                    const slot = displayTimeline[idx];
                     const useEta = showByDriveTime && (slot?.eta ?? slot?.etd);
                     const anchorIso = useEta ? (slot?.eta ?? startIso) : startIso;
                     const endIsoForHeight = useEta && slot?.etd ? slot.etd : endIso;
@@ -1517,7 +1792,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                           height,
                           zIndex: 1,
                           background: h.isPersonalBlock
-                            ? '#f3f4f6'
+                            ? '#e5e7eb'
                             : h.isPreview
                               ? '#ede9fe'
                               : h.isNoLocation
@@ -1532,17 +1807,20 @@ export default function MyWeek(props: MyWeekProps = {}) {
                         }}
                       >
                         <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {h.client}
+                          {h.isPersonalBlock ? blockDisplayLabel(h.primary) : h.client}
                         </div>
+                        {!h.isPersonalBlock && (
                         <div style={{ color: '#6b7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {h.patients.map((p) => p.name).join(', ')}
                         </div>
+                        )}
                         {isFixedTime && (
                           <span style={{ fontSize: 10, color: '#b91c1c', fontWeight: 600 }}>Fixed</span>
                         )}
                       </div>
                     );
-                  })}
+                  });
+                  })()}
                 </div>
               </div>
             );
@@ -1628,7 +1906,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                     <span style={{ color: '#dc2626', fontWeight: 600 }}>FIXED TIME</span>
                   )}
                   {hoverCard.isPersonalBlock && (
-                    <span style={{ color: '#6b7280', fontWeight: 600 }}>Personal Block</span>
+                    <span style={{ color: '#6b7280', fontWeight: 600 }}>{hoverCard.client || 'Block'}</span>
                   )}
                   {hoverCard.isNoLocation && (
                     <span style={{ color: '#dc2626', fontWeight: 600 }}>No location</span>
