@@ -400,12 +400,39 @@ function lookupCatalogEntry(
   return undefined;
 }
 
-export default function MembershipSignup() {
+type AppointmentFlowState = {
+  fromAppointmentFlow?: boolean;
+  pet?: { id: string; name: string; species?: string; breed?: string; age?: string; sex?: string };
+  clientInfo?: { email?: string; fullName?: { first?: string; last?: string } };
+  returnUrl?: string;
+  returnUrlAnotherBase?: string;
+};
+
+export type MembershipSignupPaymentState = Record<string, any>;
+
+export type MembershipSignupModalProps = {
+  fromModal?: boolean;
+  modalPet?: Pet | { id: string; name: string; species?: string; breed?: string };
+  onProceedToPayment?: (state: MembershipSignupPaymentState) => void;
+  onCancel?: () => void;
+};
+
+export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { userId: authUserId } = useAuth() as any;
+  const state = location.state as (AppointmentFlowState & { petId?: string }) | undefined;
 
-  const petId = (location.state as any)?.petId;
+  const fromModal = props?.fromModal === true;
+  const modalPet = props?.modalPet;
+  const onProceedToPayment = props?.onProceedToPayment;
+  const onCancelModal = props?.onCancel;
+
+  const petId = state?.petId;
+  const fromAppointmentFlow = state?.fromAppointmentFlow === true;
+  const prospectivePet = state?.pet;
+  const returnUrl = state?.returnUrl;
+  const returnUrlAnotherBase = state?.returnUrlAnotherBase;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -433,6 +460,15 @@ export default function MembershipSignup() {
 
   const brand = 'var(--brand, #0f766e)';
   const brandSoft = 'var(--brand-soft, #e6f7f5)';
+
+  const goBack = () => {
+    if (fromModal && onCancelModal) {
+      onCancelModal();
+      return;
+    }
+    if (returnUrl) navigate(returnUrl);
+    else navigate('/client-portal');
+  };
 
   // Build plans with dynamic pricing from API
   const plans = useMemo(() => {
@@ -528,6 +564,49 @@ export default function MembershipSignup() {
   }, [planCatalog, formattedPlans]);
 
   useEffect(() => {
+    if (fromModal && modalPet) {
+      setError(null);
+      setLoading(false);
+      const p = modalPet as Pet;
+      setPet({
+        id: p.id,
+        name: p.name,
+        species: p.species,
+        breed: p.breed,
+      } as Pet);
+      setAppointmentsLoaded(true);
+      setHasAnyAppointments(true);
+      setHasPastAppointment(false);
+      setHasUpcomingAppointment(false);
+      trackEvent('membership_signup_page_viewed', {
+        pet_id: p.id,
+        pet_name: p.name || 'Unknown',
+        pet_species: p.species || 'Unknown',
+      });
+      return;
+    }
+
+    if (fromAppointmentFlow && prospectivePet) {
+      setError(null);
+      setLoading(false);
+      setPet({
+        id: prospectivePet.id,
+        name: prospectivePet.name,
+        species: prospectivePet.species,
+        breed: prospectivePet.breed,
+      } as Pet);
+      setAppointmentsLoaded(true);
+      setHasAnyAppointments(true);
+      setHasPastAppointment(false);
+      setHasUpcomingAppointment(false);
+      trackEvent('membership_signup_page_viewed', {
+        pet_id: prospectivePet.id,
+        pet_name: prospectivePet.name || 'Unknown',
+        pet_species: prospectivePet.species || 'Unknown',
+      });
+      return;
+    }
+
     if (!petId) {
       setError('No pet selected. Please go back and select a pet.');
       setLoading(false);
@@ -600,7 +679,7 @@ export default function MembershipSignup() {
     return () => {
       alive = false;
     };
-  }, [petId]);
+  }, [petId, fromAppointmentFlow, prospectivePet, fromModal, modalPet]);
 
   useEffect(() => {
     let alive = true;
@@ -1053,7 +1132,7 @@ export default function MembershipSignup() {
       ? `${basePlanName} ${addOnLabels.join(', ')} - ${billingLabel}`
       : `${basePlanName} - ${billingLabel}`;
 
-    const paymentState = {
+    const paymentState: Record<string, any> = {
       petId: pet.id,
       petName: pet.name,
       selectedPlanId: selectedPlanExplicit,
@@ -1072,6 +1151,9 @@ export default function MembershipSignup() {
       metadata,
       membershipTransaction,
     };
+    if (returnUrl) paymentState.returnUrl = returnUrl;
+    if (fromAppointmentFlow) paymentState.fromAppointmentFlow = true;
+    if (returnUrlAnotherBase) paymentState.returnUrlAnotherBase = returnUrlAnotherBase;
 
     // Track begin checkout
     const checkoutItems = [
@@ -1106,6 +1188,10 @@ export default function MembershipSignup() {
     );
 
     setError(null);
+    if (fromModal && typeof onProceedToPayment === 'function') {
+      onProceedToPayment(paymentState);
+      return;
+    }
     navigate('/client-portal/membership-payment', { state: paymentState });
   }
 
@@ -1125,8 +1211,8 @@ export default function MembershipSignup() {
         <div className="card" style={{ maxWidth: 600, margin: '30px auto' }}>
           <h2 style={{ marginTop: 0, color: '#e11d48' }}>Error</h2>
           <p className="muted">{combinedError}</p>
-          <button className="btn" onClick={() => navigate('/client-portal')} style={{ marginTop: 16, background: '#4FB128', color: '#fff' }}>
-            Back to Portal
+          <button className="btn" onClick={goBack} style={{ marginTop: 16, background: '#4FB128', color: '#fff' }}>
+            {returnUrl ? 'Back to appointment request' : 'Back to Portal'}
           </button>
         </div>
       </div>
@@ -1137,7 +1223,7 @@ export default function MembershipSignup() {
     return (
       <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px' }}>
         <button
-          onClick={() => navigate('/client-portal')}
+          onClick={goBack}
           style={{
             background: 'transparent',
             border: 'none',
@@ -1149,7 +1235,7 @@ export default function MembershipSignup() {
             padding: 0,
           }}
         >
-          ← Back to Portal
+          ← {returnUrl ? 'Back to appointment request' : 'Back to Portal'}
         </button>
         <div className="cp-card" style={{ padding: 24, borderLeft: '4px solid #4FB128', background: brandSoft }}>
           <h2 style={{ margin: '0 0 12px' }}>Schedule an Appointment First</h2>
@@ -1162,8 +1248,8 @@ export default function MembershipSignup() {
             begin your membership with timing that coincides with your start date with us. We can’t wait to meet you!
           </p>
           <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
-            <button className="btn secondary" onClick={() => navigate('/client-portal')}>
-              Back to Portal
+            <button className="btn secondary" onClick={goBack}>
+              {returnUrl ? 'Back to appointment request' : 'Back to Portal'}
             </button>
             <a
               className="btn"
@@ -1477,7 +1563,7 @@ export default function MembershipSignup() {
 
       <div style={{ marginBottom: 24 }}>
         <button
-          onClick={() => navigate('/client-portal')}
+          onClick={goBack}
           style={{
             background: 'transparent',
             border: 'none',
@@ -1489,7 +1575,7 @@ export default function MembershipSignup() {
             padding: 0,
           }}
         >
-          ← Back to Portal
+          ← {returnUrl ? 'Back to appointment request' : 'Back to Portal'}
         </button>
         <h1 className="cp-title">Membership Signup</h1>
         <p className="cp-muted">Choose the plan that fits your pet’s care needs.</p>
@@ -2206,7 +2292,7 @@ export default function MembershipSignup() {
 
       <section className="cp-section" style={{ marginTop: 32, marginBottom: 48 }}>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', alignItems: 'center' }}>
-          <button className="btn secondary" onClick={() => navigate('/client-portal')} style={{ background: '#4FB128', color: '#fff', border: 'none' }}>
+          <button className="btn secondary" onClick={goBack} style={{ background: '#4FB128', color: '#fff', border: 'none' }}>
             Cancel
           </button>
           <button

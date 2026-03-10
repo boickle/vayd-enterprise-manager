@@ -1,9 +1,9 @@
 // src/pages/AppointmentRequestForm.tsx
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import { http } from '../api/http';
-import { fetchClientPets, type Pet, fetchClientInfo } from '../api/clientPortal';
+import { fetchClientPets, type Pet, fetchClientInfo, fetchWellnessPlansForPatient } from '../api/clientPortal';
 import { fetchPrimaryProviders, fetchVeterinarians, type Provider } from '../api/employee';
 import { validateAddress } from '../api/geo';
 import { DateTime } from 'luxon';
@@ -19,6 +19,9 @@ import {
 } from '../api/publicAppointments';
 import { trackEvent } from '../utils/analytics';
 import { isProduction } from '../utils/env';
+import { listMembershipTransactions } from '../api/membershipTransactions';
+import MembershipSignup from './MembershipSignup';
+import MembershipPayment from './MembershipPayment';
 
 type FormData = {
   // Intro page
@@ -258,6 +261,20 @@ export default function AppointmentRequestForm() {
   const [breedSearchTerms, setBreedSearchTerms] = useState<Record<string, string>>({}); // Search terms for breed dropdowns, keyed by pet ID
   const [breedDropdownOpen, setBreedDropdownOpen] = useState<Record<string, boolean>>({}); // Track which breed dropdowns are open, keyed by pet ID
   const [clientLocationReady, setClientLocationReady] = useState(false); // Track when client location is available for veterinarian fetch
+  const [showMembershipModal, setShowMembershipModal] = useState(false);
+  const [selectedMembershipPetId, setSelectedMembershipPetId] = useState<string | null>(null);
+  type MembershipModalStep = 'choose-pet' | 'signup' | 'payment' | 'success';
+  const [membershipModalStep, setMembershipModalStep] = useState<MembershipModalStep>('choose-pet');
+  const [membershipPaymentState, setMembershipPaymentState] = useState<any>(null);
+  const [lastSignedUpPetIds, setLastSignedUpPetIds] = useState<string[]>([]);
+  const [selectedMembershipPet, setSelectedMembershipPet] = useState<EligiblePet | null>(null);
+  // For logged-in users: patient ids with active/pending membership (from membership-transactions API)
+  const [petIdsWithActiveOrPendingMembership, setPetIdsWithActiveOrPendingMembership] = useState<Set<string> | null>(null);
+  // For logged-in users: pet ids (dbId or id) that have an active wellness plan (actual membership)
+  const [petIdsWithActiveWellnessPlan, setPetIdsWithActiveWellnessPlan] = useState<Set<string> | null>(null);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
 
   // Handle responsive layout
   useEffect(() => {
@@ -944,6 +961,135 @@ export default function AppointmentRequestForm() {
       is_logged_in: isLoggedIn,
     });
   }, [currentPage, isLoggedIn, formData.haveUsedServicesBefore]);
+
+  // Pets eligible for membership signup: for logged-in users, only selected pets that do NOT
+  // have an active or pending membership (from subscription on pet OR from membership-transactions API);
+  // new pets (existingClientNewPets) and new-client pets are always eligible.
+  // If all selected pets already have membership, the "Sign up for membership now" button is hidden.
+  type EligiblePet = { id: string; name: string; species?: string; isBackendPet: boolean };
+  const membershipEligiblePets = useMemo((): EligiblePet[] => {
+    const signedUpParam = searchParams.get('signedUp');
+    const excludeIds = signedUpParam ? new Set(signedUpParam.split(',').map((s) => s.trim()).filter(Boolean)) : new Set<string>();
+    lastSignedUpPetIds.forEach((id) => excludeIds.add(id));
+    if (isLoggedIn && pets.length > 0) {
+      const hasActiveOrPendingMembership = (p: Pet) => {
+        if (p.subscription?.status === 'active' || p.subscription?.status === 'pending') return true;
+        if (petIdsWithActiveOrPendingMembership) {
+          if (p.dbId && petIdsWithActiveOrPendingMembership.has(String(p.dbId))) return true;
+          if (petIdsWithActiveOrPendingMembership.has(String(p.id))) return true;
+        }
+        if (petIdsWithActiveWellnessPlan) {
+          if (p.dbId && petIdsWithActiveWellnessPlan.has(String(p.dbId))) return true;
+          if (petIdsWithActiveWellnessPlan.has(String(p.id))) return true;
+        }
+        return false;
+      };
+      // Only include selected pets that have no active/pending membership
+      const fromSelected = pets
+        .filter(
+          (p) =>
+            formData.selectedPetIds?.includes(p.id) &&
+            !hasActiveOrPendingMembership(p)
+        )
+        .map((p) => ({ id: p.id, name: p.name, species: p.species, isBackendPet: true }));
+      // New pets added by existing client have no membership yet
+      const fromNew =
+        (formData.existingClientNewPets || []).map((p) => ({
+          id: p.id,
+          name: p.name,
+          species: p.species,
+          isBackendPet: false,
+        }));
+      return [...fromSelected, ...fromNew].filter((p) => !excludeIds.has(p.id));
+    }
+    return (formData.newClientPets || [])
+      .filter((p) => p.name?.trim())
+      .map((p) => ({ id: p.id, name: p.name, species: p.species, isBackendPet: false }))
+      .filter((p) => !excludeIds.has(p.id));
+  }, [
+    isLoggedIn,
+    pets,
+    formData.selectedPetIds,
+    formData.newClientPets,
+    formData.existingClientNewPets,
+    searchParams,
+    lastSignedUpPetIds,
+    petIdsWithActiveOrPendingMembership,
+    petIdsWithActiveWellnessPlan,
+  ]);
+
+  const isOnSubmitStep =
+    currentPage === 'request-visit-continued' || currentPage === 'euthanasia-continued';
+  // Show "Sign up for membership now" only when there is at least one pet eligible for membership.
+  // For logged-in users, wait until we've loaded both transactions and wellness plans so we don't show the button for pets that already have membership.
+  const membershipDataLoaded =
+    !isLoggedIn || (petIdsWithActiveOrPendingMembership !== null && petIdsWithActiveWellnessPlan !== null);
+  const hasEligiblePetsForMembership =
+    membershipEligiblePets.length > 0 && membershipDataLoaded;
+
+  // Fetch membership status for logged-in client so we can hide signup for pets that already have membership
+  useEffect(() => {
+    if (!isLoggedIn || !userId) {
+      setPetIdsWithActiveOrPendingMembership(null);
+      return;
+    }
+    let alive = true;
+    (async () => {
+      try {
+        const txns = await listMembershipTransactions({ clientId: userId });
+        if (!alive) return;
+        const ids = new Set<string>();
+        for (const t of txns) {
+          const status = (t.status ?? '').toString().toLowerCase();
+          if (status === 'active' || status === 'pending') {
+            const pid = t.patientId ?? t.metadata?.patientId;
+            if (pid != null) ids.add(String(pid));
+          }
+        }
+        setPetIdsWithActiveOrPendingMembership(ids);
+      } catch {
+        if (alive) setPetIdsWithActiveOrPendingMembership(new Set());
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [isLoggedIn, userId]);
+
+  // Fetch wellness plans for logged-in client's pets; treat active wellness plan as membership
+  useEffect(() => {
+    if (!isLoggedIn || !pets.length) {
+      setPetIdsWithActiveWellnessPlan(null);
+      return;
+    }
+    let alive = true;
+    (async () => {
+      const ids = new Set<string>();
+      const withDbId = pets.filter((p) => p.dbId);
+      for (const pet of withDbId) {
+        if (!alive) return;
+        try {
+          const plans = await fetchWellnessPlansForPatient(pet.dbId!);
+          if (!alive) return;
+          const hasActive = (plans ?? []).some(
+            (plan) =>
+              plan?.isActive === true ||
+              String(plan?.status ?? '').toLowerCase() === 'active'
+          );
+          if (hasActive) {
+            ids.add(String(pet.dbId));
+            ids.add(String(pet.id));
+          }
+        } catch {
+          // skip this pet
+        }
+      }
+      if (alive) setPetIdsWithActiveWellnessPlan(ids);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [isLoggedIn, pets]);
 
   // Warn users when they try to use browser back button
   useEffect(() => {
@@ -2369,6 +2515,25 @@ export default function AppointmentRequestForm() {
         handleSubmit();
         break;
     }
+  };
+
+  const openMembershipSignupForPet = (pet: EligiblePet) => {
+    setSelectedMembershipPet(pet);
+    setMembershipModalStep('signup');
+  };
+
+  const getModalPetForSignup = (): Pet | { id: string; name: string; species?: string; breed?: string } | undefined => {
+    if (!selectedMembershipPet) return undefined;
+    if (selectedMembershipPet.isBackendPet) {
+      const fullPet = pets.find((p) => p.id === selectedMembershipPet.id);
+      return fullPet ?? { id: selectedMembershipPet.id, name: selectedMembershipPet.name, species: selectedMembershipPet.species };
+    }
+    const payload =
+      formData.newClientPets?.find((p) => p.id === selectedMembershipPet.id) ||
+      formData.existingClientNewPets?.find((p) => p.id === selectedMembershipPet.id);
+    return payload
+      ? { id: payload.id, name: payload.name, species: payload.species, breed: payload.breed }
+      : { id: selectedMembershipPet.id, name: selectedMembershipPet.name, species: selectedMembershipPet.species };
   };
 
   const handleBack = () => {
@@ -7407,6 +7572,31 @@ export default function AppointmentRequestForm() {
           </div>
         )}
 
+        {isOnSubmitStep && hasEligiblePetsForMembership && (
+          <div style={{ marginTop: '20px' }}>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedMembershipPetId(null);
+                setMembershipModalStep('choose-pet');
+                setShowMembershipModal(true);
+              }}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: 'transparent',
+                color: '#0f766e',
+                border: '1px solid #0f766e',
+                borderRadius: '8px',
+                fontSize: '14px',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Sign up for membership now
+            </button>
+          </div>
+        )}
+
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '32px', gap: '12px' }}>
           {currentPage !== 'intro' && currentPage !== 'existing-client' && (
             <button
@@ -7551,6 +7741,265 @@ export default function AppointmentRequestForm() {
                 </a>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Membership signup modal – full flow stays on page */}
+      {showMembershipModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => {
+            if (membershipModalStep === 'choose-pet') setShowMembershipModal(false);
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: '#fff',
+              borderRadius: '12px',
+              padding: membershipModalStep === 'choose-pet' || membershipModalStep === 'success' ? '32px' : '0',
+              maxWidth: membershipModalStep === 'signup' || membershipModalStep === 'payment' ? 'min(1120px, 96vw)' : '480px',
+              width: '90%',
+              maxHeight: '90vh',
+              overflow: 'auto',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {membershipModalStep === 'choose-pet' && (
+              <>
+                <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
+                  Sign up for membership
+                </h2>
+                <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px', lineHeight: 1.5 }}>
+                  Choose a pet to enroll in a membership plan. You can sign up additional pets after completing this one.
+                </p>
+                {membershipEligiblePets.length === 0 ? (
+                  <p style={{ fontSize: '15px', color: '#374151', marginBottom: '24px' }}>
+                    All selected pets already have an active membership, or no pets are selected. You can continue to submit your appointment request.
+                  </p>
+                ) : membershipEligiblePets.length === 1 ? (
+                  <div style={{ marginBottom: '24px' }}>
+                    <p style={{ fontSize: '15px', color: '#374151', marginBottom: '12px' }}>
+                      Sign up <strong>{membershipEligiblePets[0].name}</strong> for membership.
+                    </p>
+                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        onClick={() => openMembershipSignupForPet(membershipEligiblePets[0])}
+                        style={{
+                          padding: '10px 20px',
+                          backgroundColor: '#10b981',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '8px',
+                          fontSize: '14px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Continue to membership signup
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowMembershipModal(false)}
+                        style={{
+                          padding: '10px 20px',
+                          backgroundColor: '#f3f4f6',
+                          color: '#374151',
+                          border: 'none',
+                          borderRadius: '8px',
+                          fontSize: '14px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p style={{ fontSize: '15px', color: '#374151', marginBottom: '12px' }}>
+                      Which pet would you like to sign up for membership?
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
+                      {membershipEligiblePets.map((p) => (
+                        <label
+                          key={p.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            padding: '12px',
+                            cursor: 'pointer',
+                            borderRadius: '8px',
+                            border: `2px solid ${selectedMembershipPetId === p.id ? '#10b981' : '#e5e7eb'}`,
+                            backgroundColor: selectedMembershipPetId === p.id ? '#f0fdf4' : '#fff',
+                          }}
+                        >
+                          <input
+                            type="radio"
+                            name="membership-pet"
+                            checked={selectedMembershipPetId === p.id}
+                            onChange={() => setSelectedMembershipPetId(p.id)}
+                            style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                          />
+                          <span style={{ fontWeight: 500, color: '#111827' }}>{p.name}</span>
+                          {p.species && (
+                            <span style={{ fontSize: '13px', color: '#6b7280' }}>({p.species})</span>
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        disabled={!selectedMembershipPetId}
+                        onClick={() => {
+                          const pet = membershipEligiblePets.find((p) => p.id === selectedMembershipPetId);
+                          if (pet) openMembershipSignupForPet(pet);
+                        }}
+                        style={{
+                          padding: '10px 20px',
+                          backgroundColor: selectedMembershipPetId ? '#10b981' : '#d1d5db',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '8px',
+                          fontSize: '14px',
+                          fontWeight: 600,
+                          cursor: selectedMembershipPetId ? 'pointer' : 'not-allowed',
+                        }}
+                      >
+                        Continue to membership signup
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowMembershipModal(false)}
+                        style={{
+                          padding: '10px 20px',
+                          backgroundColor: '#f3f4f6',
+                          color: '#374151',
+                          border: 'none',
+                          borderRadius: '8px',
+                          fontSize: '14px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+
+            {membershipModalStep === 'signup' && getModalPetForSignup() && (
+              <div style={{ padding: '16px' }}>
+                <MembershipSignup
+                  fromModal
+                  modalPet={getModalPetForSignup()}
+                  onProceedToPayment={(state) => {
+                    setMembershipPaymentState(state);
+                    setMembershipModalStep('payment');
+                  }}
+                  onCancel={() => {
+                    setMembershipModalStep('choose-pet');
+                    setSelectedMembershipPet(null);
+                  }}
+                />
+              </div>
+            )}
+
+            {membershipModalStep === 'payment' && membershipPaymentState && (
+              <div style={{ padding: '16px' }}>
+                <MembershipPayment
+                  fromModal
+                  initialState={membershipPaymentState}
+                  onSuccess={() => {
+                    setLastSignedUpPetIds((prev) => [...prev, membershipPaymentState.petId]);
+                    setMembershipModalStep('success');
+                  }}
+                  onBack={() => setMembershipModalStep('signup')}
+                  onSignUpAnother={(signedUpPetId) => {
+                    setLastSignedUpPetIds((prev) => [...prev, signedUpPetId]);
+                    setMembershipPaymentState(null);
+                    setMembershipModalStep('choose-pet');
+                    setSelectedMembershipPet(null);
+                    setSelectedMembershipPetId(null);
+                  }}
+                />
+              </div>
+            )}
+
+            {membershipModalStep === 'success' && (
+              <>
+                <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
+                  Payment successful
+                </h2>
+                <p style={{ fontSize: '15px', color: '#374151', marginBottom: '24px' }}>
+                  Membership signup is complete. You can sign up another pet or return to your appointment request.
+                </p>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                  {membershipEligiblePets.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMembershipModalStep('choose-pet');
+                        setSelectedMembershipPet(null);
+                        setSelectedMembershipPetId(null);
+                      }}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: '#10b981',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Sign up another pet
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMembershipModal(false);
+                      setMembershipModalStep('choose-pet');
+                      setMembershipPaymentState(null);
+                      setSelectedMembershipPet(null);
+                      setSelectedMembershipPetId(null);
+                    }}
+                    style={{
+                      padding: '10px 20px',
+                      backgroundColor: '#f3f4f6',
+                      color: '#374151',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Done – back to appointment request
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

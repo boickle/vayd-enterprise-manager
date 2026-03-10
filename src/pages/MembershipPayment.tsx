@@ -83,6 +83,10 @@ type PaymentNavigationState = {
   subscriptionStartDate?: string;
   metadata?: Record<string, any>;
   membershipTransaction?: MembershipTransactionPayload;
+  // From appointment request flow
+  returnUrl?: string;
+  fromAppointmentFlow?: boolean;
+  returnUrlAnotherBase?: string;
   // Upgrade-specific fields
   isUpgrade?: boolean;
   patientId?: number | string;
@@ -106,10 +110,22 @@ type PaymentNavigationState = {
   };
 };
 
-export default function MembershipPayment() {
+export type { PaymentNavigationState };
+
+export type MembershipPaymentModalProps = {
+  fromModal?: boolean;
+  initialState?: PaymentNavigationState;
+  onSuccess?: () => void;
+  onBack?: () => void;
+  onSignUpAnother?: (signedUpPetId: string) => void;
+};
+
+export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const state = location.state as PaymentNavigationState | undefined;
+  const locationState = location.state as PaymentNavigationState | undefined;
+  const fromModal = props?.fromModal === true;
+  const state = fromModal ? (props?.initialState ?? locationState) : locationState;
   const { userEmail } = useAuth() as any;
 
   const [loadingScript, setLoadingScript] = useState(true);
@@ -125,10 +141,10 @@ export default function MembershipPayment() {
   const locationId = state?.enrollmentPayload?.locationId ?? defaultSquareLocationId;
 
   useEffect(() => {
-    if (!state) {
+    if (!state && !fromModal) {
       navigate('/client-portal');
     }
-  }, [state, navigate]);
+  }, [state, fromModal, navigate]);
 
   useEffect(() => {
     if (!state) return;
@@ -407,8 +423,13 @@ export default function MembershipPayment() {
   }
 
   if (!state) {
+    if (fromModal && props?.onBack) props.onBack();
     return null;
   }
+
+  const onSuccess = props?.onSuccess;
+  const onBack = props?.onBack;
+  const onSignUpAnother = props?.onSignUpAnother;
 
   if (enrollmentComplete && (paymentResponse?.success || state.isUpgrade)) {
     const providerPaymentId =
@@ -496,37 +517,47 @@ export default function MembershipPayment() {
           </section>
         )}
 
-        <div className="cp-card" style={{ marginTop: 24, padding: 20, background: '#f0f9ff', border: '1px solid #bae6fd' }}>
-          <p className="cp-muted" style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>
-            <strong>NOTE:</strong> If you want to sign-up another pet from your household or if you want to make an appointment for {state.petName}, please{' '}
-            <a 
-              href="/client-portal" 
-              onClick={(e) => {
-                e.preventDefault();
-                navigate('/client-portal');
-              }}
-              style={{ color: '#4FB128', textDecoration: 'underline', fontWeight: 600 }}
-            >
-              login to your client portal
-            </a>
-            .
-          </p>
-        </div>
+        {!state.returnUrl && (
+          <div className="cp-card" style={{ marginTop: 24, padding: 20, background: '#f0f9ff', border: '1px solid #bae6fd' }}>
+            <p className="cp-muted" style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>
+              <strong>NOTE:</strong> If you want to sign-up another pet from your household or if you want to make an appointment for {state.petName}, please{' '}
+              <a 
+                href="/client-portal" 
+                onClick={(e) => {
+                  e.preventDefault();
+                  navigate('/client-portal');
+                }}
+                style={{ color: '#4FB128', textDecoration: 'underline', fontWeight: 600 }}
+              >
+                login to your client portal
+              </a>
+              .
+            </p>
+          </div>
+        )}
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 24 }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 24, flexWrap: 'wrap' }}>
+          {(state.returnUrlAnotherBase || (fromModal && onSignUpAnother)) && (
+            <button 
+              className="btn" 
+              onClick={() => {
+                if (fromModal && onSignUpAnother) onSignUpAnother(state.petId);
+                else navigate(`${state.returnUrlAnotherBase}&signedUp=${encodeURIComponent(state.petId)}`);
+              }}
+              style={{ backgroundColor: '#4FB128', color: '#fff' }}
+            >
+              Sign up another pet
+            </button>
+          )}
           <button 
             className="btn" 
-            onClick={() => navigate('/client-portal')}
+            onClick={() => {
+              if (fromModal && onSuccess) onSuccess();
+              else navigate(state.returnUrl || '/client-portal');
+            }}
             style={{ backgroundColor: '#4FB128', color: '#fff' }}
           >
-            Sign up another pet
-          </button>
-          <button 
-            className="btn" 
-            onClick={() => navigate('/client-portal')}
-            style={{ backgroundColor: '#4FB128', color: '#fff' }}
-          >
-            Return to Client Portal
+            {fromModal ? 'Done' : state.returnUrl ? 'Return to appointment request' : 'Return to Client Portal'}
           </button>
         </div>
 
@@ -594,7 +625,10 @@ export default function MembershipPayment() {
     <div className="cp-wrap" style={{ maxWidth: 720, margin: '32px auto', padding: '0 16px' }}>
       <div style={{ marginBottom: 24 }}>
         <button
-          onClick={() => navigate(-1)}
+          onClick={() => {
+            if (fromModal && onBack) onBack();
+            else navigate(-1);
+          }}
           style={{
             background: 'transparent',
             border: 'none',
