@@ -277,6 +277,27 @@ function petImg(pet: Pet | null): string {
   return CAT_PLACEHOLDER;
 }
 
+/** Parse age string (e.g. "2 years", "6 months", "1.5", or date string) to age in years for plan eligibility (Golden 9+, Puppy/Kitten ≤1.5). */
+function parseAgeStringToYears(ageStr: string | null | undefined): number | null {
+  if (ageStr == null || typeof ageStr !== 'string') return null;
+  const s = ageStr.trim().toLowerCase();
+  if (!s) return null;
+  const numMatch = s.match(/^(\d+(?:\.\d+)?)\s*(?:y(?:ear)?s?|yr?s?)?$/);
+  if (numMatch) return Math.max(0, parseFloat(numMatch[1]));
+  const monthsMatch = s.match(/^(\d+)\s*mo(?:nth)?s?$/);
+  if (monthsMatch) return Math.max(0, parseInt(monthsMatch[1], 10) / 12);
+  const yearMonthMatch = s.match(/^(\d+)\s*y(?:ear)?s?\s*(?:and|\d*)\s*(\d+)\s*mo(?:nth)?s?$/);
+  if (yearMonthMatch) return Math.max(0, parseInt(yearMonthMatch[1], 10) + parseInt(yearMonthMatch[2], 10) / 12);
+  const justNum = parseFloat(s.replace(/[^\d.]/g, ''));
+  if (Number.isFinite(justNum)) return Math.max(0, justNum);
+  const asDate = new Date(ageStr.trim());
+  if (!Number.isNaN(asDate.getTime())) {
+    const diff = Date.now() - asDate.getTime();
+    return Math.max(0, diff / (1000 * 60 * 60 * 24 * 365.25));
+  }
+  return null;
+}
+
 type PlanCombination = 'base' | 'plus' | 'starter' | 'plusStarter';
 type BillingCadence = 'monthly' | 'annual';
 
@@ -402,7 +423,7 @@ function lookupCatalogEntry(
 
 type AppointmentFlowState = {
   fromAppointmentFlow?: boolean;
-  pet?: { id: string; name: string; species?: string; breed?: string; age?: string; sex?: string };
+  pet?: { id: string; name: string; species?: string; breed?: string; age?: string; dob?: string; sex?: string };
   clientInfo?: { email?: string; fullName?: { first?: string; last?: string } };
   returnUrl?: string;
   returnUrlAnotherBase?: string;
@@ -412,7 +433,9 @@ export type MembershipSignupPaymentState = Record<string, any>;
 
 export type MembershipSignupModalProps = {
   fromModal?: boolean;
-  modalPet?: Pet | { id: string; name: string; species?: string; breed?: string };
+  modalPet?: Pet | { id: string; name: string; species?: string; breed?: string; age?: string; dob?: string };
+  /** Client email and name from appointment form (for agreementSignedName / customerEmail when not logged in) */
+  modalClientInfo?: { email?: string; fullName?: { first?: string; last?: string } };
   onProceedToPayment?: (state: MembershipSignupPaymentState) => void;
   onCancel?: () => void;
 };
@@ -420,11 +443,12 @@ export type MembershipSignupModalProps = {
 export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { userId: authUserId } = useAuth() as any;
+  const { userId: authUserId, userEmail: authUserEmail } = useAuth() as any;
   const state = location.state as (AppointmentFlowState & { petId?: string }) | undefined;
 
   const fromModal = props?.fromModal === true;
   const modalPet = props?.modalPet;
+  const modalClientInfo = props?.modalClientInfo;
   const onProceedToPayment = props?.onProceedToPayment;
   const onCancelModal = props?.onCancel;
 
@@ -567,12 +591,14 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     if (fromModal && modalPet) {
       setError(null);
       setLoading(false);
-      const p = modalPet as Pet;
+      const p = modalPet as Pet & { age?: string; dob?: string };
       setPet({
         id: p.id,
         name: p.name,
         species: p.species,
         breed: p.breed,
+        dob: p.dob,
+        ...(p.age != null && { age: p.age } as any),
       } as Pet);
       setAppointmentsLoaded(true);
       setHasAnyAppointments(true);
@@ -739,6 +765,9 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
         const diff = Date.now() - dob.getTime();
         ageYears = Math.max(0, diff / (1000 * 60 * 60 * 24 * 365.25));
       }
+    }
+    if (ageYears == null && (pet as any).age) {
+      ageYears = parseAgeStringToYears((pet as any).age);
     }
     return { kind, ageYears };
   }, [pet]);
@@ -1068,6 +1097,18 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
 
     const effectiveBillingPreference = hasAnnualOption ? billingPreference : 'monthly';
 
+    const customerEmail =
+      (fromModal && modalClientInfo?.email?.trim())
+        ? modalClientInfo.email.trim()
+        : (authUserEmail ? String(authUserEmail).trim() : undefined);
+    const agreementSignedName = (() => {
+      if (fromModal && modalClientInfo?.fullName) {
+        const { first, last } = modalClientInfo.fullName;
+        return [first, last].filter(Boolean).map((s) => String(s).trim()).join(' ') || undefined;
+      }
+      return undefined;
+    })();
+
     const membershipTransaction: MembershipTransactionPayload = {
       agreementSignedAt,
       agreementText: MEMBERSHIP_AGREEMENT_TEXT,
@@ -1089,6 +1130,8 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
           addOns,
         };
         if (clientIdValue != null) meta.clientId = clientIdValue;
+        if (customerEmail != null) meta.customerEmail = customerEmail;
+        if (agreementSignedName != null) meta.agreementSignedName = agreementSignedName;
         return meta;
       })(),
     };
@@ -1115,6 +1158,8 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
         agreementSignedAt,
       };
       if (clientIdValue != null) meta.clientId = clientIdValue;
+      if (customerEmail != null) meta.customerEmail = customerEmail;
+      if (agreementSignedName != null) meta.agreementSignedName = agreementSignedName;
       return meta;
     })();
 
@@ -1151,6 +1196,8 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       metadata,
       membershipTransaction,
     };
+    if (customerEmail != null) paymentState.customerEmail = customerEmail;
+    if (agreementSignedName != null) paymentState.customerName = agreementSignedName;
     if (returnUrl) paymentState.returnUrl = returnUrl;
     if (fromAppointmentFlow) paymentState.fromAppointmentFlow = true;
     if (returnUrlAnotherBase) paymentState.returnUrlAnotherBase = returnUrlAnotherBase;

@@ -83,6 +83,9 @@ type PaymentNavigationState = {
   subscriptionStartDate?: string;
   metadata?: Record<string, any>;
   membershipTransaction?: MembershipTransactionPayload;
+  /** Set by MembershipSignup when from appointment form (agreement signed name / email) */
+  customerEmail?: string;
+  customerName?: string;
   // From appointment request flow
   returnUrl?: string;
   fromAppointmentFlow?: boolean;
@@ -327,7 +330,8 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         subscriptionPlanId: state.subscriptionPlanId,
         subscriptionPlanVariationId: state.subscriptionPlanVariationId,
         subscriptionStartDate: state.subscriptionStartDate,
-        customerEmail: userEmail ?? undefined,
+        customerEmail: state.customerEmail ?? userEmail ?? undefined,
+        customerName: state.customerName ?? undefined,
         metadata: {
           ...(state.metadata ?? {}),
           cardholderName: cardholderName.trim(),

@@ -2522,7 +2522,7 @@ export default function AppointmentRequestForm() {
     setMembershipModalStep('signup');
   };
 
-  const getModalPetForSignup = (): Pet | { id: string; name: string; species?: string; breed?: string } | undefined => {
+  const getModalPetForSignup = (): Pet | { id: string; name: string; species?: string; breed?: string; age?: string; dob?: string } | undefined => {
     if (!selectedMembershipPet) return undefined;
     if (selectedMembershipPet.isBackendPet) {
       const fullPet = pets.find((p) => p.id === selectedMembershipPet.id);
@@ -2531,9 +2531,17 @@ export default function AppointmentRequestForm() {
     const payload =
       formData.newClientPets?.find((p) => p.id === selectedMembershipPet.id) ||
       formData.existingClientNewPets?.find((p) => p.id === selectedMembershipPet.id);
-    return payload
-      ? { id: payload.id, name: payload.name, species: payload.species, breed: payload.breed }
-      : { id: selectedMembershipPet.id, name: selectedMembershipPet.name, species: selectedMembershipPet.species };
+    if (!payload) return { id: selectedMembershipPet.id, name: selectedMembershipPet.name, species: selectedMembershipPet.species };
+    const ageOrDob = payload.age?.trim();
+    const looksLikeDate = ageOrDob && /^\d{1,4}[\/\-]\d{1,2}[\/\-]\d{1,4}$/.test(ageOrDob);
+    return {
+      id: payload.id,
+      name: payload.name,
+      species: payload.species,
+      breed: payload.breed,
+      age: looksLikeDate ? undefined : ageOrDob || undefined,
+      dob: looksLikeDate ? ageOrDob : undefined,
+    };
   };
 
   const handleBack = () => {
@@ -7574,6 +7582,9 @@ export default function AppointmentRequestForm() {
 
         {isOnSubmitStep && hasEligiblePetsForMembership && (
           <div style={{ marginTop: '20px' }}>
+            <p style={{ fontSize: '14px', color: '#374151', lineHeight: 1.6, marginBottom: '12px' }}>
+              Our membership plans are one of the best ways to get proactive, personalized care from your One Team. Members receive wellness exams and trip fees, recommended vaccines and lab work, and after-hours online chat support—all designed to keep your pet healthy with a consistent veterinarian, technician, and client liaison. You can enroll now below or continue as pay-as-you-go; we’re happy either way.
+            </p>
             <button
               type="button"
               onClick={() => {
@@ -7786,9 +7797,27 @@ export default function AppointmentRequestForm() {
                   Choose a pet to enroll in a membership plan. You can sign up additional pets after completing this one.
                 </p>
                 {membershipEligiblePets.length === 0 ? (
-                  <p style={{ fontSize: '15px', color: '#374151', marginBottom: '24px' }}>
-                    All selected pets already have an active membership, or no pets are selected. You can continue to submit your appointment request.
-                  </p>
+                  <>
+                    <p style={{ fontSize: '15px', color: '#374151', marginBottom: '24px' }}>
+                      All selected pets already have an active membership, or no pets are selected. You can continue to submit your appointment request.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setShowMembershipModal(false)}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: '#10b981',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Done
+                    </button>
+                  </>
                 ) : membershipEligiblePets.length === 1 ? (
                   <div style={{ marginBottom: '24px' }}>
                     <p style={{ fontSize: '15px', color: '#374151', marginBottom: '12px' }}>
@@ -7911,6 +7940,10 @@ export default function AppointmentRequestForm() {
                 <MembershipSignup
                   fromModal
                   modalPet={getModalPetForSignup()}
+                  modalClientInfo={{
+                    email: formData.email?.trim() || undefined,
+                    fullName: formData.fullName,
+                  }}
                   onProceedToPayment={(state) => {
                     setMembershipPaymentState(state);
                     setMembershipModalStep('payment');
