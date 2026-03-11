@@ -74,6 +74,10 @@ type Winner = {
     windowStartIso?: string;
     windowEndIso?: string;
   };
+  /** Scoring breakdown from routing-v2; downstreamWindowEdge > 0 means a downstream appt is pushed near its window end */
+  scoringComponents?: {
+    downstreamWindowEdge?: number;
+  };
 };
 
 type UnifiedOption = Winner & {
@@ -284,24 +288,7 @@ function extractErrorMessage(err: unknown): string {
 }
 
 function SlotChip({ slot }: { slot?: Slot | null }) {
-  if (!slot) return null;
-  const text = slot === 'early' ? 'Early' : slot === 'mid' ? 'Mid' : 'Late';
-  const bg = slot === 'early' ? '#e0f2fe' : slot === 'mid' ? '#e0ffe7' : '#fef3c7';
-  const fg = slot === 'early' ? '#0369a1' : slot === 'mid' ? '#065f46' : '#92400e';
-  return (
-    <span
-      style={{
-        background: bg,
-        color: fg,
-        padding: '2px 8px',
-        borderRadius: 999,
-        fontSize: 12,
-        fontWeight: 600,
-      }}
-    >
-      {text}
-    </span>
-  );
+  return null; // Slot labels (Early / Mid / Late) not shown
 }
 
 function EdgeChip({ first, last }: { first?: boolean; last?: boolean }) {
@@ -1980,6 +1967,24 @@ export default function Routing() {
                       <SlotChip slot={opt.slot ?? null} />
                       <EdgeChip first={opt.isFirstEdge} last={opt.isLastEdge} />
                     </div>
+
+                    {(opt.scoringComponents?.downstreamWindowEdge ?? 0) > 0 && (
+                      <div
+                        style={{
+                          marginBottom: 8,
+                          padding: '8px 12px',
+                          borderRadius: 8,
+                          background: '#fef3c7',
+                          border: '1px solid #f59e0b',
+                          color: '#92400e',
+                          fontSize: 13,
+                          fontWeight: 600,
+                        }}
+                        title="At least one downstream appointment is pushed within 15 minutes of its window end"
+                      >
+                        ⚠ Pushes a downstream appointment to the edge of its window
+                      </div>
+                    )}
 
                     <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                       <KeyValue
