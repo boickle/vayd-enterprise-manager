@@ -88,6 +88,7 @@ export async function fetchEtas(payload: EtaRequest): Promise<EtaResult> {
 
   // Derive driveSeconds from byIndex when present so drive is split before/after personal blocks.
   // Backend may send correct byIndex[].driveFromPrevSec but wrong driveSeconds (e.g. 0 to block, 27min after).
+  // When byIndex[0].driveFromPrevSec is 0 but API driveSeconds[0] > 0, keep driveSeconds[0] so "drive from depot" shows correctly (not a time-based fallback).
   let driveSeconds = data?.driveSeconds;
   if (byIndex && byIndex.length > 0) {
     const fromByIndex: number[] = byIndex.map((row: EtaByIndexRow) => {
@@ -102,7 +103,12 @@ export async function fetchEtas(payload: EtaRequest): Promise<EtaResult> {
     const hasAnyDrive = fromByIndex.some((s) => s > 0);
     if (hasAnyDrive) {
       const backSec = typeof backToDepotSec === 'number' && Number.isFinite(backToDepotSec) ? backToDepotSec : 0;
-      driveSeconds = [...fromByIndex, backSec];
+      let segments = [...fromByIndex, backSec];
+      const apiFirst = Array.isArray(data?.driveSeconds) && data.driveSeconds.length > 0 ? data.driveSeconds[0] : 0;
+      if (fromByIndex[0] <= 0 && typeof apiFirst === 'number' && apiFirst > 0) {
+        segments = [apiFirst, ...segments.slice(1)];
+      }
+      driveSeconds = segments;
     }
   }
 

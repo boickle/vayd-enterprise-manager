@@ -125,6 +125,21 @@ function formatAddress(a: DoctorDayAppt) {
   }
   return 'Address not available';
 }
+function keyFor(lat: number, lon: number, d = 6): string {
+  const m = Math.pow(10, d);
+  return `${Math.round(lat * m) / m},${Math.round(lon * m) / m}`;
+}
+
+/** Key variants for matching ETA byIndex row key to household (avoids precision/rounding mismatches). */
+function keyVariantsForKeyString(s: string): string[] {
+  const parts = s.split(',');
+  if (parts.length !== 2) return [s];
+  const lat = parseFloat(parts[0]);
+  const lon = parseFloat(parts[1]);
+  if (Number.isNaN(lat) || Number.isNaN(lon)) return [s];
+  return [s, keyFor(lat, lon, 6), keyFor(lat, lon, 5)];
+}
+
 function eightThirtyIsoFor(date: string): string {
   return DateTime.fromISO(date).set({ hour: 8, minute: 30, second: 0, millisecond: 0 }).toISO()!;
 }
@@ -838,19 +853,29 @@ export default function DoctorDay({
         );
         setBackToDepotIso(result?.backToDepotIso ?? null);
 
-        // Render in byIndex order: compute display order from keys (or positionInDay)
+        // Render in positionInDay order from ETA byIndex; keyToPositionInDay uses all key variants so lookup works across precision differences
         if (Array.isArray(result?.byIndex) && result.byIndex.length === households.length) {
-          const keyToIndex: Record<string, number> = {};
-          households.forEach((h, idx) => {
-            keyToIndex[h.key] = idx;
+          const keyToPositionInDay: Record<string, number> = {};
+          result.byIndex.forEach((row: { key?: string; positionInDay?: number }, i: number) => {
+            const pos = typeof row.positionInDay === 'number' ? row.positionInDay : i + 1;
+            if (row.key != null) {
+              for (const variant of keyVariantsForKeyString(row.key)) {
+                keyToPositionInDay[variant] = pos;
+              }
+            }
           });
-          const order = result.byIndex.map(
-            (row: { key?: string; positionInDay?: number }, i: number) =>
-              row.key != null && keyToIndex[row.key] !== undefined
-                ? keyToIndex[row.key]
-                : typeof row.positionInDay === 'number'
-                  ? row.positionInDay - 1
-                  : i
+          const getPositionInDay = (householdIndex: number): number => {
+            const h = households[householdIndex];
+            const pos = keyToPositionInDay[h.key];
+            if (pos != null) return pos;
+            if (Number.isFinite(h.lat) && Number.isFinite(h.lon)) {
+              const k5 = keyFor(h.lat as number, h.lon as number, 5);
+              if (keyToPositionInDay[k5] != null) return keyToPositionInDay[k5];
+            }
+            return 999;
+          };
+          const order = Array.from({ length: households.length }, (_, i) => i).sort(
+            (a, b) => getPositionInDay(a) - getPositionInDay(b)
           );
           setRoutingOrderIndices(order);
         } else {

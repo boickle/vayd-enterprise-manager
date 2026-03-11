@@ -71,6 +71,17 @@ function keyFor(lat: number, lon: number, d = 6) {
   const m = Math.pow(10, d);
   return `${Math.round(lat * m) / m},${Math.round(lon * m) / m}`;
 }
+
+/** Key variants for matching ETA byIndex row key to household (avoids precision/rounding mismatches). */
+function keyVariantsForKeyString(s: string): string[] {
+  const parts = s.split(',');
+  if (parts.length !== 2) return [s];
+  const lat = parseFloat(parts[0]);
+  const lon = parseFloat(parts[1]);
+  if (Number.isNaN(lat) || Number.isNaN(lon)) return [s];
+  return [s, keyFor(lat, lon, 6), keyFor(lat, lon, 5)];
+}
+
 function formatAddress(a: DoctorDayAppt) {
   const address1 = str(a, 'address1');
   const city = str(a, 'city');
@@ -705,23 +716,26 @@ export default function MyWeek(props: MyWeekProps = {}) {
               typeof result?.backToDepotSec === 'number' ? result.backToDepotSec : null;
             const appointmentBufferMinutes =
               typeof result?.appointmentBufferMinutes === 'number' ? result.appointmentBufferMinutes : 5;
-            // Display in positionInDay order from ETA byIndex (route order), same as My Day
+            // Display in positionInDay order from ETA byIndex; keyToPositionInDay uses all key variants so lookup works across precision differences
             const N = day.households.length;
             let routingOrderIndices: number[];
             if (Array.isArray(result?.byIndex) && result.byIndex.length === N) {
               const keyToPositionInDay: Record<string, number> = {};
               result.byIndex.forEach((row: { key?: string; positionInDay?: number }, i: number) => {
                 const pos = typeof row.positionInDay === 'number' ? row.positionInDay : i + 1;
-                if (row.key != null) keyToPositionInDay[row.key] = pos;
+                if (row.key != null) {
+                  for (const variant of keyVariantsForKeyString(row.key)) {
+                    keyToPositionInDay[variant] = pos;
+                  }
+                }
               });
               const getPositionInDay = (householdIndex: number): number => {
                 const h = day.households[householdIndex];
                 const pos = keyToPositionInDay[h.key];
                 if (pos != null) return pos;
                 if (Number.isFinite(h.lat) && Number.isFinite(h.lon)) {
-                  const k6 = `${(h.lat as number).toFixed(6)},${(h.lon as number).toFixed(6)}`;
-                  const p6 = keyToPositionInDay[k6];
-                  if (p6 != null) return p6;
+                  const k5 = keyFor(h.lat as number, h.lon as number, 5);
+                  if (keyToPositionInDay[k5] != null) return keyToPositionInDay[k5];
                 }
                 return 999;
               };
@@ -1702,8 +1716,6 @@ export default function MyWeek(props: MyWeekProps = {}) {
                             zIndex: 0,
                             cursor: 'default',
                           }}
-                          title={seg.title}
-                          aria-label={seg.title}
                         />
                       ));
                     })()}
