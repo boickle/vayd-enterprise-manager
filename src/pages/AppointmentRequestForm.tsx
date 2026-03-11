@@ -1027,6 +1027,15 @@ export default function AppointmentRequestForm() {
   const hasEligiblePetsForMembership =
     membershipEligiblePets.length > 0 && membershipDataLoaded;
 
+  // Hide membership CTA when any selected appointment type is Quality of Life or Euthanasia
+  const selectedAppointmentTypeNames = getSelectedAppointmentTypes();
+  const shouldHideMembershipForAppointmentTypes = [...selectedAppointmentTypeNames].some(
+    (name) => {
+      const lower = name.toLowerCase();
+      return lower === 'euthanasia' || lower === 'quality of life';
+    }
+  );
+
   // Fetch membership status for logged-in client so we can hide signup for pets that already have membership
   useEffect(() => {
     if (!isLoggedIn || !userId) {
@@ -7580,10 +7589,10 @@ export default function AppointmentRequestForm() {
           </div>
         )}
 
-        {isOnSubmitStep && hasEligiblePetsForMembership && (
-          <div style={{ marginTop: '20px' }}>
-            <p style={{ fontSize: '14px', color: '#374151', lineHeight: 1.6, marginBottom: '12px' }}>
-              Our membership plans are one of the best ways to get proactive, personalized care from your One Team. Members receive wellness exams and trip fees, recommended vaccines and lab work, and after-hours online chat support—all designed to keep your pet healthy with a consistent veterinarian, technician, and client liaison. You can enroll now below or continue as pay-as-you-go; we’re happy either way.
+        {isOnSubmitStep && hasEligiblePetsForMembership && !shouldHideMembershipForAppointmentTypes && (
+          <div style={{ marginTop: '20px', textAlign: 'center' }}>
+            <p style={{ fontSize: '18px', fontWeight: 700, color: '#111827', marginBottom: '12px' }}>
+              Secure your access to your One-Team today.
             </p>
             <button
               type="button"
@@ -7603,7 +7612,7 @@ export default function AppointmentRequestForm() {
                 cursor: 'pointer',
               }}
             >
-              Sign up for membership now
+              Explore memberships
             </button>
           </div>
         )}
