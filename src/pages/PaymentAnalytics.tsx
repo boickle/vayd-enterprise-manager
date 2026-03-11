@@ -56,6 +56,28 @@ const dayKeyUTC = (d: string | Date | dayjs.Dayjs) => dayjs.utc(d).format('YYYY-
 /** Today's date in the user's local timezone (YYYY-MM-DD) for "today" revenue. */
 const todayLocalKey = () => dayjs().format('YYYY-MM-DD');
 
+/** Linear regression trend for total revenue series. */
+function addLinearTrend<T extends { totalRevenue: number }>(data: T[]): (T & { trend: number })[] {
+  if (!data.length) return [];
+  const n = data.length;
+  let sumX = 0;
+  let sumY = 0;
+  let sumXY = 0;
+  let sumXX = 0;
+  for (let i = 0; i < n; i++) {
+    const x = i;
+    const y = Number(data[i]?.totalRevenue ?? 0);
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumXX += x * x;
+  }
+  const slope =
+    n * sumXX - sumX * sumX !== 0 ? (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX) : 0;
+  const intercept = sumY / n - slope * (sumX / n);
+  return data.map((row, i) => ({ ...row, trend: Math.max(0, intercept + slope * i) }));
+}
+
 // Presets
 const now = dayjs();
 const PRESETS: Record<string, () => DateRange> = {
@@ -144,6 +166,8 @@ export default function PaymentsAnalyticsPage() {
       })),
     [series]
   );
+
+  const chartDataWithTrend = useMemo(() => addLinearTrend(chartData), [chartData]);
 
   // ---------- Leaderboards + Today's revenue ----------
   const dataset = seriesAll ?? series; // prefer all-time; fallback to current selection
@@ -371,7 +395,7 @@ export default function PaymentsAnalyticsPage() {
             <Box height={320} minHeight={320}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
-                  data={chartData}
+                  data={chartDataWithTrend}
                   margin={{ left: 8, right: 16, top: 8, bottom: 8 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" />
@@ -418,6 +442,17 @@ export default function PaymentsAnalyticsPage() {
                     name="Total"
                     stroke="#ed6c02"
                     strokeWidth={2}
+                    dot={false}
+                    isAnimationActive
+                  />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="trend"
+                    name="Trend"
+                    stroke="#ed6c02"
+                    strokeWidth={1.5}
+                    strokeDasharray="5 5"
                     dot={false}
                     isAnimationActive
                   />
