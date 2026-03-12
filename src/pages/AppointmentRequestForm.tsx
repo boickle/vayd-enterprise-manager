@@ -6589,65 +6589,6 @@ export default function AppointmentRequestForm() {
               </div>
             </div>
 
-            {!hasEuthanasiaPetEuthanasiaPage && (
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                  Are you interested in membership or pay as you go?{' '}
-                  <a
-                    href="https://www.vetatyourdoor.com/care-options"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      color: '#10b981',
-                      textDecoration: 'none',
-                      fontSize: '14px',
-                      fontWeight: 400,
-                      marginLeft: '4px',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.textDecoration = 'underline';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.textDecoration = 'none';
-                    }}
-                  >
-                    What's this?
-                  </a>
-                </label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {[
-                    'Pay as you go',
-                    'Membership',
-                    "I'm not sure yet",
-                  ].map((option) => (
-                    <label
-                      key={option}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        cursor: 'pointer',
-                        padding: '12px',
-                        border: `1px solid ${formData.membershipInterest === option ? '#10b981' : '#d1d5db'}`,
-                        borderRadius: '8px',
-                        backgroundColor: formData.membershipInterest === option ? '#f0fdf4' : '#fff',
-                      }}
-                    >
-                      <input
-                        type="radio"
-                        name="membershipInterest"
-                        value={option}
-                        checked={formData.membershipInterest === option}
-                        onChange={(e) => updateFormData('membershipInterest', e.target.value as 'Pay as you go' | 'Membership' | "I'm not sure yet")}
-                        style={{ margin: 0 }}
-                      />
-                      <span style={{ fontSize: '14px' }}>{option}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {!isLoggedIn && (
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
@@ -7124,65 +7065,6 @@ export default function AppointmentRequestForm() {
                 }}
               />
             </div>
-
-            {!hasEuthanasiaPet && (
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                  Are you interested in membership or pay as you go?{' '}
-                  <a
-                    href="https://www.vetatyourdoor.com/care-options"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      color: '#10b981',
-                      textDecoration: 'none',
-                      fontSize: '14px',
-                      fontWeight: 400,
-                      marginLeft: '4px',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.textDecoration = 'underline';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.textDecoration = 'none';
-                    }}
-                  >
-                    What's this?
-                  </a>
-                </label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {[
-                    'Pay as you go',
-                    'Membership',
-                    "I'm not sure yet",
-                  ].map((option) => (
-                    <label
-                      key={option}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        cursor: 'pointer',
-                        padding: '12px',
-                        border: `1px solid ${formData.membershipInterest === option ? '#10b981' : '#d1d5db'}`,
-                        borderRadius: '8px',
-                        backgroundColor: formData.membershipInterest === option ? '#f0fdf4' : '#fff',
-                      }}
-                    >
-                      <input
-                        type="radio"
-                        name="membershipInterest"
-                        value={option}
-                        checked={formData.membershipInterest === option}
-                        onChange={(e) => updateFormData('membershipInterest', e.target.value as 'Pay as you go' | 'Membership' | "I'm not sure yet")}
-                        style={{ margin: 0 }}
-                      />
-                      <span style={{ fontSize: '14px' }}>{option}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
 
             {!isLoggedIn && (
               <div style={{ marginBottom: '20px' }}>
