@@ -127,6 +127,12 @@ export default function RoomLoaderPage() {
   /** Room loader ID currently downloading PDF (for loading state on button). */
   const [downloadingPdfRoomLoaderId, setDownloadingPdfRoomLoaderId] = useState<number | null>(null);
 
+  /** Safe getter: API or saved form may sometimes return non-array values; always return an array for iteration. */
+  const getAddedItemsForPatient = (patientId: number): SearchableItem[] => {
+    const raw = addedItems[patientId];
+    return Array.isArray(raw) ? raw : [];
+  };
+
   // Client has already submitted this form (sentStatus === 'completed') — show read-only, grey out all fields, disable Save and Re-send
   const formSubmittedByClient = useMemo(
     () => selectedRoomLoader?.sentStatus === 'completed',
@@ -247,7 +253,8 @@ export default function RoomLoaderPage() {
           const restoredAddedItems: Record<number, SearchableItem[]> = {};
           Object.keys(savedForm.addedItems).forEach((petIdStr) => {
             const petId = Number(petIdStr);
-            restoredAddedItems[petId] = savedForm.addedItems[petId] || [];
+            const raw = savedForm.addedItems[petId];
+            restoredAddedItems[petId] = Array.isArray(raw) ? raw : [];
           });
           setAddedItems(restoredAddedItems);
         }
@@ -335,7 +342,16 @@ export default function RoomLoaderPage() {
           const vaccines = { ...savedForm.vaccineCheckboxes } as Record<number, { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean; sharps: boolean }>;
           const reasons = { ...(savedForm.appointmentReasons || {}) } as Record<number, string>;
           const windows = { ...(savedForm.arrivalWindows || {}) } as Record<number, string>;
-          const added = hasBeenSent ? {} as Record<number, SearchableItem[]> : { ...(savedForm.addedItems || {}) } as Record<number, SearchableItem[]>;
+          const added: Record<number, SearchableItem[]> = hasBeenSent ? {} : (() => {
+            const fromSaved = savedForm.addedItems || {};
+            const out: Record<number, SearchableItem[]> = {};
+            Object.keys(fromSaved).forEach((petIdStr) => {
+              const petId = Number(petIdStr);
+              const raw = fromSaved[petId];
+              out[petId] = Array.isArray(raw) ? raw : [];
+            });
+            return out;
+          })();
           const answers = { ...(savedForm.petAnswers || {}) } as Record<number, { mobility: boolean | null; labWork: boolean | null }>;
           const addedQty = hasBeenSent ? {} as Record<string, number> : { ...(savedForm.addedItemQuantities || {}) } as Record<string, number>;
           let reminderQtyFromSent: Record<number, number> = {};
@@ -1606,7 +1622,7 @@ export default function RoomLoaderPage() {
       });
 
       // Get added items (include wellnessPlanPricing/discountPricing so client can surface why price is discounted)
-      const addedItemsList = (addedItems[patient.id] || []).map((item) => {
+      const addedItemsList = getAddedItemsForPatient(patient.id).map((item) => {
         const basePrice = item.price != null ? Number(item.price) : null;
         // Use wellnessPlanPricing.adjustedPrice only when it's a number; discountPricing.priceAdjustedByDiscount is a boolean
         const wpAdjusted = (item as any).wellnessPlanPricing?.adjustedPrice;
@@ -1758,7 +1774,7 @@ export default function RoomLoaderPage() {
         (r) => r.reminder?.id && !removedReminders.has(r.reminder.id)
       );
       const fromReminders = activeReminders.some((r) => reminderContains(r, 'Trip Fee'));
-      const fromAddedItems = (addedItems[item.patient.id] || []).some((added) =>
+      const fromAddedItems = getAddedItemsForPatient(item.patient.id).some((added) =>
         itemContains(added, 'Trip Fee')
       );
       return fromReminders || fromAddedItems;
@@ -1821,7 +1837,7 @@ export default function RoomLoaderPage() {
         const text = `${name} ${code}`;
         return text.includes('visit') || text.includes('consult');
       });
-      const fromAddedItems = (addedItems[item.patient.id] || []).some((added) =>
+      const fromAddedItems = getAddedItemsForPatient(item.patient.id).some((added) =>
         itemContains(added, 'visit') || itemContains(added, 'consult')
       );
       const hasVisitOrConsult = fromReminders || fromAddedItems;
@@ -1887,7 +1903,7 @@ export default function RoomLoaderPage() {
         reminders: remindersToSave,
         addedItems: Object.keys(addedItems).reduce((acc, petIdStr) => {
           const petId = Number(petIdStr);
-          acc[petId] = addedItems[petId] || [];
+          acc[petId] = getAddedItemsForPatient(petId);
           return acc;
         }, {} as Record<number, SearchableItem[]>),
         reminderQuantities: reminderQuantities,
@@ -2856,7 +2872,7 @@ export default function RoomLoaderPage() {
                     Reminders ({item.reminders?.filter((r) => {
                       const id = r.reminder.id;
                       return id && !removedReminders.has(id);
-                    }).length || 0} + {addedItems[patient.id]?.length || 0} added)
+                    }).length || 0} + {getAddedItemsForPatient(patient.id).length || 0} added)
                   </h4>
                   
                   {/* Original Reminders */}
@@ -3695,13 +3711,13 @@ export default function RoomLoaderPage() {
                   )}
 
                   {/* Added Items */}
-                  {addedItems[patient.id] && addedItems[patient.id].length > 0 && (
+                  {getAddedItemsForPatient(patient.id).length > 0 && (
                     <div style={{ marginBottom: '15px' }}>
-                      {addedItems[patient.id].map((item, itemIdx) => (
+                      {getAddedItemsForPatient(patient.id).map((item, itemIdx) => (
                         <div
                           key={`added-${itemIdx}`}
                           style={{
-                            marginBottom: itemIdx < addedItems[patient.id].length - 1 ? '15px' : 0,
+                            marginBottom: itemIdx < getAddedItemsForPatient(patient.id).length - 1 ? '15px' : 0,
                             padding: '15px',
                             backgroundColor: '#fff3cd',
                             border: '1px solid #ffc107',
@@ -3922,7 +3938,7 @@ export default function RoomLoaderPage() {
                   {((item.reminders && item.reminders.filter((r) => {
                     const id = r.reminder.id;
                     return id && !removedReminders.has(id);
-                  }).length > 0) || (addedItems[patient.id] && addedItems[patient.id].length > 0)) && (
+                  }).length > 0) || getAddedItemsForPatient(patient.id).length > 0) && (
                     <div
                       style={{
                         marginTop: '15px',
@@ -3953,11 +3969,11 @@ export default function RoomLoaderPage() {
                             const { totalFinal } = getAddedItemFinalPrice(pricingItem, quantity);
                             return sum + totalFinal;
                           }, 0) || 0) +
-                        (addedItems[patient.id]?.reduce((sum, item, itemIdx) => {
+                        getAddedItemsForPatient(patient.id).reduce((sum, item, itemIdx) => {
                           const quantity = resolveQty(addedItemQuantities[`${patient.id}-${itemIdx}`]);
                           const { totalFinal } = getAddedItemFinalPrice(item, quantity);
                           return sum + totalFinal;
-                        }, 0) || 0)
+                        }, 0)
                       ).toFixed(2)}
                       </div>
                     </div>

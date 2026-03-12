@@ -31,8 +31,11 @@ import {
   Cell,
 } from 'recharts';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
-import { fetchDoctorMonth, type DoctorMonthDay } from '../api/appointments';
+import { fetchDoctorMonth, type DoctorMonthDay, type DoctorMonthAppt } from '../api/appointments';
 import { fetchDriveTime } from '../api/driveTime';
+
+/** Appointment with optional doctorId (set when merging multi-doctor data for multi-pet detection). */
+type ApptWithDoctor = DoctorMonthAppt & { doctorId?: string };
 
 dayjs.extend(utc);
 dayjs.extend(isoWeek);
@@ -86,6 +89,55 @@ function normalizeAppointmentType(name: string | undefined): string {
   if (s.toLowerCase().startsWith('tech appointment')) return 'Tech appointment';
   if (OTHER_APPT_TYPES.has(s.toLowerCase())) return 'Other';
   return s;
+}
+
+/** True if this appointment type should be hidden from time-spent analytics (e.g. Block). */
+function isBlockAppointmentType(name: string | undefined): boolean {
+  const s = ((name != null ? String(name).trim() : '') || '').toLowerCase();
+  return s === 'block' || s === 'personal block' || s.startsWith('block');
+}
+
+/**
+ * Multi-pet appointments: same doctor, same start time = one block. For each such block we emit
+ * one virtual appt per pet with type "multipet-{normalizedType}" and serviceMinutes = blockLength / N.
+ * Single appointments are left unchanged.
+ */
+function processMultiPet(
+  days: { date: string; appts: ApptWithDoctor[] }[]
+): { date: string; appts: { appointmentType?: string; serviceMinutes?: number }[] }[] {
+  return days.map((day) => {
+    const appts = (day.appts ?? []).filter((a) => !isBlockAppointmentType(a.appointmentType));
+    const key = (a: ApptWithDoctor) => `${a.doctorId ?? ''}|${a.startIso ?? ''}`;
+    const bySlot = new Map<string, ApptWithDoctor[]>();
+    for (const a of appts) {
+      const k = key(a);
+      if (!bySlot.has(k)) bySlot.set(k, []);
+      bySlot.get(k)!.push(a);
+    }
+    const out: { appointmentType?: string; serviceMinutes?: number }[] = [];
+    for (const group of bySlot.values()) {
+      const n = group.length;
+      const blockMinutes = Number.isFinite(group[0]?.serviceMinutes) ? group[0]!.serviceMinutes! : 0;
+      if (n > 1) {
+        const perPetMinutes = blockMinutes / n;
+        for (const a of group) {
+          const baseType = normalizeAppointmentType(a.appointmentType);
+          out.push({
+            appointmentType: `multipet-${baseType}`,
+            serviceMinutes: Math.round(perPetMinutes * 10) / 10,
+          });
+        }
+      } else {
+        for (const a of group) {
+          out.push({
+            appointmentType: a.appointmentType,
+            serviceMinutes: Number.isFinite(a.serviceMinutes) ? a.serviceMinutes : 0,
+          });
+        }
+      }
+    }
+    return { date: day.date, appts: out };
+  });
 }
 
 /** Aggregate appts into buckets (key -> sumByType, countByType). */
@@ -298,7 +350,7 @@ export default function TimeSpentAnalyticsPage() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [rawDays, setRawDays] = useState<{ date: string; appts: DoctorMonthDay['appts'] }[]>([]);
+  const [rawDays, setRawDays] = useState<{ date: string; appts: ApptWithDoctor[] }[]>([]);
   const [driveTimeRawData, setDriveTimeRawData] = useState<
     { date: string; totalDriveMinutes: number; averageDriveMinutes: number | null }[]
   >([]);
@@ -306,6 +358,8 @@ export default function TimeSpentAnalyticsPage() {
   const [driveTimeDoctorId, setDriveTimeDoctorId] = useState<string>(ALL_DVMS);
   const [driveTimeGroupBy, setDriveTimeGroupBy] = useState<GroupByOption>('day');
   const [driveTimeLoading, setDriveTimeLoading] = useState(false);
+  /** Chart shows either regular (single) appointment types only or multi-pet types only. */
+  const [timeSpentViewMode, setTimeSpentViewMode] = useState<'regular' | 'multipet'>('regular');
 
   const start = range.from.startOf('day');
   const end = range.to.startOf('day');
@@ -344,13 +398,15 @@ export default function TimeSpentAnalyticsPage() {
           return;
         }
 
-        const requests: Promise<{ days: DoctorMonthDay[] }>[] = [];
+        const requests: Promise<{ days: DoctorMonthDay[]; doctorId: string }>[] = [];
         if (doctorId === ALL_DVMS) {
           for (const p of providers) {
+            const docId = String(p.id ?? p.pimsId ?? '');
             for (const { year, month } of monthPairs) {
               requests.push(
-                fetchDoctorMonth(year, month, String(p.id ?? p.pimsId ?? '')).then((r) => ({
+                fetchDoctorMonth(year, month, docId).then((r) => ({
                   days: r.days ?? [],
+                  doctorId: docId,
                 }))
               );
             }
@@ -358,7 +414,10 @@ export default function TimeSpentAnalyticsPage() {
         } else {
           for (const { year, month } of monthPairs) {
             requests.push(
-              fetchDoctorMonth(year, month, doctorId).then((r) => ({ days: r.days ?? [] }))
+              fetchDoctorMonth(year, month, doctorId).then((r) => ({
+                days: r.days ?? [],
+                doctorId,
+              }))
             );
           }
         }
@@ -366,17 +425,20 @@ export default function TimeSpentAnalyticsPage() {
         const results = await Promise.all(requests);
         if (!alive) return;
 
-        const byDate = new Map<string, { date: string; appts: DoctorMonthDay['appts'] }>();
-        for (const { days } of results) {
+        const byDate = new Map<string, { date: string; appts: ApptWithDoctor[] }>();
+        for (const { days, doctorId: docId } of results) {
           for (const day of days) {
             const date = day?.date?.slice(0, 10);
             if (!date) continue;
+            const apptsWithDoctor: ApptWithDoctor[] = (day.appts ?? []).map((a) => ({
+              ...a,
+              doctorId: docId,
+            }));
             const existing = byDate.get(date);
-            const appts = (day.appts ?? []) as DoctorMonthDay['appts'];
             if (existing) {
-              existing.appts = [...(existing.appts ?? []), ...appts];
+              existing.appts = [...existing.appts, ...apptsWithDoctor];
             } else {
-              byDate.set(date, { date, appts });
+              byDate.set(date, { date, appts: apptsWithDoctor });
             }
           }
         }
@@ -400,6 +462,22 @@ export default function TimeSpentAnalyticsPage() {
       alive = false;
     };
   }, [startStr, endStr, doctorId, monthPairs.length, providers.length]);
+
+  /** Days with multi-pet slots converted to multipet-{type} and per-pet service minutes. */
+  const processedDays = useMemo(() => processMultiPet(rawDays), [rawDays]);
+
+  /** View data for chart/summary: show only regular or only multi-pet types. */
+  const viewDays = useMemo(() => {
+    const isMultipet = (type: string | undefined) =>
+      String(type ?? '').startsWith('multipet-');
+    return processedDays.map((day) => ({
+      ...day,
+      appts: (day.appts ?? []).filter((a) => {
+        const multipet = isMultipet(a.appointmentType);
+        return timeSpentViewMode === 'multipet' ? multipet : !multipet;
+      }),
+    }));
+  }, [processedDays, timeSpentViewMode]);
 
   useEffect(() => {
     const dates = dateRange(start, end);
@@ -462,10 +540,10 @@ export default function TimeSpentAnalyticsPage() {
 
   const chartData = useMemo(() => {
     if (loading) return [];
-    if (groupBy === 'week') return buildAvgMinutesByWeekByType(start, end, rawDays);
-    if (groupBy === 'month') return buildAvgMinutesByMonthByType(start, end, rawDays);
-    return buildAvgMinutesByDayByType(start, end, rawDays);
-  }, [loading, start, end, rawDays, groupBy]);
+    if (groupBy === 'week') return buildAvgMinutesByWeekByType(start, end, viewDays);
+    if (groupBy === 'month') return buildAvgMinutesByMonthByType(start, end, viewDays);
+    return buildAvgMinutesByDayByType(start, end, viewDays);
+  }, [loading, start, end, viewDays, groupBy]);
 
   const { data: chartDataOrdered, maxSlots } = useMemo(
     () => orderChartRowsByValuePerPeriod(chartData),
@@ -478,7 +556,7 @@ export default function TimeSpentAnalyticsPage() {
   const timeSpentSummaryByType = useMemo(() => {
     const totalByType = new Map<string, number>();
     const countByType = new Map<string, number>();
-    for (const day of rawDays) {
+    for (const day of viewDays) {
       for (const a of day.appts ?? []) {
         const typeName = normalizeAppointmentType(a.appointmentType);
         const mins = Number.isFinite(a.serviceMinutes) ? a.serviceMinutes! : 0;
@@ -499,7 +577,7 @@ export default function TimeSpentAnalyticsPage() {
     const grandCount = list.reduce((sum, x) => sum + x.count, 0);
     const overallAvg = grandCount > 0 ? grandTotal / grandCount : 0;
     return { list, grandTotal, grandCount, overallAvg };
-  }, [rawDays]);
+  }, [viewDays]);
 
   const doctorOptions = useMemo(() => {
     const list: { id: string; label: string }[] = [{ id: ALL_DVMS, label: 'All DVMs' }];
@@ -644,6 +722,18 @@ export default function TimeSpentAnalyticsPage() {
           />
           <CardContent>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2, mb: 2 }}>
+              <FormControl size="small" sx={{ minWidth: 200 }}>
+                <InputLabel id="time-spent-view-mode-label">View</InputLabel>
+                <Select
+                  labelId="time-spent-view-mode-label"
+                  value={timeSpentViewMode}
+                  label="View"
+                  onChange={(e) => setTimeSpentViewMode(e.target.value as 'regular' | 'multipet')}
+                >
+                  <MenuItem value="regular">Regular only</MenuItem>
+                  <MenuItem value="multipet">Multi-pet only</MenuItem>
+                </Select>
+              </FormControl>
               <FormControl size="small" sx={{ minWidth: 200 }}>
                 <InputLabel id="time-spent-doctor-label">Doctor</InputLabel>
                 <Select
