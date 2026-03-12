@@ -1125,6 +1125,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       metadata: (() => {
         const meta: Record<string, any> = {
           petId: pet.id,
+          petName: pet.name ?? '',
           agreementSignature: agreementSignature.trim(),
           billingPreference: billingKey,
           addOns,
@@ -1151,6 +1152,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     const metadata = (() => {
       const meta: Record<string, any> = {
         petId: pet.id,
+        petName: pet.name ?? '',
         planName: chosenPlan?.name ?? selectedPlanExplicit,
         billingPreference: effectiveBillingPreference,
         addOns,

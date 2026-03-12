@@ -310,11 +310,26 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         throw new Error('Subscription plan ID is missing for this selection.');
       }
 
+      // Use pet name from form (state.petName or from membershipTransaction.metadata as set by MembershipSignup)
+      const petNameForPayload =
+        (state.petName && String(state.petName).trim()) ||
+        (state.membershipTransaction?.metadata?.petName && String(state.membershipTransaction.metadata.petName).trim()) ||
+        '';
+
+      const isNewClientMembership = fromModal && !userId;
+      // For new clients, petId field must contain the pet's name (from the appointment form)
+      const petIdForPayload =
+        isNewClientMembership && petNameForPayload !== ''
+          ? petNameForPayload
+          : state.petId ?? '';
+
       const membershipTransactionPayload = state.membershipTransaction
         ? {
             ...state.membershipTransaction,
             metadata: {
               ...(state.membershipTransaction.metadata ?? {}),
+              ...(petIdForPayload !== '' && { petId: petIdForPayload }),
+              ...(petNameForPayload !== '' && { petName: petNameForPayload }),
             },
           }
         : undefined;
@@ -334,6 +349,8 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         customerName: state.customerName ?? undefined,
         metadata: {
           ...(state.metadata ?? {}),
+          ...(petIdForPayload !== '' && { petId: petIdForPayload }),
+          ...(petNameForPayload !== '' && { petName: petNameForPayload }),
           cardholderName: cardholderName.trim(),
           billingAddress: {
             addressLine1: addressLine1.trim(),
