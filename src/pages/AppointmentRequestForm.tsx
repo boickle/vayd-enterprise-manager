@@ -1035,6 +1035,8 @@ export default function AppointmentRequestForm() {
       return lower === 'euthanasia' || lower === 'quality of life';
     }
   );
+  const isExploreMembershipsVisible =
+    isOnSubmitStep && hasEligiblePetsForMembership && !shouldHideMembershipForAppointmentTypes;
 
   // Fetch membership status for logged-in client so we can hide signup for pets that already have membership
   useEffect(() => {
@@ -7149,24 +7151,26 @@ export default function AppointmentRequestForm() {
           <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#111827', marginBottom: '12px' }}>
             Thank You!
           </h1>
-          <p style={{ fontSize: '16px', color: '#6b7280', marginBottom: '32px' }}>
+          <p style={{ fontSize: '16px', color: '#6b7280', marginBottom: isLoggedIn ? '32px' : 0 }}>
             Your appointment request has been submitted successfully. We'll get back to you shortly!
           </p>
-          <button
-            onClick={() => navigate('/client-portal')}
-            style={{
-              padding: '12px 24px',
-              backgroundColor: '#10b981',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '8px',
-              fontSize: '14px',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            Return to Portal
-          </button>
+          {isLoggedIn && (
+            <button
+              onClick={() => navigate('/client-portal')}
+              style={{
+                padding: '12px 24px',
+                backgroundColor: '#10b981',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '14px',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Return to Portal
+            </button>
+          )}
         </div>
         </div>
 
@@ -7471,27 +7475,49 @@ export default function AppointmentRequestForm() {
           </div>
         )}
 
-        {isOnSubmitStep && hasEligiblePetsForMembership && !shouldHideMembershipForAppointmentTypes && (
+        {isExploreMembershipsVisible && (
           <div style={{ marginTop: '20px', textAlign: 'center' }}>
+            <style>{`
+              @keyframes exploreMembershipsPopIn {
+                0% { transform: scale(0.92); opacity: 0.6; box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
+                50% { transform: scale(1.06); opacity: 1; box-shadow: 0 0 0 8px rgba(15, 118, 110, 0.15); }
+                100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
+              }
+              @keyframes exploreMembershipsPulse {
+                0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(15, 118, 110, 0.35); }
+                50% { transform: scale(1.04); box-shadow: 0 0 20px 4px rgba(15, 118, 110, 0.4); }
+              }
+              .appt-form-explore-memberships-btn {
+                animation: exploreMembershipsPopIn 0.5s ease-out forwards,
+                           exploreMembershipsPulse 2.2s ease-in-out 0.6s infinite;
+              }
+              .appt-form-explore-memberships-btn:hover {
+                animation: none;
+                transform: scale(1.05);
+                box-shadow: 0 0 20px 4px rgba(15, 118, 110, 0.35);
+              }
+            `}</style>
             <p style={{ fontSize: '18px', fontWeight: 700, color: '#111827', marginBottom: '12px' }}>
               Secure your access to your One-Team today.
             </p>
             <button
               type="button"
+              className="appt-form-explore-memberships-btn"
               onClick={() => {
                 setSelectedMembershipPetId(null);
                 setMembershipModalStep('choose-pet');
                 setShowMembershipModal(true);
               }}
               style={{
-                padding: '10px 20px',
+                padding: '12px 24px',
                 backgroundColor: 'transparent',
                 color: '#0f766e',
-                border: '1px solid #0f766e',
+                border: '2px solid #0f766e',
                 borderRadius: '8px',
-                fontSize: '14px',
-                fontWeight: 600,
+                fontSize: '15px',
+                fontWeight: 700,
                 cursor: 'pointer',
+                transition: 'transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease',
               }}
             >
               Explore memberships
@@ -7500,6 +7526,33 @@ export default function AppointmentRequestForm() {
         )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '32px', gap: '12px' }}>
+          <style>{`
+            @keyframes apptFormSubmitPopIn {
+              0% { transform: scale(0.92); opacity: 0.6; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+              50% { transform: scale(1.06); opacity: 1; box-shadow: 0 0 0 8px rgba(16, 185, 129, 0.25); }
+              100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+            }
+            @keyframes apptFormSubmitPulse {
+              0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+              50% { transform: scale(1.04); box-shadow: 0 0 20px 4px rgba(16, 185, 129, 0.5); }
+            }
+            .appt-form-submit-btn {
+              animation: apptFormSubmitPopIn 0.5s ease-out forwards,
+                         apptFormSubmitPulse 2.2s ease-in-out 0.6s infinite;
+            }
+            .appt-form-submit-btn:hover:not(:disabled) {
+              animation: none;
+              transform: scale(1.05);
+              box-shadow: 0 0 20px 4px rgba(16, 185, 129, 0.45);
+            }
+            @keyframes apptFormSubmitArrowBounce {
+              0%, 100% { transform: translateX(0); opacity: 1; }
+              50% { transform: translateX(4px); opacity: 0.9; }
+            }
+            .appt-form-submit-arrow {
+              animation: apptFormSubmitArrowBounce 1.2s ease-in-out infinite;
+            }
+          `}</style>
           {currentPage !== 'intro' && currentPage !== 'existing-client' && (
             <button
               type="button"
@@ -7519,24 +7572,31 @@ export default function AppointmentRequestForm() {
             </button>
           )}
           <div style={{ flex: 1 }} />
-          <button
-            type="button"
-            onClick={handleNext}
-            disabled={submitting}
-            style={{
-              padding: '12px 24px',
-              backgroundColor: '#10b981',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '8px',
-              fontSize: '14px',
-              fontWeight: 600,
-              cursor: submitting ? 'not-allowed' : 'pointer',
-              opacity: submitting ? 0.6 : 1,
-            }}
-          >
-            {submitting ? 'Submitting...' : (currentPage === 'request-visit-continued' || currentPage === 'euthanasia-continued') ? 'Submit' : 'Next'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {(currentPage === 'request-visit-continued' || currentPage === 'euthanasia-continued') && !isExploreMembershipsVisible && (
+              <span className="appt-form-submit-arrow" style={{ color: '#10b981', fontSize: '28px', fontWeight: 700, lineHeight: 1 }} aria-hidden>→</span>
+            )}
+            <button
+              type="button"
+              className={(currentPage === 'request-visit-continued' || currentPage === 'euthanasia-continued') && !isExploreMembershipsVisible ? 'appt-form-submit-btn' : undefined}
+              onClick={handleNext}
+              disabled={submitting}
+              style={{
+                padding: '12px 24px',
+                backgroundColor: '#10b981',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '14px',
+                fontWeight: 600,
+                cursor: submitting ? 'not-allowed' : 'pointer',
+                opacity: submitting ? 0.6 : 1,
+                transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+              }}
+            >
+              {submitting ? 'Submitting...' : (currentPage === 'request-visit-continued' || currentPage === 'euthanasia-continued') ? 'Submit' : 'Next'}
+            </button>
+          </div>
         </div>
         </div>
       </div>

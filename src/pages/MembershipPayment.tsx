@@ -129,7 +129,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const locationState = location.state as PaymentNavigationState | undefined;
   const fromModal = props?.fromModal === true;
   const state = fromModal ? (props?.initialState ?? locationState) : locationState;
-  const { userEmail } = useAuth() as any;
+  const { userEmail, userId } = useAuth() as any;
 
   const [loadingScript, setLoadingScript] = useState(true);
   const [initializingPaymentForm, setInitializingPaymentForm] = useState(false);
@@ -521,7 +521,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
           </section>
         )}
 
-        {!state.returnUrl && (
+        {!state.returnUrl && !(fromModal && !userId) && (
           <div className="cp-card" style={{ marginTop: 24, padding: 20, background: '#f0f9ff', border: '1px solid #bae6fd' }}>
             <p className="cp-muted" style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>
               <strong>NOTE:</strong> If you want to sign-up another pet from your household or if you want to make an appointment for {state.petName}, please{' '}
