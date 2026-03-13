@@ -95,6 +95,18 @@ function getItemId(item: SearchableItem): number | undefined {
   return item.inventoryItem?.id ?? (item as any).procedure?.id ?? item.lab?.id;
 }
 
+/** Extract code from a SearchableItem (procedure, lab, or inventory) for summaryForPdf. */
+function getSearchItemCode(item: SearchableItem | null | undefined): string | undefined {
+  if (!item) return undefined;
+  return (item as any).lab?.code ?? (item as any).procedure?.code ?? (item as any).inventoryItem?.code ?? undefined;
+}
+
+/** Extract code from a display item (reminder/added/trip fee row) for summaryForPdf. */
+function getCodeFromDisplayItem(item: any): string | undefined {
+  if (!item) return undefined;
+  return item.code ?? getSearchItemCode(item?.searchableItem) ?? undefined;
+}
+
 /** Build a SearchableItem from a row with id, name, price, itemType (for check-item-pricing lookup). */
 function rowToSearchableItem(row: { id?: number | null; name?: string; price?: number | string | null; itemType?: string; type?: string; code?: string }): SearchableItem | null {
   const id = row.id;
@@ -1392,13 +1404,14 @@ export default function PublicRoomLoaderForm() {
     const storeTax = storeSubtotal * storeTaxRate;
     grandTotal += storeSubtotal + storeTax;
 
-    // Store additional items: always include name, quantity, price for backend summary
+    // Store additional items: always include name, quantity, price, code (sku) for backend summary
     const storeAdditionalItemsPayload = storeAdditionalItems.map((item) => ({
       id: item.id,
       name: item.name,
       quantity: 1,
       price: Number(item.price),
       sku: item.sku,
+      code: item.sku ?? (item as any).code,
     }));
 
     // Explicitly include commonly selected items (summary_common_* keys) so they always appear in the JSON
@@ -1547,6 +1560,23 @@ export default function PublicRoomLoaderForm() {
     });
 
     // --- summaryForPdf: structure mirrors Summary & Total page for identical PDF rendering ---
+    /** Extract membership-related pricing for backend PDF. Omitted when no membership applies. */
+    const getMembershipInfoForPdf = (pricing: any): Record<string, unknown> | undefined => {
+      const wp = pricing?.wellnessPlanPricing;
+      if (!wp) return undefined;
+      const hasMembership =
+        wp.hasCoverage || (wp as any)?.priceAdjustedByMembership || (wp.originalPrice != null && wp.adjustedPrice != null && wp.originalPrice !== wp.adjustedPrice);
+      if (!hasMembership) return undefined;
+      return {
+        hasCoverage: wp.hasCoverage,
+        priceAdjustedByMembership: (wp as any)?.priceAdjustedByMembership,
+        membershipPlanName: wp.membershipPlanName ?? undefined,
+        originalPrice: wp.originalPrice,
+        adjustedPrice: wp.adjustedPrice,
+        membershipDiscountAmount: wp.membershipDiscountAmount,
+        isWithinLimit: wp.isWithinLimit,
+      };
+    };
     type PdfRow = {
       type: 'visitConsult' | 'tripFee' | 'reminder' | 'vaccine' | 'lab' | 'common';
       name: string;
@@ -1557,6 +1587,10 @@ export default function PublicRoomLoaderForm() {
       uncheckable?: boolean;
       crossedOut?: boolean;
       fecalReplacedBy?: string;
+      /** Item code for backend/API use */
+      code?: string;
+      /** Membership/care plan info for backend PDF display */
+      wellnessPlanPricing?: Record<string, unknown>;
     };
     const pdfPets: Array<{ patientId: number | undefined; patientName: string; rows: PdfRow[]; subtotal: number; commonSectionLabel?: string }> = [];
     remindersByPet.forEach((entry, petIdx) => {
@@ -1596,6 +1630,7 @@ export default function PublicRoomLoaderForm() {
       let petSubtotal = 0;
 
       uncheckableDisplay.forEach(({ item }: { item: any }) => {
+        const pricing = item.wellnessPlanPricing != null ? { wellnessPlanPricing: item.wellnessPlanPricing } : (item.searchableItem ? getClientPricing(patientId, item.searchableItem) : null);
         const price = item.searchableItem != null ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) ?? 0);
         const qty = Number(item.quantity) || 1;
         const lineTotal = price * qty;
@@ -1609,20 +1644,32 @@ export default function PublicRoomLoaderForm() {
           checked: true,
           uncheckable: true,
           crossedOut: false,
+          code: getCodeFromDisplayItem(item),
+          wellnessPlanPricing: getMembershipInfoForPdf(pricing),
         });
       });
       tripFeeItems.forEach((item: any) => {
+        const pricing = item.wellnessPlanPricing != null ? { wellnessPlanPricing: item.wellnessPlanPricing } : (item.searchableItem ? getClientPricing(patientId, item.searchableItem) : null);
         const price = item.searchableItem != null ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) ?? 0);
         const qty = Number(item.quantity) || 1;
         const lineTotal = price * qty;
         petSubtotal += lineTotal;
-        rows.push({ type: 'tripFee', name: item.name, quantity: qty, price, lineTotal });
+        rows.push({
+          type: 'tripFee',
+          name: item.name,
+          quantity: qty,
+          price,
+          lineTotal,
+          code: getCodeFromDisplayItem(item),
+          wellnessPlanPricing: getMembershipInfoForPdf(pricing),
+        });
       });
       checkableDisplay.forEach(({ item, idx }: { item: any; idx: number }) => {
         const isFecalReplaced = hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0;
         const is4dxReplaced = (hasPhrase(item, '4dx') || hasPhrase(item, 'heartworm')) && fourDxReplacedBy.length > 0;
         const recKey = `pet${petIdx}_rec_${idx}`;
         const isChecked = (isFecalReplaced || is4dxReplaced) ? false : formData[recKey] !== false;
+        const pricing = item.wellnessPlanPricing != null ? { wellnessPlanPricing: item.wellnessPlanPricing } : (item.searchableItem ? getClientPricing(patientId, item.searchableItem) : null);
         const price = item.searchableItem != null ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) ?? 0);
         const qty = Number(item.quantity) || 1;
         const isReplaced = isFecalReplaced || is4dxReplaced;
@@ -1638,10 +1685,13 @@ export default function PublicRoomLoaderForm() {
           uncheckable: false,
           crossedOut: isReplaced,
           fecalReplacedBy: isReplaced ? (isFecalReplaced ? fecalReplacedBy.join(' or ') : fourDxReplacedBy.join(' or ')) : undefined,
+          code: getCodeFromDisplayItem(item),
+          wellnessPlanPricing: getMembershipInfoForPdf(pricing),
         });
       });
 
       (Object.values(optedInVaccinesByPatientId[patientId] || {}).filter(Boolean) as SearchableItem[]).forEach((item) => {
+        const pricing = getClientPricing(patientId, item);
         const p = getClientAdjustedPrice(patientId, item) ?? getSearchItemPrice(item);
         if (p != null) {
           petSubtotal += p;
@@ -1651,42 +1701,51 @@ export default function PublicRoomLoaderForm() {
             quantity: 1,
             price: p,
             lineTotal: p,
+            code: getSearchItemCode(item),
+            wellnessPlanPricing: getMembershipInfoForPdf(pricing),
           });
         }
       });
 
-      const labRows: { name: string; price: number }[] = [];
+      const labRows: { name: string; price: number; code?: string; wellnessPlanPricing?: Record<string, unknown> }[] = [];
       if (earlyDetectionYes && formData[`summary_exclude_lab_early_detection_feline_${patientId}`] !== true) {
+        const pricing = getClientPricing(patientId, earlyDetectionFelineItem);
         const p = getClientAdjustedPrice(patientId, earlyDetectionFelineItem) ?? getSearchItemPrice(earlyDetectionFelineItem);
-        if (p != null) labRows.push({ name: 'Early Detection Panel - Feline', price: p });
+        if (p != null) labRows.push({ name: 'Early Detection Panel - Feline', price: p, code: getSearchItemCode(earlyDetectionFelineItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
       }
       if (earlyDetectionCanineYes && formData[`summary_exclude_lab_early_detection_canine_${patientId}`] !== true) {
+        const pricing = getClientPricing(patientId, earlyDetectionCanineItem);
         const p = getClientAdjustedPrice(patientId, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem);
-        if (p != null) labRows.push({ name: 'Early Detection Panel - Canine', price: p });
+        if (p != null) labRows.push({ name: 'Early Detection Panel - Canine', price: p, code: getSearchItemCode(earlyDetectionCanineItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
       }
       if (seniorFelineYes && formData[`summary_exclude_lab_senior_feline_${patientId}`] !== true) {
+        const pricing = getClientPricing(patientId, seniorFelineItem);
         const p = getClientAdjustedPrice(patientId, seniorFelineItem) ?? getSearchItemPrice(seniorFelineItem);
-        if (p != null) labRows.push({ name: 'Senior Screen Feline', price: p });
+        if (p != null) labRows.push({ name: 'Senior Screen Feline', price: p, code: getSearchItemCode(seniorFelineItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
       }
       if (seniorCaninePanelVal === 'standard' && formData[`summary_exclude_lab_senior_canine_standard_${patientId}`] !== true) {
+        const pricing = getClientPricing(patientId, seniorCanineStandardItem);
         const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem);
-        if (p != null) labRows.push({ name: 'Senior Screen - Standard Comprehensive Panel', price: p });
+        if (p != null) labRows.push({ name: 'Senior Screen - Standard Comprehensive Panel', price: p, code: getSearchItemCode(seniorCanineStandardItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
       }
       if (seniorCaninePanelVal === 'extended' && formData[`summary_exclude_lab_senior_canine_extended_${patientId}`] !== true) {
+        const pricing = getClientPricing(patientId, seniorCanineExtendedItem);
         const p = getClientAdjustedPrice(patientId, seniorCanineExtendedItem) ?? getSearchItemPrice(seniorCanineExtendedItem);
-        if (p != null) labRows.push({ name: 'Senior Screen - Extended Comprehensive Panel', price: p });
+        if (p != null) labRows.push({ name: 'Senior Screen - Extended Comprehensive Panel', price: p, code: getSearchItemCode(seniorCanineExtendedItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
       }
       if (seniorFelineTwoPanelVal === 'standard' && formData[`summary_exclude_lab_senior_feline_two_standard_${patientId}`] !== true) {
+        const pricing = getClientPricing(patientId, seniorCanineStandardItem);
         const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem);
-        if (p != null) labRows.push({ name: 'Senior Screen Feline - Standard Panel', price: p });
+        if (p != null) labRows.push({ name: 'Senior Screen Feline - Standard Panel', price: p, code: getSearchItemCode(seniorCanineStandardItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
       }
       if (seniorFelineTwoPanelVal === 'extended' && formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] !== true) {
+        const pricing = getClientPricing(patientId, seniorFelineExtendedItem);
         const p = getClientAdjustedPrice(patientId, seniorFelineExtendedItem) ?? getSearchItemPrice(seniorFelineExtendedItem);
-        if (p != null) labRows.push({ name: 'Senior Screen Feline - Extended Panel', price: p });
+        if (p != null) labRows.push({ name: 'Senior Screen Feline - Extended Panel', price: p, code: getSearchItemCode(seniorFelineExtendedItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
       }
-      labRows.forEach(({ name, price }) => {
+      labRows.forEach(({ name, price, code, wellnessPlanPricing }) => {
         petSubtotal += price;
-        rows.push({ type: 'lab', name, quantity: 1, price, lineTotal: price });
+        rows.push({ type: 'lab', name, quantity: 1, price, lineTotal: price, code, wellnessPlanPricing });
       });
 
       const existingNames = new Set<string>();
@@ -1715,6 +1774,7 @@ export default function PublicRoomLoaderForm() {
         const commonKey = `summary_common_${patientId}_${itemId}`;
         const isChecked = formData[commonKey] === true;
         if (!isChecked) return; // Only include common items when selected
+        const pricing = getClientPricing(patientId, item);
         const price = getClientAdjustedPrice(patientId, item) ?? getSearchItemPrice(item) ?? 0;
         petSubtotal += price;
         rows.push({
@@ -1724,6 +1784,8 @@ export default function PublicRoomLoaderForm() {
           price,
           lineTotal: price,
           checked: true,
+          code: getSearchItemCode(item),
+          wellnessPlanPricing: getMembershipInfoForPdf(pricing),
         });
       });
 
@@ -1736,13 +1798,45 @@ export default function PublicRoomLoaderForm() {
       });
     });
 
+    // Sync lab rows from summaryLineItems into pdfPets so they stay consistent (fixes extended panel missing for some pets)
+    const compFecalName = comprehensiveFecalItem?.name ?? 'Comprehensive Fecal';
+    const labItemToCode: Record<string, string | undefined> = {
+      'Early Detection Panel - Feline': getSearchItemCode(earlyDetectionFelineItem) ?? undefined,
+      'Early Detection Panel - Canine': getSearchItemCode(earlyDetectionCanineItem) ?? undefined,
+      'Senior Screen Feline': getSearchItemCode(seniorFelineItem) ?? undefined,
+      'Senior Screen - Standard Comprehensive Panel': getSearchItemCode(seniorCanineStandardItem) ?? undefined,
+      'Senior Screen - Extended Comprehensive Panel': getSearchItemCode(seniorCanineExtendedItem) ?? undefined,
+      'Senior Screen Feline - Standard Panel': getSearchItemCode(seniorCanineStandardItem) ?? undefined,
+      'Senior Screen Feline - Extended Panel': getSearchItemCode(seniorFelineExtendedItem) ?? undefined,
+      [compFecalName]: getSearchItemCode(comprehensiveFecalItem) ?? undefined,
+    };
+    summaryLineItems
+      .filter((li) => li.category === 'lab' && li.patientId != null)
+      .forEach((labItem) => {
+        const pet = pdfPets.find((p) => p.patientId === labItem.patientId);
+        if (!pet) return;
+        const alreadyHas = pet.rows.some((r) => r.type === 'lab' && r.name === labItem.name);
+        if (!alreadyHas) {
+          const code = labItemToCode[labItem.name];
+          const qty = labItem.quantity || 1;
+          pet.rows.push({
+            type: 'lab',
+            name: labItem.name,
+            quantity: qty,
+            price: labItem.price,
+            lineTotal: labItem.price * qty,
+            code,
+          });
+        }
+      });
+
     const summaryForPdf = {
       title: 'Pre-Visit Check-In',
       instruction: "We've put together a personalized plan based on your pet's needs and our medical recommendations. You can review each item below, make adjustments, and see pricing clearly upfront so you feel informed and confident before your visit.",
       pets: pdfPets,
       additionalItems: {
         label: 'Additional items',
-        items: storeAdditionalItemsPayload.map((i) => ({ name: i.name, quantity: i.quantity, price: i.price })),
+        items: storeAdditionalItemsPayload.map((i) => ({ name: i.name, quantity: i.quantity, price: i.price, code: (i as any).code ?? i.sku })),
         subtotal: storeSubtotal,
         taxLabel: 'Sales tax (5.5%)',
         taxRate: storeTaxRate,
@@ -3500,6 +3594,16 @@ export default function PublicRoomLoaderForm() {
             <p style={{ fontSize: '14px', color: '#555', marginTop: '4px', marginBottom: '12px' }}>
               (Please uncheck any items you do not want)
             </p>
+            {currentCarePlanPatient?.notesToClient?.trim() && (
+              <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: '#e7f3ff', borderRadius: '6px', border: '1px solid #b6d4fe' }}>
+                <h4 style={{ margin: '0 0 8px', fontSize: '15px', fontWeight: 600, color: '#0a58ca' }}>
+                  Extra notes from your team about their recommendations:
+                </h4>
+                <p style={{ margin: 0, fontSize: '15px', color: '#333', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                  {currentCarePlanPatient.notesToClient}
+                </p>
+              </div>
+            )}
             {(() => {
               const nameLower = (n: string | undefined) => (n ?? '').toLowerCase();
               const hasPhrase = (item: { name?: string }, phrase: string) => nameLower(item.name).includes(phrase);

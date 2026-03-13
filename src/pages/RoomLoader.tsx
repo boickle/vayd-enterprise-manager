@@ -19,6 +19,7 @@ import {
   type SearchableItem,
 } from '../api/roomLoader';
 import { http } from '../api/http';
+import { Heart } from 'lucide-react';
 import { KeyValue } from '../components/KeyValue';
 import { evetPatientLink, evetClientLink } from '../utils/evet';
 import './RoomLoader.css';
@@ -300,6 +301,9 @@ export default function RoomLoaderPage() {
         if (savedForm.appointmentReasons) {
           setAppointmentReasons(savedForm.appointmentReasons);
         }
+        if (savedForm.notesToClient != null && typeof savedForm.notesToClient === 'object') {
+          setNotesToClient(savedForm.notesToClient as Record<number, string>);
+        }
         if (savedForm.arrivalWindows) {
           const merged: Record<number, string> = { ...savedForm.arrivalWindows };
           data?.appointments?.forEach((appt: any) => {
@@ -482,6 +486,7 @@ export default function RoomLoaderPage() {
           const reasonsFromSent: Record<number, string> = {};
           const answersFromSent: Record<number, { mobility: boolean | null; labWork: boolean | null }> = {};
           const vaccinesFromSent: Record<number, { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean; sharps: boolean }> = {};
+          const notesFromSent: Record<number, string> = {};
           const addedFromSent: Record<number, SearchableItem[]> = {};
           const addedQtyFromSent: Record<string, number> = {};
           const confirmedFromSent = new Set<number>();
@@ -490,6 +495,9 @@ export default function RoomLoaderPage() {
             const patientId = sp.patientId;
             if (patientId == null) return;
 
+            if (sp.notesToClient != null && typeof sp.notesToClient === 'string') {
+              notesFromSent[patientId] = sp.notesToClient;
+            }
             if (sp.arrivalWindow?.start && sp.arrivalWindow?.end) {
               const start = DateTime.fromISO(sp.arrivalWindow.start);
               const end = DateTime.fromISO(sp.arrivalWindow.end);
@@ -547,6 +555,7 @@ export default function RoomLoaderPage() {
           setAppointmentReasons(reasonsFromSent);
           setPetAnswers(answersFromSent);
           setVaccineCheckboxes(vaccinesFromSent);
+          setNotesToClient(notesFromSent);
           setReminderQuantities(reminderQtyFromSent);
           setAddedItems(addedFromSent);
           setAddedItemQuantities(addedQtyFromSent);
@@ -691,6 +700,10 @@ export default function RoomLoaderPage() {
       clientHasNoEmail: boolean;
       /** Token for public PDF URL when completed */
       token?: string | null;
+      /** True if any patient in this room loader is a care plan member */
+      hasMemberPatient: boolean;
+      /** Membership plan name(s) when hasMemberPatient is true */
+      membershipNames: string[];
     }> = [];
 
     roomLoaders.forEach((rl) => {
@@ -801,6 +814,15 @@ export default function RoomLoaderPage() {
         });
       });
 
+      const hasMemberPatient = rl.patients?.some((p) => p.isMember === true) ?? false;
+      const membershipNames = Array.from(
+        new Set(
+          (rl.patients ?? [])
+            .filter((p) => p.isMember === true)
+            .map((p) => (p.membershipName?.trim() || null) ?? 'Membership')
+        )
+      );
+
       rows.push({
         roomLoaderId: rl.id,
         apptDate,
@@ -815,6 +837,8 @@ export default function RoomLoaderPage() {
         roomLoader: rl,
         clientHasNoEmail,
         token: rl.token ?? null,
+        hasMemberPatient,
+        membershipNames,
       });
     });
 
@@ -879,6 +903,7 @@ export default function RoomLoaderPage() {
     setAddedItemQuantities({});
     setAppointmentReasons({});
     setVaccineCheckboxes({});
+    setNotesToClient({});
   }
 
   async function handleDownloadPdf(roomLoaderId: number, e: React.MouseEvent) {
@@ -1257,11 +1282,13 @@ export default function RoomLoaderPage() {
   };
   // Store edited reason for appointment for each patient (keyed by patient.id)
   const [appointmentReasons, setAppointmentReasons] = useState<Record<number, string>>({});
+  /** Notes to send to client per pet (e.g. explaining items); shown at bottom of each pet section; included in each patient object in sent-to-client payload */
+  const [notesToClient, setNotesToClient] = useState<Record<number, string>>({});
   // Store edited arrival window for each patient (keyed by patient.id)
   const [arrivalWindows, setArrivalWindows] = useState<Record<number, string>>({});
   // Store checkbox states for each patient (keyed by patient.id)
   const [vaccineCheckboxes, setVaccineCheckboxes] = useState<Record<number, { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean; sharps: boolean }>>({});
-  
+
   // Loading state for sending to client
   const [sendingToClient, setSendingToClient] = useState(false);
   // Loading state for saving form
@@ -1699,6 +1726,7 @@ export default function RoomLoaderPage() {
           bordatella: vaccines.bordatella,
           sharps: vaccines.sharps,
         },
+        notesToClient: (notesToClient[patient.id] ?? '')?.trim() || undefined,
       };
     });
 
@@ -2055,6 +2083,7 @@ export default function RoomLoaderPage() {
         addedItemQuantities: addedItemQuantities,
         appointmentReasons: appointmentReasons,
         arrivalWindows: arrivalWindows,
+        notesToClient: notesToClient,
         petAnswers: petAnswers,
         vaccineCheckboxes: vaccineCheckboxes,
         reminderCorrections: reminderCorrections,
@@ -2463,7 +2492,25 @@ export default function RoomLoaderPage() {
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.appointmentType}</td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.doctor}</td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.clientName}</td>
-                    <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.pets.join(', ')}</td>
+                    <td style={{ padding: '12px', border: '1px solid #ddd' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                        {row.pets.join(', ')}
+                        {row.hasMemberPatient && (
+                          <span
+                            title={row.membershipNames.length > 0 ? row.membershipNames.join(', ') : 'Member'}
+                            aria-label={row.membershipNames.length > 0 ? row.membershipNames.join(', ') : 'Member'}
+                          >
+                            <Heart
+                              size={16}
+                              fill="#e91e63"
+                              color="#e91e63"
+                              style={{ flexShrink: 0 }}
+                              aria-hidden
+                            />
+                          </span>
+                        )}
+                      </span>
+                    </td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' }}>
                         <span
@@ -2557,7 +2604,23 @@ export default function RoomLoaderPage() {
                 </div>
                 <div className="room-loader-mobile-card-row">
                   <span className="room-loader-mobile-card-label">Pets</span>
-                  <span className="room-loader-mobile-card-value">{row.pets.join(', ')}</span>
+                  <span className="room-loader-mobile-card-value" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                    {row.pets.join(', ')}
+                    {row.hasMemberPatient && (
+                      <span
+                        title={row.membershipNames.length > 0 ? row.membershipNames.join(', ') : 'Member'}
+                        aria-label={row.membershipNames.length > 0 ? row.membershipNames.join(', ') : 'Member'}
+                      >
+                        <Heart
+                          size={16}
+                          fill="#e91e63"
+                          color="#e91e63"
+                          style={{ flexShrink: 0 }}
+                          aria-hidden
+                        />
+                      </span>
+                    )}
+                  </span>
                 </div>
                 <div className="room-loader-mobile-card-badges">
                   <span className="room-loader-status-badge" style={{ backgroundColor: sentBg }}>
@@ -4257,6 +4320,30 @@ export default function RoomLoaderPage() {
                       })()}
                     </div>
                   </div>
+                </div>
+
+                {/* Notes to send to client (per pet) */}
+                <div style={{ marginTop: '20px', marginBottom: '0' }}>
+                  <h4 style={{ marginBottom: '10px', color: '#555' }}>Notes to send to client</h4>
+                  <p style={{ marginBottom: '8px', fontSize: '14px', color: '#666' }}>
+                    (e.g. explaining what items you put on there and why, etc.)
+                  </p>
+                  <textarea
+                    value={notesToClient[patient.id] ?? ''}
+                    onChange={(e) => setNotesToClient((prev) => ({ ...prev, [patient.id]: e.target.value }))}
+                    placeholder="Optional notes to include when sending to client..."
+                    style={{
+                      width: '100%',
+                      minHeight: '80px',
+                      padding: '12px',
+                      fontSize: '14px',
+                      border: '1px solid #ced4da',
+                      borderRadius: '4px',
+                      fontFamily: 'inherit',
+                      resize: 'vertical',
+                      boxSizing: 'border-box',
+                    }}
+                  />
                 </div>
               </div>
             );
