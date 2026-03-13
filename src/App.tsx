@@ -360,6 +360,8 @@ export default function App() {
             }
           />
           <Route path="/client-portal/request-appointment" element={<AppointmentRequestForm />} />
+          {/* Public membership signup when started from appointment request (no auth required) */}
+          <Route path="/client-portal/request-appointment/membership-signup" element={<MembershipSignup />} />
 
           {/* Public survey (no login) – exact path and any subpath (e.g. duplicate path in email link) */}
           <Route path="/survey/post-appointment" element={<PostAppointmentSurvey />} />

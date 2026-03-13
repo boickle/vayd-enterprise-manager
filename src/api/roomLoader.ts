@@ -277,6 +277,8 @@ export type SentToClientPatient = {
   appointmentIds?: number[];
   appointmentReason?: string;
   originalAppointmentReason?: string;
+  /** Notes from employee to client (e.g. explaining items); included per patient in sent-to-client payload */
+  notesToClient?: string;
 };
 
 export type SentToClient = {
