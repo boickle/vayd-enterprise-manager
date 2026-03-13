@@ -11,6 +11,19 @@ export type EtaHouseholdInput = {
   endIso?: string | null;
 };
 
+/** Selected routing candidate slot so backend can merge and assign correct positionInDay/ETAs */
+export type EtaRequestCandidateSlot = {
+  insertionIndex: number; // 0-based (e.g. 4 for 5th stop)
+  positionInDay: number; // 1-based (e.g. 5)
+  suggestedStartIso: string;
+  lat?: number;
+  lon?: number;
+  serviceMinutes?: number;
+  overrunSeconds?: number;
+  depotEndIso?: string;
+  arrivalWindow?: { windowStartIso?: string; windowEndIso?: string };
+};
+
 export type EtaRequest = {
   doctorId: string;
   date: string; // 'YYYY-MM-DD'
@@ -18,6 +31,8 @@ export type EtaRequest = {
   startDepot?: Depot; // optional start depot
   endDepot?: Depot; // optional end depot  ← (fix comment)
   useTraffic?: boolean;
+  /** When present, backend places candidate at this slot and uses suggestedStartIso for ETA */
+  candidateSlot?: EtaRequestCandidateSlot;
 };
 
 /** Per-stop row from ETA API; driveFromPrev is drive from previous stop (or depot) to this stop. */

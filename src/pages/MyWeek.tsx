@@ -648,10 +648,35 @@ export default function MyWeek(props: MyWeekProps = {}) {
           list.map(async (day) => {
             if (day.households.length === 0)
               return day;
+            // Visit order for ETA: when this day has the selected routing candidate (virtualAppt), put
+            // existing households first and the candidate at insertionIndex so the backend gets correct order.
+            const hasVirtual = virtualAppt && virtualAppt.date === day.date;
+            const insertionIndex = Math.max(
+              0,
+              Math.min(day.households.length - 1, virtualAppt?.insertionIndex ?? day.households.length - 1)
+            );
+            let householdsInVisitOrder: typeof day.households;
+            if (hasVirtual) {
+              const existing = day.households.filter((h) => !h.isPreview);
+              const virtualH = day.households.find((h) => h.isPreview);
+              const sortedExisting = [...existing].sort(
+                (a, b) => (a.firstApptIndex ?? 999) - (b.firstApptIndex ?? 999)
+              );
+              householdsInVisitOrder =
+                virtualH != null
+                  ? [
+                      ...sortedExisting.slice(0, insertionIndex),
+                      virtualH,
+                      ...sortedExisting.slice(insertionIndex),
+                    ]
+                  : sortedExisting;
+            } else {
+              householdsInVisitOrder = day.households;
+            }
             const payload = {
               doctorId: selectedDoctorId || '',
               date: day.date,
-              households: day.households.map((h) => ({
+              households: householdsInVisitOrder.map((h) => ({
                 key: h.key,
                 lat: h.lat,
                 lon: h.lon,
@@ -664,6 +689,29 @@ export default function MyWeek(props: MyWeekProps = {}) {
               startDepot: day.startDepot ? { lat: day.startDepot.lat, lon: day.startDepot.lon } : undefined,
               endDepot: day.endDepot ? { lat: day.endDepot.lat, lon: day.endDepot.lon } : undefined,
               useTraffic: false,
+              ...(hasVirtual &&
+              virtualAppt &&
+              Number.isFinite(virtualAppt.lat) &&
+              Number.isFinite(virtualAppt.lon)
+                ? {
+                    candidateSlot: {
+                      insertionIndex,
+                      positionInDay: virtualAppt.positionInDay ?? insertionIndex + 1,
+                      suggestedStartIso: virtualAppt.suggestedStartIso,
+                      lat: virtualAppt.lat,
+                      lon: virtualAppt.lon,
+                      serviceMinutes: virtualAppt.serviceMinutes,
+                      overrunSeconds: (virtualAppt as any).overrunSeconds,
+                      arrivalWindow:
+                        virtualAppt.arrivalWindow?.windowStartIso && virtualAppt.arrivalWindow?.windowEndIso
+                          ? {
+                              windowStartIso: virtualAppt.arrivalWindow.windowStartIso,
+                              windowEndIso: virtualAppt.arrivalWindow.windowEndIso,
+                            }
+                          : undefined,
+                    },
+                  }
+                : {}),
             } as any;
             const result: any = await fetchEtas(payload);
             const valid = (s?: string | null) => !!(s && DateTime.fromISO(s).isValid);
@@ -771,7 +819,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
     return () => {
       on = false;
     };
-  }, [showByDriveTime, dayDataList, selectedDoctorId]);
+  }, [showByDriveTime, dayDataList, selectedDoctorId, virtualAppt]);
 
   /** Earliest start in the week minus 30 min (honor earliest day start); grid end stays 19:30. */
   const weekGrid = useMemo(() => {
