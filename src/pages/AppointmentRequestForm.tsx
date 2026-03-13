@@ -23,6 +23,12 @@ import { listMembershipTransactions } from '../api/membershipTransactions';
 import MembershipSignup from './MembershipSignup';
 import MembershipPayment from './MembershipPayment';
 
+/** Set to true to show doctor selection. Code preserved for potential re-enable. */
+const SHOW_DOCTOR_SELECTION = false;
+
+/** Set to true to show time slots ("Here are some possible dates and times..."). Code preserved for potential re-enable. */
+const SHOW_TIME_SLOTS = false;
+
 type FormData = {
   // Intro page
   email: string;
@@ -2277,8 +2283,8 @@ export default function AppointmentRequestForm() {
         if (!formData.aftercarePreference) newErrors.aftercarePreference = 'Please select an aftercare preference';
         break;
       case 'request-visit-continued':
-        // Validate doctor selection
-        if (!formData.preferredDoctorExisting && !formData.preferredDoctor) {
+        // Validate doctor selection (skipped when SHOW_DOCTOR_SELECTION is false)
+        if (SHOW_DOCTOR_SELECTION && !formData.preferredDoctorExisting && !formData.preferredDoctor) {
           newErrors.preferredDoctorExisting = 'Please select a preferred doctor';
         }
         
@@ -2297,14 +2303,17 @@ export default function AppointmentRequestForm() {
         const isNotUrgentTimeframe = formData.howSoon && !isUrgentTimeframe;
         
         // Validate preferredDateTimeVisit in all scenarios where it's displayed
-        if (hasEuthanasiaPet || isUrgentTimeframe || formData.noneOfWorkForMeVisit || (isNotUrgentTimeframe && !loadingSlots && recommendedSlots.length === 0)) {
+        // When SHOW_TIME_SLOTS is false, always require it for non-urgent (no slot UI shown)
+        const shouldRequirePreferredDateTimeVisit = hasEuthanasiaPet || isUrgentTimeframe || formData.noneOfWorkForMeVisit
+          || (isNotUrgentTimeframe && (!SHOW_TIME_SLOTS || (!loadingSlots && recommendedSlots.length === 0)));
+        if (shouldRequirePreferredDateTimeVisit) {
           if (!formData.preferredDateTimeVisit?.trim()) {
             newErrors.preferredDateTimeVisit = 'Please enter any preferences for days/times for us to visit you';
           }
         }
         
-        // If not urgent/emergent and slots are available, require selections or "none work" option
-        if (isNotUrgentTimeframe) {
+        // If not urgent/emergent and slots are available (and shown), require selections or "none work" option
+        if (isNotUrgentTimeframe && SHOW_TIME_SLOTS) {
           if (recommendedSlots.length > 0) {
             const selectedCount = Object.keys(formData.selectedDateTimeSlotsVisit || {}).length;
             if (selectedCount === 0 && !formData.noneOfWorkForMeVisit) {
@@ -6634,7 +6643,8 @@ export default function AppointmentRequestForm() {
               </h1>
             </div>
 
-            {/* Doctor Selection - at the top of request visit page */}
+            {/* Doctor Selection - at the top of request visit page. Hidden via SHOW_DOCTOR_SELECTION flag. */}
+            {SHOW_DOCTOR_SELECTION && (
             <div style={{ marginBottom: '32px', padding: '20px', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
                 Select a Doctor <span style={{ color: '#ef4444' }}>*</span>{' '}
@@ -6734,6 +6744,7 @@ export default function AppointmentRequestForm() {
                 );
               })()}
             </div>
+            )}
 
             {/* If any pet is selected for euthanasia, show message instead of time slots */}
             {hasEuthanasiaPet ? (
@@ -6823,10 +6834,54 @@ export default function AppointmentRequestForm() {
                   return null;
                 })()}
                 
-                {/* Show time slots if not urgent/emergent */}
+                {/* When time slots are hidden, show preferences textarea for non-urgent case */}
                 {(() => {
                   const isUrgentTimeframe = formData.howSoon === 'Emergent – today' || formData.howSoon === 'Urgent – within 24–48 hours';
-                  return !isUrgentTimeframe;
+                  return !hasEuthanasiaPet && !isUrgentTimeframe && !SHOW_TIME_SLOTS;
+                })() && (
+                  <>
+                    <div style={{ 
+                      marginBottom: '20px', 
+                      padding: '16px',
+                      backgroundColor: '#f0fdf4',
+                      border: '1px solid #10b981',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      color: '#065f46',
+                    }}>
+                      Once you submit the form, a Client Liaison will be in touch with you shortly about available times.
+                    </div>
+                    <div style={{ marginBottom: '20px' }}>
+                      <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                        Please enter any preferences for days/times for us to visit you. <span style={{ color: '#ef4444' }}>*</span>
+                      </label>
+                      <textarea
+                        value={formData.preferredDateTimeVisit || ''}
+                        onChange={(e) => updateFormData('preferredDateTimeVisit', e.target.value)}
+                        rows={3}
+                        placeholder="Enter any preferences for days/times here..."
+                        style={{
+                          width: '100%',
+                          padding: '12px',
+                          border: errors.preferredDateTimeVisit ? '1px solid #ef4444' : '1px solid #d1d5db',
+                          borderRadius: '8px',
+                          fontSize: '14px',
+                          fontFamily: 'inherit',
+                        }}
+                      />
+                      {errors.preferredDateTimeVisit && (
+                        <div style={{ fontSize: '12px', color: '#ef4444', marginTop: '4px' }}>
+                          {errors.preferredDateTimeVisit}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+                
+                {/* Show time slots if not urgent/emergent. Hidden via SHOW_TIME_SLOTS flag. */}
+                {(() => {
+                  const isUrgentTimeframe = formData.howSoon === 'Emergent – today' || formData.howSoon === 'Urgent – within 24–48 hours';
+                  return !isUrgentTimeframe && SHOW_TIME_SLOTS;
                 })() && (
             <div style={{ marginBottom: '20px' }}>
               {loadingSlots && (
