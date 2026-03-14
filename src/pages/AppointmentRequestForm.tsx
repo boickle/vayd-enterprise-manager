@@ -3368,7 +3368,7 @@ export default function AppointmentRequestForm() {
                   marginBottom: '12px',
                 }}
               />
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr 1fr', gap: '12px' }}>
                 <input
                   type="text"
                   value={formData.physicalAddress?.city || ''}
@@ -3491,7 +3491,7 @@ export default function AppointmentRequestForm() {
                     {errors['mailingAddress.line1']}
                   </div>
                 )}
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr 1fr', gap: '12px' }}>
                   <input
                     type="text"
                     value={formData.mailingAddress?.city || ''}
@@ -4760,7 +4760,7 @@ export default function AppointmentRequestForm() {
                     }}
                   />
                   {errors['newPhysicalAddress.line1'] && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '-8px', marginBottom: '8px' }}>{errors['newPhysicalAddress.line1']}</div>}
-                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr 1fr', gap: '12px' }}>
                     <input
                       type="text"
                       value={formData.newPhysicalAddress?.city || ''}
