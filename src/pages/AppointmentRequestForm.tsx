@@ -278,6 +278,8 @@ export default function AppointmentRequestForm() {
   const [petIdsWithActiveOrPendingMembership, setPetIdsWithActiveOrPendingMembership] = useState<Set<string> | null>(null);
   // For logged-in users: pet ids (dbId or id) that have an active wellness plan (actual membership)
   const [petIdsWithActiveWellnessPlan, setPetIdsWithActiveWellnessPlan] = useState<Set<string> | null>(null);
+  // On submit step: user's answer to "Are you looking for ongoing care with a dedicated veterinary team?"
+  const [ongoingCareInterest, setOngoingCareInterest] = useState<'yes' | 'no' | null>(null);
 
   const [searchParams, setSearchParams] = useSearchParams();
   const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
@@ -3039,6 +3041,7 @@ export default function AppointmentRequestForm() {
         howDidYouHearAboutUs: formData.howDidYouHearAboutUs || undefined,
         anythingElse: formData.anythingElse || undefined,
         membershipInterest: formData.membershipInterest || undefined,
+        ongoingCareInterest: ongoingCareInterest || undefined,
         
         // Metadata
         submittedAt: new Date().toISOString(),
@@ -3104,6 +3107,7 @@ export default function AppointmentRequestForm() {
                               !!(formData.selectedDateTimeSlotsVisit && Object.keys(formData.selectedDateTimeSlotsVisit).length > 0),
         how_soon: formData.howSoon || undefined,
         membership_interest: formData.membershipInterest || undefined,
+        ongoing_care_interest: ongoingCareInterest || undefined,
       });
       
       setCurrentPage('success');
@@ -7531,52 +7535,93 @@ export default function AppointmentRequestForm() {
         )}
 
         {isExploreMembershipsVisible && (
-          <div style={{ marginTop: '20px', textAlign: 'center' }}>
-            <style>{`
-              @keyframes exploreMembershipsPopIn {
-                0% { transform: scale(0.92); opacity: 0.6; box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
-                50% { transform: scale(1.06); opacity: 1; box-shadow: 0 0 0 8px rgba(15, 118, 110, 0.15); }
-                100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
-              }
-              @keyframes exploreMembershipsPulse {
-                0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(15, 118, 110, 0.35); }
-                50% { transform: scale(1.04); box-shadow: 0 0 20px 4px rgba(15, 118, 110, 0.4); }
-              }
-              .appt-form-explore-memberships-btn {
-                animation: exploreMembershipsPopIn 0.5s ease-out forwards,
-                           exploreMembershipsPulse 2.2s ease-in-out 0.6s infinite;
-              }
-              .appt-form-explore-memberships-btn:hover {
-                animation: none;
-                transform: scale(1.05);
-                box-shadow: 0 0 20px 4px rgba(15, 118, 110, 0.35);
-              }
-            `}</style>
-            <p style={{ fontSize: '18px', fontWeight: 700, color: '#111827', marginBottom: '12px' }}>
-              Secure your access to your One-Team today.
+          <div style={{ marginTop: '20px' }}>
+            <p style={{ fontSize: '16px', fontWeight: 600, color: '#111827', marginBottom: '12px' }}>
+              Are you looking for ongoing care with a dedicated veterinary team?
             </p>
-            <button
-              type="button"
-              className="appt-form-explore-memberships-btn"
-              onClick={() => {
-                setSelectedMembershipPetId(null);
-                setMembershipModalStep('choose-pet');
-                setShowMembershipModal(true);
-              }}
-              style={{
-                padding: '12px 24px',
-                backgroundColor: 'transparent',
-                color: '#0f766e',
-                border: '2px solid #0f766e',
-                borderRadius: '8px',
-                fontSize: '15px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                transition: 'transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease',
-              }}
-            >
-              Explore memberships
-            </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '15px' }}>
+                <input
+                  type="radio"
+                  name="ongoing-care-interest"
+                  checked={ongoingCareInterest === 'yes'}
+                  onChange={() => setOngoingCareInterest('yes')}
+                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
+                />
+                Yes, tell me more
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '15px' }}>
+                <input
+                  type="radio"
+                  name="ongoing-care-interest"
+                  checked={ongoingCareInterest === 'no'}
+                  onChange={() => setOngoingCareInterest('no')}
+                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
+                />
+                Not right now
+              </label>
+            </div>
+
+            {ongoingCareInterest === 'yes' && (
+              <div style={{
+                marginTop: '20px',
+                padding: '20px',
+                backgroundColor: '#f0fdfa',
+                border: '1px solid #99f6e4',
+                borderRadius: '12px',
+              }}>
+                <p style={{ fontSize: '15px', color: '#374151', lineHeight: 1.6, marginBottom: '12px', fontWeight: 700 }}>
+                  One-Team Membership is designed for families who want ongoing, relationship-based care with the same trusted veterinary team.
+                </p>
+                <p style={{ fontSize: '14px', color: '#111827', marginBottom: '8px' }}>Members receive:</p>
+                <ul style={{ margin: '0 0 16px 20px', padding: 0, fontSize: '14px', color: '#374151', lineHeight: 1.7 }}>
+                  <li>Priority access to their dedicated veterinary One-Team</li>
+                  <li>Preferred booking for appointments</li>
+                  <li>Comprehensive Wellness care, including travel fees</li>
+                  <li>Vaccines and recommended screening labs</li>
+                  <li>After-hours telehealth support</li>
+                </ul>
+                <p style={{ fontSize: '15px', fontWeight: 700, color: '#374151', lineHeight: 1.6, marginBottom: '16px' }}>
+                  If you plan to use Vet At Your Door for ongoing care, you can explore and join One-Team Membership now before submitting your appointment request.
+                </p>
+                <style>{`
+                  @keyframes exploreMembershipsPopIn {
+                    0% { transform: scale(0.92); opacity: 0.6; box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
+                    50% { transform: scale(1.06); opacity: 1; box-shadow: 0 0 0 8px rgba(15, 118, 110, 0.15); }
+                    100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
+                  }
+                  .appt-form-view-membership-btn:hover {
+                    transform: scale(1.02);
+                    box-shadow: 0 0 20px 4px rgba(15, 118, 110, 0.35);
+                  }
+                `}</style>
+                <button
+                  type="button"
+                  className="appt-form-view-membership-btn"
+                  onClick={() => {
+                    setSelectedMembershipPetId(null);
+                    setMembershipModalStep('choose-pet');
+                    setShowMembershipModal(true);
+                  }}
+                  style={{
+                    padding: '12px 24px',
+                    backgroundColor: '#0f766e',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '15px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                  }}
+                >
+                  Review & Join Membership
+                </button>
+                <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '16px', fontStyle: 'italic' }}>
+                  Membership is optional. You can still submit your appointment request below.
+                </p>
+              </div>
+            )}
           </div>
         )}
 
