@@ -7842,10 +7842,10 @@ export default function AppointmentRequestForm() {
             {membershipModalStep === 'choose-pet' && (
               <>
                 <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
-                  Sign up for membership
+                  Explore membership
                 </h2>
                 <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px', lineHeight: 1.5 }}>
-                  Choose a pet to enroll in a membership plan. You can sign up additional pets after completing this one.
+                  Choose a pet to explore membership plans. You can explore memberships for additional pets after completing this one.
                 </p>
                 {membershipEligiblePets.length === 0 ? (
                   <>
@@ -7872,7 +7872,7 @@ export default function AppointmentRequestForm() {
                 ) : membershipEligiblePets.length === 1 ? (
                   <div style={{ marginBottom: '24px' }}>
                     <p style={{ fontSize: '15px', color: '#374151', marginBottom: '12px' }}>
-                      Sign up <strong>{membershipEligiblePets[0].name}</strong> for membership.
+                      Explore membership recommendations for <strong>{membershipEligiblePets[0].name}</strong>.
                     </p>
                     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                       <button
@@ -7889,7 +7889,7 @@ export default function AppointmentRequestForm() {
                           cursor: 'pointer',
                         }}
                       >
-                        Continue to membership signup
+                        Explore Membership Options
                       </button>
                       <button
                         type="button"
@@ -7912,7 +7912,7 @@ export default function AppointmentRequestForm() {
                 ) : (
                   <>
                     <p style={{ fontSize: '15px', color: '#374151', marginBottom: '12px' }}>
-                      Which pet would you like to sign up for membership?
+                      Which pet would you like to explore membership for?
                     </p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
                       {membershipEligiblePets.map((p) => (
@@ -7962,7 +7962,7 @@ export default function AppointmentRequestForm() {
                           cursor: selectedMembershipPetId ? 'pointer' : 'not-allowed',
                         }}
                       >
-                        Continue to membership signup
+                        Explore Membership Options
                       </button>
                       <button
                         type="button"
