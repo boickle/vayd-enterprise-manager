@@ -98,44 +98,92 @@ function isBlockAppointmentType(name: string | undefined): boolean {
 }
 
 /**
- * Multi-pet appointments: same doctor, same start time = one block. For each such block we emit
- * one virtual appt per pet with type "multipet-{normalizedType}" and serviceMinutes = blockLength / N.
- * Single appointments are left unchanged.
+ * Multi-pet detection:
+ * 1) Same client, same day, same start time: one block; if same duration divide by N, else use individual minutes.
+ * 2) Same client, same day, different start times: each appt is multipet with its own serviceMinutes.
+ * When client id is missing, only (1) applies via same doctor + same start time.
  */
 function processMultiPet(
   days: { date: string; appts: ApptWithDoctor[] }[]
 ): { date: string; appts: { appointmentType?: string; serviceMinutes?: number }[] }[] {
   return days.map((day) => {
     const appts = (day.appts ?? []).filter((a) => !isBlockAppointmentType(a.appointmentType));
-    const key = (a: ApptWithDoctor) => `${a.doctorId ?? ''}|${a.startIso ?? ''}`;
-    const bySlot = new Map<string, ApptWithDoctor[]>();
-    for (const a of appts) {
-      const k = key(a);
-      if (!bySlot.has(k)) bySlot.set(k, []);
-      bySlot.get(k)!.push(a);
-    }
+    const clientKey = (a: ApptWithDoctor) =>
+      a.clientId != null ? String(a.clientId) : (a.clientPimsId != null ? String(a.clientPimsId) : '');
+    const hasClient = (a: ApptWithDoctor) => clientKey(a) !== '';
+
     const out: { appointmentType?: string; serviceMinutes?: number }[] = [];
-    for (const group of bySlot.values()) {
-      const n = group.length;
-      const blockMinutes = Number.isFinite(group[0]?.serviceMinutes) ? group[0]!.serviceMinutes! : 0;
-      if (n > 1) {
-        const perPetMinutes = blockMinutes / n;
-        for (const a of group) {
-          const baseType = normalizeAppointmentType(a.appointmentType);
-          out.push({
-            appointmentType: `multipet-${baseType}`,
-            serviceMinutes: Math.round(perPetMinutes * 10) / 10,
-          });
-        }
-      } else {
-        for (const a of group) {
-          out.push({
-            appointmentType: a.appointmentType,
-            serviceMinutes: Number.isFinite(a.serviceMinutes) ? a.serviceMinutes : 0,
-          });
+
+    // Group by (doctorId, clientKey) for the day so we can treat "same client, multiple appts" as multi-pet
+    const byClient = new Map<string, ApptWithDoctor[]>();
+    for (const a of appts) {
+      const k = hasClient(a) ? `${a.doctorId ?? ''}|${clientKey(a)}` : `${a.doctorId ?? ''}|__no_client__|${a.startIso ?? ''}`;
+      if (!byClient.has(k)) byClient.set(k, []);
+      byClient.get(k)!.push(a);
+    }
+
+    for (const clientGroup of byClient.values()) {
+      const n = clientGroup.length;
+      const useMultipet = n > 1;
+      const isNoClientSlot = n === 1 && clientGroup[0] && !hasClient(clientGroup[0]);
+
+      if (isNoClientSlot) {
+        // Single appt with no client: output as regular (key was doctor|__no_client__|startIso so only one)
+        const a = clientGroup[0]!;
+        out.push({
+          appointmentType: a.appointmentType,
+          serviceMinutes: Number.isFinite(a.serviceMinutes) ? a.serviceMinutes : 0,
+        });
+        continue;
+      }
+
+      if (!useMultipet) {
+        // Single appt with client: regular
+        const a = clientGroup[0]!;
+        out.push({
+          appointmentType: a.appointmentType,
+          serviceMinutes: Number.isFinite(a.serviceMinutes) ? a.serviceMinutes : 0,
+        });
+        continue;
+      }
+
+      // Same client (or same slot when no client), multiple appts: sub-group by startIso
+      const bySlot = new Map<string, ApptWithDoctor[]>();
+      for (const a of clientGroup) {
+        const slot = a.startIso ?? '';
+        if (!bySlot.has(slot)) bySlot.set(slot, []);
+        bySlot.get(slot)!.push(a);
+      }
+
+      for (const slotGroup of bySlot.values()) {
+        const slotN = slotGroup.length;
+        const blockMinutes = Number.isFinite(slotGroup[0]?.serviceMinutes) ? slotGroup[0]!.serviceMinutes! : 0;
+        const allSameDuration =
+          slotN > 0 &&
+          slotGroup.every((a) => (Number.isFinite(a.serviceMinutes) ? a.serviceMinutes! : 0) === blockMinutes);
+
+        if (slotN > 1 && allSameDuration) {
+          const perPetMinutes = blockMinutes / slotN;
+          for (const a of slotGroup) {
+            const baseType = normalizeAppointmentType(a.appointmentType);
+            out.push({
+              appointmentType: `multipet-${baseType}`,
+              serviceMinutes: Math.round(perPetMinutes * 10) / 10,
+            });
+          }
+        } else {
+          for (const a of slotGroup) {
+            const baseType = normalizeAppointmentType(a.appointmentType);
+            const mins = Number.isFinite(a.serviceMinutes) ? a.serviceMinutes! : 0;
+            out.push({
+              appointmentType: `multipet-${baseType}`,
+              serviceMinutes: Math.round(mins * 10) / 10,
+            });
+          }
         }
       }
     }
+
     return { date: day.date, appts: out };
   });
 }
