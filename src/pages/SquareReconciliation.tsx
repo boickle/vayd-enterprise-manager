@@ -89,6 +89,9 @@ export default function SquareReconciliationPage() {
   const matchedCount = cc?.matched.length ?? 0;
   const unmatchedOursCount = cc?.unmatchedInOurs.length ?? 0;
   const unmatchedSquareCount = cc?.unmatchedInSquare.length ?? 0;
+  const matchedTotal = cc?.matched.reduce((sum, m) => sum + m.ours.amount, 0) ?? 0;
+  const unmatchedOursTotal = cc?.unmatchedInOurs.reduce((sum, p) => sum + p.amount, 0) ?? 0;
+  const unmatchedSquareTotal = cc?.unmatchedInSquare.reduce((sum, p) => sum + p.amountCents / 100, 0) ?? 0;
   const hasDiscrepancies = unmatchedOursCount > 0 || unmatchedSquareCount > 0;
 
   return (
@@ -154,7 +157,12 @@ export default function SquareReconciliationPage() {
                     <Typography variant="h5" fontWeight={700}>
                       {matchedCount}
                     </Typography>
-                    <Typography variant="caption">Payments in both systems</Typography>
+                    <Typography variant="body2" fontWeight={600} color="text.secondary" sx={{ mt: 0.5 }}>
+                      {fmtUSD(matchedTotal)}
+                    </Typography>
+                    <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
+                      Payments in both systems
+                    </Typography>
                   </CardContent>
                 </Card>
               </Grid>
@@ -169,7 +177,12 @@ export default function SquareReconciliationPage() {
                     <Typography variant="h5" fontWeight={700} color={unmatchedOursCount ? 'warning.main' : undefined}>
                       {unmatchedOursCount}
                     </Typography>
-                    <Typography variant="caption">In our system only</Typography>
+                    <Typography variant="body2" fontWeight={600} color="text.secondary" sx={{ mt: 0.5 }}>
+                      {fmtUSD(unmatchedOursTotal)}
+                    </Typography>
+                    <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
+                      In our system only
+                    </Typography>
                   </CardContent>
                 </Card>
               </Grid>
@@ -184,7 +197,12 @@ export default function SquareReconciliationPage() {
                     <Typography variant="h5" fontWeight={700} color={unmatchedSquareCount ? 'error.main' : undefined}>
                       {unmatchedSquareCount}
                     </Typography>
-                    <Typography variant="caption">In Square only</Typography>
+                    <Typography variant="body2" fontWeight={600} color="text.secondary" sx={{ mt: 0.5 }}>
+                      {fmtUSD(unmatchedSquareTotal)}
+                    </Typography>
+                    <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
+                      In Square only
+                    </Typography>
                   </CardContent>
                 </Card>
               </Grid>
@@ -209,7 +227,8 @@ export default function SquareReconciliationPage() {
                     <TableRow>
                       <TableCell><strong>Client</strong></TableCell>
                       <TableCell><strong>Payment Type</strong></TableCell>
-                      <TableCell align="right"><strong>Amount</strong></TableCell>
+                      <TableCell align="right"><strong>Amount (Ours)</strong></TableCell>
+                      <TableCell align="right"><strong>Matched Amount (Square)</strong></TableCell>
                       <TableCell><strong>Date</strong></TableCell>
                       <TableCell><strong>Match</strong></TableCell>
                       <TableCell><strong>Square ID</strong></TableCell>
@@ -221,6 +240,7 @@ export default function SquareReconciliationPage() {
                         <TableCell>{clientLabel(m.ours.client)}</TableCell>
                         <TableCell>{m.ours.paymentTypeName ?? '—'}</TableCell>
                         <TableCell align="right">{fmtUSD(m.ours.amount)}</TableCell>
+                        <TableCell align="right">{fmtUSD(m.square.amountCents / 100)}</TableCell>
                         <TableCell>{m.ours.date}</TableCell>
                         <TableCell>
                           <Chip size="small" label={m.matchMethod ?? '—'} variant="outlined" />
@@ -230,7 +250,7 @@ export default function SquareReconciliationPage() {
                     ))}
                     {matchedCount === 0 && (
                       <TableRow>
-                        <TableCell colSpan={6} align="center" sx={{ py: 4 }} color="text.secondary">
+                        <TableCell colSpan={7} align="center" sx={{ py: 4 }} color="text.secondary">
                           No matched payments in this range
                         </TableCell>
                       </TableRow>
