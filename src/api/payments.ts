@@ -198,3 +198,62 @@ export async function upgradeMembership(payload: MembershipUpgradeRequest): Prom
   const { data } = await http.post('/payment-processing/membership/upgrade', payload);
   return data;
 }
+
+// =========================
+// Payments Reconciliation (Square)
+// =========================
+
+export type ReconciliationClient = {
+  id: number;
+  firstName: string;
+  lastName: string;
+  email?: string;
+};
+
+export type ReconciliationPaymentOurs = {
+  id: number;
+  amount: number;
+  date: string;
+  depositDate?: string;
+  client?: ReconciliationClient;
+  paymentTypeName?: string;
+};
+
+export type ReconciliationPaymentSquare = {
+  id: string;
+  amountCents: number;
+  created_at: string;
+  cardholderName?: string;
+  buyerEmail?: string;
+};
+
+export type ReconciliationMatch = {
+  ours: ReconciliationPaymentOurs;
+  square: ReconciliationPaymentSquare;
+  matchMethod?: string;
+};
+
+export type PaymentsReconciliationResponse = {
+  start: string;
+  end: string;
+  practiceId: string | number | null;
+  byPaymentType?: Record<string, ReconciliationPaymentOurs[]>;
+  creditCardReconciliation: {
+    matched: ReconciliationMatch[];
+    unmatchedInOurs: ReconciliationPaymentOurs[];
+    unmatchedInSquare: ReconciliationPaymentSquare[];
+  };
+};
+
+/**
+ * Fetch payments reconciliation data between start/end.
+ * GET /analytics/payments/reconciliation?start=YYYY-MM-DD&end=YYYY-MM-DD
+ */
+export async function fetchPaymentsReconciliation(params: {
+  start: string;
+  end: string;
+  practiceId?: string | number;
+}): Promise<PaymentsReconciliationResponse> {
+  const { data } = await http.get('/analytics/payments/reconciliation', { params });
+  return data;
+}

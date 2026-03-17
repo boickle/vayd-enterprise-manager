@@ -10,6 +10,9 @@ const VeterinaryServicesDeliveredPage = React.lazy(
 const TimeSpentAnalyticsPage = React.lazy(
   () => import('./pages/TimeSpentAnalytics')
 );
+const SquareReconciliationPage = React.lazy(
+  () => import('./pages/SquareReconciliation')
+);
 
 export type AnalyticsTabPage = {
   path: string;
@@ -23,6 +26,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
   { path: 'vsd', label: 'Veterinary Services Delivered', element: <VeterinaryServicesDeliveredPage />, role: ['admin', 'superadmin'] },
   { path: 'time-spent', label: 'Time Spent', element: <TimeSpentAnalyticsPage />, role: ['admin', 'superadmin'] },
   { path: 'routing', label: 'Routing', element: <RoutingAnalyticsPage />, role: ['admin', 'superadmin'] },
+  { path: 'square-reconciliation', label: 'Square Reconciliation', element: <SquareReconciliationPage />, role: ['superadmin'] },
 ];
 
 export function getAnalyticsTabPages(): AnalyticsTabPage[] {

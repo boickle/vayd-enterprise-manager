@@ -23,6 +23,7 @@ export default function Analytics() {
 
   const visibleTabs = getAnalyticsTabPages().filter((tab) => matchesRole(tab.role, normalizedRoles));
   const canSeePayments = visibleTabs.some((t) => t.path === 'payments');
+  const canSeeSquareReconciliation = visibleTabs.some((t) => t.path === 'square-reconciliation');
 
   // When pathname changes, render only spinner first so it paints before the heavy child mounts.
   const pathnameRef = useRef(location.pathname);
@@ -48,7 +49,10 @@ export default function Analytics() {
     if (location.pathname === '/analytics/payments' && !canSeePayments) {
       navigate('/analytics/vsd', { replace: true });
     }
-  }, [isAdmin, location.pathname, canSeePayments, navigate]);
+    if (location.pathname === '/analytics/square-reconciliation' && !canSeeSquareReconciliation) {
+      navigate('/analytics/payments', { replace: true });
+    }
+  }, [isAdmin, location.pathname, canSeePayments, canSeeSquareReconciliation, navigate]);
 
   if (!isAdmin) {
     return null;
