@@ -634,8 +634,38 @@ export default function DoctorDay({
 
       if (households.length === 0) return;
 
-      // Keep the original order (do NOT filter out blocks anymore)
-      const ordered = households.map((h, viewIdx) => ({ h, viewIdx }));
+      // Visit order for ETA: when we have a selected routing candidate (virtualAppt), put existing
+      // households first (by firstApptIndex) and the candidate at insertionIndex so the backend
+      // gets the correct order (e.g. [existing1..4, candidate] for POST-LAST).
+      const hasVirtual = virtualAppt && virtualAppt.date === date;
+      const insertionIndex = Math.max(
+        0,
+        Math.min(households.length - 1, virtualAppt?.insertionIndex ?? households.length - 1)
+      );
+      const keyToHouseholdIndex = new Map(households.map((h, i) => [h.key, i]));
+
+      let ordered: { h: Household; viewIdx: number }[];
+      if (hasVirtual) {
+        const existing = households.filter((h) => !(h as any).isPreview);
+        const virtualH = households.find((h) => (h as any).isPreview);
+        const sortedExisting = [...existing].sort(
+          (a, b) => (a.firstApptIndex ?? 999) - (b.firstApptIndex ?? 999)
+        );
+        const inVisitOrder =
+          virtualH != null
+            ? [
+                ...sortedExisting.slice(0, insertionIndex),
+                virtualH,
+                ...sortedExisting.slice(insertionIndex),
+              ]
+            : sortedExisting;
+        ordered = inVisitOrder.map((h) => ({
+          h,
+          viewIdx: keyToHouseholdIndex.get(h.key) ?? 0,
+        }));
+      } else {
+        ordered = households.map((h, viewIdx) => ({ h, viewIdx }));
+      }
 
       // If there are zero routables, we still want blocks stamped, so keep going
 
@@ -648,7 +678,7 @@ export default function DoctorDay({
         selectedDoctorId ||
         '';
 
-      // Build payload: include ALL rows, but only provide lat/lon when routable
+      // Build payload: include ALL rows in visit order, but only provide lat/lon when routable
       const householdsPayload = ordered.map(({ h }) => {
         const isBlock = isBlockEntry({ ...h.primary, key: h.key });
         const isRoutable =
@@ -687,6 +717,29 @@ export default function DoctorDay({
         startDepot: startDepot ? { lat: startDepot.lat, lon: startDepot.lon } : undefined,
         endDepot: endDepot ? { lat: endDepot.lat, lon: endDepot.lon } : undefined,
         useTraffic: false,
+        ...(hasVirtual &&
+        virtualAppt &&
+        Number.isFinite(virtualAppt.lat) &&
+        Number.isFinite(virtualAppt.lon)
+          ? {
+              candidateSlot: {
+                insertionIndex,
+                positionInDay: virtualAppt.positionInDay ?? insertionIndex + 1,
+                suggestedStartIso: virtualAppt.suggestedStartIso,
+                lat: virtualAppt.lat,
+                lon: virtualAppt.lon,
+                serviceMinutes: virtualAppt.serviceMinutes,
+                overrunSeconds: (virtualAppt as any).overrunSeconds,
+                arrivalWindow:
+                  virtualAppt.arrivalWindow?.windowStartIso && virtualAppt.arrivalWindow?.windowEndIso
+                    ? {
+                        windowStartIso: virtualAppt.arrivalWindow.windowStartIso,
+                        windowEndIso: virtualAppt.arrivalWindow.windowEndIso,
+                      }
+                    : undefined,
+              },
+            }
+          : {}),
       } as any; // or `as EtaRequest` if you can import the type
 
       try {
@@ -897,7 +950,7 @@ export default function DoctorDay({
     return () => {
       on = false;
     };
-  }, [households, startDepot, endDepot, date, selectedDoctorId, schedStartIso]);
+  }, [households, startDepot, endDepot, date, selectedDoctorId, schedStartIso, virtualAppt]);
 
   /* ---------- Display order: byIndex order when ETA returned it ---------- */
   const displayHouseholds = useMemo(

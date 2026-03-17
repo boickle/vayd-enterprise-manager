@@ -467,7 +467,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const [plusExplicit, setPlusExplicit] = useState(false);
   const [starterAnswer, setStarterAnswer] = useState<'yes' | 'no' | null>(null);
   const [starterExplicit, setStarterExplicit] = useState(false);
-  const [comfortAnswer, setComfortAnswer] = useState<'yes' | 'no' | null>(null);
+  const [comfortAnswer, setComfortAnswer] = useState<'yes' | 'no' | null>('no');
   const [billingPreference, setBillingPreference] = useState<'monthly' | 'annual'>('monthly');
   const [appointmentsLoaded, setAppointmentsLoaded] = useState(false);
   const [hasAnyAppointments, setHasAnyAppointments] = useState(false);
@@ -1694,55 +1694,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       <section className="cp-section">
         <h2 className="cp-h2">Available Membership Plans</h2>
 
-        {pet && (
-          <div className="cp-card" style={{ padding: 20, marginBottom: 16 }}>
-            <p className="cp-muted" style={{ margin: '0 0 12px' }}>
-              Is {pet.name} in need of ongoing comfort care or support for a serious illness?
-            </p>
-            <div style={{ display: 'flex', gap: 12 }}>
-              <button
-                className="btn secondary"
-                type="button"
-                onClick={() => {
-                  setComfortAnswer('no');
-                  setSelectedPlanExplicit(null);
-                  setSelectedPlanId(null);
-                  setPlusExplicit(false);
-                  setBillingPreference('monthly');
-                }}
-                style={{
-                  background: comfortAnswer === 'no' ? '#4FB128' : '#4FB128',
-                  color: '#fff',
-                  opacity: comfortAnswer === 'no' ? 1 : 0.5,
-                  border: 'none',
-                }}
-              >
-                No
-              </button>
-              <button
-                className="btn secondary"
-                type="button"
-                onClick={() => {
-                  setComfortAnswer('yes');
-                  setSelectedPlanExplicit(null);
-                  setSelectedPlanId('comfort-care');
-                  setPlusExplicit(false);
-                  setBillingPreference('monthly');
-                }}
-                style={{
-                  background: comfortAnswer === 'yes' ? '#4FB128' : '#4FB128',
-                  color: '#fff',
-                  opacity: comfortAnswer === 'yes' ? 1 : 0.5,
-                  border: 'none',
-                }}
-              >
-                Yes, show Comfort Care
-              </button>
-            </div>
-          </div>
-        )}
-
-        {shouldAskStarter && pet && comfortAnswer !== 'yes' && (
+        {shouldAskStarter && pet && (
           <div className="cp-card" style={{ padding: 20, marginBottom: 16 }}>
             <p className="cp-muted" style={{ margin: '0 0 12px' }}>
               Has {pet.name} received more than one round of their core vaccines (like distemper)?
@@ -1808,28 +1760,6 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
           </div>
         )}
 
-        {comfortAnswer === 'yes' && pet && (
-          <div
-            className="cp-card"
-            style={{
-              padding: 20,
-              borderLeft: '4px solid #4FB128',
-              background: brandSoft,
-              marginBottom: 16,
-            }}
-          >
-            <strong style={{ display: 'block', fontSize: 16, marginBottom: 8 }}>
-              We recommend the Comfort Care Plan for {pet.name}.
-            </strong>
-            <p className="cp-muted" style={{ margin: '0 0 8px' }}>
-              It's a month-to-month hospice plan designed to support pets in their final stage of life with one in-person visit per month and compassionate, ongoing guidance.
-            </p>
-            <p className="cp-muted" style={{ margin: 0 }}>
-              You can also add PLUS if you'd like additional support or anticipate needing more frequent touch-points. Please note: PLUS can't be added later, so choose it at sign-up if you think {pet.name} may benefit.
-            </p>
-          </div>
-        )}
-
         {combinedError && (
           <div
             style={{
@@ -1874,15 +1804,13 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
           // - comfortAnswer is answered, AND
           // - if shouldAskStarter is true, then starterAnswer must also be answered
           //   (unless comfortAnswer is 'yes', in which case the starter question is hidden)
-          const canShowPlans = comfortAnswer != null && (comfortAnswer === 'yes' || !shouldAskStarter || starterAnswer != null);
+          const canShowPlans = !shouldAskStarter || starterAnswer != null;
           
           if (!canShowPlans) {
             return (
               <div className="cp-card" style={{ padding: 20, textAlign: 'center' }}>
                 <p className="cp-muted">
-                  {shouldAskStarter && starterAnswer == null
-                    ? 'Please answer both questions above to see recommended membership options.'
-                    : 'Answer the comfort care question above to see recommended membership options.'}
+                  Please answer the question above to see recommended membership options.
                 </p>
               </div>
             );
@@ -1902,13 +1830,13 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
             {(() => {
               const filteredPlans = plans
                 .filter((plan) => {
-                  if (plan.id === 'comfort-care') return comfortAnswer === 'yes';
-                  if (plan.id === 'golden') return comfortAnswer === 'no' && meetsGolden;
-                  if (plan.id === 'foundations') return comfortAnswer === 'no';
+                  if (plan.id === 'comfort-care') return false;
+                  if (plan.id === 'golden') return meetsGolden;
+                  if (plan.id === 'foundations') return true;
                   return false;
                 })
                 .sort((a, b) => {
-                  if (comfortAnswer === 'no' && meetsGolden) {
+                  if (meetsGolden) {
                     if (a.id === 'foundations') return -1;
                     if (b.id === 'foundations') return 1;
                     if (a.id === 'golden') return 1;
@@ -1917,16 +1845,13 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                   return 0;
                 });
 
-              const shouldShowStarterAddon = starterAnswer === 'no' && comfortAnswer !== 'yes';
+              const shouldShowStarterAddon = starterAnswer === 'no';
               
               return filteredPlans.flatMap((plan, index) => {
                 const planElements = [];
                 const isRecommended = 
-                  (comfortAnswer === 'no' && (
-                    plan.id === recommendedPlanId || 
-                    (!meetsGolden && plan.id === 'foundations')
-                  )) ||
-                  (comfortAnswer === 'yes' && plan.id === 'comfort-care');
+                  plan.id === recommendedPlanId || 
+                  (!meetsGolden && plan.id === 'foundations');
                 const tiers = (() => {
                   if (!petDetails.kind) return plan.pricing;
                   const filtered = plan.pricing.filter((tier) => !tier.species || tier.species === petDetails.kind);
@@ -2156,15 +2081,13 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                 <div className="cp-card-upper">
                   <div className="cp-card-head">
                     <h3>PLUS Add-on</h3>
-                    <div className="cp-card-sub">Annual Membership Plan (unless part of Comfort Care)</div>
+                    <div className="cp-card-sub">Annual Membership Plan</div>
                   </div>
                   <div className="cp-card-price">
                     <div className="cp-card-price-main">
                       49<span>/month</span>
                     </div>
-                    {comfortAnswer !== 'yes' && (
-                      <div className="cp-card-price-note">or 529 annually (10% discount!)</div>
-                    )}
+                    <div className="cp-card-price-note">or 529 annually (10% discount!)</div>
                   </div>
                 </div>
                 <div className="cp-card-body">

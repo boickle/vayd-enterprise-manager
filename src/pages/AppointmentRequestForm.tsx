@@ -23,6 +23,12 @@ import { listMembershipTransactions } from '../api/membershipTransactions';
 import MembershipSignup from './MembershipSignup';
 import MembershipPayment from './MembershipPayment';
 
+/** Set to true to show doctor selection. Code preserved for potential re-enable. */
+const SHOW_DOCTOR_SELECTION = false;
+
+/** Set to true to show time slots ("Here are some possible dates and times..."). Code preserved for potential re-enable. */
+const SHOW_TIME_SLOTS = false;
+
 type FormData = {
   // Intro page
   email: string;
@@ -272,6 +278,8 @@ export default function AppointmentRequestForm() {
   const [petIdsWithActiveOrPendingMembership, setPetIdsWithActiveOrPendingMembership] = useState<Set<string> | null>(null);
   // For logged-in users: pet ids (dbId or id) that have an active wellness plan (actual membership)
   const [petIdsWithActiveWellnessPlan, setPetIdsWithActiveWellnessPlan] = useState<Set<string> | null>(null);
+  // On submit step: user's answer to "Are you looking for ongoing care with a dedicated veterinary team?"
+  const [ongoingCareInterest, setOngoingCareInterest] = useState<'yes' | 'no' | null>(null);
 
   const [searchParams, setSearchParams] = useSearchParams();
   const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
@@ -2277,8 +2285,8 @@ export default function AppointmentRequestForm() {
         if (!formData.aftercarePreference) newErrors.aftercarePreference = 'Please select an aftercare preference';
         break;
       case 'request-visit-continued':
-        // Validate doctor selection
-        if (!formData.preferredDoctorExisting && !formData.preferredDoctor) {
+        // Validate doctor selection (skipped when SHOW_DOCTOR_SELECTION is false)
+        if (SHOW_DOCTOR_SELECTION && !formData.preferredDoctorExisting && !formData.preferredDoctor) {
           newErrors.preferredDoctorExisting = 'Please select a preferred doctor';
         }
         
@@ -2297,14 +2305,17 @@ export default function AppointmentRequestForm() {
         const isNotUrgentTimeframe = formData.howSoon && !isUrgentTimeframe;
         
         // Validate preferredDateTimeVisit in all scenarios where it's displayed
-        if (hasEuthanasiaPet || isUrgentTimeframe || formData.noneOfWorkForMeVisit || (isNotUrgentTimeframe && !loadingSlots && recommendedSlots.length === 0)) {
+        // When SHOW_TIME_SLOTS is false, always require it for non-urgent (no slot UI shown)
+        const shouldRequirePreferredDateTimeVisit = hasEuthanasiaPet || isUrgentTimeframe || formData.noneOfWorkForMeVisit
+          || (isNotUrgentTimeframe && (!SHOW_TIME_SLOTS || (!loadingSlots && recommendedSlots.length === 0)));
+        if (shouldRequirePreferredDateTimeVisit) {
           if (!formData.preferredDateTimeVisit?.trim()) {
             newErrors.preferredDateTimeVisit = 'Please enter any preferences for days/times for us to visit you';
           }
         }
         
-        // If not urgent/emergent and slots are available, require selections or "none work" option
-        if (isNotUrgentTimeframe) {
+        // If not urgent/emergent and slots are available (and shown), require selections or "none work" option
+        if (isNotUrgentTimeframe && SHOW_TIME_SLOTS) {
           if (recommendedSlots.length > 0) {
             const selectedCount = Object.keys(formData.selectedDateTimeSlotsVisit || {}).length;
             if (selectedCount === 0 && !formData.noneOfWorkForMeVisit) {
@@ -3030,6 +3041,7 @@ export default function AppointmentRequestForm() {
         howDidYouHearAboutUs: formData.howDidYouHearAboutUs || undefined,
         anythingElse: formData.anythingElse || undefined,
         membershipInterest: formData.membershipInterest || undefined,
+        ongoingCareInterest: ongoingCareInterest || undefined,
         
         // Metadata
         submittedAt: new Date().toISOString(),
@@ -3095,6 +3107,7 @@ export default function AppointmentRequestForm() {
                               !!(formData.selectedDateTimeSlotsVisit && Object.keys(formData.selectedDateTimeSlotsVisit).length > 0),
         how_soon: formData.howSoon || undefined,
         membership_interest: formData.membershipInterest || undefined,
+        ongoing_care_interest: ongoingCareInterest || undefined,
       });
       
       setCurrentPage('success');
@@ -3355,7 +3368,7 @@ export default function AppointmentRequestForm() {
                   marginBottom: '12px',
                 }}
               />
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr 1fr', gap: '12px' }}>
                 <input
                   type="text"
                   value={formData.physicalAddress?.city || ''}
@@ -3478,7 +3491,7 @@ export default function AppointmentRequestForm() {
                     {errors['mailingAddress.line1']}
                   </div>
                 )}
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr 1fr', gap: '12px' }}>
                   <input
                     type="text"
                     value={formData.mailingAddress?.city || ''}
@@ -4747,7 +4760,7 @@ export default function AppointmentRequestForm() {
                     }}
                   />
                   {errors['newPhysicalAddress.line1'] && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '-8px', marginBottom: '8px' }}>{errors['newPhysicalAddress.line1']}</div>}
-                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr 1fr', gap: '12px' }}>
                     <input
                       type="text"
                       value={formData.newPhysicalAddress?.city || ''}
@@ -6634,7 +6647,8 @@ export default function AppointmentRequestForm() {
               </h1>
             </div>
 
-            {/* Doctor Selection - at the top of request visit page */}
+            {/* Doctor Selection - at the top of request visit page. Hidden via SHOW_DOCTOR_SELECTION flag. */}
+            {SHOW_DOCTOR_SELECTION && (
             <div style={{ marginBottom: '32px', padding: '20px', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
                 Select a Doctor <span style={{ color: '#ef4444' }}>*</span>{' '}
@@ -6734,6 +6748,7 @@ export default function AppointmentRequestForm() {
                 );
               })()}
             </div>
+            )}
 
             {/* If any pet is selected for euthanasia, show message instead of time slots */}
             {hasEuthanasiaPet ? (
@@ -6823,10 +6838,54 @@ export default function AppointmentRequestForm() {
                   return null;
                 })()}
                 
-                {/* Show time slots if not urgent/emergent */}
+                {/* When time slots are hidden, show preferences textarea for non-urgent case */}
                 {(() => {
                   const isUrgentTimeframe = formData.howSoon === 'Emergent – today' || formData.howSoon === 'Urgent – within 24–48 hours';
-                  return !isUrgentTimeframe;
+                  return !hasEuthanasiaPet && !isUrgentTimeframe && !SHOW_TIME_SLOTS;
+                })() && (
+                  <>
+                    <div style={{ 
+                      marginBottom: '20px', 
+                      padding: '16px',
+                      backgroundColor: '#f0fdf4',
+                      border: '1px solid #10b981',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      color: '#065f46',
+                    }}>
+                      Once you submit the form, a Client Liaison will be in touch with you shortly about available times.
+                    </div>
+                    <div style={{ marginBottom: '20px' }}>
+                      <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                        Please enter any preferences for days/times for us to visit you. <span style={{ color: '#ef4444' }}>*</span>
+                      </label>
+                      <textarea
+                        value={formData.preferredDateTimeVisit || ''}
+                        onChange={(e) => updateFormData('preferredDateTimeVisit', e.target.value)}
+                        rows={3}
+                        placeholder="Enter any preferences for days/times here..."
+                        style={{
+                          width: '100%',
+                          padding: '12px',
+                          border: errors.preferredDateTimeVisit ? '1px solid #ef4444' : '1px solid #d1d5db',
+                          borderRadius: '8px',
+                          fontSize: '14px',
+                          fontFamily: 'inherit',
+                        }}
+                      />
+                      {errors.preferredDateTimeVisit && (
+                        <div style={{ fontSize: '12px', color: '#ef4444', marginTop: '4px' }}>
+                          {errors.preferredDateTimeVisit}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+                
+                {/* Show time slots if not urgent/emergent. Hidden via SHOW_TIME_SLOTS flag. */}
+                {(() => {
+                  const isUrgentTimeframe = formData.howSoon === 'Emergent – today' || formData.howSoon === 'Urgent – within 24–48 hours';
+                  return !isUrgentTimeframe && SHOW_TIME_SLOTS;
                 })() && (
             <div style={{ marginBottom: '20px' }}>
               {loadingSlots && (
@@ -7476,52 +7535,93 @@ export default function AppointmentRequestForm() {
         )}
 
         {isExploreMembershipsVisible && (
-          <div style={{ marginTop: '20px', textAlign: 'center' }}>
-            <style>{`
-              @keyframes exploreMembershipsPopIn {
-                0% { transform: scale(0.92); opacity: 0.6; box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
-                50% { transform: scale(1.06); opacity: 1; box-shadow: 0 0 0 8px rgba(15, 118, 110, 0.15); }
-                100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
-              }
-              @keyframes exploreMembershipsPulse {
-                0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(15, 118, 110, 0.35); }
-                50% { transform: scale(1.04); box-shadow: 0 0 20px 4px rgba(15, 118, 110, 0.4); }
-              }
-              .appt-form-explore-memberships-btn {
-                animation: exploreMembershipsPopIn 0.5s ease-out forwards,
-                           exploreMembershipsPulse 2.2s ease-in-out 0.6s infinite;
-              }
-              .appt-form-explore-memberships-btn:hover {
-                animation: none;
-                transform: scale(1.05);
-                box-shadow: 0 0 20px 4px rgba(15, 118, 110, 0.35);
-              }
-            `}</style>
-            <p style={{ fontSize: '18px', fontWeight: 700, color: '#111827', marginBottom: '12px' }}>
-              Secure your access to your One-Team today.
+          <div style={{ marginTop: '20px' }}>
+            <p style={{ fontSize: '16px', fontWeight: 600, color: '#111827', marginBottom: '12px' }}>
+              Are you looking for ongoing care with a dedicated veterinary team?
             </p>
-            <button
-              type="button"
-              className="appt-form-explore-memberships-btn"
-              onClick={() => {
-                setSelectedMembershipPetId(null);
-                setMembershipModalStep('choose-pet');
-                setShowMembershipModal(true);
-              }}
-              style={{
-                padding: '12px 24px',
-                backgroundColor: 'transparent',
-                color: '#0f766e',
-                border: '2px solid #0f766e',
-                borderRadius: '8px',
-                fontSize: '15px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                transition: 'transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease',
-              }}
-            >
-              Explore memberships
-            </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '15px' }}>
+                <input
+                  type="radio"
+                  name="ongoing-care-interest"
+                  checked={ongoingCareInterest === 'yes'}
+                  onChange={() => setOngoingCareInterest('yes')}
+                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
+                />
+                Yes, tell me more
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '15px' }}>
+                <input
+                  type="radio"
+                  name="ongoing-care-interest"
+                  checked={ongoingCareInterest === 'no'}
+                  onChange={() => setOngoingCareInterest('no')}
+                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
+                />
+                Not right now
+              </label>
+            </div>
+
+            {ongoingCareInterest === 'yes' && (
+              <div style={{
+                marginTop: '20px',
+                padding: '20px',
+                backgroundColor: '#f0fdfa',
+                border: '1px solid #99f6e4',
+                borderRadius: '12px',
+              }}>
+                <p style={{ fontSize: '15px', color: '#374151', lineHeight: 1.6, marginBottom: '12px', fontWeight: 700 }}>
+                  One-Team Membership is designed for families who want ongoing, relationship-based care with the same trusted veterinary team.
+                </p>
+                <p style={{ fontSize: '14px', color: '#111827', marginBottom: '8px' }}>Members receive:</p>
+                <ul style={{ margin: '0 0 16px 20px', padding: 0, fontSize: '14px', color: '#374151', lineHeight: 1.7 }}>
+                  <li>Priority access to their dedicated veterinary One-Team</li>
+                  <li>Preferred booking for appointments</li>
+                  <li>Comprehensive Wellness care, including travel fees</li>
+                  <li>Vaccines and recommended screening labs</li>
+                  <li>After-hours telehealth support</li>
+                </ul>
+                <p style={{ fontSize: '15px', fontWeight: 700, color: '#374151', lineHeight: 1.6, marginBottom: '16px' }}>
+                  If you plan to use Vet At Your Door for ongoing care, you can explore and join One-Team Membership now before submitting your appointment request.
+                </p>
+                <style>{`
+                  @keyframes exploreMembershipsPopIn {
+                    0% { transform: scale(0.92); opacity: 0.6; box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
+                    50% { transform: scale(1.06); opacity: 1; box-shadow: 0 0 0 8px rgba(15, 118, 110, 0.15); }
+                    100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
+                  }
+                  .appt-form-view-membership-btn:hover {
+                    transform: scale(1.02);
+                    box-shadow: 0 0 20px 4px rgba(15, 118, 110, 0.35);
+                  }
+                `}</style>
+                <button
+                  type="button"
+                  className="appt-form-view-membership-btn"
+                  onClick={() => {
+                    setSelectedMembershipPetId(null);
+                    setMembershipModalStep('choose-pet');
+                    setShowMembershipModal(true);
+                  }}
+                  style={{
+                    padding: '12px 24px',
+                    backgroundColor: '#0f766e',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '15px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                  }}
+                >
+                  Review & Join Membership
+                </button>
+                <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '16px', fontStyle: 'italic' }}>
+                  Membership is optional. You can still submit your appointment request below.
+                </p>
+              </div>
+            )}
           </div>
         )}
 
@@ -7742,10 +7842,10 @@ export default function AppointmentRequestForm() {
             {membershipModalStep === 'choose-pet' && (
               <>
                 <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
-                  Sign up for membership
+                  Explore membership
                 </h2>
                 <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px', lineHeight: 1.5 }}>
-                  Choose a pet to enroll in a membership plan. You can sign up additional pets after completing this one.
+                  Choose a pet to explore membership plans. You can explore memberships for additional pets after completing this one.
                 </p>
                 {membershipEligiblePets.length === 0 ? (
                   <>
@@ -7772,7 +7872,7 @@ export default function AppointmentRequestForm() {
                 ) : membershipEligiblePets.length === 1 ? (
                   <div style={{ marginBottom: '24px' }}>
                     <p style={{ fontSize: '15px', color: '#374151', marginBottom: '12px' }}>
-                      Sign up <strong>{membershipEligiblePets[0].name}</strong> for membership.
+                      Explore membership recommendations for <strong>{membershipEligiblePets[0].name}</strong>.
                     </p>
                     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                       <button
@@ -7789,7 +7889,7 @@ export default function AppointmentRequestForm() {
                           cursor: 'pointer',
                         }}
                       >
-                        Continue to membership signup
+                        Explore Membership Options
                       </button>
                       <button
                         type="button"
@@ -7812,7 +7912,7 @@ export default function AppointmentRequestForm() {
                 ) : (
                   <>
                     <p style={{ fontSize: '15px', color: '#374151', marginBottom: '12px' }}>
-                      Which pet would you like to sign up for membership?
+                      Which pet would you like to explore membership for?
                     </p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
                       {membershipEligiblePets.map((p) => (
@@ -7862,7 +7962,7 @@ export default function AppointmentRequestForm() {
                           cursor: selectedMembershipPetId ? 'pointer' : 'not-allowed',
                         }}
                       >
-                        Continue to membership signup
+                        Explore Membership Options
                       </button>
                       <button
                         type="button"

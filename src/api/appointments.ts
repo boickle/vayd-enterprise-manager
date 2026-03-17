@@ -241,6 +241,10 @@ export type DoctorMonthAppt = {
   /** Required for points calculation (per patient: 1 standard, 0.5 tech, 2 euthanasia). Backend should include in month response. */
   appointmentType?: string;
 
+  /** Client id for multi-pet detection (same client + same time = one block, divide time by N). */
+  clientId?: number | string | null;
+  clientPimsId?: string | null;
+
   // Zones per appointment (same semantics as day API)
   clientZone?: MiniZone;
   effectiveZone?: MiniZone;
@@ -294,6 +298,8 @@ export async function fetchDoctorMonth(
       title: a?.title,
       serviceMinutes: a?.serviceMinutes,
       appointmentType: a?.appointmentType?.name ?? a?.appointmentType ?? undefined,
+      clientId: a?.clientId ?? a?.client?.id ?? undefined,
+      clientPimsId: a?.clientPimsId ?? a?.client?.pimsId ?? undefined,
       clientZone: toMiniZone(a?.clientZone),
       effectiveZone: toMiniZone(a?.effectiveZone),
     })),
