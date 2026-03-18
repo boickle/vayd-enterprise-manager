@@ -1118,14 +1118,18 @@ export default function RoomLoaderPage() {
       }
     }
 
-    // If no match found, use the highest tier or base price
+    // No tier matched: use base price when quantity is below the minimum tier, otherwise highest tier for quantities above the max
     const activeBreaks = tieredPricing.priceBreaks.filter((pb: any) => pb.isActive);
     if (activeBreaks.length > 0) {
-      // Use the highest tier for quantities beyond the max
+      const minLow = Math.min(...activeBreaks.map((pb: any) => parseInt(pb.lowQuantity, 10)));
+      if (qty < minLow) {
+        return basePrice;
+      }
+      // Quantity is above the max tier; use the highest tier's price
       const highestTier = activeBreaks.reduce((max: any, pb: any) => {
-        const maxHigh = parseInt(max.highQuantity, 10);
+        const maxHighQ = parseInt(max.highQuantity, 10);
         const pbHigh = parseInt(pb.highQuantity, 10);
-        return pbHigh > maxHigh ? pb : max;
+        return pbHigh > maxHighQ ? pb : max;
       });
       return Number(highestTier.price);
     }
