@@ -137,7 +137,6 @@ const MEMBERSHIP_AGREEMENT_TEXT = [
   'Membership Plans',
   'Foundations: Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a twelve (12) month commitment.',
   'Golden: Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a twelve (12) month commitment.',
-  'Comfort Care: A month-to-month plan that includes one visit with trip fee per month, one tele-chat consult during business hours per month, and after-hours tele-chat. Comfort Care members receive fifteen percent (15%) off the total cost of euthanasia and after-care services when the decision has been made to proceed.',
   'Plus Add-On: Provides ten percent (10%) off all services and medications and fifty percent (50%) off exams. One free nail trim is included per year. The term of Plus matches the term of the primary plan. A store discount code is issued after sign-up.',
   'Puppy / Kitten Add-On: Covers booster vaccine appointments during your pet\'s first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.',
   'After-Hours Telehealth',
@@ -153,12 +152,12 @@ const MEMBERSHIP_AGREEMENT_TEXT = [
   'Membership Rules',
   'Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of any discounts received.',
   'Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight (8) years of age for dogs or nine (9) years of age for cats. We will email you twenty (20) to thirty (30) days before renewal with a recommendation. You may change your selection or cancel at that time.',
-  'Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve (12) month term. Comfort Care is month-to-month, as is Plus when selected with Comfort Care.',
-  'If your pet passes away, moves, or transitions to Comfort Care, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.',
+  'Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve (12) month term.',
+  'If your pet passes away or moves, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.',
   'If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client\'s new lease or mortgage agreement.',
   'A one-time registration fee, if charged, supports our Angel Fund for pets in need.',
   'Plan Change and Upgrade Limitations',
-  'Membership plans, including the Plus and Puppy / Kitten Add-Ons, must be selected at the time of initial enrollment and cannot be added or upgraded mid-term. The only permitted plan transition is from Golden to Comfort Care, when and if medically appropriate. No other plan upgrades, downgrades, or add-ons may be added after enrollment.',
+  'Membership plans, including the Plus and Puppy / Kitten Add-Ons, must be selected at the time of initial enrollment and cannot be added or upgraded mid-term. No other plan upgrades, downgrades, or add-ons may be added after enrollment.',
   'Scheduling and Availability',
   'Visits should be scheduled in advance for best availability. Specific appointment times cannot be guaranteed. Services are available only within our service area and during our regular appointment hours.',
   'We will make every reasonable effort for your pet\'s care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.',
@@ -2425,8 +2424,6 @@ function AgreementSection({
           <p style={{ marginLeft: '16px' }}>Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a twelve (12) month commitment.</p>
           <p><em>Golden</em></p>
           <p style={{ marginLeft: '16px' }}>Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a twelve (12) month commitment.</p>
-          <p><em>Comfort Care</em></p>
-          <p style={{ marginLeft: '16px' }}>A month-to-month plan that includes one visit with trip fee per month, one tele-chat consult during business hours per month, and after-hours tele-chat. Comfort Care members receive fifteen percent (15%) off the total cost of euthanasia and after-care services when the decision has been made to proceed.</p>
           <p><em>Plus Add-On</em></p>
           <p style={{ marginLeft: '16px' }}>Provides ten percent (10%) off all services and medications and fifty percent (50%) off exams. One free nail trim is included per year. The term of Plus matches the term of the primary plan. A store discount code is issued after sign-up.</p>
           <p><em>Puppy / Kitten Add-On</em></p>
@@ -2447,12 +2444,12 @@ function AgreementSection({
           <p><strong>Membership Rules</strong></p>
           <p>Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of any discounts received.</p>
           <p>Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight (8) years of age for dogs or nine (9) years of age for cats. We will email you twenty (20) to thirty (30) days before renewal with a recommendation. You may change your selection or cancel at that time.</p>
-          <p>Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve (12) month term. Comfort Care is month-to-month, as is Plus when selected with Comfort Care.</p>
-          <p>If your pet passes away, moves, or transitions to Comfort Care, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.</p>
+          <p>Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve (12) month term.</p>
+          <p>If your pet passes away or moves, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.</p>
           <p>If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client&apos;s new lease or mortgage agreement.</p>
           <p>A one-time registration fee, if charged, supports our Angel Fund for pets in need.</p>
           <p><strong>Plan Change and Upgrade Limitations</strong></p>
-          <p>Membership plans, including the Plus and Puppy / Kitten Add-Ons, must be selected at the time of initial enrollment and cannot be added or upgraded mid-term. The only permitted plan transition is from Golden to Comfort Care, when and if medically appropriate. No other plan upgrades, downgrades, or add-ons may be added after enrollment.</p>
+          <p>Membership plans, including the Plus and Puppy / Kitten Add-Ons, must be selected at the time of initial enrollment and cannot be added or upgraded mid-term. No other plan upgrades, downgrades, or add-ons may be added after enrollment.</p>
           <p><strong>Scheduling and Availability</strong></p>
           <p>Visits should be scheduled in advance for best availability. Specific appointment times cannot be guaranteed. Services are available only within our service area and during our regular appointment hours.</p>
           <p>We will make every reasonable effort for your pet&apos;s care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.</p>
