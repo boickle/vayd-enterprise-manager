@@ -1,6 +1,6 @@
 // src/pages/MembershipSignup.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import {
   fetchClientPets,
   type Pet,
@@ -456,6 +456,9 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const prospectivePet = state?.pet;
   const returnUrl = state?.returnUrl;
   const returnUrlAnotherBase = state?.returnUrlAnotherBase;
+  const [searchParams] = useSearchParams();
+  const signedUpParam = searchParams.get('signedUp');
+  const isSigningUpAdditionalPet = Boolean(signedUpParam || (state as any)?.signedUpPetIds?.length);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -480,6 +483,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const [formattedPlans, setFormattedPlans] = useState<FormattedSubscriptionPlan[]>([]);
   const [formattedPlansLoading, setFormattedPlansLoading] = useState(true);
   const [formattedPlansError, setFormattedPlansError] = useState<string | null>(null);
+  const [clientPetCount, setClientPetCount] = useState<number | null>(null);
 
   const brand = 'var(--brand, #0f766e)';
   const brandSoft = 'var(--brand-soft, #e6f7f5)';
@@ -645,6 +649,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       setAppointmentsLoaded(false);
       try {
         const pets = await fetchClientPets();
+        if (alive) setClientPetCount(pets.length);
         const selectedPet = pets.find((p) => p.id === petId);
         if (!selectedPet) {
           if (alive) {
@@ -1202,6 +1207,8 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     if (returnUrl) paymentState.returnUrl = returnUrl;
     if (fromAppointmentFlow) paymentState.fromAppointmentFlow = true;
     if (returnUrlAnotherBase) paymentState.returnUrlAnotherBase = returnUrlAnotherBase;
+    else if (!fromModal) paymentState.returnUrlAnotherBase = '/client-portal/membership-signup';
+    if (isSigningUpAdditionalPet) paymentState.multiPetCreditEligible = true;
 
     // Track begin checkout
     const checkoutItems = [
@@ -1628,6 +1635,24 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
         <h1 className="cp-title">Membership Signup</h1>
         <p className="cp-muted">Choose the plan that fits your pet’s care needs.</p>
       </div>
+
+      {!fromModal && (clientPetCount ?? 0) > 1 && (
+        <div
+          style={{
+            marginTop: 16,
+            marginBottom: 0,
+            padding: '12px 16px',
+            background: '#f0fdf4',
+            border: '1px solid #bbf7d0',
+            borderRadius: 8,
+            color: '#166534',
+            fontSize: 14,
+            lineHeight: 1.5,
+          }}
+        >
+          Enroll more than one pet and receive a $75 credit for each additional pet. Credits may be used at any future Vet At Your Door visit.
+        </div>
+      )}
 
       {pet && (
         <>
