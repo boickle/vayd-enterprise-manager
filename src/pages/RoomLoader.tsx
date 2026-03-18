@@ -127,7 +127,7 @@ export default function RoomLoaderPage() {
   // Search filter for table (doctor or client name)
   const [tableSearch, setTableSearch] = useState<string>('');
   // Store answers to questions for each pet
-  const [petAnswers, setPetAnswers] = useState<Record<number, { mobility: boolean | null; labWork: boolean | null }>>({});
+  const [petAnswers, setPetAnswers] = useState<Record<number, { mobility: boolean | null; labWork: boolean | null; preMedsAsk: boolean }>>({});
   // Store added items for each pet (items added via search)
   const [addedItems, setAddedItems] = useState<Record<number, SearchableItem[]>>({});
   // Store removed reminder IDs (reminders that have been removed by the user)
@@ -385,7 +385,7 @@ export default function RoomLoaderPage() {
             });
             return out;
           })();
-          const answers = { ...(savedForm.petAnswers || {}) } as Record<number, { mobility: boolean | null; labWork: boolean | null }>;
+          const answers = { ...(savedForm.petAnswers || {}) } as Record<number, { mobility: boolean | null; labWork: boolean | null; preMedsAsk: boolean }>;
           const addedQty = hasBeenSent ? {} as Record<string, number> : { ...(savedForm.addedItemQuantities || {}) } as Record<string, number>;
           let reminderQtyFromSent: Record<number, number> = {};
           const confirmedFromSent = new Set<number>();
@@ -447,6 +447,7 @@ export default function RoomLoaderPage() {
               answers[patientId] = {
                 mobility: sp.questions.mobility ?? null,
                 labWork: sp.questions.labWork ?? null,
+                preMedsAsk: sp.questions.preMedsAsk ?? false,
               };
             }
           });
@@ -484,7 +485,7 @@ export default function RoomLoaderPage() {
           // Load form from what was sent to the client
           const arrivalFromSent: Record<number, string> = {};
           const reasonsFromSent: Record<number, string> = {};
-          const answersFromSent: Record<number, { mobility: boolean | null; labWork: boolean | null }> = {};
+          const answersFromSent: Record<number, { mobility: boolean | null; labWork: boolean | null; preMedsAsk: boolean }> = {};
           const vaccinesFromSent: Record<number, { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean; sharps: boolean }> = {};
           const notesFromSent: Record<number, string> = {};
           const addedFromSent: Record<number, SearchableItem[]> = {};
@@ -512,6 +513,7 @@ export default function RoomLoaderPage() {
               answersFromSent[patientId] = {
                 mobility: sp.questions.mobility ?? null,
                 labWork: sp.questions.labWork ?? null,
+                preMedsAsk: sp.questions.preMedsAsk ?? false,
               };
             }
             if (sp.vaccines) {
@@ -563,7 +565,7 @@ export default function RoomLoaderPage() {
         } else {
           // New submission: no sent data — leave Reason for Appointment unfilled (required); initialize answers per patient
           const initialReasons: Record<number, string> = {};
-          const initialAnswers: Record<number, { mobility: boolean | null; labWork: boolean | null }> = {};
+          const initialAnswers: Record<number, { mobility: boolean | null; labWork: boolean | null; preMedsAsk: boolean }> = {};
           (data?.appointments || []).forEach((appt: any) => {
             const patientId = appt.patient?.id;
             if (patientId == null) return;
@@ -571,12 +573,12 @@ export default function RoomLoaderPage() {
               initialReasons[patientId] = '';
             }
             if (initialAnswers[patientId] == null) {
-              initialAnswers[patientId] = { mobility: null, labWork: null };
+              initialAnswers[patientId] = { mobility: null, labWork: null, preMedsAsk: false };
             }
           });
           (data?.patients || []).forEach((p: any) => {
             if (p?.id != null && initialAnswers[p.id] == null) {
-              initialAnswers[p.id] = { mobility: null, labWork: null };
+              initialAnswers[p.id] = { mobility: null, labWork: null, preMedsAsk: false };
             }
             if (p?.id != null && initialReasons[p.id] == null) {
               initialReasons[p.id] = '';
@@ -1545,18 +1547,18 @@ export default function RoomLoaderPage() {
     };
   }, [reminderCorrections, selectedRoomLoader]);
 
-  function handleAnswerChange(petId: number, question: 'mobility' | 'labWork', value: boolean) {
+  function handleAnswerChange(petId: number, question: 'mobility' | 'labWork' | 'preMedsAsk', value: boolean) {
     setPetAnswers((prev) => ({
       ...prev,
       [petId]: {
-        ...prev[petId],
+        ...(prev[petId] || { mobility: null, labWork: null, preMedsAsk: false }),
         [question]: value,
       },
     }));
     setSendValidationErrors((prev) => {
       if (!prev[petId]) return prev;
       const next = { ...prev };
-      const { [question]: _removed, ...rest } = next[petId] as { reason?: boolean; mobility?: boolean; labWork?: boolean };
+      const { [question]: _removed, ...rest } = next[petId] as { reason?: boolean; mobility?: boolean; labWork?: boolean; preMedsAsk?: boolean };
       if (Object.keys(rest).length === 0) delete next[petId];
       else next[petId] = rest;
       return next;
@@ -1703,7 +1705,7 @@ export default function RoomLoaderPage() {
       });
 
       // Get answers
-      const answers = petAnswers[patient.id] || { mobility: null, labWork: null };
+      const answers = petAnswers[patient.id] || { mobility: null, labWork: null, preMedsAsk: false };
 
       // Get vaccine checkboxes
       const vaccines = vaccineCheckboxes[patient.id] || { felv: true, lepto: true, lyme: true, bordatella: true, sharps: true };
@@ -1720,6 +1722,7 @@ export default function RoomLoaderPage() {
         questions: {
           mobility: answers.mobility,
           labWork: answers.labWork,
+          preMedsAsk: answers.preMedsAsk,
         },
         reminders: reminderItems,
         addedItems: addedItemsList,
@@ -2735,7 +2738,7 @@ export default function RoomLoaderPage() {
           ) : (
             petsWithAppointments.map((item, petIndex) => {
               const { patient, appointments, client, clientHasMembership, clientMembershipPlanName } = item;
-              const petAnswersForPet = petAnswers[patient.id] || { mobility: null, labWork: null };
+              const petAnswersForPet = petAnswers[patient.id] || { mobility: null, labWork: null, preMedsAsk: false };
               const firstAppt = appointments[0];
               
               // Use patient data from appointment if available and more complete
@@ -3078,6 +3081,35 @@ export default function RoomLoaderPage() {
                     {sendValidationErrors[patient.id]?.labWork && (
                       <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#dc3545' }}>Please answer Yes or No</p>
                     )}
+                  </div>
+
+                  {/* Pre-examination meds refill question */}
+                  <div style={{ marginTop: '20px' }}>
+                    <label style={{ display: 'block', marginBottom: '10px', fontWeight: 500, color: '#333', fontSize: '16px' }}>
+                      Should we ask this client if they need refills of pre-examination medications?
+                    </label>
+                    <div style={{ display: 'flex', gap: '20px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                        <input
+                          type="radio"
+                          name={`preMedsAsk-${patient.id}`}
+                          checked={petAnswersForPet.preMedsAsk === true}
+                          onChange={() => handleAnswerChange(patient.id, 'preMedsAsk', true)}
+                          style={{ marginRight: '8px', cursor: 'pointer' }}
+                        />
+                        Yes
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                        <input
+                          type="radio"
+                          name={`preMedsAsk-${patient.id}`}
+                          checked={petAnswersForPet.preMedsAsk !== true}
+                          onChange={() => handleAnswerChange(patient.id, 'preMedsAsk', false)}
+                          style={{ marginRight: '8px', cursor: 'pointer' }}
+                        />
+                        No
+                      </label>
+                    </div>
                   </div>
                 </div>
 

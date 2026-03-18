@@ -1016,6 +1016,9 @@ export default function PublicRoomLoaderForm() {
             initialFormData[`${petKey}_rabiesPreference`] = '';
             initialFormData[`${petKey}_felvVaccine`] = '';
             initialFormData[`${petKey}_labWork`] = '';
+            initialFormData[`${petKey}_preMedsNeedRefill`] = '';
+            initialFormData[`${petKey}_preMedsWhatRefills`] = '';
+            initialFormData[`${petKey}_preMedsMailOrPickup`] = '';
           });
           initialFormData['anythingElseNotes'] = '';
           if (savedForm && typeof savedForm === 'object') {
@@ -1890,6 +1893,13 @@ export default function PublicRoomLoaderForm() {
       if ((patient as any).questions?.mobility === true) {
         addOptional(`It sounds like you may have some concerns about ${petName}'s mobility. Can you tell us more about what you're noticing?`, `${petKey}_mobilityDetails`);
       }
+      if ((patient as any).questions?.preMedsAsk === true) {
+        addOptional(`Do you need any refills on your pre-examination medications for ${petName}?`, `${petKey}_preMedsNeedRefill`, { yes: 'Yes', no: 'No' });
+        if (formData[`${petKey}_preMedsNeedRefill`] === 'yes') {
+          addOptional('What do you need refills of?', `${petKey}_preMedsWhatRefills`);
+          addOptional('Do you want it mailed or pick up from Brunswick office?', `${petKey}_preMedsMailOrPickup`, { mailed: 'Mailed', pickup: 'Pick up from Brunswick office' });
+        }
+      }
       if (isCatPatient) {
         addOptional(`Does ${petName} go outdoors or live with a cat that goes outdoors?`, `${petKey}_outdoorAccess`, { yes: 'Yes', no: 'No' });
       }
@@ -2127,6 +2137,7 @@ export default function PublicRoomLoaderForm() {
 
         if (suffix === 'appointmentReason' || suffix === 'generalWellbeing' || suffix === 'eatingDrinkingNormal' || suffix === 'eatingDrinkingNormalDetails') allowedFormData[key] = value;
         else if (suffix === 'mobilityDetails' && (patientsData[petIdx] as any)?.questions?.mobility === true) allowedFormData[key] = value;
+        else if ((suffix === 'preMedsNeedRefill' || suffix === 'preMedsWhatRefills' || suffix === 'preMedsMailOrPickup') && (patientsData[petIdx] as any)?.questions?.preMedsAsk === true) allowedFormData[key] = value;
         else if (suffix === 'outdoorAccess' && isCatPatient) allowedFormData[key] = value;
         else if ((suffix === 'newPatientBehavior' || suffix === 'feeding' || suffix === 'foodAllergies' || suffix === 'foodAllergiesDetails') && isNewPatient) allowedFormData[key] = value;
         else if (suffix === 'crLymeBooster' && showCrLymeBooster) allowedFormData[key] = value;
@@ -3423,6 +3434,49 @@ export default function PublicRoomLoaderForm() {
                       style={{ ...textareaStyle, minHeight: '100px', ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}) }}
                       placeholder="Please describe what you're noticing..."
                     />
+                  </div>
+                )}
+
+                {(patient.questions?.preMedsAsk === true) && (
+                  <div style={{ marginBottom: '20px' }}>
+                    <h4 style={sectionLabelStyle}>Pre-examination medications</h4>
+                    <label style={questionLabelStyle}>
+                      Do you need any refills on your pre-examination medications for {petName}?
+                    </label>
+                    <div style={{ display: 'flex', gap: '20px', marginBottom: '12px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
+                        <input type="radio" name={`${petKey}_preMedsNeedRefill`} value="yes" checked={formData[`${petKey}_preMedsNeedRefill`] === 'yes'} onChange={(e) => handleInputChange(`${petKey}_preMedsNeedRefill`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
+                        Yes
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
+                        <input type="radio" name={`${petKey}_preMedsNeedRefill`} value="no" checked={formData[`${petKey}_preMedsNeedRefill`] === 'no'} onChange={(e) => handleInputChange(`${petKey}_preMedsNeedRefill`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
+                        No
+                      </label>
+                    </div>
+                    {(formData[`${petKey}_preMedsNeedRefill`] === 'yes') && (
+                      <>
+                        <label style={{ ...questionLabelStyle, marginTop: '12px' }}>What do you need refills of?</label>
+                        <textarea
+                          value={formData[`${petKey}_preMedsWhatRefills`] || ''}
+                          onChange={(e) => handleInputChange(`${petKey}_preMedsWhatRefills`, e.target.value)}
+                          readOnly={readOnly}
+                          disabled={readOnly}
+                          style={{ ...textareaStyle, minHeight: '80px', ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}) }}
+                          placeholder="List the medications..."
+                        />
+                        <label style={{ ...questionLabelStyle, marginTop: '12px' }}>Do you want it mailed or pick up from Brunswick office?</label>
+                        <div style={{ display: 'flex', gap: '20px', marginTop: '8px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
+                            <input type="radio" name={`${petKey}_preMedsMailOrPickup`} value="mailed" checked={formData[`${petKey}_preMedsMailOrPickup`] === 'mailed'} onChange={(e) => handleInputChange(`${petKey}_preMedsMailOrPickup`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
+                            Mailed
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
+                            <input type="radio" name={`${petKey}_preMedsMailOrPickup`} value="pickup" checked={formData[`${petKey}_preMedsMailOrPickup`] === 'pickup'} onChange={(e) => handleInputChange(`${petKey}_preMedsMailOrPickup`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
+                            Pick up from Brunswick office
+                          </label>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 
