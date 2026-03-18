@@ -1043,8 +1043,20 @@ export default function AppointmentRequestForm() {
       return lower === 'euthanasia' || lower === 'quality of life';
     }
   );
+  // Hide membership CTA when any pet (new or existing-client-new) answered Yes to calming meds or muzzle/special handling
+  const shouldHideMembershipForCalmingOrMuzzle =
+    (formData.newClientPets?.some(
+      (p) => p.needsCalmingMedications === 'Yes' || p.needsMuzzleOrSpecialHandling === 'Yes'
+    )) ||
+    (formData.existingClientNewPets?.some(
+      (p) => p.needsCalmingMedications === 'Yes' || p.needsMuzzleOrSpecialHandling === 'Yes'
+    )) ||
+    false;
   const isExploreMembershipsVisible =
-    isOnSubmitStep && hasEligiblePetsForMembership && !shouldHideMembershipForAppointmentTypes;
+    isOnSubmitStep &&
+    hasEligiblePetsForMembership &&
+    !shouldHideMembershipForAppointmentTypes &&
+    !shouldHideMembershipForCalmingOrMuzzle;
 
   // Fetch membership status for logged-in client so we can hide signup for pets that already have membership
   useEffect(() => {
