@@ -111,6 +111,8 @@ type PaymentNavigationState = {
     id: number;
     [key: string]: any;
   };
+  /** True when client is signing up a 2nd+ pet this session (eligible for $75 credit). */
+  multiPetCreditEligible?: boolean;
 };
 
 export type { PaymentNavigationState };
@@ -470,6 +472,11 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
               : `${state.petName} is now enrolled in the ${state.planName || 'membership'} membership. A confirmation email will arrive shortly. Please note that it may take up to 24-48 business hours for ${state.petName}'s membership to be fully active in our system.`
             }
           </p>
+          {!state.isUpgrade && state.multiPetCreditEligible && (
+            <p style={{ marginBottom: 20, padding: '12px 16px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, color: '#166534', fontSize: 15, lineHeight: 1.5 }}>
+              You will be receiving a $75 credit in your VAYD account to be used at any visit of your choosing — this won&apos;t expire.
+            </p>
+          )}
           <div style={{ display: 'grid', gap: 8, fontSize: 15 }}>
             <div>
               <strong>Plan:</strong> {state.planName}
@@ -563,7 +570,11 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
               className="btn" 
               onClick={() => {
                 if (fromModal && onSignUpAnother) onSignUpAnother(state.petId);
-                else navigate(`${state.returnUrlAnotherBase}&signedUp=${encodeURIComponent(state.petId)}`);
+                else {
+                  const base = state.returnUrlAnotherBase || '/client-portal/membership-signup';
+                  const sep = base.includes('?') ? '&' : '?';
+                  navigate(`${base}${sep}signedUp=${encodeURIComponent(state.petId)}`);
+                }
               }}
               style={{ backgroundColor: '#4FB128', color: '#fff' }}
             >

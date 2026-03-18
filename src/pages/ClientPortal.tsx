@@ -1876,6 +1876,27 @@ export default function ClientPortal() {
 
           {/* PETS */}
           <section className="cp-section">
+            {petsWithProvider.length > 1 &&
+              !petsWithProvider.every((p) => {
+                const hasPlan = p.membershipPlanName != null;
+                const status = (p.membershipStatus || '').toLowerCase();
+                return hasPlan && (status === 'active' || status === 'pending');
+              }) && (
+                <div
+                  style={{
+                    marginBottom: 16,
+                    padding: '12px 16px',
+                    background: '#f0fdf4',
+                    border: '1px solid #bbf7d0',
+                    borderRadius: 8,
+                    color: '#166534',
+                    fontSize: 14,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  Enroll more than one pet and receive a $75 credit for each additional pet. Credits may be used at any future Vet At Your Door visit.
+                </div>
+              )}
             <div
               style={{
                 display: 'flex',
