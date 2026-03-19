@@ -465,9 +465,16 @@ export default function RoomLoaderPage() {
           setArrivalWindows(windows);
           setAddedItems(added);
           setPetAnswers(answers);
-          setAddedItemQuantities(addedQty);
+          // When already sent, prefer savedForm quantities so re-sends respect employee edits (e.g. quantity changes)
+          const mergedAddedQty = hasBeenSent && savedForm.addedItemQuantities
+            ? { ...addedQty, ...savedForm.addedItemQuantities }
+            : addedQty;
+          setAddedItemQuantities(mergedAddedQty);
           if (hasBeenSent) {
-            setReminderQuantities(reminderQtyFromSent);
+            const mergedReminderQty = savedForm.reminderQuantities
+              ? { ...reminderQtyFromSent, ...savedForm.reminderQuantities }
+              : reminderQtyFromSent;
+            setReminderQuantities(mergedReminderQty);
             setRemovedReminders(new Set());
             setConfirmedMatchReminders(confirmedFromSent);
           }
@@ -1680,20 +1687,21 @@ export default function RoomLoaderPage() {
       });
 
       // Get added items (include wellnessPlanPricing/discountPricing so client can surface why price is discounted)
-      const addedItemsList = getAddedItemsForPatient(patient.id).map((item) => {
+      const addedItemsList = getAddedItemsForPatient(patient.id).map((item, itemIdx) => {
         const basePrice = item.price != null ? Number(item.price) : null;
         // Use wellnessPlanPricing.adjustedPrice only when it's a number; discountPricing.priceAdjustedByDiscount is a boolean
         const wpAdjusted = (item as any).wellnessPlanPricing?.adjustedPrice;
         const effectivePrice = (wpAdjusted != null && typeof wpAdjusted === 'number')
           ? Number(wpAdjusted)
           : basePrice;
+        const quantity = resolveQty(addedItemQuantities[`${patient.id}-${itemIdx}`]) || 1;
         const payload: any = {
           id: item.inventoryItem?.id || item.lab?.id || (item as any).procedure?.id,
           type: item.itemType,
           name: item.name,
           code: item.code,
           price: effectivePrice,
-          quantity: 1, // Added items default to quantity 1
+          quantity,
         };
         if ((item as any).wellnessPlanPricing) {
           payload.wellnessPlanPricing = (item as any).wellnessPlanPricing;
