@@ -261,7 +261,12 @@ function adjustedWindowForStart(
 }
 
 /* ----------------- ETA timeline type (aligned to households) ----------------- */
-type DisplaySlot = { eta?: string | null; etd?: string | null };
+type DisplaySlot = {
+  eta?: string | null;
+  etd?: string | null;
+  windowStartIso?: string | null;
+  windowEndIso?: string | null;
+};
 
 export default function DoctorDayVisual({
   readOnly,
@@ -297,7 +302,9 @@ export default function DoctorDayVisual({
   /** When set, render in positionInDay order. From ETA response. */
   const [routingOrderIndices, setRoutingOrderIndices] = useState<number[] | null>(null);
   /** ETA byIndex rows (route order); used so displayTimeline aligns with positionInDay-ordered households. */
-  const [byIndexRows, setByIndexRows] = useState<Array<{ etaIso?: string; etdIso?: string }>>([]);
+  const [byIndexRows, setByIndexRows] = useState<
+    Array<{ etaIso?: string; etdIso?: string; windowStartIso?: string; windowEndIso?: string }>
+  >([]);
 
   // schedule bounds for visual work start
   const [schedStartIso, setSchedStartIso] = useState<string | null>(null);
