@@ -130,14 +130,47 @@ function keyFor(lat: number, lon: number, d = 6): string {
   return `${Math.round(lat * m) / m},${Math.round(lon * m) / m}`;
 }
 
-/** Key variants for matching ETA byIndex row key to household (avoids precision/rounding mismatches). */
+/** Key variants for matching ETA byIndex row key to household (avoids precision/rounding mismatches). Handles "lat,lon" and "lat,lon:2" style keys. */
 function keyVariantsForKeyString(s: string): string[] {
-  const parts = s.split(',');
+  const suffix = s.includes(':') ? s.slice(s.indexOf(':')) : '';
+  const base = suffix ? s.slice(0, s.indexOf(':')) : s;
+  const parts = base.split(',');
   if (parts.length !== 2) return [s];
   const lat = parseFloat(parts[0]);
   const lon = parseFloat(parts[1]);
   if (Number.isNaN(lat) || Number.isNaN(lon)) return [s];
-  return [s, keyFor(lat, lon, 6), keyFor(lat, lon, 5)];
+  const k6 = keyFor(lat, lon, 6) + suffix;
+  const k5 = keyFor(lat, lon, 5) + suffix;
+  return [s, k6, k5].filter((x, i, arr) => arr.indexOf(x) === i);
+}
+
+/** Same client at same location = one stop; different clients at same address = separate stops. */
+function householdGroupKey(a: DoctorDayAppt, lat: number, lon: number, addrKey: string | null, idPart: string, hasGeo: boolean): string {
+  const clientId = (a as any)?.clientPimsId ?? (a as any)?.clientId;
+  const clientPart = clientId != null ? String(clientId) : (str(a, 'clientName') ?? '').trim();
+  if (hasGeo) return `${lat}_${lon}_${clientPart}`;
+  if (addrKey) return `addr:${addrKey}_${clientPart}`;
+  return `noloc:${idPart}`;
+}
+
+/** Assign unique ETA keys: first at (lat,lon) gets "lat,lon", second "lat,lon:2", etc. */
+function assignEtaKeysForSameAddress<T extends { key: string; lat: number; lon: number }>(households: T[]): void {
+  const byLoc = new Map<string, T[]>();
+  for (const h of households) {
+    const hasGeo = Number.isFinite(h.lat) && Number.isFinite(h.lon) && Math.abs(h.lat) > 1e-6 && Math.abs(h.lon) > 1e-6;
+    const locKey = hasGeo ? `${h.lat}_${h.lon}` : h.key;
+    if (!byLoc.has(locKey)) byLoc.set(locKey, []);
+    byLoc.get(locKey)!.push(h);
+  }
+  for (const [, list] of byLoc) {
+    if (list.length === 0) continue;
+    const first = list[0];
+    const hasGeo = Number.isFinite(first.lat) && Number.isFinite(first.lon) && Math.abs(first.lat) > 1e-6 && Math.abs(first.lon) > 1e-6;
+    const baseKey = hasGeo ? keyFor(first.lat, first.lon, 6) : first.key;
+    list.forEach((h, i) => {
+      (h as { key: string }).key = i === 0 ? baseKey : `${baseKey}:${i + 1}`;
+    });
+  }
 }
 
 function eightThirtyIsoFor(date: string): string {
@@ -213,7 +246,7 @@ type Household = {
   firstApptIndex?: number;
 };
 /** one row per rendered household */
-type DisplaySlot = { eta?: string | null; etd?: string | null };
+type DisplaySlot = { eta?: string | null; etd?: string | null; windowStartIso?: string | null; windowEndIso?: string | null };
 
 /* =========================================================================
    Component
@@ -473,7 +506,7 @@ export default function DoctorDay({
     };
   }, [date, selectedDoctorId, initialDoctorId, virtualAppt]);
 
-  /* ---------- Group into households (lat/lon) ---------- */
+  /* ---------- Group into households: same client same address = one stop, different clients same address = separate stops ---------- */
   const households: Household[] = useMemo(() => {
     const map = new Map<string, Household>();
     for (const [idx, a] of appts.entries()) {
@@ -501,11 +534,7 @@ export default function DoctorDay({
 
       const addrKey = hasGeo ? null : addressKeyForAppt(a);
       const idPart = (a as any)?.id != null ? String((a as any).id) : String(idx);
-      const key = hasGeo
-        ? `${lat.toFixed(6)},${lon.toFixed(6)}`
-        : addrKey
-          ? `addr:${addrKey}`
-          : `noloc:${idPart}`;
+      const groupKey = householdGroupKey(a, lat, lon, addrKey, idPart, hasGeo);
 
       const patientName =
         str(a, 'patientName') ??
@@ -519,7 +548,6 @@ export default function DoctorDay({
         status: str(a, 'confirmStatusName') ?? null,
         startIso: getStartISO(a) ?? null,
         endIso: getEndISO(a) ?? null,
-        // NEW: per-pet fields
         apptTypeName:
           str(a, 'appointmentType') ??
           str(a, 'appointmentTypeName') ??
@@ -532,11 +560,12 @@ export default function DoctorDay({
       };
 
       const apptIsPreview = (a as any)?.isPreview === true;
-      const isPersonalBlock = isBlockEntry({ ...a, key });
+      const isPersonalBlock = isBlockEntry({ ...a, key: groupKey });
 
-      if (!map.has(key)) {
-        map.set(key, {
-          key,
+      if (!map.has(groupKey)) {
+        const initialKey = hasGeo ? `${lat.toFixed(6)},${lon.toFixed(6)}` : addrKey ? `addr:${addrKey}` : `noloc:${idPart}`;
+        map.set(groupKey, {
+          key: initialKey,
           primary: a,
           addressDisplay: formatAddress(a),
           lat,
@@ -550,7 +579,7 @@ export default function DoctorDay({
           firstApptIndex: idx,
         });
       } else {
-        const h = map.get(key)!;
+        const h = map.get(groupKey)!;
         h.firstApptIndex = Math.min(h.firstApptIndex ?? idx, idx);
         if (!isPersonalBlock) {
           const exists = h.patients.some(
@@ -598,23 +627,22 @@ export default function DoctorDay({
       }
     }
 
-    // Preserve visit order (from day API or after insert): use firstApptIndex so display and ETA match.
-    return Array.from(map.values()).sort((a, b) => {
+    const list = Array.from(map.values()).sort((a, b) => {
       if (a.firstApptIndex != null && b.firstApptIndex != null) {
         return a.firstApptIndex - b.firstApptIndex;
       }
       if (!a.startIso && !b.startIso) return 0;
-      if (!a.startIso) return 1; // Put households without start time at the end
-      if (!b.startIso) return -1; // Put households without start time at the end
+      if (!a.startIso) return 1;
+      if (!b.startIso) return -1;
       const da = DateTime.fromISO(a.startIso);
       const db = DateTime.fromISO(b.startIso);
       if (!da.isValid && !db.isValid) return 0;
-      if (!da.isValid) return 1; // Put invalid dates at the end
-      if (!db.isValid) return -1; // Put invalid dates at the end
-      const ta = da.toMillis();
-      const tb = db.toMillis();
-      return ta - tb;
+      if (!da.isValid) return 1;
+      if (!db.isValid) return -1;
+      return da.toMillis() - db.toMillis();
     });
+    assignEtaKeysForSameAddress(list);
+    return list;
   }, [appts]);
 
   /* =========================================================================
@@ -758,6 +786,8 @@ export default function DoctorDay({
           key?: string;
           etaIso?: string;
           etdIso?: string;
+          windowStartIso?: string;
+          windowEndIso?: string;
           driveFromPrevMinutes?: number;
           driveFromPrevSec?: number;
           bufferAfterMinutes?: number;
@@ -784,6 +814,10 @@ export default function DoctorDay({
           if (validIso(etd)) {
             tl[viewIdx].etd = etd!;
             serverETD[viewIdx] = true;
+          }
+          if (validIso(row.windowStartIso) && validIso(row.windowEndIso)) {
+            tl[viewIdx].windowStartIso = row.windowStartIso!;
+            tl[viewIdx].windowEndIso = row.windowEndIso!;
           }
         }
 
@@ -891,15 +925,20 @@ export default function DoctorDay({
           }
         }
 
-        // 6) store drive/depot fields. First segment = drive from depot (byIndex[0].driveFromPrev*).
-        setDriveSecondsArr(Array.isArray(result?.driveSeconds) ? result.driveSeconds : null);
+        // 6) store drive/depot fields. First segment = drive from depot; use normalized result.driveSeconds[0] (same logic as My Week / routing.ts).
+        const driveArr = Array.isArray(result?.driveSeconds) ? result.driveSeconds : null;
+        setDriveSecondsArr(driveArr);
+        const fromApiFirst =
+          driveArr && driveArr.length > 0 && typeof driveArr[0] === 'number' ? driveArr[0] : null;
         const firstRow = byIndex[0] as { driveFromPrevMinutes?: number; driveFromPrevSec?: number } | undefined;
         const toFirstSec =
-          typeof firstRow?.driveFromPrevSec === 'number'
-            ? firstRow.driveFromPrevSec
-            : typeof firstRow?.driveFromPrevMinutes === 'number'
-              ? firstRow.driveFromPrevMinutes * 60
-              : null;
+          fromApiFirst != null
+            ? fromApiFirst
+            : typeof firstRow?.driveFromPrevSec === 'number'
+              ? firstRow.driveFromPrevSec
+              : typeof firstRow?.driveFromPrevMinutes === 'number'
+                ? firstRow.driveFromPrevMinutes * 60
+                : null;
         setDepotToFirstSec(toFirstSec != null && toFirstSec > 0 ? toFirstSec : null);
         setBackToDepotSec(
           typeof result?.backToDepotSec === 'number' ? result.backToDepotSec : null
@@ -1262,8 +1301,11 @@ export default function DoctorDay({
     if (!iso) return '';
     return DateTime.fromISO(iso).toLocaleString(DateTime.TIME_SIMPLE);
   }
-  /** Window text: use backend effectiveWindow when available, else frontend-calculated. */
-  function windowTextForHousehold(h: Household): string {
+  /** Window text: prefer byIndex row window when both present, else backend effectiveWindow, else frontend-calculated. */
+  function windowTextForHousehold(h: Household, slot?: DisplaySlot | null): string {
+    if (slot?.windowStartIso && slot?.windowEndIso) {
+      return `${DateTime.fromISO(slot.windowStartIso).toLocaleString(DateTime.TIME_SIMPLE)} – ${DateTime.fromISO(slot.windowEndIso).toLocaleString(DateTime.TIME_SIMPLE)}`;
+    }
     const ew = h.primary?.effectiveWindow;
     if (ew?.startIso && ew?.endIso) {
       return `${DateTime.fromISO(ew.startIso).toLocaleString(DateTime.TIME_SIMPLE)} – ${DateTime.fromISO(ew.endIso).toLocaleString(DateTime.TIME_SIMPLE)}`;
@@ -1606,7 +1648,7 @@ export default function DoctorDay({
                                   <strong style={{ color: '#dc2626' }}>FIXED TIME</strong>
                                 ) : (
                                   <>
-                                    <strong>Window:</strong> {windowTextForHousehold(h)}
+                                    <strong>Window:</strong> {windowTextForHousehold(h, displayTimeline[i])}
                                   </>
                                 )}
                               </>

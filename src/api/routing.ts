@@ -101,9 +101,8 @@ export async function fetchEtas(payload: EtaRequest): Promise<EtaResult> {
   const byIndex = Array.isArray(data?.byIndex) ? data.byIndex : undefined;
   const backToDepotSec = data?.backToDepotSec ?? null;
 
-  // Derive driveSeconds from byIndex when present so drive is split before/after personal blocks.
-  // Backend may send correct byIndex[].driveFromPrevSec but wrong driveSeconds (e.g. 0 to block, 27min after).
-  // When byIndex[0].driveFromPrevSec is 0 but API driveSeconds[0] > 0, keep driveSeconds[0] so "drive from depot" shows correctly (not a time-based fallback).
+  // Derive driveSeconds from byIndex when present. One segment per stop: segment i = drive before stop i.
+  // Source of truth: byIndex[i].driveFromPrevSec. If 0, show 0; do not overwrite with another first-leg value.
   let driveSeconds = data?.driveSeconds;
   if (byIndex && byIndex.length > 0) {
     const fromByIndex: number[] = byIndex.map((row: EtaByIndexRow) => {
@@ -115,16 +114,18 @@ export async function fetchEtas(payload: EtaRequest): Promise<EtaResult> {
       }
       return 0;
     });
-    const hasAnyDrive = fromByIndex.some((s) => s > 0);
-    if (hasAnyDrive) {
-      const backSec = typeof backToDepotSec === 'number' && Number.isFinite(backToDepotSec) ? backToDepotSec : 0;
-      let segments = [...fromByIndex, backSec];
-      const apiFirst = Array.isArray(data?.driveSeconds) && data.driveSeconds.length > 0 ? data.driveSeconds[0] : 0;
-      if (fromByIndex[0] <= 0 && typeof apiFirst === 'number' && apiFirst > 0) {
-        segments = [apiFirst, ...segments.slice(1)];
+    const backSec = typeof backToDepotSec === 'number' && Number.isFinite(backToDepotSec) ? backToDepotSec : 0;
+    let segments = [...fromByIndex, backSec];
+    const apiDrive = data?.driveSeconds;
+    if (Array.isArray(apiDrive) && apiDrive.length > 0) {
+      const apiFirst = apiDrive[0];
+      if (apiFirst === 0) {
+        const rest = apiDrive.length > 1 ? apiDrive.slice(1) : segments.slice(1);
+        segments = [0, ...rest];
       }
-      driveSeconds = segments;
+      // When API sends 0 for segment before first stop, keep 0. Do not replace with apiFirst > 0.
     }
+    driveSeconds = segments;
   }
 
   return {
