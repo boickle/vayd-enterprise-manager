@@ -22,7 +22,7 @@ import PublicRoomLoaderForm from './pages/PublicRoomLoaderForm';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
 import ErrorPage from './pages/ErrorPage';
 import { usePageTracking } from './hooks/usePageTracking';
-import { isProduction } from './utils/env';
+import { isCreateClientEnabled, isProduction } from './utils/env';
 
 /**
  * RouteGuard - Checks if user has access to a route and redirects appropriately
@@ -318,7 +318,7 @@ export default function App() {
 
           {/* Public auth */}
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/create-client" element={isProd ? <CreateClientUser /> : <Navigate to="/login" replace />} />
+          <Route path="/create-client" element={isCreateClientEnabled() ? <CreateClientUser /> : <Navigate to="/login" replace />} />
           <Route path="/request-reset" element={<RequestReset />} />
           <Route path="/auth/request-reset" element={<Navigate to="/request-reset" replace />} />
           <Route path="/requestreset" element={<Navigate to="/request-reset" replace />} />

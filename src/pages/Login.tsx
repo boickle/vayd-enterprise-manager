@@ -3,7 +3,7 @@ import { FormEvent, useState, type CSSProperties } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import { trackEvent } from '../utils/analytics';
-import { isProduction } from '../utils/env';
+import { isCreateClientEnabled } from '../utils/env';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -431,9 +431,9 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {isProduction() && (
+        {isCreateClientEnabled() && (
           <Link to="/create-client" style={secondaryButtonStyle}>
-            Create User
+            Become a Member
           </Link>
         )}
       </section>
