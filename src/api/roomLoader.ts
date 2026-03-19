@@ -262,7 +262,7 @@ export type SentToClientPatient = {
   clientName?: string;
   patientName?: string;
   vaccines?: { felv?: boolean; lepto?: boolean; lyme?: boolean; bordatella?: boolean; sharps?: boolean };
-  questions?: { labWork?: boolean; mobility?: boolean };
+  questions?: { labWork?: boolean; mobility?: boolean; preMedsAsk?: boolean };
   reminders?: Array<{
     reminderId: number;
     quantity?: number;

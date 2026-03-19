@@ -1043,8 +1043,20 @@ export default function AppointmentRequestForm() {
       return lower === 'euthanasia' || lower === 'quality of life';
     }
   );
+  // Hide membership CTA when any pet (new or existing-client-new) answered Yes to calming meds or muzzle/special handling
+  const shouldHideMembershipForCalmingOrMuzzle =
+    (formData.newClientPets?.some(
+      (p) => p.needsCalmingMedications === 'Yes' || p.needsMuzzleOrSpecialHandling === 'Yes'
+    )) ||
+    (formData.existingClientNewPets?.some(
+      (p) => p.needsCalmingMedications === 'Yes' || p.needsMuzzleOrSpecialHandling === 'Yes'
+    )) ||
+    false;
   const isExploreMembershipsVisible =
-    isOnSubmitStep && hasEligiblePetsForMembership && !shouldHideMembershipForAppointmentTypes;
+    isOnSubmitStep &&
+    hasEligiblePetsForMembership &&
+    !shouldHideMembershipForAppointmentTypes &&
+    !shouldHideMembershipForCalmingOrMuzzle;
 
   // Fetch membership status for logged-in client so we can hide signup for pets that already have membership
   useEffect(() => {
@@ -7839,6 +7851,22 @@ export default function AppointmentRequestForm() {
             }}
             onClick={(e) => e.stopPropagation()}
           >
+            {membershipEligiblePets.length > 1 && membershipModalStep !== 'success' && (
+              <div
+                style={{
+                  marginBottom: 16,
+                  padding: '12px 16px',
+                  background: '#f0fdf4',
+                  border: '1px solid #bbf7d0',
+                  borderRadius: 8,
+                  color: '#166534',
+                  fontSize: 14,
+                  lineHeight: 1.5,
+                }}
+              >
+                Enroll more than one pet and receive a $75 credit for each additional pet. Credits may be used at any future Vet At Your Door visit.
+              </div>
+            )}
             {membershipModalStep === 'choose-pet' && (
               <>
                 <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
@@ -8033,9 +8061,14 @@ export default function AppointmentRequestForm() {
                 <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
                   Payment successful
                 </h2>
-                <p style={{ fontSize: '15px', color: '#374151', marginBottom: '24px' }}>
+                <p style={{ fontSize: '15px', color: '#374151', marginBottom: lastSignedUpPetIds.length >= 2 ? '12px' : '24px' }}>
                   Membership signup is complete. You can sign up another pet or return to your appointment request.
                 </p>
+                {lastSignedUpPetIds.length >= 2 && (
+                  <p style={{ fontSize: '15px', padding: '12px 16px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, color: '#166534', marginBottom: '24px', lineHeight: 1.5 }}>
+                    You will be receiving a $75 credit in your VAYD account to be used at any visit of your choosing — this won&apos;t expire.
+                  </p>
+                )}
                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                   {membershipEligiblePets.length > 0 && (
                     <button
