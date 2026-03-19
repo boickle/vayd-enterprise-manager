@@ -72,14 +72,18 @@ function keyFor(lat: number, lon: number, d = 6) {
   return `${Math.round(lat * m) / m},${Math.round(lon * m) / m}`;
 }
 
-/** Key variants for matching ETA byIndex row key to household (avoids precision/rounding mismatches). */
+/** Key variants for matching ETA byIndex row key to household (avoids precision/rounding mismatches). Handles "lat,lon" and "lat,lon:2" style keys. */
 function keyVariantsForKeyString(s: string): string[] {
-  const parts = s.split(',');
+  const suffix = s.includes(':') ? s.slice(s.indexOf(':')) : '';
+  const base = suffix ? s.slice(0, s.indexOf(':')) : s;
+  const parts = base.split(',');
   if (parts.length !== 2) return [s];
   const lat = parseFloat(parts[0]);
   const lon = parseFloat(parts[1]);
   if (Number.isNaN(lat) || Number.isNaN(lon)) return [s];
-  return [s, keyFor(lat, lon, 6), keyFor(lat, lon, 5)];
+  const k6 = keyFor(lat, lon, 6) + suffix;
+  const k5 = keyFor(lat, lon, 5) + suffix;
+  return [s, k6, k5].filter((x, i, arr) => arr.indexOf(x) === i);
 }
 
 function formatAddress(a: DoctorDayAppt) {
@@ -156,6 +160,44 @@ export type WeekHousehold = {
   firstApptIndex?: number;
 };
 
+/** Same address: same lat/lon or keys like "lat,lon" and "lat,lon:2". */
+function sameAddressWeek(a: WeekHousehold, b: WeekHousehold): boolean {
+  if (Number.isFinite(a.lat) && Number.isFinite(b.lat) && Number.isFinite(a.lon) && Number.isFinite(b.lon)) {
+    if (Math.abs(a.lat - b.lat) < 1e-6 && Math.abs(a.lon - b.lon) < 1e-6) return true;
+  }
+  const base = (k: string) => (k.includes(':') ? k.slice(0, k.indexOf(':')) : k);
+  return base(a.key) === base(b.key);
+}
+
+/** Household grouping key: same client at same location = one stop; different clients at same address = separate stops. */
+function householdGroupKey(a: DoctorDayAppt, lat: number, lon: number, addrKey: string | null, idPart: string, hasGeo: boolean): string {
+  const clientId = (a as any)?.clientPimsId ?? (a as any)?.clientId;
+  const clientPart = clientId != null ? String(clientId) : (str(a, 'clientName') ?? '').trim();
+  if (hasGeo) return `${lat}_${lon}_${clientPart}`;
+  if (addrKey) return `addr:${addrKey}_${clientPart}`;
+  return `noloc:${idPart}`;
+}
+
+/** Assign unique ETA keys: first at (lat,lon) gets "lat,lon", second "lat,lon:2", etc., so ETA API returns one entry per stop. */
+function assignEtaKeysForSameAddress<T extends { key: string; lat: number; lon: number }>(households: T[]): void {
+  const byLoc = new Map<string, T[]>();
+  for (const h of households) {
+    const hasGeo = Number.isFinite(h.lat) && Number.isFinite(h.lon) && Math.abs(h.lat) > 1e-6 && Math.abs(h.lon) > 1e-6;
+    const locKey = hasGeo ? `${h.lat}_${h.lon}` : h.key;
+    if (!byLoc.has(locKey)) byLoc.set(locKey, []);
+    byLoc.get(locKey)!.push(h);
+  }
+  for (const [, list] of byLoc) {
+    if (list.length === 0) continue;
+    const first = list[0];
+    const hasGeo = Number.isFinite(first.lat) && Number.isFinite(first.lon) && Math.abs(first.lat) > 1e-6 && Math.abs(first.lon) > 1e-6;
+    const baseKey = hasGeo ? keyFor(first.lat, first.lon, 6) : first.key;
+    list.forEach((h, i) => {
+      (h as { key: string }).key = i === 0 ? baseKey : `${baseKey}:${i + 1}`;
+    });
+  }
+}
+
 function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
   const m = new Map<string, WeekHousehold>();
   for (const [idx, a] of appts.entries()) {
@@ -177,8 +219,8 @@ function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
     const lon = hasGeo ? (rawLon as number) : 0;
     const addrKey = hasGeo ? null : addressKeyForAppt(a);
     const idPart = (a as any)?.id != null ? String((a as any).id) : String(idx);
-    const key = hasGeo ? keyFor(lat, lon, 6) : addrKey ? `addr:${addrKey}` : `noloc:${idPart}`;
-    const isPersonalBlock = isBlockEntry({ ...a, key });
+    const groupKey = householdGroupKey(a, lat, lon, addrKey, idPart, hasGeo);
+    const isPersonalBlock = isBlockEntry({ ...a, key: groupKey });
     const isPreview = (a as any)?.isPreview === true;
     const patient = makePatientBadge(a);
 
@@ -186,9 +228,10 @@ function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
     const windowStartIso = effectiveWindow?.startIso ?? null;
     const windowEndIso = effectiveWindow?.endIso ?? null;
 
-    if (!m.has(key)) {
-      m.set(key, {
-        key,
+    if (!m.has(groupKey)) {
+      const initialKey = hasGeo ? keyFor(lat, lon, 6) : addrKey ? `addr:${addrKey}` : `noloc:${idPart}`;
+      m.set(groupKey, {
+        key: initialKey,
         client: isBlockEntry(a) ? blockDisplayLabel(a) : clientDisplayName(a),
         address: formatAddress(a),
         lat,
@@ -209,7 +252,7 @@ function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
         firstApptIndex: idx,
       });
     } else {
-      const h = m.get(key)!;
+      const h = m.get(groupKey)!;
       h.firstApptIndex = Math.min(h.firstApptIndex ?? idx, idx);
       const s = getStartISO(a);
       const e = getEndISO(a);
@@ -224,8 +267,7 @@ function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
       if (isPreview) h.isPreview = true;
     }
   }
-  // Preserve visit order (from day API or after insert): use firstApptIndex so display and ETA match.
-  return Array.from(m.values()).sort((a, b) => {
+  const list = Array.from(m.values()).sort((a, b) => {
     if (a.firstApptIndex != null && b.firstApptIndex != null) {
       return a.firstApptIndex - b.firstApptIndex;
     }
@@ -234,12 +276,14 @@ function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
       (b.startIso ? DateTime.fromISO(b.startIso).toMillis() : 0)
     );
   });
+  assignEtaKeysForSameAddress(list);
+  return list;
 }
 
 type DayData = {
   date: string;
   households: WeekHousehold[];
-  timeline: { eta?: string | null; etd?: string | null }[];
+  timeline: { eta?: string | null; etd?: string | null; windowStartIso?: string | null; windowEndIso?: string | null }[];
   startDepot: Depot | null;
   endDepot: Depot | null;
   /** Time-of-day "HH:mm" or "HH:mm:ss" when doctor leaves depot */
@@ -252,6 +296,8 @@ type DayData = {
   depotToFirstRoutableSec?: number | null;
   /** Back-to-depot drive seconds when not in driveSeconds array */
   backToDepotSec?: number | null;
+  /** Back-to-depot arrival time from ETA API (authoritative for tooltip). */
+  backToDepotIso?: string | null;
   /** Minutes after ETD before next appointment can start or drive starts. Use only for next-available/block end; ETD is appointment end. Default 5. */
   appointmentBufferMinutes?: number;
   /** When set, render in byIndex order: displayHouseholds[i] = households[routingOrderIndices[i]]. */
@@ -716,14 +762,16 @@ export default function MyWeek(props: MyWeekProps = {}) {
             const result: any = await fetchEtas(payload);
             const valid = (s?: string | null) => !!(s && DateTime.fromISO(s).isValid);
             // Build key -> { eta, etd } from byIndex so we match by key (households and byIndex can be in different orders)
-            const keyToSlot: Record<string, { eta: string | null; etd: string | null }> = {};
+            const keyToSlot: Record<string, { eta: string | null; etd: string | null; windowStartIso?: string | null; windowEndIso?: string | null }> = {};
             if (Array.isArray(result?.byIndex)) {
-              for (const row of result.byIndex as { key?: string; etaIso?: string; etdIso?: string }[]) {
+              for (const row of result.byIndex as { key?: string; etaIso?: string; etdIso?: string; windowStartIso?: string; windowEndIso?: string }[]) {
                 const k = row?.key;
                 if (k == null) continue;
                 const eta = valid(row?.etaIso) ? row.etaIso! : null;
                 const etd = valid(row?.etdIso) ? row.etdIso! : null;
-                keyToSlot[k] = { eta, etd };
+                const windowStartIso = valid(row?.windowStartIso) ? row.windowStartIso! : null;
+                const windowEndIso = valid(row?.windowEndIso) ? row.windowEndIso! : null;
+                keyToSlot[k] = { eta, etd, windowStartIso: windowStartIso ?? undefined, windowEndIso: windowEndIso ?? undefined };
               }
             }
             const tl = day.households.map((h, i) => {
@@ -737,7 +785,12 @@ export default function MyWeek(props: MyWeekProps = {}) {
                   : 60;
                 etd = DateTime.fromISO(eta!).plus({ minutes: dur }).toISO();
               }
-              return { eta: eta ?? undefined, etd: etd ?? undefined };
+              return {
+                eta: eta ?? undefined,
+                etd: etd ?? undefined,
+                windowStartIso: slot?.windowStartIso ?? undefined,
+                windowEndIso: slot?.windowEndIso ?? undefined,
+              };
             });
             let driveSeconds: number[] | null = Array.isArray(result?.driveSeconds) ? result.driveSeconds : null;
             let depotToFirstRoutableSec: number | null = null;
@@ -755,13 +808,21 @@ export default function MyWeek(props: MyWeekProps = {}) {
             }
             const firstH = day.households[0];
             const firstIsBlock = (firstH as any)?.isPersonalBlock === true || firstH?.isNoLocation === true;
-            // When first stop is a personal block, keep driveSeconds from ETA (byIndex): ds[0] = depot→block (e.g. 42 min).
-            // Do not overwrite with depotToFirstRoutableSec (drive to first routable stop), or we lose the depot→block segment.
-            if (!firstIsBlock && driveSeconds && depotToFirstRoutableSec != null && depotToFirstRoutableSec > 0) {
-              driveSeconds = [depotToFirstRoutableSec, ...driveSeconds.slice(1)];
+            // When first stop is a personal block, trust driveSeconds[0]: 0 means no drive from depot to block.
+            // Do not overwrite with byIndex[0].driveFromPrevSec, which can be the drive *after* the block in some APIs.
+            // Only fill ds[0] from byIndex[0] when the API didn't send a value (null/undefined), not when it sent 0.
+            if (firstIsBlock && Array.isArray(result?.byIndex) && result.byIndex.length > 0 && driveSeconds && driveSeconds.length > 0) {
+              const by0 = result.byIndex[0] as { driveFromPrevSec?: number; driveFromPrevMinutes?: number };
+              const depotToBlockSec = typeof by0.driveFromPrevSec === 'number' ? by0.driveFromPrevSec : typeof by0.driveFromPrevMinutes === 'number' ? by0.driveFromPrevMinutes * 60 : 0;
+              const apiSentFirst = driveSeconds[0] != null;
+              if (depotToBlockSec > 0 && !apiSentFirst) {
+                driveSeconds = [depotToBlockSec, ...driveSeconds.slice(1)];
+              }
             }
+            // Use only driveSeconds from API/byIndex for painting. Do not overwrite with depotToFirstRoutableSec.
             const backToDepotSec =
               typeof result?.backToDepotSec === 'number' ? result.backToDepotSec : null;
+            const backToDepotIso = result?.backToDepotIso ?? null;
             const appointmentBufferMinutes =
               typeof result?.appointmentBufferMinutes === 'number' ? result.appointmentBufferMinutes : 5;
             // Display in positionInDay order from ETA byIndex; keyToPositionInDay uses all key variants so lookup works across precision differences
@@ -804,6 +865,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
               driveSeconds: driveSeconds ?? undefined,
               depotToFirstRoutableSec: depotToFirstRoutableSec ?? undefined,
               backToDepotSec: backToDepotSec ?? undefined,
+              backToDepotIso: backToDepotIso ?? undefined,
               appointmentBufferMinutes,
               routingOrderIndices,
             };
@@ -1352,7 +1414,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
           background: '#fff',
         }}
       >
-        <div style={{ display: 'flex', minWidth: 800 }}>
+        <div style={{ display: 'flex', width: '100%', minWidth: 0 }}>
           {/* Time column — header height matches day column (day name + date + points/buttons) so labels align with grid lines */}
           <div style={{ width: 56, flexShrink: 0, position: 'sticky', left: 0, background: '#f9fafb', zIndex: 2 }}>
             <div style={{ minHeight: 28 }} aria-hidden />
@@ -1383,13 +1445,13 @@ export default function MyWeek(props: MyWeekProps = {}) {
             const dayData = dayDataList[colIndex];
             const dt = DateTime.fromISO(dateIso);
             const isToday = dateIso === DateTime.local().toISODate();
+            const hasApptsOrBlocks = (dayData?.households?.length ?? 0) > 0;
             return (
               <div
                 key={dateIso}
                 style={{
-                  width: (dayData?.households?.length ?? 0) > 0 ? 220 : 70,
-                  minWidth: (dayData?.households?.length ?? 0) > 0 ? 220 : 70,
-                  flexShrink: 0,
+                  flex: hasApptsOrBlocks ? '2 1 0' : '1 1 0',
+                  minWidth: 72,
                   borderLeft: '1px solid #e5e7eb',
                   background: isToday ? '#fefce8' : undefined,
                 }}
@@ -1598,6 +1660,8 @@ export default function MyWeek(props: MyWeekProps = {}) {
                         }
                       }
 
+                      // Cumulative offset (minutes) so stops after a "block + drive" are shifted; keeps inter-appt drive segments visible.
+                      let cumOffsetMin = 0;
                       for (let i = 0; i < N; i++) {
                         const h = displayHouseholds[i];
                         const slot = displayTimeline[i];
@@ -1609,15 +1673,17 @@ export default function MyWeek(props: MyWeekProps = {}) {
                         const endMin = toMin(endIsoForHeight);
                         const durMin = Math.max(1, endMin - topMin);
                         const curIsBlock = (h as any)?.isPersonalBlock === true || (h as any)?.isNoLocation === true;
-                        // Depot → first stop: draw once, ending at chronologically first stop
+                        let driveSec = typeof ds[i + 1] === 'number' ? ds[i + 1] : 0;
+                        // When first stop is block and API sends 0 for block→first appt but non-zero depot→block (ds[0]), show that drive after the block so "drive after personal block" is visible.
+                        const firstIsBlock = (displayHouseholds[0] as any)?.isPersonalBlock === true || (displayHouseholds[0] as any)?.isNoLocation === true;
+                        const blockThenZero = i === 0 && firstIsBlock && driveSec === 0 && (typeof ds[0] === 'number' && ds[0] > 0);
+                        if (blockThenZero) driveSec = ds[0];
+                        // Segment before stop i: use only driveSeconds[i]. When block first with ds[0]>0 and ds[1]===0 we draw that drive below the block, not above.
                         if (i === 0 && (dayData.startDepotTime || ds.length > 0) && firstByTimeIdx === 0) {
-                          const firstEta = slot?.eta ?? h.startIso!;
-                          const firstIsBlock = curIsBlock;
-                          let toFirstSec = typeof ds[0] === 'number' ? ds[0] : 0;
-                          if (firstIsBlock && toFirstSec <= 0 && typeof ds[1] === 'number' && ds[1] > 0) {
-                            toFirstSec = ds[1];
-                          }
-                          if (toFirstSec > 0) {
+                          const toFirstSec = typeof ds[0] === 'number' ? ds[0] : 0;
+                          const skipAboveBlock = firstIsBlock && toFirstSec > 0 && (typeof ds[1] === 'number' && ds[1] === 0);
+                          if (toFirstSec > 0 && !skipAboveBlock) {
+                            const firstEta = slot?.eta ?? h.startIso!;
                             const startIso = DateTime.fromISO(firstEta)
                               .minus({ seconds: toFirstSec })
                               .toISO()!;
@@ -1625,14 +1691,12 @@ export default function MyWeek(props: MyWeekProps = {}) {
                             const segH = Math.max(4, (toFirstSec / 60) * PPM);
                             const min = Math.round(toFirstSec / 60);
                             segs.push({ top: segTop, height: segH, title: driveLabel(min, 'Drive from depot') });
-                          } else if (!firstIsBlock) {
-                            const startPx = dayData.startDepotTime
-                              ? depotTimeToPx(
-                                  weekGrid.gridStartMinutesFromMidnight,
-                                  weekGrid.totalMinutes,
-                                  dayData.startDepotTime
-                                )
-                              : 0;
+                          } else if (dayData.startDepotTime && ds.length === 0) {
+                            const startPx = depotTimeToPx(
+                              weekGrid.gridStartMinutesFromMidnight,
+                              weekGrid.totalMinutes,
+                              dayData.startDepotTime
+                            );
                             const segTop = startPx;
                             const segH = Math.max(4, topMin * PPM - startPx);
                             if (segH > 2) {
@@ -1641,34 +1705,28 @@ export default function MyWeek(props: MyWeekProps = {}) {
                             }
                           }
                         }
-                        // When chronologically first stop is not at index 0 (e.g. block first by time), draw depot segment before it here
-                        if (i === firstByTimeIdx && i > 0) {
-                          const depotSec = dayData.depotToFirstRoutableSec ?? (typeof ds[0] === 'number' ? ds[0] : 0);
-                          if (depotSec > 0) {
-                            const startIso = DateTime.fromISO(anchorIso).minus({ seconds: depotSec }).toISO()!;
-                            const segTop = toPx(toMin(startIso));
-                            const segH = Math.max(4, (depotSec / 60) * PPM);
-                            const min = Math.round(depotSec / 60);
-                            segs.push({ top: segTop, height: segH, title: driveLabel(min, 'Drive from depot') });
-                          }
-                        }
                         if (i < N - 1) {
                           const nextH = displayHouseholds[i + 1];
                           const nextSlot = displayTimeline[i + 1];
                           const nextAnchorIso = nextSlot?.eta ?? nextSlot?.etd ?? nextH.startIso;
                           const etdIso = slot?.etd ?? DateTime.fromISO(anchorIso).plus({ minutes: durMin }).toISO()!;
-                          const curIsBlock = (h as any)?.isPersonalBlock === true || (h as any)?.isNoLocation === true;
-                          const usedFirstForDepot = i === 0 && curIsBlock && (typeof ds[0] !== 'number' || ds[0] <= 0) && (typeof ds[1] === 'number' && ds[1] > 0);
-                          // Segment between stop i and i+1: use ds[i+1] (drive to stop i+1). Position so it hugs the next block (segment bottom = next block top in px).
-                          const driveSec = usedFirstForDepot ? (typeof ds[2] === 'number' ? ds[2] : 0) : (typeof ds[i + 1] === 'number' ? ds[i + 1] : 0);
                           if (driveSec > 0 && nextAnchorIso) {
                             const segH = Math.max(4, (driveSec / 60) * PPM);
-                            const nextBlockTopPx = toPx(toMin(nextAnchorIso));
-                            const segTop = nextBlockTopPx - segH;
                             const min = Math.round(driveSec / 60);
+                            const nextBaseTopMin = toMin(nextAnchorIso);
+                            const segmentStartMin = nextBaseTopMin - driveSec / 60;
+                            const wouldOverlap = segmentStartMin < endMin;
+                            const nextVisualTopMin = nextBaseTopMin + cumOffsetMin + (curIsBlock && driveSec > 0 ? driveSec / 60 : 0);
+                            const segTop =
+                              curIsBlock || wouldOverlap
+                                ? toPx(endMin + cumOffsetMin)
+                                : toPx(nextVisualTopMin) - segH;
                             segs.push({ top: segTop, height: segH, title: driveLabel(min, 'Drive to next stop') });
                           }
-                          // When drive is 0 (e.g. to personal block), don't paint the gap as "drive" — leave it as whitespace
+                          if ((curIsBlock || (driveSec > 0 && nextAnchorIso && toMin(nextAnchorIso) - driveSec / 60 < endMin)) && driveSec > 0 && nextAnchorIso) {
+                            const nextBaseTopMin = toMin(nextAnchorIso);
+                            cumOffsetMin += Math.max(0, endMin + driveSec / 60 - nextBaseTopMin);
+                          }
                         } else if (dayData.endDepotTime || typeof ds[N] === 'number' || backSec != null) {
                           const lastIsNoAddressBlock = (h as any)?.isPersonalBlock === true || (h as any)?.isNoLocation === true;
                           let driveStartMin: number;
@@ -1700,19 +1758,22 @@ export default function MyWeek(props: MyWeekProps = {}) {
                             const etdIso = slot?.etd ?? DateTime.fromISO(anchorIso).plus({ minutes: durMin }).toISO()!;
                             driveStartMin = toMin(etdIso) + bufferMin;
                           }
+                          driveStartMin += cumOffsetMin;
                           const driveStartPx = toPx(driveStartMin);
                           const sec = (typeof ds[N] === 'number' && ds[N] > 0) ? ds[N] : (backSec ?? 0);
                           const gridBaseIso = dayBaseIso(weekGrid.gridStartMinutesFromMidnight, dateIso);
                           const arrivalTitle = (arrivalIso: string) =>
                             ` — Arrival: ${DateTime.fromISO(arrivalIso).toLocaleString(DateTime.TIME_SIMPLE)}`;
+                          const backArrivalIso =
+                            dayData.backToDepotIso ?? (sec > 0
+                              ? DateTime.fromISO(gridBaseIso).plus({ minutes: driveStartMin + sec / 60 }).toISO()!
+                              : null);
                           if (sec > 0) {
                             const min = Math.round(sec / 60);
-                            const driveDurationMin = sec / 60;
-                            const arrivalIso = DateTime.fromISO(gridBaseIso).plus({ minutes: driveStartMin + driveDurationMin }).toISO()!;
                             segs.push({
                               top: driveStartPx,
                               height: Math.max(4, (sec / 60) * PPM),
-                              title: driveLabel(min, 'Drive back to depot') + arrivalTitle(arrivalIso),
+                              title: driveLabel(min, 'Drive back to depot') + (backArrivalIso ? arrivalTitle(backArrivalIso) : ''),
                             });
                           } else if (!lastIsNoAddressBlock) {
                             const endDepotPx = dayData.endDepotTime
@@ -1723,9 +1784,8 @@ export default function MyWeek(props: MyWeekProps = {}) {
                                 )
                               : weekGrid.totalMinutes * PPM;
                             const segH = Math.max(4, endDepotPx - driveStartPx);
-                            const driveDurationMin = segH / PPM;
-                            const arrivalIso = DateTime.fromISO(gridBaseIso).plus({ minutes: driveStartMin + driveDurationMin }).toISO()!;
-                            if (segH > 2) segs.push({ top: driveStartPx, height: segH, title: driveLabel(Math.round(segH / PPM), 'Drive back to depot') + arrivalTitle(arrivalIso) });
+                            const fallbackArrivalIso = DateTime.fromISO(gridBaseIso).plus({ minutes: driveStartMin + segH / PPM }).toISO()!;
+                            if (segH > 2) segs.push({ top: driveStartPx, height: segH, title: driveLabel(Math.round(segH / PPM), 'Drive back to depot') + arrivalTitle(dayData.backToDepotIso ?? fallbackArrivalIso) });
                           }
                         }
                       }
@@ -1777,28 +1837,111 @@ export default function MyWeek(props: MyWeekProps = {}) {
                         : households;
                     const displayTimeline =
                       order && order.length === tl.length ? order.map((i) => tl[i]) : tl;
+                    const bufferMin = dayData?.appointmentBufferMinutes ?? 5;
+                    const ds = dayData?.driveSeconds ?? [];
+                    const firstIsBlock =
+                      (displayHouseholds[0] as any)?.isPersonalBlock === true ||
+                      (displayHouseholds[0] as any)?.isNoLocation === true;
+                    // Precompute base top/dur and then drive offsets sequentially so each block is only shifted by the segment immediately before it (using previous block's shifted end). Fixes 3–4 PM block ending up after 4 PM.
+                    const topMinByIdx: number[] = [];
+                    const durMinByIdx: number[] = [];
+                    const driveOffsets: number[] = [];
+                    for (let i = 0; i < displayHouseholds.length; i++) {
+                      const hi = displayHouseholds[i];
+                      const startIso = hi.startIso;
+                      const endIso = hi.endIso;
+                      if (!startIso || !endIso) {
+                        topMinByIdx.push(0);
+                        durMinByIdx.push(1);
+                        driveOffsets.push(0);
+                        continue;
+                      }
+                      const slot = displayTimeline[i];
+                      const useEta = showByDriveTime && (slot?.eta ?? slot?.etd);
+                      let anchorIso = useEta ? (slot?.eta ?? startIso) : startIso;
+                      if (i >= 1) {
+                        const prev = displayHouseholds[i - 1];
+                        const prevSlot = displayTimeline[i - 1];
+                        if (sameAddressWeek(prev, hi)) {
+                          const prevEtd = prevSlot?.etd ?? prev.endIso ?? null;
+                          if (prevEtd) {
+                            const minStartIso = DateTime.fromISO(prevEtd).plus({ minutes: bufferMin }).toISO();
+                            if (minStartIso) {
+                              const anchorDt = DateTime.fromISO(anchorIso);
+                              const minDt = DateTime.fromISO(minStartIso);
+                              if (anchorDt.isValid && minDt.isValid && anchorDt < minDt) {
+                                anchorIso = minStartIso;
+                              }
+                            }
+                          }
+                        }
+                      }
+                      const endIsoForHeight = useEta && slot?.etd ? slot.etd : endIso;
+                      const tMin = minutesFromDayStart(
+                        weekGrid.gridStartMinutesFromMidnight,
+                        weekGrid.totalMinutes,
+                        anchorIso,
+                        dateIso
+                      );
+                      const eMin = minutesFromDayStart(
+                        weekGrid.gridStartMinutesFromMidnight,
+                        weekGrid.totalMinutes,
+                        endIsoForHeight,
+                        dateIso
+                      );
+                      const dMin = Math.max(1, eMin - tMin);
+                      topMinByIdx.push(tMin);
+                      durMinByIdx.push(dMin);
+                      if (i === 0) {
+                        driveOffsets.push(0);
+                      } else {
+                        const prevEndShifted = topMinByIdx[i - 1] + driveOffsets[i - 1] + durMinByIdx[i - 1];
+                        let driveSecJ = typeof ds[i] === 'number' ? ds[i] : 0;
+                        if (i === 1 && firstIsBlock && driveSecJ === 0 && (typeof ds[0] === 'number' && ds[0] > 0)) {
+                          driveSecJ = ds[0];
+                        }
+                        driveOffsets.push(Math.max(0, prevEndShifted + driveSecJ / 60 - tMin));
+                      }
+                    }
                     return displayHouseholds.map((h, idx) => {
                     const startIso = h.startIso;
                     const endIso = h.endIso;
                     if (!startIso || !endIso) return null;
                     const slot = displayTimeline[idx];
                     const useEta = showByDriveTime && (slot?.eta ?? slot?.etd);
-                    const anchorIso = useEta ? (slot?.eta ?? startIso) : startIso;
+                    let anchorIso = useEta ? (slot?.eta ?? startIso) : startIso;
+                    if (idx >= 1) {
+                      const prev = displayHouseholds[idx - 1];
+                      const prevSlot = displayTimeline[idx - 1];
+                      if (sameAddressWeek(prev, h)) {
+                        const prevEtd = prevSlot?.etd ?? prev.endIso ?? null;
+                        if (prevEtd) {
+                          const minStartIso = DateTime.fromISO(prevEtd).plus({ minutes: bufferMin }).toISO();
+                          if (minStartIso) {
+                            const anchorDt = DateTime.fromISO(anchorIso);
+                            const minDt = DateTime.fromISO(minStartIso);
+                            if (anchorDt.isValid && minDt.isValid && anchorDt < minDt) {
+                              anchorIso = minStartIso;
+                            }
+                          }
+                        }
+                      }
+                    }
                     const endIsoForHeight = useEta && slot?.etd ? slot.etd : endIso;
-                    const topMin = minutesFromDayStart(
+                    const topMin = topMinByIdx[idx] ?? minutesFromDayStart(
                       weekGrid.gridStartMinutesFromMidnight,
                       weekGrid.totalMinutes,
                       anchorIso,
                       dateIso
                     );
-                    const endMin = minutesFromDayStart(
+                    const durMin = durMinByIdx[idx] ?? Math.max(1, minutesFromDayStart(
                       weekGrid.gridStartMinutesFromMidnight,
                       weekGrid.totalMinutes,
                       endIsoForHeight,
                       dateIso
-                    );
-                    const durMin = Math.max(1, endMin - topMin);
-                    const top = topMin * PPM;
+                    ) - topMin);
+                    const driveOffsetMin = driveOffsets[idx] ?? 0;
+                    const top = topMin * PPM + driveOffsetMin * PPM;
                     const height = Math.max(14, durMin * PPM);
 
                     const isFixedTime =
@@ -1824,8 +1967,8 @@ export default function MyWeek(props: MyWeekProps = {}) {
                             durMin,
                             etaIso: showByDriveTime ? etaIso : null,
                             etdIso: showByDriveTime ? etdIso : null,
-                            windowStartIso: h.windowStartIso ?? null,
-                            windowEndIso: h.windowEndIso ?? null,
+                            windowStartIso: (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ?? h.windowStartIso ?? null,
+                            windowEndIso: (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ?? h.windowEndIso ?? null,
                             isFixedTime,
                             isPersonalBlock: h.isPersonalBlock,
                             isNoLocation: h.isNoLocation,

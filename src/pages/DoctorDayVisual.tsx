@@ -41,14 +41,18 @@ function keyFor(lat: number, lon: number, d = 6) {
   return `${Math.round(lat * m) / m},${Math.round(lon * m) / m}`;
 }
 
-/** Key variants for matching ETA byIndex row key to household (avoids precision/rounding mismatches). */
+/** Key variants for matching ETA byIndex row key to household (avoids precision/rounding mismatches). Handles "lat,lon" and "lat,lon:2" style keys. */
 function keyVariantsForKeyString(s: string): string[] {
-  const parts = s.split(',');
+  const suffix = s.includes(':') ? s.slice(s.indexOf(':')) : '';
+  const base = suffix ? s.slice(0, s.indexOf(':')) : s;
+  const parts = base.split(',');
   if (parts.length !== 2) return [s];
   const lat = parseFloat(parts[0]);
   const lon = parseFloat(parts[1]);
   if (Number.isNaN(lat) || Number.isNaN(lon)) return [s];
-  return [s, keyFor(lat, lon, 6), keyFor(lat, lon, 5)];
+  const k6 = keyFor(lat, lon, 6) + suffix;
+  const k5 = keyFor(lat, lon, 5) + suffix;
+  return [s, k6, k5].filter((x, i, arr) => arr.indexOf(x) === i);
 }
 
 function formatAddress(a: DoctorDayAppt) {
@@ -92,6 +96,35 @@ function addressKeyForAppt(a: DoctorDayAppt): string | null {
     normalizeAddressString(str(a as any, 'addressStr')) ||
     normalizeAddressString(str(a as any, 'fullAddress'));
   return free ? `free:${free}` : null;
+}
+
+/** Same client at same location = one stop; different clients at same address = separate stops. */
+function householdGroupKey(a: DoctorDayAppt, lat: number, lon: number, addrKey: string | null, idPart: string, hasGeo: boolean): string {
+  const clientId = (a as any)?.clientPimsId ?? (a as any)?.clientId;
+  const clientPart = clientId != null ? String(clientId) : (str(a, 'clientName') ?? '').trim();
+  if (hasGeo) return `${lat}_${lon}_${clientPart}`;
+  if (addrKey) return `addr:${addrKey}_${clientPart}`;
+  return `noloc:${idPart}`;
+}
+
+/** Assign unique ETA keys: first at (lat,lon) gets "lat,lon", second "lat,lon:2", etc. */
+function assignEtaKeysForSameAddress<T extends { key: string; lat: number; lon: number }>(households: T[]): void {
+  const byLoc = new Map<string, T[]>();
+  for (const h of households) {
+    const hasGeo = Number.isFinite(h.lat) && Number.isFinite(h.lon) && Math.abs(h.lat) > 1e-6 && Math.abs(h.lon) > 1e-6;
+    const locKey = hasGeo ? `${h.lat}_${h.lon}` : h.key;
+    if (!byLoc.has(locKey)) byLoc.set(locKey, []);
+    byLoc.get(locKey)!.push(h);
+  }
+  for (const [, list] of byLoc) {
+    if (list.length === 0) continue;
+    const first = list[0];
+    const hasGeo = Number.isFinite(first.lat) && Number.isFinite(first.lon) && Math.abs(first.lat) > 1e-6 && Math.abs(first.lon) > 1e-6;
+    const baseKey = hasGeo ? keyFor(first.lat, first.lon, 6) : first.key;
+    list.forEach((h, i) => {
+      (h as { key: string }).key = i === 0 ? baseKey : `${baseKey}:${i + 1}`;
+    });
+  }
 }
 
 /* ----------------- patient extraction ----------------- */
@@ -228,7 +261,12 @@ function adjustedWindowForStart(
 }
 
 /* ----------------- ETA timeline type (aligned to households) ----------------- */
-type DisplaySlot = { eta?: string | null; etd?: string | null };
+type DisplaySlot = {
+  eta?: string | null;
+  etd?: string | null;
+  windowStartIso?: string | null;
+  windowEndIso?: string | null;
+};
 
 export default function DoctorDayVisual({
   readOnly,
@@ -264,7 +302,9 @@ export default function DoctorDayVisual({
   /** When set, render in positionInDay order. From ETA response. */
   const [routingOrderIndices, setRoutingOrderIndices] = useState<number[] | null>(null);
   /** ETA byIndex rows (route order); used so displayTimeline aligns with positionInDay-ordered households. */
-  const [byIndexRows, setByIndexRows] = useState<Array<{ etaIso?: string; etdIso?: string }>>([]);
+  const [byIndexRows, setByIndexRows] = useState<
+    Array<{ etaIso?: string; etdIso?: string; windowStartIso?: string; windowEndIso?: string }>
+  >([]);
 
   // schedule bounds for visual work start
   const [schedStartIso, setSchedStartIso] = useState<string | null>(null);
@@ -294,6 +334,8 @@ export default function DoctorDayVisual({
     patients: PatientBadge[];
     /** Backend effectiveWindow when available; used for Window display */
     effectiveWindow?: { startIso: string; endIso: string };
+    /** Window from ETA byIndex row when present; preferred over effectiveWindow */
+    windowFromByIndex?: { winStartIso: string; winEndIso: string };
   } | null>(null);
 
   /* ------------ load providers ------------ */
@@ -438,7 +480,7 @@ export default function DoctorDayVisual({
     };
   }, [date, selectedDoctorId, virtualAppt]);
 
-  /* ------------ group into households + patients (keep personal blocks) ------------ */
+  /* ------------ group into households + patients (keep personal blocks); same client same address = one stop, different clients same address = separate stops ------------ */
   const households = useMemo<Household[]>(() => {
     const m = new Map<string, Household>();
     for (const [idx, a] of appts.entries()) {
@@ -467,16 +509,17 @@ export default function DoctorDayVisual({
 
       const addrKey = hasGeo ? null : addressKeyForAppt(a);
       const idPart = (a as any)?.id != null ? String((a as any).id) : String(idx);
-      const key = hasGeo ? keyFor(lat, lon, 6) : addrKey ? `addr:${addrKey}` : `noloc:${idPart}`;
+      const groupKey = householdGroupKey(a, lat, lon, addrKey, idPart, hasGeo);
 
-      const isPersonalBlock = isBlockEntry({ ...a, key });
+      const isPersonalBlock = isBlockEntry({ ...a, key: groupKey });
 
       const patient = makePatientBadge(a);
       const apptIsPreview = (a as any)?.isPreview === true;
 
-      if (!m.has(key)) {
-        m.set(key, {
-          key,
+      if (!m.has(groupKey)) {
+        const initialKey = hasGeo ? keyFor(lat, lon, 6) : addrKey ? `addr:${addrKey}` : `noloc:${idPart}`;
+        m.set(groupKey, {
+          key: initialKey,
           client: isBlockEntry(a) ? blockDisplayLabel(a) : clientDisplayName(a),
           clientAlert: (a as any)?.clientAlert ?? null,
           address: formatAddress(a),
@@ -488,14 +531,13 @@ export default function DoctorDayVisual({
           isPreview: apptIsPreview,
           isPersonalBlock,
           patients: isPersonalBlock ? [] : [patient],
-          primary: a, // Store primary appointment
+          primary: a,
           firstApptIndex: idx,
         });
       } else {
-        const h = m.get(key)!;
+        const h = m.get(groupKey)!;
         h.firstApptIndex = Math.min(h.firstApptIndex ?? idx, idx);
 
-        // time window expand
         const s = getStartISO(a);
         const e = getEndISO(a);
         const sDt = s ? DateTime.fromISO(s) : null;
@@ -503,10 +545,8 @@ export default function DoctorDayVisual({
         if (sDt && (!h.startIso || sDt < DateTime.fromISO(h.startIso))) h.startIso = sDt.toISO();
         if (eDt && (!h.endIso || eDt > DateTime.fromISO(h.endIso))) h.endIso = eDt.toISO();
 
-        // mark preview if any appt in household is preview
         if (apptIsPreview) h.isPreview = true;
 
-        // add unique patient (skip for blocks)
         if (!h.isPersonalBlock) {
           const exists = h.patients.some(
             (p) =>
@@ -517,8 +557,7 @@ export default function DoctorDayVisual({
         }
       }
     }
-    // Preserve visit order (from day API or after insert): use firstApptIndex so display and ETA match.
-    return Array.from(m.values()).sort((a, b) => {
+    const list = Array.from(m.values()).sort((a, b) => {
       if (a.firstApptIndex != null && b.firstApptIndex != null) {
         return a.firstApptIndex - b.firstApptIndex;
       }
@@ -527,6 +566,8 @@ export default function DoctorDayVisual({
         (b.startIso ? DateTime.fromISO(b.startIso).toMillis() : 0)
       );
     });
+    assignEtaKeysForSameAddress(list);
+    return list;
   }, [appts]);
 
   /* =========================================================================
@@ -774,15 +815,20 @@ export default function DoctorDayVisual({
           }
         }
 
-        // 6) store drive/depot/buffer fields. First segment = drive from depot (byIndex[0].driveFromPrev*).
-        setDriveSecondsArr(Array.isArray(result?.driveSeconds) ? result.driveSeconds : null);
+        // 6) store drive/depot/buffer fields. First segment = drive from depot; use normalized result.driveSeconds[0] (same logic as My Week / routing.ts).
+        const driveArr = Array.isArray(result?.driveSeconds) ? result.driveSeconds : null;
+        setDriveSecondsArr(driveArr);
+        const fromApiFirst =
+          driveArr && driveArr.length > 0 && typeof driveArr[0] === 'number' ? driveArr[0] : null;
         const firstRow = byIndex[0] as { driveFromPrevMinutes?: number; driveFromPrevSec?: number } | undefined;
         const toFirstSec =
-          typeof firstRow?.driveFromPrevSec === 'number'
-            ? firstRow.driveFromPrevSec
-            : typeof firstRow?.driveFromPrevMinutes === 'number'
-              ? firstRow.driveFromPrevMinutes * 60
-              : null;
+          fromApiFirst != null
+            ? fromApiFirst
+            : typeof firstRow?.driveFromPrevSec === 'number'
+              ? firstRow.driveFromPrevSec
+              : typeof firstRow?.driveFromPrevMinutes === 'number'
+                ? firstRow.driveFromPrevMinutes * 60
+                : null;
         setDepotToFirstSec(toFirstSec != null && toFirstSec > 0 ? toFirstSec : null);
         setBackToDepotSec(
           typeof result?.backToDepotSec === 'number' ? result.backToDepotSec : null
@@ -817,7 +863,12 @@ export default function DoctorDayVisual({
             (a, b) => getPositionInDay(a) - getPositionInDay(b)
           );
           setRoutingOrderIndices(order);
-          setByIndexRows(result.byIndex.map((r: any) => ({ etaIso: r.etaIso, etdIso: r.etdIso })));
+          setByIndexRows(result.byIndex.map((r: any) => ({
+            etaIso: r.etaIso,
+            etdIso: r.etdIso,
+            windowStartIso: r.windowStartIso ?? undefined,
+            windowEndIso: r.windowEndIso ?? undefined,
+          })));
         } else {
           setRoutingOrderIndices(null);
           setByIndexRows([]);
@@ -854,7 +905,12 @@ export default function DoctorDayVisual({
   // When using positionInDay order, timeline must align with byIndex (position 1 = byIndex[0], etc.)
   const displayTimeline = useMemo(() => {
     if (routingOrderIndices && routingOrderIndices.length === households.length && byIndexRows.length === households.length) {
-      return byIndexRows.map((r) => ({ eta: r.etaIso ?? null, etd: r.etdIso ?? null }));
+      return byIndexRows.map((r) => ({
+        eta: r.etaIso ?? null,
+        etd: r.etdIso ?? null,
+        windowStartIso: r.windowStartIso ?? null,
+        windowEndIso: r.windowEndIso ?? null,
+      }));
     }
     if (routingOrderIndices && routingOrderIndices.length === timeline.length) {
       return routingOrderIndices.map((i) => timeline[i]);
@@ -918,15 +974,22 @@ export default function DoctorDayVisual({
   const driveBetweenMin = useMemo(() => {
     const N = displayHouseholds.length;
     if (N <= 1) return [] as number[];
+    const firstIsBlock =
+      (displayHouseholds[0] as any)?.isPersonalBlock === true ||
+      (displayHouseholds[0] as any)?.isNoLocation === true;
     // Prefer server driveSeconds if shape matches between segments
     if (Array.isArray(driveSecondsArr)) {
       if (driveSecondsArr.length === N - 1) {
         return driveSecondsArr.map((s) => Math.max(0, Math.round((s || 0) / 60)));
       } else if (driveSecondsArr.length === N || driveSecondsArr.length === N + 1) {
-        // try to extract between segments heuristically
         const between =
           driveSecondsArr.length === N + 1 ? driveSecondsArr.slice(1, N) : driveSecondsArr.slice(1);
-        return between.map((s) => Math.max(0, Math.round((s || 0) / 60)));
+        const result = between.map((s) => Math.max(0, Math.round((s || 0) / 60)));
+        // When first stop is block and API sends 0 for block→first appt, use ds[0] so "drive after personal block" shows (same as My Week).
+        if (firstIsBlock && N >= 2 && (driveSecondsArr[1] ?? 0) === 0 && (driveSecondsArr[0] ?? 0) > 0) {
+          result[0] = Math.max(0, Math.round(driveSecondsArr[0] / 60));
+        }
+        return result;
       }
     }
     // Fallback: ETA/ETD gaps between consecutive rows
@@ -982,27 +1045,74 @@ export default function DoctorDayVisual({
     return { startIso: h.startIso!, endIso: h.endIso! };
   };
 
-  // Geometry of each appointment block (top + height). Use ETA/ETD when available so blocks match route times (incl. personal block).
+  // Same address: same lat/lon (or keys like "lat,lon" and "lat,lon:2" for two clients at one location).
+  const sameAddress = (a: Household, b: Household): boolean => {
+    if (Number.isFinite(a.lat) && Number.isFinite(b.lat) && Number.isFinite(a.lon) && Number.isFinite(b.lon)) {
+      if (Math.abs((a.lat as number) - (b.lat as number)) < 1e-6 && Math.abs((a.lon as number) - (b.lon as number)) < 1e-6) return true;
+    }
+    const base = (k: string) => (k.includes(':') ? k.slice(0, k.indexOf(':')) : k);
+    return base(a.key) === base(b.key);
+  };
+
+  // Geometry of each appointment block (top + height). Use ETA/ETD when available. Consecutive same-address stops are placed back-to-back (prev ETD + buffer only).
+  // Offsets computed sequentially (prev block's shifted end + drive) so end-of-day blocks (e.g. 3–4 PM) don't get over-shifted (same fix as My Week).
   const blockGeom = useMemo(() => {
-    return displayHouseholds.map((h, idx) => {
+    const bufferMin = appointmentBufferMinutes ?? 5;
+    const N = displayHouseholds.length;
+    const baseTops: number[] = [];
+    const heights: number[] = [];
+    const driveOffsetsPx: number[] = [];
+    for (let idx = 0; idx < N; idx++) {
+      const h = displayHouseholds[idx];
       const slot = displayTimeline[idx];
       const etaIso = slot?.eta ?? null;
       const etdIso = slot?.etd ?? null;
       const { startIso: sIso, endIso: eIso } = householdStartEnd(h, idx);
-      const anchorIso = etaIso ?? sIso ?? h.startIso!;
+      let anchorIso = etaIso ?? sIso ?? h.startIso!;
       const endIso = etdIso ?? eIso ?? h.endIso!;
+      if (idx >= 1) {
+        const prev = displayHouseholds[idx - 1];
+        const prevSlot = displayTimeline[idx - 1];
+        if (sameAddress(prev, h)) {
+          const prevEtd = prevSlot?.etd ?? prev.endIso ?? null;
+          if (prevEtd) {
+            const minStart = DateTime.fromISO(prevEtd).plus({ minutes: bufferMin });
+            const anchorDt = DateTime.fromISO(anchorIso);
+            if (minStart.isValid && anchorDt.isValid && anchorDt < minStart) {
+              anchorIso = minStart.toISO()!;
+            }
+          }
+        }
+      }
       const s = anchorIso ? DateTime.fromISO(anchorIso) : null;
       const e = endIso ? DateTime.fromISO(endIso) : null;
-      if (!s || !e || !s.isValid || !e.isValid) return null;
-
+      if (!s || !e || !s.isValid || !e.isValid) {
+        baseTops.push(0);
+        heights.push(22);
+        driveOffsetsPx.push(0);
+        continue;
+      }
+      const baseTop = Math.max(0, Math.round(s.diff(t0).as('minutes'))) * PPM;
       const durMin = Math.max(1, Math.round(e.diff(s).as('minutes')));
-      const top = Math.max(0, Math.round(s.diff(t0).as('minutes'))) * PPM;
       const height = Math.max(22, durMin * PPM);
+      baseTops.push(baseTop);
+      heights.push(height);
+      if (idx === 0) {
+        driveOffsetsPx.push(0);
+      } else {
+        const prevEndShiftedPx = baseTops[idx - 1] + driveOffsetsPx[idx - 1] + heights[idx - 1];
+        const minsJ = driveBetweenMin[idx - 1] ?? 0;
+        driveOffsetsPx.push(Math.max(0, prevEndShiftedPx + minsJ * PPM - baseTop));
+      }
+    }
+    return displayHouseholds.map((_, idx) => {
+      const top = baseTops[idx] + driveOffsetsPx[idx];
+      const height = heights[idx];
       return { top, height };
     });
-  }, [displayHouseholds, displayTimeline, t0]);
+  }, [displayHouseholds, displayTimeline, t0, appointmentBufferMinutes, driveBetweenMin]);
 
-  // Vertical connectors between consecutive blocks (drive only). Position each segment so it hugs the next block (ends at next block start).
+  // Vertical connectors: when current stop is a block, or segment would overlap current block, place segment below it (same as My Week).
   const vConnectors = useMemo(() => {
     const out: Array<{ top: number; height: number; mins: number }> = [];
     for (let i = 0; i < displayHouseholds.length - 1; i++) {
@@ -1012,22 +1122,35 @@ export default function DoctorDayVisual({
       const mins = Math.max(0, driveBetweenMin[i] || 0);
       if (mins <= 0) continue;
       const height = Math.max(24, mins * PPM);
-      const top = b.top - height;
+      const curIsBlock =
+        (displayHouseholds[i] as any)?.isPersonalBlock === true ||
+        (displayHouseholds[i] as any)?.isNoLocation === true;
+      const wouldOverlap = b.top - height < a.top + a.height;
+      const top = curIsBlock || wouldOverlap ? a.top + a.height : b.top - height;
       out.push({ top, height, mins });
     }
     return out;
   }, [blockGeom, displayHouseholds, driveBetweenMin]);
 
   /* ------------ depot chips ------------ */
-  // First segment: "Drive from depot: X min" when byIndex[0].driveFromPrevMinutes > 0 (stored as depotToFirstSec).
-  // Fallback: driveSecondsArr[0] when first stop is routable.
+  // First segment: "Drive from depot: X min". When first stop is block and ds[1]==0 we draw that drive below the block (vConnectors), so don't show it above the block (same as My Week).
   const fromDepotMin = useMemo(() => {
     if (displayHouseholds.length === 0) return null;
+    const firstIsBlock =
+      (displayHouseholds[0] as any)?.isPersonalBlock === true ||
+      (displayHouseholds[0] as any)?.isNoLocation === true;
+    if (
+      firstIsBlock &&
+      Array.isArray(driveSecondsArr) &&
+      driveSecondsArr.length >= 2 &&
+      (driveSecondsArr[1] ?? 0) === 0 &&
+      (driveSecondsArr[0] ?? 0) > 0
+    ) {
+      return 0;
+    }
     if (depotToFirstSec != null && depotToFirstSec > 0) {
       return Math.max(0, Math.round(depotToFirstSec / 60));
     }
-    const first = displayHouseholds[0];
-    if (first.isPersonalBlock || first.isNoLocation) return null;
     if (Array.isArray(driveSecondsArr) && driveSecondsArr.length >= displayHouseholds.length) {
       return Math.max(0, Math.round((driveSecondsArr[0] || 0) / 60));
     }
@@ -1630,17 +1753,21 @@ export default function DoctorDayVisual({
               1,
               Math.round(DateTime.fromISO(endIsoForHeight).diff(DateTime.fromISO(anchorIso)).as('minutes'))
             );
-            const top =
-              Math.max(0, Math.round(DateTime.fromISO(anchorIso).diff(t0).as('minutes'))) * PPM;
-            const height = Math.max(22, durMinForHeight * PPM);
+            // Use blockGeom so blocks sit with gaps for drive segments (drive between appointments, not on top)
+            const geom = blockGeom[idx];
+            const top = geom ? geom.top : Math.max(0, Math.round(DateTime.fromISO(anchorIso).diff(t0).as('minutes'))) * PPM;
+            const height = geom ? geom.height : Math.max(22, durMinForHeight * PPM);
 
-            // Window for tooltip: backend effectiveWindow when available, else frontend-calculated
+            // Window: prefer byIndex row window when both present, else appointment effectiveWindow, else frontend-calculated
+            const slotWindow = displayTimeline[idx];
             const ew = h.primary?.effectiveWindow;
             const { winStartIso, winEndIso } = isFixedTime
               ? { winStartIso: resolvedStartIso, winEndIso: resolvedEndIso }
-              : ew?.startIso && ew?.endIso
-                ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
-                : adjustedWindowForStart(date, h.startIso!, schedStartIso);
+              : slotWindow?.windowStartIso && slotWindow?.windowEndIso
+                ? { winStartIso: slotWindow.windowStartIso, winEndIso: slotWindow.windowEndIso }
+                : ew?.startIso && ew?.endIso
+                  ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
+                  : adjustedWindowForStart(date, h.startIso!, schedStartIso);
 
             const patientsPreview = h.patients
               .map((p) => p.name)
@@ -1662,7 +1789,6 @@ export default function DoctorDayVisual({
                     client: h.client,
                     address: h.address,
                     durMin,
-                    // For fixed time appointments, use scheduled times for ETA/ETD
                     etaIso: isFixedTime ? h.startIso! : (etaIso ?? null),
                     etdIso: isFixedTime ? h.endIso! : (etdIso ?? null),
                     sIso: h.startIso!,
@@ -1671,6 +1797,9 @@ export default function DoctorDayVisual({
                     clientAlert: h?.clientAlert,
                     isFixedTime,
                     effectiveWindow: h.primary?.effectiveWindow,
+                    windowFromByIndex: slotWindow?.windowStartIso && slotWindow?.windowEndIso
+                      ? { winStartIso: slotWindow.windowStartIso, winEndIso: slotWindow.windowEndIso }
+                      : undefined,
                   });
                 }}
                 onMouseMove={(ev) => {
@@ -2002,13 +2131,15 @@ export default function DoctorDayVisual({
             const s = DateTime.fromISO(hoverCard.sIso);
             const e = DateTime.fromISO(hoverCard.eIso);
 
-            // Window for hover card: backend effectiveWindow when available, else frontend-calculated
+            // Window: prefer byIndex row when present, else effectiveWindow, else frontend-calculated
             const ew = hoverCard.effectiveWindow;
             const { winStartIso, winEndIso } = hoverCard.isFixedTime
               ? { winStartIso: hoverCard.sIso, winEndIso: hoverCard.eIso }
-              : ew?.startIso && ew?.endIso
-                ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
-                : adjustedWindowForStart(date, hoverCard.sIso, schedStartIso);
+              : hoverCard.windowFromByIndex
+                ? { winStartIso: hoverCard.windowFromByIndex.winStartIso, winEndIso: hoverCard.windowFromByIndex.winEndIso }
+                : ew?.startIso && ew?.endIso
+                  ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
+                  : adjustedWindowForStart(date, hoverCard.sIso, schedStartIso);
             return (
               <div
                 style={{
