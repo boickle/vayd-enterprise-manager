@@ -560,7 +560,7 @@ export default function CreateClientUser() {
         <section className="member-card" style={cardStyle} aria-labelledby="new-clients-title">
           <h2 id="new-clients-title" style={cardTitleStyle}>New to Vet At Your Door?</h2>
           <p style={cardBodyStyle}>
-            To become a One-Team Member, first request your first appointment. Once scheduled, you&apos;ll be invited to create your Client Portal account and enroll.
+            To become a One-Team Member, please request your first appointment. Once scheduled, you may be invited to sign up for membership during the appointment request process, or afterward once we review your pet&apos;s history and records.
           </p>
           {REQUEST_APPOINTMENT_URL.startsWith('http') ? (
             <a
