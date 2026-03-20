@@ -45,6 +45,12 @@ import {
 } from 'recharts';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import {
+  fetchEmployeeGoals,
+  getGoalForDay,
+  hasAnyGoal,
+  type EmployeeGoalsResponseDto,
+} from '../api/employeeGoals';
+import {
   fetchDoctorRevenueSeries,
   type DoctorRevenuePoint,
   type DoctorRevenueSeriesResponse,
@@ -54,6 +60,7 @@ import {
   fetchDoctorMonth,
   type DoctorMonthDay,
 } from '../api/appointments';
+import { fetchEmployee, type EmployeeWeeklySchedule } from '../api/appointmentSettings';
 
 dayjs.extend(utc);
 
@@ -81,6 +88,17 @@ function dateRange(start: Dayjs, end: Dayjs): string[] {
     d = d.add(1, 'day');
   }
   return out;
+}
+
+/** True if the employee is scheduled to work on the given date (by day of week). */
+function isWorkingDay(
+  emp: { weeklySchedules?: EmployeeWeeklySchedule[] },
+  dateStr: string
+): boolean {
+  const schedules = emp.weeklySchedules ?? [];
+  const dayOfWeek = dayjs(dateStr).day();
+  const schedule = schedules.find((s) => s.dayOfWeek === dayOfWeek);
+  return schedule?.isWorkday ?? false;
 }
 
 /** Sum series by date into a map; missing dates are 0. */
@@ -240,6 +258,13 @@ export default function VeterinaryServicesDeliveredPage() {
   const [itemsModalData, setItemsModalData] = useState<DoctorRevenueSeriesResponse | null>(null);
   const [itemsModalLoading, setItemsModalLoading] = useState(false);
 
+  // Goals summary (whole company vs per-doctor)
+  const [goalScope, setGoalScope] = useState<string>(PRACTICE_TOTAL_ID);
+  const [employeesWithGoals, setEmployeesWithGoals] = useState<
+    { id: string; name: string; goals: EmployeeGoalsResponseDto; weeklySchedules?: EmployeeWeeklySchedule[] }[]
+  >([]);
+  const [goalsLoading, setGoalsLoading] = useState(false);
+
   const start = range.from.startOf('day');
   const end = range.to.startOf('day');
   const startStr = toLocalDateStr(start);
@@ -266,6 +291,60 @@ export default function VeterinaryServicesDeliveredPage() {
       alive = false;
     };
   }, []);
+
+  // Load goals and weekly schedules for each provider; keep only those with at least one goal set
+  useEffect(() => {
+    if (!providers.length) {
+      setEmployeesWithGoals([]);
+      return;
+    }
+    let alive = true;
+    setGoalsLoading(true);
+    (async () => {
+      try {
+        const results = await Promise.allSettled(
+          providers.map(async (p) => {
+            const id = String(p.id);
+            const empId = Number(p.id);
+            if (!Number.isFinite(empId)) return null;
+            const [goals, employee] = await Promise.all([
+              fetchEmployeeGoals(empId),
+              fetchEmployee(empId),
+            ]);
+            if (!hasAnyGoal(goals)) return null;
+            return {
+              id,
+              name: p.name,
+              goals,
+              weeklySchedules: employee?.weeklySchedules ?? [],
+            };
+          })
+        );
+        if (!alive) return;
+        const withGoals = results
+          .filter((r): r is PromiseFulfilledResult<{ id: string; name: string; goals: EmployeeGoalsResponseDto; weeklySchedules: EmployeeWeeklySchedule[] } | null> =>
+            r.status === 'fulfilled')
+          .map((r) => r.value)
+          .filter((v): v is { id: string; name: string; goals: EmployeeGoalsResponseDto; weeklySchedules: EmployeeWeeklySchedule[] } => v != null);
+        setEmployeesWithGoals(withGoals);
+        // Default goal scope to company if current selection is no longer valid
+        setGoalScope((prev) => {
+          if (prev === PRACTICE_TOTAL_ID) return prev;
+          if (withGoals.some((e) => e.id === prev)) return prev;
+          return PRACTICE_TOTAL_ID;
+        });
+      } catch (e) {
+        if (!alive) return;
+        console.error('Fetch employee goals failed:', e);
+        setEmployeesWithGoals([]);
+      } finally {
+        if (alive) setGoalsLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [providers]);
 
   // Load each doctor's revenue series for the date range, plus "Not Specified" (doctorId null/empty)
   useEffect(() => {
@@ -309,9 +388,9 @@ export default function VeterinaryServicesDeliveredPage() {
     };
   }, [providers.length, startStr, endStr]);
 
-  // Load appointments per doctor per month for points (one request per doctor per month in range)
+  // Load appointments per doctor per month for points (one request per doctor per month in range; includes single-day)
   useEffect(() => {
-    if (isSingleDay || !providers.length) {
+    if (!providers.length) {
       setPointsByDoctorByDate({});
       setServiceMinutesByDoctorByDate({});
       setPointsLoading(false);
@@ -359,7 +438,7 @@ export default function VeterinaryServicesDeliveredPage() {
     return () => {
       alive = false;
     };
-  }, [isSingleDay, providers.length, startStr, endStr]);
+  }, [providers.length, startStr, endStr]);
 
   const practiceSeries = useMemo(() => {
     if (loading) return [];
@@ -498,6 +577,75 @@ export default function VeterinaryServicesDeliveredPage() {
     return options;
   }, [doctorResponses]);
 
+  /** Goal totals for the selected scope and date range (only on days the doctor(s) are working). */
+  const goalTotalsForRange = useMemo(() => {
+    const dates = dateRange(start, end);
+    let totalPointGoal = 0;
+    let totalRevenueGoal = 0;
+    const emps =
+      goalScope === PRACTICE_TOTAL_ID
+        ? employeesWithGoals
+        : employeesWithGoals.filter((e) => e.id === goalScope);
+    for (const dateStr of dates) {
+      const dayOfWeek = dayjs(dateStr).day();
+      for (const emp of emps) {
+        if (!isWorkingDay(emp, dateStr)) continue;
+        const { pointGoal, revenueGoal } = getGoalForDay(emp.goals, dayOfWeek);
+        totalPointGoal += pointGoal;
+        totalRevenueGoal += revenueGoal;
+      }
+    }
+    return { totalPointGoal, totalRevenueGoal };
+  }, [goalScope, employeesWithGoals, start, end]);
+
+  /** Actual points and revenue for the selected scope (only on days the doctor(s) are working). */
+  const actualsForGoalScope = useMemo(() => {
+    const dates = dateRange(start, end);
+    let actualPoints = 0;
+    let actualRevenue = 0;
+    if (goalScope === PRACTICE_TOTAL_ID) {
+      // Sum only over employees with goals, and only for dates they are working
+      for (const dateStr of dates) {
+        for (const emp of employeesWithGoals) {
+          if (!isWorkingDay(emp, dateStr)) continue;
+          const id = emp.id;
+          actualPoints += pointsByDoctorByDate[id]?.[dateStr] ?? 0;
+          const dr = doctorResponses.find((r) => String(r.doctorId) === id);
+          const dayRevenue = (dr?.response.series ?? []).find((p) => String(p?.date ?? '').slice(0, 10) === dateStr);
+          actualRevenue += Number(dayRevenue?.total ?? 0);
+        }
+      }
+    } else {
+      const emp = employeesWithGoals.find((e) => e.id === goalScope);
+      if (!emp) return { actualPoints: 0, actualRevenue: 0 };
+      for (const dateStr of dates) {
+        if (!isWorkingDay(emp, dateStr)) continue;
+        actualPoints += pointsByDoctorByDate[emp.id]?.[dateStr] ?? 0;
+        const dr = doctorResponses.find((r) => String(r.doctorId) === emp.id);
+        const dayRevenue = (dr?.response.series ?? []).find((p) => String(p?.date ?? '').slice(0, 10) === dateStr);
+        actualRevenue += Number(dayRevenue?.total ?? 0);
+      }
+    }
+    return { actualPoints, actualRevenue };
+  }, [goalScope, start, end, employeesWithGoals, pointsByDoctorByDate, doctorResponses]);
+
+  const goalsSummary = useMemo(() => {
+    const { totalPointGoal, totalRevenueGoal } = goalTotalsForRange;
+    const { actualPoints, actualRevenue } = actualsForGoalScope;
+    const pointPct =
+      totalPointGoal > 0 ? Math.round((actualPoints / totalPointGoal) * 100) : null;
+    const revenuePct =
+      totalRevenueGoal > 0 ? Math.round((actualRevenue / totalRevenueGoal) * 100) : null;
+    return {
+      totalPointGoal,
+      totalRevenueGoal,
+      actualPoints,
+      actualRevenue,
+      pointPct,
+      revenuePct,
+    };
+  }, [goalTotalsForRange, actualsForGoalScope]);
+
   const handleDoctorNameClick = (doctorId: string, doctorName: string) => {
     setItemsModalDoctor({ id: doctorId, name: doctorName });
     setItemsModalOpen(true);
@@ -627,13 +775,97 @@ export default function VeterinaryServicesDeliveredPage() {
           </Alert>
         )}
 
+        <Card sx={{ mb: 3 }}>
+          <CardHeader
+            title="Goals vs actual"
+            subheader={isSingleDay ? `For ${start.format('MMMM D, YYYY')}` : 'Selected period'}
+          />
+              <CardContent>
+                {goalsLoading ? (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <CircularProgress size={20} />
+                    <Typography variant="body2" color="text.secondary">
+                      Loading goals…
+                    </Typography>
+                  </Box>
+                ) : employeesWithGoals.length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">
+                    No employee goals configured. Set goals in Settings → Employee Goals.
+                  </Typography>
+                ) : (
+                  <>
+                    <FormControl size="small" sx={{ minWidth: 260, mb: 2 }}>
+                      <InputLabel id="goal-scope-label">View goals for</InputLabel>
+                      <Select
+                        labelId="goal-scope-label"
+                        value={goalScope}
+                        label="View goals for"
+                        onChange={(e) => setGoalScope(e.target.value)}
+                      >
+                        <MenuItem value={PRACTICE_TOTAL_ID}>Whole company</MenuItem>
+                        {employeesWithGoals.map((e) => (
+                          <MenuItem key={e.id} value={e.id}>
+                            {e.name}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                      <Box>
+                        <Typography variant="subtitle2" color="text.secondary">
+                          Point goal
+                        </Typography>
+                        <Typography variant="body1">
+                          {goalsSummary.totalPointGoal > 0 ? (
+                            <>
+                              {goalsSummary.actualPoints} / {goalsSummary.totalPointGoal} pts
+                              {goalsSummary.pointPct != null && (
+                                <Typography component="span" variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+                                  ({goalsSummary.pointPct}% met)
+                                </Typography>
+                              )}
+                            </>
+                          ) : (
+                            <Typography component="span" variant="body2" color="text.secondary">
+                              No point goal set
+                            </Typography>
+                          )}
+                        </Typography>
+                      </Box>
+                      <Box>
+                        <Typography variant="subtitle2" color="text.secondary">
+                          Revenue goal
+                        </Typography>
+                        <Typography variant="body1">
+                          {goalsSummary.totalRevenueGoal > 0 ? (
+                            <>
+                              {fmtUSD(goalsSummary.actualRevenue)} / {fmtUSD(goalsSummary.totalRevenueGoal)}
+                              {goalsSummary.revenuePct != null && (
+                                <Typography component="span" variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+                                  ({goalsSummary.revenuePct}% met)
+                                </Typography>
+                              )}
+                            </>
+                          ) : (
+                            <Typography component="span" variant="body2" color="text.secondary">
+                              No revenue goal set
+                            </Typography>
+                          )}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
         {!isSingleDay && (
-          <Card sx={{ mb: 3 }}>
-            <CardHeader
-              title="VSD over time"
-              subheader="Switch between practice total and individual doctors"
-            />
-            <CardContent>
+            <Card sx={{ mb: 3 }}>
+              <CardHeader
+                title="VSD over time"
+                subheader="Switch between practice total and individual doctors"
+              />
+              <CardContent>
               <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2, mb: 2 }}>
                 <FormControl size="small" sx={{ minWidth: 220 }}>
                   <InputLabel id="vsd-graph-label">Show in graph</InputLabel>
