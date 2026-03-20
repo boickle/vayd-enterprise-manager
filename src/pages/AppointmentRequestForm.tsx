@@ -1,5 +1,5 @@
 // src/pages/AppointmentRequestForm.tsx
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import { http } from '../api/http';
@@ -192,6 +192,86 @@ type Page =
   | 'euthanasia-continued'
   | 'request-visit-continued'
   | 'success';
+
+const ZONE_NOT_SERVICED_SERVICE_URL = 'www.vetatyourdoor.com/service-area';
+const ZONE_NOT_SERVICED_CALL_TEXT = 'call or text us at ';
+const ZONE_NOT_SERVICED_PHONE = '(207) 536-8387';
+const ZONE_NOT_SERVICED_TEL = 'tel:+12075368387';
+const ZONE_NOT_SERVICED_SMS = 'sms:+12075368387';
+
+/** Renders zone-not-serviced copy with blue links for service area, call, text, and phone number. */
+function renderZoneNotServicedMessage(message: string): ReactNode {
+  const linkStyle = { color: '#3b82f6', textDecoration: 'underline' as const };
+
+  if (!message.includes(ZONE_NOT_SERVICED_SERVICE_URL)) {
+    return message;
+  }
+
+  const [beforeUrl, afterUrl] = message.split(ZONE_NOT_SERVICED_SERVICE_URL);
+  if (afterUrl === undefined) {
+    return message;
+  }
+
+  if (!afterUrl.includes(ZONE_NOT_SERVICED_PHONE)) {
+    return (
+      <>
+        {beforeUrl}
+        <a
+          href={`https://${ZONE_NOT_SERVICED_SERVICE_URL}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={linkStyle}
+        >
+          {ZONE_NOT_SERVICED_SERVICE_URL}
+        </a>
+        {afterUrl}
+      </>
+    );
+  }
+
+  const [beforePhone, afterPhone] = afterUrl.split(ZONE_NOT_SERVICED_PHONE);
+  const leadParts = beforePhone.split(ZONE_NOT_SERVICED_CALL_TEXT);
+  const useCallTextLinks = leadParts.length === 2 && leadParts[1] === '';
+
+  return (
+    <>
+      {beforeUrl}
+      <a
+        href={`https://${ZONE_NOT_SERVICED_SERVICE_URL}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={linkStyle}
+      >
+        {ZONE_NOT_SERVICED_SERVICE_URL}
+      </a>
+      {useCallTextLinks ? (
+        <>
+          {leadParts[0]}
+          <a href={ZONE_NOT_SERVICED_TEL} style={linkStyle}>
+            call
+          </a>
+          {' or '}
+          <a href={ZONE_NOT_SERVICED_SMS} style={linkStyle}>
+            text
+          </a>
+          {' us at '}
+          <a href={ZONE_NOT_SERVICED_TEL} style={linkStyle}>
+            {ZONE_NOT_SERVICED_PHONE}
+          </a>
+          {afterPhone}
+        </>
+      ) : (
+        <>
+          {beforePhone}
+          <a href={ZONE_NOT_SERVICED_TEL} style={linkStyle}>
+            {ZONE_NOT_SERVICED_PHONE}
+          </a>
+          {afterPhone}
+        </>
+      )}
+    </>
+  );
+}
 
 export default function AppointmentRequestForm() {
   const navigate = useNavigate();
@@ -1271,7 +1351,7 @@ export default function AppointmentRequestForm() {
               if (zoneError?.response?.status === 404) {
                 // Zone not serviced - set error and don't fetch veterinarians
                 if (alive) {
-                  setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry we don't serve your area at this time. Please check back with us periodically to see if we have changed our service area at www.vetatyourdoor.com/service-area." }));
+                  setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry—we don't currently serve your area. Please check back periodically at www.vetatyourdoor.com/service-area to see if our coverage has expanded. You can also call or text us at (207) 536-8387, and we'll take a look to see if your location may still be within reach." }));
                   setPublicProviders([]);
                   setProviders([]);
                   setRawPublicVeterinarians([]);
@@ -1645,7 +1725,7 @@ export default function AppointmentRequestForm() {
             if (zoneError?.response?.status === 404) {
               // Zone not serviced - set error and don't fetch veterinarians
               if (alive) {
-                setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry we don't serve your area at this time. Please check back with us periodically to see if we have changed our service area at www.vetatyourdoor.com/service-area." }));
+                setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry—we don't currently serve your area. Please check back periodically at www.vetatyourdoor.com/service-area to see if our coverage has expanded. You can also call or text us at (207) 536-8387, and we'll take a look to see if your location may still be within reach." }));
                 setProviders([]);
                 setLoadingVeterinarians(false);
                 lastCheckedAddressRef.current = currentAddress; // Update last checked address even on error
@@ -3420,22 +3500,7 @@ export default function AppointmentRequestForm() {
               </div>
               {errors.zoneNotServiced && (
                 <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
-                  {errors.zoneNotServiced.includes('www.vetatyourdoor.com/service-area') ? (
-                    <>
-                      {errors.zoneNotServiced.split('www.vetatyourdoor.com/service-area')[0]}
-                      <a 
-                        href="https://www.vetatyourdoor.com/service-area" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        style={{ color: '#3b82f6', textDecoration: 'underline' }}
-                      >
-                        www.vetatyourdoor.com/service-area
-                      </a>
-                      {errors.zoneNotServiced.split('www.vetatyourdoor.com/service-area')[1]}
-                    </>
-                  ) : (
-                    errors.zoneNotServiced
-                  )}
+                  {renderZoneNotServicedMessage(errors.zoneNotServiced)}
                 </div>
               )}
             </div>
@@ -4817,22 +4882,7 @@ export default function AppointmentRequestForm() {
                   )}
                   {errors.zoneNotServiced && (
                     <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
-                      {errors.zoneNotServiced.includes('www.vetatyourdoor.com/service-area') ? (
-                        <>
-                          {errors.zoneNotServiced.split('www.vetatyourdoor.com/service-area')[0]}
-                          <a 
-                            href="https://www.vetatyourdoor.com/service-area" 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            style={{ color: '#3b82f6', textDecoration: 'underline' }}
-                          >
-                            www.vetatyourdoor.com/service-area
-                          </a>
-                          {errors.zoneNotServiced.split('www.vetatyourdoor.com/service-area')[1]}
-                        </>
-                      ) : (
-                        errors.zoneNotServiced
-                      )}
+                      {renderZoneNotServicedMessage(errors.zoneNotServiced)}
                     </div>
                   )}
                 </div>
