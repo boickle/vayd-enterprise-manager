@@ -114,6 +114,10 @@ function isReceptionEmail(email: string | null | undefined): boolean {
   return email.trim().toLowerCase() === DEFAULT_RECEPTION_EMAIL;
 }
 
+function hasEffectivePhone(phone: string | null | undefined): boolean {
+  return typeof phone === 'string' && phone.trim().length > 0;
+}
+
 export default function RoomLoaderPage() {
   const [roomLoaders, setRoomLoaders] = useState<RoomLoader[]>([]);
   const [loading, setLoading] = useState(false);
@@ -148,6 +152,8 @@ export default function RoomLoaderPage() {
   const [downloadingPdfRoomLoaderId, setDownloadingPdfRoomLoaderId] = useState<number | null>(null);
   /** True when Update (save without email) request is in progress. */
   const [updatingToClient, setUpdatingToClient] = useState(false);
+  /** Send-to-client confirmation modal: email vs SMS when re-sending (timesSent >= 1) */
+  const [confirmSendChannel, setConfirmSendChannel] = useState<'email' | 'sms'>('email');
 
   /** Safe getter: API or saved form may sometimes return non-array values; always return an array for iteration. */
   const getAddedItemsForPatient = (patientId: number): SearchableItem[] => {
@@ -1758,20 +1764,10 @@ export default function RoomLoaderPage() {
     };
   }
 
-  // Handle sending to client
-  async function handleSendToClient() {
-    if (!selectedRoomLoader) return;
+  /** Shared validation for Send to Client and follow-up (email/SMS). Returns false if validation failed (inline errors set). */
+  function runSendHardValidation(): boolean {
+    if (!selectedRoomLoader) return false;
 
-    const noEmail = petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email));
-    if (noEmail) return;
-
-    // Clear previous inline validation messages so we only show current errors
-    setSendValidationErrors({});
-    setReminderValidationErrorIds(new Set());
-    setTripFeeRequiredError(false);
-    setDuplicateItemsError(null);
-
-    // Validate required fields before sending; build inline error state per patient
     const errors: Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean; arrivalWindow?: boolean }> = {};
     let hasErrors = false;
     petsWithAppointments.forEach((item) => {
@@ -1808,10 +1804,9 @@ export default function RoomLoaderPage() {
     });
     if (hasErrors) {
       setSendValidationErrors(errors);
-      return;
+      return false;
     }
 
-    // Validate reminders: every displayed reminder must have a match and be confirmed (or be removed). Visit/consult are treated as existing and allowed without match/confirm.
     const reminderErrorIds = new Set<number>();
     petsWithAppointments.forEach((item) => {
       (item.reminders || []).forEach((reminderWithPrice) => {
@@ -1822,7 +1817,6 @@ export default function RoomLoaderPage() {
         const isVisitOrConsult = reminderContains(reminderWithPrice, 'visit', 'consult');
         const isConfirmed = confirmedMatchReminders.has(reminderId);
         if (isVisitOrConsult) {
-          // Visit/consult reminders are sent as existing even without a matched item; no validation error
         } else if (!hasMatch || !isConfirmed) {
           reminderErrorIds.add(reminderId);
         }
@@ -1830,10 +1824,9 @@ export default function RoomLoaderPage() {
     });
     if (reminderErrorIds.size > 0) {
       setReminderValidationErrorIds(reminderErrorIds);
-      return;
+      return false;
     }
 
-    // Required: at least one pet (single or multiple) must have "Trip Fee" in a reminder or an added item
     const hasTripFeeInAnyPet = petsWithAppointments.some((item) => {
       const activeReminders = (item.reminders || []).filter(
         (r) => r.reminder?.id && !removedReminders.has(r.reminder.id)
@@ -1846,11 +1839,10 @@ export default function RoomLoaderPage() {
     });
     if (!hasTripFeeInAnyPet) {
       setTripFeeRequiredError(true);
-      return;
+      return false;
     }
     setTripFeeRequiredError(false);
 
-    // Duplicate items: same matched item (id + type) must not appear more than once per pet
     const payload = packageDataForClient();
     const duplicateReports: { petName: string; itemName: string }[] = [];
     const reported = new Set<string>();
@@ -1883,11 +1875,13 @@ export default function RoomLoaderPage() {
     }
     if (duplicateReports.length > 0) {
       setDuplicateItemsError(duplicateReports);
-      return;
+      return false;
     }
     setDuplicateItemsError(null);
+    return true;
+  }
 
-    // Warnings: visit/consult per pet from matched item names (not reminder description) or added items (use active list so removed items don't count)
+  function buildSendWarnings(): string[] {
     const warnings: string[] = [];
     petsWithAppointments.forEach((item) => {
       const activeReminders = (item.reminders || []).filter(
@@ -1911,7 +1905,33 @@ export default function RoomLoaderPage() {
         warnings.push(`${petName}: It doesn't look like a visit type line item was selected (e.g. annual wellness visit, medical visit, additional wellness visit, etc.). Please be sure that you put one in before submitting.`);
       }
     });
-    setSendWarningReasons(warnings);
+    return warnings;
+  }
+
+  // Handle sending to client
+  async function handleSendToClient() {
+    if (!selectedRoomLoader) return;
+
+    const timesSent = selectedRoomLoader.timesSentToClient ?? 0;
+    const canEmail = !petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email));
+    const canSms = petsWithAppointments.some((item) => hasEffectivePhone(item.client?.phone1));
+
+    if (timesSent >= 1) {
+      if (!canEmail && !canSms) return;
+    } else {
+      if (petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email))) return;
+    }
+
+    setSendValidationErrors({});
+    setReminderValidationErrorIds(new Set());
+    setTripFeeRequiredError(false);
+    setDuplicateItemsError(null);
+
+    if (!runSendHardValidation()) return;
+    setSendWarningReasons(buildSendWarnings());
+    if (timesSent >= 1) {
+      setConfirmSendChannel(canEmail ? 'email' : 'sms');
+    }
     setConfirmAction('send');
   }
 
@@ -2032,7 +2052,10 @@ export default function RoomLoaderPage() {
     setConfirmAction('update');
   }
 
-  async function executeSendToClient(skipEmail = false) {
+  async function executeSendToClient(
+    skipEmail = false,
+    options?: { sendViaSms?: boolean; smsMessage?: string }
+  ) {
     if (!selectedRoomLoader) return;
     setSendValidationErrors({});
     setReminderValidationErrorIds(new Set());
@@ -2052,6 +2075,8 @@ export default function RoomLoaderPage() {
         return;
       }
       if (skipEmail) payload.skipEmail = true;
+      if (options?.sendViaSms) payload.sendViaSms = true;
+      if (options?.smsMessage) payload.smsMessage = options.smsMessage;
       await http.post('/room-loader/send-to-client', payload);
       await loadRoomLoaders();
       if (selectedRoomLoaderId) {
@@ -2345,6 +2370,22 @@ export default function RoomLoaderPage() {
     () => petsWithAppointments.some((item) => isReceptionEmail(item.client?.email)),
     [petsWithAppointments]
   );
+
+  const canSendFollowUpEmail = useMemo(
+    () => !petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email)),
+    [petsWithAppointments]
+  );
+  const canSendFollowUpSms = useMemo(
+    () => petsWithAppointments.some((item) => hasEffectivePhone(item.client?.phone1)),
+    [petsWithAppointments]
+  );
+
+  const sendToClientBlockedNoDestination = useMemo(() => {
+    if (!selectedRoomLoader) return true;
+    const ts = selectedRoomLoader.timesSentToClient ?? 0;
+    if (ts >= 1) return !canSendFollowUpEmail && !canSendFollowUpSms;
+    return !canSendFollowUpEmail;
+  }, [selectedRoomLoader, canSendFollowUpEmail, canSendFollowUpSms]);
 
   return (
     <div className="room-loader-page">
@@ -4509,26 +4550,26 @@ export default function RoomLoaderPage() {
               )}
               <button
                 onClick={handleSendToClient}
-                disabled={sendingToClient || updatingToClient || formSubmittedByClient || hasClientWithNoEmail}
+                disabled={sendingToClient || updatingToClient || formSubmittedByClient || sendToClientBlockedNoDestination}
                 style={{
                   padding: '12px 24px',
                   fontSize: '16px',
                   fontWeight: 600,
-                  backgroundColor: sendingToClient || updatingToClient || formSubmittedByClient || hasClientWithNoEmail ? '#6c757d' : '#007bff',
+                  backgroundColor: sendingToClient || updatingToClient || formSubmittedByClient || sendToClientBlockedNoDestination ? '#6c757d' : '#007bff',
                   color: 'white',
                   border: 'none',
                   borderRadius: '6px',
-                  cursor: sendingToClient || updatingToClient || formSubmittedByClient || hasClientWithNoEmail ? 'not-allowed' : 'pointer',
+                  cursor: sendingToClient || updatingToClient || formSubmittedByClient || sendToClientBlockedNoDestination ? 'not-allowed' : 'pointer',
                   transition: 'background-color 0.2s ease-in-out',
                   boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
                 }}
                 onMouseEnter={(e) => {
-                  if (!sendingToClient && !formSubmittedByClient && !hasClientWithNoEmail) {
+                  if (!sendingToClient && !formSubmittedByClient && !sendToClientBlockedNoDestination) {
                     e.currentTarget.style.backgroundColor = '#0056b3';
                   }
                 }}
                 onMouseLeave={(e) => {
-                  if (!sendingToClient && !formSubmittedByClient && !hasClientWithNoEmail) {
+                  if (!sendingToClient && !formSubmittedByClient && !sendToClientBlockedNoDestination) {
                     e.currentTarget.style.backgroundColor = '#007bff';
                   }
                 }}
@@ -4537,8 +4578,10 @@ export default function RoomLoaderPage() {
                   ? 'Sending...'
                   : formSubmittedByClient
                     ? 'Submitted by client'
-                    : hasClientWithNoEmail
-                      ? 'Send to Client (add client email first)'
+                    : sendToClientBlockedNoDestination
+                      ? (selectedRoomLoader.timesSentToClient ?? 0) >= 1
+                        ? 'Send to Client (add email or phone)'
+                        : 'Send to Client (add client email first)'
                       : selectedRoomLoader.sentStatus === 'not_sent'
                         ? 'Send to Client'
                         : 'Re-send to Client'}
@@ -4605,6 +4648,49 @@ export default function RoomLoaderPage() {
                   ? 'Are you sure you want to update the form data without sending an email to the client?'
                   : 'Are you sure you want to save this form for later?'}
             </p>
+            {confirmAction === 'send' && selectedRoomLoader && (selectedRoomLoader.timesSentToClient ?? 0) >= 1 && (
+              <div style={{ marginBottom: '20px' }}>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Send via</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '12px' }}>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: canSendFollowUpEmail ? 'pointer' : 'not-allowed',
+                      color: canSendFollowUpEmail ? '#333' : '#999',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="confirmSendChannel"
+                      checked={confirmSendChannel === 'email'}
+                      disabled={!canSendFollowUpEmail}
+                      onChange={() => setConfirmSendChannel('email')}
+                    />
+                    Email
+                  </label>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: canSendFollowUpSms ? 'pointer' : 'not-allowed',
+                      color: canSendFollowUpSms ? '#333' : '#999',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="confirmSendChannel"
+                      checked={confirmSendChannel === 'sms'}
+                      disabled={!canSendFollowUpSms}
+                      onChange={() => setConfirmSendChannel('sms')}
+                    />
+                    SMS {!canSendFollowUpSms && '(no phone on file)'}
+                  </label>
+                </div>
+              </div>
+            )}
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
               <button
                 onClick={() => setConfirmAction(null)}
@@ -4625,7 +4711,22 @@ export default function RoomLoaderPage() {
                 type="button"
                 onClick={() => {
                   if (confirmAction === 'send') {
-                    executeSendToClient();
+                    const ts = selectedRoomLoader?.timesSentToClient ?? 0;
+                    if (ts >= 1) {
+                      if (confirmSendChannel === 'email' && petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email))) {
+                        alert('Add a client email address to send by email, or choose SMS if a phone number is on file.');
+                        return;
+                      }
+                      if (confirmSendChannel === 'sms' && !petsWithAppointments.some((item) => hasEffectivePhone(item.client?.phone1))) {
+                        alert('Add a client phone number to send by SMS, or choose email.');
+                        return;
+                      }
+                      void executeSendToClient(false, {
+                        sendViaSms: confirmSendChannel === 'sms',
+                      });
+                    } else {
+                      executeSendToClient();
+                    }
                   } else if (confirmAction === 'update') {
                     executeSendToClient(true);
                   } else {
