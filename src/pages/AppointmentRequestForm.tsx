@@ -358,8 +358,8 @@ export default function AppointmentRequestForm() {
   const [petIdsWithActiveOrPendingMembership, setPetIdsWithActiveOrPendingMembership] = useState<Set<string> | null>(null);
   // For logged-in users: pet ids (dbId or id) that have an active wellness plan (actual membership)
   const [petIdsWithActiveWellnessPlan, setPetIdsWithActiveWellnessPlan] = useState<Set<string> | null>(null);
-  // On submit step: user's answer to "Are you looking for ongoing care with a dedicated veterinary team?"
-  const [ongoingCareInterest, setOngoingCareInterest] = useState<'yes' | 'no' | null>(null);
+  // On submit step: user's answer to "Are you looking for ongoing care with a consistent, dedicated veterinary team?"
+  const [ongoingCareInterest, setOngoingCareInterest] = useState<'yes' | 'no' | 'unsure' | null>(null);
 
   const [searchParams, setSearchParams] = useSearchParams();
   const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
@@ -2375,6 +2375,9 @@ export default function AppointmentRequestForm() {
         // Require manual date/time entry (client liaisons will handle scheduling)
         if (!formData.preferredDateTime?.trim()) newErrors.preferredDateTime = 'Please enter your preferred date and time';
         if (!formData.aftercarePreference) newErrors.aftercarePreference = 'Please select an aftercare preference';
+        if (isExploreMembershipsVisible && ongoingCareInterest == null) {
+          newErrors.ongoingCareInterest = 'Please answer this question to continue';
+        }
         break;
       case 'request-visit-continued':
         // Validate doctor selection (skipped when SHOW_DOCTOR_SELECTION is false)
@@ -2414,6 +2417,9 @@ export default function AppointmentRequestForm() {
               newErrors.selectedDateTimeSlotsVisit = 'Please select your preferred times or indicate that none of these work for you';
             }
           }
+        }
+        if (isExploreMembershipsVisible && ongoingCareInterest == null) {
+          newErrors.ongoingCareInterest = 'Please answer this question to continue';
         }
         break;
       // Add more validation as needed
@@ -7217,8 +7223,311 @@ export default function AppointmentRequestForm() {
     }
   };
 
+  const renderMembershipModal = () =>
+    showMembershipModal && (
+      <div
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+        }}
+        onClick={() => {
+          if (membershipModalStep === 'choose-pet') setShowMembershipModal(false);
+        }}
+      >
+        <div
+          style={{
+            backgroundColor: '#fff',
+            borderRadius: '12px',
+            padding: membershipModalStep === 'choose-pet' || membershipModalStep === 'success' ? '32px' : '0',
+            maxWidth: membershipModalStep === 'signup' || membershipModalStep === 'payment' ? 'min(1120px, 96vw)' : '480px',
+            width: '90%',
+            maxHeight: '90vh',
+            overflow: 'auto',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {membershipEligiblePets.length > 1 && membershipModalStep !== 'success' && (
+            <div
+              style={{
+                marginBottom: 16,
+                padding: '12px 16px',
+                background: '#f0fdf4',
+                border: '1px solid #bbf7d0',
+                borderRadius: 8,
+                color: '#166534',
+                fontSize: 14,
+                lineHeight: 1.5,
+              }}
+            >
+              Enroll more than one pet and receive a $75 credit for each additional pet. Credits may be used at any future Vet At Your Door visit.
+            </div>
+          )}
+          {membershipModalStep === 'choose-pet' && (
+            <>
+              <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
+                Explore membership
+              </h2>
+              <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px', lineHeight: 1.5 }}>
+                Choose a pet to explore membership plans. You can explore memberships for additional pets after completing this one.
+              </p>
+              {membershipEligiblePets.length === 0 ? (
+                <>
+                  <p style={{ fontSize: '15px', color: '#374151', marginBottom: '24px' }}>
+                    All selected pets already have an active membership, or no pets are selected. You can continue to submit your appointment request.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowMembershipModal(false)}
+                    style={{
+                      padding: '10px 20px',
+                      backgroundColor: '#10b981',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Done
+                  </button>
+                </>
+              ) : membershipEligiblePets.length === 1 ? (
+                <div style={{ marginBottom: '24px' }}>
+                  <p style={{ fontSize: '15px', color: '#374151', marginBottom: '12px' }}>
+                    Explore membership recommendations for <strong>{membershipEligiblePets[0].name}</strong>.
+                  </p>
+                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={() => openMembershipSignupForPet(membershipEligiblePets[0])}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: '#10b981',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Explore Membership Options
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowMembershipModal(false)}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: '#f3f4f6',
+                        color: '#374151',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p style={{ fontSize: '15px', color: '#374151', marginBottom: '12px' }}>
+                    Which pet would you like to explore membership for?
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
+                    {membershipEligiblePets.map((p) => (
+                      <label
+                        key={p.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          padding: '12px',
+                          cursor: 'pointer',
+                          borderRadius: '8px',
+                          border: `2px solid ${selectedMembershipPetId === p.id ? '#10b981' : '#e5e7eb'}`,
+                          backgroundColor: selectedMembershipPetId === p.id ? '#f0fdf4' : '#fff',
+                        }}
+                      >
+                        <input
+                          type="radio"
+                          name="membership-pet"
+                          checked={selectedMembershipPetId === p.id}
+                          onChange={() => setSelectedMembershipPetId(p.id)}
+                          style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                        />
+                        <span style={{ fontWeight: 500, color: '#111827' }}>{p.name}</span>
+                        {p.species && (
+                          <span style={{ fontSize: '13px', color: '#6b7280' }}>({p.species})</span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      disabled={!selectedMembershipPetId}
+                      onClick={() => {
+                        const pet = membershipEligiblePets.find((p) => p.id === selectedMembershipPetId);
+                        if (pet) openMembershipSignupForPet(pet);
+                      }}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: selectedMembershipPetId ? '#10b981' : '#d1d5db',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        cursor: selectedMembershipPetId ? 'pointer' : 'not-allowed',
+                      }}
+                    >
+                      Explore Membership Options
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowMembershipModal(false)}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: '#f3f4f6',
+                        color: '#374151',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {membershipModalStep === 'signup' && getModalPetForSignup() && (
+            <div style={{ padding: '16px' }}>
+              <MembershipSignup
+                fromModal
+                modalPet={getModalPetForSignup()}
+                modalClientInfo={{
+                  email: formData.email?.trim() || undefined,
+                  fullName: formData.fullName,
+                }}
+                onProceedToPayment={(state) => {
+                  setMembershipPaymentState(state);
+                  setMembershipModalStep('payment');
+                }}
+                onCancel={() => {
+                  setMembershipModalStep('choose-pet');
+                  setSelectedMembershipPet(null);
+                }}
+              />
+            </div>
+          )}
+
+          {membershipModalStep === 'payment' && membershipPaymentState && (
+            <div style={{ padding: '16px' }}>
+              <MembershipPayment
+                fromModal
+                initialState={membershipPaymentState}
+                onSuccess={() => {
+                  setLastSignedUpPetIds((prev) => [...prev, membershipPaymentState.petId]);
+                  setMembershipModalStep('success');
+                }}
+                onBack={() => setMembershipModalStep('signup')}
+                onSignUpAnother={(signedUpPetId) => {
+                  setLastSignedUpPetIds((prev) => [...prev, signedUpPetId]);
+                  setMembershipPaymentState(null);
+                  setMembershipModalStep('choose-pet');
+                  setSelectedMembershipPet(null);
+                  setSelectedMembershipPetId(null);
+                }}
+              />
+            </div>
+          )}
+
+          {membershipModalStep === 'success' && (
+            <>
+              <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
+                Payment successful
+              </h2>
+              <p style={{ fontSize: '15px', color: '#374151', marginBottom: lastSignedUpPetIds.length >= 2 ? '12px' : '24px' }}>
+                Membership signup is complete. You can sign up another pet or return to your appointment request.
+              </p>
+              {lastSignedUpPetIds.length >= 2 && (
+                <p style={{ fontSize: '15px', padding: '12px 16px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, color: '#166534', marginBottom: '24px', lineHeight: 1.5 }}>
+                  You will be receiving a $75 credit in your VAYD account to be used at any visit of your choosing — this won&apos;t expire.
+                </p>
+              )}
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                {membershipEligiblePets.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMembershipModalStep('choose-pet');
+                      setSelectedMembershipPet(null);
+                      setSelectedMembershipPetId(null);
+                    }}
+                    style={{
+                      padding: '10px 20px',
+                      backgroundColor: '#10b981',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Sign up another pet
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMembershipModal(false);
+                    setMembershipModalStep('choose-pet');
+                    setMembershipPaymentState(null);
+                    setSelectedMembershipPet(null);
+                    setSelectedMembershipPetId(null);
+                  }}
+                  style={{
+                    padding: '10px 20px',
+                    backgroundColor: '#f3f4f6',
+                    color: '#374151',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Done – back to appointment request
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+
   if (currentPage === 'success') {
     return (
+      <>
       <div style={{ minHeight: '100vh', width: '100%' }}>
         {/* Header - only show for logged-in users */}
         {isLoggedIn && (
@@ -7272,9 +7581,73 @@ export default function AppointmentRequestForm() {
           <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#111827', marginBottom: '12px' }}>
             Thank You!
           </h1>
-          <p style={{ fontSize: '16px', color: '#6b7280', marginBottom: isLoggedIn ? '32px' : 0 }}>
+          <p style={{ fontSize: '16px', color: '#6b7280', marginBottom: ongoingCareInterest === 'yes' ? '16px' : (isLoggedIn ? '32px' : 0) }}>
             Your appointment request has been submitted successfully. We'll get back to you shortly!
           </p>
+          {ongoingCareInterest === 'yes' && (
+            <div
+              style={{
+                marginTop: '0',
+                marginBottom: '24px',
+                padding: '20px',
+                backgroundColor: '#f0fdfa',
+                border: '1px solid #99f6e4',
+                borderRadius: '12px',
+                textAlign: 'left',
+              }}
+            >
+              <p style={{ fontSize: '15px', color: '#374151', lineHeight: 1.6, marginBottom: '12px', fontWeight: 700 }}>
+                One-Team Membership is designed for families who want ongoing, relationship-based care with the same trusted veterinary team.
+              </p>
+              <p style={{ fontSize: '14px', color: '#111827', marginBottom: '8px' }}>Members receive:</p>
+              <ul style={{ margin: '0 0 16px 20px', padding: 0, fontSize: '14px', color: '#374151', lineHeight: 1.7 }}>
+                <li>Priority access to their dedicated veterinary One-Team</li>
+                <li>Preferred booking for appointments</li>
+                <li>Comprehensive Wellness care, including travel fees</li>
+                <li>Vaccines and recommended screening labs</li>
+                <li>After-hours telehealth support</li>
+              </ul>
+              <p style={{ fontSize: '15px', fontWeight: 700, color: '#374151', lineHeight: 1.6, marginBottom: '16px' }}>
+                If you&apos;d like ongoing care with Vet At Your Door, you can explore and join One-Team Membership below.
+              </p>
+              <style>{`
+                @keyframes exploreMembershipsPopIn {
+                  0% { transform: scale(0.92); opacity: 0.6; box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
+                  50% { transform: scale(1.06); opacity: 1; box-shadow: 0 0 0 8px rgba(15, 118, 110, 0.15); }
+                  100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
+                }
+                .appt-form-view-membership-btn:hover {
+                  transform: scale(1.02);
+                  box-shadow: 0 0 20px 4px rgba(15, 118, 110, 0.35);
+                }
+              `}</style>
+              <button
+                type="button"
+                className="appt-form-view-membership-btn"
+                onClick={() => {
+                  setSelectedMembershipPetId(null);
+                  setMembershipModalStep('choose-pet');
+                  setShowMembershipModal(true);
+                }}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: '#0f766e',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '15px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                }}
+              >
+                Review & Join Membership Now
+              </button>
+              <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '16px', fontStyle: 'italic' }}>
+                Membership is optional.
+              </p>
+            </div>
+          )}
           {isLoggedIn && (
             <button
               onClick={() => navigate('/client-portal')}
@@ -7310,6 +7683,8 @@ export default function AppointmentRequestForm() {
           </div>
         </footer>
       </div>
+      {renderMembershipModal()}
+    </>
     );
   }
 
@@ -7599,89 +7974,72 @@ export default function AppointmentRequestForm() {
         {isExploreMembershipsVisible && (
           <div style={{ marginTop: '20px' }}>
             <p style={{ fontSize: '16px', fontWeight: 600, color: '#111827', marginBottom: '12px' }}>
-              Are you looking for ongoing care with a dedicated veterinary team?
+              Are you looking for ongoing care with a consistent, dedicated veterinary team?{' '}
+              <span style={{ color: '#ef4444' }} aria-hidden>*</span>
             </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                padding: errors.ongoingCareInterest ? '12px' : undefined,
+                borderRadius: '8px',
+                border: errors.ongoingCareInterest ? '1px solid #ef4444' : undefined,
+                backgroundColor: errors.ongoingCareInterest ? '#fef2f2' : undefined,
+              }}
+            >
               <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '15px' }}>
                 <input
                   type="radio"
                   name="ongoing-care-interest"
                   checked={ongoingCareInterest === 'yes'}
-                  onChange={() => setOngoingCareInterest('yes')}
+                  onChange={() => {
+                    setOngoingCareInterest('yes');
+                    setErrors((prev) => {
+                      const { ongoingCareInterest: _o, ...rest } = prev;
+                      return rest;
+                    });
+                  }}
                   style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
                 />
-                Yes, tell me more
+                Yes, I would like that.
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '15px' }}>
                 <input
                   type="radio"
                   name="ongoing-care-interest"
                   checked={ongoingCareInterest === 'no'}
-                  onChange={() => setOngoingCareInterest('no')}
+                  onChange={() => {
+                    setOngoingCareInterest('no');
+                    setErrors((prev) => {
+                      const { ongoingCareInterest: _o, ...rest } = prev;
+                      return rest;
+                    });
+                  }}
                   style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
                 />
-                Not right now
+                No, thank you.
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '15px' }}>
+                <input
+                  type="radio"
+                  name="ongoing-care-interest"
+                  checked={ongoingCareInterest === 'unsure'}
+                  onChange={() => {
+                    setOngoingCareInterest('unsure');
+                    setErrors((prev) => {
+                      const { ongoingCareInterest: _o, ...rest } = prev;
+                      return rest;
+                    });
+                  }}
+                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
+                />
+                I am not sure.
               </label>
             </div>
-
-            {ongoingCareInterest === 'yes' && (
-              <div style={{
-                marginTop: '20px',
-                padding: '20px',
-                backgroundColor: '#f0fdfa',
-                border: '1px solid #99f6e4',
-                borderRadius: '12px',
-              }}>
-                <p style={{ fontSize: '15px', color: '#374151', lineHeight: 1.6, marginBottom: '12px', fontWeight: 700 }}>
-                  One-Team Membership is designed for families who want ongoing, relationship-based care with the same trusted veterinary team.
-                </p>
-                <p style={{ fontSize: '14px', color: '#111827', marginBottom: '8px' }}>Members receive:</p>
-                <ul style={{ margin: '0 0 16px 20px', padding: 0, fontSize: '14px', color: '#374151', lineHeight: 1.7 }}>
-                  <li>Priority access to their dedicated veterinary One-Team</li>
-                  <li>Preferred booking for appointments</li>
-                  <li>Comprehensive Wellness care, including travel fees</li>
-                  <li>Vaccines and recommended screening labs</li>
-                  <li>After-hours telehealth support</li>
-                </ul>
-                <p style={{ fontSize: '15px', fontWeight: 700, color: '#374151', lineHeight: 1.6, marginBottom: '16px' }}>
-                  If you plan to use Vet At Your Door for ongoing care, you can explore and join One-Team Membership now before submitting your appointment request.
-                </p>
-                <style>{`
-                  @keyframes exploreMembershipsPopIn {
-                    0% { transform: scale(0.92); opacity: 0.6; box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
-                    50% { transform: scale(1.06); opacity: 1; box-shadow: 0 0 0 8px rgba(15, 118, 110, 0.15); }
-                    100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
-                  }
-                  .appt-form-view-membership-btn:hover {
-                    transform: scale(1.02);
-                    box-shadow: 0 0 20px 4px rgba(15, 118, 110, 0.35);
-                  }
-                `}</style>
-                <button
-                  type="button"
-                  className="appt-form-view-membership-btn"
-                  onClick={() => {
-                    setSelectedMembershipPetId(null);
-                    setMembershipModalStep('choose-pet');
-                    setShowMembershipModal(true);
-                  }}
-                  style={{
-                    padding: '12px 24px',
-                    backgroundColor: '#0f766e',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: '8px',
-                    fontSize: '15px',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-                  }}
-                >
-                  Review & Join Membership
-                </button>
-                <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '16px', fontStyle: 'italic' }}>
-                  Membership is optional. You can still submit your appointment request below.
-                </p>
+            {errors.ongoingCareInterest && (
+              <div style={{ fontSize: '14px', color: '#ef4444', marginTop: '8px' }} role="alert">
+                {errors.ongoingCareInterest}
               </div>
             )}
           </div>
@@ -7869,307 +8227,7 @@ export default function AppointmentRequestForm() {
         </div>
       )}
 
-      {/* Membership signup modal – full flow stays on page */}
-      {showMembershipModal && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-          }}
-          onClick={() => {
-            if (membershipModalStep === 'choose-pet') setShowMembershipModal(false);
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: '#fff',
-              borderRadius: '12px',
-              padding: membershipModalStep === 'choose-pet' || membershipModalStep === 'success' ? '32px' : '0',
-              maxWidth: membershipModalStep === 'signup' || membershipModalStep === 'payment' ? 'min(1120px, 96vw)' : '480px',
-              width: '90%',
-              maxHeight: '90vh',
-              overflow: 'auto',
-              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {membershipEligiblePets.length > 1 && membershipModalStep !== 'success' && (
-              <div
-                style={{
-                  marginBottom: 16,
-                  padding: '12px 16px',
-                  background: '#f0fdf4',
-                  border: '1px solid #bbf7d0',
-                  borderRadius: 8,
-                  color: '#166534',
-                  fontSize: 14,
-                  lineHeight: 1.5,
-                }}
-              >
-                Enroll more than one pet and receive a $75 credit for each additional pet. Credits may be used at any future Vet At Your Door visit.
-              </div>
-            )}
-            {membershipModalStep === 'choose-pet' && (
-              <>
-                <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
-                  Explore membership
-                </h2>
-                <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px', lineHeight: 1.5 }}>
-                  Choose a pet to explore membership plans. You can explore memberships for additional pets after completing this one.
-                </p>
-                {membershipEligiblePets.length === 0 ? (
-                  <>
-                    <p style={{ fontSize: '15px', color: '#374151', marginBottom: '24px' }}>
-                      All selected pets already have an active membership, or no pets are selected. You can continue to submit your appointment request.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setShowMembershipModal(false)}
-                      style={{
-                        padding: '10px 20px',
-                        backgroundColor: '#10b981',
-                        color: '#fff',
-                        border: 'none',
-                        borderRadius: '8px',
-                        fontSize: '14px',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Done
-                    </button>
-                  </>
-                ) : membershipEligiblePets.length === 1 ? (
-                  <div style={{ marginBottom: '24px' }}>
-                    <p style={{ fontSize: '15px', color: '#374151', marginBottom: '12px' }}>
-                      Explore membership recommendations for <strong>{membershipEligiblePets[0].name}</strong>.
-                    </p>
-                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                      <button
-                        type="button"
-                        onClick={() => openMembershipSignupForPet(membershipEligiblePets[0])}
-                        style={{
-                          padding: '10px 20px',
-                          backgroundColor: '#10b981',
-                          color: '#fff',
-                          border: 'none',
-                          borderRadius: '8px',
-                          fontSize: '14px',
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Explore Membership Options
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowMembershipModal(false)}
-                        style={{
-                          padding: '10px 20px',
-                          backgroundColor: '#f3f4f6',
-                          color: '#374151',
-                          border: 'none',
-                          borderRadius: '8px',
-                          fontSize: '14px',
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <p style={{ fontSize: '15px', color: '#374151', marginBottom: '12px' }}>
-                      Which pet would you like to explore membership for?
-                    </p>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
-                      {membershipEligiblePets.map((p) => (
-                        <label
-                          key={p.id}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '10px',
-                            padding: '12px',
-                            cursor: 'pointer',
-                            borderRadius: '8px',
-                            border: `2px solid ${selectedMembershipPetId === p.id ? '#10b981' : '#e5e7eb'}`,
-                            backgroundColor: selectedMembershipPetId === p.id ? '#f0fdf4' : '#fff',
-                          }}
-                        >
-                          <input
-                            type="radio"
-                            name="membership-pet"
-                            checked={selectedMembershipPetId === p.id}
-                            onChange={() => setSelectedMembershipPetId(p.id)}
-                            style={{ width: '18px', height: '18px', cursor: 'pointer' }}
-                          />
-                          <span style={{ fontWeight: 500, color: '#111827' }}>{p.name}</span>
-                          {p.species && (
-                            <span style={{ fontSize: '13px', color: '#6b7280' }}>({p.species})</span>
-                          )}
-                        </label>
-                      ))}
-                    </div>
-                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                      <button
-                        type="button"
-                        disabled={!selectedMembershipPetId}
-                        onClick={() => {
-                          const pet = membershipEligiblePets.find((p) => p.id === selectedMembershipPetId);
-                          if (pet) openMembershipSignupForPet(pet);
-                        }}
-                        style={{
-                          padding: '10px 20px',
-                          backgroundColor: selectedMembershipPetId ? '#10b981' : '#d1d5db',
-                          color: '#fff',
-                          border: 'none',
-                          borderRadius: '8px',
-                          fontSize: '14px',
-                          fontWeight: 600,
-                          cursor: selectedMembershipPetId ? 'pointer' : 'not-allowed',
-                        }}
-                      >
-                        Explore Membership Options
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowMembershipModal(false)}
-                        style={{
-                          padding: '10px 20px',
-                          backgroundColor: '#f3f4f6',
-                          color: '#374151',
-                          border: 'none',
-                          borderRadius: '8px',
-                          fontSize: '14px',
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </>
-                )}
-              </>
-            )}
-
-            {membershipModalStep === 'signup' && getModalPetForSignup() && (
-              <div style={{ padding: '16px' }}>
-                <MembershipSignup
-                  fromModal
-                  modalPet={getModalPetForSignup()}
-                  modalClientInfo={{
-                    email: formData.email?.trim() || undefined,
-                    fullName: formData.fullName,
-                  }}
-                  onProceedToPayment={(state) => {
-                    setMembershipPaymentState(state);
-                    setMembershipModalStep('payment');
-                  }}
-                  onCancel={() => {
-                    setMembershipModalStep('choose-pet');
-                    setSelectedMembershipPet(null);
-                  }}
-                />
-              </div>
-            )}
-
-            {membershipModalStep === 'payment' && membershipPaymentState && (
-              <div style={{ padding: '16px' }}>
-                <MembershipPayment
-                  fromModal
-                  initialState={membershipPaymentState}
-                  onSuccess={() => {
-                    setLastSignedUpPetIds((prev) => [...prev, membershipPaymentState.petId]);
-                    setMembershipModalStep('success');
-                  }}
-                  onBack={() => setMembershipModalStep('signup')}
-                  onSignUpAnother={(signedUpPetId) => {
-                    setLastSignedUpPetIds((prev) => [...prev, signedUpPetId]);
-                    setMembershipPaymentState(null);
-                    setMembershipModalStep('choose-pet');
-                    setSelectedMembershipPet(null);
-                    setSelectedMembershipPetId(null);
-                  }}
-                />
-              </div>
-            )}
-
-            {membershipModalStep === 'success' && (
-              <>
-                <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
-                  Payment successful
-                </h2>
-                <p style={{ fontSize: '15px', color: '#374151', marginBottom: lastSignedUpPetIds.length >= 2 ? '12px' : '24px' }}>
-                  Membership signup is complete. You can sign up another pet or return to your appointment request.
-                </p>
-                {lastSignedUpPetIds.length >= 2 && (
-                  <p style={{ fontSize: '15px', padding: '12px 16px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, color: '#166534', marginBottom: '24px', lineHeight: 1.5 }}>
-                    You will be receiving a $75 credit in your VAYD account to be used at any visit of your choosing — this won&apos;t expire.
-                  </p>
-                )}
-                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                  {membershipEligiblePets.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMembershipModalStep('choose-pet');
-                        setSelectedMembershipPet(null);
-                        setSelectedMembershipPetId(null);
-                      }}
-                      style={{
-                        padding: '10px 20px',
-                        backgroundColor: '#10b981',
-                        color: '#fff',
-                        border: 'none',
-                        borderRadius: '8px',
-                        fontSize: '14px',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Sign up another pet
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowMembershipModal(false);
-                      setMembershipModalStep('choose-pet');
-                      setMembershipPaymentState(null);
-                      setSelectedMembershipPet(null);
-                      setSelectedMembershipPetId(null);
-                    }}
-                    style={{
-                      padding: '10px 20px',
-                      backgroundColor: '#f3f4f6',
-                      color: '#374151',
-                      border: 'none',
-                      borderRadius: '8px',
-                      fontSize: '14px',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Done – back to appointment request
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+      {renderMembershipModal()}
       </div>
 
       {/* Footer */}
