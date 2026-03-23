@@ -361,8 +361,23 @@ export default function AppointmentRequestForm() {
   // On submit step: user's answer to "Are you looking for ongoing care with a consistent, dedicated veterinary team?"
   const [ongoingCareInterest, setOngoingCareInterest] = useState<'yes' | 'no' | 'unsure' | null>(null);
 
+  type NeedsTodayOption = { id: number; name: string; prettyName: string };
+  const [appointmentTypeChangeModal, setAppointmentTypeChangeModal] = useState<{
+    petId: string;
+    option: NeedsTodayOption;
+  } | null>(null);
+
   const [searchParams, setSearchParams] = useSearchParams();
   const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
+
+  useEffect(() => {
+    if (!appointmentTypeChangeModal) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setAppointmentTypeChangeModal(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [appointmentTypeChangeModal]);
 
   // Handle responsive layout
   useEffect(() => {
@@ -561,6 +576,118 @@ export default function AppointmentRequestForm() {
       
       return true; // Veterinarian accepts all selected appointment types
     });
+  };
+
+  type PetSpecificSlice = NonNullable<FormData['petSpecificData']>[string];
+
+  /** True if the user entered any details under the currently selected appointment type. */
+  const petHasEnteredDetailsForCurrentAppointmentType = (petData: PetSpecificSlice | undefined): boolean => {
+    if (!petData) return false;
+    const sel = petData.needsToday;
+    if (!sel?.trim()) return false;
+    if (isEuthanasiaAppointmentType(sel)) {
+      const t = (v: string | undefined) => (v ?? '').trim();
+      return (
+        t(petData.euthanasiaReason) !== '' ||
+        t(petData.beenToVetLastThreeMonths) !== '' ||
+        t(petData.interestedInOtherOptions as unknown as string) !== '' ||
+        t(petData.aftercarePreference) !== ''
+      );
+    }
+    return (petData.needsTodayDetails ?? '').trim() !== '';
+  };
+
+  const applyPetNeedsTodaySelection = (petId: string, option: NeedsTodayOption) => {
+    setFormData(prev => {
+      const petMap = { ...(prev.petSpecificData || {}) };
+      const existing = petMap[petId] || {};
+      petMap[petId] = {
+        ...existing,
+        needsToday: option.prettyName,
+        appointmentTypeId: option.id,
+        appointmentTypeName: option.name,
+        needsTodayDetails: '',
+        euthanasiaReason: '',
+        beenToVetLastThreeMonths: '',
+        interestedInOtherOptions: '',
+        aftercarePreference: '',
+      };
+      return { ...prev, petSpecificData: petMap };
+    });
+
+    setErrors(prev => {
+      const keys = [
+        `needsToday.${petId}`,
+        `needsTodayDetails.${petId}`,
+        `euthanasiaReason.${petId}`,
+        `beenToVetLastThreeMonths.${petId}`,
+        `interestedInOtherOptions.${petId}`,
+        `aftercarePreference.${petId}`,
+      ];
+      let touched = false;
+      const next = { ...prev };
+      for (const k of keys) {
+        if (next[k] !== undefined) {
+          delete next[k];
+          touched = true;
+        }
+      }
+      return touched ? next : prev;
+    });
+  };
+
+  const attemptPetNeedsTodayChange = (
+    petId: string,
+    option: NeedsTodayOption,
+    currentPetData: PetSpecificSlice | undefined,
+  ) => {
+    const cur = currentPetData;
+    const alreadySelected =
+      (cur?.needsToday === option.prettyName) || (cur?.needsToday === option.name);
+    if (alreadySelected) return;
+
+    const hadPriorSelection = !!(cur?.needsToday && cur.needsToday.trim());
+    if (hadPriorSelection && petHasEnteredDetailsForCurrentAppointmentType(cur)) {
+      setAppointmentTypeChangeModal({ petId, option });
+      return;
+    }
+
+    applyPetNeedsTodaySelection(petId, option);
+  };
+
+  /** Include only fields that apply to the selected appointment type (payload / persistence). */
+  const sanitizePetSpecificDataForPayload = (
+    raw: FormData['petSpecificData'],
+  ): FormData['petSpecificData'] | undefined => {
+    if (!raw) return undefined;
+    const out: NonNullable<FormData['petSpecificData']> = {};
+    for (const [petId, petData] of Object.entries(raw)) {
+      const sel = petData.needsToday;
+      const base: PetSpecificSlice = {
+        needsToday: petData.needsToday,
+        appointmentTypeId: petData.appointmentTypeId,
+        appointmentTypeName: petData.appointmentTypeName,
+      };
+      if (!sel?.trim()) {
+        out[petId] = base;
+        continue;
+      }
+      if (isEuthanasiaAppointmentType(sel)) {
+        out[petId] = {
+          ...base,
+          euthanasiaReason: petData.euthanasiaReason,
+          beenToVetLastThreeMonths: petData.beenToVetLastThreeMonths,
+          interestedInOtherOptions: petData.interestedInOtherOptions,
+          aftercarePreference: petData.aftercarePreference,
+        };
+      } else {
+        out[petId] = {
+          ...base,
+          needsTodayDetails: petData.needsTodayDetails,
+        };
+      }
+    }
+    return out;
   };
 
   // Convert raw veterinarian data to PublicProvider format
@@ -2991,8 +3118,8 @@ export default function AppointmentRequestForm() {
         hasCalmingMedications: formData.hasCalmingMedications || undefined,
         needsMuzzleOrSpecialHandling: formData.needsMuzzleOrSpecialHandling || undefined,
         
-        // Per-pet data - include in payload for API processing
-        petSpecificData: formData.petSpecificData || undefined,
+        // Per-pet data - include in payload for API processing (only fields for the selected type)
+        petSpecificData: sanitizePetSpecificDataForPayload(formData.petSpecificData),
         
         // Appointment Details
         appointmentType: (() => {
@@ -4357,7 +4484,7 @@ export default function AppointmentRequestForm() {
                         {/* What does your pet need today? */}
                         <div style={{ marginBottom: '4px' }}>
                           <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
-                            What does {pet.name || 'this pet'} need today? <span style={{ color: '#ef4444' }}>*</span>
+                            What does {pet.name || 'this pet'} need today? (Please only choose one)
                           </label>
                           {(() => {
                             const petData = getPetData(pet.id);
@@ -4401,12 +4528,8 @@ export default function AppointmentRequestForm() {
                                         name={`needsToday-${pet.id}`}
                                         value={option.name}
                                         checked={(petData.needsToday === option.prettyName) || (petData.needsToday === option.name)}
-                                        onChange={(e) => {
-                                          // Store prettyName, id, and name for backend lookup
-                                          updatePetSpecificData(pet.id, 'needsToday', option.prettyName);
-                                          updatePetSpecificData(pet.id, 'appointmentTypeId', option.id);
-                                          updatePetSpecificData(pet.id, 'appointmentTypeName', option.name);
-                                          updatePetSpecificData(pet.id, 'needsTodayDetails', '');
+                                        onChange={() => {
+                                          attemptPetNeedsTodayChange(pet.id, option, getPetData(pet.id));
                                         }}
                                         style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
                                       />
@@ -5207,7 +5330,7 @@ export default function AppointmentRequestForm() {
                             {/* What does your pet need today? */}
                             <div style={{ marginBottom: '4px' }}>
                               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
-                                What does {pet.name} need today? <span style={{ color: '#ef4444' }}>*</span>
+                                What does {pet.name} need today? (Please only choose one)
                               </label>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                                 {(() => {
@@ -5249,13 +5372,8 @@ export default function AppointmentRequestForm() {
                                         name={`needsToday-${pet.id}`}
                                         value={option.name}
                                         checked={(petData.needsToday === option.prettyName) || (petData.needsToday === option.name)}
-                                        onChange={(e) => {
-                                          // Store prettyName, id, and name for backend lookup
-                                          updatePetSpecificData(pet.id, 'needsToday', option.prettyName);
-                                          updatePetSpecificData(pet.id, 'appointmentTypeId', option.id);
-                                          updatePetSpecificData(pet.id, 'appointmentTypeName', option.name);
-                                          // Clear details when changing selection
-                                          updatePetSpecificData(pet.id, 'needsTodayDetails', '');
+                                        onChange={() => {
+                                          attemptPetNeedsTodayChange(pet.id, option, getPetData(pet.id));
                                         }}
                                         style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
                                       />
@@ -6049,7 +6167,7 @@ export default function AppointmentRequestForm() {
                                 {/* What does your pet need today? */}
                                 <div style={{ marginBottom: '4px' }}>
                                   <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
-                                    What does {pet.name || 'this pet'} need today? <span style={{ color: '#ef4444' }}>*</span>
+                                    What does {pet.name || 'this pet'} need today? (Please only choose one)
                                   </label>
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                                     {(() => {
@@ -6091,12 +6209,8 @@ export default function AppointmentRequestForm() {
                                             name={`needsToday-${pet.id}`}
                                             value={option.name}
                                             checked={(petData.needsToday === option.prettyName) || (petData.needsToday === option.name)}
-                                            onChange={(e) => {
-                                              // Store prettyName, id, and name for backend lookup
-                                              updatePetSpecificData(pet.id, 'needsToday', option.prettyName);
-                                              updatePetSpecificData(pet.id, 'appointmentTypeId', option.id);
-                                              updatePetSpecificData(pet.id, 'appointmentTypeName', option.name);
-                                              updatePetSpecificData(pet.id, 'needsTodayDetails', '');
+                                            onChange={() => {
+                                              attemptPetNeedsTodayChange(pet.id, option, getPetData(pet.id));
                                             }}
                                             style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
                                           />
@@ -8120,6 +8234,121 @@ export default function AppointmentRequestForm() {
         </div>
         </div>
       </div>
+
+      {/* Appointment type change — confirm data loss */}
+      {appointmentTypeChangeModal && (
+        <div
+          role="presentation"
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.45)',
+            backdropFilter: 'blur(4px)',
+            WebkitBackdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1001,
+            padding: '16px',
+          }}
+          onClick={() => setAppointmentTypeChangeModal(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="appt-type-change-title"
+            aria-describedby="appt-type-change-desc"
+            style={{
+              backgroundColor: '#fff',
+              borderRadius: '16px',
+              padding: '28px',
+              maxWidth: '440px',
+              width: '100%',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+              borderLeft: '4px solid #f59e0b',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                width: '52px',
+                height: '52px',
+                borderRadius: '50%',
+                backgroundColor: '#fffbeb',
+                border: '1px solid #fde68a',
+                color: '#b45309',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '24px',
+                fontWeight: 700,
+                marginBottom: '18px',
+              }}
+              aria-hidden
+            >
+              !
+            </div>
+            <h2
+              id="appt-type-change-title"
+              style={{ fontSize: '20px', fontWeight: 700, color: '#111827', margin: '0 0 10px 0', lineHeight: 1.3 }}
+            >
+              Change appointment type?
+            </h2>
+            <p
+              id="appt-type-change-desc"
+              style={{ fontSize: '15px', color: '#4b5563', margin: '0 0 8px 0', lineHeight: 1.55 }}
+            >
+              If you continue, everything you entered for the current appointment type will be cleared. This cannot be undone.
+            </p>
+            <p style={{ fontSize: '15px', color: '#111827', margin: '0 0 24px 0', lineHeight: 1.5, fontWeight: 500 }}>
+              New selection:{' '}
+              <span style={{ color: '#059669' }}>{appointmentTypeChangeModal.option.prettyName}</span>
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setAppointmentTypeChangeModal(null)}
+                style={{
+                  padding: '11px 20px',
+                  backgroundColor: '#f3f4f6',
+                  color: '#374151',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '10px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Keep current type
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const { petId, option } = appointmentTypeChangeModal;
+                  applyPetNeedsTodaySelection(petId, option);
+                  setAppointmentTypeChangeModal(null);
+                }}
+                style={{
+                  padding: '11px 20px',
+                  backgroundColor: '#059669',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '10px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  boxShadow: '0 1px 2px rgba(0, 0, 0, 0.06)',
+                }}
+              >
+                Clear and switch
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Existing Client Modal */}
       {showExistingClientModal && (
