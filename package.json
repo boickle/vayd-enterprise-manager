@@ -60,6 +60,9 @@
   },
   "overrides": {
     "qs": "^6.14.1",
-    "minimatch": "^10.2.1"
+    "minimatch": "^10.2.1",
+    "dompurify": "^3.3.2",
+    "flatted": "^3.4.0",
+    "yauzl": "^3.2.1"
   }
 }

@@ -50,6 +50,27 @@
   touch-action: manipulation;
 }
 
+.membership-rec-coverage-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px 20px;
+  align-items: start;
+}
+
+.membership-rec-coverage-header {
+  padding-bottom: 4px;
+}
+
+@media (max-width: 640px) {
+  .membership-rec-coverage-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .membership-rec-coverage-header > div:last-child {
+    margin-top: 4px;
+  }
+}
+
 .public-room-loader-summary-total-row {
   display: flex;
   justify-content: flex-end;

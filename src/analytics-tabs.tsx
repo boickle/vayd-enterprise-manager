@@ -1,8 +1,18 @@
 // Analytics sub-tabs: path is relative to /analytics.
+// VSD and Time Spent are lazy-loaded so the spinner shows immediately when switching tabs.
+import React from 'react';
 import PaymentsAnalyticsPage from './pages/PaymentAnalytics';
-import VeterinaryServicesDeliveredPage from './pages/VeterinaryServicesDelivered';
-import TimeSpentAnalyticsPage from './pages/TimeSpentAnalytics';
 import RoutingAnalyticsPage from './pages/RoutingAnalytics';
+
+const VeterinaryServicesDeliveredPage = React.lazy(
+  () => import('./pages/VeterinaryServicesDelivered')
+);
+const TimeSpentAnalyticsPage = React.lazy(
+  () => import('./pages/TimeSpentAnalytics')
+);
+const SquareReconciliationPage = React.lazy(
+  () => import('./pages/SquareReconciliation')
+);
 
 export type AnalyticsTabPage = {
   path: string;
@@ -16,6 +26,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
   { path: 'vsd', label: 'Veterinary Services Delivered', element: <VeterinaryServicesDeliveredPage />, role: ['admin', 'superadmin'] },
   { path: 'time-spent', label: 'Time Spent', element: <TimeSpentAnalyticsPage />, role: ['admin', 'superadmin'] },
   { path: 'routing', label: 'Routing', element: <RoutingAnalyticsPage />, role: ['admin', 'superadmin'] },
+  { path: 'square-reconciliation', label: 'Square Reconciliation', element: <SquareReconciliationPage />, role: ['superadmin'] },
 ];
 
 export function getAnalyticsTabPages(): AnalyticsTabPage[] {

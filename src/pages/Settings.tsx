@@ -43,6 +43,12 @@ import {
   type QuantityPriceBreak,
   type ItemType,
 } from '../api/quantityPriceBreaks';
+import {
+  fetchEmployeeGoals,
+  updateEmployeeGoals,
+  type EmployeeGoalsResponseDto,
+  type DailyGoalOverride,
+} from '../api/employeeGoals';
 import './Settings.css';
 
 /** Practice ID for reminder settings (default 1; override via env if needed) */
@@ -77,6 +83,7 @@ export default function Settings() {
     | 'employee-schedule'
     | 'inventory'
     | 'employee-images'
+    | 'employee-goals'
     | 'reminders'
   >('appointment-types');
   const [loading, setLoading] = useState(false);
@@ -136,6 +143,13 @@ export default function Settings() {
   const [imageUploadError, setImageUploadError] = useState<string | null>(null);
   /** Bump per employee after upload so img src changes and browser reloads the image */
   const [employeeImageVersion, setEmployeeImageVersion] = useState<Record<number, number>>({});
+
+  // Employee Goals tab state
+  const [selectedEmployeeForGoals, setSelectedEmployeeForGoals] = useState<Employee | null>(null);
+  const [goalsForm, setGoalsForm] = useState<Partial<EmployeeGoalsResponseDto> & { dailyGoals?: DailyGoalOverride[] }>({});
+  const [goalsLoading, setGoalsLoading] = useState(false);
+  const [goalsSaving, setGoalsSaving] = useState(false);
+  const [goalsLoadError, setGoalsLoadError] = useState<string | null>(null);
 
   // Reminders tab state
   const [reminderForm, setReminderForm] = useState<ReminderSettingsForm>({
@@ -299,6 +313,58 @@ export default function Settings() {
       setError(err?.response?.data?.message || err?.message || 'Failed to load employee');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleLoadEmployeeGoals = async (employeeId: number) => {
+    setGoalsLoadError(null);
+    setGoalsLoading(true);
+    try {
+      const goals = await fetchEmployeeGoals(employeeId);
+      setGoalsForm({
+        ...goals,
+        dailyGoals: goals.dailyGoals ? [...goals.dailyGoals] : [],
+      });
+    } catch (err: any) {
+      setGoalsLoadError(err?.response?.data?.message || err?.message || 'Failed to load goals');
+      setGoalsForm({});
+    } finally {
+      setGoalsLoading(false);
+    }
+  };
+
+  const handleSaveEmployeeGoals = async () => {
+    if (!selectedEmployeeForGoals) return;
+    setGoalsSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const payload: Parameters<typeof updateEmployeeGoals>[1] = {};
+      if (goalsForm.defaultWorkStartLocal !== undefined) payload.defaultWorkStartLocal = goalsForm.defaultWorkStartLocal || undefined;
+      if (goalsForm.defaultWorkEndLocal !== undefined) payload.defaultWorkEndLocal = goalsForm.defaultWorkEndLocal || undefined;
+      if (goalsForm.defaultStartDepotLat !== undefined) payload.defaultStartDepotLat = goalsForm.defaultStartDepotLat;
+      if (goalsForm.defaultStartDepotLon !== undefined) payload.defaultStartDepotLon = goalsForm.defaultStartDepotLon;
+      if (goalsForm.defaultEndDepotLat !== undefined) payload.defaultEndDepotLat = goalsForm.defaultEndDepotLat;
+      if (goalsForm.defaultEndDepotLon !== undefined) payload.defaultEndDepotLon = goalsForm.defaultEndDepotLon;
+      if (goalsForm.dailyRevenueGoal !== undefined) payload.dailyRevenueGoal = goalsForm.dailyRevenueGoal;
+      if (goalsForm.bonusRevenueGoal !== undefined) payload.bonusRevenueGoal = goalsForm.bonusRevenueGoal;
+      if (goalsForm.dailyPointGoal !== undefined) payload.dailyPointGoal = goalsForm.dailyPointGoal;
+      if (goalsForm.weeklyPointGoal !== undefined) payload.weeklyPointGoal = goalsForm.weeklyPointGoal;
+      if (goalsForm.dailyGoals !== undefined) {
+        payload.dailyGoals = goalsForm.dailyGoals.map((d) => ({
+          dayOfWeek: d.dayOfWeek,
+          dailyPointGoal: d.dailyPointGoal,
+          dailyRevenueGoal: d.dailyRevenueGoal,
+        }));
+      }
+      const updated = await updateEmployeeGoals(selectedEmployeeForGoals.id, payload);
+      setGoalsForm({ ...updated, dailyGoals: updated.dailyGoals ? [...updated.dailyGoals] : [] });
+      setSuccess('Employee goals updated successfully');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to update goals');
+    } finally {
+      setGoalsSaving(false);
     }
   };
 
@@ -1026,6 +1092,12 @@ export default function Settings() {
             Employee Images
           </button>
           <button
+            className={`settings-tab ${activeTab === 'employee-goals' ? 'active' : ''}`}
+            onClick={() => setActiveTab('employee-goals')}
+          >
+            Employee Goals
+          </button>
+          <button
             className={`settings-tab ${activeTab === 'reminders' ? 'active' : ''}`}
             onClick={() => setActiveTab('reminders')}
           >
@@ -1501,6 +1573,231 @@ export default function Settings() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Employee Goals Tab */}
+        {activeTab === 'employee-goals' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Employee Goals</h2>
+            <p className="settings-section-description">
+              Set default work times, depot locations, and revenue/point goals per employee. Use per-day overrides to set different daily goals by day of week (e.g. higher goals on weekdays).
+            </p>
+
+            <div className="settings-form-group">
+              <label className="settings-label">Select Employee</label>
+              <select
+                className="settings-select"
+                value={selectedEmployeeForGoals?.id || ''}
+                onChange={(e) => {
+                  const empId = Number(e.target.value);
+                  if (empId) {
+                    const emp = sortedEmployees.find((em) => em.id === empId) ?? null;
+                    setSelectedEmployeeForGoals(emp);
+                    handleLoadEmployeeGoals(empId);
+                  } else {
+                    setSelectedEmployeeForGoals(null);
+                    setGoalsForm({});
+                    setGoalsLoadError(null);
+                  }
+                }}
+              >
+                <option value="">-- Select an employee --</option>
+                {sortedEmployees.map((emp) => (
+                  <option key={emp.id} value={emp.id}>
+                    {formatEmployeeName(emp)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {goalsLoadError && (
+              <div className="settings-message settings-error-message">
+                {goalsLoadError}
+                <button onClick={() => setGoalsLoadError(null)} className="settings-close">×</button>
+              </div>
+            )}
+
+            {selectedEmployeeForGoals && (
+              <>
+                {goalsLoading ? (
+                  <div className="settings-loading">
+                    <div className="settings-spinner"></div>
+                    <span>Loading goals...</span>
+                  </div>
+                ) : (
+                  <div className="settings-card">
+                    <h3 className="settings-card-title">{formatEmployeeName(selectedEmployeeForGoals)}</h3>
+
+                    <h4 className="settings-card-title" style={{ marginTop: '16px', fontSize: '16px' }}>Goals</h4>
+                    <div className="settings-form-group" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px' }}>
+                      <div>
+                        <label className="settings-label">Daily revenue goal</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={goalsForm.dailyRevenueGoal ?? ''}
+                          onChange={(e) => setGoalsForm((f) => ({ ...f, dailyRevenueGoal: e.target.value === '' ? undefined : Number(e.target.value) }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="settings-label">Bonus revenue goal</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={goalsForm.bonusRevenueGoal ?? ''}
+                          onChange={(e) => setGoalsForm((f) => ({ ...f, bonusRevenueGoal: e.target.value === '' ? undefined : Number(e.target.value) }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="settings-label">Daily point goal</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={goalsForm.dailyPointGoal ?? ''}
+                          onChange={(e) => setGoalsForm((f) => ({ ...f, dailyPointGoal: e.target.value === '' ? undefined : Number(e.target.value) }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="settings-label">Weekly point goal</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={goalsForm.weeklyPointGoal ?? ''}
+                          onChange={(e) => setGoalsForm((f) => ({ ...f, weeklyPointGoal: e.target.value === '' ? undefined : Number(e.target.value) }))}
+                        />
+                      </div>
+                    </div>
+
+                    <h4 className="settings-card-title" style={{ marginTop: '16px', fontSize: '16px' }}>Per-day overrides</h4>
+                    <p className="settings-muted" style={{ marginBottom: '8px' }}>
+                      Override daily point and revenue goals for specific days (0=Sunday … 6=Saturday). When set, these override the default goals above for that day.
+                    </p>
+                    <div className="settings-table-container">
+                      <table className="settings-table">
+                        <thead>
+                          <tr>
+                            <th>Day</th>
+                            <th>Daily point goal</th>
+                            <th>Daily revenue goal</th>
+                            <th></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(goalsForm.dailyGoals ?? []).map((row, idx) => (
+                            <tr key={`${row.dayOfWeek}-${idx}`}>
+                              <td>
+                                <select
+                                  className="settings-select"
+                                  value={row.dayOfWeek}
+                                  onChange={(e) => {
+                                    const day = Number(e.target.value);
+                                    setGoalsForm((f) => ({
+                                      ...f,
+                                      dailyGoals: (f.dailyGoals ?? []).map((r, i) => (i === idx ? { ...r, dayOfWeek: day } : r)),
+                                    }));
+                                  }}
+                                >
+                                  {dayNames.map((name, d) => (
+                                    <option key={d} value={d}>{name}</option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={1}
+                                  className="settings-input"
+                                  style={{ width: '100px' }}
+                                  value={row.dailyPointGoal ?? ''}
+                                  onChange={(e) =>
+                                    setGoalsForm((f) => ({
+                                      ...f,
+                                      dailyGoals: (f.dailyGoals ?? []).map((r, i) =>
+                                        i === idx ? { ...r, dailyPointGoal: e.target.value === '' ? undefined : Number(e.target.value) } : r
+                                      ),
+                                    }))
+                                  }
+                                />
+                              </td>
+                              <td>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={1}
+                                  className="settings-input"
+                                  style={{ width: '100px' }}
+                                  value={row.dailyRevenueGoal ?? ''}
+                                  onChange={(e) =>
+                                    setGoalsForm((f) => ({
+                                      ...f,
+                                      dailyGoals: (f.dailyGoals ?? []).map((r, i) =>
+                                        i === idx ? { ...r, dailyRevenueGoal: e.target.value === '' ? undefined : Number(e.target.value) } : r
+                                      ),
+                                    }))
+                                  }
+                                />
+                              </td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="btn secondary"
+                                  onClick={() =>
+                                    setGoalsForm((f) => ({
+                                      ...f,
+                                      dailyGoals: (f.dailyGoals ?? []).filter((_, i) => i !== idx),
+                                    }))
+                                  }
+                                >
+                                  Remove
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div style={{ marginTop: '8px' }}>
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        disabled={(goalsForm.dailyGoals ?? []).length >= 7}
+                        onClick={() => {
+                          const used = new Set((goalsForm.dailyGoals ?? []).map((d) => d.dayOfWeek));
+                          const nextDay = [0, 1, 2, 3, 4, 5, 6].find((d) => !used.has(d));
+                          if (nextDay === undefined) return;
+                          setGoalsForm((f) => ({
+                            ...f,
+                            dailyGoals: [...(f.dailyGoals ?? []), { dayOfWeek: nextDay, dailyPointGoal: undefined, dailyRevenueGoal: undefined }],
+                          }));
+                        }}
+                      >
+                        Add day override
+                      </button>
+                    </div>
+
+                    <div className="settings-action-bar" style={{ marginTop: '24px' }}>
+                      <button
+                        className="btn"
+                        onClick={handleSaveEmployeeGoals}
+                        disabled={goalsSaving}
+                      >
+                        {goalsSaving ? 'Saving...' : 'Save Goals'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
 

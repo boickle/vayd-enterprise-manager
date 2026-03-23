@@ -1,5 +1,5 @@
 // src/pages/PublicRoomLoaderForm.tsx
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { apiBaseUrl, http } from '../api/http';
 import { getEcwidProducts, type EcwidProduct, type EcwidChoice } from '../api/ecwid';
@@ -7,6 +7,7 @@ import {
   searchItemsPublic,
   type SearchableItem,
   checkItemPricingPublic,
+  clearCheckItemPricingPublicCache,
   type CheckItemPricingResponse,
   type CheckItemPricingPublicRequest,
   simulateBillWithMembershipPublic,
@@ -15,6 +16,14 @@ import {
   type RoomLoaderSimulateLineItem,
 } from '../api/roomLoader';
 import { getPatientTreatmentHistoryPublic, type TreatmentWithItems } from '../api/treatments';
+import type { Pet } from '../api/clientPortal';
+import MembershipRecommendationPanel, {
+  type RoomLoaderPlanForDisplay,
+  type RoomLoaderPlansForPetForDisplay,
+} from '../components/MembershipRecommendationPanel';
+import MembershipEnrollmentModal, {
+  type MembershipEnrollmentEligiblePet,
+} from '../components/MembershipEnrollmentModal';
 import {
   fetchFormattedSubscriptionPlans,
   fetchSubscriptionPlanCatalog,
@@ -23,7 +32,39 @@ import {
 } from '../api/payments';
 import { DateTime } from 'luxon';
 import jsPDF from 'jspdf';
+import {
+  membershipSpeciesPrimaryLabel,
+  resolveMembershipPetKind,
+} from '../utils/membershipSpecies';
 import './PublicRoomLoaderForm.css';
+
+/** Match full appointment to room-loader patient by `patient.id` (`appointments[]` order may not match `patients[]`). */
+function getAppointmentForRoomLoaderPet(
+  appointments: any[] | undefined,
+  patientRow: any,
+  fallbackIndex: number
+): any | undefined {
+  if (!appointments?.length) return undefined;
+  const pid = patientRow?.patientId ?? patientRow?.patient?.id ?? patientRow?.id;
+  if (pid != null) {
+    const appt = appointments.find((a: any) => {
+      const ap = a?.patient;
+      const aid = ap?.id ?? a?.patientId;
+      return aid != null && Number(aid) === Number(pid);
+    });
+    if (appt) return appt;
+  }
+  return appointments[fallbackIndex];
+}
+
+/** Match appointment `patient` to a room-loader row by id (order may not match `patients[]`). */
+function getAppointmentPatientForRoomLoaderPet(
+  appointments: any[] | undefined,
+  patientRow: any,
+  fallbackIndex: number
+): any | undefined {
+  return getAppointmentForRoomLoaderPet(appointments, patientRow, fallbackIndex)?.patient;
+}
 
 // --- Labs We Recommend helpers ---
 function getAgeYears(patient: { dob?: string | null }): number | null {
@@ -33,6 +74,60 @@ function getAgeYears(patient: { dob?: string | null }): number | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Parse free-text age (e.g. "12 years", "6 months") for membership eligibility — same rules as MembershipSignup.
+ */
+function parseAgeStringToYears(ageStr: string | null | undefined): number | null {
+  if (ageStr == null || typeof ageStr !== 'string') return null;
+  const s = ageStr.trim().toLowerCase();
+  if (!s) return null;
+  const numMatch = s.match(/^(\d+(?:\.\d+)?)\s*(?:y(?:ear)?s?|yr?s?)?$/);
+  if (numMatch) return Math.max(0, parseFloat(numMatch[1]));
+  const monthsMatch = s.match(/^(\d+)\s*mo(?:nth)?s?$/);
+  if (monthsMatch) return Math.max(0, parseInt(monthsMatch[1], 10) / 12);
+  const yearMonthMatch = s.match(/^(\d+)\s*y(?:ear)?s?\s*(?:and|\d*)\s*(\d+)\s*mo(?:nth)?s?$/);
+  if (yearMonthMatch) return Math.max(0, parseInt(yearMonthMatch[1], 10) + parseInt(yearMonthMatch[2], 10) / 12);
+  const justNum = parseFloat(s.replace(/[^\d.]/g, ''));
+  if (Number.isFinite(justNum)) return Math.max(0, justNum);
+  const asDate = new Date(ageStr.trim());
+  if (!Number.isNaN(asDate.getTime())) {
+    const diff = Date.now() - asDate.getTime();
+    return Math.max(0, diff / (1000 * 60 * 60 * 24 * 365.25));
+  }
+  return null;
+}
+
+/**
+ * Age in years for Golden (9+) / starter (≤1.5): DOB from room-loader row and matched appointment `patient`,
+ * then `age` string — mirrors MembershipSignup `petDetails.ageYears`.
+ */
+function getMembershipAgeYearsForRoomLoader(p: any, appointmentPatient?: any): number | null {
+  const chain = [p?.patient, p, appointmentPatient, appointmentPatient?.patient].filter(Boolean);
+  for (const c of chain) {
+    const dob = c?.dob;
+    if (typeof dob === 'string' && dob.trim()) {
+      const iso = DateTime.fromISO(dob.trim());
+      if (iso.isValid) {
+        return Math.max(0, DateTime.now().diff(iso, 'years').years);
+      }
+      const asDate = new Date(dob.trim());
+      if (!Number.isNaN(asDate.getTime())) {
+        const diff = Date.now() - asDate.getTime();
+        return Math.max(0, diff / (1000 * 60 * 60 * 24 * 365.25));
+      }
+    }
+  }
+  for (const c of chain) {
+    if (c?.age != null && String(c.age).trim()) {
+      const parsed = parseAgeStringToYears(String(c.age));
+      if (parsed != null) return parsed;
+    }
+    const y = (c as { ageYears?: unknown; age_in_years?: unknown }).ageYears ?? (c as { age_in_years?: unknown }).age_in_years;
+    if (typeof y === 'number' && Number.isFinite(y)) return Math.max(0, y);
+  }
+  return null;
 }
 
 /** True if any reminder or addedItem for this patient contains "Wellness" (used for lab recommendations). */
@@ -174,17 +269,27 @@ function getMembershipPlanCardDetails(planId: string): { name: string; tagLine: 
 /** All plan IDs used in membership flow (base + add-ons). Filter per pet using same logic as MembershipSignup. */
 const ALL_MEMBERSHIP_PLAN_IDS = ['foundations', 'golden', 'comfort-care', 'plus-addon', 'starter-addon'] as const;
 
+/** When species fields are empty, infer from reminders/added items (e.g. canine vaccines on the visit list). */
+function inferMembershipKindFromLineItems(p: any): 'dog' | 'cat' | null {
+  const lineText = getLineItemNames(p);
+  if (!lineText.trim()) return null;
+  const canineSignals = /\b(lepto|leptospir|lyme|bordetella|4dx|heartworm|dhpp|da2pp|distemper|parvo|rabies)\b/i.test(
+    lineText
+  );
+  const felineSignals = /\b(felv|fiv|fe?lv|panleuk|herpes|calici)\b/i.test(lineText);
+  if (canineSignals && !felineSignals) return 'dog';
+  if (felineSignals && !canineSignals) return 'cat';
+  return null;
+}
+
 /** Pet details for membership plan filtering (same logic as MembershipSignup: kind + ageYears). */
-function getPetDetailsForMembership(p: any): { kind: 'dog' | 'cat' | null; ageYears: number | null } {
-  const patient = p?.patient ?? p;
-  const speciesSource = (patient?.species ?? patient?.breed ?? patient?.speciesEntity?.name ?? p?.species ?? '').toString().toLowerCase();
-  const kind: 'dog' | 'cat' | null =
-    speciesSource.includes('dog') || speciesSource.includes('canine')
-      ? 'dog'
-      : speciesSource.includes('cat') || speciesSource.includes('feline')
-        ? 'cat'
-        : null;
-  const ageYears = getAgeYears(patient ?? {});
+function getPetDetailsForMembership(
+  p: any,
+  appointmentPatient?: any
+): { kind: 'dog' | 'cat' | null; ageYears: number | null } {
+  let kind = resolveMembershipPetKind(p, appointmentPatient ? [appointmentPatient] : undefined);
+  if (kind == null) kind = inferMembershipKindFromLineItems(p);
+  const ageYears = getMembershipAgeYearsForRoomLoader(p, appointmentPatient);
   return { kind, ageYears };
 }
 
@@ -201,11 +306,295 @@ function getPlanIdsForPet(petDetails: { kind: 'dog' | 'cat' | null; ageYears: nu
   return planIds;
 }
 
-type RoomLoaderPlanForDisplay = { planId: string; planName: string; tagLine: string };
-type RoomLoaderPlansForPetForDisplay = { patientId: number; patientName: string; plans: RoomLoaderPlanForDisplay[] };
+function normalizePlanBaseId(planId: string): string {
+  return (planId || '').replace(/-cat|-dog$/i, '');
+}
+
+const MEMBERSHIP_ADDON_PLAN_BASE_IDS = new Set(['plus-addon', 'starter-addon']);
+
+/** Primary wellness plan for recommendation copy (excludes add-ons). */
+function getRecommendedWellnessPlanFromList(plans: RoomLoaderPlanForDisplay[]): RoomLoaderPlanForDisplay | null {
+  const wellness = plans.filter((p) => !MEMBERSHIP_ADDON_PLAN_BASE_IDS.has(normalizePlanBaseId(p.planId)));
+  if (wellness.length === 0) return null;
+  const withBase = wellness.map((p) => ({ p, base: normalizePlanBaseId(p.planId) }));
+  const golden = withBase.find((x) => x.base === 'golden');
+  if (golden) return golden.p;
+  const foundations = withBase.find((x) => x.base === 'foundations');
+  if (foundations) return foundations.p;
+  const comfort = withBase.find((x) => x.base === 'comfort-care');
+  if (comfort) return comfort.p;
+  return wellness[0];
+}
+
+function getFirstPlanIdFromCatalogNode(node: any): string | null {
+  if (!node || typeof node !== 'object') return null;
+  if (node.planId && typeof node.planId === 'string') return node.planId;
+  for (const key of Object.keys(node)) {
+    const id = getFirstPlanIdFromCatalogNode(node[key]);
+    if (id) return id;
+  }
+  return null;
+}
+
+type CatalogPlanCombo = 'base' | 'plus' | 'starter' | 'plusStarter';
+
+function extractCatalogComboEntry(target: any, combo: CatalogPlanCombo): { planId: string } | undefined {
+  if (!target) return undefined;
+  const entry = target[combo] ?? (combo === 'plusStarter' ? target.plus_starter : undefined);
+  if (!entry || typeof entry !== 'object') return undefined;
+  const planId = (entry as { planId?: string; plan_id?: string }).planId ?? (entry as { plan_id?: string }).plan_id;
+  if (planId) return { planId: String(planId) };
+  return undefined;
+}
+
+/**
+ * Stripe catalog plan id for base tier (monthly then annual) — mirrors MembershipSignup.lookupCatalogEntry
+ * so dog/cat get the correct Square plan name and pricing path.
+ */
+function getCatalogStripePlanIdForRoomLoader(
+  catalog: SubscriptionPlanCatalog | null | undefined,
+  planKey: string,
+  species: 'dog' | 'cat' | null,
+  cadence: 'monthly' | 'annual'
+): string | null {
+  if (!catalog || !planKey || typeof catalog !== 'object') return null;
+  const planNode = (catalog as Record<string, unknown>)[planKey] as Record<string, unknown> | undefined;
+  if (!planNode || typeof planNode !== 'object') return null;
+
+  if (planKey === 'comfort-care') {
+    const generalNode = (planNode as { general?: unknown }).general ?? planNode;
+    const g = generalNode as Record<string, unknown>;
+    const cadenceNode = g[cadence] as Record<string, unknown> | undefined;
+    const entry = extractCatalogComboEntry(cadenceNode, 'base');
+    return entry?.planId ?? null;
+  }
+
+  if (species && planNode[species] && typeof planNode[species] === 'object') {
+    const speciesNode = planNode[species] as Record<string, unknown>;
+    const cadenceNode = speciesNode[cadence] as Record<string, unknown> | undefined;
+    const entry = extractCatalogComboEntry(cadenceNode, 'base');
+    if (entry?.planId) return entry.planId;
+  }
+
+  const fallbackCadence = planNode[cadence] as Record<string, unknown> | undefined;
+  if (fallbackCadence) {
+    const entry = extractCatalogComboEntry(fallbackCadence, 'base');
+    if (entry?.planId) return entry.planId;
+  }
+
+  return null;
+}
+
+function resolveSubscriptionPlanDisplayNameForSpecies(
+  formatted: FormattedSubscriptionPlan[],
+  catalog: SubscriptionPlanCatalog | null | undefined,
+  planSlug: string,
+  species: 'dog' | 'cat' | null
+): string | undefined {
+  if (!formatted?.length) return undefined;
+  const byId = (id: string) => formatted.find((p) => p.planId === id)?.planName;
+
+  if (species === 'dog' || species === 'cat') {
+    const monthlyId = getCatalogStripePlanIdForRoomLoader(catalog, planSlug, species, 'monthly');
+    if (monthlyId) {
+      const n = byId(monthlyId);
+      if (n) return n;
+    }
+    const annualId = getCatalogStripePlanIdForRoomLoader(catalog, planSlug, species, 'annual');
+    if (annualId) {
+      const n = byId(annualId);
+      if (n) return n;
+    }
+    return undefined;
+  }
+
+  const sub =
+    catalog && typeof catalog === 'object' ? (catalog as Record<string, unknown>)[planSlug] : undefined;
+  const fallbackTreeId = sub != null ? getFirstPlanIdFromCatalogNode(sub) : null;
+  if (fallbackTreeId) {
+    const n = byId(fallbackTreeId);
+    if (n) return n;
+  }
+  return undefined;
+}
+
+function normItemName(n: string): string {
+  return (n ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** Line items for simulate: one pet's visit lines; store/tax only on first patient in list. */
+function filterLineItemsForPatientSimulate<T extends { patientId?: number; category?: string }>(
+  items: T[],
+  patientId: number,
+  firstPatientId: number
+): T[] {
+  return items.filter((li) => {
+    if ((li as { category?: string }).category === 'store') return patientId === firstPatientId;
+    const pid = (li as { patientId?: number }).patientId ?? 0;
+    return pid === patientId;
+  });
+}
+
+function patientHasMembershipFlag(p: any): boolean {
+  const pat = p?.patient ?? p;
+  const name = p?.membershipName ?? pat?.membershipName;
+  return !!(p?.isMember ?? pat?.isMember ?? (name != null && String(name).trim() !== ''));
+}
+
+/**
+ * True if this pet should be treated as already enrolled in membership for upsell UI.
+ * Flags may live only on `appointments[].patient` while `patients[]` rows omit them; scan all appointments by patient id.
+ */
+function roomLoaderPatientHasMembership(p: any, appointments: any[] | undefined): boolean {
+  if (patientHasMembershipFlag(p)) return true;
+  if (!appointments?.length) return false;
+  const pid = Number(p?.patientId ?? p?.patient?.id ?? p?.id);
+  if (Number.isNaN(pid)) return false;
+  for (const a of appointments) {
+    const ap = a?.patient;
+    if (!ap) continue;
+    const aid = Number(ap.id ?? ap.patientId);
+    if (Number.isNaN(aid) || aid !== pid) continue;
+    if (patientHasMembershipFlag(ap)) return true;
+  }
+  return false;
+}
+
+/** Membership plan label for display (row or matched appointment `patient`). */
+function getRoomLoaderMembershipDetailText(p: any, appointments: any[] | undefined): string | undefined {
+  if (!roomLoaderPatientHasMembership(p, appointments)) return undefined;
+  const pat = p?.patient ?? p;
+  let name: string | null | undefined = p?.membershipName ?? pat?.membershipName;
+  const pid = Number(p?.patientId ?? p?.patient?.id ?? p?.id);
+  if ((!name || !String(name).trim()) && !Number.isNaN(pid) && appointments?.length) {
+    for (const a of appointments) {
+      const ap = a?.patient;
+      if (!ap) continue;
+      const aid = Number(ap.id ?? ap.patientId);
+      if (aid !== pid) continue;
+      const n = ap.membershipName;
+      if (n != null && String(n).trim()) {
+        name = n;
+        break;
+      }
+    }
+  }
+  const s = name != null ? String(name).trim() : '';
+  return s || undefined;
+}
+
+function RoomLoaderPatientMemberBadge({
+  patient,
+  appointments,
+}: {
+  patient: any;
+  appointments: any[] | undefined;
+}) {
+  if (!roomLoaderPatientHasMembership(patient, appointments)) return null;
+  const detail = getRoomLoaderMembershipDetailText(patient, appointments);
+  return (
+    <div
+      style={{
+        marginTop: '8px',
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: '8px',
+      }}
+    >
+      <span
+        style={{
+          display: 'inline-block',
+          fontSize: '11px',
+          fontWeight: 700,
+          letterSpacing: '0.04em',
+          textTransform: 'uppercase',
+          color: '#0f5132',
+          backgroundColor: '#d1e7dd',
+          border: '1px solid #badbcc',
+          borderRadius: '999px',
+          padding: '4px 10px',
+        }}
+      >
+        Member
+      </span>
+      {detail ? (
+        <span style={{ fontSize: '13px', color: '#555', lineHeight: 1.45 }}>{detail}</span>
+      ) : null}
+    </div>
+  );
+}
 
 function getItemId(item: SearchableItem): number | undefined {
   return item.inventoryItem?.id ?? (item as any).procedure?.id ?? item.lab?.id;
+}
+
+type SummaryLineDisplayPricing =
+  | CheckItemPricingResponse
+  | { wellnessPlanPricing?: any; discountPricing?: any }
+  | null;
+
+/**
+ * Summary line: avoid locking to stale `item.price` when the row only has employee `discountPricing`
+ * (that bypassed check-item-pricing and hid membership pricing after enrollment). Prefer row
+ * `wellnessPlanPricing.adjustedPrice` when coverage is already embedded; else prefer check-item-pricing
+ * when the cache has a result; else fall back to embedded row price.
+ */
+function resolveSummaryLinePrice(
+  patientId: number,
+  displayRow: any,
+  getClientPricing: (pid: number, si: SearchableItem | null) => CheckItemPricingResponse | null,
+  getClientAdjustedPrice: (pid: number, si: SearchableItem | null) => number | null
+): { unitPrice: number; displayPricing: SummaryLineDisplayPricing } {
+  const searchableItem = displayRow?.searchableItem as SearchableItem | null | undefined;
+  const wp = displayRow?.wellnessPlanPricing;
+  if (
+    wp &&
+    (wp.hasCoverage === true || (wp as { priceAdjustedByMembership?: boolean }).priceAdjustedByMembership === true) &&
+    wp.adjustedPrice != null &&
+    !Number.isNaN(Number(wp.adjustedPrice))
+  ) {
+    return {
+      unitPrice: Number(wp.adjustedPrice),
+      displayPricing: {
+        wellnessPlanPricing: wp,
+        discountPricing: displayRow.discountPricing,
+      },
+    };
+  }
+
+  const sid = searchableItem != null ? getItemId(searchableItem) : undefined;
+  if (searchableItem != null && sid != null) {
+    const cached = getClientPricing(patientId, searchableItem);
+    if (cached != null) {
+      const adjusted = getClientAdjustedPrice(patientId, searchableItem);
+      if (adjusted != null) {
+        return { unitPrice: adjusted, displayPricing: cached };
+      }
+    }
+  }
+
+  if (displayRow?.wellnessPlanPricing != null || displayRow?.discountPricing != null) {
+    return {
+      unitPrice: Number(displayRow.price) ?? 0,
+      displayPricing: {
+        wellnessPlanPricing: displayRow.wellnessPlanPricing ?? undefined,
+        discountPricing: displayRow.discountPricing ?? undefined,
+      },
+    };
+  }
+
+  if (searchableItem != null) {
+    return {
+      unitPrice: getClientAdjustedPrice(patientId, searchableItem) ?? Number(displayRow.price) ?? 0,
+      displayPricing: getClientPricing(patientId, searchableItem),
+    };
+  }
+
+  return {
+    unitPrice: Number(displayRow?.price) || 0,
+    displayPricing: null,
+  };
 }
 
 /** Normalize to backend simulate-bill itemType. Only "lab" | "procedure" | "inventory". */
@@ -235,6 +624,18 @@ function getItemTypeAndId(
   if (id == null) return null;
   const type = normalizeItemType((item as any).itemType ?? (item as any).type);
   return { itemType: type, itemId: id };
+}
+
+/** Extract code from a SearchableItem (procedure, lab, or inventory) for summaryForPdf. */
+function getSearchItemCode(item: SearchableItem | null | undefined): string | undefined {
+  if (!item) return undefined;
+  return (item as any).lab?.code ?? (item as any).procedure?.code ?? (item as any).inventoryItem?.code ?? undefined;
+}
+
+/** Extract code from a display item (reminder/added/trip fee row) for summaryForPdf. */
+function getCodeFromDisplayItem(item: any): string | undefined {
+  if (!item) return undefined;
+  return item.code ?? getSearchItemCode(item?.searchableItem) ?? undefined;
 }
 
 /** Build a SearchableItem from a row with id, name, price, itemType (for check-item-pricing lookup). */
@@ -470,10 +871,58 @@ function isCrLymeItem(name?: string | null, code?: string | null): boolean {
   return n.includes('crlyme') || n.includes('cr lyme') || c === 'lymecr' || c.includes('lymecr');
 }
 
+/** Flat or nested inventory/procedure/lab row from room-loader reminders / addedItems. */
+function getPublicFormLineNameCode(raw: any): { name: string; code: string } {
+  if (raw == null || typeof raw !== 'object') return { name: '', code: '' };
+  const name =
+    raw.name ??
+    raw.inventoryItem?.name ??
+    raw.procedure?.name ??
+    raw.lab?.name ??
+    '';
+  const code =
+    raw.code ??
+    raw.inventoryItem?.code ??
+    raw.procedure?.code ??
+    raw.lab?.code ??
+    '';
+  return { name: String(name ?? ''), code: String(code ?? '') };
+}
+
+/**
+ * Name/code for one reminder row on the public form. Staff-packaged payloads use `item`;
+ * raw API may use `matchedItem` (ReminderWithPrice) or nest the line under `reminder` only.
+ */
+function getRoomLoaderReminderLineNameCode(r: any): { name: string; code: string } {
+  const a = getPublicFormLineNameCode(r?.item ?? r?.inventoryItem);
+  if (a.name || a.code) return a;
+  const b = getPublicFormLineNameCode(r?.matchedItem);
+  if (b.name || b.code) return b;
+  return getPublicFormLineNameCode(r);
+}
+
+/**
+ * Cat vs dog from joined species labels (already lowercased is fine).
+ * Word boundaries avoid false positives: "cat" inside Catahoula, cathy@…, application, etc.
+ */
+function isCatSpeciesTokens(speciesJoinedLower: string): boolean {
+  const t = speciesJoinedLower.trim().toLowerCase();
+  if (!t) return false;
+  return /\b(cat|cats|feline|felines|kitten|kittens)\b/.test(t);
+}
+
+function isDogSpeciesTokens(speciesJoinedLower: string): boolean {
+  const t = speciesJoinedLower.trim().toLowerCase();
+  if (!t) return false;
+  return /\b(dog|dogs|canine|canines|puppy|puppies)\b/.test(t);
+}
+
 /** True if patient has ever had crLyme in their treatment history. */
 function everHadCrLyme(history: TreatmentWithItems[]): boolean {
-  for (const tx of history) {
+  for (const tx of history ?? []) {
+    if ((tx as any).isEstimate === true) continue;
     for (const item of tx.treatmentItems || []) {
+      if (item.isDeclined) continue;
       const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
       const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
       if (isCrLymeItem(name, code)) return true;
@@ -486,16 +935,60 @@ function everHadCrLyme(history: TreatmentWithItems[]): boolean {
 function gettingCrLymeThisTime(patient: any): boolean {
   if (patient.reminders?.length) {
     for (const r of patient.reminders) {
-      const item = r.item;
-      if (item && isCrLymeItem(item.name, item.code)) return true;
+      let { name, code } = getRoomLoaderReminderLineNameCode(r);
+      if (!name && !code) {
+        const synthetic = [r?.reminderText, r?.description, r?.reminder?.description].filter(Boolean).join(' | ');
+        if (synthetic) ({ name, code } = { name: synthetic, code: '' });
+      }
+      if (isCrLymeItem(name, code)) return true;
     }
   }
   if (patient.addedItems?.length) {
     for (const item of patient.addedItems) {
-      if (isCrLymeItem(item.name, item.code)) return true;
+      const { name, code } = getPublicFormLineNameCode(item);
+      if (isCrLymeItem(name, code)) return true;
     }
   }
   return false;
+}
+
+/**
+ * Staff put the initial-series crLyme product on this visit (e.g. LYMECRINITIAL / "crLyme … Initial").
+ * Booster scheduling always applies for that case even if PIMS history looks like they had crLyme before
+ * (estimates, duplicates, or legacy rows).
+ */
+function hasInitialSeriesCrLymeOnCarePlan(patient: any): boolean {
+  const lineIsInitialCrLyme = (name: string, code: string) => {
+    if (!isCrLymeItem(name, code)) return false;
+    const c = (code ?? '').toUpperCase();
+    const n = (name ?? '').toLowerCase();
+    if (c.includes('INITIAL')) return true;
+    if (/\binitial\b/.test(n)) return true;
+    return false;
+  };
+  if (patient.addedItems?.length) {
+    for (const item of patient.addedItems) {
+      const { name, code } = getPublicFormLineNameCode(item);
+      if (lineIsInitialCrLyme(name, code)) return true;
+    }
+  }
+  if (patient.reminders?.length) {
+    for (const r of patient.reminders) {
+      let { name, code } = getRoomLoaderReminderLineNameCode(r);
+      if (!name && !code) {
+        const synthetic = [r?.reminderText, r?.description, r?.reminder?.description].filter(Boolean).join(' | ');
+        if (synthetic) ({ name, code } = { name: synthetic, code: '' });
+      }
+      if (lineIsInitialCrLyme(name, code)) return true;
+    }
+  }
+  return false;
+}
+
+/** Eligible for "schedule crLyme booster?" once history is loaded: getting crLyme this visit and either no prior crLyme or this visit is explicitly the initial product. */
+function showCrLymeBoosterWhenHistoryReady(patient: any, history: TreatmentWithItems[]): boolean {
+  if (!gettingCrLymeThisTime(patient)) return false;
+  return !everHadCrLyme(history) || hasInitialSeriesCrLymeOnCarePlan(patient);
 }
 
 /** True if name or code indicates any Lyme vaccine (including crLyme). */
@@ -564,13 +1057,14 @@ function everHadAnyLymeVaccine(history: TreatmentWithItems[]): boolean {
 function hasLymeInLineItems(patient: any): boolean {
   if (patient.reminders?.length) {
     for (const r of patient.reminders) {
-      const item = r.item;
-      if (item && isLymeItem(item.name, item.code)) return true;
+      const { name, code } = getRoomLoaderReminderLineNameCode(r);
+      if (isLymeItem(name, code)) return true;
     }
   }
   if (patient.addedItems?.length) {
     for (const item of patient.addedItems) {
-      if (isLymeItem(item.name, item.code)) return true;
+      const { name, code } = getPublicFormLineNameCode(item);
+      if (isLymeItem(name, code)) return true;
     }
   }
   return false;
@@ -630,13 +1124,14 @@ function hadLeptoInLast15Months(history: TreatmentWithItems[]): boolean {
 function hasLeptoInLineItems(patient: any): boolean {
   if (patient.reminders?.length) {
     for (const r of patient.reminders) {
-      const item = r.item;
-      if (item && isLeptoItem(item.name, item.code)) return true;
+      const { name, code } = getRoomLoaderReminderLineNameCode(r);
+      if (isLeptoItem(name, code)) return true;
     }
   }
   if (patient.addedItems?.length) {
     for (const item of patient.addedItems) {
-      if (isLeptoItem(item.name, item.code)) return true;
+      const { name, code } = getPublicFormLineNameCode(item);
+      if (isLeptoItem(name, code)) return true;
     }
   }
   return false;
@@ -696,13 +1191,14 @@ function hadBordetellaInLast15Months(history: TreatmentWithItems[]): boolean {
 function hasBordetellaInLineItems(patient: any): boolean {
   if (patient.reminders?.length) {
     for (const r of patient.reminders) {
-      const item = r.item;
-      if (item && isBordetellaItem(item.name, item.code)) return true;
+      const { name, code } = getRoomLoaderReminderLineNameCode(r);
+      if (isBordetellaItem(name, code)) return true;
     }
   }
   if (patient.addedItems?.length) {
     for (const item of patient.addedItems) {
-      if (isBordetellaItem(item.name, item.code)) return true;
+      const { name, code } = getPublicFormLineNameCode(item);
+      if (isBordetellaItem(name, code)) return true;
     }
   }
   return false;
@@ -797,13 +1293,14 @@ function hadFeLVInLast24Months(history: TreatmentWithItems[]): boolean {
 function hasFeLVInLineItems(patient: any): boolean {
   if (patient.reminders?.length) {
     for (const r of patient.reminders) {
-      const item = r.item;
-      if (item && isFeLVItem(item.name, item.code)) return true;
+      const { name, code } = getRoomLoaderReminderLineNameCode(r);
+      if (isFeLVItem(name, code)) return true;
     }
   }
   if (patient.addedItems?.length) {
     for (const item of patient.addedItems) {
-      if (isFeLVItem(item.name, item.code)) return true;
+      const { name, code } = getPublicFormLineNameCode(item);
+      if (isFeLVItem(name, code)) return true;
     }
   }
   return false;
@@ -825,9 +1322,9 @@ function hasFutureReminderForVaccine(patient: any, vaccine: OptionalVaccineKey):
   if (!Array.isArray(reminders)) return false;
   const now = DateTime.now();
   for (const r of reminders) {
-    const item = r?.item;
-    if (!item || !itemMatchesVaccine(vaccine, item.name, item.code)) continue;
-    const dueStr = r.dueDate ?? r.due_date;
+    const { name, code } = getRoomLoaderReminderLineNameCode(r);
+    if (!itemMatchesVaccine(vaccine, name, code)) continue;
+    const dueStr = r.dueDate ?? r.due_date ?? r.reminder?.dueDate;
     if (dueStr == null) continue;
     const due = DateTime.fromISO(dueStr);
     if (due.isValid && due > now) return true;
@@ -1054,6 +1551,8 @@ export default function PublicRoomLoaderForm() {
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [submitting, setSubmitting] = useState(false);
   const [treatmentHistoryByPatientId, setTreatmentHistoryByPatientId] = useState<Record<number, TreatmentWithItems[]>>({});
+  /** After history has been fetched for a patient id (public API). Until true, optional vaccine UI that depends on history stays hidden to avoid flash (empty history briefly looks like "never had" vaccines). */
+  const [treatmentHistoryReadyByPatientId, setTreatmentHistoryReadyByPatientId] = useState<Record<number, boolean>>({});
   /** Per-patient opted-in vaccine items (from "Yes" on Lepto/Bordetella/crLyme/FeLV). Sent on submit. */
   const [optedInVaccinesByPatientId, setOptedInVaccinesByPatientId] = useState<Record<number, Partial<Record<VaccineOptKey, SearchableItem>>>>({});
   const [vaccineSearchLoading, setVaccineSearchLoading] = useState<Record<string, boolean>>({});
@@ -1076,6 +1575,8 @@ export default function PublicRoomLoaderForm() {
   const [commonItemsFetched, setCommonItemsFetched] = useState<Record<string, SearchableItem | null>>({});
   /** Client-adjusted pricing (discounts/membership) for labs and vaccines. Key: `${patientId}-${itemType}-${itemId}`. */
   const [clientPricingCache, setClientPricingCache] = useState<Record<string, CheckItemPricingResponse | null>>({});
+  /** Bumped after room-loader refetch (e.g. post-enrollment) so check-item-pricing effect always re-runs. */
+  const [pricingRefreshKey, setPricingRefreshKey] = useState(0);
   /** Store (Ecwid) search on Summary page. */
   const [storeSearchQuery, setStoreSearchQuery] = useState('');
   const [storeSearchResults, setStoreSearchResults] = useState<EcwidProduct[]>([]);
@@ -1089,19 +1590,15 @@ export default function PublicRoomLoaderForm() {
   /** When submitStatus === 'completed', we show PDF view; this is the blob URL for the generated PDF. */
   /** Inline validation errors keyed by form field (e.g. pet0_outdoorAccess). Shown below the field instead of alert. */
   const [fieldValidationErrors, setFieldValidationErrors] = useState<Record<string, string>>({});
-  /** Membership comparison on summary: selected plan (we run simulate for both monthly and annual). */
-  const [selectedMembershipSimulate, setSelectedMembershipSimulate] = useState<{
-    planId: string;
-    planName: string;
-    patientIds: number[];
-  } | null>(null);
-  const [membershipSimulateResultMonthly, setMembershipSimulateResultMonthly] = useState<RoomLoaderSimulateBillPublicResponse | null>(null);
-  const [membershipSimulateResultAnnual, setMembershipSimulateResultAnnual] = useState<RoomLoaderSimulateBillPublicResponse | null>(null);
-  const [membershipSimulateLoading, setMembershipSimulateLoading] = useState(false);
-  /** Which plan's info (membership card) popover is open; key is `${patientId}-${planId}`. */
-  const [membershipInfoPlanKey, setMembershipInfoPlanKey] = useState<string | null>(null);
-  /** "See how a membership could change your bill" modal (only for non-members). */
-  const [membershipModalOpen, setMembershipModalOpen] = useState(false);
+  /** Per-pet membership simulate (recommended plan) when recommendation panel is open. */
+  const [membershipPanelByPatientId, setMembershipPanelByPatientId] = useState<
+    Record<number, { monthly: RoomLoaderSimulateBillPublicResponse | null; annual: RoomLoaderSimulateBillPublicResponse | null }>
+  >({});
+  const [membershipPanelLoading, setMembershipPanelLoading] = useState(false);
+  /** Collapsible "See how a membership could change your bill" section on summary (only for non-members). */
+  const [membershipBillSectionExpanded, setMembershipBillSectionExpanded] = useState(false);
+  /** Public membership enrollment modal (same flow as appointment request form). */
+  const [showMembershipEnrollmentModal, setShowMembershipEnrollmentModal] = useState(false);
   /** Formatted subscription plans (for membership comparison plan names); same source as Client Portal signup. */
   const [formattedSubscriptionPlans, setFormattedSubscriptionPlans] = useState<FormattedSubscriptionPlan[]>([]);
   const [subscriptionPlanCatalog, setSubscriptionPlanCatalog] = useState<SubscriptionPlanCatalog | null>(null);
@@ -1162,6 +1659,9 @@ export default function PublicRoomLoaderForm() {
             initialFormData[`${petKey}_rabiesPreference`] = '';
             initialFormData[`${petKey}_felvVaccine`] = '';
             initialFormData[`${petKey}_labWork`] = '';
+            initialFormData[`${petKey}_preMedsNeedRefill`] = '';
+            initialFormData[`${petKey}_preMedsWhatRefills`] = '';
+            initialFormData[`${petKey}_preMedsMailOrPickup`] = '';
           });
           initialFormData['anythingElseNotes'] = '';
           if (savedForm && typeof savedForm === 'object') {
@@ -1253,10 +1753,14 @@ export default function PublicRoomLoaderForm() {
     fetchRoomLoaderData();
   }, [token]);
 
-  // Fetch formatted subscription plans and catalog when client is non-member with patients (same source as Client Portal for plan names/display)
+  // Fetch formatted subscription plans and catalog when at least one pet may see membership upsell (same source as Client Portal for plan names/display)
   useEffect(() => {
     const hasPatients = Array.isArray(data?.patients) && data.patients.length > 0;
-    if (!hasPatients || data?.clientHasMembership) return;
+    if (!hasPatients) return;
+    const anyPetWithoutMembership = data.patients.some(
+      (p: any) => !roomLoaderPatientHasMembership(p, data?.appointments)
+    );
+    if (!anyPetWithoutMembership) return;
     let alive = true;
     Promise.all([fetchFormattedSubscriptionPlans(), fetchSubscriptionPlanCatalog()])
       .then(([formatted, catalog]) => {
@@ -1272,17 +1776,7 @@ export default function PublicRoomLoaderForm() {
     return () => {
       alive = false;
     };
-  }, [data?.patients, data?.clientHasMembership]);
-
-  const getFirstPlanIdFromCatalogNode = (node: any): string | null => {
-    if (!node || typeof node !== 'object') return null;
-    if (node.planId && typeof node.planId === 'string') return node.planId;
-    for (const key of Object.keys(node)) {
-      const id = getFirstPlanIdFromCatalogNode(node[key]);
-      if (id) return id;
-    }
-    return null;
-  };
+  }, [data?.patients, data?.appointments]);
 
   // Resolve plan display name from formatted plans / catalog (same logic as MembershipSignup)
   const membershipPlanDisplayName = useMemo(() => {
@@ -1308,33 +1802,179 @@ export default function PublicRoomLoaderForm() {
 
   // Build plans per pet using same logic as Client Portal: Golden only for 9+, Plus always, Puppy/Kitten when age <= 1.5
   const availablePlansForPetsForDisplay = useMemo((): RoomLoaderPlansForPetForDisplay[] => {
-    if (!data?.patients?.length || data?.clientHasMembership) return [];
-    return data.patients.map((p: any) => {
+    if (!data?.patients?.length) return [];
+    return data.patients.map((p: any, idx: number) => {
+      if (roomLoaderPatientHasMembership(p, data?.appointments)) return null;
       const patientId = p.patientId ?? p.patient?.id ?? p.id;
       if (patientId == null) return null;
       const patientName = p.patientName ?? p.patient?.name ?? p.name ?? 'Pet';
-      const petDetails = getPetDetailsForMembership(p);
+      const apptPatient = getAppointmentPatientForRoomLoaderPet(data?.appointments, p, idx);
+      const petDetails = getPetDetailsForMembership(p, apptPatient);
       const planIds = getPlanIdsForPet(petDetails);
       const plans: RoomLoaderPlanForDisplay[] = planIds.map((planId) => {
         const details = getMembershipPlanCardDetails(planId);
+        const speciesResolved = resolveSubscriptionPlanDisplayNameForSpecies(
+          formattedSubscriptionPlans,
+          subscriptionPlanCatalog,
+          planId,
+          petDetails.kind
+        );
         return {
           planId,
-          planName: membershipPlanDisplayName[planId] ?? details?.name ?? planId,
+          planName: speciesResolved ?? details?.name ?? planId,
           tagLine: details?.tagLine ?? '',
         };
       });
-      return { patientId: Number(patientId), patientName, plans };
+      return {
+        patientId: Number(patientId),
+        patientName,
+        plans,
+        membershipSpeciesKind: petDetails.kind,
+      };
     }).filter((x: RoomLoaderPlansForPetForDisplay | null): x is RoomLoaderPlansForPetForDisplay => x != null);
-  }, [data?.patients, data?.clientHasMembership, membershipPlanDisplayName]);
+  }, [data?.patients, data?.appointments, formattedSubscriptionPlans, subscriptionPlanCatalog]);
+
+  /** Pets eligible for in-flow membership enrollment (same modal as appointment request). */
+  const roomLoaderMembershipEligiblePets = useMemo((): MembershipEnrollmentEligiblePet[] => {
+    if (!data?.patients?.length) return [];
+    return data.patients
+      .filter((p: any) => !roomLoaderPatientHasMembership(p, data?.appointments))
+      .map((p: any, idx: number) => {
+        const apptPatient = getAppointmentPatientForRoomLoaderPet(data?.appointments, p, idx);
+        return {
+          id: String(p.patientId ?? p.patient?.id ?? p.id),
+          name: p.patientName ?? p.patient?.name ?? p.name ?? 'Pet',
+          species: membershipSpeciesPrimaryLabel(p, apptPatient ? [apptPatient] : undefined),
+          isBackendPet: true,
+        };
+      });
+  }, [data?.patients, data?.appointments]);
+
+  /** Close membership bill explainer when no pets remain eligible for upsell (e.g. after enrollment refetch). */
+  useEffect(() => {
+    if (availablePlansForPetsForDisplay.length === 0) {
+      setMembershipBillSectionExpanded(false);
+      setMembershipPanelByPatientId({});
+    }
+  }, [availablePlansForPetsForDisplay.length]);
+
+  /** Same membership resolution as upsell lists (row + matched `appointments[].patient`). */
+  const resolveRoomLoaderPatientMembership = useCallback(
+    (p: any) => roomLoaderPatientHasMembership(p, data?.appointments),
+    [data?.appointments]
+  );
+
+  const roomLoaderModalClientInfo = useMemo(() => {
+    const c = data?.client ?? data?.appointments?.[0]?.client;
+    const d = data as Record<string, unknown> | null | undefined;
+    const patients = Array.isArray(data?.patients) ? data!.patients : [];
+    const patientWithEmail = patients.find(
+      (p: any) =>
+        (typeof p?.clientEmail === 'string' && p.clientEmail.trim()) ||
+        (typeof p?.email === 'string' && p.email.trim())
+    ) as Record<string, unknown> | undefined;
+
+    const pick = (...vals: unknown[]): string | undefined => {
+      for (const v of vals) {
+        if (typeof v === 'string' && v.trim()) return v.trim();
+      }
+      return undefined;
+    };
+
+    // Prefer explicit form-response / API root fields (added on GET form), then client records, then any patient row.
+    const email = pick(
+      d?.submitterEmail,
+      d?.formEmail,
+      d?.contactEmail,
+      d?.responseEmail,
+      d?.email,
+      d?.clientEmail,
+      (c as any)?.email,
+      (c as any)?.primaryEmail,
+      data?.appointments?.[0]?.client && (data.appointments[0].client as { email?: string }).email,
+      patientWithEmail?.clientEmail,
+      patientWithEmail?.email
+    );
+
+    const first = (c as any)?.firstName ?? (c as any)?.first_name ?? '';
+    const last = (c as any)?.lastName ?? (c as any)?.last_name ?? '';
+    return {
+      email,
+      fullName: { first: first || undefined, last: last || undefined },
+    };
+  }, [data]);
+
+  const getRoomLoaderEnrollmentPet = useCallback(
+    (eligible: MembershipEnrollmentEligiblePet) => {
+      const pid = Number(eligible.id);
+      const idx =
+        data?.patients?.findIndex(
+          (pt: any) => Number(pt.patientId ?? pt.patient?.id ?? pt.id) === pid
+        ) ?? -1;
+      const p = idx >= 0 ? data?.patients?.[idx] : undefined;
+      if (!p) {
+        return { id: eligible.id, name: eligible.name, species: eligible.species };
+      }
+      const apptPatient = getAppointmentPatientForRoomLoaderPet(data?.appointments, p, idx);
+      const dbId = p.patientId ?? p.patient?.id ?? p.id;
+      const dbIdStr = dbId != null ? String(dbId) : eligible.id;
+      const clientIdVal =
+        data?.clientId ?? data?.client?.id ?? p.clientId ?? (p as any)?.client?.id ?? data?.appointments?.[0]?.client?.id;
+      return {
+        id: dbIdStr,
+        dbId: dbIdStr,
+        patientId: typeof dbId === 'number' ? dbId : Number(dbIdStr),
+        name: p.patientName ?? p.patient?.name ?? eligible.name,
+        species:
+          membershipSpeciesPrimaryLabel(p, apptPatient ? [apptPatient] : undefined) ?? eligible.species,
+        breed: p.breed ?? p.patient?.breed,
+        dob: p.dob ?? p.patient?.dob,
+        sex: p.sex ?? p.patient?.sex,
+        clientId: clientIdVal != null ? clientIdVal : undefined,
+        ...(apptPatient ? { _membershipSpeciesExtraSources: [apptPatient] } : {}),
+      } as Pet;
+    },
+    [data?.patients, data?.clientId, data?.client?.id, data?.appointments]
+  );
+
+  async function refetchRoomLoaderAfterMembership() {
+    const tokenValue = token;
+    if (!tokenValue) return;
+    clearCheckItemPricingPublicCache();
+    setClientPricingCache({});
+    try {
+      const { data: responseData } = await http.get(
+        `/public/room-loader/form?token=${encodeURIComponent(tokenValue as string)}`
+      );
+      setData(responseData);
+      setPricingRefreshKey((k) => k + 1);
+    } catch (e) {
+      console.error('Failed to refresh room loader after membership enrollment', e);
+    }
+    setMembershipPanelByPatientId({});
+    setMembershipBillSectionExpanded(false);
+  }
+
+  /** Stable id list so we do not restart treatment-history fetch on unrelated `data.patients` reference changes (avoids cancelled requests never committing `historyReady`). */
+  const treatmentHistoryPatientIdsKey = useMemo(() => {
+    const ids = (data?.patients ?? [])
+      .map((p: any) => p?.patientId ?? p?.patient?.id)
+      .filter((id: any) => id != null)
+      .map((id: any) => String(id));
+    return ids.length ? ids.join(',') : '';
+  }, [data?.patients]);
+
+  useEffect(() => {
+    setTreatmentHistoryByPatientId({});
+    setTreatmentHistoryReadyByPatientId({});
+  }, [token]);
 
   // Fetch treatment history per patient when user reaches Care Plan (page 2) or later. Uses public endpoint with token; defers N requests until needed for vaccine/lab logic.
   useEffect(() => {
     const tokenValue = token;
-    if (!tokenValue || !data?.patients?.length || currentPage < 2) return;
-    const patientIds = data.patients
-      .map((p: any) => p.patientId ?? p.patient?.id)
-      .filter((id: any) => id != null);
-    if (patientIds.length === 0) return;
+    if (!tokenValue || currentPage < 2) return;
+    if (!treatmentHistoryPatientIdsKey) return;
+    const patientIds = treatmentHistoryPatientIdsKey.split(',').map((s: string) => Number(s));
 
     let cancelled = false;
     const historyByPatient: Record<number, TreatmentWithItems[]> = {};
@@ -1349,12 +1989,115 @@ export default function PublicRoomLoaderForm() {
         }
       })
     ).then(() => {
-      if (!cancelled) setTreatmentHistoryByPatientId((prev) => ({ ...prev, ...historyByPatient }));
+      if (cancelled) return;
+      setTreatmentHistoryByPatientId((prev) => ({ ...prev, ...historyByPatient }));
+      setTreatmentHistoryReadyByPatientId((prev) => {
+        const next = { ...prev };
+        for (const id of patientIds) {
+          next[id] = true;
+        }
+        return next;
+      });
     });
     return () => {
       cancelled = true;
     };
-  }, [token, data?.patients, currentPage]);
+  }, [token, treatmentHistoryPatientIdsKey, currentPage]);
+
+  useEffect(() => {
+    setFieldValidationErrors((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const k of Object.keys(prev)) {
+        if (k.endsWith('_optionalVaccinesLoading')) {
+          delete next[k];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [treatmentHistoryReadyByPatientId]);
+
+  /** Load recommended-plan membership simulate per pet when the recommendation panel opens (must run before any early return — Rules of Hooks). */
+  useEffect(() => {
+    if (!membershipBillSectionExpanded || formAlreadySubmitted || !availablePlansForPetsForDisplay.length) return;
+    const tokenValue = token;
+    if (!tokenValue || !data) return;
+    let cancelled = false;
+    setMembershipPanelLoading(true);
+    setMembershipPanelByPatientId({});
+    (async () => {
+      try {
+        const snapshot = buildFullFormSnapshot();
+        const summaryLineItems = snapshot?.summaryLineItems ?? [];
+        const totals = snapshot?.totals ?? {};
+        const patientsData = data?.patients ?? [];
+        const firstPid = Number(
+          patientsData[0]?.patientId ?? patientsData[0]?.patient?.id ?? patientsData[0]?.id ?? 0
+        );
+        const practiceId = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id;
+        const clientId =
+          data?.clientId ??
+          data?.client?.id ??
+          data?.patients?.[0]?.clientId ??
+          (data?.patients?.[0] as any)?.client?.id ??
+          data?.appointments?.[0]?.client?.id;
+        const next: Record<
+          number,
+          { monthly: RoomLoaderSimulateBillPublicResponse | null; annual: RoomLoaderSimulateBillPublicResponse | null }
+        > = {};
+        for (const petPlans of availablePlansForPetsForDisplay) {
+          const rec = getRecommendedWellnessPlanFromList(petPlans.plans);
+          if (!rec) continue;
+          const filtered = filterLineItemsForPatientSimulate(summaryLineItems, petPlans.patientId, firstPid);
+          const lineItems: RoomLoaderSimulateLineItem[] = filtered.map(
+            (li: {
+              name: string;
+              quantity: number;
+              price: number;
+              patientId?: number;
+              patientName?: string;
+              category?: string;
+              itemType?: 'lab' | 'procedure' | 'inventory';
+              itemId?: number;
+            }) => ({
+              name: li.name,
+              quantity: li.quantity,
+              price: li.price,
+              patientId: li.patientId ?? 0,
+              patientName: li.patientName,
+              category: li.category,
+              ...(li.itemType && li.itemId != null && { itemType: li.itemType, itemId: li.itemId }),
+            })
+          );
+          const request = {
+            token: tokenValue as string,
+            practiceId,
+            clientId,
+            planId: rec.planId,
+            ...(petPlans.membershipSpeciesKind != null ? { species: petPlans.membershipSpeciesKind } : {}),
+            patientIds: [petPlans.patientId],
+            lineItems,
+            storeSubtotal: totals.storeSubtotal,
+            storeTax: totals.storeTax,
+          };
+          const [monthly, annual] = await Promise.all([
+            simulateBillWithMembershipPublic({ ...request, pricingOption: 'monthly' }),
+            simulateBillWithMembershipPublic({ ...request, pricingOption: 'annual' }),
+          ]);
+          if (!cancelled) next[petPlans.patientId] = { monthly, annual };
+        }
+        if (!cancelled) setMembershipPanelByPatientId(next);
+      } catch (err) {
+        console.error('Membership recommendation panel load error:', err);
+      } finally {
+        if (!cancelled) setMembershipPanelLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [membershipBillSectionExpanded, formAlreadySubmitted, availablePlansForPetsForDisplay, token, data]);
 
   function formatDate(dateStr: string | null | undefined): string {
     if (!dateStr) return 'N/A';
@@ -1624,13 +2367,14 @@ export default function PublicRoomLoaderForm() {
     const storeTax = storeSubtotal * storeTaxRate;
     grandTotal += storeSubtotal + storeTax;
 
-    // Store additional items: always include name, quantity, price for backend summary
+    // Store additional items: always include name, quantity, price, code (sku) for backend summary
     const storeAdditionalItemsPayload = storeAdditionalItems.map((item) => ({
       id: item.id,
       name: item.name,
       quantity: 1,
       price: Number(item.price),
       sku: item.sku,
+      code: item.sku ?? (item as any).code,
     }));
 
     // Explicitly include commonly selected items (summary_common_* keys) so they always appear in the JSON
@@ -1835,13 +2579,15 @@ export default function PublicRoomLoaderForm() {
       }
       // Commonly selected items for this pet (checked) – resolve name/price from commonItemsFetched
       const appts = data?.appointments ?? [];
+      const apptForSpecies = getAppointmentForRoomLoaderPet(appts, patient, petIdx);
       const speciesParts = [
         patient?.species,
         (patient as any)?.patient?.species,
-        appts[petIdx]?.patient?.species,
+        apptForSpecies?.patient?.species,
       ].filter(Boolean) as string[];
       const speciesLower = speciesParts.join(' ').toLowerCase();
-      const isDogPet = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !speciesLower.includes('cat'));
+      const isCatForPet = isCatSpeciesTokens(speciesLower);
+      const isDogPet = isDogSpeciesTokens(speciesLower) || (speciesLower.trim() === '' && !isCatForPet);
       const existingNames = new Set<string>();
       (Object.values(optedInVaccinesByPatientId[patientId] || {}).filter(Boolean) as SearchableItem[]).forEach((item) => {
         if (item?.name) existingNames.add(String(item.name).toLowerCase());
@@ -1891,6 +2637,23 @@ export default function PublicRoomLoaderForm() {
     });
 
     // --- summaryForPdf: structure mirrors Summary & Total page for identical PDF rendering ---
+    /** Extract membership-related pricing for backend PDF. Omitted when no membership applies. */
+    const getMembershipInfoForPdf = (pricing: any): Record<string, unknown> | undefined => {
+      const wp = pricing?.wellnessPlanPricing;
+      if (!wp) return undefined;
+      const hasMembership =
+        wp.hasCoverage || (wp as any)?.priceAdjustedByMembership || (wp.originalPrice != null && wp.adjustedPrice != null && wp.originalPrice !== wp.adjustedPrice);
+      if (!hasMembership) return undefined;
+      return {
+        hasCoverage: wp.hasCoverage,
+        priceAdjustedByMembership: (wp as any)?.priceAdjustedByMembership,
+        membershipPlanName: wp.membershipPlanName ?? undefined,
+        originalPrice: wp.originalPrice,
+        adjustedPrice: wp.adjustedPrice,
+        membershipDiscountAmount: wp.membershipDiscountAmount,
+        isWithinLimit: wp.isWithinLimit,
+      };
+    };
     type PdfRow = {
       type: 'visitConsult' | 'tripFee' | 'reminder' | 'vaccine' | 'lab' | 'common';
       name: string;
@@ -1901,6 +2664,10 @@ export default function PublicRoomLoaderForm() {
       uncheckable?: boolean;
       crossedOut?: boolean;
       fecalReplacedBy?: string;
+      /** Item code for backend/API use */
+      code?: string;
+      /** Membership/care plan info for backend PDF display */
+      wellnessPlanPricing?: Record<string, unknown>;
     };
     const pdfPets: Array<{ patientId: number | undefined; patientName: string; rows: PdfRow[]; subtotal: number; commonSectionLabel?: string }> = [];
     remindersByPet.forEach((entry, petIdx) => {
@@ -1908,13 +2675,15 @@ export default function PublicRoomLoaderForm() {
       const patientId = entry.patientId ?? patient?.patientId ?? patient?.patient?.id ?? petIdx;
       const patientName = entry.patientName || `Pet ${petIdx + 1}`;
       const appts = data?.appointments ?? [];
+      const apptForSpeciesPdf = getAppointmentForRoomLoaderPet(appts, patient, petIdx);
       const speciesParts = [
         patient?.species,
         (patient as any)?.patient?.species,
-        appts[petIdx]?.patient?.species,
+        apptForSpeciesPdf?.patient?.species,
       ].filter(Boolean) as string[];
       const speciesLower = speciesParts.join(' ').toLowerCase();
-      const isDogPet = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !speciesLower.includes('cat'));
+      const isCatForPet = isCatSpeciesTokens(speciesLower);
+      const isDogPet = isDogSpeciesTokens(speciesLower) || (speciesLower.trim() === '' && !isCatForPet);
 
       const earlyDetectionYes = formData[`lab_early_detection_feline_${patientId}`] === 'yes';
       const earlyDetectionCanineYes = formData[`lab_early_detection_canine_${patientId}`] === 'yes';
@@ -1940,6 +2709,7 @@ export default function PublicRoomLoaderForm() {
       let petSubtotal = 0;
 
       uncheckableDisplay.forEach(({ item }: { item: any }) => {
+        const pricing = item.wellnessPlanPricing != null ? { wellnessPlanPricing: item.wellnessPlanPricing } : (item.searchableItem ? getClientPricing(patientId, item.searchableItem) : null);
         const price = item.searchableItem != null ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) ?? 0);
         const qty = Number(item.quantity) || 1;
         const lineTotal = price * qty;
@@ -1953,20 +2723,32 @@ export default function PublicRoomLoaderForm() {
           checked: true,
           uncheckable: true,
           crossedOut: false,
+          code: getCodeFromDisplayItem(item),
+          wellnessPlanPricing: getMembershipInfoForPdf(pricing),
         });
       });
       tripFeeItems.forEach((item: any) => {
+        const pricing = item.wellnessPlanPricing != null ? { wellnessPlanPricing: item.wellnessPlanPricing } : (item.searchableItem ? getClientPricing(patientId, item.searchableItem) : null);
         const price = item.searchableItem != null ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) ?? 0);
         const qty = Number(item.quantity) || 1;
         const lineTotal = price * qty;
         petSubtotal += lineTotal;
-        rows.push({ type: 'tripFee', name: item.name, quantity: qty, price, lineTotal });
+        rows.push({
+          type: 'tripFee',
+          name: item.name,
+          quantity: qty,
+          price,
+          lineTotal,
+          code: getCodeFromDisplayItem(item),
+          wellnessPlanPricing: getMembershipInfoForPdf(pricing),
+        });
       });
       checkableDisplay.forEach(({ item, idx }: { item: any; idx: number }) => {
         const isFecalReplaced = hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0;
         const is4dxReplaced = (hasPhrase(item, '4dx') || hasPhrase(item, 'heartworm')) && fourDxReplacedBy.length > 0;
         const recKey = `pet${petIdx}_rec_${idx}`;
         const isChecked = (isFecalReplaced || is4dxReplaced) ? false : formData[recKey] !== false;
+        const pricing = item.wellnessPlanPricing != null ? { wellnessPlanPricing: item.wellnessPlanPricing } : (item.searchableItem ? getClientPricing(patientId, item.searchableItem) : null);
         const price = item.searchableItem != null ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) ?? 0);
         const qty = Number(item.quantity) || 1;
         const isReplaced = isFecalReplaced || is4dxReplaced;
@@ -1982,10 +2764,13 @@ export default function PublicRoomLoaderForm() {
           uncheckable: false,
           crossedOut: isReplaced,
           fecalReplacedBy: isReplaced ? (isFecalReplaced ? fecalReplacedBy.join(' or ') : fourDxReplacedBy.join(' or ')) : undefined,
+          code: getCodeFromDisplayItem(item),
+          wellnessPlanPricing: getMembershipInfoForPdf(pricing),
         });
       });
 
       (Object.values(optedInVaccinesByPatientId[patientId] || {}).filter(Boolean) as SearchableItem[]).forEach((item) => {
+        const pricing = getClientPricing(patientId, item);
         const p = getClientAdjustedPrice(patientId, item) ?? getSearchItemPrice(item);
         if (p != null) {
           petSubtotal += p;
@@ -1995,42 +2780,51 @@ export default function PublicRoomLoaderForm() {
             quantity: 1,
             price: p,
             lineTotal: p,
+            code: getSearchItemCode(item),
+            wellnessPlanPricing: getMembershipInfoForPdf(pricing),
           });
         }
       });
 
-      const labRows: { name: string; price: number }[] = [];
+      const labRows: { name: string; price: number; code?: string; wellnessPlanPricing?: Record<string, unknown> }[] = [];
       if (earlyDetectionYes && formData[`summary_exclude_lab_early_detection_feline_${patientId}`] !== true) {
+        const pricing = getClientPricing(patientId, earlyDetectionFelineItem);
         const p = getClientAdjustedPrice(patientId, earlyDetectionFelineItem) ?? getSearchItemPrice(earlyDetectionFelineItem);
-        if (p != null) labRows.push({ name: 'Early Detection Panel - Feline', price: p });
+        if (p != null) labRows.push({ name: 'Early Detection Panel - Feline', price: p, code: getSearchItemCode(earlyDetectionFelineItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
       }
       if (earlyDetectionCanineYes && formData[`summary_exclude_lab_early_detection_canine_${patientId}`] !== true) {
+        const pricing = getClientPricing(patientId, earlyDetectionCanineItem);
         const p = getClientAdjustedPrice(patientId, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem);
-        if (p != null) labRows.push({ name: 'Early Detection Panel - Canine', price: p });
+        if (p != null) labRows.push({ name: 'Early Detection Panel - Canine', price: p, code: getSearchItemCode(earlyDetectionCanineItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
       }
       if (seniorFelineYes && formData[`summary_exclude_lab_senior_feline_${patientId}`] !== true) {
+        const pricing = getClientPricing(patientId, seniorFelineItem);
         const p = getClientAdjustedPrice(patientId, seniorFelineItem) ?? getSearchItemPrice(seniorFelineItem);
-        if (p != null) labRows.push({ name: 'Senior Screen Feline', price: p });
+        if (p != null) labRows.push({ name: 'Senior Screen Feline', price: p, code: getSearchItemCode(seniorFelineItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
       }
       if (seniorCaninePanelVal === 'standard' && formData[`summary_exclude_lab_senior_canine_standard_${patientId}`] !== true) {
+        const pricing = getClientPricing(patientId, seniorCanineStandardItem);
         const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem);
-        if (p != null) labRows.push({ name: 'Senior Screen - Standard Comprehensive Panel', price: p });
+        if (p != null) labRows.push({ name: 'Senior Screen - Standard Comprehensive Panel', price: p, code: getSearchItemCode(seniorCanineStandardItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
       }
       if (seniorCaninePanelVal === 'extended' && formData[`summary_exclude_lab_senior_canine_extended_${patientId}`] !== true) {
+        const pricing = getClientPricing(patientId, seniorCanineExtendedItem);
         const p = getClientAdjustedPrice(patientId, seniorCanineExtendedItem) ?? getSearchItemPrice(seniorCanineExtendedItem);
-        if (p != null) labRows.push({ name: 'Senior Screen - Extended Comprehensive Panel', price: p });
+        if (p != null) labRows.push({ name: 'Senior Screen - Extended Comprehensive Panel', price: p, code: getSearchItemCode(seniorCanineExtendedItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
       }
       if (seniorFelineTwoPanelVal === 'standard' && formData[`summary_exclude_lab_senior_feline_two_standard_${patientId}`] !== true) {
+        const pricing = getClientPricing(patientId, seniorCanineStandardItem);
         const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem);
-        if (p != null) labRows.push({ name: 'Senior Screen Feline - Standard Panel', price: p });
+        if (p != null) labRows.push({ name: 'Senior Screen Feline - Standard Panel', price: p, code: getSearchItemCode(seniorCanineStandardItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
       }
       if (seniorFelineTwoPanelVal === 'extended' && formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] !== true) {
+        const pricing = getClientPricing(patientId, seniorFelineExtendedItem);
         const p = getClientAdjustedPrice(patientId, seniorFelineExtendedItem) ?? getSearchItemPrice(seniorFelineExtendedItem);
-        if (p != null) labRows.push({ name: 'Senior Screen Feline - Extended Panel', price: p });
+        if (p != null) labRows.push({ name: 'Senior Screen Feline - Extended Panel', price: p, code: getSearchItemCode(seniorFelineExtendedItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
       }
-      labRows.forEach(({ name, price }) => {
+      labRows.forEach(({ name, price, code, wellnessPlanPricing }) => {
         petSubtotal += price;
-        rows.push({ type: 'lab', name, quantity: 1, price, lineTotal: price });
+        rows.push({ type: 'lab', name, quantity: 1, price, lineTotal: price, code, wellnessPlanPricing });
       });
 
       const existingNames = new Set<string>();
@@ -2059,6 +2853,7 @@ export default function PublicRoomLoaderForm() {
         const commonKey = `summary_common_${patientId}_${itemId}`;
         const isChecked = formData[commonKey] === true;
         if (!isChecked) return; // Only include common items when selected
+        const pricing = getClientPricing(patientId, item);
         const price = getClientAdjustedPrice(patientId, item) ?? getSearchItemPrice(item) ?? 0;
         petSubtotal += price;
         rows.push({
@@ -2068,6 +2863,8 @@ export default function PublicRoomLoaderForm() {
           price,
           lineTotal: price,
           checked: true,
+          code: getSearchItemCode(item),
+          wellnessPlanPricing: getMembershipInfoForPdf(pricing),
         });
       });
 
@@ -2080,13 +2877,45 @@ export default function PublicRoomLoaderForm() {
       });
     });
 
+    // Sync lab rows from summaryLineItems into pdfPets so they stay consistent (fixes extended panel missing for some pets)
+    const compFecalName = comprehensiveFecalItem?.name ?? 'Comprehensive Fecal';
+    const labItemToCode: Record<string, string | undefined> = {
+      'Early Detection Panel - Feline': getSearchItemCode(earlyDetectionFelineItem) ?? undefined,
+      'Early Detection Panel - Canine': getSearchItemCode(earlyDetectionCanineItem) ?? undefined,
+      'Senior Screen Feline': getSearchItemCode(seniorFelineItem) ?? undefined,
+      'Senior Screen - Standard Comprehensive Panel': getSearchItemCode(seniorCanineStandardItem) ?? undefined,
+      'Senior Screen - Extended Comprehensive Panel': getSearchItemCode(seniorCanineExtendedItem) ?? undefined,
+      'Senior Screen Feline - Standard Panel': getSearchItemCode(seniorCanineStandardItem) ?? undefined,
+      'Senior Screen Feline - Extended Panel': getSearchItemCode(seniorFelineExtendedItem) ?? undefined,
+      [compFecalName]: getSearchItemCode(comprehensiveFecalItem) ?? undefined,
+    };
+    summaryLineItems
+      .filter((li) => li.category === 'lab' && li.patientId != null)
+      .forEach((labItem) => {
+        const pet = pdfPets.find((p) => p.patientId === labItem.patientId);
+        if (!pet) return;
+        const alreadyHas = pet.rows.some((r) => r.type === 'lab' && r.name === labItem.name);
+        if (!alreadyHas) {
+          const code = labItemToCode[labItem.name];
+          const qty = labItem.quantity || 1;
+          pet.rows.push({
+            type: 'lab',
+            name: labItem.name,
+            quantity: qty,
+            price: labItem.price,
+            lineTotal: labItem.price * qty,
+            code,
+          });
+        }
+      });
+
     const summaryForPdf = {
       title: 'Pre-Visit Check-In',
       instruction: "We've put together a personalized plan based on your pet's needs and our medical recommendations. You can review each item below, make adjustments, and see pricing clearly upfront so you feel informed and confident before your visit.",
       pets: pdfPets,
       additionalItems: {
         label: 'Additional items',
-        items: storeAdditionalItemsPayload.map((i) => ({ name: i.name, quantity: i.quantity, price: i.price })),
+        items: storeAdditionalItemsPayload.map((i) => ({ name: i.name, quantity: i.quantity, price: i.price, code: (i as any).code ?? i.sku })),
         subtotal: storeSubtotal,
         taxLabel: 'Sales tax (5.5%)',
         taxRate: storeTaxRate,
@@ -2108,7 +2937,8 @@ export default function PublicRoomLoaderForm() {
       const petKey = `pet${petIdx}`;
       const patientId = patient.patientId ?? patient.patient?.id ?? petIdx;
       const petName = patient.patientName || `Pet ${petIdx + 1}`;
-      const apptPatient = appts[petIdx]?.patient;
+      const apptRowPdfP1 = getAppointmentForRoomLoaderPet(appts, patient, petIdx);
+      const apptPatient = apptRowPdfP1?.patient;
       const speciesParts = [
         patient.species,
         patient.speciesEntity?.name,
@@ -2118,11 +2948,11 @@ export default function PublicRoomLoaderForm() {
         apptPatient?.speciesEntity?.name,
       ].filter(Boolean) as string[];
       const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
-      const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
-      const markedNewByApi = patient.isNewPatient === true || appts[petIdx]?.isNewPatient === true;
-      const explicitlyNotNew = patient.isNewPatient === false || appts[petIdx]?.isNewPatient === false;
+      const isCatPatient = isCatSpeciesTokens(speciesLower);
+      const markedNewByApi = patient.isNewPatient === true || apptRowPdfP1?.isNewPatient === true;
+      const explicitlyNotNew = patient.isNewPatient === false || apptRowPdfP1?.isNewPatient === false;
       const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
-      const treatAsNewWhenNoReminders = patient.isNewPatient !== false && appts[petIdx]?.isNewPatient !== false;
+      const treatAsNewWhenNoReminders = patient.isNewPatient !== false && apptRowPdfP1?.isNewPatient !== false;
       const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
       const questions: Qa[] = [];
       const addOptional = (question: string, key: string, valueLabels?: Record<string, string>) => {
@@ -2139,6 +2969,13 @@ export default function PublicRoomLoaderForm() {
       addOptional(`How is ${petName} doing otherwise? Are there any other concerns you'd like us to address during this visit?`, `${petKey}_generalWellbeing`);
       if ((patient as any).questions?.mobility === true) {
         addOptional(`It sounds like you may have some concerns about ${petName}'s mobility. Can you tell us more about what you're noticing?`, `${petKey}_mobilityDetails`);
+      }
+      if ((patient as any).questions?.preMedsAsk === true) {
+        addOptional(`Do you need any refills on your pre-examination medications for ${petName}?`, `${petKey}_preMedsNeedRefill`, { yes: 'Yes', no: 'No' });
+        if (formData[`${petKey}_preMedsNeedRefill`] === 'yes') {
+          addOptional('What do you need refills of?', `${petKey}_preMedsWhatRefills`);
+          addOptional('Do you want it mailed or pick up from Brunswick office?', `${petKey}_preMedsMailOrPickup`, { mailed: 'Mailed', pickup: 'Pick up from Brunswick office' });
+        }
       }
       if (isCatPatient) {
         addOptional(`Does ${petName} go outdoors or live with a cat that goes outdoors?`, `${petKey}_outdoorAccess`, { yes: 'Yes', no: 'No' });
@@ -2164,8 +3001,13 @@ export default function PublicRoomLoaderForm() {
       const petKey = `pet${petIdx}`;
       const patientId = patient.patientId ?? patient.patient?.id ?? petIdx;
       const petName = patient.patientName || `Pet ${petIdx + 1}`;
-      const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
-      const apptPatient = appts[petIdx]?.patient;
+      const historyPatientId = patient.patientId ?? patient.patient?.id ?? null;
+      const history =
+        historyPatientId != null ? treatmentHistoryByPatientId[historyPatientId] ?? [] : [];
+      const historyReady =
+        historyPatientId != null && treatmentHistoryReadyByPatientId[historyPatientId] === true;
+      const apptRowPdfCare = getAppointmentForRoomLoaderPet(appts, patient, petIdx);
+      const apptPatient = apptRowPdfCare?.patient;
       const speciesParts = [
         patient.species,
         patient.speciesEntity?.name,
@@ -2176,17 +3018,46 @@ export default function PublicRoomLoaderForm() {
       ].filter(Boolean) as string[];
       const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
       // Explicit species only: if client didn't see it (wrong species or unknown), don't put it in the PDF
-      const isCatExplicit = speciesLower.includes('cat') || speciesLower.includes('feline');
-      const isDogExplicit = speciesLower.includes('dog') || speciesLower.includes('canine');
-      const dob = patient?.dob ?? patient?.patient?.dob ?? appts[petIdx]?.patient?.dob;
+      const isCatExplicit = isCatSpeciesTokens(speciesLower);
+      const isDogExplicit = isDogSpeciesTokens(speciesLower);
+      const dob = patient?.dob ?? patient?.patient?.dob ?? apptRowPdfCare?.patient?.dob;
       const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
       const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
-      const showCrLymeBooster = isDogExplicit && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-      const showLepto = isDogExplicit && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
-      const showBordetella = isDogExplicit && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
-      const showLyme = isDogExplicit && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
+      const showCrLymeBooster =
+        historyReady &&
+        isDogExplicit &&
+        historyPatientId != null &&
+        showCrLymeBoosterWhenHistoryReady(patient, history);
+      const showLepto =
+        historyReady &&
+        isDogExplicit &&
+        historyPatientId != null &&
+        !hadLeptoInLast15Months(history) &&
+        !hasLeptoInLineItems(patient) &&
+        !hasFutureReminderForVaccine(patient, 'lepto');
+      const showBordetella =
+        historyReady &&
+        isDogExplicit &&
+        historyPatientId != null &&
+        !hadBordetellaInLast15Months(history) &&
+        !hasBordetellaInLineItems(patient) &&
+        !hasFutureReminderForVaccine(patient, 'bordetella');
+      const showLyme =
+        historyReady &&
+        isDogExplicit &&
+        historyPatientId != null &&
+        !hadLymeInLast15Months(history) &&
+        !hasLymeInLineItems(patient) &&
+        !hasFutureReminderForVaccine(patient, 'lyme');
       const showRabiesCats = isCatExplicit && patient.vaccines?.rabies;
-      const showFeLV = isCatExplicit && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
+      const showFeLV =
+        historyReady &&
+        isCatExplicit &&
+        historyPatientId != null &&
+        !hasFeLVInLineItems(patient) &&
+        !hasFutureReminderForVaccine(patient, 'felv') &&
+        ((isUnderOneYear && !everHadFeLV(history)) ||
+          (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
       const questions: Qa[] = [];
       const add = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
@@ -2228,7 +3099,7 @@ export default function PublicRoomLoaderForm() {
       const pidStr = String(patientId);
       const petName = entry.patientName || `Pet ${idx + 1}`;
       const patientForEntry = patientsData.find((p: any) => String(p.patientId ?? p.patient?.id ?? '') === String(entry.patientId ?? idx)) ?? patientsData[idx];
-      const apptForEntry = labAppts[idx];
+      const apptForEntry = getAppointmentForRoomLoaderPet(labAppts, patientForEntry, idx);
       const apptPatientEntry = apptForEntry?.patient;
       const speciesPartsEntry = [
         patientForEntry?.species,
@@ -2240,8 +3111,8 @@ export default function PublicRoomLoaderForm() {
       ].filter(Boolean) as string[];
       const speciesLowerEntry = speciesPartsEntry.length ? speciesPartsEntry.join(' ').toLowerCase() : '';
       // Explicit species only: dog never sees cat labs, cat never sees dog labs
-      const isDogExplicitEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine');
-      const isCatExplicitEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
+      const isDogExplicitEntry = isDogSpeciesTokens(speciesLowerEntry);
+      const isCatExplicitEntry = isCatSpeciesTokens(speciesLowerEntry);
       const questions: Qa[] = [];
       const add = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
@@ -2306,7 +3177,7 @@ export default function PublicRoomLoaderForm() {
       const patientId = entry.patientId ?? idx;
       const pidStr = String(patientId);
       const patientForEntry = patientsData.find((p: any) => String(p.patientId ?? p.patient?.id ?? '') === String(entry.patientId ?? idx)) ?? patientsData[idx];
-      const apptForEntry = appts[idx];
+      const apptForEntry = getAppointmentForRoomLoaderPet(appts, patientForEntry, idx);
       const apptPatientEntry = apptForEntry?.patient;
       const speciesPartsEntry = [
         patientForEntry?.species,
@@ -2317,8 +3188,8 @@ export default function PublicRoomLoaderForm() {
         apptPatientEntry?.speciesEntity?.name,
       ].filter(Boolean) as string[];
       const speciesLowerEntry = speciesPartsEntry.length ? speciesPartsEntry.join(' ').toLowerCase() : '';
-      const isDogExplicitEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine');
-      const isCatExplicitEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
+      const isDogExplicitEntry = isDogSpeciesTokens(speciesLowerEntry);
+      const isCatExplicitEntry = isCatSpeciesTokens(speciesLowerEntry);
       entry.recommendations.forEach((rec: { code?: string }) => {
         if (rec.code === 'FIL48119999' && isCatExplicitEntry && !isDogExplicitEntry) shownLabKeys.add(`lab_early_detection_feline_${pidStr}`);
         if (rec.code === 'FIL48719999' && isDogExplicitEntry && !isCatExplicitEntry) shownLabKeys.add(`lab_early_detection_canine_${pidStr}`);
@@ -2346,8 +3217,13 @@ export default function PublicRoomLoaderForm() {
         const patient = patientsData[petIdx];
         if (!patient) continue;
         const patientId = patient.patientId ?? patient.patient?.id ?? petIdx;
-        const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
-        const apptPatient = appts[petIdx]?.patient;
+        const historyPatientId = patient.patientId ?? patient.patient?.id ?? null;
+        const history =
+          historyPatientId != null ? treatmentHistoryByPatientId[historyPatientId] ?? [] : [];
+        const historyReady =
+          historyPatientId != null && treatmentHistoryReadyByPatientId[historyPatientId] === true;
+        const apptRowAllowed = getAppointmentForRoomLoaderPet(appts, patient, petIdx);
+        const apptPatient = apptRowAllowed?.patient;
         const speciesParts = [
           patient.species,
           patient.speciesEntity?.name,
@@ -2357,26 +3233,56 @@ export default function PublicRoomLoaderForm() {
           apptPatient?.speciesEntity?.name,
         ].filter(Boolean) as string[];
         const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
-        const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
-        const isDog = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !isCatPatient);
-        const markedNewByApi = patient.isNewPatient === true || appts[petIdx]?.isNewPatient === true;
-        const explicitlyNotNew = patient.isNewPatient === false || appts[petIdx]?.isNewPatient === false;
+        const isCatPatient = isCatSpeciesTokens(speciesLower);
+        const isDog = isDogSpeciesTokens(speciesLower) || (speciesLower.trim() === '' && !isCatPatient);
+        const markedNewByApi = patient.isNewPatient === true || apptRowAllowed?.isNewPatient === true;
+        const explicitlyNotNew = patient.isNewPatient === false || apptRowAllowed?.isNewPatient === false;
         const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
-        const treatAsNewWhenNoReminders = patient.isNewPatient !== false && appts[petIdx]?.isNewPatient !== false;
+        const treatAsNewWhenNoReminders = patient.isNewPatient !== false && apptRowAllowed?.isNewPatient !== false;
         const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
-        const dob = patient?.dob ?? patient?.patient?.dob ?? appts[petIdx]?.patient?.dob;
+        const dob = patient?.dob ?? patient?.patient?.dob ?? apptRowAllowed?.patient?.dob;
         const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
         const outdoorAccess = formData[`pet${petIdx}_outdoorAccess`] === 'yes';
-        const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-        const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
-        const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
-        const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
+        const showCrLymeBooster =
+          historyReady &&
+          isDog &&
+          historyPatientId != null &&
+          showCrLymeBoosterWhenHistoryReady(patient, history);
+        const showLepto =
+          historyReady &&
+          isDog &&
+          historyPatientId != null &&
+          !hadLeptoInLast15Months(history) &&
+          !hasLeptoInLineItems(patient) &&
+          !hasFutureReminderForVaccine(patient, 'lepto');
+        const showBordetella =
+          historyReady &&
+          isDog &&
+          historyPatientId != null &&
+          !hadBordetellaInLast15Months(history) &&
+          !hasBordetellaInLineItems(patient) &&
+          !hasFutureReminderForVaccine(patient, 'bordetella');
+        const showLyme =
+          historyReady &&
+          isDog &&
+          historyPatientId != null &&
+          !hadLymeInLast15Months(history) &&
+          !hasLymeInLineItems(patient) &&
+          !hasFutureReminderForVaccine(patient, 'lyme');
         const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
         // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due); FeLV uses 24-month window
-        const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
+        const showFeLV =
+          historyReady &&
+          isCatPatient &&
+          historyPatientId != null &&
+          !hasFeLVInLineItems(patient) &&
+          !hasFutureReminderForVaccine(patient, 'felv') &&
+          ((isUnderOneYear && !everHadFeLV(history)) ||
+            (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
 
         if (suffix === 'appointmentReason' || suffix === 'generalWellbeing' || suffix === 'eatingDrinkingNormal' || suffix === 'eatingDrinkingNormalDetails') allowedFormData[key] = value;
         else if (suffix === 'mobilityDetails' && (patientsData[petIdx] as any)?.questions?.mobility === true) allowedFormData[key] = value;
+        else if ((suffix === 'preMedsNeedRefill' || suffix === 'preMedsWhatRefills' || suffix === 'preMedsMailOrPickup') && (patientsData[petIdx] as any)?.questions?.preMedsAsk === true) allowedFormData[key] = value;
         else if (suffix === 'outdoorAccess' && isCatPatient) allowedFormData[key] = value;
         else if ((suffix === 'newPatientBehavior' || suffix === 'feeding' || suffix === 'foodAllergies' || suffix === 'foodAllergiesDetails') && isNewPatient) allowedFormData[key] = value;
         else if (suffix === 'crLymeBooster' && showCrLymeBooster) allowedFormData[key] = value;
@@ -2436,8 +3342,13 @@ export default function PublicRoomLoaderForm() {
       const petKey = `pet${petIdx}`;
       const petName = patient.patientName || `Pet ${petIdx + 1}`;
       const patientId = patient.patientId ?? patient.patient?.id ?? petIdx;
-      const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
-      const apptPatient = appts[petIdx]?.patient;
+      const historyPatientId = patient.patientId ?? patient.patient?.id ?? null;
+      const history =
+        historyPatientId != null ? treatmentHistoryByPatientId[historyPatientId] ?? [] : [];
+      const historyReady =
+        historyPatientId != null && treatmentHistoryReadyByPatientId[historyPatientId] === true;
+      const apptRowSubmit = getAppointmentForRoomLoaderPet(appts, patient, petIdx);
+      const apptPatient = apptRowSubmit?.patient;
       const speciesParts = [
         patient.species,
         patient.speciesEntity?.name,
@@ -2447,8 +3358,8 @@ export default function PublicRoomLoaderForm() {
         apptPatient?.speciesEntity?.name,
       ].filter(Boolean) as string[];
       const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
-      const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
-      const isDog = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !isCatPatient);
+      const isCatPatient = isCatSpeciesTokens(speciesLower);
+      const isDog = isDogSpeciesTokens(speciesLower) || (speciesLower.trim() === '' && !isCatPatient);
       const dob = patient?.dob ?? patient?.patient?.dob ?? apptPatient?.dob;
       const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
       const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
@@ -2459,10 +3370,10 @@ export default function PublicRoomLoaderForm() {
           errors[`${petKey}_outdoorAccess`] = `Please answer whether ${petName} goes outdoors or lives with a cat who does.`;
         }
       }
-      const markedNewByApi = patient.isNewPatient === true || appts[petIdx]?.isNewPatient === true;
-      const explicitlyNotNew = patient.isNewPatient === false || appts[petIdx]?.isNewPatient === false;
+      const markedNewByApi = patient.isNewPatient === true || apptRowSubmit?.isNewPatient === true;
+      const explicitlyNotNew = patient.isNewPatient === false || apptRowSubmit?.isNewPatient === false;
       const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
-      const treatAsNewWhenNoReminders = patient.isNewPatient !== false && appts[petIdx]?.isNewPatient !== false;
+      const treatAsNewWhenNoReminders = patient.isNewPatient !== false && apptRowSubmit?.isNewPatient !== false;
       const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
       if (isNewPatient) {
         const behavior = (formData[`${petKey}_newPatientBehavior`] ?? '').toString().trim();
@@ -2481,30 +3392,74 @@ export default function PublicRoomLoaderForm() {
         }
       }
 
-      const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-      const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
-      const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
-      const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
+      const showCrLymeBooster =
+        historyReady &&
+        isDog &&
+        historyPatientId != null &&
+        showCrLymeBoosterWhenHistoryReady(patient, history);
+      const showLepto =
+        historyReady &&
+        isDog &&
+        historyPatientId != null &&
+        !hadLeptoInLast15Months(history) &&
+        !hasLeptoInLineItems(patient) &&
+        !hasFutureReminderForVaccine(patient, 'lepto');
+      const showBordetella =
+        historyReady &&
+        isDog &&
+        historyPatientId != null &&
+        !hadBordetellaInLast15Months(history) &&
+        !hasBordetellaInLineItems(patient) &&
+        !hasFutureReminderForVaccine(patient, 'bordetella');
+      const showLyme =
+        historyReady &&
+        isDog &&
+        historyPatientId != null &&
+        !hadLymeInLast15Months(history) &&
+        !hasLymeInLineItems(patient) &&
+        !hasFutureReminderForVaccine(patient, 'lyme');
       const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
       // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due); FeLV uses 24-month window
-      const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
+      const showFeLV =
+        historyReady &&
+        isCatPatient &&
+        historyPatientId != null &&
+        !hasFeLVInLineItems(patient) &&
+        !hasFutureReminderForVaccine(patient, 'felv') &&
+        ((isUnderOneYear && !everHadFeLV(history)) ||
+          (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
 
-      if (showCrLymeBooster && formData[`${petKey}_crLymeBooster`] !== 'yes' && formData[`${petKey}_crLymeBooster`] !== 'no' && formData[`${petKey}_crLymeBooster`] !== 'unsure') {
+      // Only require vaccine answers when the Optional Vaccines section was actually shown (same as Care Plan UI: hidden for QOL Exam unless lab work was Yes)
+      const appointmentTypeName = (apptRowSubmit?.appointmentType?.prettyName ?? apptRowSubmit?.appointmentType?.name ?? '').toString().toLowerCase();
+      const isQOLExam = appointmentTypeName.includes('qol') || appointmentTypeName.includes('quality of life');
+      const labWorkYes = formData[`${petKey}_labWork`] === true || formData[`${petKey}_labWork`] === 'yes' || (patient as any)?.questions?.labWork === true;
+      const hideVaccineSectionForQOL = isQOLExam && !labWorkYes;
+
+      const needsTreatmentHistoryBeforeSubmit =
+        historyPatientId != null &&
+        !historyReady &&
+        !hideVaccineSectionForQOL &&
+        (isDog || (isCatPatient && (isUnderOneYear || outdoorAccess)));
+      if (needsTreatmentHistoryBeforeSubmit) {
+        errors[`${petKey}_optionalVaccinesLoading`] = `We're still loading vaccine history for ${petName}. Please wait a moment, then try again.`;
+      }
+
+      if (!hideVaccineSectionForQOL && showCrLymeBooster && formData[`${petKey}_crLymeBooster`] !== 'yes' && formData[`${petKey}_crLymeBooster`] !== 'no' && formData[`${petKey}_crLymeBooster`] !== 'unsure') {
         errors[`${petKey}_crLymeBooster`] = `Please answer the crLyme booster question for ${petName}.`;
       }
-      if (showLepto && formData[`${petKey}_leptoVaccine`] !== 'yes' && formData[`${petKey}_leptoVaccine`] !== 'no') {
+      if (!hideVaccineSectionForQOL && showLepto && formData[`${petKey}_leptoVaccine`] !== 'yes' && formData[`${petKey}_leptoVaccine`] !== 'no') {
         errors[`${petKey}_leptoVaccine`] = `Please answer the Leptospirosis vaccine question for ${petName}.`;
       }
-      if (showBordetella && formData[`${petKey}_bordetellaVaccine`] !== 'yes' && formData[`${petKey}_bordetellaVaccine`] !== 'no') {
+      if (!hideVaccineSectionForQOL && showBordetella && formData[`${petKey}_bordetellaVaccine`] !== 'yes' && formData[`${petKey}_bordetellaVaccine`] !== 'no') {
         errors[`${petKey}_bordetellaVaccine`] = `Please answer the Bordetella vaccine question for ${petName}.`;
       }
-      if (showLyme && formData[`${petKey}_lymeVaccine`] !== 'yes' && formData[`${petKey}_lymeVaccine`] !== 'no') {
+      if (!hideVaccineSectionForQOL && showLyme && formData[`${petKey}_lymeVaccine`] !== 'yes' && formData[`${petKey}_lymeVaccine`] !== 'no') {
         errors[`${petKey}_lymeVaccine`] = `Please answer the Lyme vaccine question for ${petName}.`;
       }
-      if (showRabiesCats && formData[`${petKey}_rabiesPreference`] !== '1year' && formData[`${petKey}_rabiesPreference`] !== '3year' && formData[`${petKey}_rabiesPreference`] !== 'no') {
+      if (!hideVaccineSectionForQOL && showRabiesCats && formData[`${petKey}_rabiesPreference`] !== '1year' && formData[`${petKey}_rabiesPreference`] !== '3year' && formData[`${petKey}_rabiesPreference`] !== 'no') {
         errors[`${petKey}_rabiesPreference`] = `Please answer the Rabies vaccine preference for ${petName}.`;
       }
-      if (showFeLV && formData[`${petKey}_felvVaccine`] !== 'yes' && formData[`${petKey}_felvVaccine`] !== 'no') {
+      if (!hideVaccineSectionForQOL && showFeLV && formData[`${petKey}_felvVaccine`] !== 'yes' && formData[`${petKey}_felvVaccine`] !== 'no') {
         errors[`${petKey}_felvVaccine`] = `Please answer the FeLV vaccine question for ${petName}.`;
       }
     }
@@ -2515,7 +3470,7 @@ export default function PublicRoomLoaderForm() {
       const pidStr = String(entry.patientId ?? idx);
       const petName = entry.patientName || `Pet ${idx + 1}`;
       const patientForEntry = patientsData.find((p: any) => String(p.patientId ?? p.patient?.id ?? '') === String(entry.patientId ?? idx)) ?? patientsData[idx];
-      const apptForEntry = appts[idx];
+      const apptForEntry = getAppointmentForRoomLoaderPet(appts, patientForEntry, idx);
       const apptPatientEntry = apptForEntry?.patient;
       const speciesPartsEntry = [
         patientForEntry?.species,
@@ -2526,8 +3481,8 @@ export default function PublicRoomLoaderForm() {
         apptPatientEntry?.speciesEntity?.name,
       ].filter(Boolean) as string[];
       const speciesLowerEntry = speciesPartsEntry.length ? speciesPartsEntry.join(' ').toLowerCase() : '';
-      const isDogEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine') || (speciesLowerEntry === '' && !speciesLowerEntry.includes('cat'));
-      const isCatEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
+      const isCatEntry = isCatSpeciesTokens(speciesLowerEntry);
+      const isDogEntry = isDogSpeciesTokens(speciesLowerEntry) || (speciesLowerEntry.trim() === '' && !isCatEntry);
 
       entry.recommendations.forEach((rec: { code?: string }) => {
         if (rec.code === 'FIL48119999') {
@@ -2586,7 +3541,7 @@ export default function PublicRoomLoaderForm() {
       const pid = entry.patientId ?? idx;
       const pidStr = String(pid);
       const patientForEntry = patientsData.find((p: any) => String(p.patientId ?? p.patient?.id ?? '') === String(entry.patientId ?? idx)) ?? patientsData[idx];
-      const apptForEntry = appts[idx];
+      const apptForEntry = getAppointmentForRoomLoaderPet(appts, patientForEntry, idx);
       const apptPatientEntry = apptForEntry?.patient;
       const speciesPartsEntry = [
         patientForEntry?.species,
@@ -2597,8 +3552,8 @@ export default function PublicRoomLoaderForm() {
         apptPatientEntry?.speciesEntity?.name,
       ].filter(Boolean) as string[];
       const speciesLowerEntry = speciesPartsEntry.length ? speciesPartsEntry.join(' ').toLowerCase() : '';
-      const isDogEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine') || (speciesLowerEntry === '' && !speciesLowerEntry.includes('cat'));
-      const isCatEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
+      const isCatEntry = isCatSpeciesTokens(speciesLowerEntry);
+      const isDogEntry = isDogSpeciesTokens(speciesLowerEntry) || (speciesLowerEntry.trim() === '' && !isCatEntry);
 
       entry.recommendations.forEach((rec: { code?: string }) => {
         if (rec.code === 'FIL48119999') {
@@ -2654,11 +3609,24 @@ export default function PublicRoomLoaderForm() {
       const patient = patientsData[petIdx];
       const petKey = `pet${petIdx}`;
       const petName = patient.patientName || `Pet ${petIdx + 1}`;
-      const isCatPatient = (patient.species ?? '').toLowerCase().includes('cat') || (patient.speciesEntity?.name ?? '').toLowerCase().includes('cat') || (patient.species ?? '').toLowerCase().includes('feline');
-      const markedNewByApi = patient.isNewPatient === true || appts[petIdx]?.isNewPatient === true;
-      const explicitlyNotNew = patient.isNewPatient === false || appts[petIdx]?.isNewPatient === false;
+      const apptRowP1 = getAppointmentForRoomLoaderPet(appts, patient, petIdx);
+      const apptP1 = apptRowP1?.patient;
+      const page1SpeciesLower = [
+        patient.species,
+        patient.speciesEntity?.name,
+        patient.patient?.species,
+        patient.patient?.speciesEntity?.name,
+        apptP1?.species,
+        apptP1?.speciesEntity?.name,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      const isCatPatient = isCatSpeciesTokens(page1SpeciesLower);
+      const markedNewByApi = patient.isNewPatient === true || apptRowP1?.isNewPatient === true;
+      const explicitlyNotNew = patient.isNewPatient === false || apptRowP1?.isNewPatient === false;
       const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
-      const treatAsNewWhenNoReminders = patient.isNewPatient !== false && appts[petIdx]?.isNewPatient !== false;
+      const treatAsNewWhenNoReminders = patient.isNewPatient !== false && apptRowP1?.isNewPatient !== false;
       const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
 
       if (isCatPatient) {
@@ -2711,7 +3679,9 @@ export default function PublicRoomLoaderForm() {
     // Use same patientId as Care Plan vaccine section (no petIdx fallback) so we only require vaccine answers when that section is actually shown
     const patientId = patient.patientId ?? patient.patient?.id;
     const history = patientId != null ? (treatmentHistoryByPatientId[patientId] ?? []) : [];
-    const apptPatient = appts[petIdx]?.patient;
+    const historyReady = patientId != null && treatmentHistoryReadyByPatientId[patientId] === true;
+    const apptRowCarePlan = getAppointmentForRoomLoaderPet(appts, patient, petIdx);
+    const apptPatient = apptRowCarePlan?.patient;
     const speciesParts = [
       patient.species,
       patient.speciesEntity?.name,
@@ -2721,8 +3691,8 @@ export default function PublicRoomLoaderForm() {
       apptPatient?.speciesEntity?.name,
     ].filter(Boolean) as string[];
     const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
-    const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
-    const isDog = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !isCatPatient);
+    const isCatPatient = isCatSpeciesTokens(speciesLower);
+    const isDog = isDogSpeciesTokens(speciesLower) || (speciesLower.trim() === '' && !isCatPatient);
     const dob = patient?.dob ?? patient?.patient?.dob ?? apptPatient?.dob;
     const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
     const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
@@ -2748,19 +3718,62 @@ export default function PublicRoomLoaderForm() {
     }
 
     // Same rule as Care Plan UI: hide Optional Vaccines section for QOL Exam unless lab work was said Yes — so don't require vaccine answers in that case
-    const apptForPet = appts[petIdx];
-    const appointmentTypeName = (apptForPet?.appointmentType?.prettyName ?? apptForPet?.appointmentType?.name ?? '').toString().toLowerCase();
-    const isQOLExam = appointmentTypeName.includes('qol');
+    const appointmentTypeName = (
+      apptRowCarePlan?.appointmentType?.prettyName ??
+      apptRowCarePlan?.appointmentType?.name ??
+      ''
+    )
+      .toString()
+      .toLowerCase();
+    const isQOLExam = appointmentTypeName.includes('qol') || appointmentTypeName.includes('quality of life');
     const labWorkYes = formData[`${petKey}_labWork`] === true || formData[`${petKey}_labWork`] === 'yes' || (patient as any)?.questions?.labWork === true;
     const hideVaccineSectionForQOL = isQOLExam && !labWorkYes;
 
-    const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-    const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
-    const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
-    const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
+    const needsTreatmentHistoryBeforeContinue =
+      patientId != null &&
+      !historyReady &&
+      !hideVaccineSectionForQOL &&
+      (isDog || (isCatPatient && (isUnderOneYear || outdoorAccess)));
+    if (needsTreatmentHistoryBeforeContinue) {
+      errors[`${petKey}_optionalVaccinesLoading`] = `We're still loading vaccine history for ${petName}. Please wait a moment, then try Next again.`;
+    }
+
+    const showCrLymeBooster =
+      historyReady &&
+      isDog &&
+      patientId != null &&
+      showCrLymeBoosterWhenHistoryReady(patient, history);
+    const showLepto =
+      historyReady &&
+      isDog &&
+      patientId != null &&
+      !hadLeptoInLast15Months(history) &&
+      !hasLeptoInLineItems(patient) &&
+      !hasFutureReminderForVaccine(patient, 'lepto');
+    const showBordetella =
+      historyReady &&
+      isDog &&
+      patientId != null &&
+      !hadBordetellaInLast15Months(history) &&
+      !hasBordetellaInLineItems(patient) &&
+      !hasFutureReminderForVaccine(patient, 'bordetella');
+    const showLyme =
+      historyReady &&
+      isDog &&
+      patientId != null &&
+      !hadLymeInLast15Months(history) &&
+      !hasLymeInLineItems(patient) &&
+      !hasFutureReminderForVaccine(patient, 'lyme');
     const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
     // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due); FeLV uses 24-month window
-    const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
+    const showFeLV =
+      historyReady &&
+      isCatPatient &&
+      patientId != null &&
+      !hasFeLVInLineItems(patient) &&
+      !hasFutureReminderForVaccine(patient, 'felv') &&
+      ((isUnderOneYear && !everHadFeLV(history)) ||
+        (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
 
     console.log('[RoomLoader] validateRequiredForCarePlanPet', {
       petIdx,
@@ -2809,63 +3822,6 @@ export default function PublicRoomLoaderForm() {
       return { valid: false, message: Object.values(errors)[0], errors };
     }
     return { valid: true };
-  }
-
-  /** Run membership bill simulation for both monthly and annual when user selects a plan. */
-  async function runMembershipSimulate(planId: string, planName: string, patientIds: number[]) {
-    const tokenValue = token;
-    if (!tokenValue || !data) return;
-    setSelectedMembershipSimulate({ planId, planName, patientIds });
-    // Keep previous results visible so the membership box doesn't collapse while loading
-    setMembershipSimulateLoading(true);
-    try {
-      const snapshot = buildFullFormSnapshot();
-      const summaryLineItems = snapshot?.summaryLineItems ?? [];
-      const totals = snapshot?.totals ?? {};
-      const lineItems: RoomLoaderSimulateLineItem[] = summaryLineItems.map(
-        (li: {
-          name: string;
-          quantity: number;
-          price: number;
-          patientId?: number;
-          patientName?: string;
-          category?: string;
-          itemType?: 'lab' | 'procedure' | 'inventory';
-          itemId?: number;
-        }) => ({
-          name: li.name,
-          quantity: li.quantity,
-          price: li.price,
-          patientId: li.patientId ?? 0,
-          patientName: li.patientName,
-          category: li.category,
-          ...(li.itemType && li.itemId != null && { itemType: li.itemType, itemId: li.itemId }),
-        })
-      );
-      const practiceId = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id;
-      const clientId = data?.clientId ?? data?.client?.id ?? data?.patients?.[0]?.clientId ?? (data?.patients?.[0] as any)?.client?.id ?? data?.appointments?.[0]?.client?.id;
-      const request = {
-        token: tokenValue,
-        practiceId,
-        clientId,
-        planId,
-        patientIds,
-        lineItems,
-        storeSubtotal: totals.storeSubtotal,
-        storeTax: totals.storeTax,
-      };
-      const [monthlyResult, annualResult] = await Promise.all([
-        simulateBillWithMembershipPublic({ ...request, pricingOption: 'monthly' }),
-        simulateBillWithMembershipPublic({ ...request, pricingOption: 'annual' }),
-      ]);
-      setMembershipSimulateResultMonthly(monthlyResult);
-      setMembershipSimulateResultAnnual(annualResult);
-    } catch (err) {
-      console.error('Membership simulate error:', err);
-      // Keep previous results so the box doesn't collapse
-    } finally {
-      setMembershipSimulateLoading(false);
-    }
   }
 
   async function handleSubmit() {
@@ -2928,7 +3884,7 @@ export default function PublicRoomLoaderForm() {
     patients.forEach((patient: any, idx: number) => {
       const patientId = patient.patientId ?? patient.patient?.id;
       const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
-      const appt = appointments[idx];
+      const appt = getAppointmentForRoomLoaderPet(appointments, patient, idx);
       const petKey = `pet${idx}`;
       const labWorkYes = formData[`${petKey}_labWork`] === true || formData[`${petKey}_labWork`] === 'yes' || (patient as any).questions?.labWork === true;
       const isQOLExam = (appt?.appointmentType?.prettyName ?? appt?.appointmentType?.name ?? '').toString().toLowerCase().includes('qol');
@@ -2966,8 +3922,8 @@ export default function PublicRoomLoaderForm() {
         appt?.patient?.speciesEntity?.name,
       ].filter(Boolean) as string[];
       const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
-      const isCat = speciesLower.includes('cat') || speciesLower.includes('feline');
-      const isDog = speciesLower.includes('dog') || speciesLower.includes('canine');
+      const isCat = isCatSpeciesTokens(speciesLower);
+      const isDog = isDogSpeciesTokens(speciesLower);
       const dob = patient?.dob ?? patient?.patient?.dob ?? appt?.patient?.dob;
       const age = dob != null ? getAgeYears({ dob }) : null;
       const standard = isWellnessVisit(patient);
@@ -3244,6 +4200,7 @@ export default function PublicRoomLoaderForm() {
       return true;
     });
     if (toFetch.length === 0) return;
+    let pricingFetchCancelled = false;
     const requests = toFetch.map(({ patientId, item, key }) => {
       const payload = buildPricingItemPayload(item);
       if (!payload) return Promise.resolve({ key, res: null as CheckItemPricingResponse | null });
@@ -3260,12 +4217,16 @@ export default function PublicRoomLoaderForm() {
         .catch(() => ({ key, res: null as CheckItemPricingResponse | null }));
     });
     Promise.all(requests).then((results) => {
+      if (pricingFetchCancelled) return;
       const next: Record<string, CheckItemPricingResponse | null> = {};
       results.forEach(({ key, res }) => {
         next[key] = res;
       });
       setClientPricingCache((prev) => ({ ...prev, ...next }));
     });
+    return () => {
+      pricingFetchCancelled = true;
+    };
   }, [
     token,
     data,
@@ -3279,6 +4240,7 @@ export default function PublicRoomLoaderForm() {
     comprehensiveFecalItem,
     optedInVaccinesByPatientId,
     commonItemsFetched,
+    pricingRefreshKey,
   ]);
 
   /** Type-ahead store search: debounced 300ms. Fetch with full query and, for multi-word queries, with first word too to improve fuzzy-like results from Ecwid (which may not fuzzy match). */
@@ -3610,7 +4572,11 @@ export default function PublicRoomLoaderForm() {
   const isSummaryPage = patients.length > 0 && currentPage === summaryPageIndex;
 
   // Check if cat and age conditions
-  const isCat = firstPatient?.species?.toLowerCase().includes('cat') || firstPatient?.speciesEntity?.name?.toLowerCase().includes('cat');
+  const firstPatientSpeciesLower = [firstPatient?.species, firstPatient?.speciesEntity?.name]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  const isCat = isCatSpeciesTokens(firstPatientSpeciesLower);
   const isUnderOneYear = firstPatient?.dob ? 
     DateTime.now().diff(DateTime.fromISO(firstPatient.dob), 'years').years < 1 : false;
 
@@ -3664,16 +4630,29 @@ export default function PublicRoomLoaderForm() {
           {patients.map((patient: any, petIdx: number) => {
             const petKey = `pet${petIdx}`;
             const petName = patient.patientName || `Pet ${petIdx + 1}`;
-            const isCatPatient = patient.species?.toLowerCase().includes('cat') || patient.speciesEntity?.name?.toLowerCase().includes('cat') || (patient.species ?? '').toLowerCase().includes('feline');
+            const apptRowCheckin = getAppointmentForRoomLoaderPet(appointments, patient, petIdx);
+            const apptP = apptRowCheckin?.patient;
+            const checkinSpeciesLower = [
+              patient.species,
+              patient.speciesEntity?.name,
+              patient.patient?.species,
+              patient.patient?.speciesEntity?.name,
+              apptP?.species,
+              apptP?.speciesEntity?.name,
+            ]
+              .filter(Boolean)
+              .join(' ')
+              .toLowerCase();
+            const isCatPatient = isCatSpeciesTokens(checkinSpeciesLower);
             // Show new-patient questions when: not explicitly marked as not new, no reminders (not established in wellness), and either API marks as new or neither source says false (treat missing/undefined as possibly new).
-            const markedNewByApi = patient.isNewPatient === true || appointments[petIdx]?.isNewPatient === true;
-            const explicitlyNotNew = patient.isNewPatient === false || appointments[petIdx]?.isNewPatient === false;
+            const markedNewByApi = patient.isNewPatient === true || apptRowCheckin?.isNewPatient === true;
+            const explicitlyNotNew = patient.isNewPatient === false || apptRowCheckin?.isNewPatient === false;
             const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
-            const treatAsNewWhenNoReminders = patient.isNewPatient !== false && appointments[petIdx]?.isNewPatient !== false;
+            const treatAsNewWhenNoReminders = patient.isNewPatient !== false && apptRowCheckin?.isNewPatient !== false;
             const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
             const appointmentReasonDisplay =
               patient.appointmentReason ??
-              (appointments[petIdx] && (appointments[petIdx].description || appointments[petIdx].instructions)) ??
+              (apptRowCheckin && (apptRowCheckin.description || apptRowCheckin.instructions)) ??
               '(RL-APPT-REASON)';
 
             return (
@@ -3691,6 +4670,7 @@ export default function PublicRoomLoaderForm() {
                   <h3 style={{ margin: 0, color: '#212529', fontSize: '20px', fontWeight: 700 }}>
                     Pet {petIdx + 1}: {petName}
                   </h3>
+                  <RoomLoaderPatientMemberBadge patient={patient} appointments={appointments} />
                 </div>
 
                 <div style={{ marginBottom: '20px' }}>
@@ -3724,6 +4704,49 @@ export default function PublicRoomLoaderForm() {
                       style={{ ...textareaStyle, minHeight: '100px', ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}) }}
                       placeholder="Please describe what you're noticing..."
                     />
+                  </div>
+                )}
+
+                {(patient.questions?.preMedsAsk === true) && (
+                  <div style={{ marginBottom: '20px' }}>
+                    <h4 style={sectionLabelStyle}>Pre-examination medications</h4>
+                    <label style={questionLabelStyle}>
+                      Do you need any refills on your pre-examination medications for {petName}?
+                    </label>
+                    <div style={{ display: 'flex', gap: '20px', marginBottom: '12px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
+                        <input type="radio" name={`${petKey}_preMedsNeedRefill`} value="yes" checked={formData[`${petKey}_preMedsNeedRefill`] === 'yes'} onChange={(e) => handleInputChange(`${petKey}_preMedsNeedRefill`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
+                        Yes
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
+                        <input type="radio" name={`${petKey}_preMedsNeedRefill`} value="no" checked={formData[`${petKey}_preMedsNeedRefill`] === 'no'} onChange={(e) => handleInputChange(`${petKey}_preMedsNeedRefill`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
+                        No
+                      </label>
+                    </div>
+                    {(formData[`${petKey}_preMedsNeedRefill`] === 'yes') && (
+                      <>
+                        <label style={{ ...questionLabelStyle, marginTop: '12px' }}>What do you need refills of?</label>
+                        <textarea
+                          value={formData[`${petKey}_preMedsWhatRefills`] || ''}
+                          onChange={(e) => handleInputChange(`${petKey}_preMedsWhatRefills`, e.target.value)}
+                          readOnly={readOnly}
+                          disabled={readOnly}
+                          style={{ ...textareaStyle, minHeight: '80px', ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}) }}
+                          placeholder="List the medications..."
+                        />
+                        <label style={{ ...questionLabelStyle, marginTop: '12px' }}>Do you want it mailed or pick up from Brunswick office?</label>
+                        <div style={{ display: 'flex', gap: '20px', marginTop: '8px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
+                            <input type="radio" name={`${petKey}_preMedsMailOrPickup`} value="mailed" checked={formData[`${petKey}_preMedsMailOrPickup`] === 'mailed'} onChange={(e) => handleInputChange(`${petKey}_preMedsMailOrPickup`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
+                            Mailed
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
+                            <input type="radio" name={`${petKey}_preMedsMailOrPickup`} value="pickup" checked={formData[`${petKey}_preMedsMailOrPickup`] === 'pickup'} onChange={(e) => handleInputChange(`${petKey}_preMedsMailOrPickup`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
+                            Pick up from Brunswick office
+                          </label>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -3886,6 +4909,7 @@ export default function PublicRoomLoaderForm() {
             <h1 style={{ margin: 0, color: '#212529', fontSize: '24px', fontWeight: 700 }}>
               Veterinary Care Plan{patients.length > 1 ? ` — ${currentCarePlanPatient.patientName || `Pet ${carePlanPetIndex + 1}`}` : ''}
             </h1>
+            <RoomLoaderPatientMemberBadge patient={currentCarePlanPatient} appointments={appointments} />
           </div>
 
           <div style={{ marginBottom: '20px' }}>
@@ -3895,6 +4919,16 @@ export default function PublicRoomLoaderForm() {
             <p style={{ fontSize: '14px', color: '#555', marginTop: '4px', marginBottom: '12px' }}>
               (Please uncheck any items you do not want)
             </p>
+            {currentCarePlanPatient?.notesToClient?.trim() && (
+              <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: '#e7f3ff', borderRadius: '6px', border: '1px solid #b6d4fe' }}>
+                <h4 style={{ margin: '0 0 8px', fontSize: '15px', fontWeight: 600, color: '#0a58ca' }}>
+                  Extra notes from your team about their recommendations:
+                </h4>
+                <p style={{ margin: 0, fontSize: '15px', color: '#333', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                  {currentCarePlanPatient.notesToClient}
+                </p>
+              </div>
+            )}
             {(() => {
               const nameLower = (n: string | undefined) => (n ?? '').toLowerCase();
               const hasPhrase = (item: { name?: string }, phrase: string) => nameLower(item.name).includes(phrase);
@@ -3982,7 +5016,7 @@ export default function PublicRoomLoaderForm() {
             const petIdx = carePlanPetIndex;
             const petKey = `pet${petIdx}`;
             const petName = patient.patientName || `Pet ${petIdx + 1}`;
-            const apptPatient = appointments[petIdx]?.patient;
+            const apptPatient = getAppointmentPatientForRoomLoaderPet(appointments, patient, petIdx);
             const speciesParts = [
               patient.species,
               patient.speciesEntity?.name,
@@ -3992,7 +5026,7 @@ export default function PublicRoomLoaderForm() {
               apptPatient?.speciesEntity?.name,
             ].filter(Boolean) as string[];
             const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
-            const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
+            const isCatPatient = isCatSpeciesTokens(speciesLower);
             if (!isCatPatient) return null;
             return (
               <div style={{ marginBottom: '20px' }}>
@@ -4064,12 +5098,22 @@ export default function PublicRoomLoaderForm() {
             const patient = currentCarePlanPatient;
             const petIdx = carePlanPetIndex;
             const petKey = `pet${petIdx}`;
-            const isQOLExam = (appointmentType || '').toString().toLowerCase().includes('qol');
+            const apptForOptionalVaccines = getAppointmentForRoomLoaderPet(appointments, patient, petIdx);
+            const appointmentTypeNameForPet = (
+              apptForOptionalVaccines?.appointmentType?.prettyName ??
+              apptForOptionalVaccines?.appointmentType?.name ??
+              ''
+            )
+              .toString()
+              .toLowerCase();
+            const isQOLExam =
+              appointmentTypeNameForPet.includes('qol') ||
+              appointmentTypeNameForPet.includes('quality of life');
             const labWorkYes = formData[`${petKey}_labWork`] === true || formData[`${petKey}_labWork`] === 'yes' || (patient as any)?.questions?.labWork === true;
             if (isQOLExam && !labWorkYes) return null;
             const petName = patient.patientName || `Pet ${petIdx + 1}`;
             // Species can be on patient, patient.patient, or the matching appointment
-            const apptPatient = appointments[petIdx]?.patient;
+            const apptPatient = apptForOptionalVaccines?.patient;
             const speciesParts = [
               patient.species,
               patient.speciesEntity?.name,
@@ -4079,22 +5123,52 @@ export default function PublicRoomLoaderForm() {
               apptPatient?.speciesEntity?.name,
             ].filter(Boolean) as string[];
             const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
-            const isCatPatient = speciesLower.includes('cat') || speciesLower.includes('feline');
+            const isCatPatient = isCatSpeciesTokens(speciesLower);
             // Explicit dog/canine check; when species is missing from API, assume dog so optional dog vaccines still show
-            const isDog = speciesLower.includes('dog') || speciesLower.includes('canine') || (speciesLower === '' && !isCatPatient);
+            const isDog = isDogSpeciesTokens(speciesLower) || (speciesLower.trim() === '' && !isCatPatient);
             const dob = patient?.dob ?? patient?.patient?.dob ?? apptPatient?.dob;
             const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
             const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
 
             const patientId = patient.patientId ?? patient.patient?.id;
             const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
-            const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
-            const showLepto = isDog && patientId != null && !hadLeptoInLast15Months(history) && !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
-            const showBordetella = isDog && patientId != null && !hadBordetellaInLast15Months(history) && !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
-            const showLyme = isDog && patientId != null && !hadLymeInLast15Months(history) && !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
+            const historyReady = patientId != null && treatmentHistoryReadyByPatientId[patientId] === true;
+            const showCrLymeBooster =
+              historyReady &&
+              isDog &&
+              patientId != null &&
+              showCrLymeBoosterWhenHistoryReady(patient, history);
+            const showLepto =
+              historyReady &&
+              isDog &&
+              patientId != null &&
+              !hadLeptoInLast15Months(history) &&
+              !hasLeptoInLineItems(patient) &&
+              !hasFutureReminderForVaccine(patient, 'lepto');
+            const showBordetella =
+              historyReady &&
+              isDog &&
+              patientId != null &&
+              !hadBordetellaInLast15Months(history) &&
+              !hasBordetellaInLineItems(patient) &&
+              !hasFutureReminderForVaccine(patient, 'bordetella');
+            const showLyme =
+              historyReady &&
+              isDog &&
+              patientId != null &&
+              !hadLymeInLast15Months(history) &&
+              !hasLymeInLineItems(patient) &&
+              !hasFutureReminderForVaccine(patient, 'lyme');
             const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
             // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due)
-            const showFeLV = isCatPatient && patientId != null && !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') && ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
+            const showFeLV =
+              historyReady &&
+              isCatPatient &&
+              patientId != null &&
+              !hasFeLVInLineItems(patient) &&
+              !hasFutureReminderForVaccine(patient, 'felv') &&
+              ((isUnderOneYear && !everHadFeLV(history)) ||
+                (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
             const hasAnyOptionalContent = showCrLymeBooster || showLepto || showBordetella || showLyme || showRabiesCats || showFeLV;
 
             if (!hasAnyOptionalContent) return null;
@@ -4107,9 +5181,6 @@ export default function PublicRoomLoaderForm() {
 
                 {/* crLyme booster (dogs only; first-time crLyme this visit) */}
                 {(() => {
-                  const patientId = patient.patientId ?? patient.patient?.id;
-                  const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
-                  const showCrLymeBooster = isDog && patientId != null && !everHadCrLyme(history) && gettingCrLymeThisTime(patient);
                   if (!showCrLymeBooster) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
@@ -4164,13 +5235,6 @@ export default function PublicRoomLoaderForm() {
 
                 {/* Lyme recommendation (dogs only: not in last 15 months, not on staff-recommended list) */}
                 {(() => {
-                  const patientId = patient.patientId ?? patient.patient?.id;
-                  const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
-                  const showLyme =
-                    isDog &&
-                    patientId != null &&
-                    !hadLymeInLast15Months(history) &&
-                    !hasLymeInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lyme');
                   if (!showLyme) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
@@ -4223,13 +5287,6 @@ export default function PublicRoomLoaderForm() {
 
                 {/* Leptospirosis recommendation (dogs only: not in last 15 months, not on staff-recommended list) */}
                 {(() => {
-                  const patientId = patient.patientId ?? patient.patient?.id;
-                  const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
-                  const showLepto =
-                    isDog &&
-                    patientId != null &&
-                    !hadLeptoInLast15Months(history) &&
-                    !hasLeptoInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'lepto');
                   if (!showLepto) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
@@ -4282,13 +5339,6 @@ export default function PublicRoomLoaderForm() {
 
                 {/* Bordetella recommendation (dogs only: not in last 15 months, not on staff-recommended list) */}
                 {(() => {
-                  const patientId = patient.patientId ?? patient.patient?.id;
-                  const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
-                  const showBordetella =
-                    isDog &&
-                    patientId != null &&
-                    !hadBordetellaInLast15Months(history) &&
-                    !hasBordetellaInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'bordetella');
                   if (!showBordetella) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
@@ -4389,17 +5439,6 @@ export default function PublicRoomLoaderForm() {
 
                 {/* FeLV recommendation (cats only: <1yr always; or outdoors + (never had or >15mo since)) */}
                 {(() => {
-                  const patientId = patient.patientId ?? patient.patient?.id;
-                  const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
-                  const dob = patient?.dob ?? patient?.patient?.dob ?? appointments[petIdx]?.patient?.dob;
-                  const isUnderOneYear = dob ? DateTime.now().diff(DateTime.fromISO(dob), 'years').years < 1 : false;
-                  const outdoorAccess = formData[`${petKey}_outdoorAccess`] === 'yes';
-                  // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due); FeLV uses 24-month window
-                  const showFeLV =
-                    isCatPatient &&
-                    patientId != null &&
-                    !hasFeLVInLineItems(patient) && !hasFutureReminderForVaccine(patient, 'felv') &&
-                    ((isUnderOneYear && !everHadFeLV(history)) || (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
                   if (!showFeLV) return null;
                   return (
                     <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
@@ -4449,6 +5488,22 @@ export default function PublicRoomLoaderForm() {
               </div>
             );
           })()}
+
+          {fieldValidationErrors[`pet${carePlanPetIndex}_optionalVaccinesLoading`] && (
+            <p
+              style={{
+                marginBottom: '16px',
+                padding: '12px',
+                backgroundColor: '#fff3cd',
+                border: '1px solid #ffc107',
+                borderRadius: '6px',
+                color: '#856404',
+                fontSize: '14px',
+              }}
+            >
+              {fieldValidationErrors[`pet${carePlanPetIndex}_optionalVaccinesLoading`]}
+            </p>
+          )}
 
           <div className="public-room-loader-nav-buttons">
             <button
@@ -4533,7 +5588,11 @@ export default function PublicRoomLoaderForm() {
             </p>
           )}
 
-          {labRecommendationsByPet.map((entry, idx) => (
+          {labRecommendationsByPet.map((entry, idx) => {
+            const labSectionPatient =
+              patients.find((p: any) => String(p.patientId ?? p.patient?.id ?? '') === String(entry.patientId ?? '')) ??
+              patients[idx];
+            return (
             <div
               key={idx}
               style={{
@@ -4546,6 +5605,7 @@ export default function PublicRoomLoaderForm() {
             >
               <div style={{ marginBottom: '16px', paddingBottom: '10px', borderBottom: '2px solid #e0e0e0' }}>
                 <h3 style={{ margin: 0, color: '#212529', fontSize: '18px', fontWeight: 700 }}>{entry.patientName}</h3>
+                <RoomLoaderPatientMemberBadge patient={labSectionPatient} appointments={appointments} />
               </div>
               {entry.recommendations.length === 0 ? (
                 <p style={{ margin: 0, color: '#666', fontStyle: 'italic' }}>We have no further specific lab recommendations at this time for this visit.</p>
@@ -4581,7 +5641,7 @@ export default function PublicRoomLoaderForm() {
                   const fourDxRecKey = fourDxDisplayIdx >= 0 ? `pet${idx}_rec_${fourDxDisplayIdx}` : null;
                   const has4dxReminder = !!fourDxReminder;
 
-                  const apptForEntry = appointments[idx];
+                  const apptForEntry = getAppointmentForRoomLoaderPet(appointments, patientForEntry, idx);
                   const apptPatientEntry = apptForEntry?.patient;
                   const speciesPartsEntry = [
                     patientForEntry?.species,
@@ -4592,8 +5652,9 @@ export default function PublicRoomLoaderForm() {
                     apptPatientEntry?.speciesEntity?.name,
                   ].filter(Boolean) as string[];
                   const speciesLowerEntry = speciesPartsEntry.length ? speciesPartsEntry.join(' ').toLowerCase() : '';
-                  const isDogEntry = speciesLowerEntry.includes('dog') || speciesLowerEntry.includes('canine') || (speciesLowerEntry === '' && !speciesLowerEntry.includes('cat'));
-                  const isCatEntry = speciesLowerEntry.includes('cat') || speciesLowerEntry.includes('feline');
+                  const isCatEntry = isCatSpeciesTokens(speciesLowerEntry);
+                  const isDogEntry =
+                    isDogSpeciesTokens(speciesLowerEntry) || (speciesLowerEntry.trim() === '' && !isCatEntry);
                   // Show full Senior Screen Canine for generic "lab work yes" (8659999) too—when crLyme is Annual we may only get 8659999, so details would otherwise be missing.
                   const isSeniorCanine = (rec.code === 'FIL25659999' || rec.code === 'FIL8659999' || rec.code === '8659999') && isDogEntry;
                   const hasLabWorkYesSeniorCanine = entry.recommendations.some((r: any) => r.code === '8659999');
@@ -5233,7 +6294,8 @@ export default function PublicRoomLoaderForm() {
                 })
               )}
             </div>
-          ))}
+            );
+          })}
 
           <div className="public-room-loader-nav-buttons">
             <button
@@ -5338,14 +6400,17 @@ export default function PublicRoomLoaderForm() {
 
               let petSubtotal = 0;
 
+              const apptRowSummary = getAppointmentForRoomLoaderPet(appointments, patient, petIdx);
               const speciesPartsPet = [
                 patient.species,
                 patient.speciesEntity?.name,
                 (patient as any).patient?.species,
-                appointments[petIdx]?.patient?.species,
+                apptRowSummary?.patient?.species,
               ].filter(Boolean) as string[];
               const speciesLowerPet = speciesPartsPet.join(' ').toLowerCase();
-              const isDogPet = speciesLowerPet.includes('dog') || speciesLowerPet.includes('canine') || (speciesLowerPet === '' && !speciesLowerPet.includes('cat'));
+              const isCatForPetSummary = isCatSpeciesTokens(speciesLowerPet);
+              const isDogPet =
+                isDogSpeciesTokens(speciesLowerPet) || (speciesLowerPet.trim() === '' && !isCatForPetSummary);
 
               const renderDisplayRow = (item: any, idx: number) => {
                 const isVisitOrConsult = hasPhrase(item, 'visit') || hasPhrase(item, 'consult');
@@ -5356,14 +6421,12 @@ export default function PublicRoomLoaderForm() {
                 const canUncheck = !isVisitOrConsult && !isReplaced && !readOnly;
                 const isChecked = isReplaced ? false : (isVisitOrConsult || formData[recKey] !== false);
                 const searchableItem = item.searchableItem as SearchableItem | null | undefined;
-                // Prefer pricing from API (reminder/addedItem wellnessPlanPricing) when present
-                const hasApiPricing = item.wellnessPlanPricing != null || item.discountPricing != null;
-                const displayPricing = hasApiPricing
-                  ? { wellnessPlanPricing: item.wellnessPlanPricing ?? undefined, discountPricing: item.discountPricing ?? undefined }
-                  : (searchableItem != null ? getClientPricing(patientId, searchableItem) : null);
-                const unitPrice = hasApiPricing
-                  ? (Number(item.price) ?? 0)
-                  : (searchableItem != null ? (getClientAdjustedPrice(patientId, searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) || 0));
+                const { unitPrice, displayPricing } = resolveSummaryLinePrice(
+                  patientId,
+                  item,
+                  getClientPricing,
+                  getClientAdjustedPrice
+                );
                 const qty = Number(item.quantity) || 1;
                 const lineTotal = isChecked && !isReplaced ? unitPrice * qty : 0;
                 petSubtotal += lineTotal;
@@ -5410,17 +6473,20 @@ export default function PublicRoomLoaderForm() {
 
               return (
                 <div key={petIdx} style={{ marginBottom: '28px', padding: '20px', backgroundColor: '#f9f9f9', border: '1px solid #ddd', borderRadius: '8px' }}>
-                  <h3 style={{ margin: 0, marginBottom: '14px', color: '#212529', fontSize: '18px', fontWeight: 700 }}>{petName}</h3>
+                  <div style={{ marginBottom: '14px' }}>
+                    <h3 style={{ margin: 0, color: '#212529', fontSize: '18px', fontWeight: 700 }}>{petName}</h3>
+                    <RoomLoaderPatientMemberBadge patient={patient} appointments={appointments} />
+                  </div>
                   <div style={{ borderBottom: '1px solid #e0e0e0', paddingBottom: '12px', marginBottom: '12px' }}>
                     {/* Procedures: uncheckable (visit/consult), trip fee/sharps, then checkable procedure items */}
                     {procedureDisplay.map(({ item, idx }) => renderDisplayRow(item, idx))}
                     {tripFeeItems.map((item: any, idx: number) => {
-                      const searchableItem = item.searchableItem as SearchableItem | null | undefined;
-                      const hasApiPricing = item.wellnessPlanPricing != null || item.discountPricing != null;
-                      const tripPricing = hasApiPricing
-                        ? { wellnessPlanPricing: item.wellnessPlanPricing ?? undefined, discountPricing: item.discountPricing ?? undefined }
-                        : (searchableItem != null ? getClientPricing(patientId, searchableItem) : null);
-                      const unitPrice = hasApiPricing ? (Number(item.price) ?? 0) : (searchableItem != null ? (getClientAdjustedPrice(patientId, searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) || 0));
+                      const { unitPrice, displayPricing: tripPricing } = resolveSummaryLinePrice(
+                        patientId,
+                        item,
+                        getClientPricing,
+                        getClientAdjustedPrice
+                      );
                       const qty = Number(item.quantity) || 1;
                       const lineTotal = unitPrice * qty;
                       petSubtotal += lineTotal;
@@ -6000,11 +7066,25 @@ export default function PublicRoomLoaderForm() {
               );
             })()}
 
-            <div className="public-room-loader-summary-total-row" style={{ marginTop: '24px', paddingTop: '20px', borderTop: '3px solid #e0e0e0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+            <div style={{ width: '100%' }}>
               {!readOnly && availablePlansForPetsForDisplay.length > 0 && (
+                <div
+                  className="public-room-loader-summary-total-row"
+                  style={{
+                    marginTop: '24px',
+                    paddingTop: '20px',
+                    borderTop: '3px solid #e0e0e0',
+                    justifyContent: 'flex-start',
+                    alignItems: 'flex-start',
+                    textAlign: 'left',
+                  }}
+                >
                   <button
                     type="button"
-                    onClick={() => setMembershipModalOpen(true)}
+                    id="membership-bill-explainer-trigger"
+                    aria-expanded={membershipBillSectionExpanded}
+                    aria-controls="membership-bill-explainer-panel"
+                    onClick={() => setMembershipBillSectionExpanded((v) => !v)}
                     style={{
                       padding: '10px 16px',
                       fontSize: '14px',
@@ -6014,458 +7094,72 @@ export default function PublicRoomLoaderForm() {
                       border: '1px solid #b6d4fe',
                       borderRadius: '8px',
                       cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      textAlign: 'left',
                     }}
                   >
+                    <span aria-hidden style={{ fontSize: '12px', width: '1em', flexShrink: 0 }}>
+                      {membershipBillSectionExpanded ? '▼' : '▶'}
+                    </span>
                     See how a membership could change your bill
                   </button>
-                )}
-              <span style={{ fontSize: '20px', fontWeight: 700, color: '#212529' }}>Estimated Total Due At Visit: <strong>{formatPrice(grandTotal)}</strong></span>
-            </div>
+                </div>
+              )}
 
-            {/* Membership modal: plans built from same logic as Client Portal (foundations, golden, comfort-care) */}
-            {membershipModalOpen &&
-              !readOnly &&
-              availablePlansForPetsForDisplay.length > 0 &&
-              (() => {
-                const availablePlansForPets = availablePlansForPetsForDisplay;
-                return (
-                  <div
-                    style={{
-                      position: 'fixed',
-                      inset: 0,
-                      backgroundColor: 'rgba(0,0,0,0.5)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      zIndex: 9999,
-                      padding: '20px',
-                    }}
-                    onClick={() => setMembershipModalOpen(false)}
-                  >
-                    <div
-                      style={{
-                        backgroundColor: '#f0f7ff',
-                        border: '1px solid #b6d4fe',
-                        borderRadius: '10px',
-                        padding: '20px',
-                        maxWidth: '640px',
-                        maxHeight: '90vh',
-                        overflow: 'auto',
-                        position: 'relative',
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
-                        <button
-                          type="button"
-                          onClick={() => setMembershipModalOpen(false)}
-                          style={{
-                            padding: '6px 14px',
-                            fontSize: '14px',
-                            fontWeight: 600,
-                            color: '#333',
-                            backgroundColor: '#fff',
-                            border: '1px solid #b6d4fe',
-                            borderRadius: '6px',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Close
-                        </button>
-                      </div>
-                    <h4 style={{ margin: '0 0 12px', fontSize: '17px', fontWeight: 700, color: '#084298' }}>
-                      See how a membership could change your bill
-                    </h4>
-                    <p style={{ margin: '0 0 16px', fontSize: '14px', color: '#555', lineHeight: 1.5 }}>
-                      With a membership, you only pay your first month&apos;s membership plus your discounted visit at the appointment. The rest is spread over the next 11 months—so your bill on the day of your visit is much lower. Select a plan below to see your estimated total and savings.
-                    </p>
-                    <p style={{ margin: '0 0 16px', fontSize: '14px', color: '#555', lineHeight: 1.5 }}>
-                      You can sign up for a membership before your visit in the{' '}
-                      <a
-                        href={`${typeof window !== 'undefined' ? window.location.origin : ''}/client-portal`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: '#0d6efd', fontWeight: 600, textDecoration: 'underline' }}
-                      >
-                        Client Portal
-                      </a>
-                      {' '}and get these savings.
-                    </p>
-                    <p style={{ margin: '0 0 16px', fontSize: '14px', color: '#555', lineHeight: 1.5 }}>
-                      Members get a dedicated veterinary &quot;One Team&quot;—if you&apos;re not a member, you don&apos;t get to choose your doctor and team. Members also get after-hours tele-chat support; non-members do not.
-                    </p>
-                    {availablePlansForPets.map((petPlans) => (
-                      <div key={petPlans.patientId} style={{ marginBottom: petPlans.plans?.length ? '20px' : 0 }}>
-                        {petPlans.patientName && (
-                          <div style={{ fontSize: '14px', fontWeight: 600, color: '#333', marginBottom: '8px' }}>
-                            For {petPlans.patientName}
-                          </div>
-                        )}
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                          {(petPlans.plans ?? []).map((plan) => {
-                            const isSelected = selectedMembershipSimulate?.planId === plan.planId && selectedMembershipSimulate?.patientIds?.[0] === petPlans.patientId;
-                            const monthlyDue =
-                              isSelected && membershipSimulateResultMonthly
-                                ? membershipSimulateResultMonthly.monthlyCharge != null
-                                  ? membershipSimulateResultMonthly.withMembershipVisitSubtotal + membershipSimulateResultMonthly.monthlyCharge
-                                  : membershipSimulateResultMonthly.withMembershipTotal
-                                : 0;
-                            const monthlySavings =
-                              isSelected && membershipSimulateResultMonthly
-                                ? membershipSimulateResultMonthly.originalTotal - monthlyDue
-                                : 0;
-                            const annualDue =
-                              isSelected && membershipSimulateResultAnnual ? membershipSimulateResultAnnual.withMembershipTotal : 0;
-                            const annualSavings =
-                              isSelected && membershipSimulateResultAnnual ? membershipSimulateResultAnnual.savings ?? 0 : 0;
-                            const planCardKey = `modal-${petPlans.patientId}-${plan.planId}`;
-                            const cardDetails = getMembershipPlanCardDetails(plan.planId);
-                            return (
-                              <div
-                                key={planCardKey}
-                                style={{
-                                  border: '1px solid #9ec5fe',
-                                  borderRadius: '8px',
-                                  padding: '12px 14px',
-                                  backgroundColor: '#fff',
-                                  minWidth: '200px',
-                                  position: 'relative',
-                                }}
-                              >
-                                {cardDetails && (
-                                  <>
-                                    <button
-                                      type="button"
-                                      aria-label="Plan details"
-                                      onMouseEnter={() => setMembershipInfoPlanKey(planCardKey)}
-                                      onMouseLeave={() => setMembershipInfoPlanKey((k) => (k === planCardKey ? null : k))}
-                                      onClick={() => setMembershipInfoPlanKey((k) => (k === planCardKey ? null : planCardKey))}
-                                      style={{
-                                        position: 'absolute',
-                                        top: '8px',
-                                        right: '8px',
-                                        width: '22px',
-                                        height: '22px',
-                                        borderRadius: '50%',
-                                        border: '1px solid #9ec5fe',
-                                        background: '#f0f7ff',
-                                        color: '#0d6efd',
-                                        fontSize: '12px',
-                                        fontWeight: 700,
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        padding: 0,
-                                      }}
-                                    >
-                                      i
-                                    </button>
-                                    {membershipInfoPlanKey === planCardKey && (
-                                      <div
-                                        onMouseEnter={() => setMembershipInfoPlanKey(planCardKey)}
-                                        onMouseLeave={() => setMembershipInfoPlanKey(null)}
-                                        style={{
-                                          position: 'absolute',
-                                          top: '100%',
-                                          left: 0,
-                                          marginTop: '4px',
-                                          zIndex: 20,
-                                          minWidth: '280px',
-                                          maxWidth: '320px',
-                                          padding: '14px',
-                                          background: '#fff',
-                                          border: '1px solid #0d6efd',
-                                          borderRadius: '8px',
-                                          boxShadow: '0 4px 14px rgba(0,0,0,0.12)',
-                                          fontSize: '13px',
-                                          color: '#212529',
-                                        }}
-                                      >
-                                        <div style={{ fontWeight: 700, fontSize: '15px', marginBottom: '4px' }}>{cardDetails.name}</div>
-                                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '10px' }}>{cardDetails.tagLine}</div>
-                                        <div style={{ fontWeight: 600, marginBottom: '6px' }}>Includes:</div>
-                                        <ul style={{ margin: 0, paddingLeft: '18px' }}>
-                                          {cardDetails.includes.map((item, idx) => (
-                                            <li key={idx} style={{ marginBottom: '4px' }}>
-                                              <span style={{ marginRight: 6 }}>⭐</span>
-                                              <span style={{ color: '#555' }}>{item}</span>
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      </div>
-                                    )}
-                                  </>
-                                )}
-                                <div style={{ fontWeight: 600, fontSize: '15px', color: '#212529', marginBottom: '4px', paddingRight: cardDetails ? '26px' : 0 }}>
-                                  {membershipPlanDisplayName[plan.planId] ?? plan.planName}
-                                </div>
-                                {plan.tagLine && (
-                                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px' }}>{plan.tagLine}</div>
-                                )}
-                                {isSelected && (membershipSimulateResultMonthly != null || membershipSimulateResultAnnual != null) && (
-                                  <div
-                                    style={{
-                                      marginBottom: '10px',
-                                      padding: '8px 10px',
-                                      background: '#d1e7dd',
-                                      border: '1px solid #badbcc',
-                                      borderRadius: '6px',
-                                      fontSize: '13px',
-                                      fontWeight: 700,
-                                      color: '#0f5132',
-                                    }}
-                                  >
-                                    <div style={{ marginBottom: '4px' }}>Save {formatPrice(monthlySavings)} at your visit by signing up for a monthly membership.</div>
-                                    {membershipSimulateResultMonthly != null && (
-                                      <div style={{ fontSize: '11px', fontWeight: 500, opacity: 0.95, lineHeight: 1.35 }}>
-                                        The rest is billed over the next 11 months.
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                                {!isSelected && (
-                                  <div style={{ marginBottom: '8px', fontSize: '12px', color: '#666' }}>Click to see your savings</div>
-                                )}
-                                <button
-                                  type="button"
-                                  disabled={membershipSimulateLoading}
-                                  onClick={() =>
-                                    runMembershipSimulate(plan.planId, plan.planName, [petPlans.patientId])
-                                  }
-                                  style={{
-                                    padding: '8px 14px',
-                                    fontSize: '13px',
-                                    fontWeight: 600,
-                                    backgroundColor: isSelected ? '#0d6efd' : '#e7f1ff',
-                                    color: isSelected ? '#fff' : '#0d6efd',
-                                    border: '1px solid #0d6efd',
-                                    borderRadius: '6px',
-                                    cursor: membershipSimulateLoading ? 'not-allowed' : 'pointer',
-                                  }}
-                                >
-                                  See your savings
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                    {membershipSimulateLoading &&
-                      (membershipSimulateResultMonthly == null && membershipSimulateResultAnnual == null) && (
-                      <p style={{ margin: '16px 0 0', fontSize: '14px', color: '#666' }}>Calculating...</p>
-                    )}
-                    {(membershipSimulateResultMonthly != null || membershipSimulateResultAnnual != null) &&
-                      selectedMembershipSimulate && (
-                      <div
-                        style={{
-                          marginTop: '16px',
-                          padding: '14px',
-                          backgroundColor: '#d1e7dd',
-                          border: '1px solid #badbcc',
-                          borderRadius: '8px',
-                          fontSize: '15px',
-                          color: '#0f5132',
-                        }}
-                      >
-                        {membershipSimulateLoading && (
-                          <div style={{ marginBottom: '8px', fontSize: '13px', fontStyle: 'italic', opacity: 0.9 }}>Updating…</div>
-                        )}
-                        <div style={{ marginBottom: '10px', fontWeight: 600 }}>
-                          Without membership — due at visit:{' '}
-                          <strong>
-                            {formatPrice(
-                              membershipSimulateResultMonthly?.originalTotal ??
-                                membershipSimulateResultAnnual?.originalTotal ??
-                                0
-                            )}
-                          </strong>
-                        </div>
-                        <div style={{ fontWeight: 600, marginBottom: '10px' }}>
-                          With {membershipPlanDisplayName[selectedMembershipSimulate.planId] ?? selectedMembershipSimulate.planName}:
-                        </div>
-                        {membershipSimulateResultMonthly != null && (() => {
-                          const m = membershipSimulateResultMonthly;
-                          const monthlyDueAtVisit =
-                            m.monthlyCharge != null
-                              ? m.withMembershipVisitSubtotal + m.monthlyCharge
-                              : m.withMembershipTotal;
-                          const monthlySavings = m.originalTotal - monthlyDueAtVisit;
-                          return (
-                            <div style={{ marginBottom: '14px', paddingBottom: '14px', borderBottom: '1px solid #badbcc' }}>
-                              <div style={{ fontWeight: 600, marginBottom: '6px', fontSize: '15px' }}>If you choose to pay monthly</div>
-                              <div style={{ marginBottom: '4px' }}>
-                                Due at your visit:{' '}
-                                <strong>{formatPrice(monthlyDueAtVisit)}</strong>
-                              </div>
-                              <div style={{ fontSize: '14px', opacity: 0.95 }}>
-                                First month&apos;s membership
-                                {(m.monthlyCharge != null ? m.monthlyCharge : m.membershipFee) != null &&
-                                  (m.monthlyCharge ?? m.membershipFee) > 0 && (
-                                    <> ({formatPrice(m.monthlyCharge ?? m.membershipFee)})</>
-                                  )}
-                                {' '}plus your discounted visit. The rest is spread over the next 11 months.
-                              </div>
-                              {monthlySavings > 0 && (
-                                <div
-                                  style={{
-                                    marginTop: '8px',
-                                    padding: '8px 12px',
-                                    background: 'rgba(15,81,50,0.15)',
-                                    borderRadius: '6px',
-                                    fontSize: '16px',
-                                    fontWeight: 700,
-                                    color: '#0f5132',
-                                  }}
-                                >
-                                  Savings today: {formatPrice(monthlySavings)}
-                                  {(() => {
-                                    const benefits = (m.remainingPlanBenefits ?? []).filter((b) => b.regularPrice !== 0);
-                                    const additional = benefits.reduce((sum, b) => sum + ((b.regularPrice ?? 0) - (b.price ?? 0)) * (b.remainingQuantity != null ? b.remainingQuantity : 1), 0);
-                                    return additional > 0 ? (
-                                      <div style={{ marginTop: '4px', fontSize: '14px', fontWeight: 500 }}>
-                                        Additional potential savings: {formatPrice(additional)}
-                                      </div>
-                                    ) : null;
-                                  })()}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })()}
-                        {membershipSimulateResultAnnual != null && (
-                          <div>
-                            <div style={{ fontWeight: 600, marginBottom: '6px', fontSize: '15px' }}>If you choose to pay annually</div>
-                            <div style={{ marginBottom: '4px' }}>
-                              Due at your visit:{' '}
-                              <strong>{formatPrice(membershipSimulateResultAnnual.withMembershipTotal)}</strong>
-                            </div>
-                            <div style={{ fontSize: '14px', opacity: 0.95 }}>
-                              One payment at your visit (annual membership
-                              {membershipSimulateResultAnnual.membershipFee != null &&
-                                membershipSimulateResultAnnual.membershipFee > 0 && (
-                                  <> {formatPrice(membershipSimulateResultAnnual.membershipFee)}</>
-                                )}
-                              {' '}+ discounted visit). Then you&apos;re covered for the year. The yearly cost is discounted 10% when you pay annually.
-                            </div>
-                            {membershipSimulateResultAnnual.savings > 0 && (
-                              <div
-                                style={{
-                                  marginTop: '8px',
-                                  padding: '8px 12px',
-                                  background: 'rgba(15,81,50,0.15)',
-                                  borderRadius: '6px',
-                                  fontSize: '16px',
-                                  fontWeight: 700,
-                                  color: '#0f5132',
-                                }}
-                              >
-                                Annual savings today: {formatPrice(membershipSimulateResultAnnual.savings)}
-                              </div>
-                            )}
-                            {(() => {
-                              const benefits = (membershipSimulateResultAnnual?.remainingPlanBenefits ?? []).filter((b) => b.regularPrice !== 0);
-                              const additional = benefits.reduce((sum, b) => sum + ((b.regularPrice ?? 0) - (b.price ?? 0)) * (b.remainingQuantity != null ? b.remainingQuantity : 1), 0);
-                              return additional > 0 && (
-                                <div
-                                  style={{
-                                    marginTop: '8px',
-                                    padding: '8px 12px',
-                                    background: 'rgba(15,81,50,0.12)',
-                                    borderRadius: '6px',
-                                    fontSize: '14px',
-                                    fontWeight: 500,
-                                    color: '#0f5132',
-                                  }}
-                                >
-                                  Additional potential savings: {formatPrice(additional)}
-                                </div>
-                              );
-                            })()}
-                          </div>
-                        )}
-                        {((membershipSimulateResultMonthly?.lineItemAdjustments?.length ?? 0) > 0 ||
-                          (membershipSimulateResultMonthly?.remainingPlanBenefits?.length ?? 0) > 0 ||
-                          (membershipSimulateResultAnnual?.remainingPlanBenefits?.length ?? 0) > 0) && (
-                          <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #badbcc', fontSize: '13px' }}>
-                            {(membershipSimulateResultMonthly?.lineItemAdjustments?.length ?? 0) > 0 && (
-                              <>
-                                <div style={{ fontWeight: 600, marginBottom: '4px' }}>Items with membership pricing:</div>
-                                <ul style={{ margin: 0, paddingLeft: '18px', marginBottom: '8px' }}>
-                                  {(membershipSimulateResultMonthly?.lineItemAdjustments ?? []).map((adj, i) => (
-                                    <li key={i}>
-                                      {adj.name}: {formatPrice(adj.originalPrice)} → {formatPrice(adj.adjustedPrice)}
-                                      {adj.quantity > 1 && ` (×${adj.quantity})`}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </>
-                            )}
-                            {(() => {
-                              const remainingBenefits = (membershipSimulateResultMonthly?.remainingPlanBenefits ?? membershipSimulateResultAnnual?.remainingPlanBenefits ?? []).filter(
-                                (b) => b.regularPrice !== 0
-                              );
-                              const additionalSavingsTotal = remainingBenefits.reduce((sum, b) => {
-                                const regular = b.regularPrice ?? 0;
-                                const memberPrice = b.price ?? 0;
-                                const qty = b.remainingQuantity != null ? b.remainingQuantity : 1;
-                                return sum + (regular - memberPrice) * qty;
-                              }, 0);
-                              return remainingBenefits.length > 0 && (
-                                <>
-                                  <div style={{ fontWeight: 600, marginBottom: '4px' }}>Also included in your plan (not used this visit):</div>
-                                  <ul style={{ margin: 0, paddingLeft: '18px' }}>
-                                    {remainingBenefits.map((benefit, i) => (
-                                      <li key={i} style={{ marginBottom: '2px' }}>
-                                        {benefit.name}
-                                        {(benefit.regularPrice != null || benefit.price != null) && (
-                                          <span style={{ color: '#555', marginLeft: '6px' }}>
-                                            {benefit.regularPrice != null && (
-                                              <>Value {formatPrice(benefit.regularPrice)}</>
-                                            )}
-                                            {benefit.regularPrice != null && benefit.price != null && ' · '}
-                                            {benefit.price != null && (
-                                              <>You pay {formatPrice(benefit.price)}</>
-                                            )}
-                                          </span>
-                                        )}
-                                        {benefit.remainingQuantity != null && benefit.includedQuantity != null && benefit.includedQuantity > 0 && (
-                                          <span style={{ color: '#666', marginLeft: '4px' }}>
-                                            ({benefit.remainingQuantity} of {benefit.includedQuantity} remaining)
-                                          </span>
-                                        )}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                  {additionalSavingsTotal > 0 && (
-                                    <div style={{ marginTop: '6px', color: '#155724', fontWeight: 500 }}>
-                                      Additional savings if you use all remaining benefits: {formatPrice(additionalSavingsTotal)}
-                                    </div>
-                                  )}
-                                </>
-                              );
-                            })()}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    <p style={{ margin: '16px 0 0', fontSize: '16px', fontWeight: 700, color: '#333', lineHeight: 1.5 }}>
-                      Sign up for a membership in the{' '}
-                      <a
-                        href={`${typeof window !== 'undefined' ? window.location.origin : ''}/client-portal`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: '#0d6efd', fontWeight: 700, textDecoration: 'underline' }}
-                      >
-                        client portal
-                      </a>
-                      {' '}before your appointment to get these savings.
-                    </p>
-                    </div>
-                  </div>
-                );
-              })()}
+              {/* Membership recommendation panel (recommended plan + simulate) */}
+              {membershipBillSectionExpanded &&
+                !readOnly &&
+                availablePlansForPetsForDisplay.length > 0 &&
+                (() => {
+                  const snapshot = buildFullFormSnapshot();
+                  const patientsData = data?.patients ?? [];
+                  const firstPid = Number(
+                    patientsData[0]?.patientId ?? patientsData[0]?.patient?.id ?? patientsData[0]?.id ?? 0
+                  );
+                  return (
+                    <MembershipRecommendationPanel
+                      pets={availablePlansForPetsForDisplay}
+                      membershipPanelByPatientId={membershipPanelByPatientId}
+                      membershipPanelLoading={membershipPanelLoading}
+                      summaryLineItems={snapshot?.summaryLineItems ?? []}
+                      firstPatientId={firstPid}
+                      allPatients={patientsData}
+                      membershipPlanDisplayName={membershipPlanDisplayName}
+                      formatPrice={formatPrice}
+                      enrollPrimaryPetName={
+                        availablePlansForPetsForDisplay[0]?.patientName ||
+                        patientsData[0]?.patientName ||
+                        patientsData[0]?.patient?.name ||
+                        'your pet'
+                      }
+                      hasMultiplePetsOnForm={availablePlansForPetsForDisplay.length > 1}
+                      onOpenMembershipEnrollment={() => setShowMembershipEnrollmentModal(true)}
+                      normalizePlanBaseId={normalizePlanBaseId}
+                      getRecommendedWellnessPlanFromList={getRecommendedWellnessPlanFromList}
+                      filterLineItemsForPatientSimulate={filterLineItemsForPatientSimulate}
+                      normItemName={normItemName}
+                      patientHasMembershipFlag={resolveRoomLoaderPatientMembership}
+                    />
+                  );
+                })()}
+              <div
+                className="public-room-loader-summary-total-row"
+                style={{
+                  marginTop: !readOnly && availablePlansForPetsForDisplay.length > 0 ? '20px' : '24px',
+                  paddingTop: !readOnly && availablePlansForPetsForDisplay.length > 0 ? 0 : '20px',
+                  borderTop: !readOnly && availablePlansForPetsForDisplay.length > 0 ? undefined : '3px solid #e0e0e0',
+                  display: 'flex',
+                  justifyContent: 'flex-end',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <span style={{ fontSize: '20px', fontWeight: 700, color: '#212529' }}>
+                  Estimated Total Due At Visit: <strong>{formatPrice(grandTotal)}</strong>
+                </span>
+              </div>
+            </div>
 
             {fieldValidationErrors._submit && (
               <p style={{ marginTop: '16px', marginBottom: 0, fontSize: '14px', color: '#dc3545' }}>{fieldValidationErrors._submit}</p>
@@ -6504,6 +7198,16 @@ export default function PublicRoomLoaderForm() {
           </div>
         );
       })()}
+      <MembershipEnrollmentModal
+        open={showMembershipEnrollmentModal}
+        onClose={() => setShowMembershipEnrollmentModal(false)}
+        eligiblePets={roomLoaderMembershipEligiblePets}
+        getPetForSignup={getRoomLoaderEnrollmentPet}
+        modalClientInfo={roomLoaderModalClientInfo}
+        onAfterPetEnrolled={refetchRoomLoaderAfterMembership}
+        onEnrollmentFlowCompleted={refetchRoomLoaderAfterMembership}
+        doneButtonLabel="Done – return to visit summary"
+      />
     </div>
   );
 }

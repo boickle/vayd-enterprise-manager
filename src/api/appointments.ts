@@ -27,11 +27,24 @@ export type DoctorDayAppt = {
   zip?: string;
 
   description?: string;
+  visitReason?: string;
   statusName?: string;
 
   expectedArrivalIso?: string;
   routingAvailable?: boolean;
   isNoLocation?: boolean;
+
+  // Block fields (doctor-day merged list + ETA byIndex)
+  /** Doctor-day merged list: 'appointment' | 'block'. ETA byIndex may also set this. */
+  type?: 'appointment' | 'block';
+  /** Set on both doctor-day and ETA byIndex for blocks. */
+  isBlock?: boolean;
+  /** Legacy/alternative block flag; same meaning as type === 'block' / isBlock. */
+  isPersonalBlock?: boolean;
+  /** Prefer this for block label (e.g. "Block", "Personal block"); else title, else "Block". */
+  blockLabel?: string;
+  /** Title for blocks when blockLabel is not set. */
+  title?: string;
 
   // Fixed time appointment (no flexible window)
   isFixed?: boolean;
@@ -41,7 +54,34 @@ export type DoctorDayAppt = {
   // Zones
   clientZone?: MiniZone;
   effectiveZone?: MiniZone;
-};
+
+  /** Appointment window from backend (when available); use instead of frontend-calculated window */
+  effectiveWindow?: { startIso: string; endIso: string };
+}
+
+/** Item may be an appointment (doctor-day) or ETA byIndex row (has key). */
+export function isBlockEntry(item: {
+  type?: string;
+  isBlock?: boolean;
+  isPersonalBlock?: boolean;
+  key?: string;
+} | null | undefined): boolean {
+  if (!item) return false;
+  if (item.type === 'block') return true;
+  if (item.isBlock === true) return true;
+  if (item.isPersonalBlock === true) return true;
+  if (typeof item.key === 'string' && item.key.startsWith('noloc:')) return true;
+  return false;
+}
+
+/** Label for a block entry: blockLabel ?? title ?? 'Personal Block'. Never use client/patient name for blocks. */
+export function blockDisplayLabel(item: { blockLabel?: string; title?: string } | null | undefined): string {
+  if (!item) return 'Personal Block';
+  const label = (item.blockLabel ?? item.title ?? '').trim();
+  if (!label) return 'Personal Block';
+  if (label.toLowerCase() === 'client') return 'Personal Block';
+  return label;
+}
 
 export type DoctorDayResponse = {
   date?: string;
@@ -61,6 +101,36 @@ const toMiniZone = (z: any): MiniZone => {
   }
   return { id: z, name: null };
 };
+
+/** From full zone name like "Zone 3E (Home)" or "2E:" return short label "3E" / "2E" only. */
+function shortZoneLabel(fullName: string | null | undefined): string | null {
+  const s = fullName?.trim();
+  if (!s) return null;
+  // Strip "Zone " prefix and any trailing " (Something)" to get e.g. "3E"
+  let out = s.replace(/^Zone\s+/i, '').trim();
+  out = out.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  // Strip trailing colon if backend sends e.g. "2E:"
+  out = out.replace(/:+$/, '').trim();
+  return out || s.replace(/:+$/, '').trim();
+}
+
+/** Display client name with zone or city in parentheses when available, e.g. "Martha Fogler (3E)" or "Martha Fogler (Boston)". Zone shows short label only (e.g. "3E"), not "Zone 3E (Home)". */
+export function clientDisplayName(a: {
+  clientName?: string | null;
+  clientZone?: MiniZone;
+  effectiveZone?: MiniZone;
+  city?: string | null;
+} | null): string {
+  const name = (a?.clientName ?? 'Client').trim();
+  if (!name) return 'Client';
+  const fullZoneName =
+    (a?.effectiveZone?.name ?? a?.clientZone?.name)?.trim() ||
+    (a as any)?.zoneName?.trim();
+  const zoneLabel = fullZoneName ? shortZoneLabel(fullZoneName) : null;
+  const city = (a?.city ?? (a as any)?.city)?.trim();
+  const suffix = zoneLabel || city;
+  return suffix ? `${name} (${suffix})` : name;
+}
 
 export async function fetchDoctorDay(
   dateISO: string,
@@ -104,6 +174,7 @@ export async function fetchDoctorDay(
       zip: a?.zip ?? undefined,
 
       description: a?.description,
+      visitReason: a?.visitReason,
       statusName: a?.statusName,
 
       expectedArrivalIso: a?.expectedArrivalIso ?? undefined,
@@ -117,24 +188,31 @@ export async function fetchDoctorDay(
 
       clientZone: toMiniZone(a?.clientZone),
       effectiveZone: toMiniZone(a?.effectiveZone),
+
+      effectiveWindow:
+        a?.effectiveWindow?.startIso && a?.effectiveWindow?.endIso
+          ? { startIso: a.effectiveWindow.startIso, endIso: a.effectiveWindow.endIso }
+          : undefined,
     };
   });
 
-  // --- NEW: map personal blocks coming from the server ---
+  // --- Map personal blocks from the server (doctor-day merged visit order) ---
   const blockRows: any[] = Array.isArray(data?.personalBlocks) ? data.personalBlocks : [];
   const blockAppts: DoctorDayAppt[] = blockRows.map((b) => ({
     id: b?.id ?? `block-${String(b?.startIso || b?.appointmentStart || '')}`,
-    clientName: b?.title ?? 'Personal Block',
-    appointmentType: 'Personal Block',
+    clientName: b?.title ?? 'Block',
+    appointmentType: b?.blockLabel ?? b?.title ?? 'Block',
     description: b?.description,
     // never routable, no coordinates:
     routingAvailable: false,
     isNoLocation: true,
-    // carry schedule/time fields so UI can place them on the timeline
     startIso: b?.startIso ?? b?.appointmentStart ?? undefined,
     endIso: b?.endIso ?? b?.appointmentEnd ?? undefined,
-    // flag for UI behavior
+    type: 'block',
+    isBlock: true,
     isPersonalBlock: true,
+    blockLabel: b?.blockLabel ?? b?.title,
+    title: b?.title,
   }));
 
   // Combine & let the page sort by start time as usual
@@ -160,8 +238,12 @@ export type DoctorMonthAppt = {
   endIso: string;
   title?: string;
   serviceMinutes?: number;
-  /** Required for points calculation (1 normal, 0.5 tech, 2 euthanasia). Backend should include in month response. */
+  /** Required for points calculation (per patient: 1 standard, 0.5 tech, 2 euthanasia). Backend should include in month response. */
   appointmentType?: string;
+
+  /** Client id for multi-pet detection (same client + same time = one block, divide time by N). */
+  clientId?: number | string | null;
+  clientPimsId?: string | null;
 
   // Zones per appointment (same semantics as day API)
   clientZone?: MiniZone;
@@ -216,6 +298,8 @@ export async function fetchDoctorMonth(
       title: a?.title,
       serviceMinutes: a?.serviceMinutes,
       appointmentType: a?.appointmentType?.name ?? a?.appointmentType ?? undefined,
+      clientId: a?.clientId ?? a?.client?.id ?? undefined,
+      clientPimsId: a?.clientPimsId ?? a?.client?.pimsId ?? undefined,
       clientZone: toMiniZone(a?.clientZone),
       effectiveZone: toMiniZone(a?.effectiveZone),
     })),

@@ -22,7 +22,7 @@ import PublicRoomLoaderForm from './pages/PublicRoomLoaderForm';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
 import ErrorPage from './pages/ErrorPage';
 import { usePageTracking } from './hooks/usePageTracking';
-import { isProduction } from './utils/env';
+import { isCreateClientEnabled, isProduction } from './utils/env';
 
 /**
  * RouteGuard - Checks if user has access to a route and redirects appropriately
@@ -318,7 +318,7 @@ export default function App() {
 
           {/* Public auth */}
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/create-client" element={isProd ? <CreateClientUser /> : <Navigate to="/login" replace />} />
+          <Route path="/create-client" element={isCreateClientEnabled() ? <CreateClientUser /> : <Navigate to="/login" replace />} />
           <Route path="/request-reset" element={<RequestReset />} />
           <Route path="/auth/request-reset" element={<Navigate to="/request-reset" replace />} />
           <Route path="/requestreset" element={<Navigate to="/request-reset" replace />} />
@@ -360,6 +360,8 @@ export default function App() {
             }
           />
           <Route path="/client-portal/request-appointment" element={<AppointmentRequestForm />} />
+          {/* Public membership signup when started from appointment request (no auth required) */}
+          <Route path="/client-portal/request-appointment/membership-signup" element={<MembershipSignup />} />
 
           {/* Public survey (no login) – exact path and any subpath (e.g. duplicate path in email link) */}
           <Route path="/survey/post-appointment" element={<PostAppointmentSurvey />} />
@@ -388,7 +390,7 @@ export default function App() {
                   </Route>
                 ) : p.path === '/analytics' ? (
                   <Route key={p.path} path={p.path} element={p.element}>
-                    <Route index element={<Navigate to="/analytics/vsd" replace />} />
+                    <Route index element={<Navigate to="/analytics/payments" replace />} />
                     {getAnalyticsTabPages().map((tab) => (
                       <Route key={tab.path} path={tab.path} element={tab.element} />
                     ))}

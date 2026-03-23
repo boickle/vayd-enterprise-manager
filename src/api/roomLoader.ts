@@ -262,7 +262,7 @@ export type SentToClientPatient = {
   clientName?: string;
   patientName?: string;
   vaccines?: { felv?: boolean; lepto?: boolean; lyme?: boolean; bordatella?: boolean; sharps?: boolean };
-  questions?: { labWork?: boolean; mobility?: boolean };
+  questions?: { labWork?: boolean; mobility?: boolean; preMedsAsk?: boolean };
   reminders?: Array<{
     reminderId: number;
     quantity?: number;
@@ -277,6 +277,8 @@ export type SentToClientPatient = {
   appointmentIds?: number[];
   appointmentReason?: string;
   originalAppointmentReason?: string;
+  /** Notes from employee to client (e.g. explaining items); included per patient in sent-to-client payload */
+  notesToClient?: string;
 };
 
 export type SentToClient = {
@@ -603,6 +605,11 @@ function checkItemPricingCacheKey(request: CheckItemPricingPublicRequest): strin
   });
 }
 
+/** Clears in-memory pricing cache for public check-item-pricing. Call after membership enrollment (or any change to client discount eligibility): cache keys omit membership state, so old entries would otherwise return pre-enrollment prices for up to one hour. */
+export function clearCheckItemPricingPublicCache(): void {
+  checkItemPricingCache.clear();
+}
+
 export async function checkItemPricingPublic(
   request: CheckItemPricingPublicRequest
 ): Promise<CheckItemPricingResponse> {
@@ -663,6 +670,9 @@ export type RoomLoaderAvailablePlansForPet = {
   patientId: number;
   patientName?: string;
   species?: string;
+  /** When true, this pet is already enrolled; frontend should not upsell membership for this patient. */
+  isMember?: boolean;
+  membershipName?: string | null;
   plans: RoomLoaderMembershipOffer[];
 };
 
@@ -687,6 +697,8 @@ export type RoomLoaderSimulateBillPublicRequest = {
   clientId?: number;
   /** Plan to simulate (e.g. "foundations", "golden"). */
   planId: string;
+  /** When set, backend may select dog vs cat catalog entry (same as client portal). Ignored if unsupported. */
+  species?: 'dog' | 'cat';
   /** Billing cadence for the plan. */
   pricingOption: 'monthly' | 'annual';
   /** Patient(s) this plan applies to (e.g. single pet for base plan). */

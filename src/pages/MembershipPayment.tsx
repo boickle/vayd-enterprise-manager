@@ -83,6 +83,13 @@ type PaymentNavigationState = {
   subscriptionStartDate?: string;
   metadata?: Record<string, any>;
   membershipTransaction?: MembershipTransactionPayload;
+  /** Set by MembershipSignup when from appointment form (agreement signed name / email) */
+  customerEmail?: string;
+  customerName?: string;
+  // From appointment request flow
+  returnUrl?: string;
+  fromAppointmentFlow?: boolean;
+  returnUrlAnotherBase?: string;
   // Upgrade-specific fields
   isUpgrade?: boolean;
   patientId?: number | string;
@@ -104,13 +111,49 @@ type PaymentNavigationState = {
     id: number;
     [key: string]: any;
   };
+  /** True when client is signing up a 2nd+ pet this session (eligible for $75 credit). */
+  multiPetCreditEligible?: boolean;
+  /** Email saved with the public form payload (room loader, etc.); used before showing the payment email field. */
+  formResponseEmail?: string;
 };
 
-export default function MembershipPayment() {
+export type { PaymentNavigationState };
+
+function resolveCustomerEmailFromNavigationState(state: PaymentNavigationState | undefined): string {
+  if (!state) return '';
+  const direct = state.customerEmail?.trim();
+  if (direct) return direct;
+  const formResp = state.formResponseEmail?.trim();
+  if (formResp) return formResp;
+  const m = state.metadata?.customerEmail;
+  if (typeof m === 'string' && m.trim()) return m.trim();
+  const mt = state.membershipTransaction?.metadata?.customerEmail;
+  if (typeof mt === 'string' && mt.trim()) return mt.trim();
+  return '';
+}
+
+function isValidEmail(s: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+}
+
+export type MembershipPaymentModalProps = {
+  fromModal?: boolean;
+  initialState?: PaymentNavigationState;
+  onSuccess?: () => void;
+  onBack?: () => void;
+  onSignUpAnother?: (signedUpPetId: string) => void;
+  /** Called once when payment/upgrade succeeds (before user taps Done). Use to refetch server data (e.g. room loader pricing). */
+  onEnrollmentSucceeded?: () => void;
+};
+
+export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const state = location.state as PaymentNavigationState | undefined;
-  const { userEmail } = useAuth() as any;
+  const locationState = location.state as PaymentNavigationState | undefined;
+  const fromModal = props?.fromModal === true;
+  const onEnrollmentSucceeded = props?.onEnrollmentSucceeded;
+  const state = fromModal ? (props?.initialState ?? locationState) : locationState;
+  const { userEmail, userId } = useAuth() as any;
 
   const [loadingScript, setLoadingScript] = useState(true);
   const [initializingPaymentForm, setInitializingPaymentForm] = useState(false);
@@ -125,10 +168,10 @@ export default function MembershipPayment() {
   const locationId = state?.enrollmentPayload?.locationId ?? defaultSquareLocationId;
 
   useEffect(() => {
-    if (!state) {
+    if (!state && !fromModal) {
       navigate('/client-portal');
     }
-  }, [state, navigate]);
+  }, [state, fromModal, navigate]);
 
   useEffect(() => {
     if (!state) return;
@@ -207,6 +250,24 @@ export default function MembershipPayment() {
 
   const costSummaryItems = useMemo(() => state?.costSummary?.items ?? [], [state]);
 
+  const prefilledCustomerEmail = useMemo(
+    () => resolveCustomerEmailFromNavigationState(state),
+    [state]
+  );
+
+  const [contactEmail, setContactEmail] = useState('');
+
+  useEffect(() => {
+    setContactEmail(prefilledCustomerEmail || (typeof userEmail === 'string' ? userEmail.trim() : '') || '');
+  }, [prefilledCustomerEmail, userEmail, formResetKey, state?.petId]);
+
+  const authEmailTrim = typeof userEmail === 'string' ? userEmail.trim() : '';
+  const hasKnownSubscriptionEmail = Boolean(prefilledCustomerEmail || authEmailTrim);
+  const showSubscriptionEmailField =
+    !!state &&
+    (state.intent === PaymentIntent.SUBSCRIPTION || state.isUpgrade) &&
+    !hasKnownSubscriptionEmail;
+
   const [cardholderName, setCardholderName] = useState('');
   const [addressLine1, setAddressLine1] = useState('');
   const [addressLine2, setAddressLine2] = useState('');
@@ -234,13 +295,30 @@ export default function MembershipPayment() {
         throw new Error(tokenResult.errors?.[0]?.message || 'Unable to tokenize card.');
       }
 
+      const emailForSquare =
+        contactEmail.trim() ||
+        prefilledCustomerEmail ||
+        (typeof userEmail === 'string' ? userEmail.trim() : '') ||
+        '';
+
+      if (
+        (state.intent === PaymentIntent.SUBSCRIPTION || state.isUpgrade) &&
+        (!emailForSquare || !isValidEmail(emailForSquare))
+      ) {
+        setProcessing(false);
+        setError(
+          'A valid email address is required (Square needs it on your customer profile for subscriptions and upgrades).'
+        );
+        return;
+      }
+
       // Handle upgrade flow
       if (state.isUpgrade && state.patientId && state.selectedUpgrades) {
         const upgradeRequest: MembershipUpgradeRequest = {
           patientId: state.patientId,
           newPlansSelected: state.selectedUpgrades,
           sourceId: tokenResult.token,
-          customerEmail: userEmail ?? '',
+          customerEmail: emailForSquare || userEmail || '',
           // Include prorated calculation if available
           proratedRefundAmount: state.proratedCalculation?.refundAmount,
           proratedChargeAmount: state.proratedCalculation?.chargeAmount,
@@ -278,6 +356,7 @@ export default function MembershipPayment() {
         );
 
         setEnrollmentComplete(true);
+        onEnrollmentSucceeded?.();
         return;
       }
 
@@ -291,11 +370,26 @@ export default function MembershipPayment() {
         throw new Error('Subscription plan ID is missing for this selection.');
       }
 
+      // Use pet name from form (state.petName or from membershipTransaction.metadata as set by MembershipSignup)
+      const petNameForPayload =
+        (state.petName && String(state.petName).trim()) ||
+        (state.membershipTransaction?.metadata?.petName && String(state.membershipTransaction.metadata.petName).trim()) ||
+        '';
+
+      const isNewClientMembership = fromModal && !userId;
+      // For new clients, petId field must contain the pet's name (from the appointment form)
+      const petIdForPayload =
+        isNewClientMembership && petNameForPayload !== ''
+          ? petNameForPayload
+          : state.petId ?? '';
+
       const membershipTransactionPayload = state.membershipTransaction
         ? {
             ...state.membershipTransaction,
             metadata: {
               ...(state.membershipTransaction.metadata ?? {}),
+              ...(petIdForPayload !== '' && { petId: petIdForPayload }),
+              ...(petNameForPayload !== '' && { petName: petNameForPayload }),
             },
           }
         : undefined;
@@ -311,9 +405,13 @@ export default function MembershipPayment() {
         subscriptionPlanId: state.subscriptionPlanId,
         subscriptionPlanVariationId: state.subscriptionPlanVariationId,
         subscriptionStartDate: state.subscriptionStartDate,
-        customerEmail: userEmail ?? undefined,
+        customerEmail: emailForSquare || undefined,
+        customerName: state.customerName ?? undefined,
         metadata: {
           ...(state.metadata ?? {}),
+          ...(petIdForPayload !== '' && { petId: petIdForPayload }),
+          ...(petNameForPayload !== '' && { petName: petNameForPayload }),
+          ...(emailForSquare && { customerEmail: emailForSquare }),
           cardholderName: cardholderName.trim(),
           billingAddress: {
             addressLine1: addressLine1.trim(),
@@ -368,6 +466,7 @@ export default function MembershipPayment() {
       );
 
       setEnrollmentComplete(true);
+      onEnrollmentSucceeded?.();
     } catch (err: any) {
       const status = err?.response?.status;
       const serverMessage = err?.response?.data?.message ?? err?.response?.data?.error;
@@ -407,8 +506,13 @@ export default function MembershipPayment() {
   }
 
   if (!state) {
+    if (fromModal && props?.onBack) props.onBack();
     return null;
   }
+
+  const onSuccess = props?.onSuccess;
+  const onBack = props?.onBack;
+  const onSignUpAnother = props?.onSignUpAnother;
 
   if (enrollmentComplete && (paymentResponse?.success || state.isUpgrade)) {
     const providerPaymentId =
@@ -428,6 +532,11 @@ export default function MembershipPayment() {
               : `${state.petName} is now enrolled in the ${state.planName || 'membership'} membership. A confirmation email will arrive shortly. Please note that it may take up to 24-48 business hours for ${state.petName}'s membership to be fully active in our system.`
             }
           </p>
+          {!state.isUpgrade && state.multiPetCreditEligible && (
+            <p style={{ marginBottom: 20, padding: '12px 16px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, color: '#166534', fontSize: 15, lineHeight: 1.5 }}>
+              You will be receiving a $75 credit in your VAYD account to be used at any visit of your choosing — this won&apos;t expire.
+            </p>
+          )}
           <div style={{ display: 'grid', gap: 8, fontSize: 15 }}>
             <div>
               <strong>Plan:</strong> {state.planName}
@@ -496,37 +605,51 @@ export default function MembershipPayment() {
           </section>
         )}
 
-        <div className="cp-card" style={{ marginTop: 24, padding: 20, background: '#f0f9ff', border: '1px solid #bae6fd' }}>
-          <p className="cp-muted" style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>
-            <strong>NOTE:</strong> If you want to sign-up another pet from your household or if you want to make an appointment for {state.petName}, please{' '}
-            <a 
-              href="/client-portal" 
-              onClick={(e) => {
-                e.preventDefault();
-                navigate('/client-portal');
-              }}
-              style={{ color: '#4FB128', textDecoration: 'underline', fontWeight: 600 }}
-            >
-              login to your client portal
-            </a>
-            .
-          </p>
-        </div>
+        {!state.returnUrl && !(fromModal && !userId) && (
+          <div className="cp-card" style={{ marginTop: 24, padding: 20, background: '#f0f9ff', border: '1px solid #bae6fd' }}>
+            <p className="cp-muted" style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>
+              <strong>NOTE:</strong> If you want to sign-up another pet from your household or if you want to make an appointment for {state.petName}, please{' '}
+              <a 
+                href="/client-portal" 
+                onClick={(e) => {
+                  e.preventDefault();
+                  navigate('/client-portal');
+                }}
+                style={{ color: '#4FB128', textDecoration: 'underline', fontWeight: 600 }}
+              >
+                login to your client portal
+              </a>
+              .
+            </p>
+          </div>
+        )}
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 24 }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 24, flexWrap: 'wrap' }}>
+          {(state.returnUrlAnotherBase || (fromModal && onSignUpAnother)) && (
+            <button 
+              className="btn" 
+              onClick={() => {
+                if (fromModal && onSignUpAnother) onSignUpAnother(state.petId);
+                else {
+                  const base = state.returnUrlAnotherBase || '/client-portal/membership-signup';
+                  const sep = base.includes('?') ? '&' : '?';
+                  navigate(`${base}${sep}signedUp=${encodeURIComponent(state.petId)}`);
+                }
+              }}
+              style={{ backgroundColor: '#4FB128', color: '#fff' }}
+            >
+              Sign up another pet
+            </button>
+          )}
           <button 
             className="btn" 
-            onClick={() => navigate('/client-portal')}
+            onClick={() => {
+              if (fromModal && onSuccess) onSuccess();
+              else navigate(state.returnUrl || '/client-portal');
+            }}
             style={{ backgroundColor: '#4FB128', color: '#fff' }}
           >
-            Sign up another pet
-          </button>
-          <button 
-            className="btn" 
-            onClick={() => navigate('/client-portal')}
-            style={{ backgroundColor: '#4FB128', color: '#fff' }}
-          >
-            Return to Client Portal
+            {fromModal ? 'Done' : state.returnUrl ? 'Return to appointment request' : 'Return to Client Portal'}
           </button>
         </div>
 
@@ -594,7 +717,10 @@ export default function MembershipPayment() {
     <div className="cp-wrap" style={{ maxWidth: 720, margin: '32px auto', padding: '0 16px' }}>
       <div style={{ marginBottom: 24 }}>
         <button
-          onClick={() => navigate(-1)}
+          onClick={() => {
+            if (fromModal && onBack) onBack();
+            else navigate(-1);
+          }}
           style={{
             background: 'transparent',
             border: 'none',
@@ -717,6 +843,25 @@ export default function MembershipPayment() {
           <h3 style={{ marginTop: 0, marginBottom: 12 }}>Payment Method</h3>
           <form onSubmit={handlePaymentSubmit} style={{ display: 'grid', gap: 16 }}>
             <div style={{ display: 'grid', gap: 10 }}>
+              {showSubscriptionEmailField && (
+                <div>
+                  <label style={{ display: 'block', fontWeight: 600, fontSize: 14, marginBottom: 6 }}>
+                    Email <span style={{ color: '#b91c1c' }}>*</span>
+                  </label>
+                  <input
+                    type="email"
+                    autoComplete="email"
+                    value={contactEmail}
+                    onChange={(e) => setContactEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    className="input"
+                    required
+                  />
+                  <p className="cp-muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
+                    Required so we can attach it to your Square customer for billing and receipts.
+                  </p>
+                </div>
+              )}
               <div>
                 <label style={{ display: 'block', fontWeight: 600, fontSize: 14, marginBottom: 6 }}>Cardholder Name</label>
                 <input

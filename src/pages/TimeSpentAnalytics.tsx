@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Backdrop,
   Box,
   Card,
   CardContent,
@@ -30,8 +31,11 @@ import {
   Cell,
 } from 'recharts';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
-import { fetchDoctorMonth, type DoctorMonthDay } from '../api/appointments';
+import { fetchDoctorMonth, type DoctorMonthDay, type DoctorMonthAppt } from '../api/appointments';
 import { fetchDriveTime } from '../api/driveTime';
+
+/** Appointment with optional doctorId (set when merging multi-doctor data for multi-pet detection). */
+type ApptWithDoctor = DoctorMonthAppt & { doctorId?: string };
 
 dayjs.extend(utc);
 dayjs.extend(isoWeek);
@@ -85,6 +89,103 @@ function normalizeAppointmentType(name: string | undefined): string {
   if (s.toLowerCase().startsWith('tech appointment')) return 'Tech appointment';
   if (OTHER_APPT_TYPES.has(s.toLowerCase())) return 'Other';
   return s;
+}
+
+/** True if this appointment type should be hidden from time-spent analytics (e.g. Block). */
+function isBlockAppointmentType(name: string | undefined): boolean {
+  const s = ((name != null ? String(name).trim() : '') || '').toLowerCase();
+  return s === 'block' || s === 'personal block' || s.startsWith('block');
+}
+
+/**
+ * Multi-pet detection:
+ * 1) Same client, same day, same start time: one block; if same duration divide by N, else use individual minutes.
+ * 2) Same client, same day, different start times: each appt is multipet with its own serviceMinutes.
+ * When client id is missing, only (1) applies via same doctor + same start time.
+ */
+function processMultiPet(
+  days: { date: string; appts: ApptWithDoctor[] }[]
+): { date: string; appts: { appointmentType?: string; serviceMinutes?: number }[] }[] {
+  return days.map((day) => {
+    const appts = (day.appts ?? []).filter((a) => !isBlockAppointmentType(a.appointmentType));
+    const clientKey = (a: ApptWithDoctor) =>
+      a.clientId != null ? String(a.clientId) : (a.clientPimsId != null ? String(a.clientPimsId) : '');
+    const hasClient = (a: ApptWithDoctor) => clientKey(a) !== '';
+
+    const out: { appointmentType?: string; serviceMinutes?: number }[] = [];
+
+    // Group by (doctorId, clientKey) for the day so we can treat "same client, multiple appts" as multi-pet
+    const byClient = new Map<string, ApptWithDoctor[]>();
+    for (const a of appts) {
+      const k = hasClient(a) ? `${a.doctorId ?? ''}|${clientKey(a)}` : `${a.doctorId ?? ''}|__no_client__|${a.startIso ?? ''}`;
+      if (!byClient.has(k)) byClient.set(k, []);
+      byClient.get(k)!.push(a);
+    }
+
+    for (const clientGroup of byClient.values()) {
+      const n = clientGroup.length;
+      const useMultipet = n > 1;
+      const isNoClientSlot = n === 1 && clientGroup[0] && !hasClient(clientGroup[0]);
+
+      if (isNoClientSlot) {
+        // Single appt with no client: output as regular (key was doctor|__no_client__|startIso so only one)
+        const a = clientGroup[0]!;
+        out.push({
+          appointmentType: a.appointmentType,
+          serviceMinutes: Number.isFinite(a.serviceMinutes) ? a.serviceMinutes : 0,
+        });
+        continue;
+      }
+
+      if (!useMultipet) {
+        // Single appt with client: regular
+        const a = clientGroup[0]!;
+        out.push({
+          appointmentType: a.appointmentType,
+          serviceMinutes: Number.isFinite(a.serviceMinutes) ? a.serviceMinutes : 0,
+        });
+        continue;
+      }
+
+      // Same client (or same slot when no client), multiple appts: sub-group by startIso
+      const bySlot = new Map<string, ApptWithDoctor[]>();
+      for (const a of clientGroup) {
+        const slot = a.startIso ?? '';
+        if (!bySlot.has(slot)) bySlot.set(slot, []);
+        bySlot.get(slot)!.push(a);
+      }
+
+      for (const slotGroup of bySlot.values()) {
+        const slotN = slotGroup.length;
+        const blockMinutes = Number.isFinite(slotGroup[0]?.serviceMinutes) ? slotGroup[0]!.serviceMinutes! : 0;
+        const allSameDuration =
+          slotN > 0 &&
+          slotGroup.every((a) => (Number.isFinite(a.serviceMinutes) ? a.serviceMinutes! : 0) === blockMinutes);
+
+        if (slotN > 1 && allSameDuration) {
+          const perPetMinutes = blockMinutes / slotN;
+          for (const a of slotGroup) {
+            const baseType = normalizeAppointmentType(a.appointmentType);
+            out.push({
+              appointmentType: `multipet-${baseType}`,
+              serviceMinutes: Math.round(perPetMinutes * 10) / 10,
+            });
+          }
+        } else {
+          for (const a of slotGroup) {
+            const baseType = normalizeAppointmentType(a.appointmentType);
+            const mins = Number.isFinite(a.serviceMinutes) ? a.serviceMinutes! : 0;
+            out.push({
+              appointmentType: `multipet-${baseType}`,
+              serviceMinutes: Math.round(mins * 10) / 10,
+            });
+          }
+        }
+      }
+    }
+
+    return { date: day.date, appts: out };
+  });
 }
 
 /** Aggregate appts into buckets (key -> sumByType, countByType). */
@@ -290,14 +391,14 @@ const DEFAULT_PRACTICE_ID = 1;
 export type GroupByOption = 'day' | 'week' | 'month';
 
 export default function TimeSpentAnalyticsPage() {
-  const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['30D']());
-  const [preset, setPreset] = useState<string>('30D');
+  const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['7D']());
+  const [preset, setPreset] = useState<string>('7D');
   const [doctorId, setDoctorId] = useState<string>(ALL_DVMS);
   const [groupBy, setGroupBy] = useState<GroupByOption>('day');
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [rawDays, setRawDays] = useState<{ date: string; appts: DoctorMonthDay['appts'] }[]>([]);
+  const [rawDays, setRawDays] = useState<{ date: string; appts: ApptWithDoctor[] }[]>([]);
   const [driveTimeRawData, setDriveTimeRawData] = useState<
     { date: string; totalDriveMinutes: number; averageDriveMinutes: number | null }[]
   >([]);
@@ -305,6 +406,8 @@ export default function TimeSpentAnalyticsPage() {
   const [driveTimeDoctorId, setDriveTimeDoctorId] = useState<string>(ALL_DVMS);
   const [driveTimeGroupBy, setDriveTimeGroupBy] = useState<GroupByOption>('day');
   const [driveTimeLoading, setDriveTimeLoading] = useState(false);
+  /** Chart shows either regular (single) appointment types only or multi-pet types only. */
+  const [timeSpentViewMode, setTimeSpentViewMode] = useState<'regular' | 'multipet'>('regular');
 
   const start = range.from.startOf('day');
   const end = range.to.startOf('day');
@@ -343,13 +446,15 @@ export default function TimeSpentAnalyticsPage() {
           return;
         }
 
-        const requests: Promise<{ days: DoctorMonthDay[] }>[] = [];
+        const requests: Promise<{ days: DoctorMonthDay[]; doctorId: string }>[] = [];
         if (doctorId === ALL_DVMS) {
           for (const p of providers) {
+            const docId = String(p.id ?? p.pimsId ?? '');
             for (const { year, month } of monthPairs) {
               requests.push(
-                fetchDoctorMonth(year, month, String(p.id ?? p.pimsId ?? '')).then((r) => ({
+                fetchDoctorMonth(year, month, docId).then((r) => ({
                   days: r.days ?? [],
+                  doctorId: docId,
                 }))
               );
             }
@@ -357,7 +462,10 @@ export default function TimeSpentAnalyticsPage() {
         } else {
           for (const { year, month } of monthPairs) {
             requests.push(
-              fetchDoctorMonth(year, month, doctorId).then((r) => ({ days: r.days ?? [] }))
+              fetchDoctorMonth(year, month, doctorId).then((r) => ({
+                days: r.days ?? [],
+                doctorId,
+              }))
             );
           }
         }
@@ -365,17 +473,20 @@ export default function TimeSpentAnalyticsPage() {
         const results = await Promise.all(requests);
         if (!alive) return;
 
-        const byDate = new Map<string, { date: string; appts: DoctorMonthDay['appts'] }>();
-        for (const { days } of results) {
+        const byDate = new Map<string, { date: string; appts: ApptWithDoctor[] }>();
+        for (const { days, doctorId: docId } of results) {
           for (const day of days) {
             const date = day?.date?.slice(0, 10);
             if (!date) continue;
+            const apptsWithDoctor: ApptWithDoctor[] = (day.appts ?? []).map((a) => ({
+              ...a,
+              doctorId: docId,
+            }));
             const existing = byDate.get(date);
-            const appts = (day.appts ?? []) as DoctorMonthDay['appts'];
             if (existing) {
-              existing.appts = [...(existing.appts ?? []), ...appts];
+              existing.appts = [...existing.appts, ...apptsWithDoctor];
             } else {
-              byDate.set(date, { date, appts });
+              byDate.set(date, { date, appts: apptsWithDoctor });
             }
           }
         }
@@ -399,6 +510,22 @@ export default function TimeSpentAnalyticsPage() {
       alive = false;
     };
   }, [startStr, endStr, doctorId, monthPairs.length, providers.length]);
+
+  /** Days with multi-pet slots converted to multipet-{type} and per-pet service minutes. */
+  const processedDays = useMemo(() => processMultiPet(rawDays), [rawDays]);
+
+  /** View data for chart/summary: show only regular or only multi-pet types. */
+  const viewDays = useMemo(() => {
+    const isMultipet = (type: string | undefined) =>
+      String(type ?? '').startsWith('multipet-');
+    return processedDays.map((day) => ({
+      ...day,
+      appts: (day.appts ?? []).filter((a) => {
+        const multipet = isMultipet(a.appointmentType);
+        return timeSpentViewMode === 'multipet' ? multipet : !multipet;
+      }),
+    }));
+  }, [processedDays, timeSpentViewMode]);
 
   useEffect(() => {
     const dates = dateRange(start, end);
@@ -460,10 +587,11 @@ export default function TimeSpentAnalyticsPage() {
   }, [startStr, endStr, driveTimeDoctorId]);
 
   const chartData = useMemo(() => {
-    if (groupBy === 'week') return buildAvgMinutesByWeekByType(start, end, rawDays);
-    if (groupBy === 'month') return buildAvgMinutesByMonthByType(start, end, rawDays);
-    return buildAvgMinutesByDayByType(start, end, rawDays);
-  }, [start, end, rawDays, groupBy]);
+    if (loading) return [];
+    if (groupBy === 'week') return buildAvgMinutesByWeekByType(start, end, viewDays);
+    if (groupBy === 'month') return buildAvgMinutesByMonthByType(start, end, viewDays);
+    return buildAvgMinutesByDayByType(start, end, viewDays);
+  }, [loading, start, end, viewDays, groupBy]);
 
   const { data: chartDataOrdered, maxSlots } = useMemo(
     () => orderChartRowsByValuePerPeriod(chartData),
@@ -476,7 +604,7 @@ export default function TimeSpentAnalyticsPage() {
   const timeSpentSummaryByType = useMemo(() => {
     const totalByType = new Map<string, number>();
     const countByType = new Map<string, number>();
-    for (const day of rawDays) {
+    for (const day of viewDays) {
       for (const a of day.appts ?? []) {
         const typeName = normalizeAppointmentType(a.appointmentType);
         const mins = Number.isFinite(a.serviceMinutes) ? a.serviceMinutes! : 0;
@@ -497,7 +625,7 @@ export default function TimeSpentAnalyticsPage() {
     const grandCount = list.reduce((sum, x) => sum + x.count, 0);
     const overallAvg = grandCount > 0 ? grandTotal / grandCount : 0;
     return { list, grandTotal, grandCount, overallAvg };
-  }, [rawDays]);
+  }, [viewDays]);
 
   const doctorOptions = useMemo(() => {
     const list: { id: string; label: string }[] = [{ id: ALL_DVMS, label: 'All DVMs' }];
@@ -561,6 +689,17 @@ export default function TimeSpentAnalyticsPage() {
     () => addLinearTrend(driveTimeData),
     [driveTimeData]
   );
+
+  // When loading, render only the spinner so first paint is immediate (no heavy tree).
+  if (loading) {
+    return (
+      <LocalizationProvider dateAdapter={AdapterDayjs}>
+        <Box sx={{ pb: 3, minHeight: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <CircularProgress />
+        </Box>
+      </LocalizationProvider>
+    );
+  }
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -631,6 +770,18 @@ export default function TimeSpentAnalyticsPage() {
           />
           <CardContent>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2, mb: 2 }}>
+              <FormControl size="small" sx={{ minWidth: 200 }}>
+                <InputLabel id="time-spent-view-mode-label">View</InputLabel>
+                <Select
+                  labelId="time-spent-view-mode-label"
+                  value={timeSpentViewMode}
+                  label="View"
+                  onChange={(e) => setTimeSpentViewMode(e.target.value as 'regular' | 'multipet')}
+                >
+                  <MenuItem value="regular">Regular only</MenuItem>
+                  <MenuItem value="multipet">Multi-pet only</MenuItem>
+                </Select>
+              </FormControl>
               <FormControl size="small" sx={{ minWidth: 200 }}>
                 <InputLabel id="time-spent-doctor-label">Doctor</InputLabel>
                 <Select
@@ -887,9 +1038,9 @@ export default function TimeSpentAnalyticsPage() {
                       tick={{ fontSize: 11 }}
                     />
                     <Tooltip
-                      formatter={(value: number | undefined, name: string | undefined) => [
+                      formatter={(value: unknown, name: unknown) => [
                         value != null ? `${Number(value).toFixed(1)} mins` : '0 mins',
-                        (name ?? '').includes('Trend') ? 'Trend line (smoothed)' : driveTimeMetric === 'total' ? 'Drive time' : 'Avg between appointments',
+                        String(name ?? '').includes('Trend') ? 'Trend line (smoothed)' : driveTimeMetric === 'total' ? 'Drive time' : 'Avg between appointments',
                       ]}
                       labelFormatter={(label) => String(label)}
                     />

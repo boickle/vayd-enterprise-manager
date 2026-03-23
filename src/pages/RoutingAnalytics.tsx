@@ -4,10 +4,6 @@ import {
   Card,
   CardContent,
   CardHeader,
-  FormControl,
-  InputLabel,
-  MenuItem,
-  Select,
   Typography,
   Alert,
   CircularProgress,
@@ -18,8 +14,15 @@ import {
   TableHead,
   TableRow,
   Paper,
+  IconButton,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material';
-import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
+import ChevronLeft from '@mui/icons-material/ChevronLeft';
+import ChevronRight from '@mui/icons-material/ChevronRight';
+import { LocalizationProvider } from '@mui/x-date-pickers';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import dayjs, { Dayjs } from 'dayjs';
 import {
@@ -32,6 +35,7 @@ import {
   Tooltip,
 } from 'recharts';
 import { fetchRoutingUsage, type RoutingUsageUser } from '../api/routingUsage';
+import { fetchFillDayUsage, type FillDayUsageUser } from '../api/fillDayUsage';
 
 function toLocalDateStr(d: Dayjs) {
   return d.format('YYYY-MM-DD');
@@ -47,27 +51,6 @@ function dateRange(start: Dayjs, end: Dayjs): string[] {
   }
   return out;
 }
-
-const PRESETS: Record<string, () => { from: Dayjs; to: Dayjs }> = {
-  '7D': () => {
-    const now = dayjs().startOf('day');
-    return { from: now.subtract(6, 'day'), to: now };
-  },
-  '30D': () => {
-    const now = dayjs().startOf('day');
-    return { from: now.subtract(29, 'day'), to: now };
-  },
-  '90D': () => {
-    const now = dayjs().startOf('day');
-    return { from: now.subtract(89, 'day'), to: now };
-  },
-  YTD: () => {
-    const now = dayjs().startOf('day');
-    return { from: now.startOf('year'), to: now };
-  },
-};
-
-const ALL_USERS = '';
 
 /** Linear regression trend for request count series. */
 function addLinearTrend<T extends { requestCount: number }>(data: T[]): (T & { trend: number })[] {
@@ -91,29 +74,78 @@ function addLinearTrend<T extends { requestCount: number }>(data: T[]): (T & { t
   return data.map((row, i) => ({ ...row, trend: Math.max(0, intercept + slope * i) }));
 }
 
+const ALL_USERS = '';
+
+const PRESETS: Record<string, () => { from: Dayjs; to: Dayjs }> = {
+  '1D': () => {
+    const now = dayjs().startOf('day');
+    return { from: now, to: now };
+  },
+  '7D': () => {
+    const now = dayjs().startOf('day');
+    return { from: now.subtract(6, 'day'), to: now };
+  },
+  '30D': () => {
+    const now = dayjs().startOf('day');
+    return { from: now.subtract(29, 'day'), to: now };
+  },
+  '90D': () => {
+    const now = dayjs().startOf('day');
+    return { from: now.subtract(89, 'day'), to: now };
+  },
+  YTD: () => {
+    const now = dayjs().startOf('day');
+    return { from: now.startOf('year'), to: now };
+  },
+};
+
 function displayName(u: RoutingUsageUser): string {
   const name = u.employeeName?.trim();
   return name ? name : u.userEmail;
 }
 
+function displayNameFillDay(u: FillDayUsageUser): string {
+  const name = u.employeeName?.trim();
+  return name ? name : u.userEmail;
+}
+
 export default function RoutingAnalyticsPage() {
-  const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['30D']());
-  const [preset, setPreset] = useState<string>('30D');
+  const [preset, setPreset] = useState<string>('1D');
+  const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['1D']());
   const [selectedUserEmail, setSelectedUserEmail] = useState<string>(ALL_USERS);
+  const [selectedFillDayUserEmail, setSelectedFillDayUserEmail] = useState<string>(ALL_USERS);
   const [data, setData] = useState<{ users: RoutingUsageUser[] } | null>(null);
+  const [fillDayData, setFillDayData] = useState<{ users: FillDayUsageUser[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [fillDayError, setFillDayError] = useState<string | null>(null);
 
   const start = range.from.startOf('day');
   const end = range.to.startOf('day');
   const startStr = toLocalDateStr(start);
   const endStr = toLocalDateStr(end);
+  const isSingleDay = start.isSame(end, 'day');
   const dates = useMemo(() => dateRange(start, end), [start, end]);
+
+  const shiftRange = (direction: -1 | 1) => {
+    const days = end.diff(start, 'day') + 1;
+    const shift = days * direction;
+    setRange((r) => ({
+      from: r.from.add(shift, 'day'),
+      to: r.to.add(shift, 'day'),
+    }));
+  };
 
   useEffect(() => {
     setLoading(true);
     setError(null);
+    setFillDayError(null);
     let alive = true;
+    let done = 0;
+    const checkDone = () => {
+      done += 1;
+      if (done === 2 && alive) setLoading(false);
+    };
 
     fetchRoutingUsage({ startDate: startStr, endDate: endStr })
       .then((res) => {
@@ -126,9 +158,20 @@ export default function RoutingAnalyticsPage() {
         setError('Failed to load routing usage');
         setData(null);
       })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
+      .finally(checkDone);
+
+    fetchFillDayUsage({ startDate: startStr, endDate: endStr })
+      .then((res) => {
+        if (!alive) return;
+        setFillDayData({ users: res?.users ?? [] });
+      })
+      .catch((e) => {
+        if (!alive) return;
+        console.error('Schedule loader usage fetch failed:', e);
+        setFillDayError('Failed to load schedule loader usage');
+        setFillDayData(null);
+      })
+      .finally(checkDone);
 
     return () => {
       alive = false;
@@ -159,6 +202,30 @@ export default function RoutingAnalyticsPage() {
     return dates.map((date) => ({ date, requestCount: byDate.get(date) ?? 0 }));
   }, [data, selectedUserEmail, dates]);
 
+  const fillDayChartData = useMemo(() => {
+    if (!fillDayData?.users?.length) return [];
+    if (selectedFillDayUserEmail === ALL_USERS) {
+      const byDate = new Map<string, number>();
+      for (const date of dates) byDate.set(date, 0);
+      for (const u of fillDayData.users) {
+        for (const d of u.requestsByDay ?? []) {
+          const date = d?.date?.slice(0, 10);
+          if (date && byDate.has(date)) byDate.set(date, (byDate.get(date) ?? 0) + (d.requestCount ?? 0));
+        }
+      }
+      return dates.map((date) => ({ date, requestCount: byDate.get(date) ?? 0 }));
+    }
+    const user = fillDayData.users.find((u) => u.userEmail === selectedFillDayUserEmail);
+    if (!user) return [];
+    const byDate = new Map<string, number>();
+    for (const date of dates) byDate.set(date, 0);
+    for (const d of user.requestsByDay ?? []) {
+      const date = d?.date?.slice(0, 10);
+      if (date && byDate.has(date)) byDate.set(date, d.requestCount ?? 0);
+    }
+    return dates.map((date) => ({ date, requestCount: byDate.get(date) ?? 0 }));
+  }, [fillDayData, selectedFillDayUserEmail, dates]);
+
   const userOptions = useMemo(() => {
     const list: { value: string; label: string }[] = [{ value: ALL_USERS, label: 'All users' }];
     for (const u of data?.users ?? []) {
@@ -167,12 +234,26 @@ export default function RoutingAnalyticsPage() {
     return list;
   }, [data]);
 
+  const fillDayUserOptions = useMemo(() => {
+    const list: { value: string; label: string }[] = [{ value: ALL_USERS, label: 'All users' }];
+    for (const u of fillDayData?.users ?? []) {
+      if (u.userEmail) list.push({ value: u.userEmail, label: displayNameFillDay(u) });
+    }
+    return list;
+  }, [fillDayData]);
+
+  const chartDataWithTrend = useMemo(() => addLinearTrend(chartData), [chartData]);
+  const fillDayChartDataWithTrend = useMemo(() => addLinearTrend(fillDayChartData), [fillDayChartData]);
+
   const usersSorted = useMemo(() => {
     const users = data?.users ?? [];
     return [...users].sort((a, b) => (b.totalRequests ?? 0) - (a.totalRequests ?? 0));
   }, [data]);
 
-  const chartDataWithTrend = useMemo(() => addLinearTrend(chartData), [chartData]);
+  const fillDayUsersSorted = useMemo(() => {
+    const users = fillDayData?.users ?? [];
+    return [...users].sort((a, b) => (b.totalRequests ?? 0) - (a.totalRequests ?? 0));
+  }, [fillDayData]);
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -186,7 +267,7 @@ export default function RoutingAnalyticsPage() {
             title="Date range"
             action={
               <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                {Object.keys(PRESETS).map((key) => (
+                {(['1D', '7D', '30D', '90D', 'YTD'] as const).map((key) => (
                   <button
                     key={key}
                     type="button"
@@ -208,19 +289,26 @@ export default function RoutingAnalyticsPage() {
               </Box>
             }
           />
-          <CardContent sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
-            <DatePicker
-              label="From"
-              value={range.from}
-              onChange={(d) => d && setRange((r) => ({ ...r, from: d.startOf('day') }))}
-              slotProps={{ textField: { size: 'small' } }}
-            />
-            <DatePicker
-              label="To"
-              value={range.to}
-              onChange={(d) => d && setRange((r) => ({ ...r, to: d.startOf('day') }))}
-              slotProps={{ textField: { size: 'small' } }}
-            />
+          <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <IconButton
+              aria-label={isSingleDay ? 'Previous day' : 'Previous period'}
+              onClick={() => (isSingleDay ? setRange((r) => ({ from: r.from.subtract(1, 'day'), to: r.from.subtract(1, 'day') })) : shiftRange(-1))}
+              size="small"
+            >
+              <ChevronLeft />
+            </IconButton>
+            <Typography variant="body1" component="span" sx={{ minWidth: 220, textAlign: 'center' }}>
+              {isSingleDay
+                ? range.from.format('ddd, MMM D, YYYY')
+                : `${range.from.format('MMM D')} – ${range.to.format('MMM D, YYYY')}`}
+            </Typography>
+            <IconButton
+              aria-label={isSingleDay ? 'Next day' : 'Next period'}
+              onClick={() => (isSingleDay ? setRange((r) => ({ from: r.from.add(1, 'day'), to: r.from.add(1, 'day') })) : shiftRange(1))}
+              size="small"
+            >
+              <ChevronRight />
+            </IconButton>
           </CardContent>
         </Card>
 
@@ -230,81 +318,85 @@ export default function RoutingAnalyticsPage() {
           </Alert>
         )}
 
+        {!isSingleDay && (
+          <Card sx={{ mb: 3 }}>
+            <CardHeader
+              title="Routing requests by day"
+              subheader="Overall or filter by user to see one user."
+            />
+            <CardContent>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2, mb: 2 }}>
+                <FormControl size="small" sx={{ minWidth: 280 }}>
+                  <InputLabel id="routing-user-label">User</InputLabel>
+                  <Select
+                    labelId="routing-user-label"
+                    value={selectedUserEmail}
+                    label="User"
+                    onChange={(e) => setSelectedUserEmail(e.target.value)}
+                  >
+                    {userOptions.map((opt) => (
+                      <MenuItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Box>
+              {loading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                  <CircularProgress />
+                </Box>
+              ) : (
+                <Box sx={{ width: '100%', height: 360 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                      data={chartDataWithTrend}
+                      margin={{ top: 8, right: 24, left: 8, bottom: 8 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                      <YAxis
+                        label={{ value: 'Requests', angle: -90, position: 'insideLeft' }}
+                        tick={{ fontSize: 11 }}
+                        allowDecimals={false}
+                      />
+                      <Tooltip
+                        formatter={(value: unknown, name: unknown) => [
+                          value != null ? `${Number(value).toFixed(1)} requests` : '0',
+                          (name ?? '') === 'trend' ? 'Trend' : 'Requests',
+                        ]}
+                        labelFormatter={(label) => String(label)}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="requestCount"
+                        stroke="#1976d2"
+                        strokeWidth={2}
+                        dot={{ r: 3 }}
+                        name="Requests"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="trend"
+                        stroke="#1976d2"
+                        strokeWidth={1.5}
+                        strokeDasharray="5 5"
+                        dot={false}
+                        name="Trend"
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         <Card sx={{ mb: 3 }}>
           <CardHeader
-            title="Routing requests by day"
-            subheader="Filter by user to see one user or view all users combined."
+            title="Usage by user"
+            subheader={isSingleDay ? 'Routing requests per user for the selected day.' : 'Total routing requests per user in the selected date range.'}
           />
-          <CardContent>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2, mb: 2 }}>
-              <FormControl size="small" sx={{ minWidth: 280 }}>
-                <InputLabel id="routing-user-label">User</InputLabel>
-                <Select
-                  labelId="routing-user-label"
-                  value={selectedUserEmail}
-                  label="User"
-                  onChange={(e) => setSelectedUserEmail(e.target.value)}
-                >
-                  {userOptions.map((opt) => (
-                    <MenuItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Box>
-
-            {loading ? (
-              <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-                <CircularProgress />
-              </Box>
-            ) : (
-              <Box sx={{ width: '100%', height: 360 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart
-                    data={chartDataWithTrend}
-                    margin={{ top: 8, right: 24, left: 8, bottom: 8 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                    <YAxis
-                      label={{ value: 'Requests', angle: -90, position: 'insideLeft' }}
-                      tick={{ fontSize: 11 }}
-                      allowDecimals={false}
-                    />
-                    <Tooltip
-                      formatter={(value: number | undefined, name: string | undefined) => [
-                        value != null ? `${Number(value).toFixed(1)} requests` : '0',
-                        (name ?? '') === 'trend' ? 'Trend' : 'Requests',
-                      ]}
-                      labelFormatter={(label) => String(label)}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="requestCount"
-                      stroke="#1976d2"
-                      strokeWidth={2}
-                      dot={{ r: 3 }}
-                      name="Requests"
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="trend"
-                      stroke="#1976d2"
-                      strokeWidth={1.5}
-                      strokeDasharray="5 5"
-                      dot={false}
-                      name="Trend"
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </Box>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader title="Usage by user" subheader="Total routing requests per user in the selected date range." />
           <CardContent>
             {loading ? (
               <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
@@ -328,8 +420,141 @@ export default function RoutingAnalyticsPage() {
                       </TableRow>
                     ) : (
                       usersSorted.map((u) => (
-                        <TableRow key={u.userEmail}>
+                        <TableRow
+                          key={u.userEmail}
+                          onClick={() => !isSingleDay && setSelectedUserEmail(u.userEmail)}
+                          sx={!isSingleDay ? { cursor: 'pointer' } : undefined}
+                        >
                           <TableCell>{displayName(u)}</TableCell>
+                          <TableCell align="right">{u.totalRequests ?? 0}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </CardContent>
+        </Card>
+
+        <Typography variant="h6" sx={{ mt: 4, mb: 2 }}>
+          Schedule Loader Usage
+        </Typography>
+
+        {fillDayError && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {fillDayError}
+          </Alert>
+        )}
+
+        {!isSingleDay && (
+          <Card sx={{ mb: 3 }}>
+            <CardHeader
+              title="Schedule Loader requests by day"
+              subheader="Overall or filter by user to see one user."
+            />
+            <CardContent>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2, mb: 2 }}>
+                <FormControl size="small" sx={{ minWidth: 280 }}>
+                  <InputLabel id="fill-day-user-label">User</InputLabel>
+                  <Select
+                    labelId="fill-day-user-label"
+                    value={selectedFillDayUserEmail}
+                    label="User"
+                    onChange={(e) => setSelectedFillDayUserEmail(e.target.value)}
+                  >
+                    {fillDayUserOptions.map((opt) => (
+                      <MenuItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Box>
+              {loading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                  <CircularProgress />
+                </Box>
+              ) : (
+                <Box sx={{ width: '100%', height: 360 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                      data={fillDayChartDataWithTrend}
+                      margin={{ top: 8, right: 24, left: 8, bottom: 8 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                      <YAxis
+                        label={{ value: 'Requests', angle: -90, position: 'insideLeft' }}
+                        tick={{ fontSize: 11 }}
+                        allowDecimals={false}
+                      />
+                      <Tooltip
+                        formatter={(value: unknown, name: unknown) => [
+                          value != null ? `${Number(value).toFixed(1)} requests` : '0',
+                          (name ?? '') === 'trend' ? 'Trend' : 'Requests',
+                        ]}
+                        labelFormatter={(label) => String(label)}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="requestCount"
+                        stroke="#2e7d32"
+                        strokeWidth={2}
+                        dot={{ r: 3 }}
+                        name="Requests"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="trend"
+                        stroke="#2e7d32"
+                        strokeWidth={1.5}
+                        strokeDasharray="5 5"
+                        dot={false}
+                        name="Trend"
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        <Card>
+          <CardHeader
+            title="Usage by user"
+            subheader={isSingleDay ? 'Schedule loader (fill-day) requests per user for the selected day.' : 'Total schedule loader (fill-day) requests per user in the selected date range.'}
+          />
+          <CardContent>
+            {loading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                <CircularProgress />
+              </Box>
+            ) : (
+              <TableContainer component={Paper} variant="outlined">
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Name</TableCell>
+                      <TableCell align="right">Total requests</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {fillDayUsersSorted.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={2} align="center">
+                          No usage data in this range.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      fillDayUsersSorted.map((u) => (
+                        <TableRow
+                          key={u.userEmail}
+                          onClick={() => !isSingleDay && setSelectedFillDayUserEmail(u.userEmail)}
+                          sx={!isSingleDay ? { cursor: 'pointer' } : undefined}
+                        >
+                          <TableCell>{displayNameFillDay(u)}</TableCell>
                           <TableCell align="right">{u.totalRequests ?? 0}</TableCell>
                         </TableRow>
                       ))

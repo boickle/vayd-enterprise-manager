@@ -3,6 +3,8 @@ import { FormEvent, useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { http } from '../api/http';
 
+const REQUEST_APPOINTMENT_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
+
 type Screen = 'form' | 'status';
 
 export default function CreateClientUser() {
@@ -15,6 +17,15 @@ export default function CreateClientUser() {
 
   // Persist the email used so we can reference it on the status page.
   const [submittedEmail, setSubmittedEmail] = useState<string>('');
+
+  // Page title: wireframe specifies "Become a One-Team Member"
+  useEffect(() => {
+    const prev = document.title;
+    document.title = 'Become a One-Team Member';
+    return () => {
+      document.title = prev;
+    };
+  }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -56,7 +67,135 @@ export default function CreateClientUser() {
     }
   }, [screen]);
 
-  // Style definitions
+  // Style definitions — wireframe: container 900–1100px, cards equal width, 24–32px padding
+  const pageLayoutStyle: CSSProperties = {
+    maxWidth: 1100,
+    margin: '0 auto',
+    padding: 'min(4vh, 40px) min(4vw, 32px) min(4vh, 40px)',
+    background: 'radial-gradient(1000px 600px at 20% -10%, #ecfff8 0%, transparent 60%), #f6fbf9',
+    minHeight: '100vh',
+    width: '100%',
+    boxSizing: 'border-box',
+  };
+
+  const headingStyle: CSSProperties = {
+    margin: '16px 0 0 0',
+    fontFamily: '"Libre Baskerville", Georgia, serif',
+    fontSize: 'clamp(22px, 2.8vw, 36px)',
+    lineHeight: 1.2,
+    color: '#0f172a',
+    textAlign: 'center',
+  };
+
+  const subheadStyle: CSSProperties = {
+    marginTop: 16,
+    fontSize: 'clamp(16px, 1.8vw, 20px)',
+    lineHeight: 1.5,
+    color: '#1f2937',
+    textAlign: 'center',
+    maxWidth: 640,
+    marginLeft: 'auto',
+    marginRight: 'auto',
+  };
+
+  const microTextStyle: CSSProperties = {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#64748b',
+    textAlign: 'center',
+    fontStyle: 'italic',
+  };
+
+  const cardStyle: CSSProperties = {
+    padding: '28px 28px 32px',
+    background: '#fff',
+    borderRadius: 8,
+    border: '1px solid #e2e8f0',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 20,
+  };
+
+  const cardTitleStyle: CSSProperties = {
+    fontSize: 18,
+    fontWeight: 700,
+    color: '#0f172a',
+    margin: '0 0 4px 0',
+  };
+
+  const cardBodyStyle: CSSProperties = {
+    fontSize: 16,
+    lineHeight: 1.5,
+    color: '#334155',
+    margin: 0,
+  };
+
+  const inputStyle: CSSProperties = {
+    width: '100%',
+    boxSizing: 'border-box',
+    border: '1px solid #0f172a',
+    borderRadius: 2,
+    padding: '14px 18px',
+    fontSize: 18,
+    fontFamily: '"Open Sans", system-ui, sans-serif',
+    backgroundColor: '#fff',
+    minHeight: 48,
+    // Prevent zoom on focus on iOS (font-size >= 16px)
+  };
+
+  const primaryButtonStyle: CSSProperties = {
+    width: '100%',
+    background: '#4FB128',
+    color: '#fff',
+    borderRadius: 999,
+    padding: '14px 24px',
+    fontSize: 18,
+    fontWeight: 700,
+    border: 'none',
+    cursor: pending ? 'progress' : 'pointer',
+    boxShadow: '0 10px 25px -15px rgba(79, 177, 40, 0.5)',
+    textAlign: 'center',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    textDecoration: 'none',
+    minHeight: 48,
+    boxSizing: 'border-box',
+  };
+
+  const secondaryButtonStyle: CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    borderRadius: 999,
+    border: '2px solid #cbd5e1',
+    background: '#ffffff',
+    color: '#475569',
+    fontWeight: 600,
+    fontSize: 16,
+    padding: '12px 24px',
+    cursor: 'pointer',
+    textDecoration: 'none',
+  };
+
+  const logoContainerStyle: CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    marginBottom: 8,
+  };
+
+  const logoStyle: CSSProperties = {
+    width: 'min(280px, 50vw)',
+    maxWidth: 320,
+    height: 'auto',
+    mixBlendMode: 'multiply',
+    objectFit: 'contain',
+  };
+
+  // Status screen layout (reused)
   const layoutStyle: CSSProperties = {
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1.1fr) minmax(0, 1fr)',
@@ -64,16 +203,6 @@ export default function CreateClientUser() {
     gap: 0,
     padding: 'min(4vh, 40px) min(8vw, 96px) min(4vh, 40px)',
     background: 'radial-gradient(1000px 600px at 20% -10%, #ecfff8 0%, transparent 60%), #f6fbf9',
-  };
-
-  const headingStyle: CSSProperties = {
-    margin: '16px 0 0 0',
-    fontFamily: '"Libre Baskerville", Georgia, serif',
-    fontSize: 'clamp(20px, 2.8vw, 36px)',
-    lineHeight: 1.08,
-    color: '#0f172a',
-    textAlign: 'center',
-    width: '80%',
   };
 
   const introStyle: CSSProperties = {
@@ -94,193 +223,186 @@ export default function CreateClientUser() {
     marginTop: '24px',
   };
 
-  const labelStyle: CSSProperties = {
-    fontSize: 20,
-    fontWeight: 600,
-    marginBottom: 10,
-  };
-
-  const inputStyle: CSSProperties = {
-    width: '100%',
-    border: '1px solid #0f172a',
-    borderRadius: 2,
-    padding: '18px 20px',
-    fontSize: 20,
-    fontStyle: 'italic',
-    fontFamily: '"Open Sans", system-ui, sans-serif',
-    backgroundColor: '#fff',
-  };
-
-  const submitButtonStyle: CSSProperties = {
-    width: '100%',
-    background: '#4FB128',
-    color: '#fff',
-    borderRadius: 999,
-    padding: '14px 24px',
-    fontSize: 24,
-    fontWeight: 700,
-    border: 'none',
-    cursor: pending ? 'progress' : 'pointer',
-    boxShadow: '0 10px 25px -15px rgba(79, 177, 40, 0.5)',
-    textAlign: 'center',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  };
-
-  const secondaryButtonStyle: CSSProperties = {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    borderRadius: 999,
-    border: '2px solid #4FB128',
-    background: '#ffffff',
-    color: '#4FB128',
-    fontWeight: 700,
-    fontSize: 24,
-    padding: '12px 32px',
-    cursor: 'pointer',
-    textDecoration: 'none',
-  };
-
-  const logoContainerStyle: CSSProperties = {
-    gridColumn: '1 / -1',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: '0',
-    paddingBottom: '0',
-  };
-
-  const logoStyle: CSSProperties = {
-    width: 'min(320px, 60vw)',
-    maxWidth: 360,
-    height: 'auto',
-    mixBlendMode: 'multiply',
-    objectFit: 'contain',
-  };
-
   const responsiveStyles = `
-    .create-client-page .auth-hero {
+    .create-client-page {
       display: flex;
       flex-direction: column;
-      gap: 32px;
-      margin-top: 0 !important;
-      padding-top: 0 !important;
+      align-items: stretch;
     }
-    .create-client-page .auth-hero > div:first-child {
-      margin-top: 24px !important;
+    .create-client-page .member-cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-top: 32px;
     }
-    .create-client-page .auth-panel form {
-      width: 100%;
+    /* Mobile/tablet: stack cards (inline style would override, so all grid props in CSS) */
+    .create-client-page .member-signin {
+      margin-top: 32px;
+      text-align: center;
     }
-    .create-client-page button[type="submit"],
-    .create-client-page .auth-panel a {
-      transition: background-color 0.2s ease, color 0.2s ease, border 0.2s ease !important;
+    .create-client-page .primary-btn-link:hover {
+      background: #3d8f1f !important;
+      color: #fff !important;
     }
     .create-client-page button[type="submit"]:hover:not(:disabled) {
-      background: #ffffff !important;
-      color: #4FB128 !important;
-      border: 2px solid #4FB128 !important;
+      background: #3d8f1f !important;
+      color: #fff !important;
     }
-    .create-client-page .auth-panel a:hover {
-      background: #4FB128 !important;
-      color: #ffffff !important;
-      border: 2px solid #4FB128 !important;
-    }
-    @media (max-width: 1024px) {
+    /* Tablet: stack cards */
+    @media (max-width: 900px) {
       .create-client-page {
+        padding: 24px 20px 32px !important;
+      }
+      .create-client-page .member-cards {
         grid-template-columns: 1fr !important;
-        padding: 40px 56px 40px !important;
-        gap: 48px !important;
-        text-align: center;
+        gap: 20px;
+        margin-top: 24px;
       }
-      .create-client-page .auth-hero {
-        align-items: center;
-        max-width: 100%;
-        width: 100%;
-        margin-top: 0 !important;
-        padding-top: 0 !important;
+      .create-client-page .member-signin {
+        margin-top: 28px;
       }
-      .create-client-page .auth-hero > div:first-child {
-        margin-top: 24px !important;
+      .create-client-page .member-card {
+        padding: 22px 20px 26px !important;
       }
-      .create-client-page .auth-hero h1 {
-        padding-top: 50px !important;
+      .create-client-page .member-branding {
+        padding: 14px 16px !important;
+        margin-top: 20px !important;
       }
-      .create-client-page .auth-logo {
-        margin-bottom: 0 !important;
-        padding-bottom: 0 !important;
+      .create-client-page .member-branding .member-branding-title {
+        font-size: 15px !important;
       }
-      .create-client-page .auth-logo img {
-        width: min(280px, 50vw) !important;
-        max-width: 320px !important;
+      .create-client-page .member-branding .member-branding-desc {
+        font-size: 14px !important;
       }
-      .create-client-page .auth-logo h1,
-      .create-client-page .auth-logo p {
-        text-align: center !important;
+    }
+    /* Mobile */
+    @media (max-width: 480px) {
+      .create-client-page {
+        padding: 16px 16px 28px !important;
       }
-      .create-client-page .auth-panel {
-        margin-left: 0 !important;
-        margin-right: 0 !important;
-        margin: 0 auto !important;
-        width: min(480px, 100%) !important;
-        max-width: 480px;
+      .create-client-page .create-client-header {
+        padding: 0 4px;
       }
+      .create-client-page .create-client-header h1 {
+        font-size: clamp(20px, 5.5vw, 28px) !important;
+        line-height: 1.25 !important;
+        margin-top: 12px !important;
+      }
+      .create-client-page .create-client-header .create-client-subhead {
+        font-size: 15px !important;
+        margin-top: 12px !important;
+      }
+      .create-client-page .create-client-header .create-client-micro {
+        font-size: 12px !important;
+        margin-top: 6px !important;
+        line-height: 1.4 !important;
+      }
+      .create-client-page .create-client-logo img {
+        width: min(200px, 55vw) !important;
+        max-width: 240px !important;
+      }
+      .create-client-page .member-cards {
+        gap: 16px;
+        margin-top: 20px;
+      }
+      .create-client-page .member-card {
+        padding: 20px 16px 24px !important;
+        gap: 16px !important;
+      }
+      .create-client-page .member-card h2 {
+        font-size: 17px !important;
+      }
+      .create-client-page .member-card p {
+        font-size: 15px !important;
+        line-height: 1.5 !important;
+      }
+      .create-client-page .member-branding {
+        padding: 12px 14px !important;
+        margin-top: 16px !important;
+      }
+      .create-client-page .member-branding .member-branding-title {
+        font-size: 14px !important;
+      }
+      .create-client-page .member-branding .member-branding-desc {
+        font-size: 13px !important;
+      }
+      .create-client-page .member-signin {
+        margin-top: 24px;
+      }
+      .create-client-page .member-signin p {
+        font-size: 15px !important;
+      }
+      .create-client-page button[type="submit"],
+      .create-client-page .primary-btn-link {
+        min-height: 48px !important;
+        padding: 14px 20px !important;
+        font-size: 17px !important;
+      }
+      .create-client-page .member-signin a {
+        min-height: 48px !important;
+        padding: 14px 24px !important;
+        font-size: 16px !important;
+      }
+    }
+    /* Status screen (check your email) mobile */
+    .create-client-page.create-client-status {
+      display: grid !important;
     }
     @media (max-width: 768px) {
-      .create-client-page {
-        padding: 32px 24px 32px !important;
-        gap: 40px !important;
+      .create-client-page.create-client-status {
+        grid-template-columns: 1fr !important;
+        padding: 24px 20px 32px !important;
+        gap: 24px !important;
+        text-align: center !important;
       }
-      .create-client-page .auth-hero {
+      .create-client-page.create-client-status .auth-logo {
+        order: 1;
+      }
+      .create-client-page.create-client-status .auth-hero {
+        order: 2;
         align-items: center;
-        width: 100%;
       }
-      .create-client-page .auth-hero h1 {
-        padding-top: 50px !important;
+      .create-client-page.create-client-status .auth-hero h1,
+      .create-client-page.create-client-status .auth-hero p {
+        text-align: center !important;
       }
-      .create-client-page .auth-panel {
-        width: min(420px, 100%) !important;
-        max-width: 420px;
+      .create-client-page.create-client-status .auth-panel {
+        order: 3;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
       }
-      .create-client-page .auth-logo {
-        margin-bottom: 0 !important;
-        padding-bottom: 0 !important;
-      }
-      .create-client-page .auth-logo img {
-        width: min(240px, 45vw) !important;
-        max-width: 280px !important;
+      .create-client-page.create-client-status .auth-panel a,
+      .create-client-page.create-client-status .auth-panel button {
+        min-height: 48px !important;
       }
     }
     @media (max-width: 480px) {
-      .create-client-page {
-        padding: 24px 16px 32px !important;
-        gap: 32px !important;
+      .create-client-page.create-client-status {
+        padding: 16px 16px 28px !important;
+        gap: 20px !important;
       }
-      .create-client-page .auth-hero h1 {
-        padding-top: 50px !important;
+      .create-client-page.create-client-status .auth-logo img {
+        width: min(180px, 50vw) !important;
       }
-      .create-client-page .auth-panel {
-        width: 100% !important;
-        max-width: 100%;
+      .create-client-page.create-client-status .auth-hero p {
+        font-size: 16px !important;
       }
-      .create-client-page .auth-logo {
-        margin-bottom: 0 !important;
-        padding-bottom: 0 !important;
+      .create-client-page.create-client-status .auth-panel h3 {
+        font-size: 18px !important;
       }
-      .create-client-page .auth-logo img {
-        width: min(200px, 40vw) !important;
-        max-width: 240px !important;
+      .create-client-page.create-client-status .auth-panel ol,
+      .create-client-page.create-client-status .auth-panel ul {
+        font-size: 15px !important;
+        padding-left: 20px !important;
       }
     }
   `;
 
   if (screen === 'status') {
     return (
-      <div className="create-client-page" style={layoutStyle}>
+      <div className="create-client-page create-client-status" style={layoutStyle}>
         <style>{responsiveStyles}</style>
         <div className="auth-logo" style={logoContainerStyle}>
           <img
@@ -326,7 +448,7 @@ export default function CreateClientUser() {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <Link to="/login" style={submitButtonStyle}>
+            <Link to="/login" style={primaryButtonStyle}>
               Go to Sign In
             </Link>
             <button
@@ -344,101 +466,133 @@ export default function CreateClientUser() {
     );
   }
 
-  // Default: form screen
+  // Default: form screen — wireframe: two equal-weight cards, then Sign In (secondary)
   return (
-    <div className="create-client-page" style={layoutStyle}>
+    <div className="create-client-page" style={pageLayoutStyle}>
       <style>{responsiveStyles}</style>
-      <div className="auth-logo" style={logoContainerStyle}>
-        <img
-          style={logoStyle}
-          src="/final_thick_lines_cropped.jpeg"
-          alt="Vet At Your Door logo"
-        />
-        <h1 style={headingStyle}>
-          <span style={{ display: 'block', marginBottom: '8px' }}>First Step:</span>
-          Create your Client Portal Account.
-        </h1>
-        <hr style={{ width: '80%', border: 'none', borderTop: '1px solid #0f172a', margin: '24px 0 0 0' }} />
-      </div>
-      <section className="auth-hero" style={{ marginTop: '0', paddingTop: '0' }}>
-        <div style={{ ...introStyle, fontSize: 'clamp(16px, 1.8vw, 22px)', marginTop: '24px' }}>
-          <p style={{ margin: '0 0 0 0' }}>
-            <strong>For current Vet At Your Door clients only</strong>
-          </p>
-          <p style={{ margin: '0 0 8px 0', fontStyle: 'italic' }}>
-            (Those with past visits or upcoming appointments.)
-          </p>
-          <p style={{ margin: '0 0 16px 0' }}>
-            Enter the email we have on file and we&apos;ll send you a secure setup link to access your pet&apos;s information and membership options. The rest is easy.
-          </p>
-          <p style={{ margin: '0 0 20px 0' }}>
-            <a 
-              href="https://www.vetatyourdoor.com/memberships" 
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: '#052940', textDecoration: 'underline', cursor: 'pointer' }}
-            >
-              Explore Memberships
-            </a>
-          </p>
-          <p style={{ margin: '0 0 0px 0' }}>
-            <strong>New to Vet At Your Door?</strong>
-          </p>
-          <p style={{ margin: '0 0 4px 0' }}>
-            After your first appointment is booked, you&apos;ll be invited to create your Client Portal account and join a membership.
-          </p>
-          <p style={{ margin: 0 }}>
-            <a 
-              href={import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment'} 
-              style={{ color: '#052940', textDecoration: 'underline', cursor: 'pointer' }}
-            >
-              Request your first appointment here.
-            </a>
-          </p>
-        </div>
-      </section>
 
-      <section className="auth-panel" style={panelStyle}>
-        <div>
-          <div style={labelStyle}>Enter your email to get started</div>
+      <header className="create-client-header" style={{ textAlign: 'center' }}>
+        <div className="create-client-logo" style={logoContainerStyle}>
+          <img
+            style={logoStyle}
+            src="/final_thick_lines_cropped.jpeg"
+            alt="Vet At Your Door logo"
+          />
+        </div>
+        <h1 style={headingStyle}>Become a One-Team Member</h1>
+        <p className="create-client-subhead" style={subheadStyle}>
+          There are two ways to get started depending on whether you are already a Vet At Your Door client.
+        </p>
+        <p className="create-client-micro" style={microTextStyle}>
+          Current client = past visit or scheduled appointment · New client = request first appointment
+        </p>
+
+        {/* Optional micro branding — One-Team Membership context */}
+        <div
+          className="member-branding"
+          style={{
+            marginTop: 24,
+            padding: '16px 20px',
+            background: 'rgba(79, 177, 40, 0.08)',
+            borderRadius: 8,
+            border: '1px solid rgba(79, 177, 40, 0.2)',
+            maxWidth: 560,
+            marginLeft: 'auto',
+            marginRight: 'auto',
+          }}
+        >
+          <div className="member-branding-title" style={{ fontWeight: 700, color: '#0f172a', marginBottom: 6 }}>One-Team Membership</div>
+          <div className="member-branding-desc" style={{ fontSize: 15, lineHeight: 1.5, color: '#334155' }}>
+            Relationship-based veterinary care from a dedicated veterinarian, technician, and client liaison who know your pet over time.
+          </div>
+        </div>
+      </header>
+
+      <div className="member-cards">
+        {/* Current Clients card */}
+        <section className="member-card" style={cardStyle} aria-labelledby="current-clients-title">
+          <h2 id="current-clients-title" style={cardTitleStyle}>Current Clients</h2>
+          <p style={cardBodyStyle}>
+            Already a Vet At Your Door client? (Past visit or upcoming appointment.)
+          </p>
+          <p style={cardBodyStyle}>
+            Enter the email we have on file and we&apos;ll send a secure link to create your Client Portal account and enroll in the One-Team Membership.
+          </p>
           <form
             onSubmit={onSubmit}
             style={{ display: 'flex', flexDirection: 'column', gap: 16 }}
             aria-label="Create account form"
           >
-            <div style={{ width: '100%' }}>
-              <input
-                style={inputStyle}
-                className="input"
-                placeholder="Email"
-                aria-label="Email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoComplete="email"
-                inputMode="email"
-              />
-            </div>
+            <input
+              style={inputStyle}
+              className="input"
+              placeholder="Email"
+              aria-label="Email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoComplete="email"
+              inputMode="email"
+            />
             {error && (
-              <div className="danger" style={{ textAlign: 'center' }}>
+              <div className="danger" style={{ textAlign: 'center', fontSize: 14 }}>
                 {error}
               </div>
             )}
-            <button style={submitButtonStyle} type="submit" disabled={pending}>
-              {pending ? 'Submitting…' : 'Send Setup Link'}
+            <button style={primaryButtonStyle} type="submit" disabled={pending}>
+              {pending ? 'Submitting…' : 'Send My Portal Link'}
             </button>
           </form>
-        </div>
+          <div>
+            <a
+              href="https://www.vetatyourdoor.com/memberships"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#4FB128', fontWeight: 600, textDecoration: 'underline' }}
+            >
+              Explore One-Team Membership
+            </a>
+          </div>
+        </section>
 
-        <div style={{ fontSize: 20, lineHeight: 1.4, marginTop: '42px' }}>
-          <div>Already have an account? Sign in to access your portal:</div>
-        </div>
+        {/* New Clients card */}
+        <section className="member-card" style={cardStyle} aria-labelledby="new-clients-title">
+          <h2 id="new-clients-title" style={cardTitleStyle}>New to Vet At Your Door?</h2>
+          <p style={cardBodyStyle}>
+            To become a One-Team Member, please request your first appointment. Once scheduled, you may be invited to sign up for membership during the appointment request process, or afterward once we review your pet&apos;s history and records.
+          </p>
+          {REQUEST_APPOINTMENT_URL.startsWith('http') ? (
+            <a
+              href={REQUEST_APPOINTMENT_URL}
+              style={primaryButtonStyle}
+              className="primary-btn-link"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Request Your First Appointment
+            </a>
+          ) : (
+            <Link
+              to={REQUEST_APPOINTMENT_URL}
+              style={primaryButtonStyle}
+              className="primary-btn-link"
+            >
+              Request Your First Appointment
+            </Link>
+          )}
+        </section>
+      </div>
 
-        <Link to="/login" style={{ ...secondaryButtonStyle, marginTop: '-20px' }}>
+      {/* Portal Login — visually secondary */}
+      <div className="member-signin" style={{ marginTop: 32, textAlign: 'center' }}>
+        <p style={{ fontSize: 16, color: '#475569', marginBottom: 12 }}>
+          Already have a Client Portal account?
+        </p>
+        <Link to="/login" style={secondaryButtonStyle}>
           Sign In
         </Link>
-      </section>
+      </div>
     </div>
   );
 }

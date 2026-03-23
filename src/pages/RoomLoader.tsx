@@ -19,6 +19,7 @@ import {
   type SearchableItem,
 } from '../api/roomLoader';
 import { http } from '../api/http';
+import { Heart } from 'lucide-react';
 import { KeyValue } from '../components/KeyValue';
 import { evetPatientLink, evetClientLink } from '../utils/evet';
 import './RoomLoader.css';
@@ -94,6 +95,29 @@ function itemContains(item: SearchableItem, substring: string): boolean {
   return text.includes(substring.toLowerCase());
 }
 
+const DEFAULT_RECEPTION_EMAIL = (import.meta.env.VITE_DEFAULT_RECEPTION_EMAIL || '').trim().toLowerCase();
+
+/** True if client has no effective email (null, empty, or equals default reception email). */
+function isNoEffectiveEmail(email: string | null | undefined): boolean {
+  if (email == null) return true;
+  if (typeof email !== 'string') return true;
+  const trimmed = email.trim();
+  if (trimmed === '') return true;
+  if (DEFAULT_RECEPTION_EMAIL && trimmed.toLowerCase() === DEFAULT_RECEPTION_EMAIL) return true;
+  return false;
+}
+
+/** True if email equals the default reception email (used for distinct messaging). */
+function isReceptionEmail(email: string | null | undefined): boolean {
+  if (email == null || typeof email !== 'string') return false;
+  if (!DEFAULT_RECEPTION_EMAIL) return false;
+  return email.trim().toLowerCase() === DEFAULT_RECEPTION_EMAIL;
+}
+
+function hasEffectivePhone(phone: string | null | undefined): boolean {
+  return typeof phone === 'string' && phone.trim().length > 0;
+}
+
 export default function RoomLoaderPage() {
   const [roomLoaders, setRoomLoaders] = useState<RoomLoader[]>([]);
   const [loading, setLoading] = useState(false);
@@ -107,7 +131,7 @@ export default function RoomLoaderPage() {
   // Search filter for table (doctor or client name)
   const [tableSearch, setTableSearch] = useState<string>('');
   // Store answers to questions for each pet
-  const [petAnswers, setPetAnswers] = useState<Record<number, { mobility: boolean | null; labWork: boolean | null }>>({});
+  const [petAnswers, setPetAnswers] = useState<Record<number, { mobility: boolean | null; labWork: boolean | null; preMedsAsk: boolean }>>({});
   // Store added items for each pet (items added via search)
   const [addedItems, setAddedItems] = useState<Record<number, SearchableItem[]>>({});
   // Store removed reminder IDs (reminders that have been removed by the user)
@@ -116,8 +140,8 @@ export default function RoomLoaderPage() {
   const [confirmedMatchReminders, setConfirmedMatchReminders] = useState<Set<number>>(new Set());
   // Confirmation modal state for removing reminders
   const [reminderToRemove, setReminderToRemove] = useState<{ id: number; description: string } | null>(null);
-  // Confirmation modal for Send to Client / Save for Later
-  const [confirmAction, setConfirmAction] = useState<'send' | 'save' | null>(null);
+  // Confirmation modal for Send to Client / Save for Later / Update
+  const [confirmAction, setConfirmAction] = useState<'send' | 'save' | 'update' | null>(null);
   // Warnings when sending (e.g. missing visit/consult or Trip Fee); user can still confirm to send
   const [sendWarningReasons, setSendWarningReasons] = useState<string[]>([]);
   // Search state
@@ -126,11 +150,29 @@ export default function RoomLoaderPage() {
   const [searchLoading, setSearchLoading] = useState<Record<number, boolean>>({});
   /** Room loader ID currently downloading PDF (for loading state on button). */
   const [downloadingPdfRoomLoaderId, setDownloadingPdfRoomLoaderId] = useState<number | null>(null);
+  /** True when Update (save without email) request is in progress. */
+  const [updatingToClient, setUpdatingToClient] = useState(false);
+  /** Send-to-client confirmation modal: email vs SMS when re-sending (timesSent >= 1) */
+  const [confirmSendChannel, setConfirmSendChannel] = useState<'email' | 'sms'>('email');
+
+  /** Safe getter: API or saved form may sometimes return non-array values; always return an array for iteration. */
+  const getAddedItemsForPatient = (patientId: number): SearchableItem[] => {
+    const raw = addedItems[patientId];
+    return Array.isArray(raw) ? raw : [];
+  };
 
   // Client has already submitted this form (sentStatus === 'completed') — show read-only, grey out all fields, disable Save and Re-send
   const formSubmittedByClient = useMemo(
     () => selectedRoomLoader?.sentStatus === 'completed',
     [selectedRoomLoader?.sentStatus]
+  );
+
+  // Form has been sent to client at least once — show Update button to save data without sending email
+  const hasBeenSentToClient = useMemo(
+    () =>
+      selectedRoomLoader != null &&
+      (selectedRoomLoader.sentStatus !== 'not_sent' || (selectedRoomLoader.timesSentToClient ?? 0) > 0),
+    [selectedRoomLoader]
   );
 
   // Load room loaders
@@ -247,7 +289,8 @@ export default function RoomLoaderPage() {
           const restoredAddedItems: Record<number, SearchableItem[]> = {};
           Object.keys(savedForm.addedItems).forEach((petIdStr) => {
             const petId = Number(petIdStr);
-            restoredAddedItems[petId] = savedForm.addedItems[petId] || [];
+            const raw = savedForm.addedItems[petId];
+            restoredAddedItems[petId] = Array.isArray(raw) ? raw : [];
           });
           setAddedItems(restoredAddedItems);
         }
@@ -263,6 +306,9 @@ export default function RoomLoaderPage() {
         // Restore text fields
         if (savedForm.appointmentReasons) {
           setAppointmentReasons(savedForm.appointmentReasons);
+        }
+        if (savedForm.notesToClient != null && typeof savedForm.notesToClient === 'object') {
+          setNotesToClient(savedForm.notesToClient as Record<number, string>);
         }
         if (savedForm.arrivalWindows) {
           const merged: Record<number, string> = { ...savedForm.arrivalWindows };
@@ -335,8 +381,17 @@ export default function RoomLoaderPage() {
           const vaccines = { ...savedForm.vaccineCheckboxes } as Record<number, { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean; sharps: boolean }>;
           const reasons = { ...(savedForm.appointmentReasons || {}) } as Record<number, string>;
           const windows = { ...(savedForm.arrivalWindows || {}) } as Record<number, string>;
-          const added = hasBeenSent ? {} as Record<number, SearchableItem[]> : { ...(savedForm.addedItems || {}) } as Record<number, SearchableItem[]>;
-          const answers = { ...(savedForm.petAnswers || {}) } as Record<number, { mobility: boolean | null; labWork: boolean | null }>;
+          const added: Record<number, SearchableItem[]> = hasBeenSent ? {} : (() => {
+            const fromSaved = savedForm.addedItems || {};
+            const out: Record<number, SearchableItem[]> = {};
+            Object.keys(fromSaved).forEach((petIdStr) => {
+              const petId = Number(petIdStr);
+              const raw = fromSaved[petId];
+              out[petId] = Array.isArray(raw) ? raw : [];
+            });
+            return out;
+          })();
+          const answers = { ...(savedForm.petAnswers || {}) } as Record<number, { mobility: boolean | null; labWork: boolean | null; preMedsAsk: boolean }>;
           const addedQty = hasBeenSent ? {} as Record<string, number> : { ...(savedForm.addedItemQuantities || {}) } as Record<string, number>;
           let reminderQtyFromSent: Record<number, number> = {};
           const confirmedFromSent = new Set<number>();
@@ -398,6 +453,7 @@ export default function RoomLoaderPage() {
               answers[patientId] = {
                 mobility: sp.questions.mobility ?? null,
                 labWork: sp.questions.labWork ?? null,
+                preMedsAsk: sp.questions.preMedsAsk ?? false,
               };
             }
           });
@@ -415,9 +471,16 @@ export default function RoomLoaderPage() {
           setArrivalWindows(windows);
           setAddedItems(added);
           setPetAnswers(answers);
-          setAddedItemQuantities(addedQty);
+          // When already sent, prefer savedForm quantities so re-sends respect employee edits (e.g. quantity changes)
+          const mergedAddedQty = hasBeenSent && savedForm.addedItemQuantities
+            ? { ...addedQty, ...savedForm.addedItemQuantities }
+            : addedQty;
+          setAddedItemQuantities(mergedAddedQty);
           if (hasBeenSent) {
-            setReminderQuantities(reminderQtyFromSent);
+            const mergedReminderQty = savedForm.reminderQuantities
+              ? { ...reminderQtyFromSent, ...savedForm.reminderQuantities }
+              : reminderQtyFromSent;
+            setReminderQuantities(mergedReminderQty);
             setRemovedReminders(new Set());
             setConfirmedMatchReminders(confirmedFromSent);
           }
@@ -435,8 +498,9 @@ export default function RoomLoaderPage() {
           // Load form from what was sent to the client
           const arrivalFromSent: Record<number, string> = {};
           const reasonsFromSent: Record<number, string> = {};
-          const answersFromSent: Record<number, { mobility: boolean | null; labWork: boolean | null }> = {};
+          const answersFromSent: Record<number, { mobility: boolean | null; labWork: boolean | null; preMedsAsk: boolean }> = {};
           const vaccinesFromSent: Record<number, { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean; sharps: boolean }> = {};
+          const notesFromSent: Record<number, string> = {};
           const addedFromSent: Record<number, SearchableItem[]> = {};
           const addedQtyFromSent: Record<string, number> = {};
           const confirmedFromSent = new Set<number>();
@@ -445,6 +509,9 @@ export default function RoomLoaderPage() {
             const patientId = sp.patientId;
             if (patientId == null) return;
 
+            if (sp.notesToClient != null && typeof sp.notesToClient === 'string') {
+              notesFromSent[patientId] = sp.notesToClient;
+            }
             if (sp.arrivalWindow?.start && sp.arrivalWindow?.end) {
               const start = DateTime.fromISO(sp.arrivalWindow.start);
               const end = DateTime.fromISO(sp.arrivalWindow.end);
@@ -459,6 +526,7 @@ export default function RoomLoaderPage() {
               answersFromSent[patientId] = {
                 mobility: sp.questions.mobility ?? null,
                 labWork: sp.questions.labWork ?? null,
+                preMedsAsk: sp.questions.preMedsAsk ?? false,
               };
             }
             if (sp.vaccines) {
@@ -502,6 +570,7 @@ export default function RoomLoaderPage() {
           setAppointmentReasons(reasonsFromSent);
           setPetAnswers(answersFromSent);
           setVaccineCheckboxes(vaccinesFromSent);
+          setNotesToClient(notesFromSent);
           setReminderQuantities(reminderQtyFromSent);
           setAddedItems(addedFromSent);
           setAddedItemQuantities(addedQtyFromSent);
@@ -509,7 +578,7 @@ export default function RoomLoaderPage() {
         } else {
           // New submission: no sent data — leave Reason for Appointment unfilled (required); initialize answers per patient
           const initialReasons: Record<number, string> = {};
-          const initialAnswers: Record<number, { mobility: boolean | null; labWork: boolean | null }> = {};
+          const initialAnswers: Record<number, { mobility: boolean | null; labWork: boolean | null; preMedsAsk: boolean }> = {};
           (data?.appointments || []).forEach((appt: any) => {
             const patientId = appt.patient?.id;
             if (patientId == null) return;
@@ -517,12 +586,12 @@ export default function RoomLoaderPage() {
               initialReasons[patientId] = '';
             }
             if (initialAnswers[patientId] == null) {
-              initialAnswers[patientId] = { mobility: null, labWork: null };
+              initialAnswers[patientId] = { mobility: null, labWork: null, preMedsAsk: false };
             }
           });
           (data?.patients || []).forEach((p: any) => {
             if (p?.id != null && initialAnswers[p.id] == null) {
-              initialAnswers[p.id] = { mobility: null, labWork: null };
+              initialAnswers[p.id] = { mobility: null, labWork: null, preMedsAsk: false };
             }
             if (p?.id != null && initialReasons[p.id] == null) {
               initialReasons[p.id] = '';
@@ -646,6 +715,10 @@ export default function RoomLoaderPage() {
       clientHasNoEmail: boolean;
       /** Token for public PDF URL when completed */
       token?: string | null;
+      /** True if any patient in this room loader is a care plan member */
+      hasMemberPatient: boolean;
+      /** Membership plan name(s) when hasMemberPatient is true */
+      membershipNames: string[];
     }> = [];
 
     roomLoaders.forEach((rl) => {
@@ -745,20 +818,25 @@ export default function RoomLoaderPage() {
         clientName = `${client.firstName || ''} ${client.lastName || ''}`.trim() || 'Unknown Client';
       }
 
-      // True if any client in this room loader has no email (so we can grey the row and block send)
+      // True if any client in this room loader has no effective email (null, empty, or default reception) — grey row and block send
       let clientHasNoEmail = false;
       rl.appointments.forEach((apt) => {
-        if (apt.client) {
-          const e = apt.client.email;
-          if (e == null || (typeof e === 'string' && e.trim() === '')) clientHasNoEmail = true;
-        }
+        if (apt.client && isNoEffectiveEmail(apt.client.email)) clientHasNoEmail = true;
       });
       rl.patients.forEach((p) => {
         (p.clients || []).forEach((c: any) => {
-          const e = c.email;
-          if (e == null || (typeof e === 'string' && e.trim() === '')) clientHasNoEmail = true;
+          if (isNoEffectiveEmail(c.email)) clientHasNoEmail = true;
         });
       });
+
+      const hasMemberPatient = rl.patients?.some((p) => p.isMember === true) ?? false;
+      const membershipNames = Array.from(
+        new Set(
+          (rl.patients ?? [])
+            .filter((p) => p.isMember === true)
+            .map((p) => (p.membershipName?.trim() || null) ?? 'Membership')
+        )
+      );
 
       rows.push({
         roomLoaderId: rl.id,
@@ -774,6 +852,8 @@ export default function RoomLoaderPage() {
         roomLoader: rl,
         clientHasNoEmail,
         token: rl.token ?? null,
+        hasMemberPatient,
+        membershipNames,
       });
     });
 
@@ -838,6 +918,7 @@ export default function RoomLoaderPage() {
     setAddedItemQuantities({});
     setAppointmentReasons({});
     setVaccineCheckboxes({});
+    setNotesToClient({});
   }
 
   async function handleDownloadPdf(roomLoaderId: number, e: React.MouseEvent) {
@@ -1052,14 +1133,18 @@ export default function RoomLoaderPage() {
       }
     }
 
-    // If no match found, use the highest tier or base price
+    // No tier matched: use base price when quantity is below the minimum tier, otherwise highest tier for quantities above the max
     const activeBreaks = tieredPricing.priceBreaks.filter((pb: any) => pb.isActive);
     if (activeBreaks.length > 0) {
-      // Use the highest tier for quantities beyond the max
+      const minLow = Math.min(...activeBreaks.map((pb: any) => parseInt(pb.lowQuantity, 10)));
+      if (qty < minLow) {
+        return basePrice;
+      }
+      // Quantity is above the max tier; use the highest tier's price
       const highestTier = activeBreaks.reduce((max: any, pb: any) => {
-        const maxHigh = parseInt(max.highQuantity, 10);
+        const maxHighQ = parseInt(max.highQuantity, 10);
         const pbHigh = parseInt(pb.highQuantity, 10);
-        return pbHigh > maxHigh ? pb : max;
+        return pbHigh > maxHighQ ? pb : max;
       });
       return Number(highestTier.price);
     }
@@ -1216,11 +1301,13 @@ export default function RoomLoaderPage() {
   };
   // Store edited reason for appointment for each patient (keyed by patient.id)
   const [appointmentReasons, setAppointmentReasons] = useState<Record<number, string>>({});
+  /** Notes to send to client per pet (e.g. explaining items); shown at bottom of each pet section; included in each patient object in sent-to-client payload */
+  const [notesToClient, setNotesToClient] = useState<Record<number, string>>({});
   // Store edited arrival window for each patient (keyed by patient.id)
   const [arrivalWindows, setArrivalWindows] = useState<Record<number, string>>({});
   // Store checkbox states for each patient (keyed by patient.id)
   const [vaccineCheckboxes, setVaccineCheckboxes] = useState<Record<number, { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean; sharps: boolean }>>({});
-  
+
   // Loading state for sending to client
   const [sendingToClient, setSendingToClient] = useState(false);
   // Loading state for saving form
@@ -1473,18 +1560,18 @@ export default function RoomLoaderPage() {
     };
   }, [reminderCorrections, selectedRoomLoader]);
 
-  function handleAnswerChange(petId: number, question: 'mobility' | 'labWork', value: boolean) {
+  function handleAnswerChange(petId: number, question: 'mobility' | 'labWork' | 'preMedsAsk', value: boolean) {
     setPetAnswers((prev) => ({
       ...prev,
       [petId]: {
-        ...prev[petId],
+        ...(prev[petId] || { mobility: null, labWork: null, preMedsAsk: false }),
         [question]: value,
       },
     }));
     setSendValidationErrors((prev) => {
       if (!prev[petId]) return prev;
       const next = { ...prev };
-      const { [question]: _removed, ...rest } = next[petId] as { reason?: boolean; mobility?: boolean; labWork?: boolean };
+      const { [question]: _removed, ...rest } = next[petId] as { reason?: boolean; mobility?: boolean; labWork?: boolean; preMedsAsk?: boolean };
       if (Object.keys(rest).length === 0) delete next[petId];
       else next[petId] = rest;
       return next;
@@ -1606,20 +1693,21 @@ export default function RoomLoaderPage() {
       });
 
       // Get added items (include wellnessPlanPricing/discountPricing so client can surface why price is discounted)
-      const addedItemsList = (addedItems[patient.id] || []).map((item) => {
+      const addedItemsList = getAddedItemsForPatient(patient.id).map((item, itemIdx) => {
         const basePrice = item.price != null ? Number(item.price) : null;
         // Use wellnessPlanPricing.adjustedPrice only when it's a number; discountPricing.priceAdjustedByDiscount is a boolean
         const wpAdjusted = (item as any).wellnessPlanPricing?.adjustedPrice;
         const effectivePrice = (wpAdjusted != null && typeof wpAdjusted === 'number')
           ? Number(wpAdjusted)
           : basePrice;
+        const quantity = resolveQty(addedItemQuantities[`${patient.id}-${itemIdx}`]) || 1;
         const payload: any = {
           id: item.inventoryItem?.id || item.lab?.id || (item as any).procedure?.id,
           type: item.itemType,
           name: item.name,
           code: item.code,
           price: effectivePrice,
-          quantity: 1, // Added items default to quantity 1
+          quantity,
         };
         if ((item as any).wellnessPlanPricing) {
           payload.wellnessPlanPricing = (item as any).wellnessPlanPricing;
@@ -1631,7 +1719,7 @@ export default function RoomLoaderPage() {
       });
 
       // Get answers
-      const answers = petAnswers[patient.id] || { mobility: null, labWork: null };
+      const answers = petAnswers[patient.id] || { mobility: null, labWork: null, preMedsAsk: false };
 
       // Get vaccine checkboxes
       const vaccines = vaccineCheckboxes[patient.id] || { felv: true, lepto: true, lyme: true, bordatella: true, sharps: true };
@@ -1648,6 +1736,7 @@ export default function RoomLoaderPage() {
         questions: {
           mobility: answers.mobility,
           labWork: answers.labWork,
+          preMedsAsk: answers.preMedsAsk,
         },
         reminders: reminderItems,
         addedItems: addedItemsList,
@@ -1658,6 +1747,7 @@ export default function RoomLoaderPage() {
           bordatella: vaccines.bordatella,
           sharps: vaccines.sharps,
         },
+        notesToClient: (notesToClient[patient.id] ?? '')?.trim() || undefined,
       };
     });
 
@@ -1674,23 +1764,10 @@ export default function RoomLoaderPage() {
     };
   }
 
-  // Handle sending to client
-  async function handleSendToClient() {
-    if (!selectedRoomLoader) return;
+  /** Shared validation for Send to Client and follow-up (email/SMS). Returns false if validation failed (inline errors set). */
+  function runSendHardValidation(): boolean {
+    if (!selectedRoomLoader) return false;
 
-    const noEmail = petsWithAppointments.some((item) => {
-      const e = item.client?.email;
-      return e == null || (typeof e === 'string' && e.trim() === '');
-    });
-    if (noEmail) return;
-
-    // Clear previous inline validation messages so we only show current errors
-    setSendValidationErrors({});
-    setReminderValidationErrorIds(new Set());
-    setTripFeeRequiredError(false);
-    setDuplicateItemsError(null);
-
-    // Validate required fields before sending; build inline error state per patient
     const errors: Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean; arrivalWindow?: boolean }> = {};
     let hasErrors = false;
     petsWithAppointments.forEach((item) => {
@@ -1727,10 +1804,9 @@ export default function RoomLoaderPage() {
     });
     if (hasErrors) {
       setSendValidationErrors(errors);
-      return;
+      return false;
     }
 
-    // Validate reminders: every displayed reminder must have a match and be confirmed (or be removed). Visit/consult are treated as existing and allowed without match/confirm.
     const reminderErrorIds = new Set<number>();
     petsWithAppointments.forEach((item) => {
       (item.reminders || []).forEach((reminderWithPrice) => {
@@ -1741,8 +1817,182 @@ export default function RoomLoaderPage() {
         const isVisitOrConsult = reminderContains(reminderWithPrice, 'visit', 'consult');
         const isConfirmed = confirmedMatchReminders.has(reminderId);
         if (isVisitOrConsult) {
-          // Visit/consult reminders are sent as existing even without a matched item; no validation error
         } else if (!hasMatch || !isConfirmed) {
+          reminderErrorIds.add(reminderId);
+        }
+      });
+    });
+    if (reminderErrorIds.size > 0) {
+      setReminderValidationErrorIds(reminderErrorIds);
+      return false;
+    }
+
+    const hasTripFeeInAnyPet = petsWithAppointments.some((item) => {
+      const activeReminders = (item.reminders || []).filter(
+        (r) => r.reminder?.id && !removedReminders.has(r.reminder.id)
+      );
+      const fromReminders = activeReminders.some((r) => reminderContains(r, 'Trip Fee'));
+      const fromAddedItems = getAddedItemsForPatient(item.patient.id).some((added) =>
+        itemContains(added, 'Trip Fee')
+      );
+      return fromReminders || fromAddedItems;
+    });
+    if (!hasTripFeeInAnyPet) {
+      setTripFeeRequiredError(true);
+      return false;
+    }
+    setTripFeeRequiredError(false);
+
+    const payload = packageDataForClient();
+    const duplicateReports: { petName: string; itemName: string }[] = [];
+    const reported = new Set<string>();
+    if (payload?.formData?.patients) {
+      for (const patient of payload.formData.patients) {
+        const petName = patient.patientName ?? `Pet (ID ${patient.patientId})`;
+        const itemKeys = new Map<string, string>();
+        const addItem = (id: number | undefined, type: string | undefined, name: string | undefined) => {
+          if (id == null && type == null) return;
+          const key = `${id ?? 'null'}-${type ?? 'null'}`;
+          const itemName = (name || 'Unknown item').trim();
+          if (itemKeys.has(key)) {
+            const reportKey = `${petName}:${itemName}`;
+            if (!reported.has(reportKey)) {
+              reported.add(reportKey);
+              duplicateReports.push({ petName, itemName });
+            }
+          } else {
+            itemKeys.set(key, itemName);
+          }
+        };
+        for (const r of patient.reminders || []) {
+          const item = r?.item;
+          if (item) addItem(item.id, item.type, item.name);
+        }
+        for (const a of patient.addedItems || []) {
+          addItem(a.id, a.type, a.name);
+        }
+      }
+    }
+    if (duplicateReports.length > 0) {
+      setDuplicateItemsError(duplicateReports);
+      return false;
+    }
+    setDuplicateItemsError(null);
+    return true;
+  }
+
+  function buildSendWarnings(): string[] {
+    const warnings: string[] = [];
+    petsWithAppointments.forEach((item) => {
+      const activeReminders = (item.reminders || []).filter(
+        (r) => r.reminder?.id && !removedReminders.has(r.reminder.id)
+      );
+      const fromReminders = activeReminders.some((r) => {
+        const correction = reminderCorrections[`reminder-${r.reminder.id}`];
+        const effectiveItem = correction?.selectedItem ?? r.matchedItem;
+        if (!effectiveItem) return false;
+        const name = (effectiveItem.name ?? '').toLowerCase();
+        const code = (effectiveItem.code ?? '').toLowerCase();
+        const text = `${name} ${code}`;
+        return text.includes('visit') || text.includes('consult');
+      });
+      const fromAddedItems = getAddedItemsForPatient(item.patient.id).some((added) =>
+        itemContains(added, 'visit') || itemContains(added, 'consult')
+      );
+      const hasVisitOrConsult = fromReminders || fromAddedItems;
+      if (!hasVisitOrConsult) {
+        const petName = item.patient?.name ?? `Pet (ID ${item.patient?.id})`;
+        warnings.push(`${petName}: It doesn't look like a visit type line item was selected (e.g. annual wellness visit, medical visit, additional wellness visit, etc.). Please be sure that you put one in before submitting.`);
+      }
+    });
+    return warnings;
+  }
+
+  // Handle sending to client
+  async function handleSendToClient() {
+    if (!selectedRoomLoader) return;
+
+    const timesSent = selectedRoomLoader.timesSentToClient ?? 0;
+    const canEmail = !petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email));
+    const canSms = petsWithAppointments.some((item) => hasEffectivePhone(item.client?.phone1));
+
+    if (timesSent >= 1) {
+      if (!canEmail && !canSms) return;
+    } else {
+      if (petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email))) return;
+    }
+
+    setSendValidationErrors({});
+    setReminderValidationErrorIds(new Set());
+    setTripFeeRequiredError(false);
+    setDuplicateItemsError(null);
+
+    if (!runSendHardValidation()) return;
+    setSendWarningReasons(buildSendWarnings());
+    if (timesSent >= 1) {
+      setConfirmSendChannel(canEmail ? 'email' : 'sms');
+    }
+    setConfirmAction('send');
+  }
+
+  function handleUpdate() {
+    if (!selectedRoomLoader || !hasBeenSentToClient) return;
+
+    const noEmail = petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email));
+    if (noEmail) return;
+
+    setSendValidationErrors({});
+    setReminderValidationErrorIds(new Set());
+    setTripFeeRequiredError(false);
+    setDuplicateItemsError(null);
+
+    const errors: Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean; arrivalWindow?: boolean }> = {};
+    let hasErrors = false;
+    petsWithAppointments.forEach((item) => {
+      const pid = item.patient.id;
+      const patientErrors: Record<string, boolean> = {};
+      if (!(appointmentReasons[pid] || '').trim()) {
+        patientErrors.reason = true;
+        hasErrors = true;
+      }
+      const answers = petAnswers[pid] || { mobility: null, labWork: null };
+      if (answers.mobility === null) {
+        patientErrors.mobility = true;
+        hasErrors = true;
+      }
+      if (answers.labWork === null) {
+        patientErrors.labWork = true;
+        hasErrors = true;
+      }
+      const firstAppt = item.appointments[0];
+      const isFixed = firstAppt && (firstAppt.appointmentType?.name?.toUpperCase() || firstAppt.appointmentType?.prettyName?.toUpperCase() || '') === 'FIXED';
+      if (!isFixed && firstAppt) {
+        const editedDisplay = (arrivalWindows[pid] ?? '').trim();
+        if (editedDisplay) {
+          const parsed = parseArrivalWindowDisplay(editedDisplay, firstAppt.appointmentStart);
+          if (!parsed) {
+            patientErrors.arrivalWindow = true;
+            hasErrors = true;
+          }
+        }
+      }
+      if (Object.keys(patientErrors).length > 0) errors[pid] = patientErrors;
+    });
+    if (hasErrors) {
+      setSendValidationErrors(errors);
+      return;
+    }
+
+    const reminderErrorIds = new Set<number>();
+    petsWithAppointments.forEach((item) => {
+      (item.reminders || []).forEach((reminderWithPrice) => {
+        const reminderId = reminderWithPrice.reminder.id;
+        if (!reminderId || removedReminders.has(reminderId)) return;
+        const correction = reminderCorrections[`reminder-${reminderId}`];
+        const hasMatch = !!(reminderWithPrice.matchedItem?.name || correction?.selectedItem);
+        const isVisitOrConsult = reminderContains(reminderWithPrice, 'visit', 'consult');
+        const isConfirmed = confirmedMatchReminders.has(reminderId);
+        if (!isVisitOrConsult && (!hasMatch || !isConfirmed)) {
           reminderErrorIds.add(reminderId);
         }
       });
@@ -1752,15 +2002,10 @@ export default function RoomLoaderPage() {
       return;
     }
 
-    // Required: at least one pet (single or multiple) must have "Trip Fee" in a reminder or an added item
     const hasTripFeeInAnyPet = petsWithAppointments.some((item) => {
-      const activeReminders = (item.reminders || []).filter(
-        (r) => r.reminder?.id && !removedReminders.has(r.reminder.id)
-      );
+      const activeReminders = (item.reminders || []).filter((r) => r.reminder?.id && !removedReminders.has(r.reminder.id));
       const fromReminders = activeReminders.some((r) => reminderContains(r, 'Trip Fee'));
-      const fromAddedItems = (addedItems[item.patient.id] || []).some((added) =>
-        itemContains(added, 'Trip Fee')
-      );
+      const fromAddedItems = getAddedItemsForPatient(item.patient.id).some((added) => itemContains(added, 'Trip Fee'));
       return fromReminders || fromAddedItems;
     });
     if (!hasTripFeeInAnyPet) {
@@ -1769,7 +2014,6 @@ export default function RoomLoaderPage() {
     }
     setTripFeeRequiredError(false);
 
-    // Duplicate items: same matched item (id + type) must not appear more than once per pet
     const payload = packageDataForClient();
     const duplicateReports: { petName: string; itemName: string }[] = [];
     const reported = new Set<string>();
@@ -1805,43 +2049,24 @@ export default function RoomLoaderPage() {
       return;
     }
     setDuplicateItemsError(null);
-
-    // Warnings: visit/consult per pet from matched item names (not reminder description) or added items (use active list so removed items don't count)
-    const warnings: string[] = [];
-    petsWithAppointments.forEach((item) => {
-      const activeReminders = (item.reminders || []).filter(
-        (r) => r.reminder?.id && !removedReminders.has(r.reminder.id)
-      );
-      const fromReminders = activeReminders.some((r) => {
-        const correction = reminderCorrections[`reminder-${r.reminder.id}`];
-        const effectiveItem = correction?.selectedItem ?? r.matchedItem;
-        if (!effectiveItem) return false;
-        const name = (effectiveItem.name ?? '').toLowerCase();
-        const code = (effectiveItem.code ?? '').toLowerCase();
-        const text = `${name} ${code}`;
-        return text.includes('visit') || text.includes('consult');
-      });
-      const fromAddedItems = (addedItems[item.patient.id] || []).some((added) =>
-        itemContains(added, 'visit') || itemContains(added, 'consult')
-      );
-      const hasVisitOrConsult = fromReminders || fromAddedItems;
-      if (!hasVisitOrConsult) {
-        const petName = item.patient?.name ?? `Pet (ID ${item.patient?.id})`;
-        warnings.push(`${petName}: It doesn't look like a visit type line item was selected (e.g. annual wellness visit, medical visit, additional wellness visit, etc.). Please be sure that you put one in before submitting.`);
-      }
-    });
-    setSendWarningReasons(warnings);
-    setConfirmAction('send');
+    setConfirmAction('update');
   }
 
-  async function executeSendToClient() {
+  async function executeSendToClient(
+    skipEmail = false,
+    options?: { sendViaSms?: boolean; smsMessage?: string }
+  ) {
     if (!selectedRoomLoader) return;
     setSendValidationErrors({});
     setReminderValidationErrorIds(new Set());
     setTripFeeRequiredError(false);
     setDuplicateItemsError(null);
     setSendWarningReasons([]);
-    setSendingToClient(true);
+    if (skipEmail) {
+      setUpdatingToClient(true);
+    } else {
+      setSendingToClient(true);
+    }
     setConfirmAction(null);
     try {
       const payload = packageDataForClient();
@@ -1849,6 +2074,9 @@ export default function RoomLoaderPage() {
         alert('Error: Unable to package data. Please try again.');
         return;
       }
+      if (skipEmail) payload.skipEmail = true;
+      if (options?.sendViaSms) payload.sendViaSms = true;
+      if (options?.smsMessage) payload.smsMessage = options.smsMessage;
       await http.post('/room-loader/send-to-client', payload);
       await loadRoomLoaders();
       if (selectedRoomLoaderId) {
@@ -1861,6 +2089,7 @@ export default function RoomLoaderPage() {
       alert(`Failed to send to client: ${error?.message || 'Please try again.'}`);
     } finally {
       setSendingToClient(false);
+      setUpdatingToClient(false);
     }
   }
 
@@ -1887,13 +2116,14 @@ export default function RoomLoaderPage() {
         reminders: remindersToSave,
         addedItems: Object.keys(addedItems).reduce((acc, petIdStr) => {
           const petId = Number(petIdStr);
-          acc[petId] = addedItems[petId] || [];
+          acc[petId] = getAddedItemsForPatient(petId);
           return acc;
         }, {} as Record<number, SearchableItem[]>),
         reminderQuantities: reminderQuantities,
         addedItemQuantities: addedItemQuantities,
         appointmentReasons: appointmentReasons,
         arrivalWindows: arrivalWindows,
+        notesToClient: notesToClient,
         petAnswers: petAnswers,
         vaccineCheckboxes: vaccineCheckboxes,
         reminderCorrections: reminderCorrections,
@@ -2132,13 +2362,30 @@ export default function RoomLoaderPage() {
   }, [selectedRoomLoader]);
 
   const hasClientWithNoEmail = useMemo(
-    () =>
-      petsWithAppointments.some((item) => {
-        const e = item.client?.email;
-        return e == null || (typeof e === 'string' && e.trim() === '');
-      }),
+    () => petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email)),
     [petsWithAppointments]
   );
+
+  const hasClientWithReceptionEmail = useMemo(
+    () => petsWithAppointments.some((item) => isReceptionEmail(item.client?.email)),
+    [petsWithAppointments]
+  );
+
+  const canSendFollowUpEmail = useMemo(
+    () => !petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email)),
+    [petsWithAppointments]
+  );
+  const canSendFollowUpSms = useMemo(
+    () => petsWithAppointments.some((item) => hasEffectivePhone(item.client?.phone1)),
+    [petsWithAppointments]
+  );
+
+  const sendToClientBlockedNoDestination = useMemo(() => {
+    if (!selectedRoomLoader) return true;
+    const ts = selectedRoomLoader.timesSentToClient ?? 0;
+    if (ts >= 1) return !canSendFollowUpEmail && !canSendFollowUpSms;
+    return !canSendFollowUpEmail;
+  }, [selectedRoomLoader, canSendFollowUpEmail, canSendFollowUpSms]);
 
   return (
     <div className="room-loader-page">
@@ -2301,7 +2548,25 @@ export default function RoomLoaderPage() {
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.appointmentType}</td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.doctor}</td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.clientName}</td>
-                    <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.pets.join(', ')}</td>
+                    <td style={{ padding: '12px', border: '1px solid #ddd' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                        {row.pets.join(', ')}
+                        {row.hasMemberPatient && (
+                          <span
+                            title={row.membershipNames.length > 0 ? row.membershipNames.join(', ') : 'Member'}
+                            aria-label={row.membershipNames.length > 0 ? row.membershipNames.join(', ') : 'Member'}
+                          >
+                            <Heart
+                              size={16}
+                              fill="#e91e63"
+                              color="#e91e63"
+                              style={{ flexShrink: 0 }}
+                              aria-hidden
+                            />
+                          </span>
+                        )}
+                      </span>
+                    </td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' }}>
                         <span
@@ -2395,7 +2660,23 @@ export default function RoomLoaderPage() {
                 </div>
                 <div className="room-loader-mobile-card-row">
                   <span className="room-loader-mobile-card-label">Pets</span>
-                  <span className="room-loader-mobile-card-value">{row.pets.join(', ')}</span>
+                  <span className="room-loader-mobile-card-value" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                    {row.pets.join(', ')}
+                    {row.hasMemberPatient && (
+                      <span
+                        title={row.membershipNames.length > 0 ? row.membershipNames.join(', ') : 'Member'}
+                        aria-label={row.membershipNames.length > 0 ? row.membershipNames.join(', ') : 'Member'}
+                      >
+                        <Heart
+                          size={16}
+                          fill="#e91e63"
+                          color="#e91e63"
+                          style={{ flexShrink: 0 }}
+                          aria-hidden
+                        />
+                      </span>
+                    )}
+                  </span>
                 </div>
                 <div className="room-loader-mobile-card-badges">
                   <span className="room-loader-status-badge" style={{ backgroundColor: sentBg }}>
@@ -2493,7 +2774,9 @@ export default function RoomLoaderPage() {
               }}
               role="alert"
             >
-              No email address on file for the client. Please add an email in the practice system before sending to client.
+              {hasClientWithReceptionEmail
+                ? 'Client has the default reception email on file. Please add a valid client email in the practice system before sending to client.'
+                : 'No email address on file for the client. Please add an email in the practice system before sending to client.'}
             </div>
           )}
           {/* Pet-by-Pet Information */}
@@ -2504,7 +2787,7 @@ export default function RoomLoaderPage() {
           ) : (
             petsWithAppointments.map((item, petIndex) => {
               const { patient, appointments, client, clientHasMembership, clientMembershipPlanName } = item;
-              const petAnswersForPet = petAnswers[patient.id] || { mobility: null, labWork: null };
+              const petAnswersForPet = petAnswers[patient.id] || { mobility: null, labWork: null, preMedsAsk: false };
               const firstAppt = appointments[0];
               
               // Use patient data from appointment if available and more complete
@@ -2848,6 +3131,35 @@ export default function RoomLoaderPage() {
                       <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#dc3545' }}>Please answer Yes or No</p>
                     )}
                   </div>
+
+                  {/* Pre-examination meds refill question */}
+                  <div style={{ marginTop: '20px' }}>
+                    <label style={{ display: 'block', marginBottom: '10px', fontWeight: 500, color: '#333', fontSize: '16px' }}>
+                      Should we ask this client if they need refills of pre-examination medications?
+                    </label>
+                    <div style={{ display: 'flex', gap: '20px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                        <input
+                          type="radio"
+                          name={`preMedsAsk-${patient.id}`}
+                          checked={petAnswersForPet.preMedsAsk === true}
+                          onChange={() => handleAnswerChange(patient.id, 'preMedsAsk', true)}
+                          style={{ marginRight: '8px', cursor: 'pointer' }}
+                        />
+                        Yes
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                        <input
+                          type="radio"
+                          name={`preMedsAsk-${patient.id}`}
+                          checked={petAnswersForPet.preMedsAsk !== true}
+                          onChange={() => handleAnswerChange(patient.id, 'preMedsAsk', false)}
+                          style={{ marginRight: '8px', cursor: 'pointer' }}
+                        />
+                        No
+                      </label>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Reminders */}
@@ -2856,7 +3168,7 @@ export default function RoomLoaderPage() {
                     Reminders ({item.reminders?.filter((r) => {
                       const id = r.reminder.id;
                       return id && !removedReminders.has(id);
-                    }).length || 0} + {addedItems[patient.id]?.length || 0} added)
+                    }).length || 0} + {getAddedItemsForPatient(patient.id).length || 0} added)
                   </h4>
                   
                   {/* Original Reminders */}
@@ -3695,13 +4007,13 @@ export default function RoomLoaderPage() {
                   )}
 
                   {/* Added Items */}
-                  {addedItems[patient.id] && addedItems[patient.id].length > 0 && (
+                  {getAddedItemsForPatient(patient.id).length > 0 && (
                     <div style={{ marginBottom: '15px' }}>
-                      {addedItems[patient.id].map((item, itemIdx) => (
+                      {getAddedItemsForPatient(patient.id).map((item, itemIdx) => (
                         <div
                           key={`added-${itemIdx}`}
                           style={{
-                            marginBottom: itemIdx < addedItems[patient.id].length - 1 ? '15px' : 0,
+                            marginBottom: itemIdx < getAddedItemsForPatient(patient.id).length - 1 ? '15px' : 0,
                             padding: '15px',
                             backgroundColor: '#fff3cd',
                             border: '1px solid #ffc107',
@@ -3922,7 +4234,7 @@ export default function RoomLoaderPage() {
                   {((item.reminders && item.reminders.filter((r) => {
                     const id = r.reminder.id;
                     return id && !removedReminders.has(id);
-                  }).length > 0) || (addedItems[patient.id] && addedItems[patient.id].length > 0)) && (
+                  }).length > 0) || getAddedItemsForPatient(patient.id).length > 0) && (
                     <div
                       style={{
                         marginTop: '15px',
@@ -3953,11 +4265,11 @@ export default function RoomLoaderPage() {
                             const { totalFinal } = getAddedItemFinalPrice(pricingItem, quantity);
                             return sum + totalFinal;
                           }, 0) || 0) +
-                        (addedItems[patient.id]?.reduce((sum, item, itemIdx) => {
+                        getAddedItemsForPatient(patient.id).reduce((sum, item, itemIdx) => {
                           const quantity = resolveQty(addedItemQuantities[`${patient.id}-${itemIdx}`]);
                           const { totalFinal } = getAddedItemFinalPrice(item, quantity);
                           return sum + totalFinal;
-                        }, 0) || 0)
+                        }, 0)
                       ).toFixed(2)}
                       </div>
                     </div>
@@ -4094,6 +4406,30 @@ export default function RoomLoaderPage() {
                     </div>
                   </div>
                 </div>
+
+                {/* Notes to send to client (per pet) */}
+                <div style={{ marginTop: '20px', marginBottom: '0' }}>
+                  <h4 style={{ marginBottom: '10px', color: '#555' }}>Notes to send to client</h4>
+                  <p style={{ marginBottom: '8px', fontSize: '14px', color: '#666' }}>
+                    (e.g. explaining what items you put on there and why, etc.)
+                  </p>
+                  <textarea
+                    value={notesToClient[patient.id] ?? ''}
+                    onChange={(e) => setNotesToClient((prev) => ({ ...prev, [patient.id]: e.target.value }))}
+                    placeholder="Optional notes to include when sending to client..."
+                    style={{
+                      width: '100%',
+                      minHeight: '80px',
+                      padding: '12px',
+                      fontSize: '14px',
+                      border: '1px solid #ced4da',
+                      borderRadius: '4px',
+                      fontFamily: 'inherit',
+                      resize: 'vertical',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
               </div>
             );
           })
@@ -4182,28 +4518,58 @@ export default function RoomLoaderPage() {
               >
                 {savingForm ? 'Saving...' : 'Save for Later'}
               </button>
+              {hasBeenSentToClient && (
+                <button
+                  onClick={handleUpdate}
+                  disabled={sendingToClient || updatingToClient || formSubmittedByClient || hasClientWithNoEmail}
+                  style={{
+                    padding: '12px 24px',
+                    fontSize: '16px',
+                    fontWeight: 600,
+                    backgroundColor: sendingToClient || updatingToClient || formSubmittedByClient || hasClientWithNoEmail ? '#6c757d' : '#6c757d',
+                    color: 'white',
+                    border: '1px solid #5a6268',
+                    borderRadius: '6px',
+                    cursor: sendingToClient || updatingToClient || formSubmittedByClient || hasClientWithNoEmail ? 'not-allowed' : 'pointer',
+                    transition: 'background-color 0.2s ease-in-out',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!sendingToClient && !updatingToClient && !formSubmittedByClient && !hasClientWithNoEmail) {
+                      e.currentTarget.style.backgroundColor = '#5a6268';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!sendingToClient && !updatingToClient && !formSubmittedByClient && !hasClientWithNoEmail) {
+                      e.currentTarget.style.backgroundColor = '#6c757d';
+                    }
+                  }}
+                >
+                  {updatingToClient ? 'Updating...' : 'Update'}
+                </button>
+              )}
               <button
                 onClick={handleSendToClient}
-                disabled={sendingToClient || formSubmittedByClient || hasClientWithNoEmail}
+                disabled={sendingToClient || updatingToClient || formSubmittedByClient || sendToClientBlockedNoDestination}
                 style={{
                   padding: '12px 24px',
                   fontSize: '16px',
                   fontWeight: 600,
-                  backgroundColor: sendingToClient || formSubmittedByClient || hasClientWithNoEmail ? '#6c757d' : '#007bff',
+                  backgroundColor: sendingToClient || updatingToClient || formSubmittedByClient || sendToClientBlockedNoDestination ? '#6c757d' : '#007bff',
                   color: 'white',
                   border: 'none',
                   borderRadius: '6px',
-                  cursor: sendingToClient || formSubmittedByClient || hasClientWithNoEmail ? 'not-allowed' : 'pointer',
+                  cursor: sendingToClient || updatingToClient || formSubmittedByClient || sendToClientBlockedNoDestination ? 'not-allowed' : 'pointer',
                   transition: 'background-color 0.2s ease-in-out',
                   boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
                 }}
                 onMouseEnter={(e) => {
-                  if (!sendingToClient && !formSubmittedByClient && !hasClientWithNoEmail) {
+                  if (!sendingToClient && !formSubmittedByClient && !sendToClientBlockedNoDestination) {
                     e.currentTarget.style.backgroundColor = '#0056b3';
                   }
                 }}
                 onMouseLeave={(e) => {
-                  if (!sendingToClient && !formSubmittedByClient && !hasClientWithNoEmail) {
+                  if (!sendingToClient && !formSubmittedByClient && !sendToClientBlockedNoDestination) {
                     e.currentTarget.style.backgroundColor = '#007bff';
                   }
                 }}
@@ -4212,8 +4578,10 @@ export default function RoomLoaderPage() {
                   ? 'Sending...'
                   : formSubmittedByClient
                     ? 'Submitted by client'
-                    : hasClientWithNoEmail
-                      ? 'Send to Client (add client email first)'
+                    : sendToClientBlockedNoDestination
+                      ? (selectedRoomLoader.timesSentToClient ?? 0) >= 1
+                        ? 'Send to Client (add email or phone)'
+                        : 'Send to Client (add client email first)'
                       : selectedRoomLoader.sentStatus === 'not_sent'
                         ? 'Send to Client'
                         : 'Re-send to Client'}
@@ -4246,7 +4614,7 @@ export default function RoomLoaderPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <h2 style={{ marginTop: 0, marginBottom: '15px', color: '#333', fontSize: '20px' }}>
-              {confirmAction === 'send' ? 'Send to Client?' : 'Save for Later?'}
+              {confirmAction === 'send' ? 'Send to Client?' : confirmAction === 'update' ? 'Update form data?' : 'Save for Later?'}
             </h2>
             {confirmAction === 'send' && sendWarningReasons.length > 0 && (
               <div
@@ -4276,8 +4644,53 @@ export default function RoomLoaderPage() {
             <p style={{ marginBottom: '20px', color: '#666', fontSize: '16px', lineHeight: '1.5' }}>
               {confirmAction === 'send'
                 ? 'Are you sure you want to send this room loader form to the client?'
-                : 'Are you sure you want to save this form for later?'}
+                : confirmAction === 'update'
+                  ? 'Are you sure you want to update the form data without sending an email to the client?'
+                  : 'Are you sure you want to save this form for later?'}
             </p>
+            {confirmAction === 'send' && selectedRoomLoader && (selectedRoomLoader.timesSentToClient ?? 0) >= 1 && (
+              <div style={{ marginBottom: '20px' }}>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Send via</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '12px' }}>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: canSendFollowUpEmail ? 'pointer' : 'not-allowed',
+                      color: canSendFollowUpEmail ? '#333' : '#999',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="confirmSendChannel"
+                      checked={confirmSendChannel === 'email'}
+                      disabled={!canSendFollowUpEmail}
+                      onChange={() => setConfirmSendChannel('email')}
+                    />
+                    Email
+                  </label>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: canSendFollowUpSms ? 'pointer' : 'not-allowed',
+                      color: canSendFollowUpSms ? '#333' : '#999',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="confirmSendChannel"
+                      checked={confirmSendChannel === 'sms'}
+                      disabled={!canSendFollowUpSms}
+                      onChange={() => setConfirmSendChannel('sms')}
+                    />
+                    SMS {!canSendFollowUpSms && '(no phone on file)'}
+                  </label>
+                </div>
+              </div>
+            )}
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
               <button
                 onClick={() => setConfirmAction(null)}
@@ -4298,7 +4711,24 @@ export default function RoomLoaderPage() {
                 type="button"
                 onClick={() => {
                   if (confirmAction === 'send') {
-                    executeSendToClient();
+                    const ts = selectedRoomLoader?.timesSentToClient ?? 0;
+                    if (ts >= 1) {
+                      if (confirmSendChannel === 'email' && petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email))) {
+                        alert('Add a client email address to send by email, or choose SMS if a phone number is on file.');
+                        return;
+                      }
+                      if (confirmSendChannel === 'sms' && !petsWithAppointments.some((item) => hasEffectivePhone(item.client?.phone1))) {
+                        alert('Add a client phone number to send by SMS, or choose email.');
+                        return;
+                      }
+                      void executeSendToClient(false, {
+                        sendViaSms: confirmSendChannel === 'sms',
+                      });
+                    } else {
+                      executeSendToClient();
+                    }
+                  } else if (confirmAction === 'update') {
+                    executeSendToClient(true);
                   } else {
                     executeSaveForLater();
                   }
@@ -4307,14 +4737,14 @@ export default function RoomLoaderPage() {
                   padding: '10px 20px',
                   fontSize: '14px',
                   fontWeight: 500,
-                  backgroundColor: confirmAction === 'send' ? '#007bff' : '#28a745',
+                  backgroundColor: confirmAction === 'send' ? '#007bff' : confirmAction === 'update' ? '#6c757d' : '#28a745',
                   color: 'white',
                   border: 'none',
                   borderRadius: '4px',
                   cursor: 'pointer',
                 }}
               >
-                {confirmAction === 'send' ? 'Yes, send to client' : 'Yes, save for later'}
+                {confirmAction === 'send' ? 'Yes, send to client' : confirmAction === 'update' ? 'Yes, update' : 'Yes, save for later'}
               </button>
             </div>
           </div>

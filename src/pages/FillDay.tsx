@@ -8,13 +8,14 @@ import { fetchFillDayCandidates, type FillDayCandidate, type FillDayRequest, typ
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { useAuth } from '../auth/useAuth';
 import { PreviewMyDayModal, type PreviewMyDayOption } from '../components/PreviewMyDayModal';
+import { PreviewMyWeekModal } from '../components/PreviewMyWeekModal';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
 import { fetchClientMessages, type ClientMessagesResponse } from '../api/clientPortal';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
 export default function FillDayPage() {
-  const { userEmail } = useAuth();
+  const { userEmail, doctorId: userDoctorId } = useAuth() as { userEmail?: string; doctorId?: string | null };
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -91,6 +92,11 @@ export default function FillDayPage() {
   const [previewCandidate, setPreviewCandidate] = useState<FillDayCandidate | null>(null);
   const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({});
 
+  // Preview My Week Modal
+  const [myWeekOpen, setMyWeekOpen] = useState(false);
+  const [weekPreviewOpt, setWeekPreviewOpt] = useState<PreviewMyDayOption | null>(null);
+  const [weekPreviewCandidate, setWeekPreviewCandidate] = useState<FillDayCandidate | null>(null);
+
   // Messages History Modal
   const [messagesModalOpen, setMessagesModalOpen] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
@@ -105,6 +111,7 @@ export default function FillDayPage() {
 
   // Track if we've already processed URL params to avoid re-processing
   const hasProcessedUrlParamsRef = useRef(false);
+  const didDefaultDoctorFromAuth = useRef(false);
 
   // Load providers
   useEffect(() => {
@@ -198,6 +205,98 @@ export default function FillDayPage() {
       hasProcessedUrlParamsRef.current = true;
     }
   }, [searchParams, allProviders, ignoreEmergencyBlocks]);
+
+  // Default Doctor / One Team to the logged-in user's assigned employee when providers have loaded (no URL params)
+  useEffect(() => {
+    if (didDefaultDoctorFromAuth.current || allProviders.length === 0) return;
+    if (selectedDoctorId !== '') return; // already set (e.g. by URL params or user)
+
+    const uid = userDoctorId != null ? String(userDoctorId).trim() : '';
+    const matchByAuth =
+      uid !== ''
+        ? allProviders.find(
+            (p) =>
+              String(p.id) === uid || String(p.pimsId ?? '') === uid
+          )
+        : null;
+
+    if (matchByAuth) {
+      const id = matchByAuth.pimsId ? String(matchByAuth.pimsId) : String(matchByAuth.id);
+      setSelectedDoctorId(id);
+      setSelectedDoctorName(matchByAuth.name);
+      setDoctorQuery(matchByAuth.name);
+      didDefaultDoctorFromAuth.current = true;
+      return;
+    }
+
+    // Resolve employee by API when userDoctorId didn't match (e.g. backend stores different id format)
+    if (uid !== '') {
+      let cancelled = false;
+      (async () => {
+        try {
+          const byPims = await http.get(`/employees/pims/${encodeURIComponent(uid)}`);
+          const emp = Array.isArray(byPims.data) ? (byPims.data as any)[0] : (byPims.data as any);
+          const resolvedId =
+            emp?.id != null ? String(emp.id) : emp?.employee?.id != null ? String(emp.employee.id) : null;
+          const resolvedPims =
+            emp?.pimsId != null ? String(emp.pimsId) : emp?.employee?.pimsId != null ? String(emp.employee.pimsId) : null;
+          if (cancelled) return;
+          const match = allProviders.find(
+            (p) =>
+              (resolvedId != null && String(p.id) === resolvedId) ||
+              (resolvedPims != null && String(p.pimsId ?? '') === resolvedPims)
+          );
+          if (match && !didDefaultDoctorFromAuth.current) {
+            const id = match.pimsId ? String(match.pimsId) : String(match.id);
+            setSelectedDoctorId(id);
+            setSelectedDoctorName(match.name);
+            setDoctorQuery(match.name);
+            didDefaultDoctorFromAuth.current = true;
+          }
+        } catch {
+          // Not found by pims; try by internal id
+          try {
+            const byId = await http.get(`/employees/${encodeURIComponent(uid)}`);
+            const emp = (byId.data as any)?.employee ?? byId.data;
+            const resolvedId = emp?.id != null ? String(emp.id) : null;
+            const resolvedPims = emp?.pimsId != null ? String(emp.pimsId) : null;
+            if (cancelled) return;
+            const match = allProviders.find(
+              (p) =>
+                (resolvedId != null && String(p.id) === resolvedId) ||
+                (resolvedPims != null && String(p.pimsId ?? '') === resolvedPims)
+            );
+            if (match && !didDefaultDoctorFromAuth.current) {
+              const id = match.pimsId ? String(match.pimsId) : String(match.id);
+              setSelectedDoctorId(id);
+              setSelectedDoctorName(match.name);
+              setDoctorQuery(match.name);
+              didDefaultDoctorFromAuth.current = true;
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // Fallback when no assigned doctorId: match by logged-in user email (same as My Week "me")
+    if (uid === '' && userEmail) {
+      const me = allProviders.find(
+        (p) => (p?.email || '').toLowerCase() === userEmail.toLowerCase()
+      );
+      if (me) {
+        const id = me.pimsId ? String(me.pimsId) : String(me.id);
+        setSelectedDoctorId(id);
+        setSelectedDoctorName(me.name);
+        setDoctorQuery(me.name);
+        didDefaultDoctorFromAuth.current = true;
+      }
+    }
+  }, [allProviders, userDoctorId, selectedDoctorId, userEmail]);
 
   // Filter doctors based on query
   useEffect(() => {
@@ -445,8 +544,8 @@ This spot is also being offered to other clients. If you'd like to book it for $
     }
   }
 
-  // Handle Preview My Day - open modal
-  async function handlePreviewMyDay(candidate: FillDayCandidate) {
+  // Handle Preview My Day or Preview My Week - open modal
+  async function handlePreviewMyDay(candidate: FillDayCandidate, openWeek?: boolean) {
     // Extract date from proposedStartIso (more reliable than parsing URL)
     const proposedDate = DateTime.fromISO(candidate.proposedStartIso);
     if (!proposedDate.isValid) {
@@ -530,6 +629,13 @@ This spot is also being offered to other clients. If you'd like to book it for $
       projectedDriveSeconds: candidate.addedDriveSeconds,
       currentDriveSeconds: candidate.addedDriveSeconds, // FillDay uses addedDriveSeconds for both
       clientName: candidate.clientName, // Pass client name so virtual appointment shows correct name
+      // Convert FillDayCandidate arrivalWindow format to PreviewMyDayOption format
+      arrivalWindow: candidate.arrivalWindow
+        ? {
+            windowStartIso: candidate.arrivalWindow.start,
+            windowEndIso: candidate.arrivalWindow.end,
+          }
+        : undefined,
       // Note: Optional fields like workStartLocal, effectiveEndLocal, bookedServiceSeconds
       // are not available from FillDayCandidate, but DoctorDay will work without them
     };
@@ -553,15 +659,31 @@ This spot is also being offered to other clients. If you'd like to book it for $
       });
     }
 
-    setPreviewOpt(option);
-    setPreviewCandidate(candidate);
-    setMyDayOpen(true);
+    if (openWeek) {
+      setWeekPreviewOpt(option);
+      setWeekPreviewCandidate(candidate);
+      setMyWeekOpen(true);
+    } else {
+      setPreviewOpt(option);
+      setPreviewCandidate(candidate);
+      setMyDayOpen(true);
+    }
+  }
+
+  function handlePreviewMyWeek(candidate: FillDayCandidate) {
+    handlePreviewMyDay(candidate, true);
   }
 
   function closeMyDay() {
     setMyDayOpen(false);
     setPreviewOpt(null);
     setPreviewCandidate(null);
+  }
+
+  function closeMyWeek() {
+    setMyWeekOpen(false);
+    setWeekPreviewOpt(null);
+    setWeekPreviewCandidate(null);
   }
 
   // Handle opening Messages History modal
@@ -1278,6 +1400,21 @@ This spot is also being offered to other clients. If you'd like to book it for $
                 >
                   Preview My Day
                 </button>
+                <button
+                  onClick={() => handlePreviewMyWeek(candidate)}
+                  style={{
+                    padding: '10px 20px',
+                    background: '#fff',
+                    color: '#4FB128',
+                    border: '2px solid #4FB128',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Preview My Week
+                </button>
               </div>
             </div>
           ))}
@@ -1405,7 +1542,7 @@ This spot is also being offered to other clients. If you'd like to book it for $
           newApptMeta={{
             // Match EXACTLY what Routing.tsx passes - only these 4 fields
             clientId: String(previewCandidate.clientId),
-            address: previewCandidate.address?.fullAddress || 
+            address: previewCandidate.address?.fullAddress ||
               [previewCandidate.address?.address1, previewCandidate.address?.city, previewCandidate.address?.state, previewCandidate.address?.zipcode]
                 .filter(Boolean)
                 .join(', '),
@@ -1414,6 +1551,28 @@ This spot is also being offered to other clients. If you'd like to book it for $
             lat: previewCandidate.client?.lat != null && Number.isFinite(previewCandidate.client.lat) ? previewCandidate.client.lat : undefined,
             lon: previewCandidate.client?.lon != null && Number.isFinite(previewCandidate.client.lon) ? previewCandidate.client.lon : undefined,
             // Note: PreviewMyDayModal will split the address to extract city/state/zip
+          }}
+        />
+      )}
+
+      {/* Preview My Week Modal */}
+      {myWeekOpen && weekPreviewOpt && weekPreviewCandidate && (
+        <PreviewMyWeekModal
+          key={`fill-day-week-preview-${weekPreviewOpt.date}-${weekPreviewOpt.doctorPimsId}-${weekPreviewOpt.suggestedStartIso}`}
+          option={weekPreviewOpt}
+          onClose={closeMyWeek}
+          serviceMinutes={Math.max(1, Math.round(weekPreviewCandidate.requiredDuration / 60))}
+          newApptMeta={{
+            clientId: String(weekPreviewCandidate.clientId),
+            address: weekPreviewCandidate.address?.fullAddress ||
+              [weekPreviewCandidate.address?.address1, weekPreviewCandidate.address?.city, weekPreviewCandidate.address?.state, weekPreviewCandidate.address?.zipcode]
+                .filter(Boolean)
+                .join(', '),
+            city: weekPreviewCandidate.address?.city,
+            state: weekPreviewCandidate.address?.state,
+            zip: weekPreviewCandidate.address?.zipcode,
+            lat: weekPreviewCandidate.client?.lat != null && Number.isFinite(weekPreviewCandidate.client.lat) ? weekPreviewCandidate.client.lat : weekPreviewCandidate.address?.lat,
+            lon: weekPreviewCandidate.client?.lon != null && Number.isFinite(weekPreviewCandidate.client.lon) ? weekPreviewCandidate.client.lon : weekPreviewCandidate.address?.lon,
           }}
         />
       )}

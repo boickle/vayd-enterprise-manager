@@ -1,10 +1,12 @@
+import type { ReactNode } from 'react';
+
 export function KeyValue({
   k,
   v,
   color,
 }: {
   k: string;
-  v: string | number | undefined;
+  v: string | number | ReactNode | undefined;
   color?: string;
 }) {
   return (
