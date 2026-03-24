@@ -36,6 +36,10 @@ import {
   membershipSpeciesPrimaryLabel,
   resolveMembershipPetKind,
 } from '../utils/membershipSpecies';
+import {
+  computeMembershipAgeYearsForRoomLoaderRow,
+  MEMBERSHIP_GOLDEN_MIN_AGE_YEARS,
+} from '../utils/membershipAge';
 import './PublicRoomLoaderForm.css';
 
 /** Match full appointment to room-loader patient by `patient.id` (`appointments[]` order may not match `patients[]`). */
@@ -46,15 +50,36 @@ function getAppointmentForRoomLoaderPet(
 ): any | undefined {
   if (!appointments?.length) return undefined;
   const pid = patientRow?.patientId ?? patientRow?.patient?.id ?? patientRow?.id;
+
+  const patientIdsEqual = (a: unknown, b: unknown) =>
+    a != null && b != null && String(a) === String(b);
+
   if (pid != null) {
-    const appt = appointments.find((a: any) => {
+    const apptByEmbeddedPatient = appointments.find((a: any) => {
       const ap = a?.patient;
-      const aid = ap?.id ?? a?.patientId;
-      return aid != null && Number(aid) === Number(pid);
+      if (!ap || typeof ap !== 'object') return false;
+      const aid = (ap as any).id ?? (ap as any).patientId ?? (ap as any).patient_id;
+      return patientIdsEqual(aid, pid);
     });
-    if (appt) return appt;
+    if (apptByEmbeddedPatient) return apptByEmbeddedPatient;
+
+    const apptByTopLevelPatientId = appointments.find((a: any) =>
+      patientIdsEqual(a.patientId ?? a.patient_id, pid)
+    );
+    if (apptByTopLevelPatientId) return apptByTopLevelPatientId;
   }
-  return appointments[fallbackIndex];
+
+  const apptIds = patientRow?.appointmentIds;
+  if (Array.isArray(apptIds) && apptIds.length) {
+    const wanted = new Set(apptIds.map((x: any) => String(x)));
+    const apptByRowIds = appointments.find((a: any) => a?.id != null && wanted.has(String(a.id)));
+    if (apptByRowIds) return apptByRowIds;
+  }
+
+  if (fallbackIndex >= 0 && fallbackIndex < appointments.length) {
+    return appointments[fallbackIndex];
+  }
+  return undefined;
 }
 
 /** Match appointment `patient` to a room-loader row by id (order may not match `patients[]`). */
@@ -74,60 +99,6 @@ function getAgeYears(patient: { dob?: string | null }): number | null {
   } catch {
     return null;
   }
-}
-
-/**
- * Parse free-text age (e.g. "12 years", "6 months") for membership eligibility — same rules as MembershipSignup.
- */
-function parseAgeStringToYears(ageStr: string | null | undefined): number | null {
-  if (ageStr == null || typeof ageStr !== 'string') return null;
-  const s = ageStr.trim().toLowerCase();
-  if (!s) return null;
-  const numMatch = s.match(/^(\d+(?:\.\d+)?)\s*(?:y(?:ear)?s?|yr?s?)?$/);
-  if (numMatch) return Math.max(0, parseFloat(numMatch[1]));
-  const monthsMatch = s.match(/^(\d+)\s*mo(?:nth)?s?$/);
-  if (monthsMatch) return Math.max(0, parseInt(monthsMatch[1], 10) / 12);
-  const yearMonthMatch = s.match(/^(\d+)\s*y(?:ear)?s?\s*(?:and|\d*)\s*(\d+)\s*mo(?:nth)?s?$/);
-  if (yearMonthMatch) return Math.max(0, parseInt(yearMonthMatch[1], 10) + parseInt(yearMonthMatch[2], 10) / 12);
-  const justNum = parseFloat(s.replace(/[^\d.]/g, ''));
-  if (Number.isFinite(justNum)) return Math.max(0, justNum);
-  const asDate = new Date(ageStr.trim());
-  if (!Number.isNaN(asDate.getTime())) {
-    const diff = Date.now() - asDate.getTime();
-    return Math.max(0, diff / (1000 * 60 * 60 * 24 * 365.25));
-  }
-  return null;
-}
-
-/**
- * Age in years for Golden (9+) / starter (≤1.5): DOB from room-loader row and matched appointment `patient`,
- * then `age` string — mirrors MembershipSignup `petDetails.ageYears`.
- */
-function getMembershipAgeYearsForRoomLoader(p: any, appointmentPatient?: any): number | null {
-  const chain = [p?.patient, p, appointmentPatient, appointmentPatient?.patient].filter(Boolean);
-  for (const c of chain) {
-    const dob = c?.dob;
-    if (typeof dob === 'string' && dob.trim()) {
-      const iso = DateTime.fromISO(dob.trim());
-      if (iso.isValid) {
-        return Math.max(0, DateTime.now().diff(iso, 'years').years);
-      }
-      const asDate = new Date(dob.trim());
-      if (!Number.isNaN(asDate.getTime())) {
-        const diff = Date.now() - asDate.getTime();
-        return Math.max(0, diff / (1000 * 60 * 60 * 24 * 365.25));
-      }
-    }
-  }
-  for (const c of chain) {
-    if (c?.age != null && String(c.age).trim()) {
-      const parsed = parseAgeStringToYears(String(c.age));
-      if (parsed != null) return parsed;
-    }
-    const y = (c as { ageYears?: unknown; age_in_years?: unknown }).ageYears ?? (c as { age_in_years?: unknown }).age_in_years;
-    if (typeof y === 'number' && Number.isFinite(y)) return Math.max(0, y);
-  }
-  return null;
 }
 
 /** True if any reminder or addedItem for this patient contains "Wellness" (used for lab recommendations). */
@@ -289,14 +260,15 @@ function getPetDetailsForMembership(
 ): { kind: 'dog' | 'cat' | null; ageYears: number | null } {
   let kind = resolveMembershipPetKind(p, appointmentPatient ? [appointmentPatient] : undefined);
   if (kind == null) kind = inferMembershipKindFromLineItems(p);
-  const ageYears = getMembershipAgeYearsForRoomLoader(p, appointmentPatient);
+  const ageYears = computeMembershipAgeYearsForRoomLoaderRow(p, appointmentPatient);
   return { kind, ageYears };
 }
 
-/** Which plan IDs to show for a pet (same logic as Client Portal: Golden for 9+ only, Starter for puppy/kitten). */
+/** Which plan IDs to show for a pet (same logic as Client Portal: Golden only when age meets threshold, Starter for puppy/kitten). */
 function getPlanIdsForPet(petDetails: { kind: 'dog' | 'cat' | null; ageYears: number | null }): string[] {
   const { kind, ageYears } = petDetails;
-  const meetsGolden = kind != null && ageYears != null && ageYears >= 9;
+  const meetsGolden =
+    kind != null && ageYears != null && ageYears >= MEMBERSHIP_GOLDEN_MIN_AGE_YEARS;
   const shouldShowStarter = ageYears != null && ageYears <= 1.5 && (kind === 'dog' || kind === 'cat');
   const planIds: string[] = ['foundations'];
   if (meetsGolden) planIds.push('golden');
@@ -312,13 +284,21 @@ function normalizePlanBaseId(planId: string): string {
 
 const MEMBERSHIP_ADDON_PLAN_BASE_IDS = new Set(['plus-addon', 'starter-addon']);
 
-/** Primary wellness plan for recommendation copy (excludes add-ons). */
-function getRecommendedWellnessPlanFromList(plans: RoomLoaderPlanForDisplay[]): RoomLoaderPlanForDisplay | null {
+/**
+ * Primary wellness plan for recommendation copy (excludes add-ons).
+ * Matches MembershipSignup: recommend Golden only when `meetsGolden`; otherwise Foundations (not "first Golden in list").
+ */
+function getRecommendedWellnessPlanFromList(
+  plans: RoomLoaderPlanForDisplay[],
+  meetsGolden: boolean
+): RoomLoaderPlanForDisplay | null {
   const wellness = plans.filter((p) => !MEMBERSHIP_ADDON_PLAN_BASE_IDS.has(normalizePlanBaseId(p.planId)));
   if (wellness.length === 0) return null;
   const withBase = wellness.map((p) => ({ p, base: normalizePlanBaseId(p.planId) }));
-  const golden = withBase.find((x) => x.base === 'golden');
-  if (golden) return golden.p;
+  if (meetsGolden) {
+    const golden = withBase.find((x) => x.base === 'golden');
+    if (golden) return golden.p;
+  }
   const foundations = withBase.find((x) => x.base === 'foundations');
   if (foundations) return foundations.p;
   const comfort = withBase.find((x) => x.base === 'comfort-care');
@@ -1306,6 +1286,32 @@ function hasFeLVInLineItems(patient: any): boolean {
   return false;
 }
 
+/**
+ * FeLV opt-in on the Veterinary Care Plan when FeLV is not already on the visit list / future reminder.
+ * When treatment history is still loading, show the question for kittens or once outdoor access is "yes"
+ * so clients are not blocked from seeing FeLV after answering outdoor (history then refines eligibility).
+ */
+function shouldShowFeLVOptIn(opts: {
+  isCatPatient: boolean;
+  patientId: number | null | undefined;
+  patient: any;
+  history: TreatmentWithItems[];
+  historyReady: boolean;
+  isUnderOneYear: boolean;
+  outdoorAccess: boolean;
+}): boolean {
+  const { isCatPatient, patientId, patient, history, historyReady, isUnderOneYear, outdoorAccess } = opts;
+  if (!isCatPatient || patientId == null) return false;
+  if (hasFeLVInLineItems(patient) || hasFutureReminderForVaccine(patient, 'felv')) return false;
+  if (!historyReady) {
+    return isUnderOneYear || outdoorAccess;
+  }
+  return (
+    (isUnderOneYear && !everHadFeLV(history)) ||
+    (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history)))
+  );
+}
+
 type OptionalVaccineKey = 'felv' | 'lepto' | 'lyme' | 'bordetella';
 
 function itemMatchesVaccine(vaccine: OptionalVaccineKey, name?: string | null, code?: string | null): boolean {
@@ -1810,6 +1816,10 @@ export default function PublicRoomLoaderForm() {
       const patientName = p.patientName ?? p.patient?.name ?? p.name ?? 'Pet';
       const apptPatient = getAppointmentPatientForRoomLoaderPet(data?.appointments, p, idx);
       const petDetails = getPetDetailsForMembership(p, apptPatient);
+      const meetsGolden =
+        petDetails.kind != null &&
+        petDetails.ageYears != null &&
+        petDetails.ageYears >= MEMBERSHIP_GOLDEN_MIN_AGE_YEARS;
       const planIds = getPlanIdsForPet(petDetails);
       const plans: RoomLoaderPlanForDisplay[] = planIds.map((planId) => {
         const details = getMembershipPlanCardDetails(planId);
@@ -1830,6 +1840,7 @@ export default function PublicRoomLoaderForm() {
         patientName,
         plans,
         membershipSpeciesKind: petDetails.kind,
+        meetsGolden,
       };
     }).filter((x: RoomLoaderPlansForPetForDisplay | null): x is RoomLoaderPlansForPetForDisplay => x != null);
   }, [data?.patients, data?.appointments, formattedSubscriptionPlans, subscriptionPlanCatalog]);
@@ -1916,6 +1927,7 @@ export default function PublicRoomLoaderForm() {
         return { id: eligible.id, name: eligible.name, species: eligible.species };
       }
       const apptPatient = getAppointmentPatientForRoomLoaderPet(data?.appointments, p, idx);
+      const membershipEligibility = getPetDetailsForMembership(p, apptPatient);
       const dbId = p.patientId ?? p.patient?.id ?? p.id;
       const dbIdStr = dbId != null ? String(dbId) : eligible.id;
       const clientIdVal =
@@ -1928,10 +1940,12 @@ export default function PublicRoomLoaderForm() {
         species:
           membershipSpeciesPrimaryLabel(p, apptPatient ? [apptPatient] : undefined) ?? eligible.species,
         breed: p.breed ?? p.patient?.breed,
-        dob: p.dob ?? p.patient?.dob,
-        sex: p.sex ?? p.patient?.sex,
+        dob: p.dob ?? p.patient?.dob ?? (apptPatient as { dob?: string } | undefined)?.dob,
+        sex: p.sex ?? p.patient?.sex ?? (apptPatient as { sex?: string } | undefined)?.sex,
         clientId: clientIdVal != null ? clientIdVal : undefined,
+        ...(p.patient ? { patient: p.patient } : {}),
         ...(apptPatient ? { _membershipSpeciesExtraSources: [apptPatient] } : {}),
+        _membershipEligibilitySnapshot: membershipEligibility,
       } as Pet;
     },
     [data?.patients, data?.clientId, data?.client?.id, data?.appointments]
@@ -2047,7 +2061,7 @@ export default function PublicRoomLoaderForm() {
           { monthly: RoomLoaderSimulateBillPublicResponse | null; annual: RoomLoaderSimulateBillPublicResponse | null }
         > = {};
         for (const petPlans of availablePlansForPetsForDisplay) {
-          const rec = getRecommendedWellnessPlanFromList(petPlans.plans);
+          const rec = getRecommendedWellnessPlanFromList(petPlans.plans, petPlans.meetsGolden);
           if (!rec) continue;
           const filtered = filterLineItemsForPatientSimulate(summaryLineItems, petPlans.patientId, firstPid);
           const lineItems: RoomLoaderSimulateLineItem[] = filtered.map(
@@ -2938,17 +2952,6 @@ export default function PublicRoomLoaderForm() {
       const patientId = patient.patientId ?? patient.patient?.id ?? petIdx;
       const petName = patient.patientName || `Pet ${petIdx + 1}`;
       const apptRowPdfP1 = getAppointmentForRoomLoaderPet(appts, patient, petIdx);
-      const apptPatient = apptRowPdfP1?.patient;
-      const speciesParts = [
-        patient.species,
-        patient.speciesEntity?.name,
-        patient.patient?.species,
-        patient.patient?.speciesEntity?.name,
-        apptPatient?.species,
-        apptPatient?.speciesEntity?.name,
-      ].filter(Boolean) as string[];
-      const speciesLower = speciesParts.length ? speciesParts.join(' ').toLowerCase() : '';
-      const isCatPatient = isCatSpeciesTokens(speciesLower);
       const markedNewByApi = patient.isNewPatient === true || apptRowPdfP1?.isNewPatient === true;
       const explicitlyNotNew = patient.isNewPatient === false || apptRowPdfP1?.isNewPatient === false;
       const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
@@ -2976,9 +2979,6 @@ export default function PublicRoomLoaderForm() {
           addOptional('What do you need refills of?', `${petKey}_preMedsWhatRefills`);
           addOptional('Do you want it mailed or pick up from Brunswick office?', `${petKey}_preMedsMailOrPickup`, { mailed: 'Mailed', pickup: 'Pick up from Brunswick office' });
         }
-      }
-      if (isCatPatient) {
-        addOptional(`Does ${petName} go outdoors or live with a cat that goes outdoors?`, `${petKey}_outdoorAccess`, { yes: 'Yes', no: 'No' });
       }
       if (isNewPatient) {
         addOptional(`Describe ${petName}'s behavior at home, around strangers, and at a typical vet office.`, `${petKey}_newPatientBehavior`);
@@ -3050,14 +3050,15 @@ export default function PublicRoomLoaderForm() {
         !hasLymeInLineItems(patient) &&
         !hasFutureReminderForVaccine(patient, 'lyme');
       const showRabiesCats = isCatExplicit && patient.vaccines?.rabies;
-      const showFeLV =
-        historyReady &&
-        isCatExplicit &&
-        historyPatientId != null &&
-        !hasFeLVInLineItems(patient) &&
-        !hasFutureReminderForVaccine(patient, 'felv') &&
-        ((isUnderOneYear && !everHadFeLV(history)) ||
-          (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
+      const showFeLV = shouldShowFeLVOptIn({
+        isCatPatient: isCatExplicit,
+        patientId: historyPatientId,
+        patient,
+        history,
+        historyReady,
+        isUnderOneYear,
+        outdoorAccess,
+      });
       const questions: Qa[] = [];
       const add = (question: string, key: string, valueLabels?: Record<string, string>) => {
         const raw = formData[key];
@@ -3270,15 +3271,15 @@ export default function PublicRoomLoaderForm() {
           !hasLymeInLineItems(patient) &&
           !hasFutureReminderForVaccine(patient, 'lyme');
         const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-        // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due); FeLV uses 24-month window
-        const showFeLV =
-          historyReady &&
-          isCatPatient &&
-          historyPatientId != null &&
-          !hasFeLVInLineItems(patient) &&
-          !hasFutureReminderForVaccine(patient, 'felv') &&
-          ((isUnderOneYear && !everHadFeLV(history)) ||
-            (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
+        const showFeLV = shouldShowFeLVOptIn({
+          isCatPatient,
+          patientId: historyPatientId,
+          patient,
+          history,
+          historyReady,
+          isUnderOneYear,
+          outdoorAccess,
+        });
 
         if (suffix === 'appointmentReason' || suffix === 'generalWellbeing' || suffix === 'eatingDrinkingNormal' || suffix === 'eatingDrinkingNormalDetails') allowedFormData[key] = value;
         else if (suffix === 'mobilityDetails' && (patientsData[petIdx] as any)?.questions?.mobility === true) allowedFormData[key] = value;
@@ -3332,7 +3333,7 @@ export default function PublicRoomLoaderForm() {
     };
   }
 
-  /** Validate required fields: outdoor (cats) and any vaccine question that is shown. */
+  /** Validate required fields: outdoor (cats, on Care Plan), eating/normal, new-patient blocks, and any optional vaccine question that is shown. */
   function validateRequiredBeforeSubmit(): { valid: boolean; message?: string; errors?: Record<string, string> } {
     const patientsData = data?.patients ?? [];
     const appts = data?.appointments ?? [];
@@ -3419,15 +3420,15 @@ export default function PublicRoomLoaderForm() {
         !hasLymeInLineItems(patient) &&
         !hasFutureReminderForVaccine(patient, 'lyme');
       const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-      // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due); FeLV uses 24-month window
-      const showFeLV =
-        historyReady &&
-        isCatPatient &&
-        historyPatientId != null &&
-        !hasFeLVInLineItems(patient) &&
-        !hasFutureReminderForVaccine(patient, 'felv') &&
-        ((isUnderOneYear && !everHadFeLV(history)) ||
-          (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
+      const showFeLV = shouldShowFeLVOptIn({
+        isCatPatient,
+        patientId: historyPatientId,
+        patient,
+        history,
+        historyReady,
+        isUnderOneYear,
+        outdoorAccess,
+      });
 
       // Only require vaccine answers when the Optional Vaccines section was actually shown (same as Care Plan UI: hidden for QOL Exam unless lab work was Yes)
       const appointmentTypeName = (apptRowSubmit?.appointmentType?.prettyName ?? apptRowSubmit?.appointmentType?.name ?? '').toString().toLowerCase();
@@ -3435,11 +3436,12 @@ export default function PublicRoomLoaderForm() {
       const labWorkYes = formData[`${petKey}_labWork`] === true || formData[`${petKey}_labWork`] === 'yes' || (patient as any)?.questions?.labWork === true;
       const hideVaccineSectionForQOL = isQOLExam && !labWorkYes;
 
+      // Dogs: optional vaccine eligibility depends on treatment history. Cats (FeLV / outdoor) can proceed while history loads.
       const needsTreatmentHistoryBeforeSubmit =
         historyPatientId != null &&
         !historyReady &&
         !hideVaccineSectionForQOL &&
-        (isDog || (isCatPatient && (isUnderOneYear || outdoorAccess)));
+        isDog;
       if (needsTreatmentHistoryBeforeSubmit) {
         errors[`${petKey}_optionalVaccinesLoading`] = `We're still loading vaccine history for ${petName}. Please wait a moment, then try again.`;
       }
@@ -3600,7 +3602,7 @@ export default function PublicRoomLoaderForm() {
     return { valid: true };
   }
 
-  /** Validate required fields when leaving page 1 (Check-in): outdoor for cats, food allergies only when that block is shown (new patients). */
+  /** Validate required fields when leaving page 1 (Check-in): food allergies only when that block is shown (new patients). Outdoor (cats) is on the Veterinary Care Plan only. */
   function validateRequiredForPage1(): { valid: boolean; message?: string; errors?: Record<string, string> } {
     const patientsData = data?.patients ?? [];
     const appts = data?.appointments ?? [];
@@ -3610,31 +3612,12 @@ export default function PublicRoomLoaderForm() {
       const petKey = `pet${petIdx}`;
       const petName = patient.patientName || `Pet ${petIdx + 1}`;
       const apptRowP1 = getAppointmentForRoomLoaderPet(appts, patient, petIdx);
-      const apptP1 = apptRowP1?.patient;
-      const page1SpeciesLower = [
-        patient.species,
-        patient.speciesEntity?.name,
-        patient.patient?.species,
-        patient.patient?.speciesEntity?.name,
-        apptP1?.species,
-        apptP1?.speciesEntity?.name,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      const isCatPatient = isCatSpeciesTokens(page1SpeciesLower);
       const markedNewByApi = patient.isNewPatient === true || apptRowP1?.isNewPatient === true;
       const explicitlyNotNew = patient.isNewPatient === false || apptRowP1?.isNewPatient === false;
       const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
       const treatAsNewWhenNoReminders = patient.isNewPatient !== false && apptRowP1?.isNewPatient !== false;
       const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
 
-      if (isCatPatient) {
-        const outdoor = formData[`${petKey}_outdoorAccess`];
-        if (outdoor !== 'yes' && outdoor !== 'no') {
-          errors[`${petKey}_outdoorAccess`] = `Please answer whether ${petName} goes outdoors or lives with a cat who does.`;
-        }
-      }
       const eatingNormal = formData[`${petKey}_eatingDrinkingNormal`];
       if (eatingNormal !== 'yes' && eatingNormal !== 'no') {
         errors[`${petKey}_eatingDrinkingNormal`] = `Please answer whether ${petName} is eating, drinking, defecating, and urinating normally.`;
@@ -3733,7 +3716,7 @@ export default function PublicRoomLoaderForm() {
       patientId != null &&
       !historyReady &&
       !hideVaccineSectionForQOL &&
-      (isDog || (isCatPatient && (isUnderOneYear || outdoorAccess)));
+      isDog;
     if (needsTreatmentHistoryBeforeContinue) {
       errors[`${petKey}_optionalVaccinesLoading`] = `We're still loading vaccine history for ${petName}. Please wait a moment, then try Next again.`;
     }
@@ -3765,15 +3748,15 @@ export default function PublicRoomLoaderForm() {
       !hasLymeInLineItems(patient) &&
       !hasFutureReminderForVaccine(patient, 'lyme');
     const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-    // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due); FeLV uses 24-month window
-    const showFeLV =
-      historyReady &&
-      isCatPatient &&
-      patientId != null &&
-      !hasFeLVInLineItems(patient) &&
-      !hasFutureReminderForVaccine(patient, 'felv') &&
-      ((isUnderOneYear && !everHadFeLV(history)) ||
-        (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
+    const showFeLV = shouldShowFeLVOptIn({
+      isCatPatient,
+      patientId,
+      patient,
+      history,
+      historyReady,
+      isUnderOneYear,
+      outdoorAccess,
+    });
 
     console.log('[RoomLoader] validateRequiredForCarePlanPet', {
       petIdx,
@@ -4179,6 +4162,16 @@ export default function PublicRoomLoaderForm() {
           pairs.push({ patientId, item: si, key: `p${patientId}-${itemType}-${id}` });
         }
       });
+      if (p.vaccines?.sharps === true && sharpsDisposalItem) {
+        const payload = buildPricingItemPayload(sharpsDisposalItem);
+        if (payload) {
+          const sid = getItemId(sharpsDisposalItem);
+          if (sid != null) {
+            const itemType = (sharpsDisposalItem.itemType ?? 'procedure').toString();
+            pairs.push({ patientId, item: sharpsDisposalItem, key: `p${patientId}-${itemType}-${sid}` });
+          }
+        }
+      }
     });
     // Common items per patient (for "Commonly selected items" on review page)
     patients.forEach((p: any, idx: number) => {
@@ -4238,6 +4231,7 @@ export default function PublicRoomLoaderForm() {
     seniorFelineItem,
     seniorFelineExtendedItem,
     comprehensiveFecalItem,
+    sharpsDisposalItem,
     optedInVaccinesByPatientId,
     commonItemsFetched,
     pricingRefreshKey,
@@ -4388,23 +4382,23 @@ export default function PublicRoomLoaderForm() {
     return (
       <div className="public-room-loader public-room-loader-thank-you" style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
         <div className="public-room-loader-thank-you-inner" style={{ backgroundColor: '#fff', borderRadius: '16px', boxShadow: '0 4px 24px rgba(0,0,0,0.08)', textAlign: 'center' }}>
-          <div style={{ marginBottom: '24px', fontSize: '48px' }}>✓</div>
-          <h1 style={{ margin: '0 0 12px', fontSize: '28px', fontWeight: 700, color: '#1a1a1a' }}>
+          <div style={{ marginBottom: '14px', fontSize: '48px' }}>✓</div>
+          <h1 style={{ margin: '0 0 6px', fontSize: '26px', fontWeight: 700, color: '#1a1a1a' }}>
             Thank you
           </h1>
-          <p style={{ margin: '0 0 8px', fontSize: '17px', color: '#444', lineHeight: 1.5 }}>
+          <p style={{ margin: '0 0 6px', fontSize: '16px', color: '#444', lineHeight: 1.4 }}>
             Your Pre-Visit Check-In has been submitted.
           </p>
-          <p style={{ margin: '0 0 28px', fontSize: '15px', color: '#666', lineHeight: 1.5 }}>
+          <p style={{ margin: '0 0 12px', fontSize: '14px', color: '#666', lineHeight: 1.4 }}>
             Our team has received your form. A copy was emailed to you with a PDF attachment for your records.
           </p>
-          <p style={{ margin: '0 0 12px', fontSize: '15px', color: '#444', lineHeight: 1.6, textAlign: 'left', fontWeight: 700 }}>
+          <p style={{ margin: '0 0 6px', fontSize: '15px', color: '#444', lineHeight: 1.4, textAlign: 'left', fontWeight: 700 }}>
             Want to spread out the cost of care while getting even more support and benefits?
           </p>
-          <p style={{ margin: '0 0 24px', fontSize: '15px', color: '#555', lineHeight: 1.6, textAlign: 'left' }}>
+          <p style={{ margin: '0 0 12px', fontSize: '14px', color: '#555', lineHeight: 1.4, textAlign: 'left' }}>
             Memberships allow you to turn wellness care into easy monthly payments while giving you priority access to your dedicated One Team and after-hours triage support. You can explore membership options in your Client Portal. To apply membership benefits to this visit, enrollment should be completed before your appointment.
           </p>
-          <div className="public-room-loader-thank-you-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'center', alignItems: 'center' }}>
+          <div className="public-room-loader-thank-you-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
             {token && (
               <a
                 href={`${apiBaseUrl}/public/room-loader/pdf?token=${encodeURIComponent(token)}`}
@@ -4580,10 +4574,10 @@ export default function PublicRoomLoaderForm() {
   const isUnderOneYear = firstPatient?.dob ? 
     DateTime.now().diff(DateTime.fromISO(firstPatient.dob), 'years').years < 1 : false;
 
-  const sectionLabelStyle = { marginBottom: '10px', color: '#555', fontSize: '18px', fontWeight: 600 } as const;
-  const questionLabelStyle = { display: 'block', marginBottom: '10px', fontWeight: 500, color: '#333', fontSize: '16px' } as const;
-  const inputBlockStyle = { padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #ced4da', fontSize: '14px', fontFamily: 'inherit', boxSizing: 'border-box' as const };
-  const textareaStyle = { width: '100%', minHeight: '80px', padding: '12px', border: '1px solid #ced4da', borderRadius: '4px', fontSize: '14px', fontFamily: 'inherit', resize: 'vertical' as const, backgroundColor: '#f9f9f9', boxSizing: 'border-box' as const };
+  const sectionLabelStyle = { marginBottom: '6px', color: '#555', fontSize: '17px', fontWeight: 600 } as const;
+  const questionLabelStyle = { display: 'block', marginBottom: '6px', fontWeight: 500, color: '#333', fontSize: '15px' } as const;
+  const inputBlockStyle = { padding: '8px 10px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #ced4da', fontSize: '14px', fontFamily: 'inherit', boxSizing: 'border-box' as const };
+  const textareaStyle = { width: '100%', minHeight: '64px', padding: '8px 10px', border: '1px solid #ced4da', borderRadius: '4px', fontSize: '14px', fontFamily: 'inherit', resize: 'vertical' as const, backgroundColor: '#f9f9f9', boxSizing: 'border-box' as const };
   const readOnly = formAlreadySubmitted;
 
   return (
@@ -4591,7 +4585,7 @@ export default function PublicRoomLoaderForm() {
       {readOnly && (
         <div
           style={{
-            marginBottom: '20px',
+            marginBottom: '11px',
             padding: '14px 18px',
             backgroundColor: '#e7f3ff',
             border: '1px solid #0d6efd',
@@ -4608,21 +4602,21 @@ export default function PublicRoomLoaderForm() {
       {/* Page 1 - Check-in Form */}
       {currentPage === 1 && (
         <div className="public-room-loader-form-page">
-          <div className="public-room-loader-page-label" style={{ position: 'absolute', top: '24px', right: '24px', fontSize: '14px', color: '#666' }}>
+          <div className="public-room-loader-page-label" style={{ position: 'absolute', top: '14px', right: '14px', fontSize: '13px', color: '#666' }}>
             PAGE 1
           </div>
 
-          <div style={{ marginBottom: '30px', paddingBottom: '20px', borderBottom: '3px solid #e0e0e0' }}>
+          <div style={{ marginBottom: '10px', paddingBottom: '12px', borderBottom: '3px solid #e0e0e0' }}>
             <h1 style={{ margin: 0, color: '#212529', fontSize: '24px', fontWeight: 700 }}>
               Time to Check-in for your Appointment
             </h1>
-            <p style={{ fontSize: '16px', lineHeight: '1.6', color: '#555', marginTop: '12px', marginBottom: '8px' }}>
+            <p style={{ fontSize: '16px', lineHeight: '1.42', color: '#555', marginTop: '7px', marginBottom: '8px' }}>
               {doctorName} is looking forward to {petNames}'s appointment on {appointmentDate}.
             </p>
-            <p style={{ fontSize: '16px', lineHeight: '1.6', color: '#555', marginBottom: '8px' }}>
+            <p style={{ fontSize: '16px', lineHeight: '1.42', color: '#555', marginBottom: '8px' }}>
               Window of arrival: {arrivalWindowSame ? arrivalWindowStart : `${arrivalWindowStart} – ${arrivalWindowEnd}`}
             </p>
-            <p style={{ fontSize: '16px', lineHeight: '1.6', color: '#555', marginBottom: '0' }}>
+            <p style={{ fontSize: '16px', lineHeight: '1.42', color: '#555', marginBottom: '0' }}>
               To best prepare for your appointment, please answer the questions below. We'll give you an estimate of costs after you answer some questions.
             </p>
           </div>
@@ -4659,23 +4653,23 @@ export default function PublicRoomLoaderForm() {
               <div
                 key={petIdx}
                 style={{
-                  marginBottom: '30px',
-                  padding: '20px',
+                  marginBottom: '10px',
+                  padding: '12px',
                   backgroundColor: '#fff',
                   border: '2px solid #ddd',
                   borderRadius: '8px',
                 }}
               >
-                <div style={{ marginBottom: '25px', paddingBottom: '15px', borderBottom: '3px solid #e0e0e0' }}>
+                <div style={{ marginBottom: '14px', paddingBottom: '9px', borderBottom: '3px solid #e0e0e0' }}>
                   <h3 style={{ margin: 0, color: '#212529', fontSize: '20px', fontWeight: 700 }}>
                     Pet {petIdx + 1}: {petName}
                   </h3>
                   <RoomLoaderPatientMemberBadge patient={patient} appointments={appointments} />
                 </div>
 
-                <div style={{ marginBottom: '20px' }}>
+                <div style={{ marginBottom: '11px' }}>
                   <h4 style={sectionLabelStyle}>Reason for Appointment</h4>
-                  <div style={{ padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #ddd', marginBottom: '12px' }}>
+                  <div style={{ padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #ddd', marginBottom: '8px' }}>
                     <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px', fontWeight: 500 }}>You told us:</div>
                     <div style={{ fontSize: '14px', color: '#333' }}>{appointmentReasonDisplay}</div>
                   </div>
@@ -4691,7 +4685,7 @@ export default function PublicRoomLoaderForm() {
                 </div>
 
                 {(patient.questions?.mobility === true) && (
-                  <div style={{ marginBottom: '20px' }}>
+                  <div style={{ marginBottom: '11px' }}>
                     <h4 style={sectionLabelStyle}>Mobility</h4>
                     <label style={questionLabelStyle}>
                       It sounds like you may have some concerns about {petName}&apos;s mobility. Can you tell us more about what you&apos;re noticing?
@@ -4708,12 +4702,12 @@ export default function PublicRoomLoaderForm() {
                 )}
 
                 {(patient.questions?.preMedsAsk === true) && (
-                  <div style={{ marginBottom: '20px' }}>
+                  <div style={{ marginBottom: '11px' }}>
                     <h4 style={sectionLabelStyle}>Pre-examination medications</h4>
                     <label style={questionLabelStyle}>
                       Do you need any refills on your pre-examination medications for {petName}?
                     </label>
-                    <div style={{ display: 'flex', gap: '20px', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
                       <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
                         <input type="radio" name={`${petKey}_preMedsNeedRefill`} value="yes" checked={formData[`${petKey}_preMedsNeedRefill`] === 'yes'} onChange={(e) => handleInputChange(`${petKey}_preMedsNeedRefill`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
                         Yes
@@ -4725,7 +4719,7 @@ export default function PublicRoomLoaderForm() {
                     </div>
                     {(formData[`${petKey}_preMedsNeedRefill`] === 'yes') && (
                       <>
-                        <label style={{ ...questionLabelStyle, marginTop: '12px' }}>What do you need refills of?</label>
+                        <label style={{ ...questionLabelStyle, marginTop: '7px' }}>What do you need refills of?</label>
                         <textarea
                           value={formData[`${petKey}_preMedsWhatRefills`] || ''}
                           onChange={(e) => handleInputChange(`${petKey}_preMedsWhatRefills`, e.target.value)}
@@ -4734,8 +4728,8 @@ export default function PublicRoomLoaderForm() {
                           style={{ ...textareaStyle, minHeight: '80px', ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}) }}
                           placeholder="List the medications..."
                         />
-                        <label style={{ ...questionLabelStyle, marginTop: '12px' }}>Do you want it mailed or pick up from Brunswick office?</label>
-                        <div style={{ display: 'flex', gap: '20px', marginTop: '8px' }}>
+                        <label style={{ ...questionLabelStyle, marginTop: '7px' }}>Do you want it mailed or pick up from Brunswick office?</label>
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                           <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
                             <input type="radio" name={`${petKey}_preMedsMailOrPickup`} value="mailed" checked={formData[`${petKey}_preMedsMailOrPickup`] === 'mailed'} onChange={(e) => handleInputChange(`${petKey}_preMedsMailOrPickup`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
                             Mailed
@@ -4750,12 +4744,12 @@ export default function PublicRoomLoaderForm() {
                   </div>
                 )}
 
-                <div style={{ marginBottom: '20px' }}>
+                <div style={{ marginBottom: '11px' }}>
                   <h4 style={sectionLabelStyle}>General Well-being & Concerns</h4>
                   <label style={questionLabelStyle}>
                     Is {petName} eating, drinking, defecating, and urinating normally?
                   </label>
-                  <div style={{ display: 'flex', gap: '20px', marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
                     <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
                       <input type="radio" name={`${petKey}_eatingDrinkingNormal`} value="yes" checked={formData[`${petKey}_eatingDrinkingNormal`] === 'yes'} onChange={(e) => handleInputChange(`${petKey}_eatingDrinkingNormal`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
                       Yes
@@ -4784,7 +4778,7 @@ export default function PublicRoomLoaderForm() {
                       )}
                     </>
                   )}
-                  <label style={{ ...questionLabelStyle, marginTop: '16px' }}>
+                  <label style={{ ...questionLabelStyle, marginTop: '10px' }}>
                     How is {petName} doing otherwise? Are there any other concerns you'd like us to address during this visit?
                   </label>
                   <textarea
@@ -4797,31 +4791,11 @@ export default function PublicRoomLoaderForm() {
                   />
                 </div>
 
-                {isCatPatient && (
-                  <div style={{ marginBottom: '20px' }}>
-                    <h4 style={sectionLabelStyle}>Outdoor Access (cats)</h4>
-                    <label style={questionLabelStyle}>Does {petName} go outdoors or live with a cat that goes outdoors?</label>
-                    <div style={{ display: 'flex', gap: '20px' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
-                        <input type="radio" name={`${petKey}_outdoorAccess`} value="yes" checked={formData[`${petKey}_outdoorAccess`] === 'yes'} onChange={(e) => handleInputChange(`${petKey}_outdoorAccess`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
-                        Yes
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
-                        <input type="radio" name={`${petKey}_outdoorAccess`} value="no" checked={formData[`${petKey}_outdoorAccess`] === 'no'} onChange={(e) => handleInputChange(`${petKey}_outdoorAccess`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
-                        No
-                      </label>
-                    </div>
-                    {fieldValidationErrors[`${petKey}_outdoorAccess`] && (
-                      <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_outdoorAccess`]}</p>
-                    )}
-                  </div>
-                )}
-
                 {isNewPatient && (
                   <>
-                    <div style={{ marginBottom: '20px' }}>
+                    <div style={{ marginBottom: '11px' }}>
                       <h4 style={sectionLabelStyle}>New Patient – Behavior</h4>
-                      <p style={{ fontSize: '15px', lineHeight: '1.6', color: '#555', marginBottom: '12px' }}>
+                      <p style={{ fontSize: '15px', lineHeight: '1.42', color: '#555', marginBottom: '8px' }}>
                         Since we haven't met {petName} before, it helps to know a bit about their behavior (aligned with our Fear Free™ approach).
                       </p>
                       <label style={questionLabelStyle}>Describe {petName}'s behavior at home, around strangers, and at a typical vet office. <span style={{ color: '#dc3545' }}>*</span></label>
@@ -4830,15 +4804,15 @@ export default function PublicRoomLoaderForm() {
                         <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[`${petKey}_newPatientBehavior`]}</p>
                       )}
                     </div>
-                    <div style={{ marginBottom: '20px' }}>
+                    <div style={{ marginBottom: '11px' }}>
                       <h4 style={sectionLabelStyle}>Feeding</h4>
                       <label style={questionLabelStyle}>What are you feeding {petName}? (brand, amount, frequency)</label>
                       <textarea value={formData[`${petKey}_feeding`] || ''} onChange={(e) => handleInputChange(`${petKey}_feeding`, e.target.value)} readOnly={readOnly} disabled={readOnly} style={{ ...textareaStyle, ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}) }} placeholder="What are you feeding your pet?" />
                     </div>
-                    <div style={{ marginBottom: '20px' }}>
+                    <div style={{ marginBottom: '11px' }}>
                       <h4 style={sectionLabelStyle}>Food Allergies <span style={{ color: '#dc3545' }}>*</span></h4>
                       <label style={questionLabelStyle}>Do you or {petName} have any food allergies? (we like to bribe!)</label>
-                      <div style={{ display: 'flex', gap: '20px', marginBottom: '12px' }}>
+                      <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
                         <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
                           <input type="radio" name={`${petKey}_foodAllergies`} value="yes" checked={formData[`${petKey}_foodAllergies`] === 'yes'} onChange={(e) => handleInputChange(`${petKey}_foodAllergies`, e.target.value)} disabled={readOnly} style={{ marginRight: '8px', cursor: readOnly ? 'default' : 'pointer' }} />
                           Yes
@@ -4867,7 +4841,7 @@ export default function PublicRoomLoaderForm() {
             );
           })}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '32px', paddingTop: '20px', borderTop: '2px solid #e0e0e0' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '18px', paddingTop: '12px', borderTop: '2px solid #e0e0e0' }}>
             <button
               type="button"
               onClick={() => {
@@ -4901,26 +4875,26 @@ export default function PublicRoomLoaderForm() {
         <div className="public-room-loader-form-page" style={{
           position: 'relative',
         }}>
-          <div style={{ position: 'absolute', top: '24px', right: '24px', fontSize: '14px', color: '#666' }}>
+          <div style={{ position: 'absolute', top: '14px', right: '14px', fontSize: '13px', color: '#666' }}>
             {patients.length > 1 ? `Care Plan — ${currentCarePlanPatient.patientName || `Pet ${carePlanPetIndex + 1}`} (${carePlanPetIndex + 1} of ${patients.length})` : 'PAGE 2'}
           </div>
 
-          <div style={{ marginBottom: '25px', paddingBottom: '15px', borderBottom: '3px solid #e0e0e0' }}>
+          <div style={{ marginBottom: '14px', paddingBottom: '9px', borderBottom: '3px solid #e0e0e0' }}>
             <h1 style={{ margin: 0, color: '#212529', fontSize: '24px', fontWeight: 700 }}>
               Veterinary Care Plan{patients.length > 1 ? ` — ${currentCarePlanPatient.patientName || `Pet ${carePlanPetIndex + 1}`}` : ''}
             </h1>
             <RoomLoaderPatientMemberBadge patient={currentCarePlanPatient} appointments={appointments} />
           </div>
 
-          <div style={{ marginBottom: '20px' }}>
+          <div style={{ marginBottom: '11px' }}>
             <h4 style={sectionLabelStyle}>
               The following items are recommended for {currentCarePlanPatient?.patientName || `Pet ${carePlanPetIndex + 1}`}'s upcoming visit.
             </h4>
-            <p style={{ fontSize: '14px', color: '#555', marginTop: '4px', marginBottom: '12px' }}>
+            <p style={{ fontSize: '14px', color: '#555', marginTop: '4px', marginBottom: '8px' }}>
               (Please uncheck any items you do not want)
             </p>
             {currentCarePlanPatient?.notesToClient?.trim() && (
-              <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: '#e7f3ff', borderRadius: '6px', border: '1px solid #b6d4fe' }}>
+              <div style={{ marginBottom: '10px', padding: '12px 16px', backgroundColor: '#e7f3ff', borderRadius: '6px', border: '1px solid #b6d4fe' }}>
                 <h4 style={{ margin: '0 0 8px', fontSize: '15px', fontWeight: 600, color: '#0a58ca' }}>
                   Extra notes from your team about their recommendations:
                 </h4>
@@ -4970,7 +4944,7 @@ export default function PublicRoomLoaderForm() {
               const procedureItems = sortedWithOriginalIdx.filter(({ item }) => itemCategory(item) === 'procedure');
               const labItems = sortedWithOriginalIdx.filter(({ item }) => itemCategory(item) === 'lab');
               const inventoryItems = sortedWithOriginalIdx.filter(({ item }) => itemCategory(item) === 'inventory');
-              const CarePlanSeparator = () => <div style={{ height: '1px', backgroundColor: '#e0e0e0', margin: '12px 0' }} />;
+              const CarePlanSeparator = () => <div style={{ height: '1px', backgroundColor: '#e0e0e0', margin: '6px 0' }} />;
               const renderRow = ({ item, originalIdx }: { item: any; originalIdx: number }, displayIdx: number, groupLength: number) => {
                 const isVisitOrConsult = hasPhrase(item, 'visit') || hasPhrase(item, 'consult');
                 const isFecalReplacedForItem = hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0;
@@ -4981,7 +4955,7 @@ export default function PublicRoomLoaderForm() {
                 const disabled = isVisitOrConsult || isReplacedForItem;
                 const replacedByLabel = isFecalReplacedForItem ? fecalReplacedBy.join(' or ') : is4dxReplacedForItem ? fourDxReplacedBy.join(' or ') : '';
                 return (
-                  <div key={originalIdx} style={{ display: 'flex', alignItems: 'center', padding: '10px 0', borderBottom: displayIdx < groupLength - 1 ? '1px solid #e0e0e0' : 'none' }}>
+                  <div key={originalIdx} style={{ display: 'flex', alignItems: 'center', padding: '6px 0', borderBottom: displayIdx < groupLength - 1 ? '1px solid #e0e0e0' : 'none' }}>
                     <input
                       type="checkbox"
                       checked={isChecked}
@@ -4999,7 +4973,7 @@ export default function PublicRoomLoaderForm() {
                 );
               };
               return (
-                <div style={{ padding: '15px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #ddd' }}>
+                <div style={{ padding: '10px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #ddd' }}>
                   {procedureItems.length > 0 && procedureItems.map((entry, i) => renderRow(entry, i, procedureItems.length))}
                   {procedureItems.length > 0 && (labItems.length > 0 || inventoryItems.length > 0) && <CarePlanSeparator />}
                   {labItems.length > 0 && labItems.map((entry, i) => renderRow(entry, i, labItems.length))}
@@ -5029,10 +5003,10 @@ export default function PublicRoomLoaderForm() {
             const isCatPatient = isCatSpeciesTokens(speciesLower);
             if (!isCatPatient) return null;
             return (
-              <div style={{ marginBottom: '20px' }}>
-                <h4 style={sectionLabelStyle}>Outdoor access (cats) <span style={{ color: '#dc3545' }}>*</span></h4>
+              <div style={{ marginBottom: '11px' }}>
+                <h4 style={sectionLabelStyle}>Outdoor Access (cats) <span style={{ color: '#dc3545' }}>*</span></h4>
                 <label style={questionLabelStyle}>Does {petName} go outdoors or live with a cat who does?</label>
-                <div style={{ display: 'flex', gap: '20px' }}>
+                <div style={{ display: 'flex', gap: '8px' }}>
                   <label style={{ display: 'flex', alignItems: 'center', cursor: readOnly ? 'default' : 'pointer', fontSize: '16px' }}>
                     <input
                       type="radio"
@@ -5071,9 +5045,9 @@ export default function PublicRoomLoaderForm() {
             const items = optedIn ? (Object.values(optedIn).filter(Boolean) as SearchableItem[]) : [];
             if (items.length === 0) return null;
             return (
-              <div style={{ marginBottom: '20px' }}>
+              <div style={{ marginBottom: '11px' }}>
                 <h4 style={sectionLabelStyle}>Added from your selections</h4>
-                <div style={{ padding: '15px', backgroundColor: '#e8f5e9', borderRadius: '4px', border: '1px solid #81c784' }}>
+                <div style={{ padding: '10px', backgroundColor: '#e8f5e9', borderRadius: '4px', border: '1px solid #81c784' }}>
                   {items.map((item, idx) => {
                     const displayPrice = patientId != null ? (getClientAdjustedPrice(patientId, item) ?? getSearchItemPrice(item) ?? (item as any).price) : (getSearchItemPrice(item) ?? (item as any).price);
                     const vaccinePricing = patientId != null ? getClientPricing(patientId, item) : null;
@@ -5160,22 +5134,22 @@ export default function PublicRoomLoaderForm() {
               !hasLymeInLineItems(patient) &&
               !hasFutureReminderForVaccine(patient, 'lyme');
             const showRabiesCats = isCatPatient && patient.vaccines?.rabies;
-            // FeLV: (a) <1yr and never had it; or (b) ≥1yr and outdoor yes and (never had or past due)
-            const showFeLV =
-              historyReady &&
-              isCatPatient &&
-              patientId != null &&
-              !hasFeLVInLineItems(patient) &&
-              !hasFutureReminderForVaccine(patient, 'felv') &&
-              ((isUnderOneYear && !everHadFeLV(history)) ||
-                (!isUnderOneYear && outdoorAccess && (!everHadFeLV(history) || !hadFeLVInLast24Months(history))));
+            const showFeLV = shouldShowFeLVOptIn({
+              isCatPatient,
+              patientId,
+              patient,
+              history,
+              historyReady,
+              isUnderOneYear,
+              outdoorAccess,
+            });
             const hasAnyOptionalContent = showCrLymeBooster || showLepto || showBordetella || showLyme || showRabiesCats || showFeLV;
 
             if (!hasAnyOptionalContent) return null;
 
             return (
-              <div key={petIdx} style={{ marginBottom: '30px', padding: '20px', backgroundColor: '#f9f9f9', border: '1px solid #ddd', borderRadius: '8px' }}>
-                <div style={{ marginBottom: '20px', paddingBottom: '12px', borderBottom: '2px solid #e0e0e0' }}>
+              <div key={petIdx} style={{ marginBottom: '10px', padding: '12px', backgroundColor: '#f9f9f9', border: '1px solid #ddd', borderRadius: '8px' }}>
+                <div style={{ marginBottom: '11px', paddingBottom: '12px', borderBottom: '2px solid #e0e0e0' }}>
                   <h3 style={{ margin: 0, color: '#212529', fontSize: '18px', fontWeight: 700 }}>{petName} — Optional Vaccines & Questions</h3>
                 </div>
 
@@ -5183,15 +5157,15 @@ export default function PublicRoomLoaderForm() {
                 {(() => {
                   if (!showCrLymeBooster) return null;
                   return (
-                    <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
-                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '12px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>crLyme vaccine</div>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '12px', color: '#555' }}>
+                    <div style={{ marginBottom: '14px', paddingTop: '12px', borderTop: '1px solid #ddd' }}>
+                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '8px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>crLyme vaccine</div>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '8px', color: '#555' }}>
                         We&apos;re excited to let you know that we&apos;ve switched to the crLyme vaccine, offering broader, more effective protection than what {petName} has received in the past, while remaining just as safe. {petName} will receive their first crLyme vaccine at the appointment.
                       </p>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '15px', color: '#555' }}>
                         To ensure full effectiveness, we recommend a crLyme booster in 3-4 weeks. If the booster is skipped, however, the initial dose still is at least as protective as {petName}&apos;s previous Lyme vaccine. Do you want us to schedule you a booster appointment after this visit? <span style={{ color: '#dc3545' }}>*</span>
                       </p>
-                      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
                           <input
                             type="radio"
@@ -5237,24 +5211,24 @@ export default function PublicRoomLoaderForm() {
                 {(() => {
                   if (!showLyme) return null;
                   return (
-                    <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
-                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '12px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>Lyme vaccine</div>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '12px', color: '#555' }}>
+                    <div style={{ marginBottom: '14px', paddingTop: '12px', borderTop: '1px solid #ddd' }}>
+                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '8px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>Lyme vaccine</div>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '8px', color: '#555' }}>
                         It looks like {petName} has not received a Lyme vaccine within the past 15 months and may not be fully protected at this time.
                       </p>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '12px', color: '#555' }}>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '8px', color: '#555' }}>
                         Lyme disease is extremely common in our area due to the high number of ticks. While many dogs can be exposed without symptoms, about 10–15% develop serious issues like painful joints — and in rare cases, life-threatening kidney disease.
                       </p>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '12px', color: '#555' }}>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '8px', color: '#555' }}>
                         Because of the risk where we live, <strong>Vet At Your Door considers Lyme a core vaccine for all dogs.</strong>
                       </p>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '15px', color: '#555' }}>
                         To protect {petName}, we recommend starting the vaccine series now. It will involve two vaccines, 3–4 weeks apart, followed by an annual booster.
                       </p>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '15px', color: '#555' }}>
                         Do you want us to give the Lyme vaccine? <span style={{ color: '#dc3545' }}>*</span>
                       </p>
-                      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
                           <input
                             type="radio"
@@ -5289,24 +5263,24 @@ export default function PublicRoomLoaderForm() {
                 {(() => {
                   if (!showLepto) return null;
                   return (
-                    <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
-                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '12px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>Leptospirosis vaccine</div>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                    <div style={{ marginBottom: '14px', paddingTop: '12px', borderTop: '1px solid #ddd' }}>
+                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '8px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>Leptospirosis vaccine</div>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '15px', color: '#555' }}>
                         It looks like {petName} has not received a Leptospirosis vaccine within the past 15 months and may not be fully protected at this time.
                       </p>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '15px', color: '#555' }}>
                         Leptospirosis is a serious bacterial infection that can be life-threatening for dogs — and can also spread to humans. It's carried in the urine of wild animals, and dogs can contract it simply by drinking from puddles or streams.
                       </p>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '15px', color: '#555' }}>
                         Based on updated veterinary guidelines (from AAHA, ACVIM, and WSAVA) and the risks in our area, <strong>Vet At Your Door now considers Leptospirosis a core vaccine for all dogs.</strong>
                       </p>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '15px', color: '#555' }}>
                         To protect {petName}, we recommend starting the vaccine series at your visit. It will involve two vaccines, 3–4 weeks apart, then an annual booster to stay protected.
                       </p>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '15px', color: '#555' }}>
                         Do you want us to give the Lepto vaccine? <span style={{ color: '#dc3545' }}>*</span>
                       </p>
-                      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
                           <input
                             type="radio"
@@ -5341,18 +5315,18 @@ export default function PublicRoomLoaderForm() {
                 {(() => {
                   if (!showBordetella) return null;
                   return (
-                    <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
-                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '12px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>Bordetella vaccine</div>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                    <div style={{ marginBottom: '14px', paddingTop: '12px', borderTop: '1px solid #ddd' }}>
+                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '8px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>Bordetella vaccine</div>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '15px', color: '#555' }}>
                         Bordetella: It doesn't look like {petName} has received the Bordetella ("Kennel Cough") vaccine in the last year.
                       </p>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '15px', color: '#555' }}>
                         We recommend this vaccine for dogs under a year old and for adult dogs who are boarded, go to doggy day care, or take group training classes.
                       </p>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '15px', color: '#555' }}>
                         Do you want us to give the Bordetella vaccine? <span style={{ color: '#dc3545' }}>*</span>
                       </p>
-                      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
                           <input
                             type="radio"
@@ -5385,9 +5359,9 @@ export default function PublicRoomLoaderForm() {
 
                 {/* Rabies Vaccine (Cats only) */}
                 {isCatPatient && patient.vaccines?.rabies && (
-                  <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
-                    <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '12px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>Rabies vaccine</div>
-                    <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                  <div style={{ marginBottom: '14px', paddingTop: '12px', borderTop: '1px solid #ddd' }}>
+                    <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '8px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>Rabies vaccine</div>
+                    <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '15px', color: '#555' }}>
                       If not a member AND due for rabies AND a cat: we offer two rabies vaccines - a one year or three year - which would you prefer? <span style={{ color: '#dc3545' }}>*</span>
                     </p>
                     <div style={{ marginLeft: '20px' }}>
@@ -5437,25 +5411,25 @@ export default function PublicRoomLoaderForm() {
                   </div>
                 )}
 
-                {/* FeLV recommendation (cats only: <1yr always; or outdoors + (never had or >15mo since)) */}
+                {/* FeLV recommendation (cats only: <1yr; or outdoor yes + not on plan + history when ready) */}
                 {(() => {
                   if (!showFeLV) return null;
                   return (
-                    <div style={{ marginBottom: '25px', paddingTop: '20px', borderTop: '1px solid #ddd' }}>
-                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '12px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>FeLV vaccine</div>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                    <div style={{ marginBottom: '14px', paddingTop: '12px', borderTop: '1px solid #ddd' }}>
+                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#212529', marginBottom: '8px', padding: '8px 12px', backgroundColor: '#e8f4fc', borderRadius: '6px' }}>FeLV vaccine</div>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '15px', color: '#555' }}>
                         It appears that {petName} has either not started the FeLV (Feline Leukemia) vaccine series or is not currently up to date.
                       </p>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '15px', color: '#555' }}>
                         FeLV is a contagious and potentially fatal virus spread through close contact between cats, like grooming or sharing food and water bowls.
                       </p>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '15px', color: '#555' }}>
                         Based on updated veterinary guidelines, <strong>FeLV is now considered a core vaccine for all kittens under one year old, regardless of whether they live indoors or outdoors. We also highly recommend it for any adult cats who go outside or live with cats who do.</strong>
                       </p>
-                      <p style={{ fontSize: '16px', lineHeight: '1.6', marginBottom: '15px', color: '#555' }}>
+                      <p style={{ fontSize: '16px', lineHeight: '1.42', marginBottom: '15px', color: '#555' }}>
                         Do you want us to give the FeLV vaccine? For initial immunity, two vaccines must be given, 3-4 weeks apart. <span style={{ color: '#dc3545' }}>*</span>
                       </p>
-                      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
                           <input
                             type="radio"
@@ -5492,7 +5466,7 @@ export default function PublicRoomLoaderForm() {
           {fieldValidationErrors[`pet${carePlanPetIndex}_optionalVaccinesLoading`] && (
             <p
               style={{
-                marginBottom: '16px',
+                marginBottom: '10px',
                 padding: '12px',
                 backgroundColor: '#fff3cd',
                 border: '1px solid #ffc107',
@@ -5576,14 +5550,14 @@ export default function PublicRoomLoaderForm() {
       {/* Labs We Recommend */}
       {isLabsPage && (
         <div className="public-room-loader-form-page">
-          <div style={{ marginBottom: '25px', paddingBottom: '15px', borderBottom: '3px solid #e0e0e0' }}>
+          <div style={{ marginBottom: '14px', paddingBottom: '9px', borderBottom: '3px solid #e0e0e0' }}>
             <h1 style={{ margin: 0, color: '#212529', fontSize: '24px', fontWeight: 700 }}>Labs We Recommend</h1>
-            <p style={{ fontSize: '16px', lineHeight: '1.6', color: '#555', marginTop: '10px', marginBottom: 0 }}>
+            <p style={{ fontSize: '16px', lineHeight: '1.42', color: '#555', marginTop: '10px', marginBottom: 0 }}>
               Based on your pet's age, species, and today's visit, here are lab panels we suggest.
             </p>
           </div>
           {Object.keys(fieldValidationErrors).some((k) => k.startsWith('lab_')) && (
-            <p style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: '6px', color: '#721c24', fontSize: '14px' }}>
+            <p style={{ marginBottom: '10px', padding: '12px', backgroundColor: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: '6px', color: '#721c24', fontSize: '14px' }}>
               Please complete all required lab questions below before continuing.
             </p>
           )}
@@ -5596,14 +5570,14 @@ export default function PublicRoomLoaderForm() {
             <div
               key={idx}
               style={{
-                marginBottom: '24px',
-                padding: '20px',
+                marginBottom: '14px',
+                padding: '12px',
                 backgroundColor: '#f9f9f9',
                 border: '1px solid #ddd',
                 borderRadius: '8px',
               }}
             >
-              <div style={{ marginBottom: '16px', paddingBottom: '10px', borderBottom: '2px solid #e0e0e0' }}>
+              <div style={{ marginBottom: '10px', paddingBottom: '10px', borderBottom: '2px solid #e0e0e0' }}>
                 <h3 style={{ margin: 0, color: '#212529', fontSize: '18px', fontWeight: 700 }}>{entry.patientName}</h3>
                 <RoomLoaderPatientMemberBadge patient={labSectionPatient} appointments={appointments} />
               </div>
@@ -5693,19 +5667,19 @@ export default function PublicRoomLoaderForm() {
                     const hasTestsAlreadyRecommendedFeline = testsAlreadyRecommendedFeline.length > 0;
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
-                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '12px', textDecoration: 'underline' }}>Early Detection Screening for {petName}</div>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '8px', textDecoration: 'underline' }}>Early Detection Screening for {petName}</div>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '8px', flexWrap: 'wrap' }}>
                           <img
                             src="/early-detection-feline.png"
                             alt="Early detection baseline and trend"
                             style={{ width: '180px', height: 'auto', borderRadius: '4px', border: '1px solid #e0e0e0', flexShrink: 0 }}
                           />
-                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, flex: '1 1 280px' }}>
+                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, margin: 0, flex: '1 1 280px' }}>
                             We recommend an Early Detection Panel as part of routine preventive care. This screening establishes baseline values, helps us monitor trends over time, and can identify subtle changes before pets show symptoms.
                           </p>
                         </div>
                         <p style={{ fontSize: '14px', fontWeight: 600, color: '#333', marginBottom: '8px' }}>The Early Detection Panel includes:</p>
-                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px', paddingLeft: '20px' }}>
+                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: '8px', paddingLeft: '20px' }}>
                           <li>Chemistry Panel (liver and kidney function)</li>
                           <li>Complete Blood Count (CBC)</li>
                           <li>Fecal parasite screening</li>
@@ -5720,7 +5694,7 @@ export default function PublicRoomLoaderForm() {
                           })()}
                         </p>
                         {hasTestsAlreadyRecommendedFeline && (
-                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '12px' }}>
+                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '8px' }}>
                             This bundled panel includes the {testsAlreadyRecommendedFeline.join(' and ')} already recommended for today&apos;s visit and provides a more complete picture of {petName}&apos;s health
                             {hasFecalReminder && priceDiff != null && !Number.isNaN(priceDiff)
                               ? priceDiff > 0
@@ -5731,11 +5705,11 @@ export default function PublicRoomLoaderForm() {
                               : '.'}
                           </p>
                         )}
-                        <p style={{ fontSize: '14px', color: '#555', marginBottom: '16px' }}>
+                        <p style={{ fontSize: '14px', color: '#555', marginBottom: '10px' }}>
                           Most families choose to include this screening so we have baseline information available if {petName} ever becomes sick.
                         </p>
                         <p style={{ fontSize: '15px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Would you like us to include this recommended screening today?</p>
-                        <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                           <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
                             <input
                               type="radio"
@@ -5768,7 +5742,7 @@ export default function PublicRoomLoaderForm() {
                         )}
                         {earlyDetValue === 'yes' && (
                           <>
-                            <p style={{ fontSize: '14px', color: '#333', marginTop: '12px', padding: '12px', backgroundColor: '#e8f5e9', border: '1px solid #81c784', borderRadius: '6px', lineHeight: 1.5 }}>
+                            <p style={{ fontSize: '14px', color: '#333', marginTop: '7px', padding: '12px', backgroundColor: '#e8f5e9', border: '1px solid #81c784', borderRadius: '6px', lineHeight: 1.5 }}>
                               Great!<br /><br />
                               <strong>NOTE:</strong> Please try to have a stool sample (non-frozen, fresher is better!) ready for us when we arrive!
                             </p>
@@ -5793,19 +5767,19 @@ export default function PublicRoomLoaderForm() {
                     const earlyDetCanineCost = getClientAdjustedPrice(patientIdForPricing, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem);
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
-                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '12px', textDecoration: 'underline' }}>Early Detection Screening for {petName}</div>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '8px', textDecoration: 'underline' }}>Early Detection Screening for {petName}</div>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '8px', flexWrap: 'wrap' }}>
                           <img
                             src="/early-detection-feline.png"
                             alt="Early detection baseline and trend"
                             style={{ width: '180px', height: 'auto', borderRadius: '4px', border: '1px solid #e0e0e0', flexShrink: 0 }}
                           />
-                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, flex: '1 1 280px' }}>
+                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, margin: 0, flex: '1 1 280px' }}>
                             We recommend an Early Detection Panel as part of routine preventive care. This screening establishes baseline values, helps us monitor trends over time, and can identify subtle changes before pets show symptoms.
                           </p>
                         </div>
                         <p style={{ fontSize: '14px', fontWeight: 600, color: '#333', marginBottom: '8px' }}>The Early Detection Panel includes:</p>
-                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px', paddingLeft: '20px' }}>
+                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: '8px', paddingLeft: '20px' }}>
                           <li>Chemistry Panel (liver and kidney function)</li>
                           <li>Complete Blood Count (CBC)</li>
                           <li>Fecal parasite screening</li>
@@ -5820,7 +5794,7 @@ export default function PublicRoomLoaderForm() {
                           })()}
                         </p>
                         {hasTestsAlreadyRecommended && (
-                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '12px' }}>
+                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '8px' }}>
                             This bundled panel includes the {testsAlreadyRecommended.join(' and ')} already recommended for today&apos;s visit and provides a more complete picture of {petName}&apos;s health
                             {hasFecalReminder && earlyDetCaninePriceDiff != null && !Number.isNaN(earlyDetCaninePriceDiff)
                               ? earlyDetCaninePriceDiff > 0
@@ -5831,11 +5805,11 @@ export default function PublicRoomLoaderForm() {
                               : '.'}
                           </p>
                         )}
-                        <p style={{ fontSize: '14px', color: '#555', marginBottom: '16px' }}>
+                        <p style={{ fontSize: '14px', color: '#555', marginBottom: '10px' }}>
                           Most families choose to include this screening so we have baseline information available if {petName} ever becomes sick.
                         </p>
                         <p style={{ fontSize: '15px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Would you like us to include this recommended screening today?</p>
-                        <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                           <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
                             <input
                               type="radio"
@@ -5868,7 +5842,7 @@ export default function PublicRoomLoaderForm() {
                         )}
                         {earlyDetCanineValue === 'yes' && (
                           <>
-                            <p style={{ fontSize: '14px', color: '#333', marginTop: '12px', padding: '12px', backgroundColor: '#e8f5e9', border: '1px solid #81c784', borderRadius: '6px', lineHeight: 1.5 }}>
+                            <p style={{ fontSize: '14px', color: '#333', marginTop: '7px', padding: '12px', backgroundColor: '#e8f5e9', border: '1px solid #81c784', borderRadius: '6px', lineHeight: 1.5 }}>
                               Great!<br /><br />
                               <strong>NOTE:</strong> Please try to have a stool sample (non-frozen, fresher is better!) ready for us when we arrive!
                             </p>
@@ -5891,39 +5865,39 @@ export default function PublicRoomLoaderForm() {
                     const labWorkYesForEntry = formData[`pet${idx}_labWork`] === true || formData[`pet${idx}_labWork`] === 'yes' || (patients[idx] as any)?.questions?.labWork === true;
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
-                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '12px', textDecoration: 'underline' }}>Senior Screen — Canine</div>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '8px', textDecoration: 'underline' }}>Senior Screen — Canine</div>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '8px', flexWrap: 'wrap' }}>
                           <img
                             src="/early-detection-feline.png"
                             alt="Early detection baseline and trend"
                             style={{ width: '180px', height: 'auto', borderRadius: '4px', border: '1px solid #e0e0e0', flexShrink: 0 }}
                           />
-                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, flex: '1 1 280px' }}>
+                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, margin: 0, flex: '1 1 280px' }}>
                             {!labWorkYesForEntry
                               ? <>It looks like {petName} is due for Annual Comprehensive Lab Work, which helps us gain helpful insight into {petName}&apos;s overall health and trends over time.</>
                               : <>We have two panels to choose from. Our <strong>Standard Comprehensive Panel</strong> ({formatPrice(standardPrice) != null ? <strong>{formatPrice(standardPrice)}</strong> : 'see pricing at visit'}) includes a:</>}
                           </p>
                         </div>
                         {!labWorkYesForEntry && (
-                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, marginBottom: '12px' }}>
+                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, margin: 0, marginBottom: '8px' }}>
                             We have two panels to choose from. Our <strong>Standard Comprehensive Panel</strong> ({formatPrice(standardPrice) != null ? <strong>{formatPrice(standardPrice)}</strong> : 'see pricing at visit'}) includes a:
                           </p>
                         )}
-                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px', paddingLeft: '20px' }}>
+                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: '8px', paddingLeft: '20px' }}>
                           <li><strong>Chemistry</strong> to look at organ function such as liver or kidneys</li>
                           <li><strong>Complete Blood Count</strong> to look at red/white blood cell and platelet counts</li>
                           <li><strong>Thyroid level</strong>, as this level can go below normal in middle and older aged dogs</li>
                           <li><strong>Urinalysis</strong>, to look at kidney and urinary health</li>
                         </ul>
-                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder || has4dxReminder ? '8px' : '12px' }}>
+                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: hasFecalReminder || has4dxReminder ? '8px' : '12px' }}>
                           We also offer an <strong>Extended Comprehensive Panel</strong>, which is {seniorCanineDiff != null ? <><strong>${seniorCanineDiff.toFixed(2)}</strong> more</> : 'a bit more'}. This panel includes everything in the Standard Comprehensive Panel above and also includes a:
                         </p>
-                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder || has4dxReminder ? '8px' : '12px', paddingLeft: '20px' }}>
+                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: hasFecalReminder || has4dxReminder ? '8px' : '12px', paddingLeft: '20px' }}>
                           <li>Heartworm/tick disease screening test (called &quot;4Dx&quot;)</li>
                           <li>Stool sample analysis for parasites (&quot;Fecal&quot;)</li>
                         </ul>
                         {(hasFecalReminder || has4dxReminder) && (
-                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '12px' }}>
+                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '8px' }}>
                             The Extended Comprehensive Panel includes 4Dx and fecal, so it would replace {has4dxReminder && hasFecalReminder ? 'the 4Dx and fecal' : has4dxReminder ? 'the 4Dx' : 'the fecal'} already on your care plan.
                             {(() => {
                               const diff = has4dxReminder && hasFecalReminder ? extendedMinusBoth : has4dxReminder ? extendedMinus4dx : extendedMinusFecal;
@@ -5937,7 +5911,7 @@ export default function PublicRoomLoaderForm() {
                             })()}
                           </p>
                         )}
-                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '16px' }}>
+                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: '10px' }}>
                           Conducting annual lab work aligns with the proactive essence of our philosophy by enabling early detection and tailored care strategies, ensuring optimal health outcomes for {petName}.
                         </p>
                         <p style={{ fontSize: '15px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Which panel would you like {petName} to receive?</p>
@@ -6006,7 +5980,7 @@ export default function PublicRoomLoaderForm() {
                           </p>
                         )}
                         {seniorPanelValue === 'extended' && (
-                          <p style={{ fontSize: '14px', color: '#333', marginTop: '12px', padding: '12px', backgroundColor: '#e8f5e9', border: '1px solid #81c784', borderRadius: '6px', lineHeight: 1.5 }}>
+                          <p style={{ fontSize: '14px', color: '#333', marginTop: '7px', padding: '12px', backgroundColor: '#e8f5e9', border: '1px solid #81c784', borderRadius: '6px', lineHeight: 1.5 }}>
                             Great!<br /><br />
                             <strong>NOTE:</strong> Please try to have a stool sample (non-frozen, fresher is better!) ready for us when we arrive!<br /><br />
                             Please try to have a urine sample (morning of appointment is best — you can use a clean tupperware or jar to &quot;sneak&quot; it under while they go!)
@@ -6019,36 +5993,36 @@ export default function PublicRoomLoaderForm() {
                   if (isLabWorkYesFelineTwoPanel) {
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
-                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '12px', textDecoration: 'underline' }}>Senior Screen — Feline</div>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '8px', textDecoration: 'underline' }}>Senior Screen — Feline</div>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '8px', flexWrap: 'wrap' }}>
                           <img
                             src="/early-detection-feline.png"
                             alt="Early detection baseline and trend"
                             style={{ width: '180px', height: 'auto', borderRadius: '4px', border: '1px solid #e0e0e0', flexShrink: 0 }}
                           />
-                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, flex: '1 1 280px' }}>
+                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, margin: 0, flex: '1 1 280px' }}>
                             With the symptoms you mentioned for {petName}, {doctorName} is likely to recommend lab work in order to gain valuable insight into why {petName} might be displaying these symptoms.
                           </p>
                         </div>
-                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px' }}>
+                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: '8px' }}>
                           We have two panels to choose from. First, our <strong>Standard Comprehensive Panel</strong> ({formatPrice(seniorFelineStandardPrice) != null ? <strong>{formatPrice(seniorFelineStandardPrice)}</strong> : 'see pricing at visit'}) includes a:
                         </p>
-                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px', paddingLeft: '20px' }}>
+                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: '8px', paddingLeft: '20px' }}>
                           <li><strong>Chemistry</strong> to look at organ function like the liver and kidneys.</li>
                           <li><strong>Complete Blood Count</strong> to look at red/white blood cell and platelet counts.</li>
                           <li><strong>Thyroid level</strong>, which may increase in older cats.</li>
                           <li><strong>Urinalysis</strong>, to look at kidney and urinary health.</li>
                         </ul>
-                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder ? '8px' : '12px' }}>
+                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: hasFecalReminder ? '8px' : '12px' }}>
                           We also offer a more <strong>Extended Comprehensive Panel</strong>, which is {seniorFelineTwoPanelDiff != null ? <>around <strong>${seniorFelineTwoPanelDiff.toFixed(2)}</strong> more</> : 'a bit more'}. This panel includes everything in the Standard Comprehensive Panel above and also includes:
                         </p>
-                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder ? '8px' : '12px', paddingLeft: '20px' }}>
+                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: hasFecalReminder ? '8px' : '12px', paddingLeft: '20px' }}>
                           <li>A screening (called &quot;fPL&quot;) for chronic pancreatitis. This is a condition that is common in older cats, causes vague symptoms, and doesn&apos;t usually show itself on a standard comprehensive panel.</li>
                           <li>Stool sample analysis for parasites (&quot;Fecal&quot;).</li>
                           <li>Screening for three infectious diseases: FIV, FeLV, and Heartworm.</li>
                         </ul>
                         {hasFecalReminder && (
-                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '12px' }}>
+                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '8px' }}>
                             The Extended Comprehensive Panel includes a fecal test, so it would replace the fecal already on your care plan.
                             {seniorFelineExtendedMinusFecal != null && !Number.isNaN(seniorFelineExtendedMinusFecal)
                               ? seniorFelineExtendedMinusFecal > 0
@@ -6059,7 +6033,7 @@ export default function PublicRoomLoaderForm() {
                               : ''}
                           </p>
                         )}
-                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '16px' }}>
+                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: '10px' }}>
                           Conducting annual lab work aligns with the proactive essence of our philosophy by enabling early detection and tailored care strategies, ensuring optimal health outcomes for {petName}.
                         </p>
                         <p style={{ fontSize: '15px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Which panel would you like {petName} to receive?</p>
@@ -6122,7 +6096,7 @@ export default function PublicRoomLoaderForm() {
                           </p>
                         )}
                         {seniorFelineTwoPanelValue === 'extended' && (
-                          <p style={{ fontSize: '14px', color: '#333', marginTop: '12px', padding: '12px', backgroundColor: '#e8f5e9', border: '1px solid #81c784', borderRadius: '6px', lineHeight: 1.5 }}>
+                          <p style={{ fontSize: '14px', color: '#333', marginTop: '7px', padding: '12px', backgroundColor: '#e8f5e9', border: '1px solid #81c784', borderRadius: '6px', lineHeight: 1.5 }}>
                             Great!<br /><br />
                             <strong>NOTE:</strong> Please try to have a stool sample (non-frozen, fresher is better!) ready for us when we arrive!<br /><br />
                             Ideally, please be sure to not let {petName} have access to the litterbox for 2–3 hours before our arrival. That way, we can get a good urine sample.
@@ -6139,36 +6113,36 @@ export default function PublicRoomLoaderForm() {
                     // Same two-panel choice (Standard / Extended / No) as 8659999, using lab_senior_feline_two_panel
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
-                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '12px', textDecoration: 'underline' }}>Senior Screen Feline</div>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '8px', textDecoration: 'underline' }}>Senior Screen Feline</div>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '8px', flexWrap: 'wrap' }}>
                           <img
                             src="/early-detection-feline.png"
                             alt="Early detection baseline and trend"
                             style={{ width: '180px', height: 'auto', borderRadius: '4px', border: '1px solid #e0e0e0', flexShrink: 0 }}
                           />
-                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, margin: 0, flex: '1 1 280px' }}>
+                          <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, margin: 0, flex: '1 1 280px' }}>
                             For senior cats, we recommend our Senior Screen Feline—a comprehensive panel that gives us a clear picture of {petName}&apos;s organ function, thyroid, and infectious disease status. We have two panels to choose from.
                           </p>
                         </div>
-                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px' }}>
+                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: '8px' }}>
                           First, our <strong>Standard Comprehensive Panel</strong> ({formatPrice(seniorFelineStandardPrice) != null ? <strong>{formatPrice(seniorFelineStandardPrice)}</strong> : 'see pricing at visit'}) includes:
                         </p>
-                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px', paddingLeft: '20px' }}>
+                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: '8px', paddingLeft: '20px' }}>
                           <li><strong>Chemistry</strong> to look at organ function like the liver and kidneys.</li>
                           <li><strong>Complete Blood Count</strong> to look at red/white blood cell and platelet counts.</li>
                           <li><strong>Thyroid level</strong>, which may increase in older cats.</li>
                           <li><strong>Urinalysis</strong>, to look at kidney and urinary health.</li>
                         </ul>
-                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder ? '8px' : '12px' }}>
+                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: hasFecalReminder ? '8px' : '12px' }}>
                           We also offer a more <strong>Extended Comprehensive Panel</strong>, which is {seniorFelineTwoPanelDiff != null ? <>around <strong>${seniorFelineTwoPanelDiff.toFixed(2)}</strong> more</> : 'a bit more'}. This panel includes everything in the Standard Comprehensive Panel above and also includes:
                         </p>
-                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: hasFecalReminder ? '8px' : '12px', paddingLeft: '20px' }}>
+                        <ul style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: hasFecalReminder ? '8px' : '12px', paddingLeft: '20px' }}>
                           <li>A screening (called &quot;fPL&quot;) for chronic pancreatitis. This is a condition that is common in older cats, causes vague symptoms, and doesn&apos;t usually show itself on a standard comprehensive panel.</li>
                           <li>Stool sample analysis for parasites (&quot;Fecal&quot;).</li>
                           <li>Screening for three infectious diseases: FIV, FeLV, and Heartworm.</li>
                         </ul>
                         {hasFecalReminder && (
-                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '12px' }}>
+                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '8px' }}>
                             The Extended Comprehensive Panel includes a fecal test, so it would replace the fecal already on your care plan.
                             {seniorFelineExtendedMinusFecal != null && !Number.isNaN(seniorFelineExtendedMinusFecal)
                               ? seniorFelineExtendedMinusFecal > 0
@@ -6239,7 +6213,7 @@ export default function PublicRoomLoaderForm() {
                           </p>
                         )}
                         {seniorFelineTwoPanelValue === 'extended' && (
-                          <p style={{ fontSize: '14px', color: '#333', marginTop: '12px', padding: '12px', backgroundColor: '#e8f5e9', border: '1px solid #81c784', borderRadius: '6px', lineHeight: 1.5 }}>
+                          <p style={{ fontSize: '14px', color: '#333', marginTop: '7px', padding: '12px', backgroundColor: '#e8f5e9', border: '1px solid #81c784', borderRadius: '6px', lineHeight: 1.5 }}>
                             Great!<br /><br />
                             <strong>NOTE:</strong> Please try to have a stool sample (non-frozen, fresher is better!) ready for us when we arrive!<br /><br />
                             Ideally, please be sure to not let {petName} have access to the litterbox for 2–3 hours before our arrival. That way, we can get a good urine sample.
@@ -6255,10 +6229,10 @@ export default function PublicRoomLoaderForm() {
                     const compFecalPrice = getClientAdjustedPrice(patientIdForPricing, comprehensiveFecalItem) ?? getSearchItemPrice(comprehensiveFecalItem);
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
-                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '12px', textDecoration: 'underline' }}>Comprehensive Fecal</div>
-                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.6, marginBottom: '12px' }}>{rec.message}</p>
+                        <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '8px', textDecoration: 'underline' }}>Comprehensive Fecal</div>
+                        <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: '8px' }}>{rec.message}</p>
                         {compFecalPrice != null && (
-                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '12px' }}>
+                          <p style={{ fontSize: '14px', color: '#555', marginBottom: '8px' }}>
                             Cost: <strong>{formatPrice(compFecalPrice)}</strong>
                             {(() => {
                               const labPricing = getClientPricing(patientIdForPricing, comprehensiveFecalItem);
@@ -6268,7 +6242,7 @@ export default function PublicRoomLoaderForm() {
                           </p>
                         )}
                         <p style={{ fontSize: '15px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Would you like to add a comprehensive fecal today? <span style={{ color: '#dc3545' }}>*</span></p>
-                        <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                           <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '16px' }}>
                             <input type="radio" name={compFecalKey} value="yes" checked={compFecalValue === 'yes'} onChange={(e) => handleInputChange(compFecalKey, e.target.value)} style={{ marginRight: '8px', cursor: 'pointer' }} />
                             Yes
@@ -6344,9 +6318,9 @@ export default function PublicRoomLoaderForm() {
         let grandTotal = 0;
         return (
           <div className="public-room-loader-summary-page">
-            <div style={{ marginBottom: '25px', paddingBottom: '15px', borderBottom: '3px solid #e0e0e0' }}>
+            <div style={{ marginBottom: '14px', paddingBottom: '9px', borderBottom: '3px solid #e0e0e0' }}>
               <h1 style={{ margin: 0, color: '#212529', fontSize: '24px', fontWeight: 700 }}>Review Your Care Plan & Estimate</h1>
-              <p style={{ fontSize: '16px', lineHeight: '1.6', color: '#555', marginTop: '10px', marginBottom: 0 }}>
+              <p style={{ fontSize: '16px', lineHeight: '1.42', color: '#555', marginTop: '10px', marginBottom: 0 }}>
                 We've put together a personalized plan based on your pet's needs and our medical recommendations. You can review each item below, make adjustments, and see pricing clearly upfront so you feel informed and confident before your visit.
               </p>
             </div>
@@ -6369,7 +6343,7 @@ export default function PublicRoomLoaderForm() {
               const procedureDisplay = displayWithIdx.filter(({ item }) => itemCategory(item) === 'procedure');
               const labDisplay = displayWithIdx.filter(({ item }) => itemCategory(item) === 'lab');
               const inventoryDisplay = displayWithIdx.filter(({ item }) => itemCategory(item) === 'inventory');
-              const SummarySeparator = ({ id }: { id: string }) => <div style={{ height: '1px', backgroundColor: '#e0e0e0', margin: '12px 0' }} />;
+              const SummarySeparator = ({ id }: { id: string }) => <div style={{ height: '1px', backgroundColor: '#e0e0e0', margin: '6px 0' }} />;
               const earlyDetectionYes = formData[`lab_early_detection_feline_${patientId}`] === 'yes';
               const earlyDetectionCanineYes = formData[`lab_early_detection_canine_${patientId}`] === 'yes';
               const seniorFelineYes = formData[`lab_senior_feline_${patientId}`] === 'yes';
@@ -6439,7 +6413,7 @@ export default function PublicRoomLoaderForm() {
                 const displayNote = isMembershipRelated ? `From your care plan — ${discountNote}` : discountNote;
                 return (
                   <div key={`d-${idx}`} style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                       <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: canUncheck ? 'pointer' : 'default', margin: 0 }}>
                         <input
                           type="checkbox"
@@ -6472,12 +6446,12 @@ export default function PublicRoomLoaderForm() {
               };
 
               return (
-                <div key={petIdx} style={{ marginBottom: '28px', padding: '20px', backgroundColor: '#f9f9f9', border: '1px solid #ddd', borderRadius: '8px' }}>
+                <div key={petIdx} style={{ marginBottom: '15px', padding: '12px', backgroundColor: '#f9f9f9', border: '1px solid #ddd', borderRadius: '8px' }}>
                   <div style={{ marginBottom: '14px' }}>
                     <h3 style={{ margin: 0, color: '#212529', fontSize: '18px', fontWeight: 700 }}>{petName}</h3>
                     <RoomLoaderPatientMemberBadge patient={patient} appointments={appointments} />
                   </div>
-                  <div style={{ borderBottom: '1px solid #e0e0e0', paddingBottom: '12px', marginBottom: '12px' }}>
+                  <div style={{ borderBottom: '1px solid #e0e0e0', paddingBottom: '12px', marginBottom: '8px' }}>
                     {/* Procedures: uncheckable (visit/consult), trip fee/sharps, then checkable procedure items */}
                     {procedureDisplay.map(({ item, idx }) => renderDisplayRow(item, idx))}
                     {tripFeeItems.map((item: any, idx: number) => {
@@ -6498,7 +6472,7 @@ export default function PublicRoomLoaderForm() {
                       const tripDisplayNote = isTripMembershipRelated ? `From your care plan — ${tripDiscountNote}` : tripDiscountNote;
                       return (
                         <div key={`t-${idx}`} style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', color: '#666' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', color: '#666' }}>
                             <label style={{ display: 'flex', alignItems: 'center', flex: 1, margin: 0, cursor: 'default' }}>
                               <input
                                 type="checkbox"
@@ -6531,7 +6505,7 @@ export default function PublicRoomLoaderForm() {
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                             <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
                               <input
                                 type="checkbox"
@@ -6557,7 +6531,7 @@ export default function PublicRoomLoaderForm() {
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                             <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
                               <input
                                 type="checkbox"
@@ -6584,7 +6558,7 @@ export default function PublicRoomLoaderForm() {
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                             <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
                               <input
                                 type="checkbox"
@@ -6610,7 +6584,7 @@ export default function PublicRoomLoaderForm() {
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                             <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
                               <input
                                 type="checkbox"
@@ -6636,7 +6610,7 @@ export default function PublicRoomLoaderForm() {
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                             <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
                               <input
                                 type="checkbox"
@@ -6662,7 +6636,7 @@ export default function PublicRoomLoaderForm() {
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                             <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
                               <input
                                 type="checkbox"
@@ -6687,7 +6661,7 @@ export default function PublicRoomLoaderForm() {
                       petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                             <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
                               <input
                                 type="checkbox"
@@ -6717,7 +6691,7 @@ export default function PublicRoomLoaderForm() {
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                             <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
                               <input
                                 type="checkbox"
@@ -6752,7 +6726,7 @@ export default function PublicRoomLoaderForm() {
                         if (isChecked) petSubtotal += price;
                         return (
                           <div key={`v-${i}`} style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                               <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
                                 <input
                                   type="checkbox"
@@ -6804,7 +6778,7 @@ export default function PublicRoomLoaderForm() {
                       if (rows.length === 0) return null;
                       return (
                         <>
-                          <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #e0e0e0', fontSize: '15px', fontWeight: 600, color: '#555', marginBottom: '8px' }}>
+                          <div style={{ marginTop: '10px', paddingTop: '12px', borderTop: '1px solid #e0e0e0', fontSize: '15px', fontWeight: 600, color: '#555', marginBottom: '8px' }}>
                             Commonly selected items
                           </div>
                           {rows.map(({ displayName, item, key }) => {
@@ -6817,7 +6791,7 @@ export default function PublicRoomLoaderForm() {
                             if (isChecked) petSubtotal += price;
                             return (
                               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                                   <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
                                     <input
                                       type="checkbox"
@@ -6849,13 +6823,13 @@ export default function PublicRoomLoaderForm() {
             })}
 
             {/* Store search - type-ahead, add products to Additional items (below pets) */}
-            <div style={{ marginBottom: '24px', padding: '16px', backgroundColor: '#f5f5f5', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+            <div style={{ marginBottom: '14px', padding: '16px', backgroundColor: '#f5f5f5', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
               <div style={{ fontSize: '16px', fontWeight: 600, color: '#212529', marginBottom: '8px' }}>Add medications or preventatives</div>
-              <p style={{ fontSize: '14px', lineHeight: 1.5, color: '#555', marginBottom: '12px', marginTop: 0 }}>
+              <p style={{ fontSize: '14px', lineHeight: 1.5, color: '#555', marginBottom: '8px', marginTop: 0 }}>
                 If you'd like us to bring additional items, you can search and add them here. This is a great place to include flea/tick or heartworm prevention, chronic medications, or other products you know your pet needs.
               </p>
               {patients.length > 0 && (
-                <p style={{ fontSize: '14px', color: '#555', marginBottom: '12px', marginTop: 0 }}>
+                <p style={{ fontSize: '14px', color: '#555', marginBottom: '8px', marginTop: 0 }}>
                   Pet weight{patients.length > 1 ? 's' : ''}: {patients.map((p: any, i: number) => {
                     const name = p.patientName || `Pet ${i + 1}`;
                     const w = p.weight ?? p.patient?.weight ?? p.currentWeight;
@@ -6904,9 +6878,9 @@ export default function PublicRoomLoaderForm() {
             </div>
 
             {/* Anything else you want us to know? */}
-            <div style={{ marginBottom: '24px', padding: '16px', backgroundColor: '#f5f5f5', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+            <div style={{ marginBottom: '14px', padding: '16px', backgroundColor: '#f5f5f5', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
               <div style={{ fontSize: '16px', fontWeight: 600, color: '#212529', marginBottom: '8px' }}>Anything else you want us to know?</div>
-              <p style={{ fontSize: '14px', lineHeight: 1.5, color: '#555', marginBottom: '12px', marginTop: 0 }}>
+              <p style={{ fontSize: '14px', lineHeight: 1.5, color: '#555', marginBottom: '8px', marginTop: 0 }}>
                 Optional: share any other details you'd like our team to know before your visit.
               </p>
               <textarea
@@ -6948,7 +6922,7 @@ export default function PublicRoomLoaderForm() {
                   style={{
                     backgroundColor: '#fff',
                     borderRadius: '8px',
-                    padding: '20px',
+                    padding: '12px',
                     maxWidth: '420px',
                     width: '90%',
                     maxHeight: '80vh',
@@ -6957,10 +6931,10 @@ export default function PublicRoomLoaderForm() {
                   }}
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <h4 style={{ margin: 0, marginBottom: '16px', fontSize: '16px', fontWeight: 600, color: '#333' }}>
+                  <h4 style={{ margin: 0, marginBottom: '10px', fontSize: '16px', fontWeight: 600, color: '#333' }}>
                     {storeOptionModalGroup[0].name}
                   </h4>
-                  <p style={{ margin: 0, marginBottom: '12px', fontSize: '13px', color: '#666' }}>
+                  <p style={{ margin: 0, marginBottom: '8px', fontSize: '13px', color: '#666' }}>
                     Select an option to add to your items:
                   </p>
                   <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
@@ -6971,9 +6945,9 @@ export default function PublicRoomLoaderForm() {
                           display: 'flex',
                           justifyContent: 'space-between',
                           alignItems: 'center',
-                          padding: '10px 0',
+                          padding: '6px 0',
                           borderBottom: '1px solid #eee',
-                          gap: '12px',
+                          gap: '8px',
                         }}
                       >
                         <span style={{ fontSize: '14px', color: '#333' }}>{label}</span>
@@ -7010,7 +6984,7 @@ export default function PublicRoomLoaderForm() {
                       </li>
                     ))}
                   </ul>
-                  <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end' }}>
+                  <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
                     <button
                       type="button"
                       onClick={() => setStoreOptionModalGroup(null)}
@@ -7038,13 +7012,13 @@ export default function PublicRoomLoaderForm() {
               const storeTax = storeSubtotal * storeTaxRate;
               grandTotal += storeSubtotal + storeTax;
               return (
-                <div style={{ marginTop: '24px', padding: '20px', backgroundColor: '#f9f9f9', border: '1px solid #ddd', borderRadius: '8px' }}>
-                  <h4 style={{ margin: 0, marginBottom: '12px', fontSize: '16px', fontWeight: 600, color: '#333' }}>Additional items</h4>
+                <div style={{ marginTop: '14px', padding: '12px', backgroundColor: '#f9f9f9', border: '1px solid #ddd', borderRadius: '8px' }}>
+                  <h4 style={{ margin: 0, marginBottom: '8px', fontSize: '16px', fontWeight: 600, color: '#333' }}>Additional items</h4>
                   <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
                     {storeAdditionalItems.map((item, idx) => (
                       <li key={`${item.id}-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #eee', fontSize: '15px' }}>
                         <span style={{ color: '#333' }}>{item.name}</span>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span style={{ fontWeight: 700 }}>{formatPrice(Number(item.price))}</span>
                           <button
                             type="button"
@@ -7058,7 +7032,7 @@ export default function PublicRoomLoaderForm() {
                       </li>
                     ))}
                   </ul>
-                  <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #ddd', fontSize: '15px' }}>
+                  <div style={{ marginTop: '7px', paddingTop: '12px', borderTop: '1px solid #ddd', fontSize: '15px' }}>
                     <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px' }}>Subtotal: {formatPrice(storeSubtotal)}</div>
                     <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px' }}>Sales tax (5.5%): {formatPrice(storeTax)}</div>
                   </div>
@@ -7071,8 +7045,8 @@ export default function PublicRoomLoaderForm() {
                 <div
                   className="public-room-loader-summary-total-row"
                   style={{
-                    marginTop: '24px',
-                    paddingTop: '20px',
+                    marginTop: '14px',
+                    paddingTop: '12px',
                     borderTop: '3px solid #e0e0e0',
                     justifyContent: 'flex-start',
                     alignItems: 'flex-start',
@@ -7162,7 +7136,7 @@ export default function PublicRoomLoaderForm() {
             </div>
 
             {fieldValidationErrors._submit && (
-              <p style={{ marginTop: '16px', marginBottom: 0, fontSize: '14px', color: '#dc3545' }}>{fieldValidationErrors._submit}</p>
+              <p style={{ marginTop: '10px', marginBottom: 0, fontSize: '14px', color: '#dc3545' }}>{fieldValidationErrors._submit}</p>
             )}
             <div className="public-room-loader-summary-actions">
               <button

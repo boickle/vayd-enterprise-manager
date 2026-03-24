@@ -8,6 +8,8 @@ export type RoomLoaderPlansForPetForDisplay = {
   plans: RoomLoaderPlanForDisplay[];
   /** Resolved dog/cat for catalog Stripe names and optional simulate hint (mirrors client portal). */
   membershipSpeciesKind?: 'dog' | 'cat' | null;
+  /** Golden tier eligibility (same threshold as MembershipSignup / `MEMBERSHIP_GOLDEN_MIN_AGE_YEARS`). */
+  meetsGolden: boolean;
 };
 
 type Props = {
@@ -33,7 +35,10 @@ type Props = {
   hasMultiplePetsOnForm: boolean;
   onOpenMembershipEnrollment: () => void;
   normalizePlanBaseId: (id: string) => string;
-  getRecommendedWellnessPlanFromList: (plans: RoomLoaderPlanForDisplay[]) => RoomLoaderPlanForDisplay | null;
+  getRecommendedWellnessPlanFromList: (
+    plans: RoomLoaderPlanForDisplay[],
+    meetsGolden: boolean
+  ) => RoomLoaderPlanForDisplay | null;
   filterLineItemsForPatientSimulate: <T extends { patientId?: number; category?: string }>(
     items: T[],
     patientId: number,
@@ -44,14 +49,28 @@ type Props = {
 };
 
 const PANEL_STYLE: CSSProperties = {
-  marginTop: '16px',
+  marginTop: '10px',
   width: '100%',
   boxSizing: 'border-box',
   backgroundColor: '#F3FAF6',
   border: '1px solid #c9e3d6',
   borderRadius: '12px',
-  padding: '20px 20px 22px',
+  padding: '12px 14px 14px',
   overflow: 'auto',
+};
+
+/** Matches membership signup plan cards (`cp-recommended-badge` intent). */
+const RECOMMENDED_PLAN_BADGE: CSSProperties = {
+  display: 'inline-block',
+  backgroundColor: '#4FB128',
+  color: '#fff',
+  fontSize: 11,
+  fontWeight: 700,
+  padding: '4px 10px',
+  borderRadius: 6,
+  textTransform: 'uppercase',
+  letterSpacing: '0.04em',
+  lineHeight: 1.2,
 };
 
 export default function MembershipRecommendationPanel({
@@ -78,7 +97,7 @@ export default function MembershipRecommendationPanel({
         <p style={{ margin: 0, fontSize: '14px', color: '#3d5347' }}>Loading your membership estimate…</p>
       )}
       {pets.map((petPlans) => {
-        const rec = getRecommendedWellnessPlanFromList(petPlans.plans);
+        const rec = getRecommendedWellnessPlanFromList(petPlans.plans, petPlans.meetsGolden);
         if (!rec) return null;
         const petName = petPlans.patientName || 'your pet';
         const monthly = membershipPanelByPatientId[petPlans.patientId]?.monthly;
@@ -157,8 +176,8 @@ export default function MembershipRecommendationPanel({
           <div
             key={petPlans.patientId}
             style={{
-              marginBottom: pets.length > 1 ? '28px' : 0,
-              paddingBottom: pets.length > 1 ? '24px' : 0,
+              marginBottom: pets.length > 1 ? '16px' : 0,
+              paddingBottom: pets.length > 1 ? '14px' : 0,
               borderBottom: pets.length > 1 ? '1px solid #c9e3d6' : 'none',
             }}
           >
@@ -168,10 +187,10 @@ export default function MembershipRecommendationPanel({
             <p style={{ margin: '0 0 6px', fontSize: '15px', fontWeight: 600, color: '#1e4d2d' }}>
               This is the care we recommend for {petName} each year. Membership makes it simple.
             </p>
-            <p style={{ margin: '0 0 20px', fontSize: '14px', color: '#3d5347', lineHeight: 1.55 }}>{subtext}</p>
+            <p style={{ margin: '0 0 12px', fontSize: '14px', color: '#3d5347', lineHeight: 1.45 }}>{subtext}</p>
 
-            <h4 style={{ margin: '0 0 12px', fontSize: '15px', fontWeight: 700, color: '#14532d' }}>Care Coverage Comparison</h4>
-            <div style={{ marginBottom: '20px' }}>
+            <h4 style={{ margin: '0 0 8px', fontSize: '15px', fontWeight: 700, color: '#14532d' }}>Care Coverage Comparison</h4>
+            <div style={{ marginBottom: '12px' }}>
               <div className="membership-rec-coverage-row membership-rec-coverage-header">
                 <div style={{ fontSize: '12px', fontWeight: 700, color: '#5a6b6c', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                   Today&apos;s Care Plan
@@ -182,11 +201,11 @@ export default function MembershipRecommendationPanel({
               </div>
               {coverageRows.map((row, idx) => (
                 <div key={idx} className="membership-rec-coverage-row">
-                  <div style={{ fontSize: '14px', color: '#1a2f24', padding: '8px 0', borderBottom: '1px solid #e0efe8' }}>{row.left}</div>
+                  <div style={{ fontSize: '14px', color: '#1a2f24', padding: '5px 0', borderBottom: '1px solid #e0efe8' }}>{row.left}</div>
                   <div
                     style={{
                       fontSize: '14px',
-                      padding: '8px 0',
+                      padding: '5px 0',
                       borderBottom: '1px solid #e0efe8',
                       color: row.covered ? '#0f5132' : '#6c757d',
                       fontWeight: row.covered ? 600 : 400,
@@ -200,8 +219,8 @@ export default function MembershipRecommendationPanel({
 
             <div
               style={{
-                marginBottom: '20px',
-                padding: '14px 16px',
+                marginBottom: '12px',
+                padding: '10px 12px',
                 background: 'rgba(255,255,255,0.75)',
                 border: '1px solid #b8d9c8',
                 borderRadius: '8px',
@@ -211,7 +230,20 @@ export default function MembershipRecommendationPanel({
               <div style={{ fontSize: '20px', fontWeight: 700, color: '#14532d', marginBottom: '12px' }}>
                 {todayTotal != null ? formatPrice(todayTotal) : '—'}
               </div>
-              <div style={{ fontSize: '14px', color: '#3d5347', marginBottom: '6px' }}>Estimated covered by {planShortLabel} Plan</div>
+              <div
+                style={{
+                  fontSize: '14px',
+                  color: '#3d5347',
+                  marginBottom: '6px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <span>Estimated covered by {planShortLabel} Plan</span>
+                <span style={RECOMMENDED_PLAN_BADGE}>Recommended</span>
+              </div>
               <div style={{ fontSize: '18px', fontWeight: 700, color: '#0f5132', marginBottom: '12px' }}>
                 {coveredEst != null ? formatPrice(coveredEst) : '—'}
               </div>
@@ -274,7 +306,7 @@ export default function MembershipRecommendationPanel({
         );
       })}
 
-      <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid #c9e3d6' }}>
+      <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid #c9e3d6' }}>
         <button
           type="button"
           onClick={onOpenMembershipEnrollment}

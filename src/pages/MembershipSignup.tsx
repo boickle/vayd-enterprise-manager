@@ -18,6 +18,11 @@ import {
 import { useAuth } from '../auth/useAuth';
 import { trackEvent, trackViewItem, trackAddToCart, trackBeginCheckout } from '../utils/analytics';
 import { resolveMembershipPetKind } from '../utils/membershipSpecies';
+import {
+  MEMBERSHIP_GOLDEN_MIN_AGE_YEARS,
+  computeMembershipAgeYearsForRoomLoaderRow,
+  parseAgeStringToYears,
+} from '../utils/membershipAge';
 
  type MembershipPlan = {
   id: string;
@@ -277,27 +282,6 @@ function petImg(pet: Pet | null): string {
   return CAT_PLACEHOLDER;
 }
 
-/** Parse age string (e.g. "2 years", "6 months", "1.5", or date string) to age in years for plan eligibility (Golden 9+, Puppy/Kitten ≤1.5). */
-function parseAgeStringToYears(ageStr: string | null | undefined): number | null {
-  if (ageStr == null || typeof ageStr !== 'string') return null;
-  const s = ageStr.trim().toLowerCase();
-  if (!s) return null;
-  const numMatch = s.match(/^(\d+(?:\.\d+)?)\s*(?:y(?:ear)?s?|yr?s?)?$/);
-  if (numMatch) return Math.max(0, parseFloat(numMatch[1]));
-  const monthsMatch = s.match(/^(\d+)\s*mo(?:nth)?s?$/);
-  if (monthsMatch) return Math.max(0, parseInt(monthsMatch[1], 10) / 12);
-  const yearMonthMatch = s.match(/^(\d+)\s*y(?:ear)?s?\s*(?:and|\d*)\s*(\d+)\s*mo(?:nth)?s?$/);
-  if (yearMonthMatch) return Math.max(0, parseInt(yearMonthMatch[1], 10) + parseInt(yearMonthMatch[2], 10) / 12);
-  const justNum = parseFloat(s.replace(/[^\d.]/g, ''));
-  if (Number.isFinite(justNum)) return Math.max(0, justNum);
-  const asDate = new Date(ageStr.trim());
-  if (!Number.isNaN(asDate.getTime())) {
-    const diff = Date.now() - asDate.getTime();
-    return Math.max(0, diff / (1000 * 60 * 60 * 24 * 365.25));
-  }
-  return null;
-}
-
 type PlanCombination = 'base' | 'plus' | 'starter' | 'plusStarter';
 type BillingCadence = 'monthly' | 'annual';
 
@@ -435,9 +419,25 @@ type AppointmentFlowState = {
 
 export type MembershipSignupPaymentState = Record<string, any>;
 
+export type MembershipEligibilitySnapshot = {
+  kind: 'dog' | 'cat' | null;
+  ageYears: number | null;
+};
+
 export type MembershipSignupModalProps = {
   fromModal?: boolean;
-  modalPet?: Pet | { id: string; name: string; species?: string; breed?: string; age?: string; dob?: string };
+  /** Room loader / flows that precompute eligibility should set `_membershipEligibilitySnapshot` on this object. */
+  modalPet?: Pet | {
+    id: string;
+    name: string;
+    species?: string;
+    breed?: string;
+    age?: string;
+    dob?: string;
+    patient?: unknown;
+    _membershipSpeciesExtraSources?: unknown[];
+    _membershipEligibilitySnapshot?: MembershipEligibilitySnapshot;
+  };
   /** Client email and name from appointment form (for agreementSignedName / customerEmail when not logged in) */
   modalClientInfo?: { email?: string; fullName?: { first?: string; last?: string } };
   onProceedToPayment?: (state: MembershipSignupPaymentState) => void;
@@ -761,10 +761,19 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
 
   const petDetails = useMemo(() => {
     if (!pet) return { kind: null as null | 'dog' | 'cat', ageYears: null as number | null };
+    const snap = (pet as { _membershipEligibilitySnapshot?: MembershipEligibilitySnapshot })
+      ._membershipEligibilitySnapshot;
+    if (snap && typeof snap === 'object') {
+      return {
+        kind: snap.kind ?? null,
+        ageYears: snap.ageYears ?? null,
+      };
+    }
     const extras = (pet as { _membershipSpeciesExtraSources?: unknown[] })._membershipSpeciesExtraSources;
     const kind = resolveMembershipPetKind(pet, Array.isArray(extras) ? extras : undefined);
-    let ageYears: number | null = null;
-    if (pet.dob) {
+    const apptPatient = Array.isArray(extras) && extras[0] ? extras[0] : undefined;
+    let ageYears = computeMembershipAgeYearsForRoomLoaderRow(pet, apptPatient);
+    if (ageYears == null && pet.dob) {
       const dob = new Date(pet.dob);
       if (!Number.isNaN(dob.getTime())) {
         const diff = Date.now() - dob.getTime();
@@ -772,15 +781,22 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       }
     }
     if (ageYears == null && (pet as any).age) {
-      ageYears = parseAgeStringToYears((pet as any).age);
+      ageYears = parseAgeStringToYears(String((pet as any).age));
     }
     return { kind, ageYears };
   }, [pet]);
 
   const meetsGolden = useMemo(() => {
     if (!petDetails.kind || petDetails.ageYears == null) return false;
-    return petDetails.ageYears >= 9;
+    return petDetails.ageYears >= MEMBERSHIP_GOLDEN_MIN_AGE_YEARS;
   }, [petDetails]);
+
+  useEffect(() => {
+    if (selectedPlanExplicit === 'golden' && !meetsGolden) {
+      setSelectedPlanExplicit(null);
+      setSelectedPlanId(null);
+    }
+  }, [meetsGolden, selectedPlanExplicit]);
 
   const combinedError = error ?? planCatalogError;
 
@@ -1869,16 +1885,17 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
               const filteredPlans = plans
                 .filter((plan) => {
                   if (plan.id === 'comfort-care') return false;
-                  // Always show Foundations + Golden (same as client portal): age only affects "Recommended", not visibility.
-                  if (plan.id === 'golden' || plan.id === 'foundations') return true;
+                  if (plan.id === 'foundations') return true;
+                  // Golden only for pets who meet the senior threshold (same as room-loader / `MEMBERSHIP_GOLDEN_MIN_AGE_YEARS`).
+                  if (plan.id === 'golden') return meetsGolden;
                   return false;
                 })
                 .sort((a, b) => {
                   if (meetsGolden) {
-                    if (a.id === 'foundations') return -1;
-                    if (b.id === 'foundations') return 1;
-                    if (a.id === 'golden') return 1;
-                    if (b.id === 'golden') return -1;
+                    if (a.id === 'golden') return -1;
+                    if (b.id === 'golden') return 1;
+                    if (a.id === 'foundations') return 1;
+                    if (b.id === 'foundations') return -1;
                   }
                   return 0;
                 });
@@ -1942,16 +1959,6 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                         >
                           Foundations is still available if you'd prefer a lighter option—one visit with an abbreviated lab
                           panel.
-                        </div>
-                      )}
-
-                      {plan.id === 'golden' && !meetsGolden && pet && (
-                        <div
-                          className="cp-muted"
-                          style={{ fontSize: 13, borderTop: '1px solid rgba(15,118,110,0.12)', paddingTop: 12 }}
-                        >
-                          Golden includes two wellness visits per year and our most complete annual lab work. We especially
-                          recommend it for pets 9 and older—you can choose it at any age if it fits your goals.
                         </div>
                       )}
 
