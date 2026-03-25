@@ -141,12 +141,9 @@ export default function MembershipRecommendationPanel({
         const todayTotal = monthly?.originalTotal ?? null;
         const coveredEst =
           monthly != null ? Math.max(0, monthly.originalVisitSubtotal - monthly.withMembershipVisitSubtotal) : null;
+        /** Visit services only at member pricing; monthly membership is shown separately below. */
         const dueAtVisit =
-          monthly != null
-            ? monthly.monthlyCharge != null
-              ? monthly.withMembershipVisitSubtotal + monthly.monthlyCharge
-              : monthly.withMembershipTotal
-            : null;
+          monthly != null ? monthly.withMembershipVisitSubtotal : null;
         const monthlyFee = monthly?.monthlyCharge ?? monthly?.monthlyMembershipFee ?? monthly?.membershipFee;
 
         const otherPets = allPatients.filter((p: any) => {
@@ -247,7 +244,7 @@ export default function MembershipRecommendationPanel({
               <div style={{ fontSize: '18px', fontWeight: 700, color: '#0f5132', marginBottom: '12px' }}>
                 {coveredEst != null ? formatPrice(coveredEst) : '—'}
               </div>
-              <div style={{ fontSize: '14px', color: '#3d5347', marginBottom: '6px' }}>Estimated due at visit with membership</div>
+              <div style={{ fontSize: '14px', color: '#3d5347', marginBottom: '6px' }}>Estimated due at visit after membership signup</div>
               <div style={{ fontSize: '20px', fontWeight: 700, color: '#14532d' }}>{dueAtVisit != null ? formatPrice(dueAtVisit) : '—'}</div>
               {monthlyFee != null && monthlyFee > 0 && (
                 <div style={{ marginTop: '10px', fontSize: '13px', color: '#5a6b6c', fontStyle: 'normal' }}>

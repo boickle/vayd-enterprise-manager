@@ -515,6 +515,42 @@ type SummaryLineDisplayPricing =
   | null;
 
 /**
+ * True when wellness/membership pricing should drive adjusted unit price or discount UI.
+ * Membership discounts may apply with `hasCoverage: false` (e.g. `priceAdjustedByMembership`, `outOfPlanDiscountApplied`).
+ */
+function wellnessPlanHasDiscountSignal(wp: any): boolean {
+  if (!wp) return false;
+  const o = wp.originalPrice != null ? Number(wp.originalPrice) : null;
+  const a = wp.adjustedPrice != null ? Number(wp.adjustedPrice) : null;
+  if (o != null && a != null && o !== a) return true;
+  if (wp.priceAdjustedByMembership === true || wp.outOfPlanDiscountApplied === true) return true;
+  if (wp.membershipDiscountAmount != null && Number(wp.membershipDiscountAmount) > 0) return true;
+  return false;
+}
+
+/** Show strikethrough / discount note for summary and care-plan rows (wellness + client discount). */
+function hasDiscountPricingNote(
+  pricing: CheckItemPricingResponse | { wellnessPlanPricing?: any; discountPricing?: any } | null | undefined
+): boolean {
+  if (!pricing) return false;
+  if (pricing.discountPricing?.priceAdjustedByDiscount) return true;
+  return wellnessPlanHasDiscountSignal(pricing.wellnessPlanPricing);
+}
+
+/** Prefix "From your care plan" when the row is tied to membership/wellness pricing. */
+function isMembershipCarePlanContext(pricing: SummaryLineDisplayPricing | null | undefined): boolean {
+  const wp = pricing?.wellnessPlanPricing as any;
+  if (!wp) return false;
+  return !!(
+    wp.hasCoverage ||
+    wp.priceAdjustedByMembership ||
+    wp.outOfPlanDiscountApplied ||
+    wp.membershipPlanName ||
+    (wp.membershipDiscountAmount != null && Number(wp.membershipDiscountAmount) > 0)
+  );
+}
+
+/**
  * Summary line: avoid locking to stale `item.price` when the row only has employee `discountPricing`
  * (that bypassed check-item-pricing and hid membership pricing after enrollment). Prefer row
  * `wellnessPlanPricing.adjustedPrice` when coverage is already embedded; else prefer check-item-pricing
@@ -530,9 +566,9 @@ function resolveSummaryLinePrice(
   const wp = displayRow?.wellnessPlanPricing;
   if (
     wp &&
-    (wp.hasCoverage === true || (wp as { priceAdjustedByMembership?: boolean }).priceAdjustedByMembership === true) &&
     wp.adjustedPrice != null &&
-    !Number.isNaN(Number(wp.adjustedPrice))
+    !Number.isNaN(Number(wp.adjustedPrice)) &&
+    wellnessPlanHasDiscountSignal(wp)
   ) {
     return {
       unitPrice: Number(wp.adjustedPrice),
@@ -1670,6 +1706,7 @@ export default function PublicRoomLoaderForm() {
             initialFormData[`${petKey}_preMedsMailOrPickup`] = '';
           });
           initialFormData['anythingElseNotes'] = '';
+          initialFormData['ongoingCareInterest'] = '';
           if (savedForm && typeof savedForm === 'object') {
             const {
               optedInVaccineItems: _ovi,
@@ -3150,6 +3187,21 @@ export default function PublicRoomLoaderForm() {
         labsSections.push({ sectionLabel: petName, patientId, patientName: petName, questions });
       }
     });
+    if (patientsData.length > 0) {
+      const og = formData['ongoingCareInterest'];
+      const ogLabel =
+        og === 'yes' ? 'Yes, I would like that.' : og === 'no' ? 'No, thank you.' : og === 'unsure' ? 'I am not sure.' : null;
+      labsSections.push({
+        sectionLabel: 'Dedicated veterinary team',
+        questions: [
+          {
+            question: 'Are you looking for ongoing care with a consistent, dedicated veterinary team?',
+            answer: og ?? null,
+            answerLabel: ogLabel,
+          },
+        ],
+      });
+    }
     if (labsSections.length > 0) {
       formAnswersPages.push({ pageNumber: labsPageNum, title: 'Labs We Recommend', sections: labsSections });
     }
@@ -3525,6 +3577,11 @@ export default function PublicRoomLoaderForm() {
         }
       });
     });
+    const ongoing = formData['ongoingCareInterest'];
+    if (ongoing !== 'yes' && ongoing !== 'no' && ongoing !== 'unsure') {
+      errors['ongoingCareInterest'] =
+        "Please answer whether you're interested in ongoing care with a dedicated veterinary team.";
+    }
 
     if (Object.keys(errors).length > 0) {
       return { valid: false, message: Object.values(errors)[0], errors };
@@ -3596,6 +3653,11 @@ export default function PublicRoomLoaderForm() {
         }
       });
     });
+    const ongoingLabs = formData['ongoingCareInterest'];
+    if (ongoingLabs !== 'yes' && ongoingLabs !== 'no' && ongoingLabs !== 'unsure') {
+      errors['ongoingCareInterest'] =
+        "Please answer whether you're interested in ongoing care with a dedicated veterinary team.";
+    }
     if (Object.keys(errors).length > 0) {
       return { valid: false, message: Object.values(errors)[0], errors };
     }
@@ -3818,6 +3880,8 @@ export default function PublicRoomLoaderForm() {
       const firstErrorKey = Object.keys(validation.errors || {})[0] ?? '';
       const patientsCount = (data?.patients ?? []).length;
       if (firstErrorKey.startsWith('lab_')) {
+        setCurrentPage(2 + patientsCount);
+      } else if (firstErrorKey.includes('ongoingCareInterest')) {
         setCurrentPage(2 + patientsCount);
       } else if (firstErrorKey.startsWith('pet')) {
         const petNum = firstErrorKey.match(/pet(\d+)/)?.[1];
@@ -4116,6 +4180,16 @@ export default function PublicRoomLoaderForm() {
       seniorFelineExtendedItem,
       comprehensiveFecalItem,
     ];
+    const speciesByPatientId = new Map<number, string | undefined>();
+    patients.forEach((p: any, idx: number) => {
+      const pid = Number(p.patientId ?? p.patient?.id ?? idx);
+      if (Number.isNaN(pid)) return;
+      const apptPatient = getAppointmentPatientForRoomLoaderPet(data?.appointments, p, idx);
+      speciesByPatientId.set(
+        pid,
+        membershipSpeciesPrimaryLabel(p, apptPatient ? [apptPatient] : undefined) ?? undefined
+      );
+    });
     const pairs: { patientId: number; item: SearchableItem; key: string }[] = [];
     patients.forEach((p: any, idx: number) => {
       const patientId = p.patientId ?? p.patient?.id ?? idx;
@@ -4173,12 +4247,31 @@ export default function PublicRoomLoaderForm() {
         }
       }
     });
-    // Common items per patient (for "Commonly selected items" on review page)
+    // Common items per patient (for "Commonly selected items" on review page).
+    // Must match summary row resolution: e.g. canine Pedicure uses `Pedicure - Dog`, not cat-first fallback —
+    // otherwise check-item-pricing caches cat id while UI looks up dog id → no membership line.
+    const apptsForCommonPricing = data?.appointments ?? [];
     patients.forEach((p: any, idx: number) => {
       const patientId = p.patientId ?? p.patient?.id ?? idx;
+      const apptForSpecies = getAppointmentForRoomLoaderPet(apptsForCommonPricing, p, idx);
+      const speciesParts = [
+        p?.species,
+        (p as any)?.patient?.species,
+        apptForSpecies?.patient?.species,
+      ].filter(Boolean) as string[];
+      const speciesLower = speciesParts.join(' ').toLowerCase();
+      const isCatForPet = isCatSpeciesTokens(speciesLower);
+      const isDogPet = isDogSpeciesTokens(speciesLower) || (speciesLower.trim() === '' && !isCatForPet);
       COMMON_ITEMS_CONFIG.forEach((c) => {
-        const searchQueryDog = (c as any).searchQueryDog;
-        const item = commonItemsFetched[c.searchQuery] ?? (searchQueryDog ? commonItemsFetched[searchQueryDog] : null);
+        if ((c as any).dogOnly && !isDogPet) return;
+        const hasDisplayName = 'displayName' in c && c.displayName;
+        let item: SearchableItem | null = null;
+        if (hasDisplayName && (c as any).displayName === 'Pedicure') {
+          const searchQueryDog = 'searchQueryDog' in c ? (c as any).searchQueryDog : null;
+          item = isDogPet && searchQueryDog ? commonItemsFetched[searchQueryDog] : commonItemsFetched[c.searchQuery];
+        } else {
+          item = commonItemsFetched[c.searchQuery];
+        }
         if (item && getItemId(item) != null) {
           const id = getItemId(item)!;
           const itemType = (item.itemType ?? 'procedure').toString();
@@ -4198,11 +4291,13 @@ export default function PublicRoomLoaderForm() {
       const payload = buildPricingItemPayload(item);
       if (!payload) return Promise.resolve({ key, res: null as CheckItemPricingResponse | null });
       const itemType = (item.itemType ?? 'procedure').toString();
+      const species = speciesByPatientId.get(Number(patientId));
       return checkItemPricingPublic({
         token: tokenValue,
         patientId,
         practiceId,
         clientId,
+        ...(species ? { species } : {}),
         itemType,
         item: payload,
       })
@@ -4316,7 +4411,7 @@ export default function PublicRoomLoaderForm() {
     if (wp?.hasCoverage && wp.isWithinLimit === false) {
       return 'Membership quantity used — full price applies';
     }
-    const hasWellness = (wp?.hasCoverage && wp.originalPrice !== wp.adjustedPrice) || (wp as any)?.priceAdjustedByMembership;
+    const hasWellness = wp ? wellnessPlanHasDiscountSignal(wp) : false;
     const hasDiscount = dp?.priceAdjustedByDiscount;
     if (hasWellness && wp) {
       if (wp.adjustedPrice === 0) {
@@ -5051,7 +5146,7 @@ export default function PublicRoomLoaderForm() {
                   {items.map((item, idx) => {
                     const displayPrice = patientId != null ? (getClientAdjustedPrice(patientId, item) ?? getSearchItemPrice(item) ?? (item as any).price) : (getSearchItemPrice(item) ?? (item as any).price);
                     const vaccinePricing = patientId != null ? getClientPricing(patientId, item) : null;
-                    const hasDiscount = vaccinePricing?.wellnessPlanPricing?.hasCoverage && (vaccinePricing.wellnessPlanPricing.originalPrice !== vaccinePricing.wellnessPlanPricing.adjustedPrice) || vaccinePricing?.discountPricing?.priceAdjustedByDiscount;
+                    const hasDiscount = hasDiscountPricingNote(vaccinePricing);
                     return (
                       <div key={idx} style={{ padding: '8px 0', borderBottom: idx < items.length - 1 ? '1px solid #c8e6c9' : 'none' }}>
                         <div>
@@ -5556,7 +5651,7 @@ export default function PublicRoomLoaderForm() {
               Based on your pet's age, species, and today's visit, here are lab panels we suggest.
             </p>
           </div>
-          {Object.keys(fieldValidationErrors).some((k) => k.startsWith('lab_')) && (
+          {Object.keys(fieldValidationErrors).some((k) => k.startsWith('lab_') || k === 'ongoingCareInterest') && (
             <p style={{ marginBottom: '10px', padding: '12px', backgroundColor: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: '6px', color: '#721c24', fontSize: '14px' }}>
               Please complete all required lab questions below before continuing.
             </p>
@@ -5689,7 +5784,7 @@ export default function PublicRoomLoaderForm() {
                           Cost: {formatPrice(earlyDetFelineCost) != null ? <strong>{formatPrice(earlyDetFelineCost)}</strong> : 'our standard lab pricing (ask at visit).'}
                           {(() => {
                             const labPricing = getClientPricing(patientIdForPricing, earlyDetectionFelineItem);
-                            const hasDiscount = labPricing?.wellnessPlanPricing?.hasCoverage && (labPricing.wellnessPlanPricing.originalPrice !== labPricing.wellnessPlanPricing.adjustedPrice) || labPricing?.discountPricing?.priceAdjustedByDiscount;
+                            const hasDiscount = hasDiscountPricingNote(labPricing);
                             return hasDiscount ? <><br /><span style={{ fontSize: '12px', color: '#1976d2' }}>{getDiscountNote(labPricing) ?? 'Discount applied'}</span></> : null;
                           })()}
                         </p>
@@ -5789,7 +5884,7 @@ export default function PublicRoomLoaderForm() {
                           Cost: {formatPrice(earlyDetCanineCost) != null ? <strong>{formatPrice(earlyDetCanineCost)}</strong> : 'our standard lab pricing (ask at visit).'}
                           {(() => {
                             const labPricing = getClientPricing(patientIdForPricing, earlyDetectionCanineItem);
-                            const hasDiscount = labPricing?.wellnessPlanPricing?.hasCoverage && (labPricing.wellnessPlanPricing.originalPrice !== labPricing.wellnessPlanPricing.adjustedPrice) || labPricing?.discountPricing?.priceAdjustedByDiscount;
+                            const hasDiscount = hasDiscountPricingNote(labPricing);
                             return hasDiscount ? <><br /><span style={{ fontSize: '12px', color: '#1976d2' }}>{getDiscountNote(labPricing) ?? 'Discount applied'}</span></> : null;
                           })()}
                         </p>
@@ -5957,8 +6052,8 @@ export default function PublicRoomLoaderForm() {
                         {(() => {
                           const standardPricing = getClientPricing(patientIdForPricing, seniorCanineStandardItem);
                           const extendedPricing = getClientPricing(patientIdForPricing, seniorCanineExtendedItem);
-                          const hasStandardDiscount = standardPricing?.wellnessPlanPricing?.hasCoverage && (standardPricing.wellnessPlanPricing.originalPrice !== standardPricing.wellnessPlanPricing.adjustedPrice) || standardPricing?.discountPricing?.priceAdjustedByDiscount;
-                          const hasExtendedDiscount = extendedPricing?.wellnessPlanPricing?.hasCoverage && (extendedPricing.wellnessPlanPricing.originalPrice !== extendedPricing.wellnessPlanPricing.adjustedPrice) || extendedPricing?.discountPricing?.priceAdjustedByDiscount;
+                          const hasStandardDiscount = hasDiscountPricingNote(standardPricing);
+                          const hasExtendedDiscount = hasDiscountPricingNote(extendedPricing);
                           const hasAnyDiscount = hasStandardDiscount || hasExtendedDiscount;
                           return hasAnyDiscount ? (
                             <p style={{ fontSize: '12px', color: '#1976d2', marginTop: '8px', marginBottom: 0 }}>
@@ -6078,8 +6173,8 @@ export default function PublicRoomLoaderForm() {
                         {(() => {
                           const standardPricing = getClientPricing(patientIdForPricing, seniorCanineStandardItem);
                           const extendedPricing = getClientPricing(patientIdForPricing, seniorFelineExtendedItem);
-                          const hasStandardDiscount = standardPricing?.wellnessPlanPricing?.hasCoverage && (standardPricing.wellnessPlanPricing.originalPrice !== standardPricing.wellnessPlanPricing.adjustedPrice) || standardPricing?.discountPricing?.priceAdjustedByDiscount;
-                          const hasExtendedDiscount = extendedPricing?.wellnessPlanPricing?.hasCoverage && (extendedPricing.wellnessPlanPricing.originalPrice !== extendedPricing.wellnessPlanPricing.adjustedPrice) || extendedPricing?.discountPricing?.priceAdjustedByDiscount;
+                          const hasStandardDiscount = hasDiscountPricingNote(standardPricing);
+                          const hasExtendedDiscount = hasDiscountPricingNote(extendedPricing);
                           const hasAnyDiscount = hasStandardDiscount || hasExtendedDiscount;
                           return hasAnyDiscount ? (
                             <p style={{ fontSize: '12px', color: '#1976d2', marginTop: '8px', marginBottom: 0 }}>
@@ -6195,8 +6290,8 @@ export default function PublicRoomLoaderForm() {
                         {(() => {
                           const standardPricing = getClientPricing(patientIdForPricing, seniorCanineStandardItem);
                           const extendedPricing = getClientPricing(patientIdForPricing, seniorFelineExtendedItem);
-                          const hasStandardDiscount = standardPricing?.wellnessPlanPricing?.hasCoverage && (standardPricing.wellnessPlanPricing.originalPrice !== standardPricing.wellnessPlanPricing.adjustedPrice) || standardPricing?.discountPricing?.priceAdjustedByDiscount;
-                          const hasExtendedDiscount = extendedPricing?.wellnessPlanPricing?.hasCoverage && (extendedPricing.wellnessPlanPricing.originalPrice !== extendedPricing.wellnessPlanPricing.adjustedPrice) || extendedPricing?.discountPricing?.priceAdjustedByDiscount;
+                          const hasStandardDiscount = hasDiscountPricingNote(standardPricing);
+                          const hasExtendedDiscount = hasDiscountPricingNote(extendedPricing);
                           const hasAnyDiscount = hasStandardDiscount || hasExtendedDiscount;
                           return hasAnyDiscount ? (
                             <p style={{ fontSize: '12px', color: '#1976d2', marginTop: '8px', marginBottom: 0 }}>
@@ -6236,7 +6331,7 @@ export default function PublicRoomLoaderForm() {
                             Cost: <strong>{formatPrice(compFecalPrice)}</strong>
                             {(() => {
                               const labPricing = getClientPricing(patientIdForPricing, comprehensiveFecalItem);
-                              const hasDiscount = labPricing?.wellnessPlanPricing?.hasCoverage && (labPricing.wellnessPlanPricing.originalPrice !== labPricing.wellnessPlanPricing.adjustedPrice) || labPricing?.discountPricing?.priceAdjustedByDiscount;
+                              const hasDiscount = hasDiscountPricingNote(labPricing);
                               return hasDiscount ? <><br /><span style={{ fontSize: '12px', color: '#1976d2' }}>{getDiscountNote(labPricing) ?? 'Discount applied'}</span></> : null;
                             })()}
                           </p>
@@ -6270,6 +6365,92 @@ export default function PublicRoomLoaderForm() {
             </div>
             );
           })}
+
+          <div
+            style={{
+              marginTop: '18px',
+              padding: '16px',
+              backgroundColor: '#f9f9f9',
+              border: '1px solid #ddd',
+              borderRadius: '8px',
+            }}
+          >
+            <p style={{ fontSize: '16px', fontWeight: 600, color: '#111827', marginBottom: '12px' }}>
+              Are you looking for ongoing care with a consistent, dedicated veterinary team?{' '}
+              <span style={{ color: '#ef4444' }} aria-hidden>*</span>
+            </p>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                padding: fieldValidationErrors.ongoingCareInterest ? '12px' : undefined,
+                borderRadius: '8px',
+                border: fieldValidationErrors.ongoingCareInterest ? '1px solid #ef4444' : undefined,
+                backgroundColor: fieldValidationErrors.ongoingCareInterest ? '#fef2f2' : undefined,
+              }}
+            >
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: readOnly ? 'default' : 'pointer', fontSize: '15px' }}>
+                <input
+                  type="radio"
+                  name="ongoingCareInterest"
+                  checked={formData.ongoingCareInterest === 'yes'}
+                  onChange={() => {
+                    handleInputChange('ongoingCareInterest', 'yes');
+                    setFieldValidationErrors((prev) => {
+                      const next = { ...prev };
+                      delete next.ongoingCareInterest;
+                      return next;
+                    });
+                  }}
+                  disabled={readOnly}
+                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
+                />
+                Yes, I would like that.
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: readOnly ? 'default' : 'pointer', fontSize: '15px' }}>
+                <input
+                  type="radio"
+                  name="ongoingCareInterest"
+                  checked={formData.ongoingCareInterest === 'no'}
+                  onChange={() => {
+                    handleInputChange('ongoingCareInterest', 'no');
+                    setFieldValidationErrors((prev) => {
+                      const next = { ...prev };
+                      delete next.ongoingCareInterest;
+                      return next;
+                    });
+                  }}
+                  disabled={readOnly}
+                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
+                />
+                No, thank you.
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: readOnly ? 'default' : 'pointer', fontSize: '15px' }}>
+                <input
+                  type="radio"
+                  name="ongoingCareInterest"
+                  checked={formData.ongoingCareInterest === 'unsure'}
+                  onChange={() => {
+                    handleInputChange('ongoingCareInterest', 'unsure');
+                    setFieldValidationErrors((prev) => {
+                      const next = { ...prev };
+                      delete next.ongoingCareInterest;
+                      return next;
+                    });
+                  }}
+                  disabled={readOnly}
+                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
+                />
+                I am not sure.
+              </label>
+            </div>
+            {fieldValidationErrors.ongoingCareInterest && (
+              <div style={{ fontSize: '14px', color: '#ef4444', marginTop: '8px' }} role="alert">
+                {fieldValidationErrors.ongoingCareInterest}
+              </div>
+            )}
+          </div>
 
           <div className="public-room-loader-nav-buttons">
             <button
@@ -6405,10 +6586,11 @@ export default function PublicRoomLoaderForm() {
                 const lineTotal = isChecked && !isReplaced ? unitPrice * qty : 0;
                 petSubtotal += lineTotal;
                 const replacedByLabel = isFecalReplaced ? fecalReplacedBy.join(' or ') : is4dxReplaced ? fourDxReplacedBy.join(' or ') : '';
-                const hasDiscount = displayPricing?.wellnessPlanPricing?.hasCoverage && (displayPricing.wellnessPlanPricing.originalPrice !== displayPricing.wellnessPlanPricing.adjustedPrice) || (displayPricing?.wellnessPlanPricing as any)?.priceAdjustedByMembership || displayPricing?.discountPricing?.priceAdjustedByDiscount;
+                const hasDiscount = hasDiscountPricingNote(displayPricing);
                 const quantityUsedNote = displayPricing?.wellnessPlanPricing?.hasCoverage && displayPricing.wellnessPlanPricing.isWithinLimit === false;
                 const hasPricingNote = hasDiscount || quantityUsedNote;
-                const isMembershipRelated = displayPricing?.wellnessPlanPricing?.hasCoverage && ((displayPricing.wellnessPlanPricing.originalPrice !== displayPricing.wellnessPlanPricing.adjustedPrice) || (displayPricing?.wellnessPlanPricing as any)?.priceAdjustedByMembership || quantityUsedNote);
+                const isMembershipRelated =
+                  quantityUsedNote || isMembershipCarePlanContext(displayPricing);
                 const discountNote = getDiscountNote(displayPricing) ?? 'Membership or discount applied';
                 const displayNote = isMembershipRelated ? `From your care plan — ${discountNote}` : discountNote;
                 return (
@@ -6464,10 +6646,10 @@ export default function PublicRoomLoaderForm() {
                       const qty = Number(item.quantity) || 1;
                       const lineTotal = unitPrice * qty;
                       petSubtotal += lineTotal;
-                      const hasTripDiscount = tripPricing?.wellnessPlanPricing?.hasCoverage && (tripPricing.wellnessPlanPricing.originalPrice !== tripPricing.wellnessPlanPricing.adjustedPrice) || (tripPricing?.wellnessPlanPricing as any)?.priceAdjustedByMembership || tripPricing?.discountPricing?.priceAdjustedByDiscount;
+                      const hasTripDiscount = hasDiscountPricingNote(tripPricing);
                       const tripQuantityUsedNote = tripPricing?.wellnessPlanPricing?.hasCoverage && tripPricing.wellnessPlanPricing.isWithinLimit === false;
                       const hasTripPricingNote = hasTripDiscount || tripQuantityUsedNote;
-                      const isTripMembershipRelated = tripPricing?.wellnessPlanPricing?.hasCoverage && ((tripPricing.wellnessPlanPricing.originalPrice !== tripPricing.wellnessPlanPricing.adjustedPrice) || (tripPricing?.wellnessPlanPricing as any)?.priceAdjustedByMembership || tripQuantityUsedNote);
+                      const isTripMembershipRelated = tripQuantityUsedNote || isMembershipCarePlanContext(tripPricing);
                       const tripDiscountNote = getDiscountNote(tripPricing) ?? 'Membership or discount applied';
                       const tripDisplayNote = isTripMembershipRelated ? `From your care plan — ${tripDiscountNote}` : tripDiscountNote;
                       return (
@@ -6501,7 +6683,7 @@ export default function PublicRoomLoaderForm() {
                       const isExcluded = formData[summaryExcludeKey] === true;
                       const p = getClientAdjustedPrice(patientId, earlyDetectionFelineItem) ?? getSearchItemPrice(earlyDetectionFelineItem)!;
                       const labPricing = getClientPricing(patientId, earlyDetectionFelineItem);
-                      const hasDiscount = labPricing?.wellnessPlanPricing?.hasCoverage && (labPricing.wellnessPlanPricing.originalPrice !== labPricing.wellnessPlanPricing.adjustedPrice) || labPricing?.discountPricing?.priceAdjustedByDiscount;
+                      const hasDiscount = hasDiscountPricingNote(labPricing);
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -6527,7 +6709,7 @@ export default function PublicRoomLoaderForm() {
                       const isExcluded = formData[summaryExcludeKey] === true;
                       const p = getClientAdjustedPrice(patientId, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem)!;
                       const labPricing = getClientPricing(patientId, earlyDetectionCanineItem);
-                      const hasDiscount = labPricing?.wellnessPlanPricing?.hasCoverage && (labPricing.wellnessPlanPricing.originalPrice !== labPricing.wellnessPlanPricing.adjustedPrice) || labPricing?.discountPricing?.priceAdjustedByDiscount;
+                      const hasDiscount = hasDiscountPricingNote(labPricing);
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -6554,7 +6736,7 @@ export default function PublicRoomLoaderForm() {
                       const p = getClientAdjustedPrice(patientId, comprehensiveFecalItem) ?? getSearchItemPrice(comprehensiveFecalItem)!;
                       const compFecalName = comprehensiveFecalItem?.name ?? 'Comprehensive Fecal';
                       const labPricing = getClientPricing(patientId, comprehensiveFecalItem);
-                      const hasDiscount = labPricing?.wellnessPlanPricing?.hasCoverage && (labPricing.wellnessPlanPricing.originalPrice !== labPricing.wellnessPlanPricing.adjustedPrice) || labPricing?.discountPricing?.priceAdjustedByDiscount;
+                      const hasDiscount = hasDiscountPricingNote(labPricing);
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -6580,7 +6762,7 @@ export default function PublicRoomLoaderForm() {
                       const isExcluded = formData[summaryExcludeKey] === true;
                       const p = getClientAdjustedPrice(patientId, seniorFelineItem) ?? getSearchItemPrice(seniorFelineItem)!;
                       const labPricing = getClientPricing(patientId, seniorFelineItem);
-                      const hasDiscount = labPricing?.wellnessPlanPricing?.hasCoverage && (labPricing.wellnessPlanPricing.originalPrice !== labPricing.wellnessPlanPricing.adjustedPrice) || labPricing?.discountPricing?.priceAdjustedByDiscount;
+                      const hasDiscount = hasDiscountPricingNote(labPricing);
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -6606,7 +6788,7 @@ export default function PublicRoomLoaderForm() {
                       const isExcluded = formData[summaryExcludeKey] === true;
                       const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem)!;
                       const labPricing = getClientPricing(patientId, seniorCanineStandardItem);
-                      const hasDiscount = labPricing?.wellnessPlanPricing?.hasCoverage && (labPricing.wellnessPlanPricing.originalPrice !== labPricing.wellnessPlanPricing.adjustedPrice) || labPricing?.discountPricing?.priceAdjustedByDiscount;
+                      const hasDiscount = hasDiscountPricingNote(labPricing);
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -6632,7 +6814,7 @@ export default function PublicRoomLoaderForm() {
                       const isExcluded = formData[summaryExcludeKey] === true;
                       const p = getClientAdjustedPrice(patientId, seniorCanineExtendedItem) ?? getSearchItemPrice(seniorCanineExtendedItem)!;
                       const labPricing = getClientPricing(patientId, seniorCanineExtendedItem);
-                      const hasDiscount = labPricing?.wellnessPlanPricing?.hasCoverage && (labPricing.wellnessPlanPricing.originalPrice !== labPricing.wellnessPlanPricing.adjustedPrice) || labPricing?.discountPricing?.priceAdjustedByDiscount;
+                      const hasDiscount = hasDiscountPricingNote(labPricing);
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -6657,7 +6839,7 @@ export default function PublicRoomLoaderForm() {
                       const key = `lab_senior_feline_two_panel_${patientId}`;
                       const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem)!;
                       const labPricing = getClientPricing(patientId, seniorCanineStandardItem);
-                      const hasDiscount = labPricing?.wellnessPlanPricing?.hasCoverage && (labPricing.wellnessPlanPricing.originalPrice !== labPricing.wellnessPlanPricing.adjustedPrice) || labPricing?.discountPricing?.priceAdjustedByDiscount;
+                      const hasDiscount = hasDiscountPricingNote(labPricing);
                       petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -6687,7 +6869,7 @@ export default function PublicRoomLoaderForm() {
                       const isExcluded = formData[summaryExcludeKey] === true;
                       const p = getClientAdjustedPrice(patientId, seniorFelineExtendedItem) ?? getSearchItemPrice(seniorFelineExtendedItem)!;
                       const labPricing = getClientPricing(patientId, seniorFelineExtendedItem);
-                      const hasDiscount = labPricing?.wellnessPlanPricing?.hasCoverage && (labPricing.wellnessPlanPricing.originalPrice !== labPricing.wellnessPlanPricing.adjustedPrice) || labPricing?.discountPricing?.priceAdjustedByDiscount;
+                      const hasDiscount = hasDiscountPricingNote(labPricing);
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -6722,7 +6904,7 @@ export default function PublicRoomLoaderForm() {
                         const p = getClientAdjustedPrice(patientId, item) ?? getSearchItemPrice(item);
                         const price = p != null ? p : 0;
                         const vaccinePricing = getClientPricing(patientId, item);
-                        const hasDiscount = vaccinePricing?.wellnessPlanPricing?.hasCoverage && (vaccinePricing.wellnessPlanPricing.originalPrice !== vaccinePricing.wellnessPlanPricing.adjustedPrice) || vaccinePricing?.discountPricing?.priceAdjustedByDiscount;
+                        const hasDiscount = hasDiscountPricingNote(vaccinePricing);
                         if (isChecked) petSubtotal += price;
                         return (
                           <div key={`v-${i}`} style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -6785,9 +6967,23 @@ export default function PublicRoomLoaderForm() {
                             const itemId = getItemId(item) ?? key;
                             const commonKey = `summary_common_${patientId}_${itemId}`;
                             const isChecked = formData[commonKey] === true;
-                            const price = getClientAdjustedPrice(patientId, item) ?? getSearchItemPrice(item) ?? 0;
                             const commonPricing = getClientPricing(patientId, item);
-                            const hasDiscount = commonPricing?.wellnessPlanPricing?.hasCoverage && (commonPricing.wellnessPlanPricing.originalPrice !== commonPricing.wellnessPlanPricing.adjustedPrice) || commonPricing?.discountPricing?.priceAdjustedByDiscount;
+                            const price = getClientAdjustedPrice(patientId, item) ?? getSearchItemPrice(item) ?? 0;
+                            const hasDiscount = hasDiscountPricingNote(commonPricing);
+                            const quantityUsedNote =
+                              commonPricing?.wellnessPlanPricing?.hasCoverage &&
+                              commonPricing.wellnessPlanPricing.isWithinLimit === false;
+                            const hasPricingNote = hasDiscount || quantityUsedNote;
+                            const isMembershipRelated =
+                              quantityUsedNote || isMembershipCarePlanContext(commonPricing);
+                            const discountNote = getDiscountNote(commonPricing) ?? 'Membership or discount applied';
+                            const displayNote = isMembershipRelated ? `From your care plan — ${discountNote}` : discountNote;
+                            const origList =
+                              commonPricing?.originalPrice != null ? Number(commonPricing.originalPrice) : null;
+                            const showPriceCompare =
+                              hasDiscount &&
+                              origList != null &&
+                              Math.abs(origList - price) > 0.005;
                             if (isChecked) petSubtotal += price;
                             return (
                               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -6802,9 +6998,24 @@ export default function PublicRoomLoaderForm() {
                                     />
                                     <span style={{ color: '#333' }}>{displayName}</span>
                                   </label>
-                                  <span style={{ fontWeight: 700, flexShrink: 0 }}>{formatPrice(price)}</span>
+                                  <span style={{ fontWeight: 700, flexShrink: 0, textAlign: 'right' }}>
+                                    {showPriceCompare ? (
+                                      <>
+                                        <span style={{ textDecoration: 'line-through', color: '#888', fontWeight: 600, marginRight: '8px' }}>
+                                          {formatPrice(origList)}
+                                        </span>
+                                        <span>{formatPrice(price)}</span>
+                                      </>
+                                    ) : (
+                                      formatPrice(price)
+                                    )}
+                                  </span>
                                 </div>
-                                {isChecked && hasDiscount && <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>{getDiscountNote(commonPricing) ?? 'Membership or discount applied'}</div>}
+                                {hasPricingNote && (
+                                  <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>
+                                    {displayNote}
+                                  </div>
+                                )}
                               </div>
                             );
                           })}

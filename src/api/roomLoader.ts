@@ -508,6 +508,8 @@ export type CheckItemPricingRequest = {
   patientId: number;
   practiceId: number;
   clientId: number;
+  /** Patient species label (e.g. Canine, Feline) for membership / species-specific pricing rules. */
+  species?: string;
   itemType: 'lab' | 'procedure' | 'inventory' | string;
   item: {
     lab?: Record<string, unknown>;
@@ -580,6 +582,8 @@ export type CheckItemPricingPublicRequest = {
   practiceId?: number;
   /** Client ID (same as employee request) so backend can apply client-specific discounts. */
   clientId?: number;
+  /** Patient species label (e.g. Canine, Feline) for membership / species-specific pricing rules. */
+  species?: string;
   itemType: 'lab' | 'procedure' | 'inventory' | string;
   item: {
     lab?: Record<string, unknown>;
@@ -600,6 +604,7 @@ function checkItemPricingCacheKey(request: CheckItemPricingPublicRequest): strin
     patientId: request.patientId,
     practiceId: request.practiceId,
     clientId: request.clientId,
+    species: request.species ?? null,
     itemType: request.itemType,
     item: request.item,
   });
