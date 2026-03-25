@@ -3158,6 +3158,7 @@ export default function PublicRoomLoaderForm() {
         const label = valueLabels && typeof val === 'string' ? (valueLabels[val] ?? val) : (typeof val === 'string' ? val : (val != null ? String(val) : null));
         questions.push({ question, answer: val, answerLabel: label ?? null });
       };
+      let pdfAddedFelineSeniorTwoPanel = false;
       entry.recommendations.forEach((rec: { code?: string }) => {
         if (rec.code === 'FIL48119999' && isCatExplicitEntry && !isDogExplicitEntry) {
           add('Would you like to do the Early Detection Panel? (Feline)', `lab_early_detection_feline_${pidStr}`, { yes: 'Yes', no: 'No' });
@@ -3172,7 +3173,13 @@ export default function PublicRoomLoaderForm() {
             no: 'No thank you',
           });
         }
-        if ((rec.code === '8659999' || rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatExplicitEntry && !isDogExplicitEntry) {
+        if (
+          (rec.code === '8659999' || rec.code === 'FIL45129999' || rec.code === 'FIL8659999') &&
+          isCatExplicitEntry &&
+          !isDogExplicitEntry &&
+          !pdfAddedFelineSeniorTwoPanel
+        ) {
+          pdfAddedFelineSeniorTwoPanel = true;
           add('Which panel would you like your pet to receive? (Senior Screen — Feline)', `lab_senior_feline_two_panel_${pidStr}`, {
             standard: 'Senior Screen Feline - Standard Panel',
             extended: 'Senior Screen Feline - Extended Panel',
@@ -6202,9 +6209,9 @@ export default function PublicRoomLoaderForm() {
                   }
 
                   if (isSeniorFelineFullPanel) {
-                    // When labs was answered Yes and patient is due for senior screen, we already show the "With the symptoms you mentioned..." block (8659999). For FIL45129999 only, skip this block so that one doesn't duplicate.
+                    // When 8659999 is present we already show "Senior Screen — Feline" (symptom / lab-work path). Skip age-based FIL45129999 and FIL8659999 so the same two-panel choice isn't shown twice.
                     const hasLabWorkYesSeniorFeline = entry.recommendations.some((r: any) => r.code === '8659999');
-                    if (rec.code === 'FIL45129999' && hasLabWorkYesSeniorFeline) return null;
+                    if (hasLabWorkYesSeniorFeline && (rec.code === 'FIL45129999' || rec.code === 'FIL8659999')) return null;
                     // Same two-panel choice (Standard / Extended / No) as 8659999, using lab_senior_feline_two_panel
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
