@@ -161,11 +161,20 @@ export default function MembershipRecommendationPanel({
         const thisPetIsMember = currentPatient ? patientHasMembershipFlag(currentPatient) : false;
 
         const subtext =
-          planBase === 'golden' || planBase === 'foundations'
-            ? `We recommend the ${planDisplayName} for ${petName}. It covers the core wellness care we recommend each year and supports ongoing care with ${petName}'s dedicated Vet At Your Door One-Team.`
-            : planBase === 'comfort-care'
-              ? `We recommend the ${planDisplayName} for ${petName}. Membership makes it simple to get ongoing care with ${petName}'s dedicated Vet At Your Door One-Team.`
-              : `We recommend the ${planDisplayName} for ${petName}.`;
+          planBase === 'golden' || planBase === 'foundations' ? (
+            <>
+              We recommend the <strong>{planDisplayName}</strong> Membership Plan for {petName}. It covers the core wellness care we recommend each year and supports ongoing care with{' '}
+              {petName}&apos;s dedicated Vet At Your Door One-Team.
+            </>
+          ) : planBase === 'comfort-care' ? (
+            <>
+              We recommend the <strong>{planDisplayName}</strong> Membership Plan for {petName}. Membership makes it simple to get ongoing care with {petName}&apos;s dedicated Vet At Your Door One-Team.
+            </>
+          ) : (
+            <>
+              We recommend the <strong>{planDisplayName}</strong> Membership Plan for {petName}.
+            </>
+          );
 
         const showPlus = petPlans.plans.some((p) => normalizePlanBaseId(p.planId) === 'plus-addon');
 
@@ -181,8 +190,24 @@ export default function MembershipRecommendationPanel({
             <h3 style={{ margin: '0 0 6px', fontSize: '18px', fontWeight: 700, color: '#14532d', letterSpacing: '-0.01em' }}>
               Recommended Care Option for {petName}
             </h3>
-            <p style={{ margin: '0 0 6px', fontSize: '15px', fontWeight: 600, color: '#1e4d2d' }}>
-              This is the care we recommend for {petName} each year. Membership makes it simple.
+            <p style={{ margin: '0 0 12px', fontSize: '15px', fontWeight: 500, color: '#3d5347', lineHeight: 1.45 }}>
+              Pets do best when the same veterinary team knows them over time.
+            </p>
+            <div style={{ marginBottom: '14px' }}>
+              <h4 style={{ margin: '0 0 10px', fontSize: '15px', fontWeight: 700, color: '#14532d' }}>
+                Why families choose One-Team membership
+              </h4>
+              <ul style={{ margin: 0, paddingLeft: '20px', color: '#1a2f24', fontSize: '14px', lineHeight: 1.5 }}>
+                <li style={{ marginBottom: '6px' }}>✔ Priority access to a dedicated One-Team who knows {petName} over time</li>
+                <li style={{ marginBottom: '6px' }}>✔ Preferred booking with your veterinary team</li>
+                <li style={{ marginBottom: '6px' }}>✔ After-hours veterinary chat through the VAYD Client Portal</li>
+                <li style={{ marginBottom: '6px' }}>✔ Care designed for long-term health, not just sick visits</li>
+              </ul>
+            </div>
+            <p style={{ margin: '0 0 6px', fontSize: '15px', fontWeight: 600, color: '#1e4d2d', lineHeight: 1.45 }}>
+              This is the care we recommend for {petName} each year.
+              <br />
+              Membership covers this care and supports ongoing care with {petName}&apos;s dedicated Vet At Your Door One-Team.
             </p>
             <p style={{ margin: '0 0 12px', fontSize: '14px', color: '#3d5347', lineHeight: 1.45 }}>{subtext}</p>
 
@@ -251,19 +276,6 @@ export default function MembershipRecommendationPanel({
                   {planBase === 'golden' ? 'Golden Membership' : planDisplayName} · {formatPrice(monthlyFee)}/month · 12-month membership
                 </div>
               )}
-            </div>
-
-            <div style={{ marginBottom: showPlus ? '16px' : '12px' }}>
-              <h4 style={{ margin: '0 0 10px', fontSize: '15px', fontWeight: 700, color: '#14532d' }}>Why families choose membership</h4>
-              <ul style={{ margin: 0, paddingLeft: '20px', color: '#1a2f24', fontSize: '14px', lineHeight: 1.5 }}>
-                <li style={{ marginBottom: '6px' }}>✔ A dedicated One-Team who knows {petName} over time</li>
-                <li style={{ marginBottom: '6px' }}>✔ Priority scheduling with your veterinary team</li>
-                <li style={{ marginBottom: '6px' }}>✔ After-hours veterinary chat through the VAYD Client Portal</li>
-                <li style={{ marginBottom: '6px' }}>✔ Care designed for long-term health, not just sick visits</li>
-              </ul>
-              <p style={{ margin: '12px 0 0', fontSize: '13px', color: '#5a6b6c', fontStyle: 'italic' }}>
-                Pets do best when the same veterinary team knows them over time.
-              </p>
             </div>
 
             {showPlus && (

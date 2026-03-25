@@ -1,5 +1,5 @@
 // src/pages/PublicRoomLoaderForm.tsx
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { apiBaseUrl, http } from '../api/http';
 import { getEcwidProducts, type EcwidProduct, type EcwidChoice } from '../api/ecwid';
@@ -2069,86 +2069,117 @@ export default function PublicRoomLoaderForm() {
     });
   }, [treatmentHistoryReadyByPatientId]);
 
-  /** Load recommended-plan membership simulate per pet when the recommendation panel opens (must run before any early return — Rules of Hooks). */
+  /** Tracks whether the membership bill section was expanded on the previous effect run (for immediate fetch on open vs debounced refetch). */
+  const membershipPanelWasExpandedRef = useRef(false);
+  /** Invalidates in-flight membership simulate requests so stale responses do not clear loading or overwrite newer data. */
+  const membershipSimulateSeqRef = useRef(0);
+
+  /** Load recommended-plan membership simulate per pet when the recommendation panel opens, and refetch when summary lines / store totals change (debounced so typing elsewhere does not spam the API). */
   useEffect(() => {
-    if (!membershipBillSectionExpanded || formAlreadySubmitted || !availablePlansForPetsForDisplay.length) return;
+    if (!membershipBillSectionExpanded || formAlreadySubmitted || !availablePlansForPetsForDisplay.length) {
+      membershipPanelWasExpandedRef.current = false;
+      setMembershipPanelLoading(false);
+      return;
+    }
     const tokenValue = token;
     if (!tokenValue || !data) return;
-    let cancelled = false;
-    setMembershipPanelLoading(true);
-    setMembershipPanelByPatientId({});
-    (async () => {
-      try {
-        const snapshot = buildFullFormSnapshot();
-        const summaryLineItems = snapshot?.summaryLineItems ?? [];
-        const totals = snapshot?.totals ?? {};
-        const patientsData = data?.patients ?? [];
-        const firstPid = Number(
-          patientsData[0]?.patientId ?? patientsData[0]?.patient?.id ?? patientsData[0]?.id ?? 0
-        );
-        const practiceId = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id;
-        const clientId =
-          data?.clientId ??
-          data?.client?.id ??
-          data?.patients?.[0]?.clientId ??
-          (data?.patients?.[0] as any)?.client?.id ??
-          data?.appointments?.[0]?.client?.id;
-        const next: Record<
-          number,
-          { monthly: RoomLoaderSimulateBillPublicResponse | null; annual: RoomLoaderSimulateBillPublicResponse | null }
-        > = {};
-        for (const petPlans of availablePlansForPetsForDisplay) {
-          const rec = getRecommendedWellnessPlanFromList(petPlans.plans, petPlans.meetsGolden);
-          if (!rec) continue;
-          const filtered = filterLineItemsForPatientSimulate(summaryLineItems, petPlans.patientId, firstPid);
-          const lineItems: RoomLoaderSimulateLineItem[] = filtered.map(
-            (li: {
-              name: string;
-              quantity: number;
-              price: number;
-              patientId?: number;
-              patientName?: string;
-              category?: string;
-              itemType?: 'lab' | 'procedure' | 'inventory';
-              itemId?: number;
-            }) => ({
-              name: li.name,
-              quantity: li.quantity,
-              price: li.price,
-              patientId: li.patientId ?? 0,
-              patientName: li.patientName,
-              category: li.category,
-              ...(li.itemType && li.itemId != null && { itemType: li.itemType, itemId: li.itemId }),
-            })
+
+    const panelJustOpened = !membershipPanelWasExpandedRef.current;
+    membershipPanelWasExpandedRef.current = true;
+
+    const seq = ++membershipSimulateSeqRef.current;
+    const debounceMs = panelJustOpened ? 0 : 350;
+
+    const timer = window.setTimeout(() => {
+      (async () => {
+        try {
+          if (panelJustOpened) {
+            setMembershipPanelLoading(true);
+            setMembershipPanelByPatientId({});
+          } else {
+            setMembershipPanelLoading(true);
+          }
+          const snapshot = buildFullFormSnapshot();
+          const summaryLineItems = snapshot?.summaryLineItems ?? [];
+          const totals = snapshot?.totals ?? {};
+          const patientsData = data?.patients ?? [];
+          const firstPid = Number(
+            patientsData[0]?.patientId ?? patientsData[0]?.patient?.id ?? patientsData[0]?.id ?? 0
           );
-          const request = {
-            token: tokenValue as string,
-            practiceId,
-            clientId,
-            planId: rec.planId,
-            ...(petPlans.membershipSpeciesKind != null ? { species: petPlans.membershipSpeciesKind } : {}),
-            patientIds: [petPlans.patientId],
-            lineItems,
-            storeSubtotal: totals.storeSubtotal,
-            storeTax: totals.storeTax,
-          };
-          const [monthly, annual] = await Promise.all([
-            simulateBillWithMembershipPublic({ ...request, pricingOption: 'monthly' }),
-            simulateBillWithMembershipPublic({ ...request, pricingOption: 'annual' }),
-          ]);
-          if (!cancelled) next[petPlans.patientId] = { monthly, annual };
+          const practiceId = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id;
+          const clientId =
+            data?.clientId ??
+            data?.client?.id ??
+            data?.patients?.[0]?.clientId ??
+            (data?.patients?.[0] as any)?.client?.id ??
+            data?.appointments?.[0]?.client?.id;
+          const next: Record<
+            number,
+            { monthly: RoomLoaderSimulateBillPublicResponse | null; annual: RoomLoaderSimulateBillPublicResponse | null }
+          > = {};
+          for (const petPlans of availablePlansForPetsForDisplay) {
+            const rec = getRecommendedWellnessPlanFromList(petPlans.plans, petPlans.meetsGolden);
+            if (!rec) continue;
+            const filtered = filterLineItemsForPatientSimulate(summaryLineItems, petPlans.patientId, firstPid);
+            const lineItems: RoomLoaderSimulateLineItem[] = filtered.map(
+              (li: {
+                name: string;
+                quantity: number;
+                price: number;
+                patientId?: number;
+                patientName?: string;
+                category?: string;
+                itemType?: 'lab' | 'procedure' | 'inventory';
+                itemId?: number;
+              }) => ({
+                name: li.name,
+                quantity: li.quantity,
+                price: li.price,
+                patientId: li.patientId ?? 0,
+                patientName: li.patientName,
+                category: li.category,
+                ...(li.itemType && li.itemId != null && { itemType: li.itemType, itemId: li.itemId }),
+              })
+            );
+            const request = {
+              token: tokenValue as string,
+              practiceId,
+              clientId,
+              planId: rec.planId,
+              ...(petPlans.membershipSpeciesKind != null ? { species: petPlans.membershipSpeciesKind } : {}),
+              patientIds: [petPlans.patientId],
+              lineItems,
+              storeSubtotal: totals.storeSubtotal,
+              storeTax: totals.storeTax,
+            };
+            const [monthly, annual] = await Promise.all([
+              simulateBillWithMembershipPublic({ ...request, pricingOption: 'monthly' }),
+              simulateBillWithMembershipPublic({ ...request, pricingOption: 'annual' }),
+            ]);
+            if (membershipSimulateSeqRef.current === seq) next[petPlans.patientId] = { monthly, annual };
+          }
+          if (membershipSimulateSeqRef.current === seq) setMembershipPanelByPatientId(next);
+        } catch (err) {
+          console.error('Membership recommendation panel load error:', err);
+        } finally {
+          if (membershipSimulateSeqRef.current === seq) setMembershipPanelLoading(false);
         }
-        if (!cancelled) setMembershipPanelByPatientId(next);
-      } catch (err) {
-        console.error('Membership recommendation panel load error:', err);
-      } finally {
-        if (!cancelled) setMembershipPanelLoading(false);
-      }
-    })();
+      })();
+    }, debounceMs);
+
     return () => {
-      cancelled = true;
+      window.clearTimeout(timer);
+      membershipSimulateSeqRef.current += 1;
     };
-  }, [membershipBillSectionExpanded, formAlreadySubmitted, availablePlansForPetsForDisplay, token, data]);
+  }, [
+    membershipBillSectionExpanded,
+    formAlreadySubmitted,
+    availablePlansForPetsForDisplay,
+    token,
+    data,
+    formData,
+    storeAdditionalItems,
+  ]);
 
   function formatDate(dateStr: string | null | undefined): string {
     if (!dateStr) return 'N/A';
@@ -7356,6 +7387,26 @@ export default function PublicRoomLoaderForm() {
             {fieldValidationErrors._submit && (
               <p style={{ marginTop: '10px', marginBottom: 0, fontSize: '14px', color: '#dc3545' }}>{fieldValidationErrors._submit}</p>
             )}
+            <style>{`
+              @keyframes roomLoaderSubmitPopIn {
+                0% { transform: scale(0.92); opacity: 0.6; box-shadow: 0 0 0 0 rgba(13, 110, 253, 0); }
+                50% { transform: scale(1.06); opacity: 1; box-shadow: 0 0 0 8px rgba(13, 110, 253, 0.28); }
+                100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(13, 110, 253, 0); }
+              }
+              @keyframes roomLoaderSubmitPulse {
+                0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(13, 110, 253, 0.38); }
+                50% { transform: scale(1.04); box-shadow: 0 0 20px 4px rgba(13, 110, 253, 0.48); }
+              }
+              .public-room-loader-submit-btn-throb {
+                animation: roomLoaderSubmitPopIn 0.5s ease-out forwards,
+                  roomLoaderSubmitPulse 2.2s ease-in-out 0.6s infinite;
+              }
+              .public-room-loader-submit-btn-throb:hover:not(:disabled) {
+                animation: none;
+                transform: scale(1.05);
+                box-shadow: 0 0 20px 4px rgba(13, 110, 253, 0.42);
+              }
+            `}</style>
             <div className="public-room-loader-summary-actions">
               <button
                 type="button"
@@ -7371,7 +7422,7 @@ export default function PublicRoomLoaderForm() {
               </button>
               <button
                 type="button"
-                className="public-room-loader-btn"
+                className={`public-room-loader-btn${!readOnly && !submitting ? ' public-room-loader-submit-btn-throb' : ''}`}
                 onClick={(e) => {
                   e.preventDefault();
                   handleSubmit();
@@ -7382,6 +7433,7 @@ export default function PublicRoomLoaderForm() {
                   color: '#fff',
                   border: 'none',
                   cursor: submitting || readOnly ? 'not-allowed' : 'pointer',
+                  transition: 'transform 0.2s ease, box-shadow 0.2s ease',
                 }}
               >
                 {submitting ? 'Submitting...' : readOnly ? 'Already submitted' : 'Submit Form'}
