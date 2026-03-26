@@ -27,8 +27,8 @@ export type MembershipEnrollmentModalProps = {
   };
   /** After payment success + user finishes flow (Done). Use to refetch server data. */
   onEnrollmentFlowCompleted?: () => void | Promise<void>;
-  /** After each successful payment or upgrade (and when choosing “sign up another pet”). Refetch so pricing/membership flags update under the modal. */
-  onAfterPetEnrolled?: () => void | Promise<void>;
+  /** After each successful payment or upgrade (and when choosing “sign up another pet”). Refetch so pricing/membership flags update under the modal. Pass enrolled pet id when known (room loader multi-pet credit). */
+  onAfterPetEnrolled?: (enrolledPetId?: string) => void | Promise<void>;
   /** Label for the final dismiss button (default: appointment request copy). */
   doneButtonLabel?: string;
 };
@@ -293,7 +293,7 @@ export default function MembershipEnrollmentModal({
               fromModal
               initialState={membershipPaymentState as any}
               onEnrollmentSucceeded={() => {
-                void onAfterPetEnrolled?.();
+                void onAfterPetEnrolled?.(membershipPaymentState.petId);
               }}
               onSuccess={() => {
                 setLastSignedUpPetIds((prev) => [...prev, membershipPaymentState.petId]);
@@ -301,7 +301,7 @@ export default function MembershipEnrollmentModal({
               }}
               onBack={() => setMembershipModalStep('signup')}
               onSignUpAnother={async (signedUpPetId) => {
-                await onAfterPetEnrolled?.();
+                await onAfterPetEnrolled?.(signedUpPetId);
                 setLastSignedUpPetIds((prev) => [...prev, signedUpPetId]);
                 setMembershipPaymentState(null);
                 setMembershipModalStep('choose-pet');

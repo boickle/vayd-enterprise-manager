@@ -42,6 +42,11 @@ import {
 } from '../utils/membershipAge';
 import './PublicRoomLoaderForm.css';
 
+/** Dollar amount credited when an additional pet enrolls in membership (same household / multi-pet rule). */
+const VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD = 75;
+/** Label for the credit line on summary, PDF payload, and simulate exclusions. */
+const VAYD_MULTI_PET_MEMBERSHIP_CREDIT_LINE_NAME = 'VAYD multi-pet membership credit';
+
 /** Match full appointment to room-loader patient by `patient.id` (`appointments[]` order may not match `patients[]`). */
 function getAppointmentForRoomLoaderPet(
   appointments: any[] | undefined,
@@ -409,6 +414,7 @@ function filterLineItemsForPatientSimulate<T extends { patientId?: number; categ
   firstPatientId: number
 ): T[] {
   return items.filter((li) => {
+    if ((li as { category?: string }).category === 'membershipCredit') return false;
     if ((li as { category?: string }).category === 'store') return patientId === firstPatientId;
     const pid = (li as { patientId?: number }).patientId ?? 0;
     return pid === patientId;
@@ -438,6 +444,25 @@ function roomLoaderPatientHasMembership(p: any, appointments: any[] | undefined)
     if (patientHasMembershipFlag(ap)) return true;
   }
   return false;
+}
+
+/**
+ * Non-member pet on the form with at least one other household pet (same `patients[]`) already a member — eligible for multi-pet upsell blurb and estimate adjustment.
+ * Relies on API including member pets on the client (appointment or not).
+ */
+function roomLoaderPetEligibleForMultiPetMembershipUpsell(
+  patient: any,
+  allPatients: any[],
+  appointments: any[] | undefined
+): boolean {
+  if (roomLoaderPatientHasMembership(patient, appointments)) return false;
+  const pid = Number(patient?.patientId ?? patient?.patient?.id ?? patient?.id);
+  if (Number.isNaN(pid)) return false;
+  return allPatients.some((other: any) => {
+    const oid = Number(other?.patientId ?? other?.patient?.id ?? other?.id);
+    if (Number.isNaN(oid) || oid === pid) return false;
+    return roomLoaderPatientHasMembership(other, appointments);
+  });
 }
 
 /** Membership plan label for display (row or matched appointment `patient`). */
@@ -1589,6 +1614,8 @@ export default function PublicRoomLoaderForm() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<any>(null);
+  const dataRef = useRef<any>(null);
+  dataRef.current = data;
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -1637,6 +1664,14 @@ export default function PublicRoomLoaderForm() {
     Record<number, { monthly: RoomLoaderSimulateBillPublicResponse | null; annual: RoomLoaderSimulateBillPublicResponse | null }>
   >({});
   const [membershipPanelLoading, setMembershipPanelLoading] = useState(false);
+  /**
+   * Session-only: enrollment order and which pets receive the $75 multi-pet credit on the summary after signing up
+   * (second+ enrollment in this session, or first enrollment while another pet on the form was already a member).
+   */
+  const [roomLoaderSessionMembership, setRoomLoaderSessionMembership] = useState<{
+    enrollmentOrder: number[];
+    multiPetCreditPatientIds: Record<number, true>;
+  }>({ enrollmentOrder: [], multiPetCreditPatientIds: {} });
   /** Collapsible "See how a membership could change your bill" section on summary (only for non-members). */
   const [membershipBillSectionExpanded, setMembershipBillSectionExpanded] = useState(false);
   /** Public membership enrollment modal (same flow as appointment request form). */
@@ -1988,9 +2023,35 @@ export default function PublicRoomLoaderForm() {
     [data?.patients, data?.clientId, data?.client?.id, data?.appointments]
   );
 
-  async function refetchRoomLoaderAfterMembership() {
+  async function refetchRoomLoaderAfterMembership(enrolledPetId?: string) {
     const tokenValue = token;
     if (!tokenValue) return;
+
+    if (enrolledPetId != null && String(enrolledPetId).trim() !== '') {
+      const pid = Number(enrolledPetId);
+      if (!Number.isNaN(pid)) {
+        const snap = dataRef.current;
+        const hadExistingOtherMember =
+          snap?.patients?.some((p: any) => {
+            const oid = Number(p.patientId ?? p.patient?.id ?? p.id);
+            if (Number.isNaN(oid) || oid === pid) return false;
+            return roomLoaderPatientHasMembership(p, snap?.appointments);
+          }) ?? false;
+
+        setRoomLoaderSessionMembership((prev) => {
+          if (prev.enrollmentOrder.includes(pid)) return prev;
+          const isAdditionalInSession = prev.enrollmentOrder.length >= 1;
+          const qualifiesForCredit = hadExistingOtherMember || isAdditionalInSession;
+          return {
+            enrollmentOrder: [...prev.enrollmentOrder, pid],
+            multiPetCreditPatientIds: qualifiesForCredit
+              ? { ...prev.multiPetCreditPatientIds, [pid]: true }
+              : prev.multiPetCreditPatientIds,
+          };
+        });
+      }
+    }
+
     clearCheckItemPricingPublicCache();
     setClientPricingCache({});
     try {
@@ -2018,6 +2079,10 @@ export default function PublicRoomLoaderForm() {
   useEffect(() => {
     setTreatmentHistoryByPatientId({});
     setTreatmentHistoryReadyByPatientId({});
+  }, [token]);
+
+  useEffect(() => {
+    setRoomLoaderSessionMembership({ enrollmentOrder: [], multiPetCreditPatientIds: {} });
   }, [token]);
 
   // Fetch treatment history per patient when user reaches Care Plan (page 2) or later. Uses public endpoint with token; defers N requests until needed for vaccine/lab logic.
@@ -2444,6 +2509,15 @@ export default function PublicRoomLoaderForm() {
       grandTotal += petSubtotal;
     });
 
+    patientsData.forEach((patient: any, petIdx: number) => {
+      const pid = Number(patient.patientId ?? patient.patient?.id ?? petIdx);
+      if (Number.isNaN(pid) || !roomLoaderSessionMembership.multiPetCreditPatientIds[pid]) return;
+      if (petIdx < petSubtotals.length) {
+        petSubtotals[petIdx] -= VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD;
+        grandTotal -= VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD;
+      }
+    });
+
     const storeSubtotal = storeAdditionalItems.reduce((sum, i) => sum + Number(i.price), 0);
     const storeTaxRate = 0.055;
     const storeTax = storeSubtotal * storeTaxRate;
@@ -2709,6 +2783,20 @@ export default function PublicRoomLoaderForm() {
       });
     });
 
+    patientsData.forEach((patient: any, petIdx: number) => {
+      const pid = Number(patient.patientId ?? patient.patient?.id ?? petIdx);
+      if (Number.isNaN(pid) || !roomLoaderSessionMembership.multiPetCreditPatientIds[pid]) return;
+      const petName = patient.patientName || `Pet ${petIdx + 1}`;
+      summaryLineItems.push({
+        name: VAYD_MULTI_PET_MEMBERSHIP_CREDIT_LINE_NAME,
+        quantity: 1,
+        price: -VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD,
+        patientId: pid,
+        patientName: petName,
+        category: 'membershipCredit',
+      });
+    });
+
     storeAdditionalItems.forEach((item) => {
       summaryLineItems.push({
         name: item.name,
@@ -2737,7 +2825,7 @@ export default function PublicRoomLoaderForm() {
       };
     };
     type PdfRow = {
-      type: 'visitConsult' | 'tripFee' | 'reminder' | 'vaccine' | 'lab' | 'common';
+      type: 'visitConsult' | 'tripFee' | 'reminder' | 'vaccine' | 'lab' | 'common' | 'membershipCredit';
       name: string;
       quantity: number;
       price: number;
@@ -2949,6 +3037,18 @@ export default function PublicRoomLoaderForm() {
           wellnessPlanPricing: getMembershipInfoForPdf(pricing),
         });
       });
+
+      const pidForCredit = Number(patientId);
+      if (!Number.isNaN(pidForCredit) && roomLoaderSessionMembership.multiPetCreditPatientIds[pidForCredit]) {
+        const c = VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD;
+        rows.push({
+          type: 'membershipCredit',
+          name: VAYD_MULTI_PET_MEMBERSHIP_CREDIT_LINE_NAME,
+          quantity: 1,
+          price: -c,
+          lineTotal: -c,
+        });
+      }
 
       pdfPets.push({
         patientId,
@@ -6592,6 +6692,16 @@ export default function PublicRoomLoaderForm() {
               const includePanelOnSummary = (summaryExcludeKey: string) => handleInputChange(summaryExcludeKey, false);
 
               let petSubtotal = 0;
+              const pidN = Number(patientId);
+              const sessionMultiPetCredit =
+                !Number.isNaN(pidN) && roomLoaderSessionMembership.multiPetCreditPatientIds[pidN]
+                  ? VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD
+                  : 0;
+              const showMultiPetMembershipUpsellBlurb = roomLoaderPetEligibleForMultiPetMembershipUpsell(
+                patient,
+                patients,
+                appointments
+              );
 
               const apptRowSummary = getAppointmentForRoomLoaderPet(appointments, patient, petIdx);
               const speciesPartsPet = [
@@ -6669,6 +6779,22 @@ export default function PublicRoomLoaderForm() {
                 <div key={petIdx} style={{ marginBottom: '15px', padding: '12px', backgroundColor: '#f9f9f9', border: '1px solid #ddd', borderRadius: '8px' }}>
                   <div style={{ marginBottom: '14px' }}>
                     <h3 style={{ margin: 0, color: '#212529', fontSize: '18px', fontWeight: 700 }}>{petName}</h3>
+                    {showMultiPetMembershipUpsellBlurb && (
+                      <p
+                        style={{
+                          margin: '10px 0 0',
+                          fontSize: '14px',
+                          color: '#166534',
+                          lineHeight: 1.5,
+                          padding: '10px 12px',
+                          background: '#f0fdf4',
+                          border: '1px solid #bbf7d0',
+                          borderRadius: 8,
+                        }}
+                      >
+                        We also offer a $75 VAYD multi-pet membership credit for each additional pet. This never expires.
+                      </p>
+                    )}
                     <RoomLoaderPatientMemberBadge patient={patient} appointments={appointments} />
                   </div>
                   <div style={{ borderBottom: '1px solid #e0e0e0', paddingBottom: '12px', marginBottom: '8px' }}>
@@ -7061,12 +7187,32 @@ export default function PublicRoomLoaderForm() {
                       );
                     })()}
                   </div>
-                  {patients.length > 1 && (
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '15px', fontWeight: 600, color: '#333' }}>
-                      Subtotal: <strong>{formatPrice(petSubtotal)}</strong>
+                  {sessionMultiPetCredit > 0 && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '8px 0',
+                        fontSize: '15px',
+                        color: '#166534',
+                        borderTop: '1px solid #e8f5e9',
+                        marginTop: '4px',
+                      }}
+                    >
+                      <span>{VAYD_MULTI_PET_MEMBERSHIP_CREDIT_LINE_NAME}</span>
+                      <span style={{ fontWeight: 700 }}>-{formatPrice(sessionMultiPetCredit)}</span>
                     </div>
                   )}
-                  {(() => { grandTotal += petSubtotal; return null; })()}
+                  {patients.length > 1 && (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '15px', fontWeight: 600, color: '#333' }}>
+                      Subtotal: <strong>{formatPrice(petSubtotal - sessionMultiPetCredit)}</strong>
+                    </div>
+                  )}
+                  {(() => {
+                    grandTotal += petSubtotal - sessionMultiPetCredit;
+                    return null;
+                  })()}
                 </div>
               );
             })}

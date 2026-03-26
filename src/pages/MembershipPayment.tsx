@@ -143,7 +143,7 @@ export type MembershipPaymentModalProps = {
   onBack?: () => void;
   onSignUpAnother?: (signedUpPetId: string) => void;
   /** Called once when payment/upgrade succeeds (before user taps Done). Use to refetch server data (e.g. room loader pricing). */
-  onEnrollmentSucceeded?: () => void;
+  onEnrollmentSucceeded?: (petId?: string) => void;
 };
 
 export default function MembershipPayment(props?: MembershipPaymentModalProps) {
@@ -356,7 +356,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         );
 
         setEnrollmentComplete(true);
-        onEnrollmentSucceeded?.();
+        onEnrollmentSucceeded?.(state.petId);
         return;
       }
 
@@ -466,7 +466,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
       );
 
       setEnrollmentComplete(true);
-      onEnrollmentSucceeded?.();
+      onEnrollmentSucceeded?.(state.petId);
     } catch (err: any) {
       const status = err?.response?.status;
       const serverMessage = err?.response?.data?.message ?? err?.response?.data?.error;

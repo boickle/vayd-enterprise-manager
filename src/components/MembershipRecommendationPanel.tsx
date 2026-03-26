@@ -48,6 +48,9 @@ type Props = {
   patientHasMembershipFlag: (p: any) => boolean;
 };
 
+/** Matches room loader / enrollment multi-pet policy (additional pet credit). */
+const VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD = 75;
+
 const PANEL_STYLE: CSSProperties = {
   marginTop: '10px',
   width: '100%',
@@ -138,27 +141,48 @@ export default function MembershipRecommendationPanel({
           return { left: line.name, right, covered };
         });
 
-        const todayTotal = monthly?.originalTotal ?? null;
-        const coveredEst =
-          monthly != null ? Math.max(0, monthly.originalVisitSubtotal - monthly.withMembershipVisitSubtotal) : null;
-        /** Visit services only at member pricing; monthly membership is shown separately below. */
-        const dueAtVisit =
-          monthly != null ? monthly.withMembershipVisitSubtotal : null;
-        const monthlyFee = monthly?.monthlyCharge ?? monthly?.monthlyMembershipFee ?? monthly?.membershipFee;
-
         const otherPets = allPatients.filter((p: any) => {
           const pid = Number(p?.patientId ?? p?.patient?.id ?? p?.id);
           return !Number.isNaN(pid) && pid !== petPlans.patientId;
         });
         const otherNames = otherPets.map((p: any) => p.patientName ?? p.patient?.name ?? p.name).filter(Boolean) as string[];
         const otherMembers = otherPets.filter((p: any) => patientHasMembershipFlag(p));
-        const otherMemberNames = otherMembers.map((p: any) => p.patientName ?? p.patient?.name ?? p.name).filter(Boolean) as string[];
         const formatNames = (names: string[]) =>
           names.length <= 1 ? names[0] ?? '' : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
         const currentPatient = allPatients.find(
           (p: any) => Number(p?.patientId ?? p?.patient?.id ?? p?.id) === petPlans.patientId
         );
         const thisPetIsMember = currentPatient ? patientHasMembershipFlag(currentPatient) : false;
+        /** Additional pet in this upsell list (not first) can receive the multi-pet credit too. */
+        const isFirstPetInUpsellList = pets.length > 0 && pets[0].patientId === petPlans.patientId;
+        const showSignUpOtherPetsBoldBlurb =
+          !thisPetIsMember &&
+          otherMembers.length === 0 &&
+          otherNames.length >= 1 &&
+          !isFirstPetInUpsellList;
+        const qualifiesForMultiPetCredit =
+          !thisPetIsMember &&
+          (otherMembers.length >= 1 || showSignUpOtherPetsBoldBlurb);
+        const multiPetCreditUsd = qualifiesForMultiPetCredit ? VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD : 0;
+        const coverageRowsWithCredit = multiPetCreditUsd > 0
+          ? [
+              ...coverageRows,
+              {
+                left: '$75 multi pet discount',
+                right: '✔ Applied at membership signup',
+                covered: true,
+              },
+            ]
+          : coverageRows;
+
+        const todayTotal = monthly?.originalTotal ?? null;
+        const coveredEst =
+          monthly != null
+            ? Math.max(0, monthly.originalVisitSubtotal - monthly.withMembershipVisitSubtotal + multiPetCreditUsd)
+            : null;
+        const dueAtVisit =
+          monthly != null ? Math.max(0, monthly.withMembershipVisitSubtotal - multiPetCreditUsd) : null;
+        const monthlyFee = monthly?.monthlyCharge ?? monthly?.monthlyMembershipFee ?? monthly?.membershipFee;
 
         const subtext =
           planBase === 'golden' || planBase === 'foundations' ? (
@@ -187,6 +211,35 @@ export default function MembershipRecommendationPanel({
               borderBottom: pets.length > 1 ? '1px solid #c9e3d6' : 'none',
             }}
           >
+            {!thisPetIsMember && otherMembers.length >= 1 && (
+              <p
+                style={{
+                  margin: '0 0 12px',
+                  fontSize: '14px',
+                  color: '#166534',
+                  lineHeight: 1.5,
+                  padding: '10px 12px',
+                  background: '#f0fdf4',
+                  border: '1px solid #bbf7d0',
+                  borderRadius: 8,
+                }}
+              >
+                We also offer a $75 VAYD multi-pet membership credit for each additional pet. This never expires.
+              </p>
+            )}
+            {showSignUpOtherPetsBoldBlurb && (
+              <p
+                style={{
+                  margin: '0 0 12px',
+                  fontSize: '14px',
+                  fontWeight: 700,
+                  color: '#1a2f24',
+                  lineHeight: 1.5,
+                }}
+              >
+                You can also sign up {petName} and get a $75 multi-pet membership credit for each additional pet, applied to a future Vet At Your Door visit. This never expires!
+              </p>
+            )}
             <h3 style={{ margin: '0 0 6px', fontSize: '18px', fontWeight: 700, color: '#14532d', letterSpacing: '-0.01em' }}>
               Recommended Care Option for {petName}
             </h3>
@@ -221,7 +274,7 @@ export default function MembershipRecommendationPanel({
                   Covered by Membership
                 </div>
               </div>
-              {coverageRows.map((row, idx) => (
+              {coverageRowsWithCredit.map((row, idx) => (
                 <div key={idx} className="membership-rec-coverage-row">
                   <div style={{ fontSize: '14px', color: '#1a2f24', padding: '5px 0', borderBottom: '1px solid #e0efe8' }}>{row.left}</div>
                   <div
@@ -271,6 +324,11 @@ export default function MembershipRecommendationPanel({
               </div>
               <div style={{ fontSize: '14px', color: '#3d5347', marginBottom: '6px' }}>Estimated due at visit after membership signup</div>
               <div style={{ fontSize: '20px', fontWeight: 700, color: '#14532d' }}>{dueAtVisit != null ? formatPrice(dueAtVisit) : '—'}</div>
+              {multiPetCreditUsd > 0 && (
+                <div style={{ marginTop: '8px', fontSize: '13px', color: '#166534', lineHeight: 1.45 }}>
+                  Includes {formatPrice(multiPetCreditUsd)} VAYD multi-pet membership credit in this estimate.
+                </div>
+              )}
               {monthlyFee != null && monthlyFee > 0 && (
                 <div style={{ marginTop: '10px', fontSize: '13px', color: '#5a6b6c', fontStyle: 'normal' }}>
                   {planBase === 'golden' ? 'Golden Membership' : planDisplayName} · {formatPrice(monthlyFee)}/month · 12-month membership
@@ -299,17 +357,6 @@ export default function MembershipRecommendationPanel({
                   <li>One complimentary nail trim per year</li>
                 </ul>
               </div>
-            )}
-
-            {!thisPetIsMember && otherMembers.length >= 1 && (
-              <p style={{ margin: '0 0 12px', fontSize: '13px', color: '#3d5347', lineHeight: 1.5 }}>
-                Since {formatNames(otherMemberNames)} {otherMemberNames.length === 1 ? 'is' : 'are'} already signed up for membership, you will receive a $75 multi-pet membership credit for use at a future Vet At Your Door visit. This never expires!
-              </p>
-            )}
-            {!thisPetIsMember && otherMembers.length === 0 && otherNames.length >= 1 && (
-              <p style={{ margin: '0 0 12px', fontSize: '13px', color: '#3d5347', lineHeight: 1.5 }}>
-                You can also sign up {formatNames(otherNames)} and get a $75 multi-pet membership credit for each additional pet, applied to a future Vet At Your Door visit. This never expires!
-              </p>
             )}
           </div>
         );
