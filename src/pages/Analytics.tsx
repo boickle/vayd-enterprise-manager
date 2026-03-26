@@ -63,7 +63,7 @@ export default function Analytics() {
       <div className="settings-page">
         <h1 className="settings-title">Analytics</h1>
         <p className="settings-section-description" style={{ marginBottom: 24 }}>
-          View payments and veterinary services delivered.
+          View payments, operations metrics, and OpenPhone receptionist call analytics.
         </p>
         <div className="settings-tabs">
           {visibleTabs.map((tab) => (
