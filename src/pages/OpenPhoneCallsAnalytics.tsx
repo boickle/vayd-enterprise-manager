@@ -74,9 +74,10 @@ function KpiCard({
   subtitle,
 }: {
   title: string;
-  value: number;
+  value: number | null | undefined;
   subtitle?: string;
 }) {
+  const display = value != null ? String(value) : '—';
   return (
     <Card variant="outlined" sx={{ height: '100%' }}>
       <CardContent>
@@ -84,7 +85,7 @@ function KpiCard({
           {title}
         </Typography>
         <Typography variant="h4" component="div">
-          {value}
+          {display}
         </Typography>
         {subtitle ? (
           <Typography variant="caption" color="text.secondary">
@@ -137,7 +138,7 @@ export default function OpenPhoneCallsAnalyticsPage() {
       totalCalls: r.totals.totalCalls,
       totalMessages: r.totals.totalMessages,
       incoming: r.totals.incomingCalls,
-      missed: r.totals.missedIncomingCalls,
+      missed: r.totals.missedIncomingCallsTotal,
       outgoing: r.totals.outgoingCalls,
     }));
   }, [data]);
@@ -245,13 +246,38 @@ export default function OpenPhoneCallsAnalyticsPage() {
                 <KpiCard title="Incoming" value={data.totals.incomingCalls} />
               </Grid>
               <Grid item xs={6} sm={3}>
-                <KpiCard title="Missed (incoming)" value={data.totals.missedIncomingCalls} />
+                <KpiCard title="Missed (incoming)" value={data.totals.missedIncomingCallsTotal} />
               </Grid>
               <Grid item xs={6} sm={3}>
                 <KpiCard title="Outgoing" value={data.totals.outgoingCalls} />
               </Grid>
               <Grid item xs={6} sm={3}>
                 <KpiCard title="Total calls" value={data.totals.totalCalls} />
+              </Grid>
+            </Grid>
+
+            <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1.5 }}>
+              Missed calls
+            </Typography>
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
+              During vs outside use hoursOfOperation per weekday in PRACTICE_TIMEZONE (closed / null days count as
+              outside).
+            </Typography>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={4}>
+                <KpiCard title="Total missed" value={data.totals.missedIncomingCallsTotal} />
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <KpiCard
+                  title="During business hours"
+                  value={data.totals.missedIncomingDuringBusinessHours}
+                />
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <KpiCard
+                  title="Outside business hours"
+                  value={data.totals.missedIncomingOutsideBusinessHours}
+                />
               </Grid>
             </Grid>
 
@@ -348,7 +374,7 @@ export default function OpenPhoneCallsAnalyticsPage() {
                               </TableCell>
                               <TableCell>{r.phoneNumber}</TableCell>
                               <TableCell align="right">{r.totals.incomingCalls}</TableCell>
-                              <TableCell align="right">{r.totals.missedIncomingCalls}</TableCell>
+                              <TableCell align="right">{r.totals.missedIncomingCallsTotal}</TableCell>
                               <TableCell align="right">{r.totals.outgoingCalls}</TableCell>
                               <TableCell align="right">{r.totals.totalCalls}</TableCell>
                               <TableCell align="right">{r.totals.incomingMessages}</TableCell>
@@ -382,7 +408,7 @@ export default function OpenPhoneCallsAnalyticsPage() {
                                             <TableCell>{n.label ?? '—'}</TableCell>
                                             <TableCell>{n.phoneNumber}</TableCell>
                                             <TableCell align="right">{n.incomingCalls}</TableCell>
-                                            <TableCell align="right">{n.missedIncomingCalls}</TableCell>
+                                            <TableCell align="right">{n.missedIncomingCallsTotal}</TableCell>
                                             <TableCell align="right">{n.outgoingCalls}</TableCell>
                                             <TableCell align="right">{n.totalCalls}</TableCell>
                                             <TableCell align="right">{n.incomingMessages}</TableCell>

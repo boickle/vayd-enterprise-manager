@@ -4,7 +4,12 @@ import { http } from './http';
 
 export type OpenPhoneCallTotals = {
   incomingCalls: number;
-  missedIncomingCalls: number;
+  /** Inbound calls counted as missed (missed, no-answer, abandoned). */
+  missedIncomingCallsTotal: number;
+  /** Subset whose time falls inside hoursOfOperation for that weekday in PRACTICE_TIMEZONE. */
+  missedIncomingDuringBusinessHours: number;
+  /** Subset outside those windows (includes closed days / null day rows). */
+  missedIncomingOutsideBusinessHours: number;
   outgoingCalls: number;
   totalCalls: number;
   incomingMessages: number;
@@ -17,7 +22,9 @@ export type OpenPhoneCallSummaryByNumber = {
   phoneNumber: string;
   label: string | null;
   incomingCalls: number;
-  missedIncomingCalls: number;
+  missedIncomingCallsTotal: number;
+  missedIncomingDuringBusinessHours: number;
+  missedIncomingOutsideBusinessHours: number;
   outgoingCalls: number;
   totalCalls: number;
   incomingMessages: number;
