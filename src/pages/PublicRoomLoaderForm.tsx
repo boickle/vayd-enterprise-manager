@@ -311,6 +311,55 @@ function getRecommendedWellnessPlanFromList(
   return wellness[0];
 }
 
+/**
+ * Same total as each pet card’s “If you enroll in membership today” (`dueAtVisit`): member-priced visit + store/tax,
+ * with multi-pet credit applied — does not add the first month’s membership charge (that’s called out separately in the panel).
+ */
+const VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD_FOOTER = 75;
+
+function estimatedDueTodayWithMembershipForUpsellPets(
+  pets: RoomLoaderPlansForPetForDisplay[],
+  membershipPanelByPatientId: Record<
+    number,
+    { monthly: RoomLoaderSimulateBillPublicResponse | null; annual: RoomLoaderSimulateBillPublicResponse | null }
+  >,
+  allPatients: any[],
+  patientHasMembershipFlag: (p: any) => boolean
+): number | null {
+  if (pets.length === 0) return null;
+  let sumMemberVisit = 0;
+  let storeTax: number | null = null;
+
+  for (const petPlans of pets) {
+    const monthly = membershipPanelByPatientId[petPlans.patientId]?.monthly;
+    if (!monthly) return null;
+
+    const otherPets = allPatients.filter((p: any) => {
+      const pid = Number(p?.patientId ?? p?.patient?.id ?? p?.id);
+      return !Number.isNaN(pid) && pid !== petPlans.patientId;
+    });
+    const otherNames = otherPets.map((p: any) => p.patientName ?? p.patient?.name ?? p.name).filter(Boolean) as string[];
+    const otherMembers = otherPets.filter((p: any) => patientHasMembershipFlag(p));
+    const currentPatient = allPatients.find(
+      (p: any) => Number(p?.patientId ?? p?.patient?.id ?? p?.id) === petPlans.patientId
+    );
+    const thisPetIsMember = currentPatient ? patientHasMembershipFlag(currentPatient) : false;
+    const isFirstPetInUpsellList = pets.length > 0 && pets[0].patientId === petPlans.patientId;
+    const showSignUpOtherPetsBoldBlurb =
+      !thisPetIsMember && otherMembers.length === 0 && otherNames.length >= 1 && !isFirstPetInUpsellList;
+    const qualifiesForMultiPetCredit =
+      !thisPetIsMember && (otherMembers.length >= 1 || showSignUpOtherPetsBoldBlurb);
+    const multiPetCreditUsd = qualifiesForMultiPetCredit ? VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD_FOOTER : 0;
+
+    sumMemberVisit += Math.max(0, monthly.withMembershipVisitSubtotal - multiPetCreditUsd);
+
+    const st = Math.max(0, Number(monthly.originalTotal) - Number(monthly.originalVisitSubtotal));
+    if (storeTax === null) storeTax = st;
+  }
+
+  return Math.max(0, sumMemberVisit + (storeTax ?? 0));
+}
+
 function getFirstPlanIdFromCatalogNode(node: any): string | null {
   if (!node || typeof node !== 'object') return null;
   if (node.planId && typeof node.planId === 'string') return node.planId;
@@ -1652,6 +1701,8 @@ export default function PublicRoomLoaderForm() {
   const [storeSearchLoading, setStoreSearchLoading] = useState(false);
   /** Store items added by client on Summary page (for subtotal + 5.5% tax). */
   const [storeAdditionalItems, setStoreAdditionalItems] = useState<EcwidProduct[]>([]);
+  /** Index of row to play a short “just added” animation (set only from Add, not on restore). */
+  const [storeItemJustAddedIndex, setStoreItemJustAddedIndex] = useState<number | null>(null);
   /** When set, show modal to pick a variation of this product (same name, different options/SKU). */
   const [storeOptionModalGroup, setStoreOptionModalGroup] = useState<EcwidProduct[] | null>(null);
   /** True when form was already submitted (client or admin viewing); show read-only or PDF view. */
@@ -2139,9 +2190,17 @@ export default function PublicRoomLoaderForm() {
   /** Invalidates in-flight membership simulate requests so stale responses do not clear loading or overwrite newer data. */
   const membershipSimulateSeqRef = useRef(0);
 
-  /** Load recommended-plan membership simulate per pet when the recommendation panel opens, and refetch when summary lines / store totals change (debounced so typing elsewhere does not spam the API). */
+  /** Load membership simulate when the explainer panel is open or on the visit summary (footer “due with membership” line). Refetch when summary lines / store totals change (debounced). */
   useEffect(() => {
-    if (!membershipBillSectionExpanded || formAlreadySubmitted || !availablePlansForPetsForDisplay.length) {
+    const patientsLen = data?.patients?.length ?? 0;
+    const summaryPageIndexCalc = patientsLen > 0 ? 3 + patientsLen : -1;
+    const onVisitSummaryPage = patientsLen > 0 && currentPage === summaryPageIndexCalc;
+    const shouldLoadMembershipSimulate =
+      !formAlreadySubmitted &&
+      availablePlansForPetsForDisplay.length > 0 &&
+      (membershipBillSectionExpanded || onVisitSummaryPage);
+
+    if (!shouldLoadMembershipSimulate) {
       membershipPanelWasExpandedRef.current = false;
       setMembershipPanelLoading(false);
       return;
@@ -2185,7 +2244,9 @@ export default function PublicRoomLoaderForm() {
           for (const petPlans of availablePlansForPetsForDisplay) {
             const rec = getRecommendedWellnessPlanFromList(petPlans.plans, petPlans.meetsGolden);
             if (!rec) continue;
-            const filtered = filterLineItemsForPatientSimulate(summaryLineItems, petPlans.patientId, firstPid);
+            const filtered = filterLineItemsForPatientSimulate(summaryLineItems, petPlans.patientId, firstPid).filter(
+              (li) => (li as { category?: string }).category !== 'store'
+            );
             const lineItems: RoomLoaderSimulateLineItem[] = filtered.map(
               (li: {
                 name: string;
@@ -2240,6 +2301,8 @@ export default function PublicRoomLoaderForm() {
     membershipBillSectionExpanded,
     formAlreadySubmitted,
     availablePlansForPetsForDisplay,
+    currentPage,
+    data?.patients?.length,
     token,
     data,
     formData,
@@ -6634,7 +6697,19 @@ export default function PublicRoomLoaderForm() {
         const nameLower = (n: string | undefined) => (n ?? '').toLowerCase();
         const hasPhrase = (item: { name?: string }, phrase: string) => nameLower(item.name).includes(phrase);
         const formatPrice = (p: number | null | undefined) => (p != null && !Number.isNaN(Number(p)) ? `$${Number(p).toFixed(2)}` : '$0.00');
-        let grandTotal = 0;
+        const summarySnapshot = buildFullFormSnapshot();
+        const canonicalGrandTotal = summarySnapshot.totals.grandTotal;
+        const estimatedDueTodayWithMembership = estimatedDueTodayWithMembershipForUpsellPets(
+          availablePlansForPetsForDisplay,
+          membershipPanelByPatientId,
+          data?.patients ?? [],
+          resolveRoomLoaderPatientMembership
+        );
+        const showMembershipFooterComparison =
+          !readOnly &&
+          availablePlansForPetsForDisplay.length > 0 &&
+          !membershipPanelLoading &&
+          estimatedDueTodayWithMembership != null;
         return (
           <div className="public-room-loader-summary-page">
             <div style={{ marginBottom: '14px', paddingBottom: '9px', borderBottom: '3px solid #e0e0e0' }}>
@@ -7209,15 +7284,81 @@ export default function PublicRoomLoaderForm() {
                       Subtotal: <strong>{formatPrice(petSubtotal - sessionMultiPetCredit)}</strong>
                     </div>
                   )}
-                  {(() => {
-                    grandTotal += petSubtotal - sessionMultiPetCredit;
-                    return null;
-                  })()}
                 </div>
               );
             })}
 
-            {/* Store search - type-ahead, add products to Additional items (below pets) */}
+            {/* Additional items — directly under last pet, above store search */}
+            {storeAdditionalItems.length > 0 && (() => {
+              const storeSubtotal = storeAdditionalItems.reduce((sum, i) => sum + Number(i.price), 0);
+              const storeTaxRate = 0.055;
+              const storeTax = storeSubtotal * storeTaxRate;
+              return (
+                <div
+                  id="public-room-loader-additional-items"
+                  style={{
+                    marginBottom: '14px',
+                    padding: '16px',
+                    background: 'linear-gradient(180deg, #f0f7ff 0%, #e8f2fc 100%)',
+                    border: '2px solid #0d6efd',
+                    borderRadius: '10px',
+                    boxShadow: '0 4px 14px rgba(13, 110, 253, 0.12)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                    <span style={{ fontSize: '20px', lineHeight: 1 }} aria-hidden>✓</span>
+                    <h4 style={{ margin: 0, fontSize: '17px', fontWeight: 700, color: '#084298' }}>Additional items</h4>
+                  </div>
+                  <p style={{ fontSize: '14px', lineHeight: 1.5, color: '#495057', margin: '0 0 12px 0' }}>
+                    These products are included in your estimated total below (plus sales tax).
+                  </p>
+                  <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+                    {storeAdditionalItems.map((item, idx) => (
+                      <li
+                        key={`${item.id}-${idx}`}
+                        className={idx === storeItemJustAddedIndex ? 'public-room-loader-store-item-new' : undefined}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          gap: '10px',
+                          padding: '12px 12px',
+                          marginBottom: idx < storeAdditionalItems.length - 1 ? '8px' : 0,
+                          borderRadius: '8px',
+                          border: '1px solid #b6d4fe',
+                          backgroundColor: '#fff',
+                          fontSize: '15px',
+                          fontWeight: idx === storeItemJustAddedIndex ? 600 : 400,
+                        }}
+                      >
+                        <span style={{ color: '#212529', flex: 1, minWidth: 0 }}>{item.name}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                          <span style={{ fontWeight: 700, color: '#212529' }}>{formatPrice(Number(item.price))}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (readOnly) return;
+                              setStoreItemJustAddedIndex(null);
+                              setStoreAdditionalItems((prev) => prev.filter((_, i) => i !== idx));
+                            }}
+                            disabled={readOnly}
+                            style={{ padding: '6px 12px', fontSize: '13px', color: readOnly ? '#999' : '#dc3545', background: '#fff', border: `1px solid ${readOnly ? '#999' : '#dc3545'}`, borderRadius: '6px', cursor: readOnly ? 'not-allowed' : 'pointer', fontWeight: 600 }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                  <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #b6d4fe', fontSize: '15px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px', fontWeight: 500 }}>Subtotal: {formatPrice(storeSubtotal)}</div>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px', fontWeight: 500 }}>Sales tax (5.5%): {formatPrice(storeTax)}</div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Store search - type-ahead, add products to Additional items */}
             <div style={{ marginBottom: '14px', padding: '16px', backgroundColor: '#f5f5f5', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
               <div style={{ fontSize: '16px', fontWeight: 600, color: '#212529', marginBottom: '8px' }}>Add medications or preventatives</div>
               <p style={{ fontSize: '14px', lineHeight: 1.5, color: '#555', marginBottom: '8px', marginTop: 0 }}>
@@ -7359,7 +7500,20 @@ export default function PublicRoomLoaderForm() {
                                 label && baseName && !baseName.includes(label)
                                   ? `${baseName} - ${label}`
                                   : baseName || label || 'Additional item';
-                              setStoreAdditionalItems((prev) => [...prev, { ...item, name: fullName }]);
+                              let newIdx = 0;
+                              setStoreAdditionalItems((prev) => {
+                                const next = [...prev, { ...item, name: fullName }];
+                                newIdx = next.length - 1;
+                                return next;
+                              });
+                              setStoreItemJustAddedIndex(newIdx);
+                              window.setTimeout(() => setStoreItemJustAddedIndex(null), 1200);
+                              requestAnimationFrame(() => {
+                                document.getElementById('public-room-loader-additional-items')?.scrollIntoView({
+                                  behavior: 'smooth',
+                                  block: 'nearest',
+                                });
+                              });
                               setStoreOptionModalGroup(null);
                               setStoreSearchQuery('');
                             }}
@@ -7399,41 +7553,6 @@ export default function PublicRoomLoaderForm() {
                 </div>
               </div>
             )}
-
-            {/* Additional items (store products) - subtotal + 5.5% sales tax */}
-            {storeAdditionalItems.length > 0 && (() => {
-              const storeSubtotal = storeAdditionalItems.reduce((sum, i) => sum + Number(i.price), 0);
-              const storeTaxRate = 0.055;
-              const storeTax = storeSubtotal * storeTaxRate;
-              grandTotal += storeSubtotal + storeTax;
-              return (
-                <div style={{ marginTop: '14px', padding: '12px', backgroundColor: '#f9f9f9', border: '1px solid #ddd', borderRadius: '8px' }}>
-                  <h4 style={{ margin: 0, marginBottom: '8px', fontSize: '16px', fontWeight: 600, color: '#333' }}>Additional items</h4>
-                  <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
-                    {storeAdditionalItems.map((item, idx) => (
-                      <li key={`${item.id}-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #eee', fontSize: '15px' }}>
-                        <span style={{ color: '#333' }}>{item.name}</span>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span style={{ fontWeight: 700 }}>{formatPrice(Number(item.price))}</span>
-                          <button
-                            type="button"
-                            onClick={() => !readOnly && setStoreAdditionalItems((prev) => prev.filter((_, i) => i !== idx))}
-                            disabled={readOnly}
-                            style={{ padding: '4px 10px', fontSize: '13px', color: readOnly ? '#999' : '#dc3545', background: 'none', border: `1px solid ${readOnly ? '#999' : '#dc3545'}`, borderRadius: '4px', cursor: readOnly ? 'not-allowed' : 'pointer' }}
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                  <div style={{ marginTop: '7px', paddingTop: '12px', borderTop: '1px solid #ddd', fontSize: '15px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px' }}>Subtotal: {formatPrice(storeSubtotal)}</div>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px' }}>Sales tax (5.5%): {formatPrice(storeTax)}</div>
-                  </div>
-                </div>
-              );
-            })()}
 
             <div style={{ width: '100%' }}>
               {!readOnly && availablePlansForPetsForDisplay.length > 0 && (
@@ -7482,7 +7601,6 @@ export default function PublicRoomLoaderForm() {
                 !readOnly &&
                 availablePlansForPetsForDisplay.length > 0 &&
                 (() => {
-                  const snapshot = buildFullFormSnapshot();
                   const patientsData = data?.patients ?? [];
                   const firstPid = Number(
                     patientsData[0]?.patientId ?? patientsData[0]?.patient?.id ?? patientsData[0]?.id ?? 0
@@ -7492,8 +7610,11 @@ export default function PublicRoomLoaderForm() {
                       pets={availablePlansForPetsForDisplay}
                       membershipPanelByPatientId={membershipPanelByPatientId}
                       membershipPanelLoading={membershipPanelLoading}
-                      summaryLineItems={snapshot?.summaryLineItems ?? []}
+                      summaryLineItems={summarySnapshot?.summaryLineItems ?? []}
                       firstPatientId={firstPid}
+                      todayVisitTotalAlignedWithSummary={
+                        availablePlansForPetsForDisplay.length === 1 ? canonicalGrandTotal : undefined
+                      }
                       allPatients={patientsData}
                       membershipPlanDisplayName={membershipPlanDisplayName}
                       formatPrice={formatPrice}
@@ -7524,9 +7645,17 @@ export default function PublicRoomLoaderForm() {
                   flexWrap: 'wrap',
                 }}
               >
-                <span style={{ fontSize: '20px', fontWeight: 700, color: '#212529' }}>
-                  Estimated Total Due At Visit: <strong>{formatPrice(grandTotal)}</strong>
-                </span>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+                  <span style={{ fontSize: '20px', fontWeight: 700, color: '#212529' }}>
+                    Estimated Total Due At Visit: <strong>{formatPrice(canonicalGrandTotal)}</strong>
+                  </span>
+                  {showMembershipFooterComparison && (
+                    <span style={{ fontSize: '18px', fontWeight: 700, color: '#166534' }}>
+                      Estimated Due Today With Membership:{' '}
+                      <strong>{formatPrice(estimatedDueTodayWithMembership)}</strong>
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -7534,6 +7663,25 @@ export default function PublicRoomLoaderForm() {
               <p style={{ marginTop: '10px', marginBottom: 0, fontSize: '14px', color: '#dc3545' }}>{fieldValidationErrors._submit}</p>
             )}
             <style>{`
+              @keyframes publicRoomLoaderStoreItemPop {
+                0% { transform: scale(0.94); opacity: 0.75; }
+                40% { transform: scale(1.03); opacity: 1; }
+                70% { transform: scale(0.99); }
+                100% { transform: scale(1); opacity: 1; }
+              }
+              @keyframes publicRoomLoaderStoreRowGlow {
+                0% {
+                  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.45), 0 6px 20px rgba(13, 110, 253, 0.2);
+                  border-color: #0d6efd;
+                }
+                100% {
+                  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+                  border-color: #b6d4fe;
+                }
+              }
+              .public-room-loader-store-item-new {
+                animation: publicRoomLoaderStoreItemPop 0.55s ease-out, publicRoomLoaderStoreRowGlow 1.1s ease-out 0.05s forwards;
+              }
               @keyframes roomLoaderSubmitPopIn {
                 0% { transform: scale(0.92); opacity: 0.6; box-shadow: 0 0 0 0 rgba(13, 110, 253, 0); }
                 50% { transform: scale(1.06); opacity: 1; box-shadow: 0 0 0 8px rgba(13, 110, 253, 0.28); }
@@ -7597,6 +7745,7 @@ export default function PublicRoomLoaderForm() {
         onAfterPetEnrolled={refetchRoomLoaderAfterMembership}
         onEnrollmentFlowCompleted={refetchRoomLoaderAfterMembership}
         doneButtonLabel="Done – return to visit summary"
+        fromRoomLoaderPublicForm
       />
     </div>
   );

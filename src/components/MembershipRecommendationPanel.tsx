@@ -46,6 +46,11 @@ type Props = {
   ) => T[];
   normItemName: (n: string) => string;
   patientHasMembershipFlag: (p: any) => boolean;
+  /**
+   * When there is exactly one pet on the form, use this for “Today’s estimated visit total” so it matches
+   * the summary footer (same source as submit). For multiple pets, each card uses API `originalTotal` per pet.
+   */
+  todayVisitTotalAlignedWithSummary?: number | null;
 };
 
 /** Matches room loader / enrollment multi-pet policy (additional pet credit). */
@@ -93,6 +98,7 @@ export default function MembershipRecommendationPanel({
   filterLineItemsForPatientSimulate,
   normItemName,
   patientHasMembershipFlag,
+  todayVisitTotalAlignedWithSummary,
 }: Props) {
   return (
     <div id="membership-bill-explainer-panel" role="region" aria-labelledby="membership-bill-explainer-trigger" style={PANEL_STYLE}>
@@ -175,13 +181,29 @@ export default function MembershipRecommendationPanel({
             ]
           : coverageRows;
 
-        const todayTotal = monthly?.originalTotal ?? null;
+        const todayTotal =
+          pets.length === 1 &&
+          todayVisitTotalAlignedWithSummary != null &&
+          Number.isFinite(todayVisitTotalAlignedWithSummary)
+            ? todayVisitTotalAlignedWithSummary
+            : monthly?.originalTotal ?? null;
         const coveredEst =
           monthly != null
             ? Math.max(0, monthly.originalVisitSubtotal - monthly.withMembershipVisitSubtotal + multiPetCreditUsd)
             : null;
+        /** Store / add-on subtotal + sales tax (not part of `originalVisitSubtotal` per simulate API). */
+        const storeAndTaxPortion =
+          monthly != null
+            ? Math.max(0, Number(monthly.originalTotal) - Number(monthly.originalVisitSubtotal))
+            : 0;
+        /**
+         * Membership-priced visit (minus multi-pet credit) plus store add-ons & tax still due at visit.
+         * Avoid `withMembershipTotal` — it can include bundled annual membership amounts.
+         */
         const dueAtVisit =
-          monthly != null ? Math.max(0, monthly.withMembershipVisitSubtotal - multiPetCreditUsd) : null;
+          monthly != null
+            ? Math.max(0, monthly.withMembershipVisitSubtotal - multiPetCreditUsd + storeAndTaxPortion)
+            : null;
         const monthlyFee = monthly?.monthlyCharge ?? monthly?.monthlyMembershipFee ?? monthly?.membershipFee;
 
         const subtext =
@@ -253,7 +275,10 @@ export default function MembershipRecommendationPanel({
               <ul style={{ margin: 0, paddingLeft: '20px', color: '#1a2f24', fontSize: '14px', lineHeight: 1.5 }}>
                 <li style={{ marginBottom: '6px' }}>✔ Priority access to a dedicated One-Team who knows {petName} over time</li>
                 <li style={{ marginBottom: '6px' }}>✔ Preferred booking with your veterinary team</li>
-                <li style={{ marginBottom: '6px' }}>✔ After-hours veterinary chat through the VAYD Client Portal</li>
+                <li style={{ marginBottom: '6px' }}>
+                  ✔ After-hours support from Vet At Your Door staff through the Client Portal when something comes up and
+                  you&apos;re worried
+                </li>
                 <li style={{ marginBottom: '6px' }}>✔ Care designed for long-term health, not just sick visits</li>
               </ul>
             </div>
@@ -322,17 +347,27 @@ export default function MembershipRecommendationPanel({
               <div style={{ fontSize: '18px', fontWeight: 700, color: '#0f5132', marginBottom: '12px' }}>
                 {coveredEst != null ? formatPrice(coveredEst) : '—'}
               </div>
-              <div style={{ fontSize: '14px', color: '#3d5347', marginBottom: '6px' }}>Estimated due at visit after membership signup</div>
-              <div style={{ fontSize: '20px', fontWeight: 700, color: '#14532d' }}>{dueAtVisit != null ? formatPrice(dueAtVisit) : '—'}</div>
+              <div style={{ fontSize: '14px', color: '#3d5347', marginBottom: '6px' }}>
+                Estimated due at visit after membership signup
+              </div>
+              <div style={{ fontSize: '20px', fontWeight: 700, color: '#14532d', marginBottom: '12px' }}>
+                {dueAtVisit != null ? formatPrice(dueAtVisit) : '—'}
+              </div>
               {multiPetCreditUsd > 0 && (
                 <div style={{ marginTop: '8px', fontSize: '13px', color: '#166534', lineHeight: 1.45 }}>
                   Includes {formatPrice(multiPetCreditUsd)} VAYD multi-pet membership credit in this estimate.
                 </div>
               )}
               {monthlyFee != null && monthlyFee > 0 && (
-                <div style={{ marginTop: '10px', fontSize: '13px', color: '#5a6b6c', fontStyle: 'normal' }}>
-                  {planBase === 'golden' ? 'Golden Membership' : planDisplayName} · {formatPrice(monthlyFee)}/month · 12-month membership
-                </div>
+                <>
+                  <div style={{ marginTop: '10px', fontSize: '13px', color: '#5a6b6c', fontStyle: 'normal' }}>
+                    {planBase === 'golden' ? 'Golden Membership' : planDisplayName} · {formatPrice(monthlyFee)}/month · 12-month membership
+                  </div>
+                  <p style={{ margin: '8px 0 0', fontSize: '13px', color: '#5a6b6c', lineHeight: 1.45 }}>
+                    Membership also includes ongoing care with your dedicated Vet At Your Door One-Team, preferred booking, and after-hours veterinary
+                    chat.
+                  </p>
+                </>
               )}
             </div>
 

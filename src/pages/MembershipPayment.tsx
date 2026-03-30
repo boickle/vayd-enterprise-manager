@@ -115,6 +115,8 @@ type PaymentNavigationState = {
   multiPetCreditEligible?: boolean;
   /** Email saved with the public form payload (room loader, etc.); used before showing the payment email field. */
   formResponseEmail?: string;
+  /** Public room-loader membership: omit client-portal NOTE on payment success. */
+  fromRoomLoaderPublicForm?: boolean;
 };
 
 export type { PaymentNavigationState };
@@ -605,7 +607,9 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
           </section>
         )}
 
-        {!state.returnUrl && !(fromModal && !userId) && (
+        {!state.returnUrl &&
+          !(fromModal && !userId) &&
+          !state.fromRoomLoaderPublicForm && (
           <div className="cp-card" style={{ marginTop: 24, padding: 20, background: '#f0f9ff', border: '1px solid #bae6fd' }}>
             <p className="cp-muted" style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>
               <strong>NOTE:</strong> If you want to sign-up another pet from your household or if you want to make an appointment for {state.petName}, please{' '}

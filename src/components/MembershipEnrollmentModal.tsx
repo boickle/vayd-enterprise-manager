@@ -31,6 +31,8 @@ export type MembershipEnrollmentModalProps = {
   onAfterPetEnrolled?: (enrolledPetId?: string) => void | Promise<void>;
   /** Label for the final dismiss button (default: appointment request copy). */
   doneButtonLabel?: string;
+  /** Public room-loader: omit client-portal NOTE on embedded payment success screen. */
+  fromRoomLoaderPublicForm?: boolean;
 };
 
 /**
@@ -45,6 +47,7 @@ export default function MembershipEnrollmentModal({
   onEnrollmentFlowCompleted,
   onAfterPetEnrolled,
   doneButtonLabel = 'Done – back to appointment request',
+  fromRoomLoaderPublicForm = false,
 }: MembershipEnrollmentModalProps) {
   const [membershipModalStep, setMembershipModalStep] = useState<MembershipModalStep>('choose-pet');
   const [membershipPaymentState, setMembershipPaymentState] = useState<MembershipSignupPaymentState | null>(null);
@@ -275,6 +278,7 @@ export default function MembershipEnrollmentModal({
               fromModal
               modalPet={getModalPetForSignup()}
               modalClientInfo={modalClientInfo}
+              fromRoomLoaderPublicForm={fromRoomLoaderPublicForm}
               onProceedToPayment={(state) => {
                 setMembershipPaymentState(state);
                 setMembershipModalStep('payment');

@@ -440,6 +440,8 @@ export type MembershipSignupModalProps = {
   };
   /** Client email and name from appointment form (for agreementSignedName / customerEmail when not logged in) */
   modalClientInfo?: { email?: string; fullName?: { first?: string; last?: string } };
+  /** Public room-loader membership: payment success omits client-portal NOTE. */
+  fromRoomLoaderPublicForm?: boolean;
   onProceedToPayment?: (state: MembershipSignupPaymentState) => void;
   onCancel?: () => void;
 };
@@ -453,6 +455,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const fromModal = props?.fromModal === true;
   const modalPet = props?.modalPet;
   const modalClientInfo = props?.modalClientInfo;
+  const fromRoomLoaderPublicForm = props?.fromRoomLoaderPublicForm === true;
   const onProceedToPayment = props?.onProceedToPayment;
   const onCancelModal = props?.onCancel;
 
@@ -1239,6 +1242,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     if (returnUrlAnotherBase) paymentState.returnUrlAnotherBase = returnUrlAnotherBase;
     else if (!fromModal) paymentState.returnUrlAnotherBase = '/client-portal/membership-signup';
     if (isSigningUpAdditionalPet) paymentState.multiPetCreditEligible = true;
+    if (fromRoomLoaderPublicForm) paymentState.fromRoomLoaderPublicForm = true;
 
     // Track begin checkout
     const checkoutItems = [
