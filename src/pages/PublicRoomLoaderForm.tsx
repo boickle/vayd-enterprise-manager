@@ -338,17 +338,17 @@ function estimatedDueTodayWithMembershipForUpsellPets(
       const pid = Number(p?.patientId ?? p?.patient?.id ?? p?.id);
       return !Number.isNaN(pid) && pid !== petPlans.patientId;
     });
-    const otherNames = otherPets.map((p: any) => p.patientName ?? p.patient?.name ?? p.name).filter(Boolean) as string[];
     const otherMembers = otherPets.filter((p: any) => patientHasMembershipFlag(p));
     const currentPatient = allPatients.find(
       (p: any) => Number(p?.patientId ?? p?.patient?.id ?? p?.id) === petPlans.patientId
     );
     const thisPetIsMember = currentPatient ? patientHasMembershipFlag(currentPatient) : false;
-    const isFirstPetInUpsellList = pets.length > 0 && pets[0].patientId === petPlans.patientId;
-    const showSignUpOtherPetsBoldBlurb =
-      !thisPetIsMember && otherMembers.length === 0 && otherNames.length >= 1 && !isFirstPetInUpsellList;
+    const householdIndex = allPatients.findIndex(
+      (p: any) => Number(p?.patientId ?? p?.patient?.id ?? p?.id) === petPlans.patientId
+    );
+    const isFirstHouseholdPet = householdIndex === 0;
     const qualifiesForMultiPetCredit =
-      !thisPetIsMember && (otherMembers.length >= 1 || showSignUpOtherPetsBoldBlurb);
+      !thisPetIsMember && (otherMembers.length >= 1 || (allPatients.length > 1 && !isFirstHouseholdPet));
     const multiPetCreditUsd = qualifiesForMultiPetCredit ? VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD_FOOTER : 0;
 
     sumMemberVisit += Math.max(0, monthly.withMembershipVisitSubtotal - multiPetCreditUsd);
@@ -756,6 +756,26 @@ function buildPricingItemPayload(item: SearchableItem | null | undefined): Check
   if (item.lab) return { lab: item.lab };
   if ((item as any).procedure) return { procedure: (item as any).procedure };
   if (item.inventoryItem) return { inventoryItem: item.inventoryItem };
+  return null;
+}
+
+/** Cache key for Ecwid “additional items” rows (customPrice check-item-pricing). */
+function getStoreItemPricingCacheKey(patientId: number, product: EcwidProduct, index: number): string {
+  return `p${patientId}-store-${String(product.id)}-${index}`;
+}
+
+function pickAdjustedUnitPriceFromCheckResponse(pricing: CheckItemPricingResponse | null): number | null {
+  if (!pricing) return null;
+  const wp = pricing.wellnessPlanPricing as any;
+  if (
+    wp &&
+    wp.adjustedPrice != null &&
+    !Number.isNaN(Number(wp.adjustedPrice)) &&
+    wellnessPlanHasDiscountSignal(wp)
+  ) {
+    return Number(wp.adjustedPrice);
+  }
+  if (pricing.adjustedPrice != null) return Number(pricing.adjustedPrice);
   return null;
 }
 
@@ -1984,13 +2004,25 @@ export default function PublicRoomLoaderForm() {
       });
   }, [data?.patients, data?.appointments]);
 
+  /** If any pet on the form already has membership, hide the visit-summary membership upsell (mixed household). */
+  const roomLoaderHasAnyPetWithMembership = useMemo(
+    () =>
+      Array.isArray(data?.patients) &&
+      data.patients.some((p: any) => roomLoaderPatientHasMembership(p, data?.appointments)),
+    [data?.patients, data?.appointments]
+  );
+
   /** Close membership bill explainer when no pets remain eligible for upsell (e.g. after enrollment refetch). */
   useEffect(() => {
-    if (availablePlansForPetsForDisplay.length === 0) {
+    if (availablePlansForPetsForDisplay.length === 0 || roomLoaderHasAnyPetWithMembership) {
       setMembershipBillSectionExpanded(false);
       setMembershipPanelByPatientId({});
     }
-  }, [availablePlansForPetsForDisplay.length]);
+  }, [availablePlansForPetsForDisplay.length, roomLoaderHasAnyPetWithMembership]);
+
+  useEffect(() => {
+    if (roomLoaderHasAnyPetWithMembership) setShowMembershipEnrollmentModal(false);
+  }, [roomLoaderHasAnyPetWithMembership]);
 
   /** Same membership resolution as upsell lists (row + matched `appointments[].patient`). */
   const resolveRoomLoaderPatientMembership = useCallback(
@@ -2197,6 +2229,7 @@ export default function PublicRoomLoaderForm() {
     const onVisitSummaryPage = patientsLen > 0 && currentPage === summaryPageIndexCalc;
     const shouldLoadMembershipSimulate =
       !formAlreadySubmitted &&
+      !roomLoaderHasAnyPetWithMembership &&
       availablePlansForPetsForDisplay.length > 0 &&
       (membershipBillSectionExpanded || onVisitSummaryPage);
 
@@ -2300,6 +2333,7 @@ export default function PublicRoomLoaderForm() {
   }, [
     membershipBillSectionExpanded,
     formAlreadySubmitted,
+    roomLoaderHasAnyPetWithMembership,
     availablePlansForPetsForDisplay,
     currentPage,
     data?.patients?.length,
@@ -2469,6 +2503,10 @@ export default function PublicRoomLoaderForm() {
   function buildFullFormSnapshot() {
     const optedInVaccineItems = buildOptedInVaccineItemsPayload();
     const patientsData = data?.patients ?? [];
+    const firstPidForStore =
+      patientsData.length > 0
+        ? Number(patientsData[0]?.patientId ?? patientsData[0]?.patient?.id ?? 0)
+        : NaN;
     const recommendedByPet = recommendedItemsByPet;
     const nameLower = (n: string | undefined) => (n ?? '').toLowerCase();
     const hasPhrase = (item: { name?: string }, phrase: string) => nameLower(item.name).includes(phrase);
@@ -2581,17 +2619,26 @@ export default function PublicRoomLoaderForm() {
       }
     });
 
-    const storeSubtotal = storeAdditionalItems.reduce((sum, i) => sum + Number(i.price), 0);
+    const storeSubtotal = storeAdditionalItems.reduce((sum, item, idx) => {
+      const unit =
+        !Number.isNaN(firstPidForStore) && firstPidForStore > 0
+          ? getStoreAdjustedPrice(firstPidForStore, item, idx)
+          : null;
+      return sum + (unit ?? Number(item.price));
+    }, 0);
     const storeTaxRate = 0.055;
     const storeTax = storeSubtotal * storeTaxRate;
     grandTotal += storeSubtotal + storeTax;
 
     // Store additional items: always include name, quantity, price, code (sku) for backend summary
-    const storeAdditionalItemsPayload = storeAdditionalItems.map((item) => ({
+    const storeAdditionalItemsPayload = storeAdditionalItems.map((item, idx) => ({
       id: item.id,
       name: item.name,
       quantity: 1,
-      price: Number(item.price),
+      price:
+        !Number.isNaN(firstPidForStore) && firstPidForStore > 0
+          ? (getStoreAdjustedPrice(firstPidForStore, item, idx) ?? Number(item.price))
+          : Number(item.price),
       sku: item.sku,
       code: item.sku ?? (item as any).code,
     }));
@@ -2860,11 +2907,15 @@ export default function PublicRoomLoaderForm() {
       });
     });
 
-    storeAdditionalItems.forEach((item) => {
+    storeAdditionalItems.forEach((item, idx) => {
+      const unit =
+        !Number.isNaN(firstPidForStore) && firstPidForStore > 0
+          ? getStoreAdjustedPrice(firstPidForStore, item, idx)
+          : null;
       summaryLineItems.push({
         name: item.name,
         quantity: 1,
-        price: Number(item.price),
+        price: unit ?? Number(item.price),
         category: 'store',
       });
     });
@@ -4486,7 +4537,28 @@ export default function PublicRoomLoaderForm() {
       seen.add(key);
       return true;
     });
-    if (toFetch.length === 0) return;
+    const firstPid =
+      patients.length > 0 ? Number(patients[0]?.patientId ?? patients[0]?.patient?.id ?? 0) : NaN;
+    const storePricingPromises =
+      !Number.isNaN(firstPid) && firstPid > 0 && storeAdditionalItems.length > 0
+        ? storeAdditionalItems.map((product, idx) => {
+            const key = getStoreItemPricingCacheKey(firstPid, product, idx);
+            const species = speciesByPatientId.get(Number(firstPid));
+            return checkItemPricingPublic({
+              token: tokenValue,
+              patientId: firstPid,
+              practiceId,
+              clientId,
+              ...(species ? { species } : {}),
+              itemType: 'inventory',
+              customPrice: Number(product.price),
+              customName: product.name,
+            })
+              .then((res) => ({ key, res }))
+              .catch(() => ({ key, res: null as CheckItemPricingResponse | null }));
+          })
+        : [];
+    if (toFetch.length === 0 && storePricingPromises.length === 0) return;
     let pricingFetchCancelled = false;
     const requests = toFetch.map(({ patientId, item, key }) => {
       const payload = buildPricingItemPayload(item);
@@ -4505,7 +4577,7 @@ export default function PublicRoomLoaderForm() {
         .then((res) => ({ key, res }))
         .catch(() => ({ key, res: null as CheckItemPricingResponse | null }));
     });
-    Promise.all(requests).then((results) => {
+    Promise.all([...requests, ...storePricingPromises]).then((results) => {
       if (pricingFetchCancelled) return;
       const next: Record<string, CheckItemPricingResponse | null> = {};
       results.forEach(({ key, res }) => {
@@ -4530,6 +4602,7 @@ export default function PublicRoomLoaderForm() {
     sharpsDisposalItem,
     optedInVaccinesByPatientId,
     commonItemsFetched,
+    storeAdditionalItems,
     pricingRefreshKey,
   ]);
 
@@ -4595,11 +4668,28 @@ export default function PublicRoomLoaderForm() {
     const itemType = (item.itemType ?? 'procedure').toString();
     return clientPricingCache[`p${patientId}-${itemType}-${id}`] ?? null;
   };
-  /** Price to show for labs/vaccines: use client-adjusted price when available, else catalog price. */
+  /**
+   * Price to show for labs/vaccines/commonly selected items: prefer wellness/membership-adjusted unit price when
+   * check-item-pricing embeds it (e.g. percentage off out-of-plan services). Top-level `adjustedPrice` can still
+   * reflect catalog price until backend merges; mirrors `resolveSummaryLinePrice` for reminder rows.
+   */
   const getClientAdjustedPrice = (patientId: number, item: SearchableItem | null): number | null => {
-    const pricing = getClientPricing(patientId, item);
-    if (pricing?.adjustedPrice != null) return Number(pricing.adjustedPrice);
+    const picked = pickAdjustedUnitPriceFromCheckResponse(getClientPricing(patientId, item));
+    if (picked != null) return picked;
     return getSearchItemPrice(item);
+  };
+
+  /** Membership-adjusted unit price for Ecwid additional items (customPrice check-item-pricing). */
+  const getStoreAdjustedPrice = (patientId: number, product: EcwidProduct, index: number): number | null => {
+    const pricing = clientPricingCache[getStoreItemPricingCacheKey(patientId, product, index)] ?? null;
+    const picked = pickAdjustedUnitPriceFromCheckResponse(pricing);
+    if (picked != null) return picked;
+    const raw = Number(product.price);
+    return Number.isFinite(raw) ? raw : null;
+  };
+
+  const getStoreItemPricing = (patientId: number, product: EcwidProduct, index: number): CheckItemPricingResponse | null => {
+    return clientPricingCache[getStoreItemPricingCacheKey(patientId, product, index)] ?? null;
   };
 
   /** Human-readable note for why a price was discounted (membership plan and/or client discount), or why full price applies. */
@@ -4645,6 +4735,20 @@ export default function PublicRoomLoaderForm() {
       parts.push(amount || 'Discount applied');
     }
     return parts.length > 0 ? parts.join('. ') : null;
+  };
+
+  /** Short line for Additional items list: membership / client discount or savings vs list price. */
+  const getStoreItemDiscountDescription = (pricing: CheckItemPricingResponse | null): string | null => {
+    if (!pricing) return null;
+    const fromNote = getDiscountNote(pricing);
+    if (fromNote) return fromNote;
+    const o = Number(pricing.originalPrice);
+    const a = pickAdjustedUnitPriceFromCheckResponse(pricing) ?? Number(pricing.adjustedPrice);
+    if (Number.isFinite(o) && Number.isFinite(a) && o > a + 0.005) {
+      const pct = o > 0 ? Math.round((1 - a / o) * 100) : 0;
+      return `You save $${(o - a).toFixed(2)}${pct > 0 ? ` (${pct}% off)` : ''}`;
+    }
+    return null;
   };
 
   if (loading) {
@@ -6707,6 +6811,7 @@ export default function PublicRoomLoaderForm() {
         );
         const showMembershipFooterComparison =
           !readOnly &&
+          !roomLoaderHasAnyPetWithMembership &&
           availablePlansForPetsForDisplay.length > 0 &&
           !membershipPanelLoading &&
           estimatedDueTodayWithMembership != null;
@@ -6772,11 +6877,9 @@ export default function PublicRoomLoaderForm() {
                 !Number.isNaN(pidN) && roomLoaderSessionMembership.multiPetCreditPatientIds[pidN]
                   ? VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD
                   : 0;
-              const showMultiPetMembershipUpsellBlurb = roomLoaderPetEligibleForMultiPetMembershipUpsell(
-                patient,
-                patients,
-                appointments
-              );
+              const showMultiPetMembershipUpsellBlurb =
+                !roomLoaderHasAnyPetWithMembership &&
+                roomLoaderPetEligibleForMultiPetMembershipUpsell(patient, patients, appointments);
 
               const apptRowSummary = getAppointmentForRoomLoaderPet(appointments, patient, petIdx);
               const speciesPartsPet = [
@@ -7290,7 +7393,17 @@ export default function PublicRoomLoaderForm() {
 
             {/* Additional items — directly under last pet, above store search */}
             {storeAdditionalItems.length > 0 && (() => {
-              const storeSubtotal = storeAdditionalItems.reduce((sum, i) => sum + Number(i.price), 0);
+              const firstPid =
+                data?.patients?.length && data.patients.length > 0
+                  ? Number(data.patients[0]?.patientId ?? data.patients[0]?.patient?.id ?? 0)
+                  : NaN;
+              const storeSubtotal = storeAdditionalItems.reduce((sum, item, idx) => {
+                const unit =
+                  !Number.isNaN(firstPid) && firstPid > 0
+                    ? getStoreAdjustedPrice(firstPid, item, idx)
+                    : null;
+                return sum + (unit ?? Number(item.price));
+              }, 0);
               const storeTaxRate = 0.055;
               const storeTax = storeSubtotal * storeTaxRate;
               return (
@@ -7313,14 +7426,28 @@ export default function PublicRoomLoaderForm() {
                     These products are included in your estimated total below (plus sales tax).
                   </p>
                   <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
-                    {storeAdditionalItems.map((item, idx) => (
+                    {storeAdditionalItems.map((item, idx) => {
+                      const storePricing =
+                        !Number.isNaN(firstPid) && firstPid > 0 ? getStoreItemPricing(firstPid, item, idx) : null;
+                      const finalUnit =
+                        !Number.isNaN(firstPid) && firstPid > 0
+                          ? (getStoreAdjustedPrice(firstPid, item, idx) ?? Number(item.price))
+                          : Number(item.price);
+                      const listOrOrig =
+                        storePricing != null && storePricing.originalPrice != null
+                          ? Number(storePricing.originalPrice)
+                          : Number(item.price);
+                      const showPriceCompare =
+                        Number.isFinite(listOrOrig) && Number.isFinite(finalUnit) && listOrOrig > finalUnit + 0.005;
+                      const discountLine = storePricing ? getStoreItemDiscountDescription(storePricing) : null;
+                      return (
                       <li
                         key={`${item.id}-${idx}`}
                         className={idx === storeItemJustAddedIndex ? 'public-room-loader-store-item-new' : undefined}
                         style={{
                           display: 'flex',
                           justifyContent: 'space-between',
-                          alignItems: 'center',
+                          alignItems: 'flex-start',
                           gap: '10px',
                           padding: '12px 12px',
                           marginBottom: idx < storeAdditionalItems.length - 1 ? '8px' : 0,
@@ -7331,9 +7458,42 @@ export default function PublicRoomLoaderForm() {
                           fontWeight: idx === storeItemJustAddedIndex ? 600 : 400,
                         }}
                       >
-                        <span style={{ color: '#212529', flex: 1, minWidth: 0 }}>{item.name}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ color: '#212529' }}>{item.name}</span>
+                          {discountLine != null && discountLine !== '' && (
+                            <div
+                              style={{
+                                fontSize: '13px',
+                                color: '#166534',
+                                marginTop: '6px',
+                                lineHeight: 1.4,
+                                fontWeight: 500,
+                              }}
+                            >
+                              {discountLine}
+                            </div>
+                          )}
+                        </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                          <span style={{ fontWeight: 700, color: '#212529' }}>{formatPrice(Number(item.price))}</span>
+                          <span style={{ fontWeight: 700, color: '#212529', textAlign: 'right' }}>
+                            {showPriceCompare ? (
+                              <>
+                                <span
+                                  style={{
+                                    textDecoration: 'line-through',
+                                    color: '#888',
+                                    fontWeight: 600,
+                                    marginRight: '8px',
+                                  }}
+                                >
+                                  {formatPrice(listOrOrig)}
+                                </span>
+                                <span>{formatPrice(finalUnit)}</span>
+                              </>
+                            ) : (
+                              formatPrice(finalUnit)
+                            )}
+                          </span>
                           <button
                             type="button"
                             onClick={() => {
@@ -7348,7 +7508,8 @@ export default function PublicRoomLoaderForm() {
                           </button>
                         </div>
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                   <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #b6d4fe', fontSize: '15px' }}>
                     <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px', fontWeight: 500 }}>Subtotal: {formatPrice(storeSubtotal)}</div>
@@ -7555,7 +7716,9 @@ export default function PublicRoomLoaderForm() {
             )}
 
             <div style={{ width: '100%' }}>
-              {!readOnly && availablePlansForPetsForDisplay.length > 0 && (
+              {!readOnly &&
+                availablePlansForPetsForDisplay.length > 0 &&
+                !roomLoaderHasAnyPetWithMembership && (
                 <div
                   className="public-room-loader-summary-total-row"
                   style={{
@@ -7599,6 +7762,7 @@ export default function PublicRoomLoaderForm() {
               {/* Membership recommendation panel (recommended plan + simulate) */}
               {membershipBillSectionExpanded &&
                 !readOnly &&
+                !roomLoaderHasAnyPetWithMembership &&
                 availablePlansForPetsForDisplay.length > 0 &&
                 (() => {
                   const patientsData = data?.patients ?? [];
@@ -7637,9 +7801,24 @@ export default function PublicRoomLoaderForm() {
               <div
                 className="public-room-loader-summary-total-row"
                 style={{
-                  marginTop: !readOnly && availablePlansForPetsForDisplay.length > 0 ? '20px' : '24px',
-                  paddingTop: !readOnly && availablePlansForPetsForDisplay.length > 0 ? 0 : '20px',
-                  borderTop: !readOnly && availablePlansForPetsForDisplay.length > 0 ? undefined : '3px solid #e0e0e0',
+                  marginTop:
+                    !readOnly &&
+                    availablePlansForPetsForDisplay.length > 0 &&
+                    !roomLoaderHasAnyPetWithMembership
+                      ? '20px'
+                      : '24px',
+                  paddingTop:
+                    !readOnly &&
+                    availablePlansForPetsForDisplay.length > 0 &&
+                    !roomLoaderHasAnyPetWithMembership
+                      ? 0
+                      : '20px',
+                  borderTop:
+                    !readOnly &&
+                    availablePlansForPetsForDisplay.length > 0 &&
+                    !roomLoaderHasAnyPetWithMembership
+                      ? undefined
+                      : '3px solid #e0e0e0',
                   display: 'flex',
                   justifyContent: 'flex-end',
                   flexWrap: 'wrap',
@@ -7651,7 +7830,7 @@ export default function PublicRoomLoaderForm() {
                   </span>
                   {showMembershipFooterComparison && (
                     <span style={{ fontSize: '18px', fontWeight: 700, color: '#166534' }}>
-                      Estimated Due Today With Membership:{' '}
+                      Estimated Due At Visit With Membership:{' '}
                       <strong>{formatPrice(estimatedDueTodayWithMembership)}</strong>
                     </span>
                   )}
@@ -7716,7 +7895,13 @@ export default function PublicRoomLoaderForm() {
               </button>
               <button
                 type="button"
-                className={`public-room-loader-btn${!readOnly && !submitting ? ' public-room-loader-submit-btn-throb' : ''}`}
+                className={`public-room-loader-btn${
+                  !readOnly &&
+                  !submitting &&
+                  (roomLoaderMembershipEligiblePets.length === 0 || roomLoaderHasAnyPetWithMembership)
+                    ? ' public-room-loader-submit-btn-throb'
+                    : ''
+                }`}
                 onClick={(e) => {
                   e.preventDefault();
                   handleSubmit();
@@ -7739,7 +7924,7 @@ export default function PublicRoomLoaderForm() {
       <MembershipEnrollmentModal
         open={showMembershipEnrollmentModal}
         onClose={() => setShowMembershipEnrollmentModal(false)}
-        eligiblePets={roomLoaderMembershipEligiblePets}
+        eligiblePets={roomLoaderHasAnyPetWithMembership ? [] : roomLoaderMembershipEligiblePets}
         getPetForSignup={getRoomLoaderEnrollmentPet}
         modalClientInfo={roomLoaderModalClientInfo}
         onAfterPetEnrolled={refetchRoomLoaderAfterMembership}

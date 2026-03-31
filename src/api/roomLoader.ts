@@ -585,11 +585,18 @@ export type CheckItemPricingPublicRequest = {
   /** Patient species label (e.g. Canine, Feline) for membership / species-specific pricing rules. */
   species?: string;
   itemType: 'lab' | 'procedure' | 'inventory' | string;
-  item: {
+  /**
+   * Catalog row (lab / procedure / inventory). Omit when using `customPrice` (no catalog row, e.g. Ecwid additional item).
+   */
+  item?: {
     lab?: Record<string, unknown>;
     procedure?: Record<string, unknown>;
     inventoryItem?: Record<string, unknown>;
   };
+  /** Pre-discount amount when there is no catalog row; backend applies membership pricing to this amount. */
+  customPrice?: number;
+  /** Optional label for custom line (backend default: Custom item). */
+  customName?: string;
 };
 
 const CHECK_ITEM_PRICING_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -606,7 +613,9 @@ function checkItemPricingCacheKey(request: CheckItemPricingPublicRequest): strin
     clientId: request.clientId,
     species: request.species ?? null,
     itemType: request.itemType,
-    item: request.item,
+    item: request.item ?? null,
+    customPrice: request.customPrice ?? null,
+    customName: request.customName ?? null,
   });
 }
 
@@ -627,7 +636,25 @@ export async function checkItemPricingPublic(
   if (entry != null) {
     checkItemPricingCache.delete(key);
   }
-  const { data } = await http.post<CheckItemPricingResponse>('/public/room-loader/check-item-pricing', request);
+  const body: Record<string, unknown> = {
+    token: request.token,
+    patientId: request.patientId,
+    itemType: request.itemType,
+  };
+  if (request.practiceId != null) body.practiceId = request.practiceId;
+  if (request.clientId != null) body.clientId = request.clientId;
+  if (request.species != null && String(request.species).trim() !== '') body.species = request.species;
+  const useCustom =
+    request.customPrice != null && request.customPrice !== undefined && Number.isFinite(Number(request.customPrice));
+  if (useCustom) {
+    body.customPrice = Number(request.customPrice);
+    if (request.customName != null && String(request.customName).trim() !== '') {
+      body.customName = String(request.customName).trim();
+    }
+  } else if (request.item != null) {
+    body.item = request.item;
+  }
+  const { data } = await http.post<CheckItemPricingResponse>('/public/room-loader/check-item-pricing', body);
   if (checkItemPricingCache.size >= CHECK_ITEM_PRICING_CACHE_MAX) {
     const firstKey = checkItemPricingCache.keys().next().value;
     if (firstKey != null) checkItemPricingCache.delete(firstKey);
