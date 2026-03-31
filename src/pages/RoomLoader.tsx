@@ -868,7 +868,7 @@ export default function RoomLoaderPage() {
     });
   }, [roomLoaders]);
 
-  // Filter table rows based on search query (doctor or client name)
+  // Filter table rows based on search query (doctor, client, or patient/pet name)
   const filteredTableRows = useMemo(() => {
     if (!tableSearch.trim()) {
       return tableRows;
@@ -877,7 +877,8 @@ export default function RoomLoaderPage() {
     return tableRows.filter((row) => {
       const doctorMatch = row.doctor.toLowerCase().includes(searchLower);
       const clientMatch = row.clientName.toLowerCase().includes(searchLower);
-      return doctorMatch || clientMatch;
+      const patientMatch = row.pets.some((petName) => petName.toLowerCase().includes(searchLower));
+      return doctorMatch || clientMatch || patientMatch;
     });
   }, [tableRows, tableSearch]);
 
@@ -1218,10 +1219,16 @@ export default function RoomLoaderPage() {
         itemPayload.inventoryItem = item.inventoryItem;
       }
 
+      const speciesLabel =
+        patientData.patient.species?.trim() ||
+        patientData.patient.speciesEntity?.name?.trim() ||
+        undefined;
+
       const pricingResponse = await checkItemPricing({
         patientId: petId,
         practiceId: selectedRoomLoader.practice.id,
         clientId: patientData.client.id,
+        species: speciesLabel,
         itemType: item.itemType,
         item: itemPayload,
       });
@@ -2402,7 +2409,7 @@ export default function RoomLoaderPage() {
         <div className="room-loader-search-wrap">
           <input
             type="text"
-            placeholder="Search by doctor or client name..."
+            placeholder="Search by doctor, client, or patient name..."
             value={tableSearch}
             onChange={(e) => setTableSearch(e.target.value)}
             style={{
@@ -3101,7 +3108,8 @@ export default function RoomLoaderPage() {
                   {/* Lab Work Question */}
                   <div>
                     <label style={{ display: 'block', marginBottom: '10px', fontWeight: 500, color: '#333', fontSize: '16px' }}>
-                      Is there a medical concern that may warrant lab work? <span style={{ color: '#dc3545' }}>*</span>
+                      Is there a medical concern that may warrant lab work? (this will ask client about senior panel){' '}
+                      <span style={{ color: '#dc3545' }}>*</span>
                       <br />
                       <span style={{ fontWeight: 400, fontSize: '14px', color: '#666' }}>Examples include PU/PD, lethargy, ADR, vomiting, weight loss</span>
                     </label>

@@ -17,6 +17,12 @@ import {
 } from '../api/payments';
 import { useAuth } from '../auth/useAuth';
 import { trackEvent, trackViewItem, trackAddToCart, trackBeginCheckout } from '../utils/analytics';
+import { resolveMembershipPetKind } from '../utils/membershipSpecies';
+import {
+  MEMBERSHIP_GOLDEN_MIN_AGE_YEARS,
+  computeMembershipAgeYearsForRoomLoaderRow,
+  parseAgeStringToYears,
+} from '../utils/membershipAge';
 
  type MembershipPlan = {
   id: string;
@@ -276,27 +282,6 @@ function petImg(pet: Pet | null): string {
   return CAT_PLACEHOLDER;
 }
 
-/** Parse age string (e.g. "2 years", "6 months", "1.5", or date string) to age in years for plan eligibility (Golden 9+, Puppy/Kitten ≤1.5). */
-function parseAgeStringToYears(ageStr: string | null | undefined): number | null {
-  if (ageStr == null || typeof ageStr !== 'string') return null;
-  const s = ageStr.trim().toLowerCase();
-  if (!s) return null;
-  const numMatch = s.match(/^(\d+(?:\.\d+)?)\s*(?:y(?:ear)?s?|yr?s?)?$/);
-  if (numMatch) return Math.max(0, parseFloat(numMatch[1]));
-  const monthsMatch = s.match(/^(\d+)\s*mo(?:nth)?s?$/);
-  if (monthsMatch) return Math.max(0, parseInt(monthsMatch[1], 10) / 12);
-  const yearMonthMatch = s.match(/^(\d+)\s*y(?:ear)?s?\s*(?:and|\d*)\s*(\d+)\s*mo(?:nth)?s?$/);
-  if (yearMonthMatch) return Math.max(0, parseInt(yearMonthMatch[1], 10) + parseInt(yearMonthMatch[2], 10) / 12);
-  const justNum = parseFloat(s.replace(/[^\d.]/g, ''));
-  if (Number.isFinite(justNum)) return Math.max(0, justNum);
-  const asDate = new Date(ageStr.trim());
-  if (!Number.isNaN(asDate.getTime())) {
-    const diff = Date.now() - asDate.getTime();
-    return Math.max(0, diff / (1000 * 60 * 60 * 24 * 365.25));
-  }
-  return null;
-}
-
 type PlanCombination = 'base' | 'plus' | 'starter' | 'plusStarter';
 type BillingCadence = 'monthly' | 'annual';
 
@@ -369,9 +354,13 @@ function lookupCatalogEntry(
 
   const extractEntry = (target: any, combo: PlanCombination): PlanEntry | undefined => {
     if (!target) return undefined;
-    const entry = target[combo];
-    if (entry && entry.planId && entry.planVariationId) {
-      return entry as PlanEntry;
+    const entry =
+      target[combo] ?? (combo === 'plusStarter' ? target.plus_starter : undefined);
+    if (!entry || typeof entry !== 'object') return undefined;
+    const planId = (entry as any).planId ?? (entry as any).plan_id;
+    const planVariationId = (entry as any).planVariationId ?? (entry as any).plan_variation_id;
+    if (planId && planVariationId) {
+      return { planId: String(planId), planVariationId: String(planVariationId) };
     }
     return undefined;
   };
@@ -430,11 +419,29 @@ type AppointmentFlowState = {
 
 export type MembershipSignupPaymentState = Record<string, any>;
 
+export type MembershipEligibilitySnapshot = {
+  kind: 'dog' | 'cat' | null;
+  ageYears: number | null;
+};
+
 export type MembershipSignupModalProps = {
   fromModal?: boolean;
-  modalPet?: Pet | { id: string; name: string; species?: string; breed?: string; age?: string; dob?: string };
+  /** Room loader / flows that precompute eligibility should set `_membershipEligibilitySnapshot` on this object. */
+  modalPet?: Pet | {
+    id: string;
+    name: string;
+    species?: string;
+    breed?: string;
+    age?: string;
+    dob?: string;
+    patient?: unknown;
+    _membershipSpeciesExtraSources?: unknown[];
+    _membershipEligibilitySnapshot?: MembershipEligibilitySnapshot;
+  };
   /** Client email and name from appointment form (for agreementSignedName / customerEmail when not logged in) */
   modalClientInfo?: { email?: string; fullName?: { first?: string; last?: string } };
+  /** Public room-loader membership: payment success omits client-portal NOTE. */
+  fromRoomLoaderPublicForm?: boolean;
   onProceedToPayment?: (state: MembershipSignupPaymentState) => void;
   onCancel?: () => void;
 };
@@ -448,6 +455,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const fromModal = props?.fromModal === true;
   const modalPet = props?.modalPet;
   const modalClientInfo = props?.modalClientInfo;
+  const fromRoomLoaderPublicForm = props?.fromRoomLoaderPublicForm === true;
   const onProceedToPayment = props?.onProceedToPayment;
   const onCancelModal = props?.onCancel;
 
@@ -756,14 +764,19 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
 
   const petDetails = useMemo(() => {
     if (!pet) return { kind: null as null | 'dog' | 'cat', ageYears: null as number | null };
-    const speciesSource = (pet.species ?? pet.breed ?? '').toLowerCase();
-    const kind: 'dog' | 'cat' | null = speciesSource.includes('dog') || speciesSource.includes('canine')
-      ? 'dog'
-      : speciesSource.includes('cat') || speciesSource.includes('feline')
-        ? 'cat'
-        : null;
-    let ageYears: number | null = null;
-    if (pet.dob) {
+    const snap = (pet as { _membershipEligibilitySnapshot?: MembershipEligibilitySnapshot })
+      ._membershipEligibilitySnapshot;
+    if (snap && typeof snap === 'object') {
+      return {
+        kind: snap.kind ?? null,
+        ageYears: snap.ageYears ?? null,
+      };
+    }
+    const extras = (pet as { _membershipSpeciesExtraSources?: unknown[] })._membershipSpeciesExtraSources;
+    const kind = resolveMembershipPetKind(pet, Array.isArray(extras) ? extras : undefined);
+    const apptPatient = Array.isArray(extras) && extras[0] ? extras[0] : undefined;
+    let ageYears = computeMembershipAgeYearsForRoomLoaderRow(pet, apptPatient);
+    if (ageYears == null && pet.dob) {
       const dob = new Date(pet.dob);
       if (!Number.isNaN(dob.getTime())) {
         const diff = Date.now() - dob.getTime();
@@ -771,15 +784,22 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       }
     }
     if (ageYears == null && (pet as any).age) {
-      ageYears = parseAgeStringToYears((pet as any).age);
+      ageYears = parseAgeStringToYears(String((pet as any).age));
     }
     return { kind, ageYears };
   }, [pet]);
 
   const meetsGolden = useMemo(() => {
     if (!petDetails.kind || petDetails.ageYears == null) return false;
-    return petDetails.ageYears >= 9;
+    return petDetails.ageYears >= MEMBERSHIP_GOLDEN_MIN_AGE_YEARS;
   }, [petDetails]);
+
+  useEffect(() => {
+    if (selectedPlanExplicit === 'golden' && !meetsGolden) {
+      setSelectedPlanExplicit(null);
+      setSelectedPlanId(null);
+    }
+  }, [meetsGolden, selectedPlanExplicit]);
 
   const combinedError = error ?? planCatalogError;
 
@@ -989,7 +1009,17 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
         plusExplicit,
         catalogEntry,
         comfortCareNode: selectedPlanExplicit === 'comfort-care' ? planCatalog?.['comfort-care'] : undefined,
+        planSlice:
+          selectedPlanExplicit && planCatalog?.[selectedPlanExplicit]
+            ? planCatalog[selectedPlanExplicit]
+            : undefined,
       });
+      if (selectedPlanExplicit !== 'comfort-care' && !speciesKey) {
+        setError(
+          'We could not tell if this pet is a dog or cat from the information we have. Please contact support or try again after your pet’s species is updated in our records.',
+        );
+        return;
+      }
       setError('This membership combination is not yet configured for automated billing. Please contact support.');
       return;
     }
@@ -1202,13 +1232,17 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       metadata,
       membershipTransaction,
     };
-    if (customerEmail != null) paymentState.customerEmail = customerEmail;
+    if (customerEmail != null) {
+      paymentState.customerEmail = customerEmail;
+      if (fromModal) paymentState.formResponseEmail = customerEmail;
+    }
     if (agreementSignedName != null) paymentState.customerName = agreementSignedName;
     if (returnUrl) paymentState.returnUrl = returnUrl;
     if (fromAppointmentFlow) paymentState.fromAppointmentFlow = true;
     if (returnUrlAnotherBase) paymentState.returnUrlAnotherBase = returnUrlAnotherBase;
     else if (!fromModal) paymentState.returnUrlAnotherBase = '/client-portal/membership-signup';
     if (isSigningUpAdditionalPet) paymentState.multiPetCreditEligible = true;
+    if (fromRoomLoaderPublicForm) paymentState.fromRoomLoaderPublicForm = true;
 
     // Track begin checkout
     const checkoutItems = [
@@ -1855,16 +1889,17 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
               const filteredPlans = plans
                 .filter((plan) => {
                   if (plan.id === 'comfort-care') return false;
-                  if (plan.id === 'golden') return meetsGolden;
                   if (plan.id === 'foundations') return true;
+                  // Golden only for pets who meet the senior threshold (same as room-loader / `MEMBERSHIP_GOLDEN_MIN_AGE_YEARS`).
+                  if (plan.id === 'golden') return meetsGolden;
                   return false;
                 })
                 .sort((a, b) => {
                   if (meetsGolden) {
-                    if (a.id === 'foundations') return -1;
-                    if (b.id === 'foundations') return 1;
-                    if (a.id === 'golden') return 1;
-                    if (b.id === 'golden') return -1;
+                    if (a.id === 'golden') return -1;
+                    if (b.id === 'golden') return 1;
+                    if (a.id === 'foundations') return 1;
+                    if (b.id === 'foundations') return -1;
                   }
                   return 0;
                 });

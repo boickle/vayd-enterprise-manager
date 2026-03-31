@@ -113,9 +113,30 @@ type PaymentNavigationState = {
   };
   /** True when client is signing up a 2nd+ pet this session (eligible for $75 credit). */
   multiPetCreditEligible?: boolean;
+  /** Email saved with the public form payload (room loader, etc.); used before showing the payment email field. */
+  formResponseEmail?: string;
+  /** Public room-loader membership: omit client-portal NOTE on payment success. */
+  fromRoomLoaderPublicForm?: boolean;
 };
 
 export type { PaymentNavigationState };
+
+function resolveCustomerEmailFromNavigationState(state: PaymentNavigationState | undefined): string {
+  if (!state) return '';
+  const direct = state.customerEmail?.trim();
+  if (direct) return direct;
+  const formResp = state.formResponseEmail?.trim();
+  if (formResp) return formResp;
+  const m = state.metadata?.customerEmail;
+  if (typeof m === 'string' && m.trim()) return m.trim();
+  const mt = state.membershipTransaction?.metadata?.customerEmail;
+  if (typeof mt === 'string' && mt.trim()) return mt.trim();
+  return '';
+}
+
+function isValidEmail(s: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+}
 
 export type MembershipPaymentModalProps = {
   fromModal?: boolean;
@@ -123,6 +144,8 @@ export type MembershipPaymentModalProps = {
   onSuccess?: () => void;
   onBack?: () => void;
   onSignUpAnother?: (signedUpPetId: string) => void;
+  /** Called once when payment/upgrade succeeds (before user taps Done). Use to refetch server data (e.g. room loader pricing). */
+  onEnrollmentSucceeded?: (petId?: string) => void;
 };
 
 export default function MembershipPayment(props?: MembershipPaymentModalProps) {
@@ -130,6 +153,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const location = useLocation();
   const locationState = location.state as PaymentNavigationState | undefined;
   const fromModal = props?.fromModal === true;
+  const onEnrollmentSucceeded = props?.onEnrollmentSucceeded;
   const state = fromModal ? (props?.initialState ?? locationState) : locationState;
   const { userEmail, userId } = useAuth() as any;
 
@@ -228,6 +252,24 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
 
   const costSummaryItems = useMemo(() => state?.costSummary?.items ?? [], [state]);
 
+  const prefilledCustomerEmail = useMemo(
+    () => resolveCustomerEmailFromNavigationState(state),
+    [state]
+  );
+
+  const [contactEmail, setContactEmail] = useState('');
+
+  useEffect(() => {
+    setContactEmail(prefilledCustomerEmail || (typeof userEmail === 'string' ? userEmail.trim() : '') || '');
+  }, [prefilledCustomerEmail, userEmail, formResetKey, state?.petId]);
+
+  const authEmailTrim = typeof userEmail === 'string' ? userEmail.trim() : '';
+  const hasKnownSubscriptionEmail = Boolean(prefilledCustomerEmail || authEmailTrim);
+  const showSubscriptionEmailField =
+    !!state &&
+    (state.intent === PaymentIntent.SUBSCRIPTION || state.isUpgrade) &&
+    !hasKnownSubscriptionEmail;
+
   const [cardholderName, setCardholderName] = useState('');
   const [addressLine1, setAddressLine1] = useState('');
   const [addressLine2, setAddressLine2] = useState('');
@@ -255,13 +297,30 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         throw new Error(tokenResult.errors?.[0]?.message || 'Unable to tokenize card.');
       }
 
+      const emailForSquare =
+        contactEmail.trim() ||
+        prefilledCustomerEmail ||
+        (typeof userEmail === 'string' ? userEmail.trim() : '') ||
+        '';
+
+      if (
+        (state.intent === PaymentIntent.SUBSCRIPTION || state.isUpgrade) &&
+        (!emailForSquare || !isValidEmail(emailForSquare))
+      ) {
+        setProcessing(false);
+        setError(
+          'A valid email address is required (Square needs it on your customer profile for subscriptions and upgrades).'
+        );
+        return;
+      }
+
       // Handle upgrade flow
       if (state.isUpgrade && state.patientId && state.selectedUpgrades) {
         const upgradeRequest: MembershipUpgradeRequest = {
           patientId: state.patientId,
           newPlansSelected: state.selectedUpgrades,
           sourceId: tokenResult.token,
-          customerEmail: userEmail ?? '',
+          customerEmail: emailForSquare || userEmail || '',
           // Include prorated calculation if available
           proratedRefundAmount: state.proratedCalculation?.refundAmount,
           proratedChargeAmount: state.proratedCalculation?.chargeAmount,
@@ -299,6 +358,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         );
 
         setEnrollmentComplete(true);
+        onEnrollmentSucceeded?.(state.petId);
         return;
       }
 
@@ -347,12 +407,13 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         subscriptionPlanId: state.subscriptionPlanId,
         subscriptionPlanVariationId: state.subscriptionPlanVariationId,
         subscriptionStartDate: state.subscriptionStartDate,
-        customerEmail: state.customerEmail ?? userEmail ?? undefined,
+        customerEmail: emailForSquare || undefined,
         customerName: state.customerName ?? undefined,
         metadata: {
           ...(state.metadata ?? {}),
           ...(petIdForPayload !== '' && { petId: petIdForPayload }),
           ...(petNameForPayload !== '' && { petName: petNameForPayload }),
+          ...(emailForSquare && { customerEmail: emailForSquare }),
           cardholderName: cardholderName.trim(),
           billingAddress: {
             addressLine1: addressLine1.trim(),
@@ -407,6 +468,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
       );
 
       setEnrollmentComplete(true);
+      onEnrollmentSucceeded?.(state.petId);
     } catch (err: any) {
       const status = err?.response?.status;
       const serverMessage = err?.response?.data?.message ?? err?.response?.data?.error;
@@ -545,7 +607,9 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
           </section>
         )}
 
-        {!state.returnUrl && !(fromModal && !userId) && (
+        {!state.returnUrl &&
+          !(fromModal && !userId) &&
+          !state.fromRoomLoaderPublicForm && (
           <div className="cp-card" style={{ marginTop: 24, padding: 20, background: '#f0f9ff', border: '1px solid #bae6fd' }}>
             <p className="cp-muted" style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>
               <strong>NOTE:</strong> If you want to sign-up another pet from your household or if you want to make an appointment for {state.petName}, please{' '}
@@ -783,6 +847,25 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
           <h3 style={{ marginTop: 0, marginBottom: 12 }}>Payment Method</h3>
           <form onSubmit={handlePaymentSubmit} style={{ display: 'grid', gap: 16 }}>
             <div style={{ display: 'grid', gap: 10 }}>
+              {showSubscriptionEmailField && (
+                <div>
+                  <label style={{ display: 'block', fontWeight: 600, fontSize: 14, marginBottom: 6 }}>
+                    Email <span style={{ color: '#b91c1c' }}>*</span>
+                  </label>
+                  <input
+                    type="email"
+                    autoComplete="email"
+                    value={contactEmail}
+                    onChange={(e) => setContactEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    className="input"
+                    required
+                  />
+                  <p className="cp-muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
+                    Required so we can attach it to your Square customer for billing and receipts.
+                  </p>
+                </div>
+              )}
               <div>
                 <label style={{ display: 'block', fontWeight: 600, fontSize: 14, marginBottom: 6 }}>Cardholder Name</label>
                 <input
