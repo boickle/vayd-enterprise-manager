@@ -412,8 +412,8 @@ export default function MembershipRecommendationPanel({
                     {planBase === 'golden' ? 'Golden Membership' : planDisplayName} · {formatPrice(monthlyFee)}/month · 12-month membership
                   </div>
                   <p style={{ margin: '8px 0 0', fontSize: '13px', color: '#5a6b6c', lineHeight: 1.45 }}>
-                    Membership also includes ongoing care with your dedicated Vet At Your Door One-Team, preferred booking, and after-hours veterinary
-                    chat.
+                    Membership is how families access the Vet At Your Door One-Team model — ongoing care with one dedicated veterinary team who knows you
+                    and your pet over time, preferred booking with that team, and after-hours support through the Client Portal.
                   </p>
                 </>
               )}
