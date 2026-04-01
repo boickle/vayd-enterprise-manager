@@ -1202,36 +1202,51 @@ export default function RoomLoaderPage() {
 
     // Check pricing for the item
     try {
-      // Construct the item object based on itemType
-      const itemPayload: any = {};
-      // Pass the full item object (from search) so backend has all fields
-      if (item.itemType === 'lab' && item.lab) {
-        itemPayload.lab = item.lab;
-      } else if (item.itemType === 'procedure' && (item as any).procedure) {
-        itemPayload.procedure = (item as any).procedure;
-      } else if (item.itemType === 'inventory' && item.inventoryItem) {
-        itemPayload.inventoryItem = item.inventoryItem;
-      } else if (item.lab) {
-        itemPayload.lab = item.lab;
-      } else if ((item as any).procedure) {
-        itemPayload.procedure = (item as any).procedure;
-      } else if (item.inventoryItem) {
-        itemPayload.inventoryItem = item.inventoryItem;
-      }
-
       const speciesLabel =
         patientData.patient.species?.trim() ||
         patientData.patient.speciesEntity?.name?.trim() ||
         undefined;
 
-      const pricingResponse = await checkItemPricing({
-        patientId: petId,
-        practiceId: selectedRoomLoader.practice.id,
-        clientId: patientData.client.id,
-        species: speciesLabel,
-        itemType: item.itemType,
-        item: itemPayload,
-      });
+      const isPackage = (item.itemType ?? '').toLowerCase() === 'package';
+      let pricingResponse: Awaited<ReturnType<typeof checkItemPricing>>;
+      if (isPackage) {
+        const customPrice = Number(item.price ?? 0);
+        pricingResponse = await checkItemPricing({
+          patientId: petId,
+          practiceId: selectedRoomLoader.practice.id,
+          clientId: patientData.client.id,
+          species: speciesLabel,
+          itemType: 'inventory',
+          customPrice,
+          customName: String(item.name ?? '').trim() || 'Package',
+        });
+      } else {
+        // Construct the item object based on itemType
+        const itemPayload: any = {};
+        // Pass the full item object (from search) so backend has all fields
+        if (item.itemType === 'lab' && item.lab) {
+          itemPayload.lab = item.lab;
+        } else if (item.itemType === 'procedure' && (item as any).procedure) {
+          itemPayload.procedure = (item as any).procedure;
+        } else if (item.itemType === 'inventory' && item.inventoryItem) {
+          itemPayload.inventoryItem = item.inventoryItem;
+        } else if (item.lab) {
+          itemPayload.lab = item.lab;
+        } else if ((item as any).procedure) {
+          itemPayload.procedure = (item as any).procedure;
+        } else if (item.inventoryItem) {
+          itemPayload.inventoryItem = item.inventoryItem;
+        }
+
+        pricingResponse = await checkItemPricing({
+          patientId: petId,
+          practiceId: selectedRoomLoader.practice.id,
+          clientId: patientData.client.id,
+          species: speciesLabel,
+          itemType: item.itemType,
+          item: itemPayload,
+        });
+      }
 
       // Update the item with the adjusted price and wellness plan info
       setAddedItems((prev) => {

@@ -581,7 +581,24 @@ function RoomLoaderPatientMemberBadge({
 }
 
 function getItemId(item: SearchableItem): number | undefined {
+  const t = (item.itemType ?? '').toLowerCase();
+  if (t === 'package' && (item as any).packageId != null) return Number((item as any).packageId);
   return item.inventoryItem?.id ?? (item as any).procedure?.id ?? item.lab?.id;
+}
+
+/**
+ * Package lines from staff often have `type: "package"` and a product `code` but no `id`.
+ * Check-item-pricing and cache keys need a stable numeric segment; prefer catalog id, else numeric code, else synthetic.
+ */
+function resolvePackageLineNumericKey(item: any, patientId: number, addedIndex: number): number {
+  const fromNested = item?.id ?? item?.procedure?.id ?? item?.lab?.id ?? item?.inventoryItem?.id;
+  if (fromNested != null && Number.isFinite(Number(fromNested))) return Number(fromNested);
+  const codeRaw = item?.code;
+  if (codeRaw != null && String(codeRaw).trim() !== '') {
+    const trimmed = String(codeRaw).trim();
+    if (/^\d+$/.test(trimmed)) return Number(trimmed);
+  }
+  return 900_000_000 + (Math.abs(Math.floor(Number(patientId))) % 100_000) * 1_000 + (addedIndex % 1_000);
 }
 
 type SummaryLineDisplayPricing =
@@ -701,7 +718,10 @@ function getItemTypeAndId(
   item: SearchableItem | { searchableItem?: SearchableItem | null; itemType?: string; type?: string; id?: number; procedure?: { id: number }; lab?: { id: number }; inventoryItem?: { id: number } } | null
 ): { itemType: 'lab' | 'procedure' | 'inventory'; itemId: number } | null {
   if (!item) return null;
+  const rawType = String((item as any).itemType ?? (item as any).type ?? '').toLowerCase();
+  if (rawType === 'package') return null;
   const si = (item as any).searchableItem;
+  if (si && String(si.itemType ?? '').toLowerCase() === 'package') return null;
   if (si) {
     const id = getItemId(si);
     if (id == null) return null;
@@ -737,6 +757,16 @@ function rowToSearchableItem(row: { id?: number | null; name?: string; price?: n
   const price = row.price != null ? String(row.price) : '';
   const code = row.code;
   const itemType = (row.itemType ?? row.type ?? 'procedure').toString().toLowerCase();
+  if (itemType === 'package') {
+    const priceNum = row.price != null ? Number(row.price) : 0;
+    return {
+      name,
+      itemType: 'package',
+      price: Number.isFinite(priceNum) ? priceNum : 0,
+      code,
+      packageId: id,
+    } as SearchableItem;
+  }
   const entry = { id, name, price, code };
   const base: SearchableItem = {
     name,
@@ -4479,14 +4509,19 @@ export default function PublicRoomLoaderForm() {
           }
         }
       });
-      (p.addedItems ?? []).forEach((item: any) => {
-        const id = item?.id ?? item?.procedure?.id ?? item?.lab?.id ?? item?.inventoryItem?.id;
+      (p.addedItems ?? []).forEach((item: any, addedIdx: number) => {
+        const rawType = (item.itemType ?? item.type ?? 'procedure').toString().toLowerCase();
+        const pidNum = Number(patientId);
+        const id =
+          rawType === 'package'
+            ? resolvePackageLineNumericKey(item, Number.isFinite(pidNum) ? pidNum : 0, addedIdx)
+            : item?.id ?? item?.procedure?.id ?? item?.lab?.id ?? item?.inventoryItem?.id;
         if (id == null) return;
         const row = { id, name: item.name, price: item.price, itemType: item.itemType ?? item.type ?? 'procedure', code: item.code };
         const si = rowToSearchableItem(row);
         if (si) {
           const itemType = (si.itemType ?? 'procedure').toString();
-          pairs.push({ patientId, item: si, key: `p${patientId}-${itemType}-${id}` });
+          pairs.push({ patientId, item: si, key: `p${patientId}-${itemType}-${getItemId(si) ?? id}` });
         }
       });
       if (p.vaccines?.sharps === true && sharpsDisposalItem) {
@@ -4562,10 +4597,31 @@ export default function PublicRoomLoaderForm() {
     if (toFetch.length === 0 && storePricingPromises.length === 0) return;
     let pricingFetchCancelled = false;
     const requests = toFetch.map(({ patientId, item, key }) => {
+      const species = speciesByPatientId.get(Number(patientId));
+      const t = (item.itemType ?? '').toLowerCase();
+      // Package items: membership may still discount via custom amount; do not send itemType "package" or catalog item.
+      if (t === 'package') {
+        const customPrice = Number((item as any).price ?? 0);
+        if (!Number.isFinite(customPrice)) {
+          return Promise.resolve({ key, res: null as CheckItemPricingResponse | null });
+        }
+        const customName = String(item.name ?? '').trim() || 'Package';
+        return checkItemPricingPublic({
+          token: tokenValue,
+          patientId,
+          practiceId,
+          clientId,
+          ...(species ? { species } : {}),
+          itemType: 'inventory',
+          customPrice,
+          customName,
+        })
+          .then((res) => ({ key, res }))
+          .catch(() => ({ key, res: null as CheckItemPricingResponse | null }));
+      }
       const payload = buildPricingItemPayload(item);
       if (!payload) return Promise.resolve({ key, res: null as CheckItemPricingResponse | null });
       const itemType = (item.itemType ?? 'procedure').toString();
-      const species = speciesByPatientId.get(Number(patientId));
       return checkItemPricingPublic({
         token: tokenValue,
         patientId,
@@ -4918,14 +4974,19 @@ export default function PublicRoomLoaderForm() {
       });
     }
     if (patient.addedItems && Array.isArray(patient.addedItems)) {
-      patient.addedItems.forEach((item: any) => {
+      const pidForPackage = Number(patient.patientId ?? patient.patient?.id ?? 0);
+      patient.addedItems.forEach((item: any, addedIdx: number) => {
         const itemType = item.itemType ?? item.type ?? 'procedure';
+        const rawLower = String(itemType).toLowerCase();
         const row: any = {
           name: item.name,
           price: item.price,
           quantity: item.quantity || 1,
           type: itemType,
-          id: item.id ?? item.procedure?.id ?? item.lab?.id ?? item.inventoryItem?.id,
+          id:
+            rawLower === 'package'
+              ? resolvePackageLineNumericKey(item, Number.isFinite(pidForPackage) ? pidForPackage : 0, addedIdx)
+              : item.id ?? item.procedure?.id ?? item.lab?.id ?? item.inventoryItem?.id,
           itemType,
           code: item.code ?? item.procedure?.code ?? item.lab?.code,
         };

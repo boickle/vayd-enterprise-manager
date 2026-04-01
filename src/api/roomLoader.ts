@@ -380,9 +380,11 @@ export async function deleteRoomLoaders(ids: number[]): Promise<{ ok: boolean; d
 
 // Search items for room loader
 export type SearchableItem = {
-  itemType: 'inventory' | 'lab' | 'procedure' | string;
+  itemType: 'inventory' | 'lab' | 'procedure' | 'package' | string;
   inventoryItem?: any;
   lab?: any;
+  /** Set when itemType is `package` (bundle id for UI/cache; pricing uses customPrice). */
+  packageId?: number;
   price: number;
   name: string;
   code?: string;
@@ -511,11 +513,15 @@ export type CheckItemPricingRequest = {
   /** Patient species label (e.g. Canine, Feline) for membership / species-specific pricing rules. */
   species?: string;
   itemType: 'lab' | 'procedure' | 'inventory' | string;
-  item: {
+  /** Catalog row. Omit when using `customPrice` (e.g. package lines priced as a bundle). */
+  item?: {
     lab?: Record<string, unknown>;
     procedure?: Record<string, unknown>;
     inventoryItem?: Record<string, unknown>;
   };
+  /** Pre-discount amount when there is no catalog row; backend applies membership/discount rules. */
+  customPrice?: number;
+  customName?: string;
 };
 
 export type CheckItemPricingResponse = {
