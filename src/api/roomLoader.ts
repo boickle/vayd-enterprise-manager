@@ -508,6 +508,8 @@ export type CheckItemPricingRequest = {
   patientId: number;
   practiceId: number;
   clientId: number;
+  /** Patient species label (e.g. Canine, Feline) for membership / species-specific pricing rules. */
+  species?: string;
   itemType: 'lab' | 'procedure' | 'inventory' | string;
   item: {
     lab?: Record<string, unknown>;
@@ -580,12 +582,21 @@ export type CheckItemPricingPublicRequest = {
   practiceId?: number;
   /** Client ID (same as employee request) so backend can apply client-specific discounts. */
   clientId?: number;
+  /** Patient species label (e.g. Canine, Feline) for membership / species-specific pricing rules. */
+  species?: string;
   itemType: 'lab' | 'procedure' | 'inventory' | string;
-  item: {
+  /**
+   * Catalog row (lab / procedure / inventory). Omit when using `customPrice` (no catalog row, e.g. Ecwid additional item).
+   */
+  item?: {
     lab?: Record<string, unknown>;
     procedure?: Record<string, unknown>;
     inventoryItem?: Record<string, unknown>;
   };
+  /** Pre-discount amount when there is no catalog row; backend applies membership pricing to this amount. */
+  customPrice?: number;
+  /** Optional label for custom line (backend default: Custom item). */
+  customName?: string;
 };
 
 const CHECK_ITEM_PRICING_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -600,9 +611,17 @@ function checkItemPricingCacheKey(request: CheckItemPricingPublicRequest): strin
     patientId: request.patientId,
     practiceId: request.practiceId,
     clientId: request.clientId,
+    species: request.species ?? null,
     itemType: request.itemType,
-    item: request.item,
+    item: request.item ?? null,
+    customPrice: request.customPrice ?? null,
+    customName: request.customName ?? null,
   });
+}
+
+/** Clears in-memory pricing cache for public check-item-pricing. Call after membership enrollment (or any change to client discount eligibility): cache keys omit membership state, so old entries would otherwise return pre-enrollment prices for up to one hour. */
+export function clearCheckItemPricingPublicCache(): void {
+  checkItemPricingCache.clear();
 }
 
 export async function checkItemPricingPublic(
@@ -617,7 +636,25 @@ export async function checkItemPricingPublic(
   if (entry != null) {
     checkItemPricingCache.delete(key);
   }
-  const { data } = await http.post<CheckItemPricingResponse>('/public/room-loader/check-item-pricing', request);
+  const body: Record<string, unknown> = {
+    token: request.token,
+    patientId: request.patientId,
+    itemType: request.itemType,
+  };
+  if (request.practiceId != null) body.practiceId = request.practiceId;
+  if (request.clientId != null) body.clientId = request.clientId;
+  if (request.species != null && String(request.species).trim() !== '') body.species = request.species;
+  const useCustom =
+    request.customPrice != null && request.customPrice !== undefined && Number.isFinite(Number(request.customPrice));
+  if (useCustom) {
+    body.customPrice = Number(request.customPrice);
+    if (request.customName != null && String(request.customName).trim() !== '') {
+      body.customName = String(request.customName).trim();
+    }
+  } else if (request.item != null) {
+    body.item = request.item;
+  }
+  const { data } = await http.post<CheckItemPricingResponse>('/public/room-loader/check-item-pricing', body);
   if (checkItemPricingCache.size >= CHECK_ITEM_PRICING_CACHE_MAX) {
     const firstKey = checkItemPricingCache.keys().next().value;
     if (firstKey != null) checkItemPricingCache.delete(firstKey);
@@ -640,5 +677,114 @@ export type SaveFormRequest = {
 
 export async function saveRoomLoaderForm(request: SaveFormRequest): Promise<RoomLoader> {
   const { data } = await http.post<RoomLoader>('/room-loader/save-form', request);
+  return data;
+}
+
+// =============================================================================
+// Room loader summary: membership comparison for non-members
+// =============================================================================
+
+/** One membership plan offered for a pet (species-based). Returned by GET /public/room-loader/form when client is not a member. */
+export type RoomLoaderMembershipOffer = {
+  planId: string;
+  planName: string;
+  tagLine?: string;
+  /** Price in dollars per month (monthly billing). */
+  monthlyPrice: number;
+  /** Price in dollars for annual billing (total for the year, or first year). */
+  annualPrice?: number;
+  /** Whether this plan is an add-on (e.g. PLUS, Puppy/Kitten). */
+  isAddOn?: boolean;
+};
+
+/** Per-patient membership offers (plans applicable to this pet's species). Returned by GET /public/room-loader/form. */
+export type RoomLoaderAvailablePlansForPet = {
+  patientId: number;
+  patientName?: string;
+  species?: string;
+  /** When true, this pet is already enrolled; frontend should not upsell membership for this patient. */
+  isMember?: boolean;
+  membershipName?: string | null;
+  plans: RoomLoaderMembershipOffer[];
+};
+
+/** Line item for simulate-bill: must include enough for backend to re-apply membership pricing (itemType + item id when available). */
+export type RoomLoaderSimulateLineItem = {
+  name: string;
+  quantity: number;
+  /** Current price (non-member) in dollars. */
+  price: number;
+  patientId: number;
+  patientName?: string;
+  category?: string;
+  /** Optional: so backend can look up membership-adjusted price. */
+  itemType?: 'lab' | 'procedure' | 'inventory' | string;
+  /** Optional: id of procedure, lab, or inventory item. */
+  itemId?: number;
+};
+
+export type RoomLoaderSimulateBillPublicRequest = {
+  token: string;
+  practiceId?: number;
+  clientId?: number;
+  /** Plan to simulate (e.g. "foundations", "golden"). */
+  planId: string;
+  /** When set, backend may select dog vs cat catalog entry (same as client portal). Ignored if unsupported. */
+  species?: 'dog' | 'cat';
+  /** Billing cadence for the plan. */
+  pricingOption: 'monthly' | 'annual';
+  /** Patient(s) this plan applies to (e.g. single pet for base plan). */
+  patientIds: number[];
+  /** Current summary line items (services/labs/products) so backend can recalc with membership. */
+  lineItems: RoomLoaderSimulateLineItem[];
+  /** Store/additional items subtotal and tax (optional; backend may add to total). */
+  storeSubtotal?: number;
+  storeTax?: number;
+};
+
+export type RoomLoaderSimulateBillPublicResponse = {
+  /** Total without membership (visit services only, no store). */
+  originalVisitSubtotal: number;
+  /** Total without membership (visit + store + tax). */
+  originalTotal: number;
+  /** Visit subtotal if client had this membership (discounts applied). */
+  withMembershipVisitSubtotal: number;
+  /** Membership fee for this plan/cadence (e.g. first month or annual amount). */
+  membershipFee: number;
+  /** Total with membership: withMembershipVisitSubtotal + membershipFee + store (if any). */
+  withMembershipTotal: number;
+  /** originalTotal - withMembershipTotal (positive = savings). */
+  savings: number;
+  /** When pricingOption is monthly: first month's membership charge. Use for "due at visit" (withMembershipVisitSubtotal + monthlyCharge). */
+  monthlyCharge?: number;
+  /** When pricingOption is monthly: optional (e.g. annual equivalent for display). */
+  monthlyMembershipFee?: number;
+  /** Per-line adjustments for display (optional). */
+  lineItemAdjustments?: Array<{
+    name: string;
+    patientId: number;
+    originalPrice: number;
+    adjustedPrice: number;
+    quantity: number;
+  }>;
+  /** Plan benefits still available to the member that are not used in this visit (optional). Backend may return when simulating. */
+  remainingPlanBenefits?: Array<{
+    name: string;
+    remainingQuantity?: number;
+    includedQuantity?: number;
+    /** Plan/membership price per unit (what the member pays when using this benefit). */
+    price?: number;
+    /** Standard (non-member) price per unit, e.g. for "Value $X". */
+    regularPrice?: number;
+  }>;
+};
+
+export async function simulateBillWithMembershipPublic(
+  request: RoomLoaderSimulateBillPublicRequest
+): Promise<RoomLoaderSimulateBillPublicResponse> {
+  const { data } = await http.post<RoomLoaderSimulateBillPublicResponse>(
+    '/public/room-loader/simulate-bill-with-membership',
+    request
+  );
   return data;
 }
