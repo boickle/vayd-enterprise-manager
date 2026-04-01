@@ -7739,6 +7739,11 @@ export default function AppointmentRequestForm() {
                 type="button"
                 className="appt-form-view-membership-btn"
                 onClick={() => {
+                  trackEvent('appointment_form_confirmation_membership_cta_clicked', {
+                    eligible_pet_count: membershipEligiblePets.length,
+                    is_logged_in: isLoggedIn,
+                    membership_interest: formData.membershipInterest ?? undefined,
+                  });
                   setSelectedMembershipPetId(null);
                   setMembershipModalStep('choose-pet');
                   setShowMembershipModal(true);

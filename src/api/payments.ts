@@ -33,10 +33,16 @@ export interface MembershipTransactionPlanSelection {
   addOns?: MembershipTransactionAddOn[];
 }
 
+/** Where the membership checkout was started (sent on payment `membershipTransaction` for analytics / ops). */
+export const MEMBERSHIP_PAYMENT_REQUEST_ORIGINS = ['client-portal', 'appointment-form', 'room-loader'] as const;
+export type MembershipPaymentRequestOrigin = (typeof MEMBERSHIP_PAYMENT_REQUEST_ORIGINS)[number];
+
 export interface MembershipTransactionPayload {
   clientId?: number | string;
   patientId?: number | string;
   practiceId?: number | string;
+  /** Origin of the membership transaction (e.g. client portal vs public forms). */
+  requestOrigin?: MembershipPaymentRequestOrigin;
   agreementSignedAt?: string;
   agreementText?: string;
   plansSelected?: MembershipTransactionPlanSelection[];

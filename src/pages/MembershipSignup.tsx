@@ -10,6 +10,7 @@ import {
   PaymentIntent,
   type MembershipTransactionPayload,
   type MembershipTransactionAddOn,
+  type MembershipPaymentRequestOrigin,
   fetchSubscriptionPlanCatalog,
   type SubscriptionPlanCatalog,
   fetchFormattedSubscriptionPlans,
@@ -1174,6 +1175,13 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     if (clientIdValue != null) membershipTransaction.clientId = clientIdValue;
     if (patientId != null) membershipTransaction.patientId = patientId;
     if (practiceId != null) membershipTransaction.practiceId = practiceId;
+
+    const membershipRequestOrigin: MembershipPaymentRequestOrigin = fromRoomLoaderPublicForm
+      ? 'room-loader'
+      : fromAppointmentFlow || fromModal
+        ? 'appointment-form'
+        : 'client-portal';
+    membershipTransaction.requestOrigin = membershipRequestOrigin;
 
     const enrollmentPayload: Record<string, any> = {};
     if (chosenPlan?.apiPlanId) enrollmentPayload.planId = chosenPlan.apiPlanId;
