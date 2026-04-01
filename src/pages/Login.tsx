@@ -433,7 +433,7 @@ export default function LoginPage() {
 
         {isCreateClientEnabled() && (
           <Link to="/create-client" style={secondaryButtonStyle}>
-            Become a Member
+            Create Your Account
           </Link>
         )}
       </section>
