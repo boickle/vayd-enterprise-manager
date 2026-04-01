@@ -8,16 +8,18 @@ import {
   clientDisplayName,
   isBlockEntry,
   blockDisplayLabel,
+  isFlexBlockItem,
   type DoctorDayAppt,
   type Depot,
   type DoctorDayResponse,
 } from '../api/appointments';
 import { useAuth } from '../auth/useAuth';
 import './DoctorDay.css';
-import { fetchEtas } from '../api/routing';
+import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { reverseGeocode } from '../api/geo';
 import { formatHM, colorForWhitespace, colorForHDRatio, colorForDrive } from '../utils/statsFormat';
+import { Heart } from 'lucide-react';
 
 /* =========================================================================
    Public props
@@ -52,6 +54,8 @@ export type DoctorDayProps = {
       windowStartIso?: string;
       windowEndIso?: string;
     };
+    /** Routing-v2: wall-clock return to depot (sec since local midnight on `date`). */
+    validationReturnSec?: number;
   };
 };
 
@@ -228,6 +232,8 @@ type PatientBadge = {
   description?: string | null;
   recordStatus?: string | null;
   alerts?: string | null;
+  isMember?: boolean;
+  membershipName?: string | null;
 };
 
 type Household = {
@@ -557,6 +563,15 @@ export default function DoctorDay({
         description: str(a as any, 'description') ?? str(a as any, 'visitReason') ?? null,
         recordStatus: str(a, 'statusName') ?? null,
         alerts: str(a, 'alerts') ?? null,
+        isMember: Boolean(
+          a.isMember ?? (a as any).patient?.isMember
+        ),
+        membershipName: (() => {
+          const raw = a.membershipName ?? (a as any).patient?.membershipName;
+          if (typeof raw === 'string' && raw.trim()) return raw.trim();
+          if (raw != null && String(raw).trim()) return String(raw).trim();
+          return null;
+        })(),
       };
 
       const apptIsPreview = (a as any)?.isPreview === true;
@@ -722,13 +737,15 @@ export default function DoctorDay({
           lon, // always present
           startIso: h.startIso ?? null,
           endIso: h.endIso ?? null,
-          ...(isBlock
-            ? {
-                isPersonalBlock: true,
-                windowStartIso: h.startIso ?? null,
-                windowEndIso: h.endIso ?? null,
-              }
-            : {}),
+          ...etaHouseholdArrivalWindowPayload({
+            isBlock,
+            isNoLocation: !!h.isNoLocation,
+            lat,
+            lon,
+            startIso: h.startIso,
+            endIso: h.endIso,
+            effectiveWindow: h.primary?.effectiveWindow,
+          }),
           isAlternateStop: (h.primary as any)?.isAlternateStop ?? undefined,
           alternateAddressText: (h.primary as any)?.alternateAddressText ?? undefined,
           appointmentTypeName:
@@ -1353,9 +1370,6 @@ export default function DoctorDay({
       {/* Header */}
       <div className="card">
         <h2>My Day</h2>
-        <p className="muted">
-          {userEmail ? `Signed in as ${userEmail}` : 'Signed in'} — choose a date and provider.
-        </p>
 
         <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <label className="muted" htmlFor="dd-date">
@@ -1412,10 +1426,38 @@ export default function DoctorDay({
           </div>
         )}
 
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 16,
+            flexWrap: 'wrap',
+            marginTop: 10,
+            marginBottom: 6,
+          }}
+        >
+          <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Day Metrics</h3>
+          {links.length > 0 && (
+            <a
+              href={links[0]}
+              className="btn"
+              style={{ fontSize: 13, padding: '7px 16px', whiteSpace: 'nowrap' }}
+              target="_blank"
+              rel="noreferrer"
+              title={
+                links.length > 1
+                  ? `Open segment 1 of ${links.length} in Google Maps (full day is split for the 25-stop limit)`
+                  : 'Open this day in Google Maps'
+              }
+            >
+              Google Maps
+            </a>
+          )}
+        </div>
         {/* Day stats */}
         <div
           className="dd-meta muted"
-          style={{ marginTop: 6, display: 'flex', gap: 12, flexWrap: 'wrap' }}
+          style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}
         >
           <span>
             <strong>Points:</strong> {points}
@@ -1448,36 +1490,6 @@ export default function DoctorDay({
 
       {/* Grid */}
       <div className="dd-grid">
-        {/* Navigate */}
-        <div className="card dd-nav">
-          <h3>Navigate</h3>
-          {links.length === 0 ? (
-            <p className="muted">Add at least two stops to generate a route.</p>
-          ) : links.length === 1 ? (
-            <a className="btn" href={links[0]} target="_blank" rel="noreferrer">
-              Open Full Day in Google Maps
-            </a>
-          ) : (
-            <>
-              <p className="muted">
-                Your route has many stops. We split it into {links.length} segments (Google Maps
-                allows up to 25 points per link).
-              </p>
-              <div className="dd-links">
-                {links.map((u, idx) => (
-                  <a key={idx} className="btn" href={u} target="_blank" rel="noreferrer">
-                    Open Segment {idx + 1}
-                  </a>
-                ))}
-              </div>
-            </>
-          )}
-          <p className="muted" style={{ marginTop: 8 }}>
-            Tip: On iOS/Android, this opens the Google Maps app if installed; otherwise it opens in
-            the browser.
-          </p>
-        </div>
-
         {/* Households */}
         <div className="card">
           <h3>Households ({displayHouseholds.length})</h3>
@@ -1497,6 +1509,7 @@ export default function DoctorDay({
             <ul className="dd-list">
               {displayHouseholds.map((h, i) => {
                 const a = h.primary;
+                const flexBlock = h.isPersonalBlock && isFlexBlockItem(a);
                 const clientHref = str(a, 'clientPimsId')
                   ? evetClientLink(str(a, 'clientPimsId') as string)
                   : undefined;
@@ -1518,14 +1531,23 @@ export default function DoctorDay({
                     className="dd-item"
                     style={
                       h.isPersonalBlock
-                        ? {
-                            background: '#f3f4f6', // light gray
-                            border: '1px solid #9ca3af', // gray-400
-                            borderRadius: 8,
-                            padding: 12,
-                            color: '#111827', // near-black text
-                            opacity: 0.65, // greyed out feel
-                          }
+                        ? flexBlock
+                          ? {
+                              background: '#fef9c3',
+                              border: '1px solid #ca8a04',
+                              borderRadius: 8,
+                              padding: 12,
+                              color: '#111827',
+                              opacity: 1,
+                            }
+                          : {
+                              background: '#f3f4f6', // light gray
+                              border: '1px solid #9ca3af', // gray-400
+                              borderRadius: 8,
+                              padding: 12,
+                              color: '#111827', // near-black text
+                              opacity: 0.65, // greyed out feel
+                            }
                         : h.isNoLocation
                           ? {
                               background: '#fee2e2',
@@ -1576,8 +1598,9 @@ export default function DoctorDay({
                         {h.isPersonalBlock ? (
                           <span
                             style={{
-                              background: '#000',
-                              color: '#fff',
+                              background: flexBlock ? '#fef08a' : '#000',
+                              color: flexBlock ? '#713f12' : '#fff',
+                              border: flexBlock ? '1px solid #ca8a04' : undefined,
                               fontWeight: 700,
                               fontSize: 12,
                               padding: '2px 8px',
@@ -1698,18 +1721,28 @@ export default function DoctorDay({
                               '';
                             return (
                               <li key={`${p.pimsId || p.name}-${idx2}`} className="dd-patient-item">
-                                {href ? (
-                                  <a
-                                    className="link-strong"
-                                    href={href}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
-                                    {p.name}
-                                  </a>
-                                ) : (
-                                  <span>{p.name}</span>
-                                )}{' '}
+                                <span style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                                  {p.isMember && (
+                                    <Heart size={14} fill="#dc2626" color="#dc2626" strokeWidth={1.5} aria-hidden />
+                                  )}
+                                  {href ? (
+                                    <a
+                                      className="link-strong"
+                                      href={href}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      {p.name}
+                                    </a>
+                                  ) : (
+                                    <span>{p.name}</span>
+                                  )}
+                                  {p.isMember && p.membershipName?.trim() ? (
+                                    <span style={{ color: '#991b1b', fontWeight: 600, fontSize: 13 }}>
+                                      {p.membershipName.trim()}
+                                    </span>
+                                  ) : null}
+                                </span>{' '}
                                 {p?.alerts ? (
                                   <>
                                     {' '}
