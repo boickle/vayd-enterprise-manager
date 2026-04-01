@@ -5,6 +5,7 @@ import {
   type PaymentResponse,
   PaymentIntent,
   type MembershipTransactionPayload,
+  type MembershipPaymentRequestOrigin,
   upgradeMembership,
   type MembershipUpgradeRequest,
 } from '../api/payments';
@@ -136,6 +137,14 @@ function resolveCustomerEmailFromNavigationState(state: PaymentNavigationState |
 
 function isValidEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+}
+
+function resolveMembershipRequestOriginForPayment(
+  state: PaymentNavigationState
+): MembershipPaymentRequestOrigin {
+  if (state.fromRoomLoaderPublicForm) return 'room-loader';
+  if (state.fromAppointmentFlow) return 'appointment-form';
+  return 'client-portal';
 }
 
 export type MembershipPaymentModalProps = {
@@ -388,6 +397,9 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
       const membershipTransactionPayload = state.membershipTransaction
         ? {
             ...state.membershipTransaction,
+            requestOrigin:
+              state.membershipTransaction.requestOrigin ??
+              resolveMembershipRequestOriginForPayment(state),
             metadata: {
               ...(state.membershipTransaction.metadata ?? {}),
               ...(petIdForPayload !== '' && { petId: petIdForPayload }),

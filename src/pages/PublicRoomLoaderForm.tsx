@@ -40,6 +40,7 @@ import {
   computeMembershipAgeYearsForRoomLoaderRow,
   MEMBERSHIP_GOLDEN_MIN_AGE_YEARS,
 } from '../utils/membershipAge';
+import { trackEvent } from '../utils/analytics';
 import './PublicRoomLoaderForm.css';
 
 /** Dollar amount credited when an additional pet enrolls in membership (same household / multi-pet rule). */
@@ -7735,7 +7736,17 @@ export default function PublicRoomLoaderForm() {
                     id="membership-bill-explainer-trigger"
                     aria-expanded={membershipBillSectionExpanded}
                     aria-controls="membership-bill-explainer-panel"
-                    onClick={() => setMembershipBillSectionExpanded((v) => !v)}
+                    onClick={() =>
+                      setMembershipBillSectionExpanded((v) => {
+                        const opening = !v;
+                        if (opening) {
+                          trackEvent('room_loader_membership_bill_explainer_opened', {
+                            eligible_pet_count: availablePlansForPetsForDisplay.length,
+                          });
+                        }
+                        return opening;
+                      })
+                    }
                     style={{
                       padding: '10px 16px',
                       fontSize: '14px',
