@@ -5,7 +5,6 @@ import { Field } from '../components/Field';
 import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
 import { PreviewMyDayModal } from '../components/PreviewMyDayModal';
-import { PreviewMyWeekModal } from '../components/PreviewMyWeekModal';
 import { validateAddress } from '../api/geo';
 // Removed fetchPrimaryProviders import - now using /employees/veterinarians endpoint directly
 
@@ -78,6 +77,9 @@ type Winner = {
   scoringComponents?: {
     downstreamWindowEdge?: number;
   };
+  /** Seconds since local midnight when return to depot completes (v2 validation). */
+  validationReturnSec?: number;
+  validationLastEtdSec?: number;
 };
 
 type UnifiedOption = Winner & {
@@ -488,9 +490,9 @@ export default function Routing() {
   const [doctorNames, setDoctorNames] = useState<Record<string, string>>({});
   const doctorNameReqs = useRef<Record<string, Promise<string>>>({});
 
-  const [myDayOpen, setMyDayOpen] = useState(false);
-  const [myWeekOpen, setMyWeekOpen] = useState(false);
-  const [previewOpt, setPreviewOpt] = useState<UnifiedOption | null>(null);
+  const [schedulePreview, setSchedulePreview] = useState<null | { opt: UnifiedOption; scope: 'day' | 'week' }>(
+    null
+  );
   const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({});
   const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(null); // 👈 NEW
   const [latestRoutingRequestId, setLatestRoutingRequestId] = useState<string | null>(() => {
@@ -552,13 +554,10 @@ export default function Routing() {
     if (!internalId) return; // couldn’t resolve → don’t open
 
     // Pass INTERNAL id via the same property your Preview/DoctorDay read
-    setPreviewOpt({ ...opt, doctorPimsId: internalId });
-    setMyWeekOpen(false);
-    setMyDayOpen(true);
+    setSchedulePreview({ opt: { ...opt, doctorPimsId: internalId }, scope: 'day' });
   }
-  function closeMyDay() {
-    setMyDayOpen(false);
-    setPreviewOpt(null);
+  function closeSchedulePreview() {
+    setSchedulePreview(null);
   }
 
   async function openMyWeek(opt: UnifiedOption) {
@@ -579,13 +578,7 @@ export default function Routing() {
       }
     }
     if (!internalId) return;
-    setPreviewOpt({ ...opt, doctorPimsId: internalId });
-    setMyDayOpen(false);
-    setMyWeekOpen(true);
-  }
-  function closeMyWeek() {
-    setMyWeekOpen(false);
-    setPreviewOpt(null);
+    setSchedulePreview({ opt: { ...opt, doctorPimsId: internalId }, scope: 'week' });
   }
 
   const hasFinalSelection = feedbackSuccessKey != null;
@@ -1982,7 +1975,7 @@ export default function Routing() {
                         }}
                         title="At least one downstream appointment is pushed within 15 minutes of its window end"
                       >
-                        ⚠ Pushes a downstream appointment to the edge of its window
+                        ⚠ May push a later appointment to its window edge. Check My Day for true warnings.
                       </div>
                     )}
 
@@ -2067,23 +2060,15 @@ export default function Routing() {
         )}
 
       </div>
-      {myDayOpen && previewOpt && (
+      {schedulePreview && (
         <PreviewMyDayModal
-          option={previewOpt}
-          onClose={closeMyDay}
-          serviceMinutes={form.newAppt.serviceMinutes}
-          newApptMeta={{
-            clientId: form.newAppt.clientId,
-            address: form.newAppt.address,
-            lat: form.newAppt.lat,
-            lon: form.newAppt.lon,
-          }}
-        />
-      )}
-      {myWeekOpen && previewOpt && (
-        <PreviewMyWeekModal
-          option={previewOpt}
-          onClose={closeMyWeek}
+          key={`routing-preview-${schedulePreview.opt.date}-${schedulePreview.opt.insertionIndex}-${schedulePreview.opt.suggestedStartIso}`}
+          option={schedulePreview.opt}
+          scheduleScope={schedulePreview.scope}
+          onScheduleScopeChange={(scope) =>
+            setSchedulePreview((p) => (p ? { ...p, scope } : null))
+          }
+          onClose={closeSchedulePreview}
           serviceMinutes={form.newAppt.serviceMinutes}
           newApptMeta={{
             clientId: form.newAppt.clientId,

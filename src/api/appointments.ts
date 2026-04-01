@@ -57,6 +57,11 @@ export type DoctorDayAppt = {
 
   /** Appointment window from backend (when available); use instead of frontend-calculated window */
   effectiveWindow?: { startIso: string; endIso: string };
+
+  /** One-team / membership: client is an active member */
+  isMember?: boolean;
+  /** Display name of the membership tier/plan when `isMember` */
+  membershipName?: string | null;
 }
 
 /** Item may be an appointment (doctor-day) or ETA byIndex row (has key). */
@@ -74,12 +79,31 @@ export function isBlockEntry(item: {
   return false;
 }
 
+/** True when the block is a "Flex Block" (routing stand-in; same treatment as personal block for drive logic). */
+export function isFlexBlockItem(item: { blockLabel?: string; title?: string } | null | undefined): boolean {
+  if (!item) return false;
+  const label = (item.blockLabel ?? item.title ?? '').trim().toLowerCase();
+  return label === 'flex block';
+}
+
 /** Label for a block entry: blockLabel ?? title ?? 'Personal Block'. Never use client/patient name for blocks. */
 export function blockDisplayLabel(item: { blockLabel?: string; title?: string } | null | undefined): string {
   if (!item) return 'Personal Block';
-  const label = (item.blockLabel ?? item.title ?? '').trim();
+  let label = (item.blockLabel ?? item.title ?? '').trim();
   if (!label) return 'Personal Block';
   if (label.toLowerCase() === 'client') return 'Personal Block';
+  if (label.toLowerCase() === 'flex block') return 'Flex Block';
+  // ETA/routing may prefix with duplicated tokens (e.g. "BLOCK BLOCK Greg …"); keep one BLOCK + rest.
+  label = label.replace(/^block(?:\s+block)+(?=\s|$)/i, 'BLOCK').trim();
+  // Backend sometimes sends repeated tokens only (e.g. "BLOCK BLOCK"); show once.
+  const parts = label.split(/\s+/).filter(Boolean);
+  if (parts.length > 1) {
+    const low0 = parts[0].toLowerCase();
+    if (parts.every((p) => p.toLowerCase() === low0)) {
+      if (low0 === 'block') return 'BLOCK';
+      return parts[0].charAt(0).toUpperCase() + parts[0].slice(1).toLowerCase();
+    }
+  }
   return label;
 }
 
@@ -193,6 +217,16 @@ export async function fetchDoctorDay(
         a?.effectiveWindow?.startIso && a?.effectiveWindow?.endIso
           ? { startIso: a.effectiveWindow.startIso, endIso: a.effectiveWindow.endIso }
           : undefined,
+
+      ...(() => {
+        const pat = a?.patient;
+        const isMember = a?.isMember === true || pat?.isMember === true;
+        const rawMem = a?.membershipName ?? pat?.membershipName;
+        let membershipName: string | undefined;
+        if (typeof rawMem === 'string' && rawMem.trim() !== '') membershipName = rawMem.trim();
+        else if (rawMem != null && String(rawMem).trim() !== '') membershipName = String(rawMem).trim();
+        return { isMember, membershipName };
+      })(),
     };
   });
 

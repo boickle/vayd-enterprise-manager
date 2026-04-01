@@ -8,7 +8,6 @@ import { fetchFillDayCandidates, type FillDayCandidate, type FillDayRequest, typ
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { useAuth } from '../auth/useAuth';
 import { PreviewMyDayModal, type PreviewMyDayOption } from '../components/PreviewMyDayModal';
-import { PreviewMyWeekModal } from '../components/PreviewMyWeekModal';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
 import { fetchClientMessages, type ClientMessagesResponse } from '../api/clientPortal';
 import jsPDF from 'jspdf';
@@ -87,15 +86,13 @@ export default function FillDayPage() {
   });
 
   // Preview My Day Modal
-  const [myDayOpen, setMyDayOpen] = useState(false);
-  const [previewOpt, setPreviewOpt] = useState<PreviewMyDayOption | null>(null);
-  const [previewCandidate, setPreviewCandidate] = useState<FillDayCandidate | null>(null);
+  const [fillSchedulePreview, setFillSchedulePreview] = useState<null | {
+    scope: 'day' | 'week';
+    option: PreviewMyDayOption & { clientName?: string; currentDriveSeconds?: number };
+    candidate: FillDayCandidate;
+  }>(null);
   const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({});
 
-  // Preview My Week Modal
-  const [myWeekOpen, setMyWeekOpen] = useState(false);
-  const [weekPreviewOpt, setWeekPreviewOpt] = useState<PreviewMyDayOption | null>(null);
-  const [weekPreviewCandidate, setWeekPreviewCandidate] = useState<FillDayCandidate | null>(null);
 
   // Messages History Modal
   const [messagesModalOpen, setMessagesModalOpen] = useState(false);
@@ -659,31 +656,19 @@ This spot is also being offered to other clients. If you'd like to book it for $
       });
     }
 
-    if (openWeek) {
-      setWeekPreviewOpt(option);
-      setWeekPreviewCandidate(candidate);
-      setMyWeekOpen(true);
-    } else {
-      setPreviewOpt(option);
-      setPreviewCandidate(candidate);
-      setMyDayOpen(true);
-    }
+    setFillSchedulePreview({
+      scope: openWeek ? 'week' : 'day',
+      option,
+      candidate,
+    });
   }
 
   function handlePreviewMyWeek(candidate: FillDayCandidate) {
     handlePreviewMyDay(candidate, true);
   }
 
-  function closeMyDay() {
-    setMyDayOpen(false);
-    setPreviewOpt(null);
-    setPreviewCandidate(null);
-  }
-
-  function closeMyWeek() {
-    setMyWeekOpen(false);
-    setWeekPreviewOpt(null);
-    setWeekPreviewCandidate(null);
+  function closeFillSchedulePreview() {
+    setFillSchedulePreview(null);
   }
 
   // Handle opening Messages History modal
@@ -1532,47 +1517,41 @@ This spot is also being offered to other clients. If you'd like to book it for $
         document.body
       )}
 
-      {/* Preview My Day Modal */}
-      {myDayOpen && previewOpt && previewCandidate && (
+      {fillSchedulePreview && (
         <PreviewMyDayModal
-          key={`fill-day-preview-${previewOpt.date}-${previewOpt.doctorPimsId}-${previewOpt.suggestedStartIso}`}
-          option={previewOpt}
-          onClose={closeMyDay}
-          serviceMinutes={Math.max(1, Math.round(previewCandidate.requiredDuration / 60))}
+          key={`fill-day-preview-${fillSchedulePreview.option.date}-${fillSchedulePreview.option.doctorPimsId}-${fillSchedulePreview.option.suggestedStartIso}`}
+          option={fillSchedulePreview.option}
+          scheduleScope={fillSchedulePreview.scope}
+          onScheduleScopeChange={(scope) =>
+            setFillSchedulePreview((p) => (p ? { ...p, scope } : null))
+          }
+          onClose={closeFillSchedulePreview}
+          serviceMinutes={Math.max(1, Math.round(fillSchedulePreview.candidate.requiredDuration / 60))}
           newApptMeta={{
-            // Match EXACTLY what Routing.tsx passes - only these 4 fields
-            clientId: String(previewCandidate.clientId),
-            address: previewCandidate.address?.fullAddress ||
-              [previewCandidate.address?.address1, previewCandidate.address?.city, previewCandidate.address?.state, previewCandidate.address?.zipcode]
+            clientId: String(fillSchedulePreview.candidate.clientId),
+            address:
+              fillSchedulePreview.candidate.address?.fullAddress ||
+              [
+                fillSchedulePreview.candidate.address?.address1,
+                fillSchedulePreview.candidate.address?.city,
+                fillSchedulePreview.candidate.address?.state,
+                fillSchedulePreview.candidate.address?.zipcode,
+              ]
                 .filter(Boolean)
                 .join(', '),
-            // Use coordinates from client object if available - this prevents borrowing coordinates
-            // from existing appointments and ensures the virtual appointment is unique
-            lat: previewCandidate.client?.lat != null && Number.isFinite(previewCandidate.client.lat) ? previewCandidate.client.lat : undefined,
-            lon: previewCandidate.client?.lon != null && Number.isFinite(previewCandidate.client.lon) ? previewCandidate.client.lon : undefined,
-            // Note: PreviewMyDayModal will split the address to extract city/state/zip
-          }}
-        />
-      )}
-
-      {/* Preview My Week Modal */}
-      {myWeekOpen && weekPreviewOpt && weekPreviewCandidate && (
-        <PreviewMyWeekModal
-          key={`fill-day-week-preview-${weekPreviewOpt.date}-${weekPreviewOpt.doctorPimsId}-${weekPreviewOpt.suggestedStartIso}`}
-          option={weekPreviewOpt}
-          onClose={closeMyWeek}
-          serviceMinutes={Math.max(1, Math.round(weekPreviewCandidate.requiredDuration / 60))}
-          newApptMeta={{
-            clientId: String(weekPreviewCandidate.clientId),
-            address: weekPreviewCandidate.address?.fullAddress ||
-              [weekPreviewCandidate.address?.address1, weekPreviewCandidate.address?.city, weekPreviewCandidate.address?.state, weekPreviewCandidate.address?.zipcode]
-                .filter(Boolean)
-                .join(', '),
-            city: weekPreviewCandidate.address?.city,
-            state: weekPreviewCandidate.address?.state,
-            zip: weekPreviewCandidate.address?.zipcode,
-            lat: weekPreviewCandidate.client?.lat != null && Number.isFinite(weekPreviewCandidate.client.lat) ? weekPreviewCandidate.client.lat : weekPreviewCandidate.address?.lat,
-            lon: weekPreviewCandidate.client?.lon != null && Number.isFinite(weekPreviewCandidate.client.lon) ? weekPreviewCandidate.client.lon : weekPreviewCandidate.address?.lon,
+            city: fillSchedulePreview.candidate.address?.city,
+            state: fillSchedulePreview.candidate.address?.state,
+            zip: fillSchedulePreview.candidate.address?.zipcode,
+            lat:
+              fillSchedulePreview.candidate.client?.lat != null &&
+              Number.isFinite(fillSchedulePreview.candidate.client.lat)
+                ? fillSchedulePreview.candidate.client.lat
+                : fillSchedulePreview.candidate.address?.lat,
+            lon:
+              fillSchedulePreview.candidate.client?.lon != null &&
+              Number.isFinite(fillSchedulePreview.candidate.client.lon)
+                ? fillSchedulePreview.candidate.client.lon
+                : fillSchedulePreview.candidate.address?.lon,
           }}
         />
       )}

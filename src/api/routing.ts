@@ -9,7 +9,51 @@ export type EtaHouseholdInput = {
   lon: number;
   startIso?: string | null;
   endIso?: string | null;
+  /** Customer arrival window; prefer doctor-day `effectiveWindow` — do not use service `endIso` as window end. */
+  windowStartIso?: string | null;
+  windowEndIso?: string | null;
+  isPersonalBlock?: boolean;
 };
+
+/**
+ * Fields for POST /routing/eta `households[]` so computeEtasForDay gets the real arrival window.
+ * Blocks: window = scheduled block span. Routable appointments: prefer `effectiveWindow` from doctor-day
+ * so the server does not fall back to `endIso` (service end) as the arrival window end.
+ */
+export function etaHouseholdArrivalWindowPayload(args: {
+  isBlock: boolean;
+  isNoLocation: boolean;
+  lat: number;
+  lon: number;
+  startIso: string | null | undefined;
+  endIso: string | null | undefined;
+  effectiveWindow?: { startIso?: string; endIso?: string } | null;
+}): {
+  isPersonalBlock?: true;
+  windowStartIso?: string | null;
+  windowEndIso?: string | null;
+} {
+  const { isBlock, isNoLocation, lat, lon, startIso, endIso, effectiveWindow } = args;
+
+  if (isBlock) {
+    return {
+      isPersonalBlock: true,
+      windowStartIso: startIso ?? null,
+      windowEndIso: endIso ?? null,
+    };
+  }
+
+  const isRoutable = !isNoLocation && Number.isFinite(lat) && Number.isFinite(lon);
+
+  if (isRoutable && effectiveWindow?.startIso && effectiveWindow?.endIso) {
+    return {
+      windowStartIso: effectiveWindow.startIso,
+      windowEndIso: effectiveWindow.endIso,
+    };
+  }
+
+  return {};
+}
 
 /** Selected routing candidate slot so backend can merge and assign correct positionInDay/ETAs */
 export type EtaRequestCandidateSlot = {
