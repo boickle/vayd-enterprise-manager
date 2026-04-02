@@ -30,6 +30,8 @@ type Slot = 'early' | 'mid' | 'late';
 type Winner = {
   date: string;
   insertionIndex: number;
+  /** 1-based visit order (1 = first, 2 = second, ...). positionInDay === insertionIndex + 1 */
+  positionInDay?: number;
   addedDriveSeconds: number;
   currentDriveSeconds: number;
   projectedDriveSeconds: number;
@@ -64,6 +66,20 @@ type Winner = {
   appointmentId?: number;
   // v2 multi-doctor support
   doctorId?: string; // PIMS ID of the doctor this candidate belongs to
+  // Arrival window from backend
+  arrivalWindow?: {
+    windowStartSec?: number;
+    windowEndSec?: number;
+    windowStartIso?: string;
+    windowEndIso?: string;
+  };
+  /** Scoring breakdown from routing-v2; downstreamWindowEdge > 0 means a downstream appt is pushed near its window end */
+  scoringComponents?: {
+    downstreamWindowEdge?: number;
+  };
+  /** Seconds since local midnight when return to depot completes (v2 validation). */
+  validationReturnSec?: number;
+  validationLastEtdSec?: number;
 };
 
 type UnifiedOption = Winner & {
@@ -274,24 +290,7 @@ function extractErrorMessage(err: unknown): string {
 }
 
 function SlotChip({ slot }: { slot?: Slot | null }) {
-  if (!slot) return null;
-  const text = slot === 'early' ? 'Early' : slot === 'mid' ? 'Mid' : 'Late';
-  const bg = slot === 'early' ? '#e0f2fe' : slot === 'mid' ? '#e0ffe7' : '#fef3c7';
-  const fg = slot === 'early' ? '#0369a1' : slot === 'mid' ? '#065f46' : '#92400e';
-  return (
-    <span
-      style={{
-        background: bg,
-        color: fg,
-        padding: '2px 8px',
-        borderRadius: 999,
-        fontSize: 12,
-        fontWeight: 600,
-      }}
-    >
-      {text}
-    </span>
-  );
+  return null; // Slot labels (Early / Mid / Late) not shown
 }
 
 function EdgeChip({ first, last }: { first?: boolean; last?: boolean }) {
@@ -491,8 +490,9 @@ export default function Routing() {
   const [doctorNames, setDoctorNames] = useState<Record<string, string>>({});
   const doctorNameReqs = useRef<Record<string, Promise<string>>>({});
 
-  const [myDayOpen, setMyDayOpen] = useState(false);
-  const [previewOpt, setPreviewOpt] = useState<UnifiedOption | null>(null);
+  const [schedulePreview, setSchedulePreview] = useState<null | { opt: UnifiedOption; scope: 'day' | 'week' }>(
+    null
+  );
   const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({});
   const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(null); // 👈 NEW
   const [latestRoutingRequestId, setLatestRoutingRequestId] = useState<string | null>(() => {
@@ -554,12 +554,31 @@ export default function Routing() {
     if (!internalId) return; // couldn’t resolve → don’t open
 
     // Pass INTERNAL id via the same property your Preview/DoctorDay read
-    setPreviewOpt({ ...opt, doctorPimsId: internalId });
-    setMyDayOpen(true);
+    setSchedulePreview({ opt: { ...opt, doctorPimsId: internalId }, scope: 'day' });
   }
-  function closeMyDay() {
-    setMyDayOpen(false);
-    setPreviewOpt(null);
+  function closeSchedulePreview() {
+    setSchedulePreview(null);
+  }
+
+  async function openMyWeek(opt: UnifiedOption) {
+    let internalId: string | undefined = doctorIdByPims[opt.doctorPimsId];
+    if (!internalId) {
+      try {
+        const { data } = await http.get(`/employees/pims/${encodeURIComponent(opt.doctorPimsId)}`);
+        const emp = Array.isArray(data) ? data[0] : data;
+        const resolvedId =
+          (emp?.id != null ? String(emp.id) : undefined) ??
+          (emp?.employee?.id != null ? String(emp.employee.id) : undefined);
+        if (resolvedId) {
+          internalId = resolvedId;
+          setDoctorIdByPims((m) => ({ ...m, [opt.doctorPimsId]: resolvedId }));
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!internalId) return;
+    setSchedulePreview({ opt: { ...opt, doctorPimsId: internalId }, scope: 'week' });
   }
 
   const hasFinalSelection = feedbackSuccessKey != null;
@@ -1267,9 +1286,11 @@ export default function Routing() {
       // Force index look nice for EMPTY day
       const empty = isEmptyDay(r);
       const displayInsertionIndex = empty ? 1 : (r.insertionIndex ?? 0) + 1;
+      const positionInDay = r.positionInDay ?? displayInsertionIndex;
       return {
         ...r,
         displayInsertionIndex,
+        positionInDay,
         routingRequestId: r.routingRequestId ?? requestIdFromResult,
         candidateIndex: r.candidateIndex ?? idx,
       };
@@ -1852,8 +1873,7 @@ export default function Routing() {
                   <div
                     key={`${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${idx}`}
                     className="card"
-                    style={{ position: 'relative', paddingTop: 48, cursor: 'pointer' }}
-                    onClick={() => openMyDay(opt)}
+                    style={{ position: 'relative', paddingTop: 48 }}
                   >
                     <div
                       style={{
@@ -1941,12 +1961,39 @@ export default function Routing() {
                       <EdgeChip first={opt.isFirstEdge} last={opt.isLastEdge} />
                     </div>
 
+                    {(opt.scoringComponents?.downstreamWindowEdge ?? 0) > 0 && (
+                      <div
+                        style={{
+                          marginBottom: 8,
+                          padding: '8px 12px',
+                          borderRadius: 8,
+                          background: '#fef3c7',
+                          border: '1px solid #f59e0b',
+                          color: '#92400e',
+                          fontSize: 13,
+                          fontWeight: 600,
+                        }}
+                        title="At least one downstream appointment is pushed within 15 minutes of its window end"
+                      >
+                        ⚠ May push a later appointment to its window edge. Check My Day for true warnings.
+                      </div>
+                    )}
+
                     <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                       <KeyValue
-                        k="Insertion Index"
-                        v={String((opt as any).displayInsertionIndex ?? opt.insertionIndex + 1)}
+                        k="Visit #"
+                        v={String((opt as any).positionInDay ?? (opt as any).displayInsertionIndex ?? opt.insertionIndex + 1)}
                       />
-                      <KeyValue k="Start Time" v={isoToTime(opt.suggestedStartIso)} />
+                      <KeyValue
+                        k="Visit Window"
+                        v={
+                          <strong>
+                            {opt.arrivalWindow?.windowStartIso && opt.arrivalWindow?.windowEndIso
+                              ? `${isoToTime(opt.arrivalWindow.windowStartIso)} – ${isoToTime(opt.arrivalWindow.windowEndIso)}`
+                              : isoToTime(opt.suggestedStartIso)}
+                          </strong>
+                        }
+                      />
                       <KeyValue
                         k="Added Drive"
                         v={opt.addedDrivePretty ?? secsToPretty(opt.addedDriveSeconds)}
@@ -1973,9 +2020,25 @@ export default function Routing() {
                       style={{
                         marginTop: 16,
                         display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 8,
                         justifyContent: 'flex-end',
                       }}
                     >
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        onClick={() => openMyDay(opt)}
+                      >
+                        My Day
+                      </button>
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        onClick={() => openMyWeek(opt)}
+                      >
+                        My Week
+                      </button>
                       <button
                         type="button"
                         className="btn"
@@ -1997,10 +2060,15 @@ export default function Routing() {
         )}
 
       </div>
-      {myDayOpen && previewOpt && (
+      {schedulePreview && (
         <PreviewMyDayModal
-          option={previewOpt}
-          onClose={closeMyDay}
+          key={`routing-preview-${schedulePreview.opt.date}-${schedulePreview.opt.insertionIndex}-${schedulePreview.opt.suggestedStartIso}`}
+          option={schedulePreview.opt}
+          scheduleScope={schedulePreview.scope}
+          onScheduleScopeChange={(scope) =>
+            setSchedulePreview((p) => (p ? { ...p, scope } : null))
+          }
+          onClose={closeSchedulePreview}
           serviceMinutes={form.newAppt.serviceMinutes}
           newApptMeta={{
             clientId: form.newAppt.clientId,

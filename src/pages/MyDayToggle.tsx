@@ -1,12 +1,16 @@
 // src/pages/MyDayToggle.tsx
 import { useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { DateTime } from 'luxon';
 import DoctorDay, { type DoctorDayProps } from './DoctorDay';
 import DoctorDayVisual from './DoctorDayVisual';
+import { MYWEEK_STORAGE_KEY, weekStartSunday } from './MyWeek';
 
 type Mode = 'list' | 'visual';
 
 export default function MyDayToggle(props: DoctorDayProps) {
-  const [mode, setMode] = useState<Mode>('list');
+  const navigate = useNavigate();
+  const [mode, setMode] = useState<Mode>('visual');
   // Track the selected doctor ID from each view
   const listDoctorIdRef = useRef<string>(props.initialDoctorId || '');
   const visualDoctorIdRef = useRef<string>(props.initialDoctorId || '');
@@ -14,13 +18,51 @@ export default function MyDayToggle(props: DoctorDayProps) {
   const listDateRef = useRef<string>(props.initialDate || '');
   const visualDateRef = useRef<string>(props.initialDate || '');
 
+  function goToMyWeek() {
+    let doctorId =
+      mode === 'visual' ? visualDoctorIdRef.current : listDoctorIdRef.current;
+    let dateIso =
+      mode === 'visual' ? visualDateRef.current : listDateRef.current;
+    if (mode === 'visual') {
+      const sel = document.querySelector('#vdd-doc') as HTMLSelectElement | null;
+      if (sel?.value) doctorId = sel.value;
+      const dIn = document.querySelector('#vdd-date') as HTMLInputElement | null;
+      if (dIn?.value) dateIso = dIn.value;
+    } else {
+      const sel = document.querySelector('#dd-doctor') as HTMLSelectElement | null;
+      if (sel?.value) doctorId = sel.value;
+      const dIn = document.querySelector('#dd-date') as HTMLInputElement | null;
+      if (dIn?.value) dateIso = dIn.value;
+    }
+    doctorId = doctorId || props.initialDoctorId || '';
+    dateIso = dateIso || props.initialDate || DateTime.local().toISODate() || '';
+    try {
+      const raw = sessionStorage.getItem(MYWEEK_STORAGE_KEY);
+      const prev = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      sessionStorage.setItem(
+        MYWEEK_STORAGE_KEY,
+        JSON.stringify({
+          ...prev,
+          weekStart: weekStartSunday(dateIso),
+          selectedDoctorId: doctorId,
+        })
+      );
+    } catch {
+      /* ignore */
+    }
+    navigate('/doctorweek');
+  }
+
   return (
     <div className="dd-section">
       {/* Toggle header */}
       <div className="card" style={{ marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <h2 style={{ margin: 0 }}>My Day</h2>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button type="button" className="btn btn--ghost" onClick={goToMyWeek}>
+              My Week
+            </button>
             <span className="muted" style={{ fontSize: 12 }}>
               View:
             </span>

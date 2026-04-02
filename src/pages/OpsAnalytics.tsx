@@ -627,7 +627,7 @@ export default function OpsAnalyticsPage() {
             }
           />
           <CardContent>
-            <Box height={340}>
+            <Box height={340} minHeight={340}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -649,13 +649,15 @@ export default function OpsAnalyticsPage() {
                     domain={normalize ? [0, 1] : ['auto', 'auto']}
                   />
                   <Tooltip
-                    formatter={(value: number) => {
-                      if (normalize) return Number(value).toFixed(2);
+                    formatter={(value: unknown) => {
+                      if (value == null) return '';
+                      const n = Number(value);
+                      if (normalize) return n.toFixed(2);
                       const m = METRICS.find((mm) => mm.key === metric);
-                      if (!m) return value;
-                      if (m.axis === 'pct') return `${Math.round(value)}%`;
-                      if (m.axis === 'ratio') return Number(value).toFixed(2);
-                      return Math.round(value).toLocaleString();
+                      if (!m) return String(value);
+                      if (m.axis === 'pct') return `${Math.round(n)}%`;
+                      if (m.axis === 'ratio') return n.toFixed(2);
+                      return Math.round(n).toLocaleString();
                     }}
                     labelFormatter={(l) => dayjs(l).format('ddd, MMM D, YYYY')}
                   />
@@ -730,7 +732,7 @@ export default function OpsAnalyticsPage() {
               <Card variant="outlined">
                 <CardHeader title={METRICS.find((m) => m.key === k)?.label || k} />
                 <CardContent>
-                  <Box height={220}>
+                  <Box height={220} minHeight={220}>
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={series} margin={{ left: 8, right: 8, top: 8, bottom: 8 }}>
                         <CartesianGrid strokeDasharray="3 3" />
@@ -745,10 +747,12 @@ export default function OpsAnalyticsPage() {
                           }
                         />
                         <Tooltip
-                          formatter={(value: number) =>
-                            k === 'whitePct'
-                              ? `${Math.round(value)}%`
-                              : Math.round(value).toLocaleString()
+                          formatter={(value: unknown) =>
+                            value == null
+                              ? ''
+                              : k === 'whitePct'
+                                ? `${Math.round(Number(value))}%`
+                                : Math.round(Number(value)).toLocaleString()
                           }
                           labelFormatter={(l) => dayjs(l).format('MMM D, YYYY')}
                         />

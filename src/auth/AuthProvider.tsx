@@ -2,6 +2,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { http, setToken } from '../api/http';
 import { setLogoutHandler } from '../api/http';
+import { getCurrentUser } from '../api/users';
 import { trackLogin, trackLogout } from '../utils/analytics';
 
 const MOCK = import.meta.env.VITE_MOCK_AUTH === '1';
@@ -27,6 +28,8 @@ type AuthContextType = {
   userId: string | null;
   role: string[];
   clientInfo: any | null; // Store client information for clients
+  /** Doctor/provider id from users table (when set). Used to default provider selection in My Day / My Week. */
+  doctorId: string | null;
   // ⬅️ now returns a LoginResult instead of void
   login: (email: string, password: string) => Promise<LoginResult>;
   logout: () => Promise<void>;
@@ -139,6 +142,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return null;
     }
   });
+  const [doctorId, setDoctorId] = useState<string | null>(null);
   const [clientInfo, setClientInfo] = useState<any | null>(() => {
     try {
       const stored = localStorage.getItem('vayd_clientInfo');
@@ -310,6 +314,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           localStorage.removeItem('vayd_clientId');
           setUserId(null);
         }
+        const userDoctorId = (user as any)?.doctorId;
+        if (userDoctorId != null && String(userDoctorId).trim() !== '') {
+          setDoctorId(String(userDoctorId));
+        }
         
         // Extract and set role from login response immediately
         const roles: string[] = Array.isArray((user as any)?.role)
@@ -405,6 +413,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setEmail(null);
     setToken(null);
     setUserId(null);
+    setDoctorId(null);
     setClientInfo(null);
   }
 
@@ -441,8 +450,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setEmail(null);
     setToken(null);
     setUserId(null);
+    setDoctorId(null);
     setClientInfo(null);
   }
+
+  // Fetch current user (for doctorId from users table) when we have a token
+  useEffect(() => {
+    if (!tokenState) {
+      setDoctorId(null);
+      return;
+    }
+    let on = true;
+    getCurrentUser()
+      .then((res: any) => {
+        const data = res?.data ?? res;
+        const id = data?.doctorId;
+        if (on && id != null && String(id).trim() !== '') {
+          setDoctorId(String(id));
+        }
+      })
+      .catch(() => {
+        if (on) setDoctorId(null);
+      });
+    return () => {
+      on = false;
+    };
+  }, [tokenState]);
 
   const value = useMemo<AuthContextType>(
     () => ({
@@ -451,11 +484,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       userId,
       role,
       clientInfo,
+      doctorId,
       login,
       logout,
       logoutAll,
     }),
-    [tokenState, email, userId, role, clientInfo]
+    [tokenState, email, userId, role, clientInfo, doctorId]
   );
 
 

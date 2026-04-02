@@ -1,0 +1,229 @@
+/* Public Room Loader Form — responsive for mobile */
+
+.public-room-loader {
+  padding: 14px 16px;
+  max-width: 1000px;
+  margin: 0 auto;
+  font-family: system-ui, -apple-system, sans-serif;
+  background-color: #f9f9f9;
+  min-height: 100vh;
+  box-sizing: border-box;
+  line-height: 1.4;
+}
+
+.public-room-loader-form-page {
+  padding: 14px 16px;
+  background-color: #fff;
+  border: 2px solid #ddd;
+  border-radius: 12px;
+  position: relative;
+  box-sizing: border-box;
+}
+
+.public-room-loader-summary-page {
+  padding: 14px 16px;
+  background-color: #fff;
+  border: 2px solid #ddd;
+  border-radius: 12px;
+  position: relative;
+  box-sizing: border-box;
+}
+
+.public-room-loader-nav-buttons {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 2px solid #e0e0e0;
+}
+
+.public-room-loader-nav-buttons button,
+.public-room-loader-btn {
+  min-height: 40px;
+  padding: 8px 18px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  box-sizing: border-box;
+  touch-action: manipulation;
+}
+
+.membership-rec-coverage-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px 14px;
+  align-items: start;
+}
+
+.membership-rec-coverage-header {
+  padding-bottom: 4px;
+}
+
+@media (max-width: 640px) {
+  .membership-rec-coverage-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .membership-rec-coverage-header > div:last-child {
+    margin-top: 4px;
+  }
+}
+
+.public-room-loader-summary-total-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.public-room-loader-summary-actions {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 2px solid #e0e0e0;
+}
+
+/* Checkbox/radio touch targets */
+.public-room-loader input[type="checkbox"],
+.public-room-loader input[type="radio"] {
+  min-width: 20px;
+  min-height: 20px;
+}
+
+/* Thank you / completed state */
+.public-room-loader-thank-you {
+  padding: 48px 24px;
+  max-width: 560px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.public-room-loader-thank-you-inner {
+  padding: 40px 36px;
+  box-sizing: border-box;
+}
+
+.public-room-loader-thank-you-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  align-items: center;
+}
+
+.public-room-loader-thank-you-actions .public-room-loader-thank-you-btn {
+  min-height: 48px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Loading / error states */
+.public-room-loader-loading,
+.public-room-loader-error {
+  padding: 40px 24px;
+  box-sizing: border-box;
+}
+
+@media (max-width: 768px) {
+  .public-room-loader {
+    padding: 16px 12px;
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
+  .public-room-loader-form-page,
+  .public-room-loader-summary-page {
+    padding: 16px;
+    border-radius: 8px;
+    border-width: 1px;
+  }
+
+  .public-room-loader-form-page h1,
+  .public-room-loader-summary-page h1 {
+    font-size: 1.35rem !important;
+    line-height: 1.3;
+  }
+
+  .public-room-loader-form-page .public-room-loader-page-label {
+    top: 16px;
+    right: 16px;
+    font-size: 12px;
+  }
+
+  .public-room-loader-nav-buttons,
+  .public-room-loader-summary-actions {
+    flex-direction: column;
+    margin-top: 16px;
+    padding-top: 12px;
+  }
+
+  .public-room-loader-nav-buttons button,
+  .public-room-loader-summary-actions button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .public-room-loader-summary-total-row {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+  }
+
+  .public-room-loader-summary-total-row span {
+    font-size: 1.1rem !important;
+  }
+
+  .public-room-loader-thank-you {
+    padding: 24px 16px;
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+  }
+
+  .public-room-loader-thank-you-inner {
+    padding: 24px 20px;
+  }
+
+  .public-room-loader-thank-you h1 {
+    font-size: 1.5rem !important;
+  }
+
+  .public-room-loader-thank-you-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .public-room-loader-thank-you-actions .public-room-loader-thank-you-btn {
+    width: 100%;
+  }
+
+  .public-room-loader-loading,
+  .public-room-loader-error {
+    padding: 24px 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .public-room-loader {
+    padding: 12px 10px;
+  }
+
+  .public-room-loader-form-page,
+  .public-room-loader-summary-page {
+    padding: 12px;
+  }
+
+  .public-room-loader-nav-buttons button,
+  .public-room-loader-summary-actions button,
+  .public-room-loader-btn {
+    min-height: 48px;
+    padding: 14px 20px;
+  }
+}

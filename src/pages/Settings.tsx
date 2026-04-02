@@ -10,12 +10,56 @@ import {
   updateEmployeeScheduleZones,
   updateAppointmentType,
   updateWeeklySchedule,
+  uploadEmployeeImage,
+  fetchScheduleOverrides,
+  fetchScheduleOverrideByDate,
+  createScheduleOverride,
+  updateScheduleOverride,
+  deleteScheduleOverride,
   type AppointmentType,
   type Employee,
   type EmployeeWeeklySchedule,
+  type ScheduleOverride,
   type Zone,
 } from '../api/appointmentSettings';
+import {
+  getPracticeSettings,
+  updatePracticeSettings,
+  settingsToForm,
+  formToSettings,
+  type ReminderSettingsForm,
+  type CadenceEntry,
+} from '../api/practiceSettings';
+import dayjs from 'dayjs';
+import { apiBaseUrl } from '../api/http';
+import {
+  searchItems,
+  getItemWithPriceBreaks,
+  createQuantityPriceBreak,
+  updateQuantityPriceBreak,
+  deleteQuantityPriceBreak,
+  type SearchResultItem,
+  type ItemWithPriceBreaks,
+  type QuantityPriceBreak,
+  type ItemType,
+} from '../api/quantityPriceBreaks';
+import {
+  fetchEmployeeGoals,
+  updateEmployeeGoals,
+  type EmployeeGoalsResponseDto,
+  type DailyGoalOverride,
+} from '../api/employeeGoals';
 import './Settings.css';
+
+/** Practice ID for reminder settings (default 1; override via env if needed) */
+const REMINDERS_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+
+/** Placeholder when GET /employees/:id/image returns 404 or fails */
+const EMPLOYEE_IMAGE_PLACEHOLDER =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80"><rect width="80" height="80" fill="#e4efe9"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#4b7c6a" font-size="11">No photo</text></svg>'
+  );
 
 // Helper function to format employee name with title and designation
 function formatEmployeeName(emp: Employee): string {
@@ -32,7 +76,16 @@ function formatEmployeeName(emp: Employee): string {
 
 export default function Settings() {
   const { role } = useAuth() as any;
-  const [activeTab, setActiveTab] = useState<'appointment-types' | 'employee-types' | 'employee-zones' | 'employee-schedule'>('appointment-types');
+  const [activeTab, setActiveTab] = useState<
+    | 'appointment-types'
+    | 'employee-types'
+    | 'employee-zones'
+    | 'employee-schedule'
+    | 'inventory'
+    | 'employee-images'
+    | 'employee-goals'
+    | 'reminders'
+  >('appointment-types');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +110,63 @@ export default function Settings() {
   const [selectedEmployeeForSchedule, setSelectedEmployeeForSchedule] = useState<Employee | null>(null);
   // Use composite key: `${employeeId}-${dayOfWeek}` since schedules might not have ids
   const [scheduleUpdates, setScheduleUpdates] = useState<Map<string, Partial<EmployeeWeeklySchedule>>>(new Map());
+
+  // Inventory state
+  const [practiceId] = useState(1); // Default practice ID, could be made configurable
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<ItemWithPriceBreaks | null>(null);
+  const [loadingItem, setLoadingItem] = useState(false);
+  const [editingPriceBreak, setEditingPriceBreak] = useState<QuantityPriceBreak | null>(null);
+  const [newPriceBreak, setNewPriceBreak] = useState<{
+    price: string;
+    markup: string;
+    lowQuantity: string;
+    highQuantity: string;
+    isActive: boolean;
+  } | null>(null);
+  const [priceManuallyEdited, setPriceManuallyEdited] = useState(false);
+
+  // Schedule overrides calendar (per-date overrides for routing)
+  const [showOverrideCalendar, setShowOverrideCalendar] = useState(false);
+  const [overrideCalendarEmployeeId, setOverrideCalendarEmployeeId] = useState<number | null>(null);
+  const [overrideCalendarMonth, setOverrideCalendarMonth] = useState(() => dayjs().startOf('month'));
+  const [overridesInRange, setOverridesInRange] = useState<ScheduleOverride[]>([]);
+  const [selectedOverrideDate, setSelectedOverrideDate] = useState<string | null>(null);
+  const [overrideForm, setOverrideForm] = useState<ScheduleOverride | Partial<ScheduleOverride> & { date: string } | null>(null);
+  const [overrideFormLoading, setOverrideFormLoading] = useState(false);
+  const [overrideFormSaving, setOverrideFormSaving] = useState(false);
+
+  // Employee Images state
+  const [uploadingEmployeeId, setUploadingEmployeeId] = useState<number | null>(null);
+  const [imageUploadError, setImageUploadError] = useState<string | null>(null);
+  /** Bump per employee after upload so img src changes and browser reloads the image */
+  const [employeeImageVersion, setEmployeeImageVersion] = useState<Record<number, number>>({});
+
+  // Employee Goals tab state
+  const [selectedEmployeeForGoals, setSelectedEmployeeForGoals] = useState<Employee | null>(null);
+  const [goalsForm, setGoalsForm] = useState<Partial<EmployeeGoalsResponseDto> & { dailyGoals?: DailyGoalOverride[] }>({});
+  const [goalsLoading, setGoalsLoading] = useState(false);
+  const [goalsSaving, setGoalsSaving] = useState(false);
+  const [goalsLoadError, setGoalsLoadError] = useState<string | null>(null);
+
+  // Reminders tab state
+  const [reminderForm, setReminderForm] = useState<ReminderSettingsForm>({
+    enableEmail: true,
+    enableSms: false,
+    appointmentWindowDays: 30,
+    appointmentCadence: [],
+    healthCadence: [],
+    testRedirectEmail: '',
+    testRedirectPhone: '',
+    excludedNamePhrases: [],
+    smsExcludedNamePhrases: [],
+    includedReminderTypes: [],
+  });
+  const [reminderLoading, setReminderLoading] = useState(false);
+  const [reminderSaving, setReminderSaving] = useState(false);
+  const [reminderLoadError, setReminderLoadError] = useState<string | null>(null);
 
   // Normalize roles
   const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
@@ -96,6 +206,29 @@ export default function Settings() {
     if (!isAdmin) return;
     loadData();
   }, [isAdmin]);
+
+  // Load reminder settings when Reminders tab is active
+  useEffect(() => {
+    if (!isAdmin || activeTab !== 'reminders') return;
+    let cancelled = false;
+    setReminderLoadError(null);
+    setReminderLoading(true);
+    getPracticeSettings(REMINDERS_PRACTICE_ID)
+      .then((settings) => {
+        if (!cancelled) setReminderForm(settingsToForm(settings));
+      })
+      .catch((err: any) => {
+        if (!cancelled) {
+          setReminderLoadError(err?.response?.data?.message || err?.message || 'Failed to load reminder settings');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setReminderLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, activeTab]);
 
   const loadData = async () => {
     setLoading(true);
@@ -180,6 +313,58 @@ export default function Settings() {
       setError(err?.response?.data?.message || err?.message || 'Failed to load employee');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleLoadEmployeeGoals = async (employeeId: number) => {
+    setGoalsLoadError(null);
+    setGoalsLoading(true);
+    try {
+      const goals = await fetchEmployeeGoals(employeeId);
+      setGoalsForm({
+        ...goals,
+        dailyGoals: goals.dailyGoals ? [...goals.dailyGoals] : [],
+      });
+    } catch (err: any) {
+      setGoalsLoadError(err?.response?.data?.message || err?.message || 'Failed to load goals');
+      setGoalsForm({});
+    } finally {
+      setGoalsLoading(false);
+    }
+  };
+
+  const handleSaveEmployeeGoals = async () => {
+    if (!selectedEmployeeForGoals) return;
+    setGoalsSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const payload: Parameters<typeof updateEmployeeGoals>[1] = {};
+      if (goalsForm.defaultWorkStartLocal !== undefined) payload.defaultWorkStartLocal = goalsForm.defaultWorkStartLocal || undefined;
+      if (goalsForm.defaultWorkEndLocal !== undefined) payload.defaultWorkEndLocal = goalsForm.defaultWorkEndLocal || undefined;
+      if (goalsForm.defaultStartDepotLat !== undefined) payload.defaultStartDepotLat = goalsForm.defaultStartDepotLat;
+      if (goalsForm.defaultStartDepotLon !== undefined) payload.defaultStartDepotLon = goalsForm.defaultStartDepotLon;
+      if (goalsForm.defaultEndDepotLat !== undefined) payload.defaultEndDepotLat = goalsForm.defaultEndDepotLat;
+      if (goalsForm.defaultEndDepotLon !== undefined) payload.defaultEndDepotLon = goalsForm.defaultEndDepotLon;
+      if (goalsForm.dailyRevenueGoal !== undefined) payload.dailyRevenueGoal = goalsForm.dailyRevenueGoal;
+      if (goalsForm.bonusRevenueGoal !== undefined) payload.bonusRevenueGoal = goalsForm.bonusRevenueGoal;
+      if (goalsForm.dailyPointGoal !== undefined) payload.dailyPointGoal = goalsForm.dailyPointGoal;
+      if (goalsForm.weeklyPointGoal !== undefined) payload.weeklyPointGoal = goalsForm.weeklyPointGoal;
+      if (goalsForm.dailyGoals !== undefined) {
+        payload.dailyGoals = goalsForm.dailyGoals.map((d) => ({
+          dayOfWeek: d.dayOfWeek,
+          dailyPointGoal: d.dailyPointGoal,
+          dailyRevenueGoal: d.dailyRevenueGoal,
+        }));
+      }
+      const updated = await updateEmployeeGoals(selectedEmployeeForGoals.id, payload);
+      setGoalsForm({ ...updated, dailyGoals: updated.dailyGoals ? [...updated.dailyGoals] : [] });
+      setSuccess('Employee goals updated successfully');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to update goals');
+    } finally {
+      setGoalsSaving(false);
     }
   };
 
@@ -344,6 +529,137 @@ export default function Settings() {
     });
   };
 
+  // Load overrides for the calendar month when modal is open and employee/month change
+  useEffect(() => {
+    if (!showOverrideCalendar || !overrideCalendarEmployeeId) {
+      setOverridesInRange([]);
+      return;
+    }
+    const start = overrideCalendarMonth.format('YYYY-MM-DD');
+    const end = overrideCalendarMonth.endOf('month').format('YYYY-MM-DD');
+    fetchScheduleOverrides(overrideCalendarEmployeeId, { startDate: start, endDate: end })
+      .then(setOverridesInRange)
+      .catch(() => setOverridesInRange([]));
+  }, [showOverrideCalendar, overrideCalendarEmployeeId, overrideCalendarMonth]);
+
+  const handleOpenOverrideCalendar = () => {
+    setOverrideCalendarEmployeeId(selectedEmployeeForSchedule?.id ?? sortedEmployees.find((e) => e.isProvider)?.id ?? null);
+    setOverrideCalendarMonth(dayjs().startOf('month'));
+    setSelectedOverrideDate(null);
+    setOverrideForm(null);
+    setShowOverrideCalendar(true);
+  };
+
+  const handleOverrideDayClick = async (dateStr: string) => {
+    if (!overrideCalendarEmployeeId) return;
+    setSelectedOverrideDate(dateStr);
+    setOverrideFormLoading(true);
+    setOverrideForm(null);
+    try {
+      const [existing, employee] = await Promise.all([
+        fetchScheduleOverrideByDate(overrideCalendarEmployeeId, dateStr),
+        fetchEmployee(overrideCalendarEmployeeId),
+      ]);
+      const dayOfWeek = dayjs(dateStr).day();
+      const defaultSchedule = employee.weeklySchedules?.find((s) => s.dayOfWeek === dayOfWeek);
+
+      const defaultLatLon = {
+        startDepotLat: defaultSchedule?.startDepotLat ?? undefined,
+        startDepotLon: defaultSchedule?.startDepotLon ?? undefined,
+        endDepotLat: defaultSchedule?.endDepotLat ?? undefined,
+        endDepotLon: defaultSchedule?.endDepotLon ?? undefined,
+      };
+
+      if (existing) {
+        setOverrideForm({
+          ...existing,
+          startDepotLat: existing.startDepotLat ?? defaultLatLon.startDepotLat,
+          startDepotLon: existing.startDepotLon ?? defaultLatLon.startDepotLon,
+          endDepotLat: existing.endDepotLat ?? defaultLatLon.endDepotLat,
+          endDepotLon: existing.endDepotLon ?? defaultLatLon.endDepotLon,
+        });
+      } else {
+        setOverrideForm({
+          date: dateStr,
+          workStartLocal: defaultSchedule?.workStartLocal ?? '',
+          workEndLocal: defaultSchedule?.workEndLocal ?? '',
+          ...defaultLatLon,
+        });
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to load override');
+    } finally {
+      setOverrideFormLoading(false);
+    }
+  };
+
+  const handleOverrideSave = async () => {
+    if (!overrideCalendarEmployeeId || !overrideForm?.date) return;
+    setOverrideFormSaving(true);
+    setError(null);
+    try {
+      const payload = {
+        workStartLocal: overrideForm.workStartLocal || undefined,
+        workEndLocal: overrideForm.workEndLocal || undefined,
+        startDepotLat: overrideForm.startDepotLat ?? undefined,
+        startDepotLon: overrideForm.startDepotLon ?? undefined,
+        endDepotLat: overrideForm.endDepotLat ?? undefined,
+        endDepotLon: overrideForm.endDepotLon ?? undefined,
+      };
+      if ('id' in overrideForm && overrideForm.id) {
+        await updateScheduleOverride(overrideCalendarEmployeeId, overrideForm.id, payload);
+      } else {
+        await createScheduleOverride(overrideCalendarEmployeeId, {
+          date: overrideForm.date,
+          ...payload,
+        });
+      }
+      setSuccess('Schedule override saved');
+      setTimeout(() => setSuccess(null), 3000);
+      const start = overrideCalendarMonth.format('YYYY-MM-DD');
+      const end = overrideCalendarMonth.endOf('month').format('YYYY-MM-DD');
+      const list = await fetchScheduleOverrides(overrideCalendarEmployeeId, { startDate: start, endDate: end });
+      setOverridesInRange(list);
+      const updated = list.find((o) => o.date === overrideForm.date) ?? { ...overrideForm, date: overrideForm.date };
+      setOverrideForm(updated as ScheduleOverride);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to save override');
+    } finally {
+      setOverrideFormSaving(false);
+    }
+  };
+
+  const handleOverrideRemove = async () => {
+    if (!overrideCalendarEmployeeId || !overrideForm || !('id' in overrideForm) || !overrideForm.id) return;
+    setOverrideFormSaving(true);
+    setError(null);
+    try {
+      await deleteScheduleOverride(overrideCalendarEmployeeId, overrideForm.id);
+      setSuccess('Override removed; default schedule will be used for that day');
+      setTimeout(() => setSuccess(null), 3000);
+      const start = overrideCalendarMonth.format('YYYY-MM-DD');
+      const end = overrideCalendarMonth.endOf('month').format('YYYY-MM-DD');
+      const list = await fetchScheduleOverrides(overrideCalendarEmployeeId, { startDate: start, endDate: end });
+      setOverridesInRange(list);
+      const employee = await fetchEmployee(overrideCalendarEmployeeId);
+      const dayOfWeek = dayjs(overrideForm.date).day();
+      const defaultSchedule = employee.weeklySchedules?.find((s) => s.dayOfWeek === dayOfWeek);
+      setOverrideForm({
+        date: overrideForm.date,
+        workStartLocal: defaultSchedule?.workStartLocal ?? '',
+        workEndLocal: defaultSchedule?.workEndLocal ?? '',
+        startDepotLat: defaultSchedule?.startDepotLat ?? undefined,
+        startDepotLon: defaultSchedule?.startDepotLon ?? undefined,
+        endDepotLat: defaultSchedule?.endDepotLat ?? undefined,
+        endDepotLon: defaultSchedule?.endDepotLon ?? undefined,
+      });
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to remove override');
+    } finally {
+      setOverrideFormSaving(false);
+    }
+  };
+
   const handleSaveEmployeeSchedule = async () => {
     if (!selectedEmployeeForSchedule) return;
     setSaving(true);
@@ -436,6 +752,290 @@ export default function Settings() {
     });
   };
 
+  // Inventory handlers - type-ahead search with debouncing
+  useEffect(() => {
+    if (activeTab !== 'inventory') return;
+    
+    const trimmedQuery = searchQuery.trim();
+    if (!trimmedQuery) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+
+    // Debounce search - wait 300ms after user stops typing
+    const timeoutId = setTimeout(async () => {
+      setSearching(true);
+      setError(null);
+      try {
+        const results = await searchItems(trimmedQuery, practiceId);
+        setSearchResults(results);
+      } catch (err: any) {
+        setError(err?.response?.data?.message || err?.message || 'Failed to search items');
+        setSearchResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [searchQuery, practiceId, activeTab]);
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    setSearching(true);
+    setError(null);
+    try {
+      const results = await searchItems(searchQuery.trim(), practiceId);
+      setSearchResults(results);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to search items');
+      setSearchResults([]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const handleSelectItem = async (itemType: ItemType, itemId: number) => {
+    if (!itemId || itemId === 0) {
+      setError('Invalid item ID');
+      return;
+    }
+    setLoadingItem(true);
+    setError(null);
+    setSuccess(null);
+    setEditingPriceBreak(null);
+    setNewPriceBreak(null);
+    setSelectedItem(null); // Clear previous selection
+    try {
+      const item = await getItemWithPriceBreaks(itemType, itemId, practiceId);
+      // Ensure the response has the expected structure
+      if (item && item.item && item.itemType) {
+        // Ensure priceBreaks is always an array
+        if (!Array.isArray(item.priceBreaks)) {
+          item.priceBreaks = [];
+        }
+        setSelectedItem(item);
+      } else {
+        throw new Error('Invalid response structure from server');
+      }
+    } catch (err: any) {
+      const errorMessage = err?.response?.data?.message || err?.message || 'Failed to load item details';
+      setError(errorMessage);
+      setSelectedItem(null);
+    } finally {
+      setLoadingItem(false);
+    }
+  };
+
+  const handleSavePriceBreak = async (id: number) => {
+    if (!editingPriceBreak) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await updateQuantityPriceBreak(id, {
+        price: editingPriceBreak.price,
+        markup: editingPriceBreak.markup,
+        lowQuantity: editingPriceBreak.lowQuantity,
+        highQuantity: editingPriceBreak.highQuantity,
+        isActive: editingPriceBreak.isActive,
+      });
+      setSuccess('Price break updated successfully');
+      setTimeout(() => setSuccess(null), 3000);
+      setEditingPriceBreak(null);
+      // Reload item details
+      if (selectedItem) {
+        const item = await getItemWithPriceBreaks(
+          selectedItem.itemType,
+          selectedItem.item.id,
+          practiceId
+        );
+        setSelectedItem(item);
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to update price break');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCreatePriceBreak = async () => {
+    if (!newPriceBreak || !selectedItem) {
+      setError('Missing required data');
+      return;
+    }
+    
+    // Validate required fields
+    const price = newPriceBreak.price?.trim();
+    const lowQty = newPriceBreak.lowQuantity?.trim();
+    const highQty = newPriceBreak.highQuantity?.trim();
+    
+    if (!price || !lowQty || !highQty) {
+      setError('Please fill in all required fields (Price, Low Quantity, High Quantity)');
+      return;
+    }
+    
+    const priceNum = Number(price);
+    const lowQtyNum = Number(lowQty);
+    const highQtyNum = Number(highQty);
+    
+    if (isNaN(priceNum) || priceNum < 0) {
+      setError('Price must be a valid number >= 0');
+      return;
+    }
+    
+    if (isNaN(lowQtyNum) || lowQtyNum < 1) {
+      setError('Low Quantity must be >= 1');
+      return;
+    }
+    
+    if (isNaN(highQtyNum) || highQtyNum < 1) {
+      setError('High Quantity must be >= 1');
+      return;
+    }
+    
+    if (lowQtyNum > highQtyNum) {
+      setError('Low Quantity must be <= High Quantity');
+      return;
+    }
+    
+    const markupValue = newPriceBreak.markup?.trim() ? Number(newPriceBreak.markup) : null;
+    
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await createQuantityPriceBreak(
+        selectedItem.itemType,
+        selectedItem.item.id,
+        practiceId,
+        priceNum,
+        lowQtyNum,
+        highQtyNum,
+        markupValue,
+        newPriceBreak.isActive
+      );
+      setSuccess('Price break created successfully');
+      setTimeout(() => setSuccess(null), 3000);
+      setNewPriceBreak(null);
+      // Reload item details
+      const item = await getItemWithPriceBreaks(
+        selectedItem.itemType,
+        selectedItem.item.id,
+        practiceId
+      );
+      setSelectedItem(item);
+    } catch (err: any) {
+      const errorMessage = err?.response?.data?.message || err?.message || 'Failed to create price break';
+      setError(errorMessage);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeletePriceBreak = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this price break?')) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await deleteQuantityPriceBreak(id);
+      setSuccess('Price break deleted successfully');
+      setTimeout(() => setSuccess(null), 3000);
+      // Reload item details
+      if (selectedItem) {
+        const item = await getItemWithPriceBreaks(
+          selectedItem.itemType,
+          selectedItem.item.id,
+          practiceId
+        );
+        setSelectedItem(item);
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to delete price break');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveReminders = async () => {
+    setReminderSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await updatePracticeSettings(REMINDERS_PRACTICE_ID, formToSettings(reminderForm));
+      setSuccess('Reminder settings updated successfully');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to update reminder settings');
+    } finally {
+      setReminderSaving(false);
+    }
+  };
+
+  const updateAppointmentCadenceEntry = (index: number, update: Partial<CadenceEntry>) => {
+    setReminderForm((prev) => {
+      const next = [...prev.appointmentCadence];
+      next[index] = { ...next[index], ...update };
+      return { ...prev, appointmentCadence: next };
+    });
+  };
+
+  const updateHealthCadenceEntry = (index: number, update: Partial<CadenceEntry>) => {
+    setReminderForm((prev) => {
+      const next = [...prev.healthCadence];
+      next[index] = { ...next[index], ...update };
+      return { ...prev, healthCadence: next };
+    });
+  };
+
+  const addAppointmentCadenceEntry = () => {
+    setReminderForm((prev) => ({
+      ...prev,
+      appointmentCadence: [...prev.appointmentCadence, { days: 1, channels: ['sms'], smsFallback: 'email' }],
+    }));
+  };
+
+  const addHealthCadenceEntry = () => {
+    setReminderForm((prev) => ({
+      ...prev,
+      healthCadence: [...prev.healthCadence, { days: 30, channels: ['email'], smsFallback: 'none' }],
+    }));
+  };
+
+  const removeAppointmentCadenceEntry = (index: number) => {
+    setReminderForm((prev) => ({
+      ...prev,
+      appointmentCadence: prev.appointmentCadence.filter((_, i) => i !== index),
+    }));
+  };
+
+  const removeHealthCadenceEntry = (index: number) => {
+    setReminderForm((prev) => ({
+      ...prev,
+      healthCadence: prev.healthCadence.filter((_, i) => i !== index),
+    }));
+  };
+
+  const handleUploadEmployeeImage = async (employeeId: number, file: File | null) => {
+    if (!file) return;
+    setUploadingEmployeeId(employeeId);
+    setImageUploadError(null);
+    try {
+      await uploadEmployeeImage(employeeId, file);
+      setEmployeeImageVersion((prev) => ({ ...prev, [employeeId]: Date.now() }));
+      setSuccess('Image updated successfully');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setImageUploadError(err?.response?.data?.message ?? err?.message ?? 'Failed to upload image');
+    } finally {
+      setUploadingEmployeeId(null);
+    }
+  };
+
   if (!isAdmin) {
     return (
       <div className="container">
@@ -478,6 +1078,30 @@ export default function Settings() {
             onClick={() => setActiveTab('employee-schedule')}
           >
             Employee Schedule
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'inventory' ? 'active' : ''}`}
+            onClick={() => setActiveTab('inventory')}
+          >
+            Inventory
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'employee-images' ? 'active' : ''}`}
+            onClick={() => setActiveTab('employee-images')}
+          >
+            Employee Images
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'employee-goals' ? 'active' : ''}`}
+            onClick={() => setActiveTab('employee-goals')}
+          >
+            Employee Goals
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'reminders' ? 'active' : ''}`}
+            onClick={() => setActiveTab('reminders')}
+          >
+            Reminders
           </button>
         </div>
 
@@ -895,12 +1519,297 @@ export default function Settings() {
           </div>
         )}
 
+        {/* Employee Images Tab */}
+        {activeTab === 'employee-images' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Employee Images</h2>
+            <p className="settings-section-description">
+              View and update profile images for each employee. These images can appear in the post-appointment survey and elsewhere. Allowed: JPEG, PNG, GIF, WebP. Max 5MB.
+            </p>
+
+            {imageUploadError && (
+              <div className="settings-message settings-error-message">
+                {imageUploadError}
+                <button onClick={() => setImageUploadError(null)} className="settings-close">×</button>
+              </div>
+            )}
+
+            <div className="settings-employee-images-list">
+              {sortedEmployees.map((emp) => (
+                <div key={emp.id} className="settings-employee-image-row">
+                  <div className="settings-employee-image-preview">
+                    <img
+                      src={`${apiBaseUrl}/employees/${emp.id}/image?t=${employeeImageVersion[emp.id] ?? 0}`}
+                      alt=""
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = EMPLOYEE_IMAGE_PLACEHOLDER;
+                      }}
+                    />
+                  </div>
+                  <div className="settings-employee-image-info">
+                    <strong>{formatEmployeeName(emp)}</strong>
+                  </div>
+                  <div className="settings-employee-image-upload">
+                    <label className={`settings-file-label ${uploadingEmployeeId === emp.id ? 'uploading' : ''}`}>
+                      <input
+                        type="file"
+                        accept=".jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp"
+                        className="settings-file-input"
+                        disabled={uploadingEmployeeId === emp.id}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            handleUploadEmployeeImage(emp.id, file);
+                          }
+                          e.target.value = '';
+                        }}
+                      />
+                      <span className="btn secondary">
+                        {uploadingEmployeeId === emp.id ? 'Uploading…' : 'Change image'}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Employee Goals Tab */}
+        {activeTab === 'employee-goals' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Employee Goals</h2>
+            <p className="settings-section-description">
+              Set default work times, depot locations, and revenue/point goals per employee. Use per-day overrides to set different daily goals by day of week (e.g. higher goals on weekdays).
+            </p>
+
+            <div className="settings-form-group">
+              <label className="settings-label">Select Employee</label>
+              <select
+                className="settings-select"
+                value={selectedEmployeeForGoals?.id || ''}
+                onChange={(e) => {
+                  const empId = Number(e.target.value);
+                  if (empId) {
+                    const emp = sortedEmployees.find((em) => em.id === empId) ?? null;
+                    setSelectedEmployeeForGoals(emp);
+                    handleLoadEmployeeGoals(empId);
+                  } else {
+                    setSelectedEmployeeForGoals(null);
+                    setGoalsForm({});
+                    setGoalsLoadError(null);
+                  }
+                }}
+              >
+                <option value="">-- Select an employee --</option>
+                {sortedEmployees.map((emp) => (
+                  <option key={emp.id} value={emp.id}>
+                    {formatEmployeeName(emp)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {goalsLoadError && (
+              <div className="settings-message settings-error-message">
+                {goalsLoadError}
+                <button onClick={() => setGoalsLoadError(null)} className="settings-close">×</button>
+              </div>
+            )}
+
+            {selectedEmployeeForGoals && (
+              <>
+                {goalsLoading ? (
+                  <div className="settings-loading">
+                    <div className="settings-spinner"></div>
+                    <span>Loading goals...</span>
+                  </div>
+                ) : (
+                  <div className="settings-card">
+                    <h3 className="settings-card-title">{formatEmployeeName(selectedEmployeeForGoals)}</h3>
+
+                    <h4 className="settings-card-title" style={{ marginTop: '16px', fontSize: '16px' }}>Goals</h4>
+                    <div className="settings-form-group" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px' }}>
+                      <div>
+                        <label className="settings-label">Daily revenue goal</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={goalsForm.dailyRevenueGoal ?? ''}
+                          onChange={(e) => setGoalsForm((f) => ({ ...f, dailyRevenueGoal: e.target.value === '' ? undefined : Number(e.target.value) }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="settings-label">Bonus revenue goal</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={goalsForm.bonusRevenueGoal ?? ''}
+                          onChange={(e) => setGoalsForm((f) => ({ ...f, bonusRevenueGoal: e.target.value === '' ? undefined : Number(e.target.value) }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="settings-label">Daily point goal</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={goalsForm.dailyPointGoal ?? ''}
+                          onChange={(e) => setGoalsForm((f) => ({ ...f, dailyPointGoal: e.target.value === '' ? undefined : Number(e.target.value) }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="settings-label">Weekly point goal</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={goalsForm.weeklyPointGoal ?? ''}
+                          onChange={(e) => setGoalsForm((f) => ({ ...f, weeklyPointGoal: e.target.value === '' ? undefined : Number(e.target.value) }))}
+                        />
+                      </div>
+                    </div>
+
+                    <h4 className="settings-card-title" style={{ marginTop: '16px', fontSize: '16px' }}>Per-day overrides</h4>
+                    <p className="settings-muted" style={{ marginBottom: '8px' }}>
+                      Override daily point and revenue goals for specific days (0=Sunday … 6=Saturday). When set, these override the default goals above for that day.
+                    </p>
+                    <div className="settings-table-container">
+                      <table className="settings-table">
+                        <thead>
+                          <tr>
+                            <th>Day</th>
+                            <th>Daily point goal</th>
+                            <th>Daily revenue goal</th>
+                            <th></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(goalsForm.dailyGoals ?? []).map((row, idx) => (
+                            <tr key={`${row.dayOfWeek}-${idx}`}>
+                              <td>
+                                <select
+                                  className="settings-select"
+                                  value={row.dayOfWeek}
+                                  onChange={(e) => {
+                                    const day = Number(e.target.value);
+                                    setGoalsForm((f) => ({
+                                      ...f,
+                                      dailyGoals: (f.dailyGoals ?? []).map((r, i) => (i === idx ? { ...r, dayOfWeek: day } : r)),
+                                    }));
+                                  }}
+                                >
+                                  {dayNames.map((name, d) => (
+                                    <option key={d} value={d}>{name}</option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={1}
+                                  className="settings-input"
+                                  style={{ width: '100px' }}
+                                  value={row.dailyPointGoal ?? ''}
+                                  onChange={(e) =>
+                                    setGoalsForm((f) => ({
+                                      ...f,
+                                      dailyGoals: (f.dailyGoals ?? []).map((r, i) =>
+                                        i === idx ? { ...r, dailyPointGoal: e.target.value === '' ? undefined : Number(e.target.value) } : r
+                                      ),
+                                    }))
+                                  }
+                                />
+                              </td>
+                              <td>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={1}
+                                  className="settings-input"
+                                  style={{ width: '100px' }}
+                                  value={row.dailyRevenueGoal ?? ''}
+                                  onChange={(e) =>
+                                    setGoalsForm((f) => ({
+                                      ...f,
+                                      dailyGoals: (f.dailyGoals ?? []).map((r, i) =>
+                                        i === idx ? { ...r, dailyRevenueGoal: e.target.value === '' ? undefined : Number(e.target.value) } : r
+                                      ),
+                                    }))
+                                  }
+                                />
+                              </td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="btn secondary"
+                                  onClick={() =>
+                                    setGoalsForm((f) => ({
+                                      ...f,
+                                      dailyGoals: (f.dailyGoals ?? []).filter((_, i) => i !== idx),
+                                    }))
+                                  }
+                                >
+                                  Remove
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div style={{ marginTop: '8px' }}>
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        disabled={(goalsForm.dailyGoals ?? []).length >= 7}
+                        onClick={() => {
+                          const used = new Set((goalsForm.dailyGoals ?? []).map((d) => d.dayOfWeek));
+                          const nextDay = [0, 1, 2, 3, 4, 5, 6].find((d) => !used.has(d));
+                          if (nextDay === undefined) return;
+                          setGoalsForm((f) => ({
+                            ...f,
+                            dailyGoals: [...(f.dailyGoals ?? []), { dayOfWeek: nextDay, dailyPointGoal: undefined, dailyRevenueGoal: undefined }],
+                          }));
+                        }}
+                      >
+                        Add day override
+                      </button>
+                    </div>
+
+                    <div className="settings-action-bar" style={{ marginTop: '24px' }}>
+                      <button
+                        className="btn"
+                        onClick={handleSaveEmployeeGoals}
+                        disabled={goalsSaving}
+                      >
+                        {goalsSaving ? 'Saving...' : 'Save Goals'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
         {/* Employee Schedule Tab */}
         {activeTab === 'employee-schedule' && (
           <div className="settings-section">
             <h2 className="settings-section-title">Employee Schedule</h2>
             <p className="settings-section-description">
               Configure work hours, workdays, and depot locations for each day of the week.
+            </p>
+            <p className="settings-section-description" style={{ marginTop: '-16px' }}>
+              To set different start/end times or depot locations for specific dates (used by routing), use the calendar below.
             </p>
 
             <div className="settings-form-group">
@@ -1017,23 +1926,35 @@ export default function Settings() {
                                   <div className="settings-schedule-field">
                                     <label className="settings-label">Latitude</label>
                                     <input
-                                      type="number"
+                                      type="text"
                                       className="settings-input"
-                                      value={startDepotLat}
-                                      onChange={(e) => updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'startDepotLat', e.target.value ? parseFloat(e.target.value) : undefined)}
-                                      placeholder="43.90065"
-                                      step="any"
+                                      value={startDepotLat === '' ? '' : startDepotLat}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        if (v === '') {
+                                          updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'startDepotLat', undefined);
+                                          return;
+                                        }
+                                        const n = parseFloat(v);
+                                        if (Number.isFinite(n)) updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'startDepotLat', n);
+                                      }}
                                     />
                                   </div>
                                   <div className="settings-schedule-field">
                                     <label className="settings-label">Longitude</label>
                                     <input
-                                      type="number"
+                                      type="text"
                                       className="settings-input"
-                                      value={startDepotLon}
-                                      onChange={(e) => updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'startDepotLon', e.target.value ? parseFloat(e.target.value) : undefined)}
-                                      placeholder="-70.058646"
-                                      step="any"
+                                      value={startDepotLon === '' ? '' : startDepotLon}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        if (v === '') {
+                                          updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'startDepotLon', undefined);
+                                          return;
+                                        }
+                                        const n = parseFloat(v);
+                                        if (Number.isFinite(n)) updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'startDepotLon', n);
+                                      }}
                                     />
                                   </div>
                                 </div>
@@ -1045,23 +1966,35 @@ export default function Settings() {
                                   <div className="settings-schedule-field">
                                     <label className="settings-label">Latitude</label>
                                     <input
-                                      type="number"
+                                      type="text"
                                       className="settings-input"
-                                      value={endDepotLat}
-                                      onChange={(e) => updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'endDepotLat', e.target.value ? parseFloat(e.target.value) : undefined)}
-                                      placeholder="43.90065"
-                                      step="any"
+                                      value={endDepotLat === '' ? '' : endDepotLat}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        if (v === '') {
+                                          updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'endDepotLat', undefined);
+                                          return;
+                                        }
+                                        const n = parseFloat(v);
+                                        if (Number.isFinite(n)) updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'endDepotLat', n);
+                                      }}
                                     />
                                   </div>
                                   <div className="settings-schedule-field">
                                     <label className="settings-label">Longitude</label>
                                     <input
-                                      type="number"
+                                      type="text"
                                       className="settings-input"
-                                      value={endDepotLon}
-                                      onChange={(e) => updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'endDepotLon', e.target.value ? parseFloat(e.target.value) : undefined)}
-                                      placeholder="-70.058646"
-                                      step="any"
+                                      value={endDepotLon === '' ? '' : endDepotLon}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        if (v === '') {
+                                          updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'endDepotLon', undefined);
+                                          return;
+                                        }
+                                        const n = parseFloat(v);
+                                        if (Number.isFinite(n)) updateScheduleField(selectedEmployeeForSchedule.id, dayOfWeek, 'endDepotLon', n);
+                                      }}
                                     />
                                   </div>
                                 </div>
@@ -1088,6 +2021,1132 @@ export default function Settings() {
                     disabled={saving || scheduleUpdates.size === 0}
                   >
                     {saving ? 'Saving...' : 'Save Changes'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    onClick={handleOpenOverrideCalendar}
+                  >
+                    Set schedule overrides (calendar)
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {!selectedEmployeeForSchedule && (
+              <div className="settings-action-bar" style={{ marginTop: 16 }}>
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={handleOpenOverrideCalendar}
+                >
+                  Set schedule overrides (calendar)
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Schedule overrides calendar modal */}
+        {showOverrideCalendar && (
+          <div
+            className="settings-modal-overlay"
+            onClick={(e) => e.target === e.currentTarget && setShowOverrideCalendar(false)}
+          >
+            <div className="settings-modal settings-modal-wide">
+              <div className="settings-modal-header">
+                <h3>Schedule overrides by day</h3>
+                <button
+                  type="button"
+                  className="settings-modal-close"
+                  onClick={() => setShowOverrideCalendar(false)}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="settings-modal-body">
+                <div className="settings-form-group">
+                  <label className="settings-label">Employee (doctor)</label>
+                  <select
+                    className="settings-select"
+                    value={overrideCalendarEmployeeId ?? ''}
+                    onChange={(e) => {
+                      const id = e.target.value ? Number(e.target.value) : null;
+                      setOverrideCalendarEmployeeId(id);
+                      setSelectedOverrideDate(null);
+                      setOverrideForm(null);
+                    }}
+                  >
+                    <option value="">-- Select employee --</option>
+                    {sortedEmployees.map((emp) => (
+                      <option key={emp.id} value={emp.id}>
+                        {formatEmployeeName(emp)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {!overrideCalendarEmployeeId ? (
+                  <p className="settings-muted" style={{ marginTop: 16 }}>
+                    Please select a provider above to view and set schedule overrides by day.
+                  </p>
+                ) : (
+                  <>
+                    <div className="settings-override-calendar-nav">
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        onClick={() => setOverrideCalendarMonth((m) => m.subtract(1, 'month'))}
+                      >
+                        ← Prev
+                      </button>
+                      <span className="settings-override-calendar-month">
+                        {overrideCalendarMonth.format('MMMM YYYY')}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        onClick={() => setOverrideCalendarMonth((m) => m.add(1, 'month'))}
+                      >
+                        Next →
+                      </button>
+                    </div>
+
+                    <div className="settings-override-calendar-grid">
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
+                        <div key={d} className="settings-override-calendar-weekday">
+                          {d}
+                        </div>
+                      ))}
+                      {(() => {
+                        const start = overrideCalendarMonth.startOf('month');
+                        const end = overrideCalendarMonth.endOf('month');
+                        const startDay = start.day();
+                        const daysInMonth = end.date();
+                        const cells: React.ReactNode[] = [];
+                        for (let i = 0; i < startDay; i++) {
+                          cells.push(<div key={`pad-${i}`} className="settings-override-calendar-day settings-override-calendar-day-pad" />);
+                        }
+                        const overrideDates = new Set(overridesInRange.map((o) => o.date));
+                        for (let d = 1; d <= daysInMonth; d++) {
+                          const date = start.date(d);
+                          const dateStr = date.format('YYYY-MM-DD');
+                          const hasOverride = overrideDates.has(dateStr);
+                          const isSelected = selectedOverrideDate === dateStr;
+                          cells.push(
+                            <button
+                              key={dateStr}
+                              type="button"
+                              className={`settings-override-calendar-day ${hasOverride ? 'settings-override-calendar-day-has-override' : ''} ${isSelected ? 'settings-override-calendar-day-selected' : ''}`}
+                              onClick={() => handleOverrideDayClick(dateStr)}
+                            >
+                              {d}
+                            </button>
+                          );
+                        }
+                        return cells;
+                      })()}
+                    </div>
+
+                    {overrideFormLoading && (
+                      <div className="settings-loading" style={{ padding: 24 }}>
+                        <span className="settings-spinner" />
+                        <span>Loading day…</span>
+                      </div>
+                    )}
+
+                    {!overrideFormLoading && overrideForm && (
+                      <div className="settings-override-form">
+                        <h4 className="settings-schedule-subtitle">
+                          {overrideForm.date} {dayjs(overrideForm.date).format('dddd')}
+                        </h4>
+                        <p className="settings-muted" style={{ marginBottom: 12 }}>
+                          Set start/end time and depot locations for this day. Routing will use these values instead of the weekly schedule.
+                        </p>
+                        <div className="settings-schedule-row">
+                          <div className="settings-schedule-field">
+                            <label className="settings-label">Start time</label>
+                            <input
+                              type="time"
+                              className="settings-input"
+                              value={overrideForm.workStartLocal ?? ''}
+                              onChange={(e) => setOverrideForm((f) => (f ? { ...f, workStartLocal: e.target.value } : null))}
+                            />
+                          </div>
+                          <div className="settings-schedule-field">
+                            <label className="settings-label">End time</label>
+                            <input
+                              type="time"
+                              className="settings-input"
+                              value={overrideForm.workEndLocal ?? ''}
+                              onChange={(e) => setOverrideForm((f) => (f ? { ...f, workEndLocal: e.target.value } : null))}
+                            />
+                          </div>
+                        </div>
+                        <div className="settings-schedule-section">
+                          <h4 className="settings-schedule-subtitle">Start depot</h4>
+                          <div className="settings-schedule-row">
+                            <div className="settings-schedule-field">
+                              <label className="settings-label">Latitude</label>
+                              <input
+                                type="text"
+                                className="settings-input"
+                                value={overrideForm.startDepotLat ?? ''}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v === '') {
+                                    setOverrideForm((f) => (f ? { ...f, startDepotLat: undefined } : null));
+                                    return;
+                                  }
+                                  const n = parseFloat(v);
+                                  if (Number.isFinite(n)) setOverrideForm((f) => (f ? { ...f, startDepotLat: n } : null));
+                                }}
+                              />
+                            </div>
+                            <div className="settings-schedule-field">
+                              <label className="settings-label">Longitude</label>
+                              <input
+                                type="text"
+                                className="settings-input"
+                                value={overrideForm.startDepotLon ?? ''}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v === '') {
+                                    setOverrideForm((f) => (f ? { ...f, startDepotLon: undefined } : null));
+                                    return;
+                                  }
+                                  const n = parseFloat(v);
+                                  if (Number.isFinite(n)) setOverrideForm((f) => (f ? { ...f, startDepotLon: n } : null));
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                        <div className="settings-schedule-section">
+                          <h4 className="settings-schedule-subtitle">End depot</h4>
+                          <div className="settings-schedule-row">
+                            <div className="settings-schedule-field">
+                              <label className="settings-label">Latitude</label>
+                              <input
+                                type="text"
+                                className="settings-input"
+                                value={overrideForm.endDepotLat ?? ''}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v === '') {
+                                    setOverrideForm((f) => (f ? { ...f, endDepotLat: undefined } : null));
+                                    return;
+                                  }
+                                  const n = parseFloat(v);
+                                  if (Number.isFinite(n)) setOverrideForm((f) => (f ? { ...f, endDepotLat: n } : null));
+                                }}
+                              />
+                            </div>
+                            <div className="settings-schedule-field">
+                              <label className="settings-label">Longitude</label>
+                              <input
+                                type="text"
+                                className="settings-input"
+                                value={overrideForm.endDepotLon ?? ''}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v === '') {
+                                    setOverrideForm((f) => (f ? { ...f, endDepotLon: undefined } : null));
+                                    return;
+                                  }
+                                  const n = parseFloat(v);
+                                  if (Number.isFinite(n)) setOverrideForm((f) => (f ? { ...f, endDepotLon: n } : null));
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                        <div className="settings-action-bar" style={{ marginTop: 16 }}>
+                          <button
+                            type="button"
+                            className="btn"
+                            onClick={handleOverrideSave}
+                            disabled={overrideFormSaving}
+                          >
+                            {overrideFormSaving ? 'Saving…' : 'Save override'}
+                          </button>
+                          {'id' in overrideForm && overrideForm.id && (
+                            <button
+                              type="button"
+                              className="btn secondary"
+                              onClick={handleOverrideRemove}
+                              disabled={overrideFormSaving}
+                            >
+                              Remove override (use default)
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Inventory Tab */}
+        {activeTab === 'inventory' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Inventory Management</h2>
+            <p className="settings-section-description">
+              Search for inventory items, labs, and procedures to manage quantity price breaks.
+            </p>
+
+            <div className="settings-form-group">
+              <label className="settings-label">Search Items</label>
+              <div style={{ position: 'relative', marginBottom: '16px' }}>
+                <input
+                  type="text"
+                  className="settings-input"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Type to search for items..."
+                  style={{ width: '100%', maxWidth: '100%', paddingRight: searching ? '40px' : '12px' }}
+                />
+                {searching && (
+                  <div style={{ 
+                    position: 'absolute', 
+                    right: '12px', 
+                    top: '50%', 
+                    transform: 'translateY(-50%)',
+                    display: 'flex',
+                    alignItems: 'center'
+                  }}>
+                    <div className="settings-spinner" style={{ width: '16px', height: '16px', borderWidth: '2px' }}></div>
+                  </div>
+                )}
+              </div>
+              {searchQuery.trim() && (
+                <p className="settings-muted" style={{ fontSize: '12px', marginTop: '4px' }}>
+                  {searching ? 'Searching...' : searchResults.length > 0 ? `Found ${searchResults.length} result${searchResults.length === 1 ? '' : 's'}` : 'No results found'}
+                </p>
+              )}
+            </div>
+
+            {searchResults.length > 0 && (
+              <div className="settings-card" style={{ marginBottom: '24px' }}>
+                <h3 className="settings-card-title">Search Results</h3>
+                <div className="settings-table-container">
+                  <table className="settings-table">
+                    <thead>
+                      <tr>
+                        <th>Type</th>
+                        <th>Name</th>
+                        <th>Code</th>
+                        <th>Price</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {searchResults.map((item, index) => {
+                        // Extract the correct item ID based on itemType
+                        const itemId = item.itemType === 'inventory' 
+                          ? item.inventoryItem?.id 
+                          : item.itemType === 'lab' 
+                          ? item.lab?.id 
+                          : item.procedure?.id;
+                        
+                        return (
+                          <tr key={`${item.itemType}-${itemId}-${index}`}>
+                            <td style={{ textTransform: 'capitalize' }}>{item.itemType}</td>
+                            <td>{item.name}</td>
+                            <td>{item.code || '—'}</td>
+                            <td>${Number(item.price).toFixed(2)}</td>
+                            <td>
+                              <button
+                                className="btn secondary"
+                                onClick={() => {
+                                  if (itemId) {
+                                    handleSelectItem(item.itemType, itemId);
+                                  } else {
+                                    setError('Item ID not found');
+                                  }
+                                }}
+                                disabled={loadingItem || !itemId}
+                              >
+                                View Details
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {!searching && searchQuery.trim() && searchResults.length === 0 && (
+              <div className="settings-card" style={{ marginBottom: '24px' }}>
+                <p className="settings-muted">No items found matching "{searchQuery}".</p>
+              </div>
+            )}
+
+            {loadingItem && !selectedItem && (
+              <div className="settings-loading">
+                <div className="settings-spinner"></div>
+                <span>Loading item details...</span>
+              </div>
+            )}
+
+            {/* Inventory Item Details Modal */}
+            {selectedItem && selectedItem.item && (
+              <div
+                role="dialog"
+                aria-modal="true"
+                onClick={() => {
+                  setSelectedItem(null);
+                  setEditingPriceBreak(null);
+                  setNewPriceBreak(null);
+                }}
+                style={{
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 10000,
+                  padding: 16,
+                }}
+              >
+                <div
+                  className="settings-card"
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    width: 'min(900px, 90vw)',
+                    maxHeight: '90vh',
+                    overflow: 'auto',
+                    padding: '24px',
+                    borderRadius: '12px',
+                    background: '#fff',
+                    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+                    <h2 className="settings-card-title" style={{ margin: 0, fontSize: '24px' }}>
+                      {selectedItem.item.name}
+                    </h2>
+                    <button
+                      className="btn secondary"
+                      onClick={() => {
+                        setSelectedItem(null);
+                        setEditingPriceBreak(null);
+                        setNewPriceBreak(null);
+                        setError(null);
+                        setSuccess(null);
+                      }}
+                      style={{ fontSize: '14px', padding: '8px 16px' }}
+                    >
+                      × Close
+                    </button>
+                  </div>
+                  <p className="settings-card-subtitle">
+                    Type: <strong style={{ textTransform: 'capitalize' }}>{selectedItem.itemType}</strong>
+                    {' | '}
+                    Code: <strong>{selectedItem.item.code || 'N/A'}</strong>
+                    {' | '}
+                    Cost: <strong>${Number(selectedItem.item.cost || 0).toFixed(2)}</strong>
+                    {' | '}
+                    Price: <strong>${Number(selectedItem.item.price).toFixed(2)}</strong>
+                  </p>
+
+                  {/* Error/Success messages inside modal */}
+                  {error && (
+                    <div className="settings-message settings-error-message" style={{ marginBottom: '16px' }}>
+                      {error}
+                      <button onClick={() => setError(null)} className="settings-close">×</button>
+                    </div>
+                  )}
+
+                  {success && (
+                    <div className="settings-message settings-success-message" style={{ marginBottom: '16px' }}>
+                      {success}
+                      <button onClick={() => setSuccess(null)} className="settings-close">×</button>
+                    </div>
+                  )}
+
+                <div style={{ marginBottom: '24px' }}>
+                  <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px' }}>
+                    Quantity Price Breaks
+                  </h4>
+                  {selectedItem.priceBreaks.length > 0 ? (
+                    <div className="settings-table-container">
+                      <table className="settings-table">
+                        <thead>
+                          <tr>
+                            <th>Low Qty</th>
+                            <th>High Qty</th>
+                            <th>Price</th>
+                            <th>Markup %</th>
+                            <th>Active</th>
+                            <th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedItem.priceBreaks
+                            .sort((a, b) => a.lowQuantity - b.lowQuantity)
+                            .map((priceBreak) => (
+                              <tr key={priceBreak.id}>
+                                {editingPriceBreak?.id === priceBreak.id ? (
+                                  <>
+                                    <td>
+                                      <input
+                                        type="number"
+                                        className="settings-input"
+                                        value={editingPriceBreak.lowQuantity}
+                                        onChange={(e) =>
+                                          setEditingPriceBreak({
+                                            ...editingPriceBreak,
+                                            lowQuantity: Number(e.target.value),
+                                          })
+                                        }
+                                        min="1"
+                                        style={{ width: '80px' }}
+                                      />
+                                    </td>
+                                    <td>
+                                      <input
+                                        type="number"
+                                        className="settings-input"
+                                        value={editingPriceBreak.highQuantity}
+                                        onChange={(e) =>
+                                          setEditingPriceBreak({
+                                            ...editingPriceBreak,
+                                            highQuantity: Number(e.target.value),
+                                          })
+                                        }
+                                        min="1"
+                                        style={{ width: '80px' }}
+                                      />
+                                    </td>
+                                    <td>
+                                      <input
+                                        type="number"
+                                        className="settings-input"
+                                        value={editingPriceBreak.price}
+                                        onChange={(e) => {
+                                          setEditingPriceBreak({
+                                            ...editingPriceBreak,
+                                            price: Number(e.target.value),
+                                          });
+                                        }}
+                                        min="0"
+                                        step="0.01"
+                                        style={{ width: '100px' }}
+                                      />
+                                    </td>
+                                    <td>
+                                      <input
+                                        type="number"
+                                        className="settings-input"
+                                        value={editingPriceBreak.markup ?? ''}
+                                        onChange={(e) => {
+                                          const markupValue = e.target.value === '' ? null : Number(e.target.value);
+                                          const updated = {
+                                            ...editingPriceBreak,
+                                            markup: markupValue,
+                                          };
+                                          // Auto-calculate price if markup is entered, using cost as base, rounded to nearest cent
+                                          if (markupValue !== null && selectedItem?.item?.cost) {
+                                            const baseCost = Number(selectedItem.item.cost);
+                                            if (!isNaN(baseCost) && !isNaN(markupValue)) {
+                                              updated.price = Math.round(baseCost * (1 + markupValue / 100) * 100) / 100;
+                                            }
+                                          }
+                                          setEditingPriceBreak(updated);
+                                        }}
+                                        step="0.1"
+                                        style={{ width: '100px' }}
+                                      />
+                                    </td>
+                                    <td>
+                                      <input
+                                        type="checkbox"
+                                        checked={editingPriceBreak.isActive}
+                                        onChange={(e) =>
+                                          setEditingPriceBreak({
+                                            ...editingPriceBreak,
+                                            isActive: e.target.checked,
+                                          })
+                                        }
+                                      />
+                                    </td>
+                                    <td>
+                                      <div className="settings-action-buttons">
+                                        <button
+                                          className="btn"
+                                          onClick={() => handleSavePriceBreak(priceBreak.id)}
+                                          disabled={saving}
+                                        >
+                                          {saving ? 'Saving...' : 'Save'}
+                                        </button>
+                                        <button
+                                          className="btn secondary"
+                                          onClick={() => setEditingPriceBreak(null)}
+                                          disabled={saving}
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </>
+                                ) : (
+                                  <>
+                                    <td>{priceBreak.lowQuantity}</td>
+                                    <td>{priceBreak.highQuantity === 999 ? '∞' : priceBreak.highQuantity}</td>
+                                    <td>${Number(priceBreak.price).toFixed(2)}</td>
+                                    <td>{priceBreak.markup ? `${Number(priceBreak.markup).toFixed(1)}%` : '—'}</td>
+                                    <td>{priceBreak.isActive ? 'Yes' : 'No'}</td>
+                                    <td>
+                                      <div className="settings-action-buttons">
+                                        <button
+                                          className="btn secondary"
+                                          onClick={() => setEditingPriceBreak(priceBreak)}
+                                        >
+                                          Edit
+                                        </button>
+                                        <button
+                                          className="btn secondary"
+                                          onClick={() => handleDeletePriceBreak(priceBreak.id)}
+                                          disabled={saving}
+                                        >
+                                          Delete
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </>
+                                )}
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="settings-muted">No price breaks configured for this item.</p>
+                  )}
+                </div>
+
+                {!newPriceBreak && !editingPriceBreak && (
+                  <div className="settings-action-bar">
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        setPriceManuallyEdited(false);
+                        setNewPriceBreak({
+                          price: '',
+                          markup: '',
+                          lowQuantity: '',
+                          highQuantity: '',
+                          isActive: true,
+                        });
+                      }}
+                    >
+                      Add Price Break
+                    </button>
+                  </div>
+                )}
+
+                {newPriceBreak && (
+                  <div className="settings-card" style={{ marginTop: '24px', background: '#f8fdfa' }}>
+                    <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>
+                      New Price Break
+                    </h4>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                      <div>
+                        <label className="settings-label">Low Quantity</label>
+                        <input
+                          type="number"
+                          className="settings-input"
+                          value={newPriceBreak.lowQuantity}
+                          onChange={(e) =>
+                            setNewPriceBreak({
+                              ...newPriceBreak,
+                              lowQuantity: e.target.value,
+                            })
+                          }
+                          min="1"
+                          placeholder="1"
+                        />
+                      </div>
+                      <div>
+                        <label className="settings-label">High Quantity</label>
+                        <input
+                          type="number"
+                          className="settings-input"
+                          value={newPriceBreak.highQuantity}
+                          onChange={(e) =>
+                            setNewPriceBreak({
+                              ...newPriceBreak,
+                              highQuantity: e.target.value,
+                            })
+                          }
+                          min="1"
+                          placeholder="999"
+                        />
+                      </div>
+                      <div>
+                        <label className="settings-label">Price</label>
+                        <input
+                          type="number"
+                          className="settings-input"
+                          value={newPriceBreak.price}
+                          onChange={(e) => {
+                            setPriceManuallyEdited(true);
+                            setNewPriceBreak({
+                              ...newPriceBreak,
+                              price: e.target.value,
+                            });
+                          }}
+                          min="0"
+                          step="0.01"
+                          placeholder="0.00"
+                        />
+                      </div>
+                      <div>
+                        <label className="settings-label">Markup % (optional)</label>
+                        <input
+                          type="number"
+                          className="settings-input"
+                          value={newPriceBreak.markup}
+                          onChange={(e) => {
+                            const markupValue = e.target.value;
+                            setNewPriceBreak({
+                              ...newPriceBreak,
+                              markup: markupValue,
+                            });
+                            // Auto-calculate price if markup is entered and price hasn't been manually edited, using cost as base, rounded to nearest cent
+                            if (markupValue && selectedItem?.item?.cost && !priceManuallyEdited) {
+                              const baseCost = Number(selectedItem.item.cost);
+                              const markupPercent = Number(markupValue);
+                              if (!isNaN(baseCost) && !isNaN(markupPercent)) {
+                                const calculatedPrice = Math.round(baseCost * (1 + markupPercent / 100) * 100) / 100;
+                                setNewPriceBreak((prev) => ({
+                                  ...(prev || {
+                                    price: '',
+                                    markup: '',
+                                    lowQuantity: '',
+                                    highQuantity: '',
+                                    isActive: true,
+                                  }),
+                                  markup: markupValue,
+                                  price: calculatedPrice.toFixed(2),
+                                }));
+                              }
+                            }
+                          }}
+                          step="0.1"
+                          placeholder="Optional"
+                        />
+                      </div>
+                    </div>
+                    <div style={{ marginBottom: '16px' }}>
+                      <label className="settings-checkbox-item">
+                        <input
+                          type="checkbox"
+                          checked={newPriceBreak.isActive}
+                          onChange={(e) =>
+                            setNewPriceBreak({
+                              ...newPriceBreak,
+                              isActive: e.target.checked,
+                            })
+                          }
+                        />
+                        <span>Active</span>
+                      </label>
+                    </div>
+                    <div className="settings-action-bar">
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (saving) {
+                            return;
+                          }
+                          if (!newPriceBreak.price || !newPriceBreak.lowQuantity || !newPriceBreak.highQuantity) {
+                            setError('Please fill in all required fields (Price, Low Quantity, High Quantity)');
+                            return;
+                          }
+                          handleCreatePriceBreak();
+                        }}
+                        style={{ 
+                          cursor: (saving || !newPriceBreak.price || !newPriceBreak.lowQuantity || !newPriceBreak.highQuantity) ? 'not-allowed' : 'pointer',
+                          opacity: (saving || !newPriceBreak.price || !newPriceBreak.lowQuantity || !newPriceBreak.highQuantity) ? 0.5 : 1
+                        }}
+                      >
+                        {saving ? 'Creating...' : 'Create Price Break'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setNewPriceBreak(null);
+                        }}
+                        disabled={saving}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          </div>
+        )}
+
+        {/* Reminders Tab */}
+        {activeTab === 'reminders' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Reminder Settings</h2>
+            <p className="settings-section-description">
+              Configure when and how appointment and health reminders are sent (email and SMS). Each cadence entry specifies days before/after, channels (email, SMS), and SMS fallback when only SMS is used.
+            </p>
+
+            {reminderLoadError && (
+              <div className="settings-message settings-error-message">
+                {reminderLoadError}
+                <button onClick={() => setReminderLoadError(null)} className="settings-close">×</button>
+              </div>
+            )}
+
+            {reminderLoading ? (
+              <div className="settings-loading">
+                <div className="settings-spinner"></div>
+                <span>Loading reminder settings...</span>
+              </div>
+            ) : (
+              <div className="settings-card">
+                <h3 className="settings-card-title">Channels</h3>
+                <div className="settings-form-group">
+                  <label className="settings-checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={reminderForm.enableEmail}
+                      onChange={(e) =>
+                        setReminderForm((prev) => ({ ...prev, enableEmail: e.target.checked }))
+                      }
+                    />
+                    <span>Enable email reminders</span>
+                  </label>
+                </div>
+                <div className="settings-form-group">
+                  <label className="settings-checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={reminderForm.enableSms}
+                      onChange={(e) =>
+                        setReminderForm((prev) => ({ ...prev, enableSms: e.target.checked }))
+                      }
+                    />
+                    <span>Enable SMS reminders</span>
+                  </label>
+                </div>
+
+                <h3 className="settings-card-title" style={{ marginTop: '24px' }}>Appointment reminders</h3>
+                <div className="settings-form-group">
+                  <label className="settings-label">Appointment cadence</label>
+                  <span className="settings-muted" style={{ display: 'block', marginBottom: '8px' }}>
+                    Days before appointment (positive). Each row: days, channels (email/SMS), and SMS fallback when only SMS is used.
+                  </span>
+                  <div className="settings-cadence-list">
+                    {reminderForm.appointmentCadence.map((entry, index) => (
+                      <div key={index} className="settings-cadence-row">
+                        <input
+                          type="number"
+                          className="settings-input"
+                          value={entry.days}
+                          onChange={(e) =>
+                            updateAppointmentCadenceEntry(index, {
+                              days: parseInt(e.target.value, 10) || 0,
+                            })
+                          }
+                          placeholder="Days"
+                          style={{ width: '80px' }}
+                        />
+                        <label className="settings-checkbox-item" style={{ margin: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={entry.channels.includes('email')}
+                            onChange={(e) => {
+                              const channels = e.target.checked
+                                ? ([...entry.channels.filter((c) => c !== 'email'), 'email'] as ('email' | 'sms')[]).sort()
+                                : (entry.channels.filter((c) => c !== 'email') as ('email' | 'sms')[]);
+                              const next: ('email' | 'sms')[] = channels.length ? channels : ['sms'];
+                              updateAppointmentCadenceEntry(index, {
+                                channels: next,
+                                smsFallback: next.length === 1 && next[0] === 'sms' ? (entry.smsFallback ?? 'email') : undefined,
+                              });
+                            }}
+                          />
+                          <span>Email</span>
+                        </label>
+                        <label className="settings-checkbox-item" style={{ margin: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={entry.channels.includes('sms')}
+                            onChange={(e) => {
+                              const channels = e.target.checked
+                                ? ([...entry.channels.filter((c) => c !== 'sms'), 'sms'] as ('email' | 'sms')[]).sort()
+                                : (entry.channels.filter((c) => c !== 'sms') as ('email' | 'sms')[]);
+                              updateAppointmentCadenceEntry(index, {
+                                channels: channels.length ? (channels as ('email' | 'sms')[]) : ['email'],
+                                smsFallback: channels.length && channels.includes('sms') && channels.length === 1 ? (entry.smsFallback ?? 'email') : undefined,
+                              });
+                            }}
+                          />
+                          <span>SMS</span>
+                        </label>
+                        {entry.channels.length === 1 && entry.channels[0] === 'sms' && (
+                          <select
+                            className="settings-select"
+                            value={entry.smsFallback ?? 'email'}
+                            onChange={(e) =>
+                              updateAppointmentCadenceEntry(index, {
+                                smsFallback: e.target.value as 'email' | 'none',
+                              })
+                            }
+                            style={{ width: '150px' }}
+                          >
+                            <option value="email">Fallback: email</option>
+                            <option value="none">Fallback: none</option>
+                          </select>
+                        )}
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          onClick={() => removeAppointmentCadenceEntry(index)}
+                          aria-label="Remove entry"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" className="btn secondary" onClick={addAppointmentCadenceEntry} style={{ marginTop: '8px' }}>
+                    Add appointment cadence entry
+                  </button>
+                </div>
+
+                <h3 className="settings-card-title" style={{ marginTop: '24px' }}>Health reminders</h3>
+                <div className="settings-form-group">
+                  <label className="settings-label">Health cadence</label>
+                  <span className="settings-muted" style={{ display: 'block', marginBottom: '8px' }}>
+                    Days before (positive) or after (negative) due date. Each row: days, channels, and SMS fallback when only SMS is used.
+                  </span>
+                  <div className="settings-cadence-list">
+                    {reminderForm.healthCadence.map((entry, index) => (
+                      <div key={index} className="settings-cadence-row">
+                        <input
+                          type="number"
+                          className="settings-input"
+                          value={entry.days}
+                          onChange={(e) =>
+                            updateHealthCadenceEntry(index, {
+                              days: parseInt(e.target.value, 10) || 0,
+                            })
+                          }
+                          placeholder="Days"
+                          style={{ width: '80px' }}
+                        />
+                        <label className="settings-checkbox-item" style={{ margin: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={entry.channels.includes('email')}
+                            onChange={(e) => {
+                              const channels = e.target.checked
+                                ? ([...entry.channels.filter((c) => c !== 'email'), 'email'] as ('email' | 'sms')[]).sort()
+                                : (entry.channels.filter((c) => c !== 'email') as ('email' | 'sms')[]);
+                              const next: ('email' | 'sms')[] = channels.length ? channels : ['sms'];
+                              updateHealthCadenceEntry(index, {
+                                channels: next,
+                                smsFallback: next.length === 1 && next[0] === 'sms' ? (entry.smsFallback ?? 'email') : undefined,
+                              });
+                            }}
+                          />
+                          <span>Email</span>
+                        </label>
+                        <label className="settings-checkbox-item" style={{ margin: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={entry.channels.includes('sms')}
+                            onChange={(e) => {
+                              const channels = e.target.checked
+                                ? ([...entry.channels.filter((c) => c !== 'sms'), 'sms'] as ('email' | 'sms')[]).sort()
+                                : (entry.channels.filter((c) => c !== 'sms') as ('email' | 'sms')[]);
+                              updateHealthCadenceEntry(index, {
+                                channels: channels.length ? (channels as ('email' | 'sms')[]) : ['email'],
+                                smsFallback: channels.length && channels.includes('sms') && channels.length === 1 ? (entry.smsFallback ?? 'email') : undefined,
+                              });
+                            }}
+                          />
+                          <span>SMS</span>
+                        </label>
+                        {entry.channels.length === 1 && entry.channels[0] === 'sms' && (
+                          <select
+                            className="settings-select"
+                            value={entry.smsFallback ?? 'email'}
+                            onChange={(e) =>
+                              updateHealthCadenceEntry(index, {
+                                smsFallback: e.target.value as 'email' | 'none',
+                              })
+                            }
+                            style={{ width: '150px' }}
+                          >
+                            <option value="email">Fallback: email</option>
+                            <option value="none">Fallback: none</option>
+                          </select>
+                        )}
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          onClick={() => removeHealthCadenceEntry(index)}
+                          aria-label="Remove entry"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" className="btn secondary" onClick={addHealthCadenceEntry} style={{ marginTop: '8px' }}>
+                    Add health cadence entry
+                  </button>
+                </div>
+                <div className="settings-form-group">
+                  <label className="settings-label">Appointment window (days)</label>
+                  <input
+                    type="number"
+                    className="settings-input"
+                    value={reminderForm.appointmentWindowDays}
+                    onChange={(e) =>
+                      setReminderForm((prev) => ({
+                        ...prev,
+                        appointmentWindowDays: parseInt(e.target.value, 10) || 0,
+                      }))
+                    }
+                    min={0}
+                    style={{ maxWidth: '120px' }}
+                  />
+                  <span className="settings-muted">Do not send health reminders if the patient has an appointment within this many days.</span>
+                </div>
+
+                <h3 className="settings-card-title" style={{ marginTop: '24px' }}>Exclude reminders by name</h3>
+                <div className="settings-form-group">
+                  <label className="settings-label">Excluded words or phrases</label>
+                  <span className="settings-muted" style={{ display: 'block', marginBottom: '8px' }}>
+                    Reminders whose name contains any of these (one per line) will be excluded from being sent.
+                  </span>
+                  <textarea
+                    className="settings-input"
+                    value={reminderForm.excludedNamePhrases.join('\n')}
+                    onChange={(e) =>
+                      setReminderForm((prev) => ({
+                        ...prev,
+                        excludedNamePhrases: e.target.value
+                          .split(/\r?\n/)
+                          .map((s) => s.trim())
+                          .filter(Boolean),
+                      }))
+                    }
+                    rows={4}
+                    style={{ resize: 'vertical', minHeight: '80px' }}
+                  />
+                </div>
+
+                <h3 className="settings-card-title" style={{ marginTop: '24px' }}>Exclude from SMS only (by name)</h3>
+                <div className="settings-form-group">
+                  <label className="settings-label">SMS-excluded words or phrases</label>
+                  <span className="settings-muted" style={{ display: 'block', marginBottom: '8px' }}>
+                    Reminders whose name contains any of these (one per line) will not be sent via SMS; email is still sent if enabled.
+                  </span>
+                  <textarea
+                    className="settings-input"
+                    value={reminderForm.smsExcludedNamePhrases.join('\n')}
+                    onChange={(e) =>
+                      setReminderForm((prev) => ({
+                        ...prev,
+                        smsExcludedNamePhrases: e.target.value
+                          .split(/\r?\n/)
+                          .map((s) => s.trim())
+                          .filter(Boolean),
+                      }))
+                    }
+                    rows={4}
+                    style={{ resize: 'vertical', minHeight: '80px' }}
+                  />
+                </div>
+
+                <h3 className="settings-card-title" style={{ marginTop: '24px' }}>Include reminder types</h3>
+                <div className="settings-form-group">
+                  <label className="settings-label">Included reminder types</label>
+                  <span className="settings-muted" style={{ display: 'block', marginBottom: '8px' }}>
+                    Only send reminders whose type is in this list (one type name per line). Leave empty to include all types.
+                  </span>
+                  <textarea
+                    className="settings-input"
+                    value={reminderForm.includedReminderTypes.join('\n')}
+                    onChange={(e) =>
+                      setReminderForm((prev) => ({
+                        ...prev,
+                        includedReminderTypes: e.target.value
+                          .split(/\r?\n/)
+                          .map((s) => s.trim())
+                          .filter(Boolean),
+                      }))
+                    }
+                    placeholder={'e.g. vaccination\nannual exam\nwellness'}
+                    rows={4}
+                    style={{ resize: 'vertical', minHeight: '80px' }}
+                  />
+                </div>
+
+                <h3 className="settings-card-title" style={{ marginTop: '24px' }}>Test redirects (non-production)</h3>
+                <div className="settings-form-group">
+                  <label className="settings-label">Test redirect email</label>
+                  <input
+                    type="text"
+                    className="settings-input"
+                    value={reminderForm.testRedirectEmail}
+                    onChange={(e) =>
+                      setReminderForm((prev) => ({ ...prev, testRedirectEmail: e.target.value }))
+                    }
+                    placeholder="email@example.com"
+                  />
+                </div>
+                <div className="settings-form-group">
+                  <label className="settings-label">Test redirect phone</label>
+                  <input
+                    type="text"
+                    className="settings-input"
+                    value={reminderForm.testRedirectPhone}
+                    onChange={(e) =>
+                      setReminderForm((prev) => ({ ...prev, testRedirectPhone: e.target.value }))
+                    }
+                    placeholder="2078440442"
+                  />
+                </div>
+
+                <div className="settings-action-bar">
+                  <button
+                    className="btn"
+                    onClick={handleSaveReminders}
+                    disabled={reminderSaving}
+                  >
+                    {reminderSaving ? 'Saving...' : 'Save reminder settings'}
                   </button>
                 </div>
               </div>

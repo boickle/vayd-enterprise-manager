@@ -1,9 +1,9 @@
 // src/pages/AppointmentRequestForm.tsx
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import { http } from '../api/http';
-import { fetchClientPets, type Pet, fetchClientInfo } from '../api/clientPortal';
+import { fetchClientPets, type Pet, fetchClientInfo, fetchWellnessPlansForPatient } from '../api/clientPortal';
 import { fetchPrimaryProviders, fetchVeterinarians, type Provider } from '../api/employee';
 import { validateAddress } from '../api/geo';
 import { DateTime } from 'luxon';
@@ -18,6 +18,16 @@ import {
   type AppointmentType,
 } from '../api/publicAppointments';
 import { trackEvent } from '../utils/analytics';
+import { isProduction } from '../utils/env';
+import { listMembershipTransactions } from '../api/membershipTransactions';
+import MembershipSignup from './MembershipSignup';
+import MembershipPayment from './MembershipPayment';
+
+/** Set to true to show doctor selection. Code preserved for potential re-enable. */
+const SHOW_DOCTOR_SELECTION = false;
+
+/** Set to true to show time slots ("Here are some possible dates and times..."). Code preserved for potential re-enable. */
+const SHOW_TIME_SLOTS = false;
 
 type FormData = {
   // Intro page
@@ -183,6 +193,86 @@ type Page =
   | 'request-visit-continued'
   | 'success';
 
+const ZONE_NOT_SERVICED_SERVICE_URL = 'www.vetatyourdoor.com/service-area';
+const ZONE_NOT_SERVICED_CALL_TEXT = 'call or text us at ';
+const ZONE_NOT_SERVICED_PHONE = '(207) 536-8387';
+const ZONE_NOT_SERVICED_TEL = 'tel:+12075368387';
+const ZONE_NOT_SERVICED_SMS = 'sms:+12075368387';
+
+/** Renders zone-not-serviced copy with blue links for service area, call, text, and phone number. */
+function renderZoneNotServicedMessage(message: string): ReactNode {
+  const linkStyle = { color: '#3b82f6', textDecoration: 'underline' as const };
+
+  if (!message.includes(ZONE_NOT_SERVICED_SERVICE_URL)) {
+    return message;
+  }
+
+  const [beforeUrl, afterUrl] = message.split(ZONE_NOT_SERVICED_SERVICE_URL);
+  if (afterUrl === undefined) {
+    return message;
+  }
+
+  if (!afterUrl.includes(ZONE_NOT_SERVICED_PHONE)) {
+    return (
+      <>
+        {beforeUrl}
+        <a
+          href={`https://${ZONE_NOT_SERVICED_SERVICE_URL}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={linkStyle}
+        >
+          {ZONE_NOT_SERVICED_SERVICE_URL}
+        </a>
+        {afterUrl}
+      </>
+    );
+  }
+
+  const [beforePhone, afterPhone] = afterUrl.split(ZONE_NOT_SERVICED_PHONE);
+  const leadParts = beforePhone.split(ZONE_NOT_SERVICED_CALL_TEXT);
+  const useCallTextLinks = leadParts.length === 2 && leadParts[1] === '';
+
+  return (
+    <>
+      {beforeUrl}
+      <a
+        href={`https://${ZONE_NOT_SERVICED_SERVICE_URL}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={linkStyle}
+      >
+        {ZONE_NOT_SERVICED_SERVICE_URL}
+      </a>
+      {useCallTextLinks ? (
+        <>
+          {leadParts[0]}
+          <a href={ZONE_NOT_SERVICED_TEL} style={linkStyle}>
+            call
+          </a>
+          {' or '}
+          <a href={ZONE_NOT_SERVICED_SMS} style={linkStyle}>
+            text
+          </a>
+          {' us at '}
+          <a href={ZONE_NOT_SERVICED_TEL} style={linkStyle}>
+            {ZONE_NOT_SERVICED_PHONE}
+          </a>
+          {afterPhone}
+        </>
+      ) : (
+        <>
+          {beforePhone}
+          <a href={ZONE_NOT_SERVICED_TEL} style={linkStyle}>
+            {ZONE_NOT_SERVICED_PHONE}
+          </a>
+          {afterPhone}
+        </>
+      )}
+    </>
+  );
+}
+
 export default function AppointmentRequestForm() {
   const navigate = useNavigate();
   const { token, userEmail, userId } = useAuth() as any;
@@ -257,6 +347,37 @@ export default function AppointmentRequestForm() {
   const [breedSearchTerms, setBreedSearchTerms] = useState<Record<string, string>>({}); // Search terms for breed dropdowns, keyed by pet ID
   const [breedDropdownOpen, setBreedDropdownOpen] = useState<Record<string, boolean>>({}); // Track which breed dropdowns are open, keyed by pet ID
   const [clientLocationReady, setClientLocationReady] = useState(false); // Track when client location is available for veterinarian fetch
+  const [showMembershipModal, setShowMembershipModal] = useState(false);
+  const [selectedMembershipPetId, setSelectedMembershipPetId] = useState<string | null>(null);
+  type MembershipModalStep = 'choose-pet' | 'signup' | 'payment' | 'success';
+  const [membershipModalStep, setMembershipModalStep] = useState<MembershipModalStep>('choose-pet');
+  const [membershipPaymentState, setMembershipPaymentState] = useState<any>(null);
+  const [lastSignedUpPetIds, setLastSignedUpPetIds] = useState<string[]>([]);
+  const [selectedMembershipPet, setSelectedMembershipPet] = useState<EligiblePet | null>(null);
+  // For logged-in users: patient ids with active/pending membership (from membership-transactions API)
+  const [petIdsWithActiveOrPendingMembership, setPetIdsWithActiveOrPendingMembership] = useState<Set<string> | null>(null);
+  // For logged-in users: pet ids (dbId or id) that have an active wellness plan (actual membership)
+  const [petIdsWithActiveWellnessPlan, setPetIdsWithActiveWellnessPlan] = useState<Set<string> | null>(null);
+  // On submit step: user's answer to "Are you looking for ongoing care with a consistent, dedicated veterinary team?"
+  const [ongoingCareInterest, setOngoingCareInterest] = useState<'yes' | 'no' | 'unsure' | null>(null);
+
+  type NeedsTodayOption = { id: number; name: string; prettyName: string };
+  const [appointmentTypeChangeModal, setAppointmentTypeChangeModal] = useState<{
+    petId: string;
+    option: NeedsTodayOption;
+  } | null>(null);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
+
+  useEffect(() => {
+    if (!appointmentTypeChangeModal) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setAppointmentTypeChangeModal(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [appointmentTypeChangeModal]);
 
   // Handle responsive layout
   useEffect(() => {
@@ -455,6 +576,118 @@ export default function AppointmentRequestForm() {
       
       return true; // Veterinarian accepts all selected appointment types
     });
+  };
+
+  type PetSpecificSlice = NonNullable<FormData['petSpecificData']>[string];
+
+  /** True if the user entered any details under the currently selected appointment type. */
+  const petHasEnteredDetailsForCurrentAppointmentType = (petData: PetSpecificSlice | undefined): boolean => {
+    if (!petData) return false;
+    const sel = petData.needsToday;
+    if (!sel?.trim()) return false;
+    if (isEuthanasiaAppointmentType(sel)) {
+      const t = (v: string | undefined) => (v ?? '').trim();
+      return (
+        t(petData.euthanasiaReason) !== '' ||
+        t(petData.beenToVetLastThreeMonths) !== '' ||
+        t(petData.interestedInOtherOptions as unknown as string) !== '' ||
+        t(petData.aftercarePreference) !== ''
+      );
+    }
+    return (petData.needsTodayDetails ?? '').trim() !== '';
+  };
+
+  const applyPetNeedsTodaySelection = (petId: string, option: NeedsTodayOption) => {
+    setFormData(prev => {
+      const petMap = { ...(prev.petSpecificData || {}) };
+      const existing = petMap[petId] || {};
+      petMap[petId] = {
+        ...existing,
+        needsToday: option.prettyName,
+        appointmentTypeId: option.id,
+        appointmentTypeName: option.name,
+        needsTodayDetails: '',
+        euthanasiaReason: '',
+        beenToVetLastThreeMonths: '',
+        interestedInOtherOptions: '',
+        aftercarePreference: '',
+      };
+      return { ...prev, petSpecificData: petMap };
+    });
+
+    setErrors(prev => {
+      const keys = [
+        `needsToday.${petId}`,
+        `needsTodayDetails.${petId}`,
+        `euthanasiaReason.${petId}`,
+        `beenToVetLastThreeMonths.${petId}`,
+        `interestedInOtherOptions.${petId}`,
+        `aftercarePreference.${petId}`,
+      ];
+      let touched = false;
+      const next = { ...prev };
+      for (const k of keys) {
+        if (next[k] !== undefined) {
+          delete next[k];
+          touched = true;
+        }
+      }
+      return touched ? next : prev;
+    });
+  };
+
+  const attemptPetNeedsTodayChange = (
+    petId: string,
+    option: NeedsTodayOption,
+    currentPetData: PetSpecificSlice | undefined,
+  ) => {
+    const cur = currentPetData;
+    const alreadySelected =
+      (cur?.needsToday === option.prettyName) || (cur?.needsToday === option.name);
+    if (alreadySelected) return;
+
+    const hadPriorSelection = !!(cur?.needsToday && cur.needsToday.trim());
+    if (hadPriorSelection && petHasEnteredDetailsForCurrentAppointmentType(cur)) {
+      setAppointmentTypeChangeModal({ petId, option });
+      return;
+    }
+
+    applyPetNeedsTodaySelection(petId, option);
+  };
+
+  /** Include only fields that apply to the selected appointment type (payload / persistence). */
+  const sanitizePetSpecificDataForPayload = (
+    raw: FormData['petSpecificData'],
+  ): FormData['petSpecificData'] | undefined => {
+    if (!raw) return undefined;
+    const out: NonNullable<FormData['petSpecificData']> = {};
+    for (const [petId, petData] of Object.entries(raw)) {
+      const sel = petData.needsToday;
+      const base: PetSpecificSlice = {
+        needsToday: petData.needsToday,
+        appointmentTypeId: petData.appointmentTypeId,
+        appointmentTypeName: petData.appointmentTypeName,
+      };
+      if (!sel?.trim()) {
+        out[petId] = base;
+        continue;
+      }
+      if (isEuthanasiaAppointmentType(sel)) {
+        out[petId] = {
+          ...base,
+          euthanasiaReason: petData.euthanasiaReason,
+          beenToVetLastThreeMonths: petData.beenToVetLastThreeMonths,
+          interestedInOtherOptions: petData.interestedInOtherOptions,
+          aftercarePreference: petData.aftercarePreference,
+        };
+      } else {
+        out[petId] = {
+          ...base,
+          needsTodayDetails: petData.needsTodayDetails,
+        };
+      }
+    }
+    return out;
   };
 
   // Convert raw veterinarian data to PublicProvider format
@@ -944,6 +1177,158 @@ export default function AppointmentRequestForm() {
     });
   }, [currentPage, isLoggedIn, formData.haveUsedServicesBefore]);
 
+  // Pets eligible for membership signup: for logged-in users, only selected pets that do NOT
+  // have an active or pending membership (from subscription on pet OR from membership-transactions API);
+  // new pets (existingClientNewPets) and new-client pets are always eligible.
+  // If all selected pets already have membership, the "Sign up for membership now" button is hidden.
+  type EligiblePet = { id: string; name: string; species?: string; isBackendPet: boolean };
+  const membershipEligiblePets = useMemo((): EligiblePet[] => {
+    const signedUpParam = searchParams.get('signedUp');
+    const excludeIds = signedUpParam ? new Set(signedUpParam.split(',').map((s) => s.trim()).filter(Boolean)) : new Set<string>();
+    lastSignedUpPetIds.forEach((id) => excludeIds.add(id));
+    if (isLoggedIn && pets.length > 0) {
+      const hasActiveOrPendingMembership = (p: Pet) => {
+        if (p.subscription?.status === 'active' || p.subscription?.status === 'pending') return true;
+        if (petIdsWithActiveOrPendingMembership) {
+          if (p.dbId && petIdsWithActiveOrPendingMembership.has(String(p.dbId))) return true;
+          if (petIdsWithActiveOrPendingMembership.has(String(p.id))) return true;
+        }
+        if (petIdsWithActiveWellnessPlan) {
+          if (p.dbId && petIdsWithActiveWellnessPlan.has(String(p.dbId))) return true;
+          if (petIdsWithActiveWellnessPlan.has(String(p.id))) return true;
+        }
+        return false;
+      };
+      // Only include selected pets that have no active/pending membership
+      const fromSelected = pets
+        .filter(
+          (p) =>
+            formData.selectedPetIds?.includes(p.id) &&
+            !hasActiveOrPendingMembership(p)
+        )
+        .map((p) => ({ id: p.id, name: p.name, species: p.species, isBackendPet: true }));
+      // New pets added by existing client have no membership yet
+      const fromNew =
+        (formData.existingClientNewPets || []).map((p) => ({
+          id: p.id,
+          name: p.name,
+          species: p.species,
+          isBackendPet: false,
+        }));
+      return [...fromSelected, ...fromNew].filter((p) => !excludeIds.has(p.id));
+    }
+    return (formData.newClientPets || [])
+      .filter((p) => p.name?.trim())
+      .map((p) => ({ id: p.id, name: p.name, species: p.species, isBackendPet: false }))
+      .filter((p) => !excludeIds.has(p.id));
+  }, [
+    isLoggedIn,
+    pets,
+    formData.selectedPetIds,
+    formData.newClientPets,
+    formData.existingClientNewPets,
+    searchParams,
+    lastSignedUpPetIds,
+    petIdsWithActiveOrPendingMembership,
+    petIdsWithActiveWellnessPlan,
+  ]);
+
+  const isOnSubmitStep =
+    currentPage === 'request-visit-continued' || currentPage === 'euthanasia-continued';
+  // Show "Sign up for membership now" only when there is at least one pet eligible for membership.
+  // For logged-in users, wait until we've loaded both transactions and wellness plans so we don't show the button for pets that already have membership.
+  const membershipDataLoaded =
+    !isLoggedIn || (petIdsWithActiveOrPendingMembership !== null && petIdsWithActiveWellnessPlan !== null);
+  const hasEligiblePetsForMembership =
+    membershipEligiblePets.length > 0 && membershipDataLoaded;
+
+  // Hide membership CTA when any selected appointment type is Quality of Life or Euthanasia
+  const selectedAppointmentTypeNames = getSelectedAppointmentTypes();
+  const shouldHideMembershipForAppointmentTypes = [...selectedAppointmentTypeNames].some(
+    (name) => {
+      const lower = name.toLowerCase();
+      return lower === 'euthanasia' || lower === 'quality of life';
+    }
+  );
+  // Hide membership CTA when any pet (new or existing-client-new) answered Yes to calming meds or muzzle/special handling
+  const shouldHideMembershipForCalmingOrMuzzle =
+    (formData.newClientPets?.some(
+      (p) => p.needsCalmingMedications === 'Yes' || p.needsMuzzleOrSpecialHandling === 'Yes'
+    )) ||
+    (formData.existingClientNewPets?.some(
+      (p) => p.needsCalmingMedications === 'Yes' || p.needsMuzzleOrSpecialHandling === 'Yes'
+    )) ||
+    false;
+  const isExploreMembershipsVisible =
+    isOnSubmitStep &&
+    hasEligiblePetsForMembership &&
+    !shouldHideMembershipForAppointmentTypes &&
+    !shouldHideMembershipForCalmingOrMuzzle;
+
+  // Fetch membership status for logged-in client so we can hide signup for pets that already have membership
+  useEffect(() => {
+    if (!isLoggedIn || !userId) {
+      setPetIdsWithActiveOrPendingMembership(null);
+      return;
+    }
+    let alive = true;
+    (async () => {
+      try {
+        const txns = await listMembershipTransactions({ clientId: userId });
+        if (!alive) return;
+        const ids = new Set<string>();
+        for (const t of txns) {
+          const status = (t.status ?? '').toString().toLowerCase();
+          if (status === 'active' || status === 'pending') {
+            const pid = t.patientId ?? t.metadata?.patientId;
+            if (pid != null) ids.add(String(pid));
+          }
+        }
+        setPetIdsWithActiveOrPendingMembership(ids);
+      } catch {
+        if (alive) setPetIdsWithActiveOrPendingMembership(new Set());
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [isLoggedIn, userId]);
+
+  // Fetch wellness plans for logged-in client's pets; treat active wellness plan as membership
+  useEffect(() => {
+    if (!isLoggedIn || !pets.length) {
+      setPetIdsWithActiveWellnessPlan(null);
+      return;
+    }
+    let alive = true;
+    (async () => {
+      const ids = new Set<string>();
+      const withDbId = pets.filter((p) => p.dbId);
+      for (const pet of withDbId) {
+        if (!alive) return;
+        try {
+          const plans = await fetchWellnessPlansForPatient(pet.dbId!);
+          if (!alive) return;
+          const hasActive = (plans ?? []).some(
+            (plan) =>
+              plan?.isActive === true ||
+              String(plan?.status ?? '').toLowerCase() === 'active'
+          );
+          if (hasActive) {
+            ids.add(String(pet.dbId));
+            ids.add(String(pet.id));
+          }
+        } catch {
+          // skip this pet
+        }
+      }
+      if (alive) setPetIdsWithActiveWellnessPlan(ids);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [isLoggedIn, pets]);
+
   // Warn users when they try to use browser back button
   useEffect(() => {
     // Only show warning if not on intro page and not on success page
@@ -1093,7 +1478,7 @@ export default function AppointmentRequestForm() {
               if (zoneError?.response?.status === 404) {
                 // Zone not serviced - set error and don't fetch veterinarians
                 if (alive) {
-                  setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry we don't serve your area at this time. Please check back with us periodically to see if we have changed our service area at www.vetatyourdoor.com/service-area." }));
+                  setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry—we don't currently serve your area. Please check back periodically at www.vetatyourdoor.com/service-area to see if our coverage has expanded. You can also call or text us at (207) 536-8387, and we'll take a look to see if your location may still be within reach." }));
                   setPublicProviders([]);
                   setProviders([]);
                   setRawPublicVeterinarians([]);
@@ -1467,7 +1852,7 @@ export default function AppointmentRequestForm() {
             if (zoneError?.response?.status === 404) {
               // Zone not serviced - set error and don't fetch veterinarians
               if (alive) {
-                setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry we don't serve your area at this time. Please check back with us periodically to see if we have changed our service area at www.vetatyourdoor.com/service-area." }));
+                setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry—we don't currently serve your area. Please check back periodically at www.vetatyourdoor.com/service-area to see if our coverage has expanded. You can also call or text us at (207) 536-8387, and we'll take a look to see if your location may still be within reach." }));
                 setProviders([]);
                 setLoadingVeterinarians(false);
                 lastCheckedAddressRef.current = currentAddress; // Update last checked address even on error
@@ -1879,6 +2264,13 @@ export default function AppointmentRequestForm() {
         if (!formData.physicalAddress.state.trim()) newErrors['physicalAddress.state'] = 'State is required';
         if (!formData.physicalAddress.zip.trim()) newErrors['physicalAddress.zip'] = 'Zip code is required';
         if (errors.zoneNotServiced) newErrors.zoneNotServiced = errors.zoneNotServiced;
+        if (!formData.mailingAddressSame) newErrors.mailingAddressSame = 'Please select whether your mailing address is different from your physical address';
+        if (formData.mailingAddressSame === 'Yes, it is different.') {
+          if (!formData.mailingAddress?.line1?.trim()) newErrors['mailingAddress.line1'] = 'Mailing street address is required';
+          if (!formData.mailingAddress?.city?.trim()) newErrors['mailingAddress.city'] = 'Mailing city is required';
+          if (!formData.mailingAddress?.state?.trim()) newErrors['mailingAddress.state'] = 'Mailing state is required';
+          if (!formData.mailingAddress?.zip?.trim()) newErrors['mailingAddress.zip'] = 'Mailing zip code is required';
+        }
         if (!formData.previousVeterinaryPractices?.trim()) newErrors.previousVeterinaryPractices = 'Previous veterinary practices are required';
         // Doctor selection moved to request-visit-continued page
         }
@@ -1980,9 +2372,14 @@ export default function AppointmentRequestForm() {
         break;
       case 'existing-client':
         if (!formData.bestPhoneNumber?.trim()) newErrors.bestPhoneNumber = 'Phone number is required';
-        if (formData.physicalAddress && (formData.physicalAddress.line1 || formData.physicalAddress.city || formData.physicalAddress.state || formData.physicalAddress.zip)) {
+        // Use same logic as UI: show validation when address is present (from form or original)
+        const addressToCheckExisting = formData.physicalAddress && (formData.physicalAddress.line1 || formData.physicalAddress.city || formData.physicalAddress.state || formData.physicalAddress.zip)
+          ? formData.physicalAddress
+          : originalAddress;
+        const hasAddressForVisit = addressToCheckExisting && (addressToCheckExisting.line1 || addressToCheckExisting.city || addressToCheckExisting.state || addressToCheckExisting.zip);
+        if (hasAddressForVisit) {
           if (!formData.isThisTheAddressWhereWeWillCome) newErrors.isThisTheAddressWhereWeWillCome = 'Please select an option';
-          // If they answered "No", validate new address fields
+          // If they answered "No", require all fields for the other (visit) address
           if (formData.isThisTheAddressWhereWeWillCome === 'No') {
             if (!formData.newPhysicalAddress?.line1?.trim()) newErrors['newPhysicalAddress.line1'] = 'Street address is required';
             if (!formData.newPhysicalAddress?.city?.trim()) newErrors['newPhysicalAddress.city'] = 'City is required';
@@ -2105,10 +2502,13 @@ export default function AppointmentRequestForm() {
         // Require manual date/time entry (client liaisons will handle scheduling)
         if (!formData.preferredDateTime?.trim()) newErrors.preferredDateTime = 'Please enter your preferred date and time';
         if (!formData.aftercarePreference) newErrors.aftercarePreference = 'Please select an aftercare preference';
+        if (isExploreMembershipsVisible && ongoingCareInterest == null) {
+          newErrors.ongoingCareInterest = 'Please answer this question to continue';
+        }
         break;
       case 'request-visit-continued':
-        // Validate doctor selection
-        if (!formData.preferredDoctorExisting && !formData.preferredDoctor) {
+        // Validate doctor selection (skipped when SHOW_DOCTOR_SELECTION is false)
+        if (SHOW_DOCTOR_SELECTION && !formData.preferredDoctorExisting && !formData.preferredDoctor) {
           newErrors.preferredDoctorExisting = 'Please select a preferred doctor';
         }
         
@@ -2127,20 +2527,26 @@ export default function AppointmentRequestForm() {
         const isNotUrgentTimeframe = formData.howSoon && !isUrgentTimeframe;
         
         // Validate preferredDateTimeVisit in all scenarios where it's displayed
-        if (hasEuthanasiaPet || isUrgentTimeframe || formData.noneOfWorkForMeVisit || (isNotUrgentTimeframe && !loadingSlots && recommendedSlots.length === 0)) {
+        // When SHOW_TIME_SLOTS is false, always require it for non-urgent (no slot UI shown)
+        const shouldRequirePreferredDateTimeVisit = hasEuthanasiaPet || isUrgentTimeframe || formData.noneOfWorkForMeVisit
+          || (isNotUrgentTimeframe && (!SHOW_TIME_SLOTS || (!loadingSlots && recommendedSlots.length === 0)));
+        if (shouldRequirePreferredDateTimeVisit) {
           if (!formData.preferredDateTimeVisit?.trim()) {
             newErrors.preferredDateTimeVisit = 'Please enter any preferences for days/times for us to visit you';
           }
         }
         
-        // If not urgent/emergent and slots are available, require selections or "none work" option
-        if (isNotUrgentTimeframe) {
+        // If not urgent/emergent and slots are available (and shown), require selections or "none work" option
+        if (isNotUrgentTimeframe && SHOW_TIME_SLOTS) {
           if (recommendedSlots.length > 0) {
             const selectedCount = Object.keys(formData.selectedDateTimeSlotsVisit || {}).length;
             if (selectedCount === 0 && !formData.noneOfWorkForMeVisit) {
               newErrors.selectedDateTimeSlotsVisit = 'Please select your preferred times or indicate that none of these work for you';
             }
           }
+        }
+        if (isExploreMembershipsVisible && ongoingCareInterest == null) {
+          newErrors.ongoingCareInterest = 'Please answer this question to continue';
         }
         break;
       // Add more validation as needed
@@ -2356,6 +2762,33 @@ export default function AppointmentRequestForm() {
         handleSubmit();
         break;
     }
+  };
+
+  const openMembershipSignupForPet = (pet: EligiblePet) => {
+    setSelectedMembershipPet(pet);
+    setMembershipModalStep('signup');
+  };
+
+  const getModalPetForSignup = (): Pet | { id: string; name: string; species?: string; breed?: string; age?: string; dob?: string } | undefined => {
+    if (!selectedMembershipPet) return undefined;
+    if (selectedMembershipPet.isBackendPet) {
+      const fullPet = pets.find((p) => p.id === selectedMembershipPet.id);
+      return fullPet ?? { id: selectedMembershipPet.id, name: selectedMembershipPet.name, species: selectedMembershipPet.species };
+    }
+    const payload =
+      formData.newClientPets?.find((p) => p.id === selectedMembershipPet.id) ||
+      formData.existingClientNewPets?.find((p) => p.id === selectedMembershipPet.id);
+    if (!payload) return { id: selectedMembershipPet.id, name: selectedMembershipPet.name, species: selectedMembershipPet.species };
+    const ageOrDob = payload.age?.trim();
+    const looksLikeDate = ageOrDob && /^\d{1,4}[\/\-]\d{1,2}[\/\-]\d{1,4}$/.test(ageOrDob);
+    return {
+      id: payload.id,
+      name: payload.name,
+      species: payload.species,
+      breed: payload.breed,
+      age: looksLikeDate ? undefined : ageOrDob || undefined,
+      dob: looksLikeDate ? ageOrDob : undefined,
+    };
   };
 
   const handleBack = () => {
@@ -2685,8 +3118,8 @@ export default function AppointmentRequestForm() {
         hasCalmingMedications: formData.hasCalmingMedications || undefined,
         needsMuzzleOrSpecialHandling: formData.needsMuzzleOrSpecialHandling || undefined,
         
-        // Per-pet data - include in payload for API processing
-        petSpecificData: formData.petSpecificData || undefined,
+        // Per-pet data - include in payload for API processing (only fields for the selected type)
+        petSpecificData: sanitizePetSpecificDataForPayload(formData.petSpecificData),
         
         // Appointment Details
         appointmentType: (() => {
@@ -2833,6 +3266,7 @@ export default function AppointmentRequestForm() {
         howDidYouHearAboutUs: formData.howDidYouHearAboutUs || undefined,
         anythingElse: formData.anythingElse || undefined,
         membershipInterest: formData.membershipInterest || undefined,
+        ongoingCareInterest: ongoingCareInterest || undefined,
         
         // Metadata
         submittedAt: new Date().toISOString(),
@@ -2898,6 +3332,7 @@ export default function AppointmentRequestForm() {
                               !!(formData.selectedDateTimeSlotsVisit && Object.keys(formData.selectedDateTimeSlotsVisit).length > 0),
         how_soon: formData.howSoon || undefined,
         membership_interest: formData.membershipInterest || undefined,
+        ongoing_care_interest: ongoingCareInterest || undefined,
       });
       
       setCurrentPage('success');
@@ -3005,17 +3440,21 @@ export default function AppointmentRequestForm() {
                   >
                     log in
                   </a>
-                  {' '}or quickly{' '}
-                  <a
-                    href="/create-client"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      navigate('/create-client');
-                    }}
-                    style={{ color: '#d97706', textDecoration: 'underline', fontWeight: 600 }}
-                  >
-                    create an account
-                  </a>
+                  {isProduction() && (
+                    <>
+                      {' '}or quickly{' '}
+                      <a
+                        href="/create-client"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          navigate('/create-client');
+                        }}
+                        style={{ color: '#d97706', textDecoration: 'underline', fontWeight: 600 }}
+                      >
+                        create an account
+                      </a>
+                    </>
+                  )}
                   {' '}using this email to access our Client Portal and request appointments.
                 </div>
               )}
@@ -3154,7 +3593,7 @@ export default function AppointmentRequestForm() {
                   marginBottom: '12px',
                 }}
               />
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr 1fr', gap: '12px' }}>
                 <input
                   type="text"
                   value={formData.physicalAddress?.city || ''}
@@ -3194,29 +3633,14 @@ export default function AppointmentRequestForm() {
               </div>
               {errors.zoneNotServiced && (
                 <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
-                  {errors.zoneNotServiced.includes('www.vetatyourdoor.com/service-area') ? (
-                    <>
-                      {errors.zoneNotServiced.split('www.vetatyourdoor.com/service-area')[0]}
-                      <a 
-                        href="https://www.vetatyourdoor.com/service-area" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        style={{ color: '#3b82f6', textDecoration: 'underline' }}
-                      >
-                        www.vetatyourdoor.com/service-area
-                      </a>
-                      {errors.zoneNotServiced.split('www.vetatyourdoor.com/service-area')[1]}
-                    </>
-                  ) : (
-                    errors.zoneNotServiced
-                  )}
+                  {renderZoneNotServicedMessage(errors.zoneNotServiced)}
                 </div>
               )}
             </div>
 
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Is your mailing address different from your physical address?
+                Is your mailing address different from your physical address? <span style={{ color: '#ef4444' }}>*</span>
               </label>
               <div style={{ display: 'flex', gap: '16px' }}>
                 {['Yes, it is different.', 'No, it is the same.'].map((option) => (
@@ -3228,7 +3652,7 @@ export default function AppointmentRequestForm() {
                       gap: '8px',
                       cursor: 'pointer',
                       padding: '12px',
-                      border: `1px solid ${formData.mailingAddressSame === option ? '#10b981' : '#d1d5db'}`,
+                      border: `1px solid ${errors.mailingAddressSame ? '#ef4444' : formData.mailingAddressSame === option ? '#10b981' : '#d1d5db'}`,
                       borderRadius: '8px',
                       backgroundColor: formData.mailingAddressSame === option ? '#f0fdf4' : '#fff',
                       flex: 1,
@@ -3246,12 +3670,17 @@ export default function AppointmentRequestForm() {
                   </label>
                 ))}
               </div>
+              {errors.mailingAddressSame && (
+                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
+                  {errors.mailingAddressSame}
+                </div>
+              )}
             </div>
 
             {formData.mailingAddressSame === 'Yes, it is different.' && (
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                  Please enter your MAILING address here.
+                  Please enter your MAILING address here. <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <input
                   type="text"
@@ -3261,35 +3690,45 @@ export default function AppointmentRequestForm() {
                   style={{
                     width: '100%',
                     padding: '12px',
-                    border: '1px solid #d1d5db',
+                    border: `1px solid ${errors['mailingAddress.line1'] ? '#ef4444' : '#d1d5db'}`,
                     borderRadius: '8px',
                     fontSize: '14px',
                     marginBottom: '12px',
                   }}
                 />
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
+                {errors['mailingAddress.line1'] && (
+                  <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '-8px', marginBottom: '12px' }}>
+                    {errors['mailingAddress.line1']}
+                  </div>
+                )}
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr 1fr', gap: '12px' }}>
                   <input
                     type="text"
                     value={formData.mailingAddress?.city || ''}
                     onChange={(e) => updateNestedFormData('mailingAddress', 'city', e.target.value)}
                     placeholder="City"
-                    style={{ padding: '12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px' }}
+                    style={{ padding: '12px', border: `1px solid ${errors['mailingAddress.city'] ? '#ef4444' : '#d1d5db'}`, borderRadius: '8px', fontSize: '14px' }}
                   />
                   <input
                     type="text"
                     value={formData.mailingAddress?.state || ''}
                     onChange={(e) => updateNestedFormData('mailingAddress', 'state', e.target.value)}
                     placeholder="State"
-                    style={{ padding: '12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px' }}
+                    style={{ padding: '12px', border: `1px solid ${errors['mailingAddress.state'] ? '#ef4444' : '#d1d5db'}`, borderRadius: '8px', fontSize: '14px' }}
                   />
                   <input
                     type="text"
                     value={formData.mailingAddress?.zip || ''}
                     onChange={(e) => updateNestedFormData('mailingAddress', 'zip', e.target.value)}
                     placeholder="Zip"
-                    style={{ padding: '12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px' }}
+                    style={{ padding: '12px', border: `1px solid ${errors['mailingAddress.zip'] ? '#ef4444' : '#d1d5db'}`, borderRadius: '8px', fontSize: '14px' }}
                   />
                 </div>
+                {(errors['mailingAddress.city'] || errors['mailingAddress.state'] || errors['mailingAddress.zip']) && (
+                  <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
+                    {errors['mailingAddress.city'] || errors['mailingAddress.state'] || errors['mailingAddress.zip']}
+                  </div>
+                )}
               </div>
             )}
 
@@ -3353,6 +3792,9 @@ export default function AppointmentRequestForm() {
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
                 Is it okay if we contact them to get records?
               </label>
+              <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '12px', lineHeight: 1.5 }}>
+                Access to your pet's prior medical records is important for their safety and continuity of care. Declining to share available records may limit our ability to provide comprehensive care.
+              </p>
               <div style={{ display: 'flex', gap: '16px' }}>
                 {['Yes', 'No'].map((option) => (
                   <label
@@ -4042,7 +4484,7 @@ export default function AppointmentRequestForm() {
                         {/* What does your pet need today? */}
                         <div style={{ marginBottom: '4px' }}>
                           <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
-                            What does {pet.name || 'this pet'} need today? <span style={{ color: '#ef4444' }}>*</span>
+                            What does {pet.name || 'this pet'} need today? (Please only choose one)
                           </label>
                           {(() => {
                             const petData = getPetData(pet.id);
@@ -4086,12 +4528,8 @@ export default function AppointmentRequestForm() {
                                         name={`needsToday-${pet.id}`}
                                         value={option.name}
                                         checked={(petData.needsToday === option.prettyName) || (petData.needsToday === option.name)}
-                                        onChange={(e) => {
-                                          // Store prettyName, id, and name for backend lookup
-                                          updatePetSpecificData(pet.id, 'needsToday', option.prettyName);
-                                          updatePetSpecificData(pet.id, 'appointmentTypeId', option.id);
-                                          updatePetSpecificData(pet.id, 'appointmentTypeName', option.name);
-                                          updatePetSpecificData(pet.id, 'needsTodayDetails', '');
+                                        onChange={() => {
+                                          attemptPetNeedsTodayChange(pet.id, option, getPetData(pet.id));
                                         }}
                                         style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
                                       />
@@ -4511,7 +4949,7 @@ export default function AppointmentRequestForm() {
               <>
                 <div style={{ marginBottom: '20px' }}>
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                    Please let us know where we will meet you.
+                    Please let us know where we will meet you. <span style={{ color: '#ef4444' }}>*</span>
                   </label>
                   <input
                     type="text"
@@ -4528,7 +4966,7 @@ export default function AppointmentRequestForm() {
                     }}
                   />
                   {errors['newPhysicalAddress.line1'] && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '-8px', marginBottom: '8px' }}>{errors['newPhysicalAddress.line1']}</div>}
-                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr 1fr', gap: '12px' }}>
                     <input
                       type="text"
                       value={formData.newPhysicalAddress?.city || ''}
@@ -4573,22 +5011,7 @@ export default function AppointmentRequestForm() {
                   )}
                   {errors.zoneNotServiced && (
                     <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
-                      {errors.zoneNotServiced.includes('www.vetatyourdoor.com/service-area') ? (
-                        <>
-                          {errors.zoneNotServiced.split('www.vetatyourdoor.com/service-area')[0]}
-                          <a 
-                            href="https://www.vetatyourdoor.com/service-area" 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            style={{ color: '#3b82f6', textDecoration: 'underline' }}
-                          >
-                            www.vetatyourdoor.com/service-area
-                          </a>
-                          {errors.zoneNotServiced.split('www.vetatyourdoor.com/service-area')[1]}
-                        </>
-                      ) : (
-                        errors.zoneNotServiced
-                      )}
+                      {renderZoneNotServicedMessage(errors.zoneNotServiced)}
                     </div>
                   )}
                 </div>
@@ -4654,6 +5077,9 @@ export default function AppointmentRequestForm() {
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
                     May we ask for records from the above hospitals?
                   </label>
+                  <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '12px', lineHeight: 1.5 }}>
+                    Access to your pet's prior medical records is important for their safety and continuity of care. Declining to share available records may limit our ability to provide comprehensive care.
+                  </p>
                 <div style={{ display: 'flex', gap: '16px' }}>
                   {['Yes', 'No'].map((option) => (
                     <label
@@ -4904,7 +5330,7 @@ export default function AppointmentRequestForm() {
                             {/* What does your pet need today? */}
                             <div style={{ marginBottom: '4px' }}>
                               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
-                                What does {pet.name} need today? <span style={{ color: '#ef4444' }}>*</span>
+                                What does {pet.name} need today? (Please only choose one)
                               </label>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                                 {(() => {
@@ -4946,13 +5372,8 @@ export default function AppointmentRequestForm() {
                                         name={`needsToday-${pet.id}`}
                                         value={option.name}
                                         checked={(petData.needsToday === option.prettyName) || (petData.needsToday === option.name)}
-                                        onChange={(e) => {
-                                          // Store prettyName, id, and name for backend lookup
-                                          updatePetSpecificData(pet.id, 'needsToday', option.prettyName);
-                                          updatePetSpecificData(pet.id, 'appointmentTypeId', option.id);
-                                          updatePetSpecificData(pet.id, 'appointmentTypeName', option.name);
-                                          // Clear details when changing selection
-                                          updatePetSpecificData(pet.id, 'needsTodayDetails', '');
+                                        onChange={() => {
+                                          attemptPetNeedsTodayChange(pet.id, option, getPetData(pet.id));
                                         }}
                                         style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
                                       />
@@ -5746,7 +6167,7 @@ export default function AppointmentRequestForm() {
                                 {/* What does your pet need today? */}
                                 <div style={{ marginBottom: '4px' }}>
                                   <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
-                                    What does {pet.name || 'this pet'} need today? <span style={{ color: '#ef4444' }}>*</span>
+                                    What does {pet.name || 'this pet'} need today? (Please only choose one)
                                   </label>
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                                     {(() => {
@@ -5788,12 +6209,8 @@ export default function AppointmentRequestForm() {
                                             name={`needsToday-${pet.id}`}
                                             value={option.name}
                                             checked={(petData.needsToday === option.prettyName) || (petData.needsToday === option.name)}
-                                            onChange={(e) => {
-                                              // Store prettyName, id, and name for backend lookup
-                                              updatePetSpecificData(pet.id, 'needsToday', option.prettyName);
-                                              updatePetSpecificData(pet.id, 'appointmentTypeId', option.id);
-                                              updatePetSpecificData(pet.id, 'appointmentTypeName', option.name);
-                                              updatePetSpecificData(pet.id, 'needsTodayDetails', '');
+                                            onChange={() => {
+                                              attemptPetNeedsTodayChange(pet.id, option, getPetData(pet.id));
                                             }}
                                             style={{ marginTop: '2px', width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
                                           />
@@ -6369,62 +6786,24 @@ export default function AppointmentRequestForm() {
               </div>
             </div>
 
-            {!hasEuthanasiaPetEuthanasiaPage && (
+            {!isLoggedIn && (
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                  Are you interested in membership or pay as you go?{' '}
-                  <a
-                    href="https://www.vetatyourdoor.com/care-options"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      color: '#10b981',
-                      textDecoration: 'none',
-                      fontSize: '14px',
-                      fontWeight: 400,
-                      marginLeft: '4px',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.textDecoration = 'underline';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.textDecoration = 'none';
-                    }}
-                  >
-                    What's this?
-                  </a>
+                  How did you hear about us?
                 </label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {[
-                    'Pay as you go',
-                    'Membership',
-                    "I'm not sure yet",
-                  ].map((option) => (
-                    <label
-                      key={option}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        cursor: 'pointer',
-                        padding: '12px',
-                        border: `1px solid ${formData.membershipInterest === option ? '#10b981' : '#d1d5db'}`,
-                        borderRadius: '8px',
-                        backgroundColor: formData.membershipInterest === option ? '#f0fdf4' : '#fff',
-                      }}
-                    >
-                      <input
-                        type="radio"
-                        name="membershipInterest"
-                        value={option}
-                        checked={formData.membershipInterest === option}
-                        onChange={(e) => updateFormData('membershipInterest', e.target.value as 'Pay as you go' | 'Membership' | "I'm not sure yet")}
-                        style={{ margin: 0 }}
-                      />
-                      <span style={{ fontSize: '14px' }}>{option}</span>
-                    </label>
-                  ))}
-                </div>
+                <textarea
+                  value={formData.howDidYouHearAboutUs || ''}
+                  onChange={(e) => updateFormData('howDidYouHearAboutUs', e.target.value)}
+                  rows={4}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    fontFamily: 'inherit',
+                  }}
+                />
               </div>
             )}
           </div>
@@ -6450,7 +6829,8 @@ export default function AppointmentRequestForm() {
               </h1>
             </div>
 
-            {/* Doctor Selection - at the top of request visit page */}
+            {/* Doctor Selection - at the top of request visit page. Hidden via SHOW_DOCTOR_SELECTION flag. */}
+            {SHOW_DOCTOR_SELECTION && (
             <div style={{ marginBottom: '32px', padding: '20px', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
                 Select a Doctor <span style={{ color: '#ef4444' }}>*</span>{' '}
@@ -6550,6 +6930,7 @@ export default function AppointmentRequestForm() {
                 );
               })()}
             </div>
+            )}
 
             {/* If any pet is selected for euthanasia, show message instead of time slots */}
             {hasEuthanasiaPet ? (
@@ -6639,10 +7020,54 @@ export default function AppointmentRequestForm() {
                   return null;
                 })()}
                 
-                {/* Show time slots if not urgent/emergent */}
+                {/* When time slots are hidden, show preferences textarea for non-urgent case */}
                 {(() => {
                   const isUrgentTimeframe = formData.howSoon === 'Emergent – today' || formData.howSoon === 'Urgent – within 24–48 hours';
-                  return !isUrgentTimeframe;
+                  return !hasEuthanasiaPet && !isUrgentTimeframe && !SHOW_TIME_SLOTS;
+                })() && (
+                  <>
+                    <div style={{ 
+                      marginBottom: '20px', 
+                      padding: '16px',
+                      backgroundColor: '#f0fdf4',
+                      border: '1px solid #10b981',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      color: '#065f46',
+                    }}>
+                      Once you submit the form, a Client Liaison will be in touch with you shortly about available times.
+                    </div>
+                    <div style={{ marginBottom: '20px' }}>
+                      <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                        Please enter any preferences for days/times for us to visit you. <span style={{ color: '#ef4444' }}>*</span>
+                      </label>
+                      <textarea
+                        value={formData.preferredDateTimeVisit || ''}
+                        onChange={(e) => updateFormData('preferredDateTimeVisit', e.target.value)}
+                        rows={3}
+                        placeholder="Enter any preferences for days/times here..."
+                        style={{
+                          width: '100%',
+                          padding: '12px',
+                          border: errors.preferredDateTimeVisit ? '1px solid #ef4444' : '1px solid #d1d5db',
+                          borderRadius: '8px',
+                          fontSize: '14px',
+                          fontFamily: 'inherit',
+                        }}
+                      />
+                      {errors.preferredDateTimeVisit && (
+                        <div style={{ fontSize: '12px', color: '#ef4444', marginTop: '4px' }}>
+                          {errors.preferredDateTimeVisit}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+                
+                {/* Show time slots if not urgent/emergent. Hidden via SHOW_TIME_SLOTS flag. */}
+                {(() => {
+                  const isUrgentTimeframe = formData.howSoon === 'Emergent – today' || formData.howSoon === 'Urgent – within 24–48 hours';
+                  return !isUrgentTimeframe && SHOW_TIME_SLOTS;
                 })() && (
             <div style={{ marginBottom: '20px' }}>
               {loadingSlots && (
@@ -6865,27 +7290,6 @@ export default function AppointmentRequestForm() {
               </>
             )}
 
-            {/* Only show "How did you hear about us" for new clients */}
-            {(!isLoggedIn && formData.haveUsedServicesBefore === 'No') && (
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                  How did you hear about us?
-                </label>
-                <input
-                  type="text"
-                  value={formData.howDidYouHearAboutUs || ''}
-                  onChange={(e) => updateFormData('howDidYouHearAboutUs', e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '12px',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                  }}
-                />
-              </div>
-            )}
-
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
                 Anything else you want us to know?
@@ -6905,62 +7309,24 @@ export default function AppointmentRequestForm() {
               />
             </div>
 
-            {!hasEuthanasiaPet && (
+            {!isLoggedIn && (
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                  Are you interested in membership or pay as you go?{' '}
-                  <a
-                    href="https://www.vetatyourdoor.com/care-options"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      color: '#10b981',
-                      textDecoration: 'none',
-                      fontSize: '14px',
-                      fontWeight: 400,
-                      marginLeft: '4px',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.textDecoration = 'underline';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.textDecoration = 'none';
-                    }}
-                  >
-                    What's this?
-                  </a>
+                  How did you hear about us?
                 </label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {[
-                    'Pay as you go',
-                    'Membership',
-                    "I'm not sure yet",
-                  ].map((option) => (
-                    <label
-                      key={option}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        cursor: 'pointer',
-                        padding: '12px',
-                        border: `1px solid ${formData.membershipInterest === option ? '#10b981' : '#d1d5db'}`,
-                        borderRadius: '8px',
-                        backgroundColor: formData.membershipInterest === option ? '#f0fdf4' : '#fff',
-                      }}
-                    >
-                      <input
-                        type="radio"
-                        name="membershipInterest"
-                        value={option}
-                        checked={formData.membershipInterest === option}
-                        onChange={(e) => updateFormData('membershipInterest', e.target.value as 'Pay as you go' | 'Membership' | "I'm not sure yet")}
-                        style={{ margin: 0 }}
-                      />
-                      <span style={{ fontSize: '14px' }}>{option}</span>
-                    </label>
-                  ))}
-                </div>
+                <textarea
+                  value={formData.howDidYouHearAboutUs || ''}
+                  onChange={(e) => updateFormData('howDidYouHearAboutUs', e.target.value)}
+                  rows={4}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    fontFamily: 'inherit',
+                  }}
+                />
               </div>
             )}
           </div>
@@ -6971,8 +7337,311 @@ export default function AppointmentRequestForm() {
     }
   };
 
+  const renderMembershipModal = () =>
+    showMembershipModal && (
+      <div
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+        }}
+        onClick={() => {
+          if (membershipModalStep === 'choose-pet') setShowMembershipModal(false);
+        }}
+      >
+        <div
+          style={{
+            backgroundColor: '#fff',
+            borderRadius: '12px',
+            padding: membershipModalStep === 'choose-pet' || membershipModalStep === 'success' ? '32px' : '0',
+            maxWidth: membershipModalStep === 'signup' || membershipModalStep === 'payment' ? 'min(1120px, 96vw)' : '480px',
+            width: '90%',
+            maxHeight: '90vh',
+            overflow: 'auto',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {membershipEligiblePets.length > 1 && membershipModalStep !== 'success' && (
+            <div
+              style={{
+                marginBottom: 16,
+                padding: '12px 16px',
+                background: '#f0fdf4',
+                border: '1px solid #bbf7d0',
+                borderRadius: 8,
+                color: '#166534',
+                fontSize: 14,
+                lineHeight: 1.5,
+              }}
+            >
+              Enroll more than one pet and receive a $75 credit for each additional pet. Credits may be used at any future Vet At Your Door visit.
+            </div>
+          )}
+          {membershipModalStep === 'choose-pet' && (
+            <>
+              <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
+                Explore membership
+              </h2>
+              <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px', lineHeight: 1.5 }}>
+                Choose a pet to explore membership plans. You can explore memberships for additional pets after completing this one.
+              </p>
+              {membershipEligiblePets.length === 0 ? (
+                <>
+                  <p style={{ fontSize: '15px', color: '#374151', marginBottom: '24px' }}>
+                    All selected pets already have an active membership, or no pets are selected. You can continue to submit your appointment request.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowMembershipModal(false)}
+                    style={{
+                      padding: '10px 20px',
+                      backgroundColor: '#10b981',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Done
+                  </button>
+                </>
+              ) : membershipEligiblePets.length === 1 ? (
+                <div style={{ marginBottom: '24px' }}>
+                  <p style={{ fontSize: '15px', color: '#374151', marginBottom: '12px' }}>
+                    Explore membership recommendations for <strong>{membershipEligiblePets[0].name}</strong>.
+                  </p>
+                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={() => openMembershipSignupForPet(membershipEligiblePets[0])}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: '#10b981',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Explore Membership Options
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowMembershipModal(false)}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: '#f3f4f6',
+                        color: '#374151',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p style={{ fontSize: '15px', color: '#374151', marginBottom: '12px' }}>
+                    Which pet would you like to explore membership for?
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
+                    {membershipEligiblePets.map((p) => (
+                      <label
+                        key={p.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          padding: '12px',
+                          cursor: 'pointer',
+                          borderRadius: '8px',
+                          border: `2px solid ${selectedMembershipPetId === p.id ? '#10b981' : '#e5e7eb'}`,
+                          backgroundColor: selectedMembershipPetId === p.id ? '#f0fdf4' : '#fff',
+                        }}
+                      >
+                        <input
+                          type="radio"
+                          name="membership-pet"
+                          checked={selectedMembershipPetId === p.id}
+                          onChange={() => setSelectedMembershipPetId(p.id)}
+                          style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                        />
+                        <span style={{ fontWeight: 500, color: '#111827' }}>{p.name}</span>
+                        {p.species && (
+                          <span style={{ fontSize: '13px', color: '#6b7280' }}>({p.species})</span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      disabled={!selectedMembershipPetId}
+                      onClick={() => {
+                        const pet = membershipEligiblePets.find((p) => p.id === selectedMembershipPetId);
+                        if (pet) openMembershipSignupForPet(pet);
+                      }}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: selectedMembershipPetId ? '#10b981' : '#d1d5db',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        cursor: selectedMembershipPetId ? 'pointer' : 'not-allowed',
+                      }}
+                    >
+                      Explore Membership Options
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowMembershipModal(false)}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: '#f3f4f6',
+                        color: '#374151',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {membershipModalStep === 'signup' && getModalPetForSignup() && (
+            <div style={{ padding: '16px' }}>
+              <MembershipSignup
+                fromModal
+                modalPet={getModalPetForSignup()}
+                modalClientInfo={{
+                  email: formData.email?.trim() || undefined,
+                  fullName: formData.fullName,
+                }}
+                onProceedToPayment={(state) => {
+                  setMembershipPaymentState(state);
+                  setMembershipModalStep('payment');
+                }}
+                onCancel={() => {
+                  setMembershipModalStep('choose-pet');
+                  setSelectedMembershipPet(null);
+                }}
+              />
+            </div>
+          )}
+
+          {membershipModalStep === 'payment' && membershipPaymentState && (
+            <div style={{ padding: '16px' }}>
+              <MembershipPayment
+                fromModal
+                initialState={membershipPaymentState}
+                onSuccess={() => {
+                  setLastSignedUpPetIds((prev) => [...prev, membershipPaymentState.petId]);
+                  setMembershipModalStep('success');
+                }}
+                onBack={() => setMembershipModalStep('signup')}
+                onSignUpAnother={(signedUpPetId) => {
+                  setLastSignedUpPetIds((prev) => [...prev, signedUpPetId]);
+                  setMembershipPaymentState(null);
+                  setMembershipModalStep('choose-pet');
+                  setSelectedMembershipPet(null);
+                  setSelectedMembershipPetId(null);
+                }}
+              />
+            </div>
+          )}
+
+          {membershipModalStep === 'success' && (
+            <>
+              <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
+                Payment successful
+              </h2>
+              <p style={{ fontSize: '15px', color: '#374151', marginBottom: lastSignedUpPetIds.length >= 2 ? '12px' : '24px' }}>
+                Membership signup is complete. You can sign up another pet or return to your appointment request.
+              </p>
+              {lastSignedUpPetIds.length >= 2 && (
+                <p style={{ fontSize: '15px', padding: '12px 16px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, color: '#166534', marginBottom: '24px', lineHeight: 1.5 }}>
+                  You will be receiving a $75 credit in your VAYD account to be used at any visit of your choosing — this won&apos;t expire.
+                </p>
+              )}
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                {membershipEligiblePets.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMembershipModalStep('choose-pet');
+                      setSelectedMembershipPet(null);
+                      setSelectedMembershipPetId(null);
+                    }}
+                    style={{
+                      padding: '10px 20px',
+                      backgroundColor: '#10b981',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Sign up another pet
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMembershipModal(false);
+                    setMembershipModalStep('choose-pet');
+                    setMembershipPaymentState(null);
+                    setSelectedMembershipPet(null);
+                    setSelectedMembershipPetId(null);
+                  }}
+                  style={{
+                    padding: '10px 20px',
+                    backgroundColor: '#f3f4f6',
+                    color: '#374151',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Done – back to appointment request
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+
   if (currentPage === 'success') {
     return (
+      <>
       <div style={{ minHeight: '100vh', width: '100%' }}>
         {/* Header - only show for logged-in users */}
         {isLoggedIn && (
@@ -7026,24 +7695,95 @@ export default function AppointmentRequestForm() {
           <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#111827', marginBottom: '12px' }}>
             Thank You!
           </h1>
-          <p style={{ fontSize: '16px', color: '#6b7280', marginBottom: '32px' }}>
+          <p style={{ fontSize: '16px', color: '#6b7280', marginBottom: ongoingCareInterest === 'yes' ? '16px' : (isLoggedIn ? '32px' : 0) }}>
             Your appointment request has been submitted successfully. We'll get back to you shortly!
           </p>
-          <button
-            onClick={() => navigate('/client-portal')}
-            style={{
-              padding: '12px 24px',
-              backgroundColor: '#10b981',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '8px',
-              fontSize: '14px',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            Return to Portal
-          </button>
+          {ongoingCareInterest === 'yes' && (
+            <div
+              style={{
+                marginTop: '0',
+                marginBottom: '24px',
+                padding: '20px',
+                backgroundColor: '#f0fdfa',
+                border: '1px solid #99f6e4',
+                borderRadius: '12px',
+                textAlign: 'left',
+              }}
+            >
+              <p style={{ fontSize: '15px', color: '#374151', lineHeight: 1.6, marginBottom: '12px', fontWeight: 700 }}>
+                One-Team Membership is designed for families who want ongoing, relationship-based care with the same trusted veterinary team.
+              </p>
+              <p style={{ fontSize: '14px', color: '#111827', marginBottom: '8px' }}>Members receive:</p>
+              <ul style={{ margin: '0 0 16px 20px', padding: 0, fontSize: '14px', color: '#374151', lineHeight: 1.7 }}>
+                <li>Priority access to their dedicated veterinary One-Team</li>
+                <li>Preferred booking for appointments</li>
+                <li>Comprehensive Wellness care, including travel fees</li>
+                <li>Vaccines and recommended screening labs</li>
+                <li>After-hours telehealth support</li>
+              </ul>
+              <p style={{ fontSize: '15px', fontWeight: 700, color: '#374151', lineHeight: 1.6, marginBottom: '16px' }}>
+                If you&apos;d like ongoing care with Vet At Your Door, you can explore and join One-Team Membership below.
+              </p>
+              <style>{`
+                @keyframes exploreMembershipsPopIn {
+                  0% { transform: scale(0.92); opacity: 0.6; box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
+                  50% { transform: scale(1.06); opacity: 1; box-shadow: 0 0 0 8px rgba(15, 118, 110, 0.15); }
+                  100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
+                }
+                .appt-form-view-membership-btn:hover {
+                  transform: scale(1.02);
+                  box-shadow: 0 0 20px 4px rgba(15, 118, 110, 0.35);
+                }
+              `}</style>
+              <button
+                type="button"
+                className="appt-form-view-membership-btn"
+                onClick={() => {
+                  trackEvent('appointment_form_confirmation_membership_cta_clicked', {
+                    eligible_pet_count: membershipEligiblePets.length,
+                    is_logged_in: isLoggedIn,
+                    membership_interest: formData.membershipInterest ?? undefined,
+                  });
+                  setSelectedMembershipPetId(null);
+                  setMembershipModalStep('choose-pet');
+                  setShowMembershipModal(true);
+                }}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: '#0f766e',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '15px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                }}
+              >
+                Review & Join Membership Now
+              </button>
+              <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '16px', fontStyle: 'italic' }}>
+                Membership is optional.
+              </p>
+            </div>
+          )}
+          {isLoggedIn && (
+            <button
+              onClick={() => navigate('/client-portal')}
+              style={{
+                padding: '12px 24px',
+                backgroundColor: '#10b981',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '14px',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Return to Portal
+            </button>
+          )}
         </div>
         </div>
 
@@ -7062,6 +7802,8 @@ export default function AppointmentRequestForm() {
           </div>
         </footer>
       </div>
+      {renderMembershipModal()}
+    </>
     );
   }
 
@@ -7348,7 +8090,108 @@ export default function AppointmentRequestForm() {
           </div>
         )}
 
+        {isExploreMembershipsVisible && (
+          <div style={{ marginTop: '20px' }}>
+            <p style={{ fontSize: '16px', fontWeight: 600, color: '#111827', marginBottom: '12px' }}>
+              Are you looking for ongoing care with a consistent, dedicated veterinary team?{' '}
+              <span style={{ color: '#ef4444' }} aria-hidden>*</span>
+            </p>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                padding: errors.ongoingCareInterest ? '12px' : undefined,
+                borderRadius: '8px',
+                border: errors.ongoingCareInterest ? '1px solid #ef4444' : undefined,
+                backgroundColor: errors.ongoingCareInterest ? '#fef2f2' : undefined,
+              }}
+            >
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '15px' }}>
+                <input
+                  type="radio"
+                  name="ongoing-care-interest"
+                  checked={ongoingCareInterest === 'yes'}
+                  onChange={() => {
+                    setOngoingCareInterest('yes');
+                    setErrors((prev) => {
+                      const { ongoingCareInterest: _o, ...rest } = prev;
+                      return rest;
+                    });
+                  }}
+                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
+                />
+                Yes, I would like that.
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '15px' }}>
+                <input
+                  type="radio"
+                  name="ongoing-care-interest"
+                  checked={ongoingCareInterest === 'no'}
+                  onChange={() => {
+                    setOngoingCareInterest('no');
+                    setErrors((prev) => {
+                      const { ongoingCareInterest: _o, ...rest } = prev;
+                      return rest;
+                    });
+                  }}
+                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
+                />
+                No, thank you.
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '15px' }}>
+                <input
+                  type="radio"
+                  name="ongoing-care-interest"
+                  checked={ongoingCareInterest === 'unsure'}
+                  onChange={() => {
+                    setOngoingCareInterest('unsure');
+                    setErrors((prev) => {
+                      const { ongoingCareInterest: _o, ...rest } = prev;
+                      return rest;
+                    });
+                  }}
+                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
+                />
+                I am not sure.
+              </label>
+            </div>
+            {errors.ongoingCareInterest && (
+              <div style={{ fontSize: '14px', color: '#ef4444', marginTop: '8px' }} role="alert">
+                {errors.ongoingCareInterest}
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '32px', gap: '12px' }}>
+          <style>{`
+            @keyframes apptFormSubmitPopIn {
+              0% { transform: scale(0.92); opacity: 0.6; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+              50% { transform: scale(1.06); opacity: 1; box-shadow: 0 0 0 8px rgba(16, 185, 129, 0.25); }
+              100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+            }
+            @keyframes apptFormSubmitPulse {
+              0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+              50% { transform: scale(1.04); box-shadow: 0 0 20px 4px rgba(16, 185, 129, 0.5); }
+            }
+            .appt-form-submit-btn {
+              animation: apptFormSubmitPopIn 0.5s ease-out forwards,
+                         apptFormSubmitPulse 2.2s ease-in-out 0.6s infinite;
+            }
+            .appt-form-submit-btn:hover:not(:disabled) {
+              animation: none;
+              transform: scale(1.05);
+              box-shadow: 0 0 20px 4px rgba(16, 185, 129, 0.45);
+            }
+            @keyframes apptFormSubmitArrowBounce {
+              0%, 100% { transform: translateX(0); opacity: 1; }
+              50% { transform: translateX(4px); opacity: 0.9; }
+            }
+            .appt-form-submit-arrow {
+              animation: apptFormSubmitArrowBounce 1.2s ease-in-out infinite;
+            }
+          `}</style>
           {currentPage !== 'intro' && currentPage !== 'existing-client' && (
             <button
               type="button"
@@ -7368,27 +8211,149 @@ export default function AppointmentRequestForm() {
             </button>
           )}
           <div style={{ flex: 1 }} />
-          <button
-            type="button"
-            onClick={handleNext}
-            disabled={submitting}
-            style={{
-              padding: '12px 24px',
-              backgroundColor: '#10b981',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '8px',
-              fontSize: '14px',
-              fontWeight: 600,
-              cursor: submitting ? 'not-allowed' : 'pointer',
-              opacity: submitting ? 0.6 : 1,
-            }}
-          >
-            {submitting ? 'Submitting...' : (currentPage === 'request-visit-continued' || currentPage === 'euthanasia-continued') ? 'Submit' : 'Next'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {(currentPage === 'request-visit-continued' || currentPage === 'euthanasia-continued') && !isExploreMembershipsVisible && (
+              <span className="appt-form-submit-arrow" style={{ color: '#10b981', fontSize: '28px', fontWeight: 700, lineHeight: 1 }} aria-hidden>→</span>
+            )}
+            <button
+              type="button"
+              className={(currentPage === 'request-visit-continued' || currentPage === 'euthanasia-continued') && !isExploreMembershipsVisible ? 'appt-form-submit-btn' : undefined}
+              onClick={handleNext}
+              disabled={submitting}
+              style={{
+                padding: '12px 24px',
+                backgroundColor: '#10b981',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '14px',
+                fontWeight: 600,
+                cursor: submitting ? 'not-allowed' : 'pointer',
+                opacity: submitting ? 0.6 : 1,
+                transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+              }}
+            >
+              {submitting ? 'Submitting...' : (currentPage === 'request-visit-continued' || currentPage === 'euthanasia-continued') ? 'Submit' : 'Next'}
+            </button>
+          </div>
         </div>
         </div>
       </div>
+
+      {/* Appointment type change — confirm data loss */}
+      {appointmentTypeChangeModal && (
+        <div
+          role="presentation"
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.45)',
+            backdropFilter: 'blur(4px)',
+            WebkitBackdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1001,
+            padding: '16px',
+          }}
+          onClick={() => setAppointmentTypeChangeModal(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="appt-type-change-title"
+            aria-describedby="appt-type-change-desc"
+            style={{
+              backgroundColor: '#fff',
+              borderRadius: '16px',
+              padding: '28px',
+              maxWidth: '440px',
+              width: '100%',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+              borderLeft: '4px solid #f59e0b',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                width: '52px',
+                height: '52px',
+                borderRadius: '50%',
+                backgroundColor: '#fffbeb',
+                border: '1px solid #fde68a',
+                color: '#b45309',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '24px',
+                fontWeight: 700,
+                marginBottom: '18px',
+              }}
+              aria-hidden
+            >
+              !
+            </div>
+            <h2
+              id="appt-type-change-title"
+              style={{ fontSize: '20px', fontWeight: 700, color: '#111827', margin: '0 0 10px 0', lineHeight: 1.3 }}
+            >
+              Change appointment type?
+            </h2>
+            <p
+              id="appt-type-change-desc"
+              style={{ fontSize: '15px', color: '#4b5563', margin: '0 0 8px 0', lineHeight: 1.55 }}
+            >
+              If you continue, everything you entered for the current appointment type will be cleared. This cannot be undone.
+            </p>
+            <p style={{ fontSize: '15px', color: '#111827', margin: '0 0 24px 0', lineHeight: 1.5, fontWeight: 500 }}>
+              New selection:{' '}
+              <span style={{ color: '#059669' }}>{appointmentTypeChangeModal.option.prettyName}</span>
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setAppointmentTypeChangeModal(null)}
+                style={{
+                  padding: '11px 20px',
+                  backgroundColor: '#f3f4f6',
+                  color: '#374151',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '10px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Keep current type
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const { petId, option } = appointmentTypeChangeModal;
+                  applyPetNeedsTodaySelection(petId, option);
+                  setAppointmentTypeChangeModal(null);
+                }}
+                style={{
+                  padding: '11px 20px',
+                  backgroundColor: '#059669',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '10px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  boxShadow: '0 1px 2px rgba(0, 0, 0, 0.06)',
+                }}
+              >
+                Clear and switch
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Existing Client Modal */}
       {showExistingClientModal && (
@@ -7454,7 +8419,7 @@ export default function AppointmentRequestForm() {
               >
                 Cancel
               </button>
-              {emailCheckForModal?.hasAccount ? (
+              {emailCheckForModal?.hasAccount || !isProduction() ? (
                 <a
                   href="/login"
                   style={{
@@ -7495,6 +8460,8 @@ export default function AppointmentRequestForm() {
           </div>
         </div>
       )}
+
+      {renderMembershipModal()}
       </div>
 
       {/* Footer */}

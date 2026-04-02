@@ -6,11 +6,10 @@ import {
   CardContent,
   Typography,
   Button,
-  Tabs,
-  Tab,
   Popover,
   Stack,
   Divider,
+  CircularProgress,
 } from '@mui/material';
 import Alert from '@mui/material/Alert';
 import Grid from '@mui/material/Grid';
@@ -27,6 +26,7 @@ import {
   YAxis,
   Tooltip,
   Line,
+  Legend,
 } from 'recharts';
 import { fetchPaymentsAnalytics, type PaymentPoint } from '../api/payments';
 
@@ -53,6 +53,30 @@ function daysBetween(a: Dayjs, b: Dayjs) {
   return Math.max(1, b.startOf('day').diff(a.startOf('day'), 'day') + 1);
 }
 const dayKeyUTC = (d: string | Date | dayjs.Dayjs) => dayjs.utc(d).format('YYYY-MM-DD');
+/** Today's date in the user's local timezone (YYYY-MM-DD) for "today" revenue. */
+const todayLocalKey = () => dayjs().format('YYYY-MM-DD');
+
+/** Linear regression trend for total revenue series. */
+function addLinearTrend<T extends { totalRevenue: number }>(data: T[]): (T & { trend: number })[] {
+  if (!data.length) return [];
+  const n = data.length;
+  let sumX = 0;
+  let sumY = 0;
+  let sumXY = 0;
+  let sumXX = 0;
+  for (let i = 0; i < n; i++) {
+    const x = i;
+    const y = Number(data[i]?.totalRevenue ?? 0);
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumXX += x * x;
+  }
+  const slope =
+    n * sumXX - sumX * sumX !== 0 ? (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX) : 0;
+  const intercept = sumY / n - slope * (sumX / n);
+  return data.map((row, i) => ({ ...row, trend: Math.max(0, intercept + slope * i) }));
+}
 
 // Presets
 const now = dayjs();
@@ -67,18 +91,19 @@ const PRESETS: Record<string, () => DateRange> = {
 // Main component
 // ----------------------------------
 export default function PaymentsAnalyticsPage() {
-  const [range, setRange] = useState<DateRange>(PRESETS['30D']());
+  const [range, setRange] = useState<DateRange>(PRESETS['7D']());
   const [series, setSeries] = useState<PaymentPoint[]>([]);
   const [seriesAll, setSeriesAll] = useState<PaymentPoint[] | null>(null); // all-time for leaderboards
-  const [metric, setMetric] = useState<'revenue' | 'count'>('revenue');
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
+  const [loading, setLoading] = useState(true);
   const open = Boolean(anchorEl);
 
   // Fetch selected-range series (for chart + header totals)
   useEffect(() => {
     let alive = true;
     setUnauthorized(false);
+    setLoading(true);
     (async () => {
       try {
         const data = await fetchPaymentsAnalytics({
@@ -92,6 +117,8 @@ export default function PaymentsAnalyticsPage() {
         console.error('Payments analytics request failed:', err);
         setUnauthorized(true);
         setSeries([]);
+      } finally {
+        if (alive) setLoading(false);
       }
     })();
     return () => {
@@ -122,23 +149,39 @@ export default function PaymentsAnalyticsPage() {
 
   const totals = useMemo(() => {
     const revenue = series.reduce((s, p) => s + p.revenue, 0);
-    const count = series.reduce((s, p) => s + p.count, 0);
-    const avg = series.length ? revenue / series.length : 0;
-    return { revenue, count, avg };
+    const subscriptionRevenue = series.reduce(
+      (s, p) => s + (p.subscriptionRevenue ?? 0),
+      0
+    );
+    const total = revenue + subscriptionRevenue;
+    const avg = series.length ? total / series.length : 0;
+    return { revenue, subscriptionRevenue, total, avg };
   }, [series]);
+
+  const chartData = useMemo(
+    () =>
+      series.map((p) => ({
+        ...p,
+        totalRevenue: p.revenue + (p.subscriptionRevenue ?? 0),
+      })),
+    [series]
+  );
+
+  const chartDataWithTrend = useMemo(() => addLinearTrend(chartData), [chartData]);
 
   // ---------- Leaderboards + Today's revenue ----------
   const dataset = seriesAll ?? series; // prefer all-time; fallback to current selection
-  const todayISO = toISODate(now.startOf('day'));
-  const todaysRevenue = useMemo(() => {
-    const key = dayKeyUTC(dayjs()); // today in UTC (YYYY-MM-DD)
-
-    // Try the current range first (series), then fall back to all-time if present
-    const rowFromRange = series.find((p) => dayKeyUTC(p.date) === key);
-    const rowFromAll = (seriesAll ?? []).find((p) => dayKeyUTC(p.date) === key);
-
-    return (rowFromRange ?? rowFromAll)?.revenue ?? 0;
+  /** Today's revenue row. Match by local date or UTC date so we find the row regardless of API timezone. */
+  const todaysRow = useMemo(() => {
+    const localKey = todayLocalKey();
+    const utcKey = dayjs().utc().format('YYYY-MM-DD');
+    const matches = (p: PaymentPoint) => p.date === localKey || p.date === utcKey || dayKeyUTC(p.date) === utcKey;
+    return series.find(matches) ?? (seriesAll ?? []).find(matches) ?? null;
   }, [series, seriesAll]);
+  const todaysRevenue = todaysRow?.revenue ?? 0;
+  const todaysSubscriptionRevenue = todaysRow?.subscriptionRevenue ?? 0;
+  const todaysTotalRevenue = todaysRevenue + todaysSubscriptionRevenue;
+  const todayLabel = dayjs().format('dddd, MMM D, YYYY');
 
   const topDays = useMemo(() => {
     const copy = [...dataset];
@@ -234,13 +277,19 @@ export default function PaymentsAnalyticsPage() {
           </Grid>
         </Grid>
 
+        {loading ? (
+          <Box display="flex" justifyContent="center" alignItems="center" minHeight={320} p={4}>
+            <CircularProgress />
+          </Box>
+        ) : (
+          <>
         {/* Summary cards */}
         <Grid container spacing={2}>
-          <Grid item xs={12} sm={4}>
+          <Grid item xs={12} sm={6} md={4}>
             <Card variant="outlined">
               <CardHeader
                 titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
-                title="Total Revenue (range)"
+                title="Revenue (range)"
               />
               <CardContent>
                 <Typography variant="h5" fontWeight={700}>
@@ -252,15 +301,15 @@ export default function PaymentsAnalyticsPage() {
               </CardContent>
             </Card>
           </Grid>
-          <Grid item xs={12} sm={4}>
+          <Grid item xs={12} sm={6} md={4}>
             <Card variant="outlined">
               <CardHeader
                 titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
-                title="Payments (range)"
+                title="Subscription Revenue (range)"
               />
               <CardContent>
                 <Typography variant="h5" fontWeight={700}>
-                  {totals.count.toLocaleString()}
+                  {fmtUSD(totals.subscriptionRevenue)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
                   {series.length} days
@@ -268,7 +317,23 @@ export default function PaymentsAnalyticsPage() {
               </CardContent>
             </Card>
           </Grid>
-          <Grid item xs={12} sm={4}>
+          <Grid item xs={12} sm={6} md={4}>
+            <Card variant="outlined">
+              <CardHeader
+                titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
+                title="Total (range)"
+              />
+              <CardContent>
+                <Typography variant="h5" fontWeight={700}>
+                  {fmtUSD(totals.total)}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  revenue + subscription · {series.length} days
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid item xs={12} sm={6} md={4}>
             <Card variant="outlined">
               <CardHeader
                 titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
@@ -279,41 +344,60 @@ export default function PaymentsAnalyticsPage() {
                   {fmtUSD(totals.avg)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  avg revenue / day
+                  avg total / day
                 </Typography>
               </CardContent>
             </Card>
           </Grid>
         </Grid>
 
-        {/* Today's revenue */}
+        {/* Today's revenue (current day in user's local timezone) */}
         <Card variant="outlined">
           <CardHeader title="Today's Revenue" />
           <CardContent>
-            <Typography variant="h4" fontWeight={800}>
-              {fmtUSD(todaysRevenue)}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {dayjs(todayISO).format('dddd, MMM D, YYYY')}
+            <Stack spacing={0.5}>
+              <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                <Typography variant="body2" color="text.secondary">
+                  Payments revenue
+                </Typography>
+                <Typography variant="body1" fontWeight={600}>
+                  {fmtUSD(todaysRevenue)}
+                </Typography>
+              </Box>
+              <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                <Typography variant="body2" color="text.secondary">
+                  Subscription revenue
+                </Typography>
+                <Typography variant="body1" fontWeight={600}>
+                  {fmtUSD(todaysSubscriptionRevenue)}
+                </Typography>
+              </Box>
+              <Divider sx={{ my: 0.5 }} />
+              <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                <Typography variant="body2" fontWeight={600} color="text.secondary">
+                  Total
+                </Typography>
+                <Typography variant="h5" fontWeight={800}>
+                  {fmtUSD(todaysTotalRevenue)}
+                </Typography>
+              </Box>
+            </Stack>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              {todayLabel}
             </Typography>
           </CardContent>
         </Card>
 
         {/* Chart */}
         <Card variant="outlined">
-          <CardHeader
-            title="Trend"
-            action={
-              <Tabs value={metric} onChange={(_, v) => setMetric(v as 'revenue' | 'count')}>
-                <Tab value="revenue" label="Revenue" />
-                <Tab value="count" label="Count" />
-              </Tabs>
-            }
-          />
+          <CardHeader title="Trend" />
           <CardContent>
-            <Box height={320}>
+            <Box height={320} minHeight={320}>
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={series} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
+                <LineChart
+                  data={chartDataWithTrend}
+                  margin={{ left: 8, right: 16, top: 8, bottom: 8 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis
                     dataKey="date"
@@ -322,21 +406,53 @@ export default function PaymentsAnalyticsPage() {
                   />
                   <YAxis
                     yAxisId="left"
-                    tickFormatter={(v) =>
-                      metric === 'revenue' ? fmtUSD(v) : Math.round(v).toString()
-                    }
+                    tickFormatter={(v) => fmtUSD(v)}
                   />
                   <Tooltip
-                    formatter={(value: number) =>
-                      metric === 'revenue' ? fmtUSD(value) : value.toLocaleString()
+                    formatter={(value: unknown) =>
+                      value == null ? '' : fmtUSD(Number(value))
                     }
                     labelFormatter={(l) => dayjs(l).format('ddd, MMM D, YYYY')}
+                  />
+                  <Legend />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="revenue"
+                    name="Revenue"
+                    stroke="#1976d2"
+                    strokeWidth={2}
+                    dot={false}
+                    isAnimationActive
                   />
                   <Line
                     yAxisId="left"
                     type="monotone"
-                    dataKey={metric}
+                    dataKey="subscriptionRevenue"
+                    name="Subscription Revenue"
+                    stroke="#2e7d32"
                     strokeWidth={2}
+                    dot={false}
+                    isAnimationActive
+                  />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="totalRevenue"
+                    name="Total"
+                    stroke="#ed6c02"
+                    strokeWidth={2}
+                    dot={false}
+                    isAnimationActive
+                  />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="trend"
+                    name="Trend"
+                    stroke="#ed6c02"
+                    strokeWidth={1.5}
+                    strokeDasharray="5 5"
                     dot={false}
                     isAnimationActive
                   />
@@ -523,6 +639,8 @@ export default function PaymentsAnalyticsPage() {
             </Stack>
           </Stack>
         </Popover>
+          </>
+        )}
       </Box>
     </LocalizationProvider>
   );

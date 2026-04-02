@@ -1,6 +1,6 @@
 // src/pages/MembershipSignup.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import {
   fetchClientPets,
   type Pet,
@@ -10,6 +10,7 @@ import {
   PaymentIntent,
   type MembershipTransactionPayload,
   type MembershipTransactionAddOn,
+  type MembershipPaymentRequestOrigin,
   fetchSubscriptionPlanCatalog,
   type SubscriptionPlanCatalog,
   fetchFormattedSubscriptionPlans,
@@ -17,6 +18,12 @@ import {
 } from '../api/payments';
 import { useAuth } from '../auth/useAuth';
 import { trackEvent, trackViewItem, trackAddToCart, trackBeginCheckout } from '../utils/analytics';
+import { resolveMembershipPetKind } from '../utils/membershipSpecies';
+import {
+  MEMBERSHIP_GOLDEN_MIN_AGE_YEARS,
+  computeMembershipAgeYearsForRoomLoaderRow,
+  parseAgeStringToYears,
+} from '../utils/membershipAge';
 
  type MembershipPlan = {
   id: string;
@@ -137,7 +144,6 @@ const MEMBERSHIP_AGREEMENT_TEXT = [
   'Membership Plans',
   'Foundations: Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a twelve (12) month commitment.',
   'Golden: Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a twelve (12) month commitment.',
-  'Comfort Care: A month-to-month plan that includes one visit with trip fee per month, one tele-chat consult during business hours per month, and after-hours tele-chat. Comfort Care members receive fifteen percent (15%) off the total cost of euthanasia and after-care services when the decision has been made to proceed.',
   'Plus Add-On: Provides ten percent (10%) off all services and medications and fifty percent (50%) off exams. One free nail trim is included per year. The term of Plus matches the term of the primary plan. A store discount code is issued after sign-up.',
   'Puppy / Kitten Add-On: Covers booster vaccine appointments during your pet\'s first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.',
   'After-Hours Telehealth',
@@ -153,12 +159,12 @@ const MEMBERSHIP_AGREEMENT_TEXT = [
   'Membership Rules',
   'Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of any discounts received.',
   'Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight (8) years of age for dogs or nine (9) years of age for cats. We will email you twenty (20) to thirty (30) days before renewal with a recommendation. You may change your selection or cancel at that time.',
-  'Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve (12) month term. Comfort Care is month-to-month, as is Plus when selected with Comfort Care.',
-  'If your pet passes away, moves, or transitions to Comfort Care, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.',
+  'Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve (12) month term.',
+  'If your pet passes away or moves, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.',
   'If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client\'s new lease or mortgage agreement.',
   'A one-time registration fee, if charged, supports our Angel Fund for pets in need.',
   'Plan Change and Upgrade Limitations',
-  'Membership plans, including the Plus and Puppy / Kitten Add-Ons, must be selected at the time of initial enrollment and cannot be added or upgraded mid-term. The only permitted plan transition is from Golden to Comfort Care, when and if medically appropriate. No other plan upgrades, downgrades, or add-ons may be added after enrollment.',
+  'Membership plans, including the Plus and Puppy / Kitten Add-Ons, must be selected at the time of initial enrollment and cannot be added or upgraded mid-term. No other plan upgrades, downgrades, or add-ons may be added after enrollment.',
   'Scheduling and Availability',
   'Visits should be scheduled in advance for best availability. Specific appointment times cannot be guaranteed. Services are available only within our service area and during our regular appointment hours.',
   'We will make every reasonable effort for your pet\'s care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.',
@@ -349,9 +355,13 @@ function lookupCatalogEntry(
 
   const extractEntry = (target: any, combo: PlanCombination): PlanEntry | undefined => {
     if (!target) return undefined;
-    const entry = target[combo];
-    if (entry && entry.planId && entry.planVariationId) {
-      return entry as PlanEntry;
+    const entry =
+      target[combo] ?? (combo === 'plusStarter' ? target.plus_starter : undefined);
+    if (!entry || typeof entry !== 'object') return undefined;
+    const planId = (entry as any).planId ?? (entry as any).plan_id;
+    const planVariationId = (entry as any).planVariationId ?? (entry as any).plan_variation_id;
+    if (planId && planVariationId) {
+      return { planId: String(planId), planVariationId: String(planVariationId) };
     }
     return undefined;
   };
@@ -400,12 +410,64 @@ function lookupCatalogEntry(
   return undefined;
 }
 
-export default function MembershipSignup() {
+type AppointmentFlowState = {
+  fromAppointmentFlow?: boolean;
+  pet?: { id: string; name: string; species?: string; breed?: string; age?: string; dob?: string; sex?: string };
+  clientInfo?: { email?: string; fullName?: { first?: string; last?: string } };
+  returnUrl?: string;
+  returnUrlAnotherBase?: string;
+};
+
+export type MembershipSignupPaymentState = Record<string, any>;
+
+export type MembershipEligibilitySnapshot = {
+  kind: 'dog' | 'cat' | null;
+  ageYears: number | null;
+};
+
+export type MembershipSignupModalProps = {
+  fromModal?: boolean;
+  /** Room loader / flows that precompute eligibility should set `_membershipEligibilitySnapshot` on this object. */
+  modalPet?: Pet | {
+    id: string;
+    name: string;
+    species?: string;
+    breed?: string;
+    age?: string;
+    dob?: string;
+    patient?: unknown;
+    _membershipSpeciesExtraSources?: unknown[];
+    _membershipEligibilitySnapshot?: MembershipEligibilitySnapshot;
+  };
+  /** Client email and name from appointment form (for agreementSignedName / customerEmail when not logged in) */
+  modalClientInfo?: { email?: string; fullName?: { first?: string; last?: string } };
+  /** Public room-loader membership: payment success omits client-portal NOTE. */
+  fromRoomLoaderPublicForm?: boolean;
+  onProceedToPayment?: (state: MembershipSignupPaymentState) => void;
+  onCancel?: () => void;
+};
+
+export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { userId: authUserId } = useAuth() as any;
+  const { userId: authUserId, userEmail: authUserEmail } = useAuth() as any;
+  const state = location.state as (AppointmentFlowState & { petId?: string }) | undefined;
 
-  const petId = (location.state as any)?.petId;
+  const fromModal = props?.fromModal === true;
+  const modalPet = props?.modalPet;
+  const modalClientInfo = props?.modalClientInfo;
+  const fromRoomLoaderPublicForm = props?.fromRoomLoaderPublicForm === true;
+  const onProceedToPayment = props?.onProceedToPayment;
+  const onCancelModal = props?.onCancel;
+
+  const petId = state?.petId;
+  const fromAppointmentFlow = state?.fromAppointmentFlow === true;
+  const prospectivePet = state?.pet;
+  const returnUrl = state?.returnUrl;
+  const returnUrlAnotherBase = state?.returnUrlAnotherBase;
+  const [searchParams] = useSearchParams();
+  const signedUpParam = searchParams.get('signedUp');
+  const isSigningUpAdditionalPet = Boolean(signedUpParam || (state as any)?.signedUpPetIds?.length);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -416,7 +478,7 @@ export default function MembershipSignup() {
   const [plusExplicit, setPlusExplicit] = useState(false);
   const [starterAnswer, setStarterAnswer] = useState<'yes' | 'no' | null>(null);
   const [starterExplicit, setStarterExplicit] = useState(false);
-  const [comfortAnswer, setComfortAnswer] = useState<'yes' | 'no' | null>(null);
+  const [comfortAnswer, setComfortAnswer] = useState<'yes' | 'no' | null>('no');
   const [billingPreference, setBillingPreference] = useState<'monthly' | 'annual'>('monthly');
   const [appointmentsLoaded, setAppointmentsLoaded] = useState(false);
   const [hasAnyAppointments, setHasAnyAppointments] = useState(false);
@@ -430,9 +492,19 @@ export default function MembershipSignup() {
   const [formattedPlans, setFormattedPlans] = useState<FormattedSubscriptionPlan[]>([]);
   const [formattedPlansLoading, setFormattedPlansLoading] = useState(true);
   const [formattedPlansError, setFormattedPlansError] = useState<string | null>(null);
+  const [clientPetCount, setClientPetCount] = useState<number | null>(null);
 
   const brand = 'var(--brand, #0f766e)';
   const brandSoft = 'var(--brand-soft, #e6f7f5)';
+
+  const goBack = () => {
+    if (fromModal && onCancelModal) {
+      onCancelModal();
+      return;
+    }
+    if (returnUrl) navigate(returnUrl);
+    else navigate('/client-portal');
+  };
 
   // Build plans with dynamic pricing from API
   const plans = useMemo(() => {
@@ -528,6 +600,51 @@ export default function MembershipSignup() {
   }, [planCatalog, formattedPlans]);
 
   useEffect(() => {
+    if (fromModal && modalPet) {
+      setError(null);
+      setLoading(false);
+      const p = modalPet as Pet & { age?: string; dob?: string };
+      setPet({
+        id: p.id,
+        name: p.name,
+        species: p.species,
+        breed: p.breed,
+        dob: p.dob,
+        ...(p.age != null && { age: p.age } as any),
+      } as Pet);
+      setAppointmentsLoaded(true);
+      setHasAnyAppointments(true);
+      setHasPastAppointment(false);
+      setHasUpcomingAppointment(false);
+      trackEvent('membership_signup_page_viewed', {
+        pet_id: p.id,
+        pet_name: p.name || 'Unknown',
+        pet_species: p.species || 'Unknown',
+      });
+      return;
+    }
+
+    if (fromAppointmentFlow && prospectivePet) {
+      setError(null);
+      setLoading(false);
+      setPet({
+        id: prospectivePet.id,
+        name: prospectivePet.name,
+        species: prospectivePet.species,
+        breed: prospectivePet.breed,
+      } as Pet);
+      setAppointmentsLoaded(true);
+      setHasAnyAppointments(true);
+      setHasPastAppointment(false);
+      setHasUpcomingAppointment(false);
+      trackEvent('membership_signup_page_viewed', {
+        pet_id: prospectivePet.id,
+        pet_name: prospectivePet.name || 'Unknown',
+        pet_species: prospectivePet.species || 'Unknown',
+      });
+      return;
+    }
+
     if (!petId) {
       setError('No pet selected. Please go back and select a pet.');
       setLoading(false);
@@ -541,6 +658,7 @@ export default function MembershipSignup() {
       setAppointmentsLoaded(false);
       try {
         const pets = await fetchClientPets();
+        if (alive) setClientPetCount(pets.length);
         const selectedPet = pets.find((p) => p.id === petId);
         if (!selectedPet) {
           if (alive) {
@@ -600,7 +718,7 @@ export default function MembershipSignup() {
     return () => {
       alive = false;
     };
-  }, [petId]);
+  }, [petId, fromAppointmentFlow, prospectivePet, fromModal, modalPet]);
 
   useEffect(() => {
     let alive = true;
@@ -647,27 +765,42 @@ export default function MembershipSignup() {
 
   const petDetails = useMemo(() => {
     if (!pet) return { kind: null as null | 'dog' | 'cat', ageYears: null as number | null };
-    const speciesSource = (pet.species ?? pet.breed ?? '').toLowerCase();
-    const kind: 'dog' | 'cat' | null = speciesSource.includes('dog') || speciesSource.includes('canine')
-      ? 'dog'
-      : speciesSource.includes('cat') || speciesSource.includes('feline')
-        ? 'cat'
-        : null;
-    let ageYears: number | null = null;
-    if (pet.dob) {
+    const snap = (pet as { _membershipEligibilitySnapshot?: MembershipEligibilitySnapshot })
+      ._membershipEligibilitySnapshot;
+    if (snap && typeof snap === 'object') {
+      return {
+        kind: snap.kind ?? null,
+        ageYears: snap.ageYears ?? null,
+      };
+    }
+    const extras = (pet as { _membershipSpeciesExtraSources?: unknown[] })._membershipSpeciesExtraSources;
+    const kind = resolveMembershipPetKind(pet, Array.isArray(extras) ? extras : undefined);
+    const apptPatient = Array.isArray(extras) && extras[0] ? extras[0] : undefined;
+    let ageYears = computeMembershipAgeYearsForRoomLoaderRow(pet, apptPatient);
+    if (ageYears == null && pet.dob) {
       const dob = new Date(pet.dob);
       if (!Number.isNaN(dob.getTime())) {
         const diff = Date.now() - dob.getTime();
         ageYears = Math.max(0, diff / (1000 * 60 * 60 * 24 * 365.25));
       }
     }
+    if (ageYears == null && (pet as any).age) {
+      ageYears = parseAgeStringToYears(String((pet as any).age));
+    }
     return { kind, ageYears };
   }, [pet]);
 
   const meetsGolden = useMemo(() => {
     if (!petDetails.kind || petDetails.ageYears == null) return false;
-    return petDetails.ageYears >= 9;
+    return petDetails.ageYears >= MEMBERSHIP_GOLDEN_MIN_AGE_YEARS;
   }, [petDetails]);
+
+  useEffect(() => {
+    if (selectedPlanExplicit === 'golden' && !meetsGolden) {
+      setSelectedPlanExplicit(null);
+      setSelectedPlanId(null);
+    }
+  }, [meetsGolden, selectedPlanExplicit]);
 
   const combinedError = error ?? planCatalogError;
 
@@ -877,7 +1010,17 @@ export default function MembershipSignup() {
         plusExplicit,
         catalogEntry,
         comfortCareNode: selectedPlanExplicit === 'comfort-care' ? planCatalog?.['comfort-care'] : undefined,
+        planSlice:
+          selectedPlanExplicit && planCatalog?.[selectedPlanExplicit]
+            ? planCatalog[selectedPlanExplicit]
+            : undefined,
       });
+      if (selectedPlanExplicit !== 'comfort-care' && !speciesKey) {
+        setError(
+          'We could not tell if this pet is a dog or cat from the information we have. Please contact support or try again after your pet’s species is updated in our records.',
+        );
+        return;
+      }
       setError('This membership combination is not yet configured for automated billing. Please contact support.');
       return;
     }
@@ -989,6 +1132,18 @@ export default function MembershipSignup() {
 
     const effectiveBillingPreference = hasAnnualOption ? billingPreference : 'monthly';
 
+    const customerEmail =
+      (fromModal && modalClientInfo?.email?.trim())
+        ? modalClientInfo.email.trim()
+        : (authUserEmail ? String(authUserEmail).trim() : undefined);
+    const agreementSignedName = (() => {
+      if (fromModal && modalClientInfo?.fullName) {
+        const { first, last } = modalClientInfo.fullName;
+        return [first, last].filter(Boolean).map((s) => String(s).trim()).join(' ') || undefined;
+      }
+      return undefined;
+    })();
+
     const membershipTransaction: MembershipTransactionPayload = {
       agreementSignedAt,
       agreementText: MEMBERSHIP_AGREEMENT_TEXT,
@@ -1005,11 +1160,14 @@ export default function MembershipSignup() {
       metadata: (() => {
         const meta: Record<string, any> = {
           petId: pet.id,
+          petName: pet.name ?? '',
           agreementSignature: agreementSignature.trim(),
           billingPreference: billingKey,
           addOns,
         };
         if (clientIdValue != null) meta.clientId = clientIdValue;
+        if (customerEmail != null) meta.customerEmail = customerEmail;
+        if (agreementSignedName != null) meta.agreementSignedName = agreementSignedName;
         return meta;
       })(),
     };
@@ -1017,6 +1175,13 @@ export default function MembershipSignup() {
     if (clientIdValue != null) membershipTransaction.clientId = clientIdValue;
     if (patientId != null) membershipTransaction.patientId = patientId;
     if (practiceId != null) membershipTransaction.practiceId = practiceId;
+
+    const membershipRequestOrigin: MembershipPaymentRequestOrigin = fromRoomLoaderPublicForm
+      ? 'room-loader'
+      : fromAppointmentFlow || fromModal
+        ? 'appointment-form'
+        : 'client-portal';
+    membershipTransaction.requestOrigin = membershipRequestOrigin;
 
     const enrollmentPayload: Record<string, any> = {};
     if (chosenPlan?.apiPlanId) enrollmentPayload.planId = chosenPlan.apiPlanId;
@@ -1029,6 +1194,7 @@ export default function MembershipSignup() {
     const metadata = (() => {
       const meta: Record<string, any> = {
         petId: pet.id,
+        petName: pet.name ?? '',
         planName: chosenPlan?.name ?? selectedPlanExplicit,
         billingPreference: effectiveBillingPreference,
         addOns,
@@ -1036,6 +1202,8 @@ export default function MembershipSignup() {
         agreementSignedAt,
       };
       if (clientIdValue != null) meta.clientId = clientIdValue;
+      if (customerEmail != null) meta.customerEmail = customerEmail;
+      if (agreementSignedName != null) meta.agreementSignedName = agreementSignedName;
       return meta;
     })();
 
@@ -1053,7 +1221,7 @@ export default function MembershipSignup() {
       ? `${basePlanName} ${addOnLabels.join(', ')} - ${billingLabel}`
       : `${basePlanName} - ${billingLabel}`;
 
-    const paymentState = {
+    const paymentState: Record<string, any> = {
       petId: pet.id,
       petName: pet.name,
       selectedPlanId: selectedPlanExplicit,
@@ -1072,6 +1240,17 @@ export default function MembershipSignup() {
       metadata,
       membershipTransaction,
     };
+    if (customerEmail != null) {
+      paymentState.customerEmail = customerEmail;
+      if (fromModal) paymentState.formResponseEmail = customerEmail;
+    }
+    if (agreementSignedName != null) paymentState.customerName = agreementSignedName;
+    if (returnUrl) paymentState.returnUrl = returnUrl;
+    if (fromAppointmentFlow) paymentState.fromAppointmentFlow = true;
+    if (returnUrlAnotherBase) paymentState.returnUrlAnotherBase = returnUrlAnotherBase;
+    else if (!fromModal) paymentState.returnUrlAnotherBase = '/client-portal/membership-signup';
+    if (isSigningUpAdditionalPet) paymentState.multiPetCreditEligible = true;
+    if (fromRoomLoaderPublicForm) paymentState.fromRoomLoaderPublicForm = true;
 
     // Track begin checkout
     const checkoutItems = [
@@ -1106,6 +1285,10 @@ export default function MembershipSignup() {
     );
 
     setError(null);
+    if (fromModal && typeof onProceedToPayment === 'function') {
+      onProceedToPayment(paymentState);
+      return;
+    }
     navigate('/client-portal/membership-payment', { state: paymentState });
   }
 
@@ -1125,8 +1308,8 @@ export default function MembershipSignup() {
         <div className="card" style={{ maxWidth: 600, margin: '30px auto' }}>
           <h2 style={{ marginTop: 0, color: '#e11d48' }}>Error</h2>
           <p className="muted">{combinedError}</p>
-          <button className="btn" onClick={() => navigate('/client-portal')} style={{ marginTop: 16, background: '#4FB128', color: '#fff' }}>
-            Back to Portal
+          <button className="btn" onClick={goBack} style={{ marginTop: 16, background: '#4FB128', color: '#fff' }}>
+            {returnUrl ? 'Back to appointment request' : 'Back to Portal'}
           </button>
         </div>
       </div>
@@ -1137,7 +1320,7 @@ export default function MembershipSignup() {
     return (
       <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px' }}>
         <button
-          onClick={() => navigate('/client-portal')}
+          onClick={goBack}
           style={{
             background: 'transparent',
             border: 'none',
@@ -1149,7 +1332,7 @@ export default function MembershipSignup() {
             padding: 0,
           }}
         >
-          ← Back to Portal
+          ← {returnUrl ? 'Back to appointment request' : 'Back to Portal'}
         </button>
         <div className="cp-card" style={{ padding: 24, borderLeft: '4px solid #4FB128', background: brandSoft }}>
           <h2 style={{ margin: '0 0 12px' }}>Schedule an Appointment First</h2>
@@ -1162,8 +1345,8 @@ export default function MembershipSignup() {
             begin your membership with timing that coincides with your start date with us. We can’t wait to meet you!
           </p>
           <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
-            <button className="btn secondary" onClick={() => navigate('/client-portal')}>
-              Back to Portal
+            <button className="btn secondary" onClick={goBack}>
+              {returnUrl ? 'Back to appointment request' : 'Back to Portal'}
             </button>
             <a
               className="btn"
@@ -1477,7 +1660,7 @@ export default function MembershipSignup() {
 
       <div style={{ marginBottom: 24 }}>
         <button
-          onClick={() => navigate('/client-portal')}
+          onClick={goBack}
           style={{
             background: 'transparent',
             border: 'none',
@@ -1489,11 +1672,29 @@ export default function MembershipSignup() {
             padding: 0,
           }}
         >
-          ← Back to Portal
+          ← {returnUrl ? 'Back to appointment request' : 'Back to Portal'}
         </button>
         <h1 className="cp-title">Membership Signup</h1>
         <p className="cp-muted">Choose the plan that fits your pet’s care needs.</p>
       </div>
+
+      {!fromModal && (clientPetCount ?? 0) > 1 && (
+        <div
+          style={{
+            marginTop: 16,
+            marginBottom: 0,
+            padding: '12px 16px',
+            background: '#f0fdf4',
+            border: '1px solid #bbf7d0',
+            borderRadius: 8,
+            color: '#166534',
+            fontSize: 14,
+            lineHeight: 1.5,
+          }}
+        >
+          Enroll more than one pet and receive a $75 credit for each additional pet. Credits may be used at any future Vet At Your Door visit.
+        </div>
+      )}
 
       {pet && (
         <>
@@ -1559,55 +1760,7 @@ export default function MembershipSignup() {
       <section className="cp-section">
         <h2 className="cp-h2">Available Membership Plans</h2>
 
-        {pet && (
-          <div className="cp-card" style={{ padding: 20, marginBottom: 16 }}>
-            <p className="cp-muted" style={{ margin: '0 0 12px' }}>
-              Is {pet.name} in need of ongoing comfort care or support for a serious illness?
-            </p>
-            <div style={{ display: 'flex', gap: 12 }}>
-              <button
-                className="btn secondary"
-                type="button"
-                onClick={() => {
-                  setComfortAnswer('no');
-                  setSelectedPlanExplicit(null);
-                  setSelectedPlanId(null);
-                  setPlusExplicit(false);
-                  setBillingPreference('monthly');
-                }}
-                style={{
-                  background: comfortAnswer === 'no' ? '#4FB128' : '#4FB128',
-                  color: '#fff',
-                  opacity: comfortAnswer === 'no' ? 1 : 0.5,
-                  border: 'none',
-                }}
-              >
-                No
-              </button>
-              <button
-                className="btn secondary"
-                type="button"
-                onClick={() => {
-                  setComfortAnswer('yes');
-                  setSelectedPlanExplicit(null);
-                  setSelectedPlanId('comfort-care');
-                  setPlusExplicit(false);
-                  setBillingPreference('monthly');
-                }}
-                style={{
-                  background: comfortAnswer === 'yes' ? '#4FB128' : '#4FB128',
-                  color: '#fff',
-                  opacity: comfortAnswer === 'yes' ? 1 : 0.5,
-                  border: 'none',
-                }}
-              >
-                Yes, show Comfort Care
-              </button>
-            </div>
-          </div>
-        )}
-
-        {shouldAskStarter && pet && comfortAnswer !== 'yes' && (
+        {shouldAskStarter && pet && (
           <div className="cp-card" style={{ padding: 20, marginBottom: 16 }}>
             <p className="cp-muted" style={{ margin: '0 0 12px' }}>
               Has {pet.name} received more than one round of their core vaccines (like distemper)?
@@ -1673,28 +1826,6 @@ export default function MembershipSignup() {
           </div>
         )}
 
-        {comfortAnswer === 'yes' && pet && (
-          <div
-            className="cp-card"
-            style={{
-              padding: 20,
-              borderLeft: '4px solid #4FB128',
-              background: brandSoft,
-              marginBottom: 16,
-            }}
-          >
-            <strong style={{ display: 'block', fontSize: 16, marginBottom: 8 }}>
-              We recommend the Comfort Care Plan for {pet.name}.
-            </strong>
-            <p className="cp-muted" style={{ margin: '0 0 8px' }}>
-              It's a month-to-month hospice plan designed to support pets in their final stage of life with one in-person visit per month and compassionate, ongoing guidance.
-            </p>
-            <p className="cp-muted" style={{ margin: 0 }}>
-              You can also add PLUS if you'd like additional support or anticipate needing more frequent touch-points. Please note: PLUS can't be added later, so choose it at sign-up if you think {pet.name} may benefit.
-            </p>
-          </div>
-        )}
-
         {combinedError && (
           <div
             style={{
@@ -1739,15 +1870,13 @@ export default function MembershipSignup() {
           // - comfortAnswer is answered, AND
           // - if shouldAskStarter is true, then starterAnswer must also be answered
           //   (unless comfortAnswer is 'yes', in which case the starter question is hidden)
-          const canShowPlans = comfortAnswer != null && (comfortAnswer === 'yes' || !shouldAskStarter || starterAnswer != null);
+          const canShowPlans = !shouldAskStarter || starterAnswer != null;
           
           if (!canShowPlans) {
             return (
               <div className="cp-card" style={{ padding: 20, textAlign: 'center' }}>
                 <p className="cp-muted">
-                  {shouldAskStarter && starterAnswer == null
-                    ? 'Please answer both questions above to see recommended membership options.'
-                    : 'Answer the comfort care question above to see recommended membership options.'}
+                  Please answer the question above to see recommended membership options.
                 </p>
               </div>
             );
@@ -1767,31 +1896,29 @@ export default function MembershipSignup() {
             {(() => {
               const filteredPlans = plans
                 .filter((plan) => {
-                  if (plan.id === 'comfort-care') return comfortAnswer === 'yes';
-                  if (plan.id === 'golden') return comfortAnswer === 'no' && meetsGolden;
-                  if (plan.id === 'foundations') return comfortAnswer === 'no';
+                  if (plan.id === 'comfort-care') return false;
+                  if (plan.id === 'foundations') return true;
+                  // Golden only for pets who meet the senior threshold (same as room-loader / `MEMBERSHIP_GOLDEN_MIN_AGE_YEARS`).
+                  if (plan.id === 'golden') return meetsGolden;
                   return false;
                 })
                 .sort((a, b) => {
-                  if (comfortAnswer === 'no' && meetsGolden) {
-                    if (a.id === 'foundations') return -1;
-                    if (b.id === 'foundations') return 1;
-                    if (a.id === 'golden') return 1;
-                    if (b.id === 'golden') return -1;
+                  if (meetsGolden) {
+                    if (a.id === 'golden') return -1;
+                    if (b.id === 'golden') return 1;
+                    if (a.id === 'foundations') return 1;
+                    if (b.id === 'foundations') return -1;
                   }
                   return 0;
                 });
 
-              const shouldShowStarterAddon = starterAnswer === 'no' && comfortAnswer !== 'yes';
+              const shouldShowStarterAddon = starterAnswer === 'no';
               
               return filteredPlans.flatMap((plan, index) => {
                 const planElements = [];
                 const isRecommended = 
-                  (comfortAnswer === 'no' && (
-                    plan.id === recommendedPlanId || 
-                    (!meetsGolden && plan.id === 'foundations')
-                  )) ||
-                  (comfortAnswer === 'yes' && plan.id === 'comfort-care');
+                  plan.id === recommendedPlanId || 
+                  (!meetsGolden && plan.id === 'foundations');
                 const tiers = (() => {
                   if (!petDetails.kind) return plan.pricing;
                   const filtered = plan.pricing.filter((tier) => !tier.species || tier.species === petDetails.kind);
@@ -2021,15 +2148,13 @@ export default function MembershipSignup() {
                 <div className="cp-card-upper">
                   <div className="cp-card-head">
                     <h3>PLUS Add-on</h3>
-                    <div className="cp-card-sub">Annual Membership Plan (unless part of Comfort Care)</div>
+                    <div className="cp-card-sub">Annual Membership Plan</div>
                   </div>
                   <div className="cp-card-price">
                     <div className="cp-card-price-main">
                       49<span>/month</span>
                     </div>
-                    {comfortAnswer !== 'yes' && (
-                      <div className="cp-card-price-note">or 529 annually (10% discount!)</div>
-                    )}
+                    <div className="cp-card-price-note">or 529 annually (10% discount!)</div>
                   </div>
                 </div>
                 <div className="cp-card-body">
@@ -2206,7 +2331,7 @@ export default function MembershipSignup() {
 
       <section className="cp-section" style={{ marginTop: 32, marginBottom: 48 }}>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', alignItems: 'center' }}>
-          <button className="btn secondary" onClick={() => navigate('/client-portal')} style={{ background: '#4FB128', color: '#fff', border: 'none' }}>
+          <button className="btn secondary" onClick={goBack} style={{ background: '#4FB128', color: '#fff', border: 'none' }}>
             Cancel
           </button>
           <button
@@ -2367,8 +2492,6 @@ function AgreementSection({
           <p style={{ marginLeft: '16px' }}>Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a twelve (12) month commitment.</p>
           <p><em>Golden</em></p>
           <p style={{ marginLeft: '16px' }}>Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a twelve (12) month commitment.</p>
-          <p><em>Comfort Care</em></p>
-          <p style={{ marginLeft: '16px' }}>A month-to-month plan that includes one visit with trip fee per month, one tele-chat consult during business hours per month, and after-hours tele-chat. Comfort Care members receive fifteen percent (15%) off the total cost of euthanasia and after-care services when the decision has been made to proceed.</p>
           <p><em>Plus Add-On</em></p>
           <p style={{ marginLeft: '16px' }}>Provides ten percent (10%) off all services and medications and fifty percent (50%) off exams. One free nail trim is included per year. The term of Plus matches the term of the primary plan. A store discount code is issued after sign-up.</p>
           <p><em>Puppy / Kitten Add-On</em></p>
@@ -2389,12 +2512,12 @@ function AgreementSection({
           <p><strong>Membership Rules</strong></p>
           <p>Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of any discounts received.</p>
           <p>Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight (8) years of age for dogs or nine (9) years of age for cats. We will email you twenty (20) to thirty (30) days before renewal with a recommendation. You may change your selection or cancel at that time.</p>
-          <p>Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve (12) month term. Comfort Care is month-to-month, as is Plus when selected with Comfort Care.</p>
-          <p>If your pet passes away, moves, or transitions to Comfort Care, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.</p>
+          <p>Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve (12) month term.</p>
+          <p>If your pet passes away or moves, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.</p>
           <p>If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client&apos;s new lease or mortgage agreement.</p>
           <p>A one-time registration fee, if charged, supports our Angel Fund for pets in need.</p>
           <p><strong>Plan Change and Upgrade Limitations</strong></p>
-          <p>Membership plans, including the Plus and Puppy / Kitten Add-Ons, must be selected at the time of initial enrollment and cannot be added or upgraded mid-term. The only permitted plan transition is from Golden to Comfort Care, when and if medically appropriate. No other plan upgrades, downgrades, or add-ons may be added after enrollment.</p>
+          <p>Membership plans, including the Plus and Puppy / Kitten Add-Ons, must be selected at the time of initial enrollment and cannot be added or upgraded mid-term. No other plan upgrades, downgrades, or add-ons may be added after enrollment.</p>
           <p><strong>Scheduling and Availability</strong></p>
           <p>Visits should be scheduled in advance for best availability. Specific appointment times cannot be guaranteed. Services are available only within our service area and during our regular appointment hours.</p>
           <p>We will make every reasonable effort for your pet&apos;s care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.</p>

@@ -199,15 +199,19 @@ export default function AuditUsage() {
         <Card variant="outlined">
           <CardHeader title="Requests per Day" />
           <CardContent>
-            <Box sx={{ width: '100%', height: 360 }}>
+            <Box sx={{ width: '100%', height: 360, minHeight: 360 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={rows} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="day" tickFormatter={fmtTick} minTickGap={24} />
                   <YAxis />
                   <Tooltip
-                    formatter={(v: number) => (typeof v === 'number' ? v.toLocaleString() : v)}
-                    labelFormatter={fmtLabel}
+                    formatter={(v: unknown) =>
+                      v != null ? (typeof v === 'number' ? v.toLocaleString() : String(v)) : ''
+                    }
+                    labelFormatter={(label) =>
+                      typeof label === 'string' ? fmtLabel(label) : String(label ?? '')
+                    }
                   />
                   <Line type="monotone" dataKey="requests" strokeWidth={2} dot={false} />
                 </LineChart>

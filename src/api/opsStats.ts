@@ -1,8 +1,9 @@
 import { http } from './http';
 
 /* =========================
- * Revenue types + helpers
- * (unchanged)
+ * Veterinary Services Delivered (Ops Analytics Revenue)
+ * Base path: /analytics/ops
+ * All endpoints require auth. Revenue is from treatment items (production employee).
  * ========================= */
 
 export type DoctorRevenueRow = {
@@ -11,24 +12,30 @@ export type DoctorRevenueRow = {
   totalServiceValue: number;
 };
 
-const csv = (ids?: string[]) => (ids && ids.length ? ids.map(String).join(',') : undefined);
+/** Build providerIds query: comma-separated IDs or "all". Omit = all doctors. */
+function providerIdsParam(ids?: string[]): string | undefined {
+  if (!ids?.length) return undefined;
+  const single = ids.length === 1 && ids[0].toLowerCase() === 'all';
+  return single ? 'all' : ids.map(String).join(',');
+}
 
 /**
  * GET /analytics/ops/revenue/day
- * Returns { date, providerIds, total, byDoctor }
+ * One day: total revenue + breakdown by doctor.
+ * Query: date (YYYY-MM-DD, optional, default today UTC), providerIds (optional, admins only: comma-separated or "all").
  */
 export async function fetchRevenueForDay(params?: {
-  date?: string; // YYYY-MM-DD (optional; server defaults to today UTC)
-  providerIds?: string[]; // optional; omit or ["all"] -> ALL providers (admin only)
+  date?: string;
+  providerIds?: string[];
 }): Promise<{
   date: string;
-  providerIds: string[] | 'ALL';
+  providerIds: string | string[];
   total: number;
   byDoctor: DoctorRevenueRow[];
 }> {
   const query: Record<string, string> = {};
   if (params?.date) query.date = params.date;
-  const pids = csv(params?.providerIds);
+  const pids = providerIdsParam(params?.providerIds);
   if (pids) query.providerIds = pids;
 
   const { data } = await http.get('/analytics/ops/revenue/day', { params: query });
@@ -37,15 +44,16 @@ export async function fetchRevenueForDay(params?: {
 
 /**
  * GET /analytics/ops/revenue/day/total
- * Convenience: returns just the numeric total for the day.
+ * One day: total only (no byDoctor).
+ * Query: date (optional), providerIds (optional, admins only).
  */
 export async function fetchRevenueTotalForDay(params?: {
-  date?: string; // YYYY-MM-DD (optional; server defaults to today UTC)
-  providerIds?: string[]; // optional
+  date?: string;
+  providerIds?: string[];
 }): Promise<number> {
   const query: Record<string, string> = {};
   if (params?.date) query.date = params.date;
-  const pids = csv(params?.providerIds);
+  const pids = providerIdsParam(params?.providerIds);
   if (pids) query.providerIds = pids;
 
   const { data } = await http.get('/analytics/ops/revenue/day/total', { params: query });
@@ -54,15 +62,16 @@ export async function fetchRevenueTotalForDay(params?: {
 
 /**
  * GET /analytics/ops/revenue/day/doctors
- * Returns an array of { doctorId, doctorName, totalServiceValue } for the day.
+ * One day: list of doctors with revenue only (no total in response; sum client-side if needed).
+ * Query: date (optional), providerIds (optional, admins only).
  */
 export async function fetchRevenueByDoctorForDay(params?: {
-  date?: string; // YYYY-MM-DD (optional; server defaults to today UTC)
-  providerIds?: string[]; // optional
+  date?: string;
+  providerIds?: string[];
 }): Promise<DoctorRevenueRow[]> {
   const query: Record<string, string> = {};
   if (params?.date) query.date = params.date;
-  const pids = csv(params?.providerIds);
+  const pids = providerIdsParam(params?.providerIds);
   if (pids) query.providerIds = pids;
 
   const { data } = await http.get('/analytics/ops/revenue/day/doctors', { params: query });
@@ -70,18 +79,19 @@ export async function fetchRevenueByDoctorForDay(params?: {
 }
 
 /* =========================
- * Ops time-series (added)
+ * Ops stats (drive/household/points) – not revenue
+ * GET /analytics/ops
  * ========================= */
 
 export type OpsStatPoint = {
-  date: string; // YYYY-MM-DD
-  driveMin: number; // total minutes driving for the day
-  householdMin: number; // total minutes on-site (service) for the day
-  shiftMin: number; // total shift minutes for the day
-  whiteMin: number; // whitespace minutes (shift - drive - household)
-  whitePct: number; // 0..100
-  hdRatio: number; // householdMin / driveMin
-  points: number; // euth=2, tech=0.5, else 1
+  date: string;
+  driveMin: number;
+  householdMin: number;
+  shiftMin: number;
+  whiteMin: number;
+  whitePct: number;
+  hdRatio: number;
+  points: number;
 };
 
 const hadAppt = (p?: Partial<OpsStatPoint>) =>
@@ -89,20 +99,20 @@ const hadAppt = (p?: Partial<OpsStatPoint>) =>
 
 /**
  * GET /analytics/ops
- * Returns daily OpsStatPoint[] for the date range; filters out all-zero days.
+ * Ops metrics by date (drive time, household time, shift, whitespace, points). Not revenue.
+ * Query: start (YYYY-MM-DD), end (YYYY-MM-DD), providerIds (optional, admins only: comma-separated or "all").
  */
 export async function fetchOpsStatsAnalytics(params: {
-  start: string; // YYYY-MM-DD inclusive
-  end: string; // YYYY-MM-DD inclusive
-  providerIds?: string[]; // optional; admin: omit/[] => ALL providers
+  start: string;
+  end: string;
+  providerIds?: string[];
 }): Promise<OpsStatPoint[]> {
   const query: Record<string, string> = {
     start: params.start,
     end: params.end,
   };
-  if (params.providerIds?.length) {
-    query.providerIds = params.providerIds.map(String).join(',');
-  }
+  const pids = providerIdsParam(params.providerIds);
+  if (pids) query.providerIds = pids;
 
   const { data } = await http.get('/analytics/ops', { params: query });
   const rows: OpsStatPoint[] = Array.isArray(data) ? data : [];
@@ -110,52 +120,79 @@ export async function fetchOpsStatsAnalytics(params: {
 }
 
 /* =========================
- * Revenue: single doctor daily series
+ * One doctor's revenue series over a date range
  * GET /analytics/ops/revenue/doctor/series
  * ========================= */
 
+export type DoctorRevenueSeriesItem = {
+  treatmentItemId: number;
+  cost: number;
+  description: string | null;
+  patientName?: string | null;
+  clientName?: string | null;
+};
+
 export type DoctorRevenuePoint = {
-  date: string; // YYYY-MM-DD
-  total: number; // revenue for that day
+  date: string;
+  total: number;
+  items?: DoctorRevenueSeriesItem[];
 };
 
 export type DoctorRevenueSeriesResponse = {
-  doctorId: number;
-  start: string; // YYYY-MM-DD
-  end: string; // YYYY-MM-DD
-  total: number; // sum(series.total)
+  doctorId: number | null;
+  start: string;
+  end: string;
+  total: number;
   series: DoctorRevenuePoint[];
 };
 
 /**
- * Returns a daily revenue series for a single doctor within a date range.
- * - Admins: pass doctorId (required by backend).
- * - Non-admins: you may omit doctorId; backend will use the caller's doctor.
+ * GET /analytics/ops/revenue/doctor/series
+ * One doctor: daily revenue over a date range + sum. Days with no revenue may be omitted from series.
+ * Query: start (YYYY-MM-DD), end (YYYY-MM-DD), doctorId (optional: omit = own doctor; pass '' or null for revenue with no doctor).
  */
 export async function fetchDoctorRevenueSeries(params: {
-  start: string; // YYYY-MM-DD inclusive
-  end: string; // YYYY-MM-DD inclusive
-  doctorId?: string | number; // optional for non-admins; required for admins
+  start: string;
+  end: string;
+  doctorId?: string | number | null;
 }): Promise<DoctorRevenueSeriesResponse> {
   const query: Record<string, string> = {
     start: params.start,
     end: params.end,
   };
-  if (params.doctorId != null) query.doctorId = String(params.doctorId);
+  // Send doctorId when explicitly requested (including '' for "Not Specified" / no-doctor revenue)
+  if (params.doctorId !== undefined) {
+    query.doctorId = params.doctorId === null || params.doctorId === '' ? '' : String(params.doctorId);
+  }
 
   const { data } = await http.get('/analytics/ops/revenue/doctor/series', { params: query });
 
-  // Be defensive about shape
   const resp = data ?? {};
   const series = Array.isArray(resp.series) ? resp.series : [];
+  const isUnspecified =
+    params.doctorId === null || params.doctorId === '';
   return {
-    doctorId: Number(resp.doctorId ?? params.doctorId ?? 0),
+    doctorId:
+      resp.doctorId != null
+        ? Number(resp.doctorId)
+        : isUnspecified
+          ? null
+          : Number(params.doctorId ?? 0),
     start: String(resp.start ?? params.start),
     end: String(resp.end ?? params.end),
     total: Number(resp.total ?? series.reduce((s: number, r: any) => s + Number(r?.total || 0), 0)),
     series: series.map((r: any) => ({
       date: String(r?.date ?? ''),
       total: Number(r?.total ?? 0),
+      items: Array.isArray(r?.items)
+        ? (r.items as any[]).map((i: any) => ({
+            treatmentItemId: Number(i?.treatmentItemId ?? 0),
+            cost: Number(i?.cost ?? 0),
+            description: i?.description ?? null,
+            patientName: i?.patientName ?? null,
+            clientName: i?.clientName ?? null,
+          }))
+        : undefined,
     })),
   };
 }
