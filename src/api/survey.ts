@@ -96,6 +96,22 @@ export type SurveySubmitResponse = {
   message: string;
 };
 
+/**
+ * POST /survey/post-appointment/referral (public, no auth).
+ * referrerEmail must match the invite’s recipient / client email.
+ */
+export type SurveyReferralRequest = {
+  /** Same survey invite token as the form URL. */
+  token: string;
+  referrerEmail: string;
+  friendEmail: string;
+  friendName?: string;
+};
+
+export type SurveyReferralResponse = {
+  message?: string;
+};
+
 // ---------------------------------------------------------------------------
 // Types (authenticated: responses & reports)
 // ---------------------------------------------------------------------------
@@ -224,6 +240,19 @@ export async function submitSurvey(
     { token, answers }
   );
   return data;
+}
+
+/**
+ * Submit a referral from the public post-appointment survey thank-you page.
+ * POST /survey/post-appointment/referral — public, no JWT.
+ * JSON body: token, referrerEmail (must match invite recipient), friendEmail, friendName?
+ */
+export async function submitSurveyReferral(body: SurveyReferralRequest): Promise<SurveyReferralResponse> {
+  const { data } = await publicSurveyClient.post<SurveyReferralResponse>(
+    '/survey/post-appointment/referral',
+    body
+  );
+  return data ?? {};
 }
 
 // ---------------------------------------------------------------------------
