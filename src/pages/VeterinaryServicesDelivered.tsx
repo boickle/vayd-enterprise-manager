@@ -111,6 +111,56 @@ function seriesByDate(series: DoctorRevenuePoint[]): Map<string, number> {
   return m;
 }
 
+/** Mean of (revenue ÷ points) over days in [histStart, histEnd] where points > 0. */
+function meanHistoricalVsdPerPoint(
+  series: DoctorRevenuePoint[],
+  pointsByDate: Record<string, number>,
+  histStart: Dayjs,
+  histEnd: Dayjs
+): number | null {
+  const revByDate = seriesByDate(series);
+  const ratios: number[] = [];
+  for (const dateStr of dateRange(histStart, histEnd)) {
+    const pts = pointsByDate[dateStr] ?? 0;
+    if (pts <= 0) continue;
+    const rev = revByDate.get(dateStr) ?? 0;
+    ratios.push(Number(rev) / pts);
+  }
+  if (!ratios.length) return null;
+  return ratios.reduce((a, b) => a + b, 0) / ratios.length;
+}
+
+/**
+ * Practice-wide trailing VSD/pt: for each historical day, (sum of provider revenues) ÷ (sum of provider
+ * points); then mean over days with points &gt; 0. Excludes "Not Specified" (no calendar points).
+ */
+function meanPracticeHistoricalVsdPerPoint(
+  providerIds: string[],
+  histResponses: { doctorId: string; response: DoctorRevenueSeriesResponse }[],
+  pointsByDoctorByDate: Record<string, Record<string, number>>,
+  histStart: Dayjs,
+  histEnd: Dayjs
+): number | null {
+  const revByDoctorByDate = new Map<string, Map<string, number>>();
+  for (const id of providerIds) {
+    const hist = histResponses.find((x) => x.doctorId === id);
+    if (!hist) continue;
+    revByDoctorByDate.set(id, seriesByDate(hist.response.series ?? []));
+  }
+  const ratios: number[] = [];
+  for (const dateStr of dateRange(histStart, histEnd)) {
+    let rev = 0;
+    let pts = 0;
+    for (const id of providerIds) {
+      rev += revByDoctorByDate.get(id)?.get(dateStr) ?? 0;
+      pts += pointsByDoctorByDate[id]?.[dateStr] ?? 0;
+    }
+    if (pts > 0) ratios.push(rev / pts);
+  }
+  if (!ratios.length) return null;
+  return ratios.reduce((a, b) => a + b, 0) / ratios.length;
+}
+
 /** Compute linear regression trend values for chart data (index vs total). */
 function addLinearTrend<T extends { total: number }>(
   data: T[]
@@ -235,6 +285,9 @@ const PRESETS: Record<string, () => { from: Dayjs; to: Dayjs }> = {
   },
 };
 
+/** Days of history (ending yesterday) used to estimate today's VSD per point. */
+const VSD_ESTIMATE_LOOKBACK_DAYS = 30;
+
 export default function VeterinaryServicesDeliveredPage() {
   const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['Today']());
   const [preset, setPreset] = useState<string>('Today');
@@ -258,6 +311,15 @@ export default function VeterinaryServicesDeliveredPage() {
   const [itemsModalData, setItemsModalData] = useState<DoctorRevenueSeriesResponse | null>(null);
   const [itemsModalLoading, setItemsModalLoading] = useState(false);
 
+  /** Trailing revenue + points (excluding today) for estimated day revenue when viewing today. */
+  const [estHistDoctorResponses, setEstHistDoctorResponses] = useState<
+    { doctorId: string; name: string; response: DoctorRevenueSeriesResponse }[]
+  >([]);
+  const [estHistPointsByDoctorByDate, setEstHistPointsByDoctorByDate] = useState<
+    Record<string, Record<string, number>>
+  >({});
+  const [estHistLoading, setEstHistLoading] = useState(false);
+
   // Goals summary (whole company vs per-doctor)
   const [goalScope, setGoalScope] = useState<string>(PRACTICE_TOTAL_ID);
   const [employeesWithGoals, setEmployeesWithGoals] = useState<
@@ -271,6 +333,8 @@ export default function VeterinaryServicesDeliveredPage() {
   const endStr = toLocalDateStr(end);
   const isSingleDay = start.isSame(end, 'day');
   const today = dayjs().startOf('day');
+  const todayCalStr = toLocalDateStr(today);
+  const isViewingCalendarToday = isSingleDay && startStr === todayCalStr;
   const canGoNext = end.isBefore(today);
 
   // Load providers
@@ -439,6 +503,84 @@ export default function VeterinaryServicesDeliveredPage() {
       alive = false;
     };
   }, [providers.length, startStr, endStr]);
+
+  // Trailing history for "estimated day revenue" when the selected day is calendar today
+  useEffect(() => {
+    if (!isViewingCalendarToday || !providers.length) {
+      setEstHistDoctorResponses([]);
+      setEstHistPointsByDoctorByDate({});
+      setEstHistLoading(false);
+      return;
+    }
+
+    const todayD = dayjs().startOf('day');
+    const histEnd = todayD.subtract(1, 'day');
+    const histStart = histEnd.subtract(VSD_ESTIMATE_LOOKBACK_DAYS - 1, 'day');
+    const histStartStr = toLocalDateStr(histStart);
+    const histEndStr = toLocalDateStr(histEnd);
+    const monthPairs = monthsInRange(histStart, todayD);
+
+    let alive = true;
+    setEstHistLoading(true);
+    (async () => {
+      try {
+        const providerPromises = providers.map(async (p) => {
+          const id = String(p.id);
+          const response = await fetchDoctorRevenueSeries({
+            start: histStartStr,
+            end: histEndStr,
+            doctorId: id,
+          });
+          return { doctorId: id, name: p.name, response };
+        });
+        const notSpecifiedPromise = fetchDoctorRevenueSeries({
+          start: histStartStr,
+          end: histEndStr,
+          doctorId: '',
+        }).then((response) => ({
+          doctorId: NOT_SPECIFIED_DOCTOR_ID,
+          name: 'Not Specified',
+          response,
+        }));
+        const revenueResults = await Promise.all([...providerPromises, notSpecifiedPromise]);
+
+        const entries = providers.flatMap((p) =>
+          monthPairs.map(({ year, month }) => ({ doctorId: String(p.id), year, month }))
+        );
+        const pointResults = await Promise.all(
+          entries.map(async ({ doctorId, year, month }) => {
+            const resp = await fetchDoctorMonth(year, month, doctorId);
+            return { doctorId, days: resp?.days ?? [] };
+          })
+        );
+
+        const byDoctorByDate: Record<string, Record<string, number>> = {};
+        for (const { doctorId, days } of pointResults) {
+          if (!byDoctorByDate[doctorId]) byDoctorByDate[doctorId] = {};
+          for (const day of days) {
+            const date = day?.date?.slice(0, 10);
+            if (date) {
+              byDoctorByDate[doctorId][date] = pointsFromMonthDay(day);
+            }
+          }
+        }
+
+        if (!alive) return;
+        setEstHistDoctorResponses(revenueResults);
+        setEstHistPointsByDoctorByDate(byDoctorByDate);
+      } catch (e) {
+        if (!alive) return;
+        console.error('VSD trailing history fetch failed:', e);
+        setEstHistDoctorResponses([]);
+        setEstHistPointsByDoctorByDate({});
+      } finally {
+        if (alive) setEstHistLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [isViewingCalendarToday, providers]);
 
   const practiceSeries = useMemo(() => {
     if (loading) return [];
@@ -645,6 +787,77 @@ export default function VeterinaryServicesDeliveredPage() {
       revenuePct,
     };
   }, [goalTotalsForRange, actualsForGoalScope]);
+
+  /** When viewing today: trailing avg VSD/pt (last N days, excluding today) × today's appointment points. */
+  const todayRevenueEstimates = useMemo(() => {
+    if (!isViewingCalendarToday || !doctorResponses.length) return null;
+
+    const todayD = dayjs().startOf('day');
+    const histEnd = todayD.subtract(1, 'day');
+    const histStart = histEnd.subtract(VSD_ESTIMATE_LOOKBACK_DAYS - 1, 'day');
+
+    const providerIds = providers.map((p) => String(p.id));
+    const practiceAvgVsd = meanPracticeHistoricalVsdPerPoint(
+      providerIds,
+      estHistDoctorResponses,
+      estHistPointsByDoctorByDate,
+      histStart,
+      histEnd
+    );
+
+    type Row = {
+      estimated: number | null;
+      /** Rate used for the estimate (personal trailing avg, or practice avg as fallback). */
+      rateVsdPerPoint: number | null;
+      usedPracticeFallback: boolean;
+      todayPoints: number;
+    };
+    const byDoctor: Record<string, Row> = {};
+    let practiceSum = 0;
+    let doctorsWithEstimate = 0;
+    let doctorsUsingPracticeFallback = 0;
+
+    for (const r of doctorResponses) {
+      const id = String(r.doctorId);
+      const todayPoints = pointsByDoctorByDate[id]?.[todayCalStr] ?? 0;
+      const hist = estHistDoctorResponses.find((x) => x.doctorId === id);
+      const histPts = estHistPointsByDoctorByDate[id] ?? {};
+      const personalAvg = hist
+        ? meanHistoricalVsdPerPoint(hist.response.series ?? [], histPts, histStart, histEnd)
+        : null;
+      const usedPracticeFallback = personalAvg == null && practiceAvgVsd != null;
+      const rateVsd = personalAvg ?? practiceAvgVsd;
+      const estimated = rateVsd != null ? rateVsd * todayPoints : null;
+
+      byDoctor[id] = {
+        estimated,
+        rateVsdPerPoint: rateVsd,
+        usedPracticeFallback,
+        todayPoints,
+      };
+      if (estimated != null) {
+        practiceSum += estimated;
+        doctorsWithEstimate += 1;
+      }
+      if (usedPracticeFallback && estimated != null && todayPoints > 0) {
+        doctorsUsingPracticeFallback += 1;
+      }
+    }
+
+    return {
+      byDoctor,
+      practiceEstimate: doctorsWithEstimate > 0 ? practiceSum : null,
+      doctorsUsingPracticeFallback,
+    };
+  }, [
+    isViewingCalendarToday,
+    todayCalStr,
+    doctorResponses,
+    providers,
+    pointsByDoctorByDate,
+    estHistDoctorResponses,
+    estHistPointsByDoctorByDate,
+  ]);
 
   const handleDoctorNameClick = (doctorId: string, doctorName: string) => {
     setItemsModalDoctor({ id: doctorId, name: doctorName });
@@ -1023,6 +1236,46 @@ export default function VeterinaryServicesDeliveredPage() {
             <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
               Practice total: {fmtUSD(practiceTotal)}
             </Typography>
+            {isViewingCalendarToday && (
+              <Box sx={{ mb: 2 }}>
+                {estHistLoading ? (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <CircularProgress size={18} />
+                    <Typography variant="body2" color="text.secondary">
+                      Loading estimated day revenue…
+                    </Typography>
+                  </Box>
+                ) : todayRevenueEstimates?.practiceEstimate != null ? (
+                  <>
+                    <Typography variant="body2" color="text.secondary">
+                      Estimated day revenue:{' '}
+                      <Typography component="span" variant="body2" fontWeight={600} color="text.primary">
+                        {fmtUSD(todayRevenueEstimates.practiceEstimate)}
+                      </Typography>
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 0.5, mb: 0 }}>
+                      Trailing {VSD_ESTIMATE_LOOKBACK_DAYS}-day average VSD per point (excluding today) ×
+                      today&apos;s scheduled points. Same weighting as the chart (1 / 0.5 / 2 by appointment
+                      type). Doctors without enough personal history use the practice-wide average for that
+                      window (combined revenue ÷ combined points per day, then averaged across days).
+                    </Typography>
+                    {todayRevenueEstimates.doctorsUsingPracticeFallback > 0 && (
+                      <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 0.5 }}>
+                        {todayRevenueEstimates.doctorsUsingPracticeFallback} doctor
+                        {todayRevenueEstimates.doctorsUsingPracticeFallback === 1 ? '' : 's'} estimated
+                        using practice average VSD/pt.
+                      </Typography>
+                    )}
+                  </>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    Estimated day revenue unavailable — need at least one prior day in the last{' '}
+                    {VSD_ESTIMATE_LOOKBACK_DAYS} days with practice-wide revenue and appointment points to
+                    build a practice average.
+                  </Typography>
+                )}
+              </Box>
+            )}
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               By doctor
             </Typography>
@@ -1030,38 +1283,76 @@ export default function VeterinaryServicesDeliveredPage() {
               {doctorResponses
                 .slice()
                 .sort((a, b) => Number(b.response.total ?? 0) - Number(a.response.total ?? 0))
-                .map((r) => (
-                  <ListItem
-                    key={r.doctorId}
-                    disablePadding
-                    sx={{ py: 0.5, display: 'flex', justifyContent: 'space-between' }}
-                  >
-                    <ListItemText
-                      primary={
-                        <Typography
-                          variant="body2"
-                          component="button"
-                          onClick={() => handleDoctorNameClick(r.doctorId, r.name)}
-                          sx={{
-                            background: 'none',
-                            border: 'none',
-                            padding: 0,
-                            cursor: 'pointer',
-                            color: 'primary.main',
-                            textDecoration: 'underline',
-                            textAlign: 'left',
-                            font: 'inherit',
-                          }}
-                        >
-                          {r.name}
-                        </Typography>
-                      }
-                    />
-                    <Typography variant="body2" fontWeight={500}>
-                      {fmtUSD(Number(r.response.total ?? 0))}
-                    </Typography>
-                  </ListItem>
-                ))}
+                .map((r) => {
+                  const estRow = isViewingCalendarToday
+                    ? todayRevenueEstimates?.byDoctor[String(r.doctorId)]
+                    : undefined;
+                  return (
+                    <ListItem
+                      key={r.doctorId}
+                      disablePadding
+                      sx={{
+                        py: 0.5,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
+                      }}
+                    >
+                      <ListItemText
+                        primary={
+                          <Typography
+                            variant="body2"
+                            component="button"
+                            onClick={() => handleDoctorNameClick(r.doctorId, r.name)}
+                            sx={{
+                              background: 'none',
+                              border: 'none',
+                              padding: 0,
+                              cursor: 'pointer',
+                              color: 'primary.main',
+                              textDecoration: 'underline',
+                              textAlign: 'left',
+                              font: 'inherit',
+                            }}
+                          >
+                            {r.name}
+                          </Typography>
+                        }
+                        secondary={
+                          isViewingCalendarToday && estRow && !estHistLoading ? (
+                            <Typography variant="caption" color="text.secondary" component="span" sx={{ display: 'block', mt: 0.25 }}>
+                              {estRow.estimated != null ? (
+                                <>
+                                  Est. {fmtUSD(estRow.estimated)}
+                                  {estRow.rateVsdPerPoint != null && estRow.todayPoints > 0 && (
+                                    <>
+                                      {' '}
+                                      (
+                                      {estRow.usedPracticeFallback ? (
+                                        <>practice avg {fmtUSD(estRow.rateVsdPerPoint)}/pt</>
+                                      ) : (
+                                        <>{fmtUSD(estRow.rateVsdPerPoint)}/pt</>
+                                      )}
+                                      {' × '}
+                                      {estRow.todayPoints} pts)
+                                    </>
+                                  )}
+                                </>
+                              ) : estRow.todayPoints <= 0 ? (
+                                <>Est. — (no points scheduled today)</>
+                              ) : (
+                                <>Est. — (no practice average available)</>
+                              )}
+                            </Typography>
+                          ) : undefined
+                        }
+                      />
+                      <Typography variant="body2" fontWeight={500} sx={{ flexShrink: 0, ml: 1 }}>
+                        {fmtUSD(Number(r.response.total ?? 0))}
+                      </Typography>
+                    </ListItem>
+                  );
+                })}
             </List>
           </CardContent>
         </Card>
