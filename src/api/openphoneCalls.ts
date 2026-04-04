@@ -1,6 +1,6 @@
 import { http } from './http';
 
-/** GET /openphone/calls/summary — OpenPhone call metrics for Receptionist employees. */
+/** GET /openphone/calls/summary — company-wide totals, per company line (`numbers`), and per-employee attribution. */
 
 export type OpenPhoneCallTotals = {
   incomingCalls: number;
@@ -32,15 +32,35 @@ export type OpenPhoneCallSummaryByNumber = {
   totalMessages: number;
 };
 
-export type OpenPhoneReceptionistSummary = {
+export type OpenPhoneEmployeeSummary = {
   employeeId: number;
   firstName: string;
   lastName: string;
   fullName: string;
   phoneNumber: string;
+  openPhoneUserId?: string | null;
   warning?: string;
   totals: OpenPhoneCallTotals;
   numbers: OpenPhoneCallSummaryByNumber[];
+};
+
+/** @deprecated Use `OpenPhoneEmployeeSummary`; same shape as `employees` from the API. */
+export type OpenPhoneReceptionistSummary = OpenPhoneEmployeeSummary;
+
+/** One webhook-normalized row for timeline charts (calls and messages; chart filters to calls). */
+export type OpenPhoneCallItem = {
+  openPhoneId: string;
+  kind: string;
+  createdAt: string;
+  direction: string;
+  status: string | null;
+  phoneNumberId: string;
+  phoneNumber: string;
+  lastEvent: string | null;
+  answeredAt: string | null;
+  completedAt: string | null;
+  durationSeconds: number | null;
+  staffOpenPhoneUserId: string | null;
 };
 
 export type OpenPhoneCallSummaryResponse = {
@@ -48,7 +68,15 @@ export type OpenPhoneCallSummaryResponse = {
   to: string;
   warnings?: string[];
   totals: OpenPhoneCallTotals;
-  receptionists: OpenPhoneReceptionistSummary[];
+  /** One row per company-owned OpenPhone line — primary breakdown for org-wide traffic and missed calls per main/office number. */
+  numbers: OpenPhoneCallSummaryByNumber[];
+  employees: OpenPhoneEmployeeSummary[];
+  /** @deprecated Same as `employees`; prefer `employees` when present. */
+  receptionists?: OpenPhoneEmployeeSummary[];
+  /**
+   * Per-event rows (same `from`/`to`) for the inbound call timeline — same shape as `OpenPhoneCallItem`.
+   */
+  events?: OpenPhoneCallItem[];
 };
 
 /**
