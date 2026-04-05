@@ -1867,7 +1867,7 @@ export default function Routing() {
                 const emptyBadge = isEmptyDay(opt);
                 const shiftOverrunSec =
                   typeof opt.overrunSeconds === 'number' ? opt.overrunSeconds : 0;
-                const overtimeBadge = finite(shiftOverrunSec) && shiftOverrunSec > 0;
+                const overtimeBadge = finite(shiftOverrunSec) && shiftOverrunSec >= 60;
 
                 return (
                   <div
@@ -1973,9 +1973,8 @@ export default function Routing() {
                           fontSize: 13,
                           fontWeight: 600,
                         }}
-                        title="At least one downstream appointment is pushed within 15 minutes of its window end"
                       >
-                        ⚠ May push a later appointment to its window edge. Check My Day for true warnings.
+                        ⚠ At least one downstream appointment is pushed within 15 minutes of its window end.
                       </div>
                     )}
 

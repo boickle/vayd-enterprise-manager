@@ -1468,8 +1468,15 @@ export default function DoctorDayVisual({
       const interMin = interSec / 60;
       const fitsInGap = interSec > 0 && interMin <= gapAvailMin + 1e-6;
 
+      // ds[hop]===0 and ds[hop+1]>0: leg is barrier → next visit only (e.g. flex with 0 prev drive).
+      // When ETAs are flush (gapAvailMin 0), still keep routed minutes so layout opens space and
+      // vConnectors can paint before the visit (My Week computeMyWeekDayColumnLayout parity).
+      const routedLegOnVisitAfterBarrier = dsLow === 0 && dsHigh > 0;
+
       if (interSec > 0 && !fitsInGap) {
-        base[hop] = 0;
+        if (!routedLegOnVisitAfterBarrier) {
+          base[hop] = 0;
+        }
         if (hop === 0 && dsLow > 0 && dsHigh > 0 && dsLow !== dsHigh) {
           firstHopRelocatedDriveMin += Math.max(0, Math.round(dsHigh / 60));
         }
