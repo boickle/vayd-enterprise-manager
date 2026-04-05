@@ -4,6 +4,7 @@ import { useSearchParams, Link } from 'react-router-dom';
 import {
   getSurveyForm,
   submitSurvey,
+  submitSurveyReferral,
   type SurveyFormResponse,
   type SurveyFormQuestion,
   type SurveyFormSection,
@@ -21,6 +22,34 @@ const FALLBACK_IMAGE =
   );
 
 type Block = { order: number; type: 'section'; section: SurveyFormSection } | { order: number; type: 'question'; question: SurveyFormQuestion };
+
+const GOOGLE_REVIEW_URL = 'https://g.page/r/CdUqd2ODZtQ4EBM/review';
+
+function questionsSortedByOrder(questions: SurveyFormQuestion[]) {
+  return [...questions].sort((a, b) => a.order - b.order);
+}
+
+/** First scale question by survey order (treated as overall rating / “question 1”). */
+function getFirstScaleQuestion(questions: SurveyFormQuestion[]): SurveyFormQuestion | undefined {
+  return questionsSortedByOrder(questions).find((q) => q.questionType === 'scale');
+}
+
+/** Standout / “question 3” — matches DB copy; falls back to any question text containing “stood out”. */
+function getStandoutQuestion(questions: SurveyFormQuestion[]): SurveyFormQuestion | undefined {
+  const sorted = questionsSortedByOrder(questions);
+  return sorted.find(
+    (q) =>
+      (q.questionType === 'textarea' || q.questionType === 'textbox') &&
+      q.questionText.toLowerCase().includes('stood out')
+  );
+}
+
+function parseScaleRating(value: string | string[] | undefined): number | null {
+  if (value == null) return null;
+  const s = Array.isArray(value) ? value[0] : value;
+  const n = parseInt(String(s).trim(), 10);
+  return Number.isFinite(n) ? n : null;
+}
 
 /** True if question has no showWhen, or the referenced question's answer equals showWhen.value. */
 function isQuestionVisible(
@@ -407,6 +436,18 @@ export default function PostAppointmentSurvey() {
   /** Single value (string) or multiple values (string[]) for image_choice multiple */
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
+  /** After submit (4–5): promoter thank-you. After revisiting a used link: same page, no saved standout text. */
+  const [promoterThankYou, setPromoterThankYou] = useState<{ standoutText: string } | null>(null);
+  /** True when form load failed because the survey was already submitted (show review + referral again). */
+  const [surveyReplay, setSurveyReplay] = useState(false);
+  const [copiedStandout, setCopiedStandout] = useState(false);
+  const [referrerEmail, setReferrerEmail] = useState('');
+  const [friendEmail, setFriendEmail] = useState('');
+  const [friendName, setFriendName] = useState('');
+  const [referralSubmitting, setReferralSubmitting] = useState(false);
+  const [referralError, setReferralError] = useState<string | null>(null);
+  const [referralSuccess, setReferralSuccess] = useState(false);
+  const [referralExpanded, setReferralExpanded] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -415,10 +456,20 @@ export default function PostAppointmentSurvey() {
     }
     let cancelled = false;
     setState('loading');
+    setPromoterThankYou(null);
+    setSurveyReplay(false);
+    setCopiedStandout(false);
+    setReferrerEmail('');
+    setFriendEmail('');
+    setFriendName('');
+    setReferralError(null);
+    setReferralSuccess(false);
+    setReferralExpanded(false);
     getSurveyForm(token)
       .then((data) => {
         if (!cancelled) {
           setFormData(data);
+          setSurveyReplay(false);
           setState('form');
         }
       })
@@ -432,7 +483,13 @@ export default function PostAppointmentSurvey() {
             code === 'ALREADY_SUBMITTED' ||
             code === 'SURVEY_ALREADY_COMPLETED' ||
             (typeof message === 'string' && /already\s+(been\s+)?used|already\s+submitted|already\s+completed/i.test(message));
-          setState(isAlreadyUsed ? 'success' : 'invalid');
+          if (isAlreadyUsed) {
+            setPromoterThankYou({ standoutText: '' });
+            setSurveyReplay(true);
+            setState('success');
+          } else {
+            setState('invalid');
+          }
         } else {
           setSubmitError(message || 'Unable to load the survey.');
           setState('error');
@@ -570,8 +627,26 @@ export default function PostAppointmentSurvey() {
 
     setState('submitting');
     setSubmitError(null);
+    const scaleQ = getFirstScaleQuestion(formData.questions);
+    const rating = parseScaleRating(scaleQ ? answers[scaleQ.questionKey] : undefined);
+    const isPromoter = rating != null && rating >= 4;
+    const standoutQ = getStandoutQuestion(formData.questions);
+    let standoutText = '';
+    if (standoutQ) {
+      const raw = answers[standoutQ.questionKey];
+      if (typeof raw === 'string') standoutText = raw.trim();
+    }
+
     submitSurvey(token, answerList)
-      .then(() => setState('success'))
+      .then(() => {
+        setSurveyReplay(false);
+        setPromoterThankYou(isPromoter ? { standoutText } : null);
+        setCopiedStandout(false);
+        setReferralSuccess(false);
+        setReferralError(null);
+        setReferralExpanded(false);
+        setState('success');
+      })
       .catch((err: any) => {
         const message = err?.response?.data?.message ?? err?.message ?? 'Something went wrong. Please try again.';
         setSubmitError(message);
@@ -623,6 +698,201 @@ export default function PostAppointmentSurvey() {
   }
 
   if (state === 'success') {
+    if (promoterThankYou) {
+      const { standoutText } = promoterThankYou;
+      const hasStandout = standoutText.length > 0;
+
+      const promoterLead = hasStandout ? (
+        <>
+          Reviews help other pet owners discover in-home veterinary care. If you&apos;re willing, you can share what you
+          wrote as a Google review.
+        </>
+      ) : (
+        <>
+          Reviews help other pet owners discover in-home veterinary care. If you&apos;re willing, we&apos;d appreciate a
+          Google review.
+        </>
+      );
+
+      const handleCopyStandout = async () => {
+        try {
+          await navigator.clipboard.writeText(standoutText);
+          setCopiedStandout(true);
+        } catch {
+          setCopiedStandout(false);
+        }
+      };
+
+      const handleReferralSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const refEmail = referrerEmail.trim();
+        const fEmail = friendEmail.trim();
+        const fName = friendName.trim();
+        if (!refEmail) {
+          setReferralError('Please enter your email so we can credit your account.');
+          return;
+        }
+        if (!fEmail) {
+          setReferralError("Please enter your friend's email.");
+          return;
+        }
+        setReferralError(null);
+        setReferralSubmitting(true);
+        try {
+          await submitSurveyReferral({
+            token,
+            referrerEmail: refEmail,
+            friendEmail: fEmail,
+            friendName: fName || undefined,
+          });
+          setReferralSuccess(true);
+        } catch (err: any) {
+          const message = err?.response?.data?.message ?? err?.message;
+          setReferralError(typeof message === 'string' ? message : 'Something went wrong. Please try again.');
+        } finally {
+          setReferralSubmitting(false);
+        }
+      };
+
+      return (
+        <div className="survey-page">
+          <div className="survey-card survey-success survey-success-promoter">
+            {surveyReplay && (
+              <p className="survey-replay-banner">You&apos;ve already submitted this survey—thanks again!</p>
+            )}
+            <h1 className="survey-promoter-heading">Thank you for sharing this.</h1>
+            <p className="survey-promoter-lead">{promoterLead}</p>
+
+            {hasStandout && (
+              <>
+                <figure className="survey-testimonial">
+                  <blockquote className="survey-testimonial-quote">
+                    <p>{standoutText}</p>
+                  </blockquote>
+                </figure>
+                <p className="survey-paste-hint">
+                  After clicking &ldquo;Leave a Google Review,&rdquo; simply paste your response.
+                </p>
+                <p className="survey-standout-hint">
+                  You can copy your response and paste it directly into a Google review.
+                </p>
+                <button
+                  type="button"
+                  className={`btn survey-copy-response-btn ${copiedStandout ? 'survey-copy-done' : ''}`}
+                  onClick={handleCopyStandout}
+                >
+                  {copiedStandout ? (
+                    <span className="survey-copied-inline">
+                      <span className="survey-copied-check" aria-hidden>
+                        ✓
+                      </span>
+                      Copied!
+                    </span>
+                  ) : (
+                    'Copy My Response'
+                  )}
+                </button>
+              </>
+            )}
+
+            <div className="survey-google-review-wrap">
+              <a
+                href={GOOGLE_REVIEW_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn secondary survey-btn-google-review"
+              >
+                Leave a Google Review
+              </a>
+            </div>
+
+            <div className="survey-referral-section">
+              <p className="survey-referral-heading">Know someone who would love in-home veterinary care?</p>
+              <p className="survey-success-blurb survey-referral-copy">
+                Most of our new clients come from referrals from happy pet owners like you.
+              </p>
+              <p className="survey-success-blurb survey-referral-copy">
+                When a friend books their first visit using your referral, both of you receive a $50 Vet At Your Door
+                credit. If they become a member, you each get another $25 credit.
+              </p>
+
+              {referralSuccess ? (
+                <p className="survey-referral-success">Thank you! We&apos;ve recorded your referral.</p>
+              ) : !referralExpanded ? (
+                <div className="survey-referral-cta-wrap">
+                  <button
+                    type="button"
+                    className="btn survey-btn-refer-friend"
+                    onClick={() => setReferralExpanded(true)}
+                  >
+                    Refer a Friend
+                  </button>
+                </div>
+              ) : (
+                <form className="survey-referral-form survey-referral-form-expanded" onSubmit={handleReferralSubmit}>
+                  <label className="survey-referral-label">
+                    Your email
+                    <span className="survey-referral-hint">
+                      Use the same address this survey link was sent to so we can credit your account.
+                    </span>
+                    <input
+                      type="email"
+                      className="survey-input"
+                      value={referrerEmail}
+                      onChange={(e) => setReferrerEmail(e.target.value)}
+                      autoComplete="email"
+                      placeholder="you@example.com"
+                      disabled={referralSubmitting}
+                      required
+                    />
+                  </label>
+                  <label className="survey-referral-label">
+                    Friend&apos;s email
+                    <input
+                      type="email"
+                      className="survey-input"
+                      value={friendEmail}
+                      onChange={(e) => setFriendEmail(e.target.value)}
+                      autoComplete="off"
+                      placeholder="friend@example.com"
+                      disabled={referralSubmitting}
+                      required
+                    />
+                  </label>
+                  <label className="survey-referral-label">
+                    Friend&apos;s name <span className="survey-muted">(optional)</span>
+                    <input
+                      type="text"
+                      className="survey-input"
+                      value={friendName}
+                      onChange={(e) => setFriendName(e.target.value)}
+                      autoComplete="name"
+                      placeholder="First name"
+                      disabled={referralSubmitting}
+                    />
+                  </label>
+                  {referralError && <p className="survey-error survey-referral-error">{referralError}</p>}
+                  <div className="survey-referral-actions">
+                    <button type="submit" className="btn survey-btn-send-referral" disabled={referralSubmitting}>
+                      {referralSubmitting ? 'Sending…' : 'Send referral'}
+                    </button>
+                    <Link to="/client-portal" className="btn secondary survey-btn-referral-alt">
+                      Refer from client portal
+                    </Link>
+                  </div>
+                </form>
+              )}
+            </div>
+
+            <p className="survey-success-footer-blurb">
+              Your survey responses have been saved. You can close this window or{' '}
+              <Link to="/client-portal">open the client portal</Link> for appointments and account details.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="survey-page">
         <div className="survey-card survey-success">
