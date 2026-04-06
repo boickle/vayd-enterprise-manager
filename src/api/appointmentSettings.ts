@@ -31,6 +31,8 @@ export type Employee = {
   designation?: string;
   isProvider?: boolean;
   imageUrl?: string | null;
+  /** OpenPhone user id for call attribution / CSR coaching when synced. */
+  openPhoneUserId?: string | null;
   appointmentTypes: AppointmentType[];
   weeklySchedules: EmployeeWeeklySchedule[];
   practice?: {
