@@ -9,6 +9,28 @@ export type EmployeeCsrCoachingPerCall = {
   strengths: string[];
   missedBookingOpportunities: string[];
   coachingTip: string;
+  /** Transcript-based: appointment booked/scheduled at this practice on this call. */
+  appointmentBooked?: boolean | null;
+  appointmentBookedRationale?: string;
+  /** Transcript-based: CSR sent the client elsewhere for care as the main outcome. */
+  referredClientElsewhere?: boolean | null;
+  referredElsewhereRationale?: string;
+};
+
+/** Computed after OpenAI returns; denominator = fielded calls in batch. Omitted on older cached reports. */
+export type EmployeeCsrCoachingConversionMetrics = {
+  fieldedCallCount: number;
+  appointmentsBookedCount: number;
+  appointmentsNotBookedCount: number;
+  appointmentBookingUnclearCount: number;
+  closeRateVsFielded: number | null;
+  closeRateVsFieldedPercent: number | null;
+  referredClientElsewhereCount: number;
+  notReferredElsewhereCount: number;
+  referredElsewhereUnclearCount: number;
+  referralAwayRateVsFielded: number | null;
+  referralAwayRateVsFieldedPercent: number | null;
+  definitions?: Record<string, string>;
 };
 
 export type EmployeeCsrCoachingBatchReport = {
@@ -18,6 +40,8 @@ export type EmployeeCsrCoachingBatchReport = {
     growthAreas: string[];
   };
   perCall: EmployeeCsrCoachingPerCall[];
+  /** Omitted until a fresh POST (refresh) after backend added metrics. */
+  conversionMetrics?: EmployeeCsrCoachingConversionMetrics;
   openingNote: string;
   callSummaryTable: Array<{ dimension: string; notes: string }>;
   csrStrengths: string[];

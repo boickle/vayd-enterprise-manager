@@ -40,6 +40,7 @@ import {
   postEmployeeCsrCoachingBatch,
   type EmployeeCsrCoachingBatchReport,
   type EmployeeCsrCoachingBatchResponse,
+  type EmployeeCsrCoachingConversionMetrics,
 } from '../api/openphoneCsrCoaching';
 
 /** Receptionist rows for the coaching dropdown (from GET /employees/by-role for the Receptionist role). */
@@ -143,6 +144,110 @@ function StringList({ items, dense }: { items: string[]; dense?: boolean }) {
   );
 }
 
+function formatPercentDisplay(pct: number | null | undefined): string {
+  if (pct == null || Number.isNaN(pct)) return '—';
+  return `${pct.toFixed(1)}%`;
+}
+
+function triStateLabel(v: boolean | null | undefined): string {
+  if (v === true) return 'Yes';
+  if (v === false) return 'No';
+  return 'Unclear';
+}
+
+function ConversionMetricsSection({ m }: { m: EmployeeCsrCoachingConversionMetrics }) {
+  const defEntries = Object.entries(m.definitions ?? {}).sort(([a], [b]) => a.localeCompare(b));
+
+  return (
+    <Card variant="outlined">
+      <CardContent>
+        <Typography variant="h6" gutterBottom>
+          Conversion (transcript-based)
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Counts and rates are model judgments from call transcripts, not PIMS. Denominator is
+          fielded calls in this batch (same as calls sent to the model).
+        </Typography>
+        <TableContainer>
+          <Table size="small">
+            <TableBody>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 600 }}>Fielded calls</TableCell>
+                <TableCell>{m.fieldedCallCount}</TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 600 }}>
+                  Appointments booked (this practice, this call)
+                </TableCell>
+                <TableCell>{m.appointmentsBookedCount}</TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 600 }}>Appointments not booked</TableCell>
+                <TableCell>{m.appointmentsNotBookedCount}</TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 600 }}>Appointment outcome unclear</TableCell>
+                <TableCell>{m.appointmentBookingUnclearCount}</TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 600 }}>Close rate (vs fielded)</TableCell>
+                <TableCell>{formatPercentDisplay(m.closeRateVsFieldedPercent)}</TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 600 }}>Referred client elsewhere</TableCell>
+                <TableCell>{m.referredClientElsewhereCount}</TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 600 }}>Not referred elsewhere</TableCell>
+                <TableCell>{m.notReferredElsewhereCount}</TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 600 }}>Referral-away unclear</TableCell>
+                <TableCell>{m.referredElsewhereUnclearCount}</TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 600 }}>Referral-away rate (vs fielded)</TableCell>
+                <TableCell>{formatPercentDisplay(m.referralAwayRateVsFieldedPercent)}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </TableContainer>
+        {defEntries.length > 0 ? (
+          <>
+            <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>
+              Definitions
+            </Typography>
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Term</TableCell>
+                    <TableCell>Meaning</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {defEntries.map(([key, text]) => (
+                    <TableRow key={key}>
+                      <TableCell
+                        sx={{ verticalAlign: 'top', fontWeight: 600, whiteSpace: 'nowrap' }}
+                      >
+                        {key}
+                      </TableCell>
+                      <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'pre-wrap' }}>
+                        {text}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ReportSections({ report }: { report: EmployeeCsrCoachingBatchReport }) {
   const { employeeSummary, performanceScorecard } = report;
 
@@ -171,6 +276,8 @@ function ReportSections({ report }: { report: EmployeeCsrCoachingBatchReport }) 
           <StringList items={employeeSummary.growthAreas ?? []} />
         </CardContent>
       </Card>
+
+      {report.conversionMetrics ? <ConversionMetricsSection m={report.conversionMetrics} /> : null}
 
       {report.openingNote ? (
         <Card variant="outlined">
@@ -428,6 +535,12 @@ function ReportSections({ report }: { report: EmployeeCsrCoachingBatchReport }) 
                     <Typography variant="body2" color="text.secondary">
                       {pc.reason || '—'}
                     </Typography>
+                    {pc.appointmentBooked === true ? (
+                      <Chip size="small" label="Booked" color="success" variant="outlined" />
+                    ) : null}
+                    {pc.referredClientElsewhere === true ? (
+                      <Chip size="small" label="Referred away" color="warning" variant="outlined" />
+                    ) : null}
                   </Stack>
                 </AccordionSummary>
                 <AccordionDetails>
@@ -447,6 +560,40 @@ function ReportSections({ report }: { report: EmployeeCsrCoachingBatchReport }) 
                       <Typography variant="body2" whiteSpace="pre-wrap">
                         {pc.outcome || '—'}
                       </Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary">
+                        Transcript-based: appointment booked (this practice)
+                      </Typography>
+                      <Typography variant="body2">{triStateLabel(pc.appointmentBooked)}</Typography>
+                      {pc.appointmentBookedRationale ? (
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          whiteSpace="pre-wrap"
+                          sx={{ mt: 0.5 }}
+                        >
+                          {pc.appointmentBookedRationale}
+                        </Typography>
+                      ) : null}
+                    </Box>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary">
+                        Transcript-based: referred client elsewhere
+                      </Typography>
+                      <Typography variant="body2">
+                        {triStateLabel(pc.referredClientElsewhere)}
+                      </Typography>
+                      {pc.referredElsewhereRationale ? (
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          whiteSpace="pre-wrap"
+                          sx={{ mt: 0.5 }}
+                        >
+                          {pc.referredElsewhereRationale}
+                        </Typography>
+                      ) : null}
                     </Box>
                     <Box>
                       <Typography variant="caption" color="text.secondary">
@@ -788,6 +935,14 @@ export default function OpenPhoneCoaching() {
             <Alert severity="info">
               Report is generating. This page will refresh every few seconds until it completes or
               fails.
+            </Alert>
+          ) : null}
+
+          {batch.status === 'completed' && batch.report && !batch.report.conversionMetrics ? (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              This cached report was saved before conversion metrics were added. Use{' '}
+              <strong>Regenerate (OpenAI)</strong> to rebuild with transcript-based booking and
+              referral-away rates.
             </Alert>
           ) : null}
 
