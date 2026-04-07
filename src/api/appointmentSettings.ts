@@ -182,6 +182,33 @@ export async function fetchAllEmployees(): Promise<Employee[]> {
   return Array.isArray(data) ? data : (data?.items ?? []);
 }
 
+/** Active, non-deleted employee_role row from GET /employees/roles */
+export type EmployeeRole = {
+  id: number;
+  name: string;
+  roleValue: string;
+  pimsType?: string;
+  description?: string | null;
+};
+
+/**
+ * Active non-deleted employee roles, ordered by name then roleValue.
+ * GET /employees/roles
+ */
+export async function fetchEmployeeRoles(): Promise<EmployeeRole[]> {
+  const { data } = await http.get('/employees/roles');
+  return Array.isArray(data) ? data : (data?.items ?? []);
+}
+
+/**
+ * Employees with the given role (same Employee shape as GET /employees).
+ * GET /employees/by-role/:roleId
+ */
+export async function fetchEmployeesByRole(roleId: number): Promise<Employee[]> {
+  const { data } = await http.get(`/employees/by-role/${roleId}`);
+  return Array.isArray(data) ? data : (data?.items ?? []);
+}
+
 /**
  * Get all available zones
  * GET /zones
@@ -293,7 +320,8 @@ export async function uploadEmployeeImage(
   file: File
 ): Promise<{ success: boolean; imageUrl: string; s3Key: string }> {
   const lower = file.type?.toLowerCase() ?? '';
-  const allowed = ALLOWED_IMAGE_TYPES.some((t) => t === lower) || /\.(jpe?g|png|gif|webp)$/i.test(file.name);
+  const allowed =
+    ALLOWED_IMAGE_TYPES.some((t) => t === lower) || /\.(jpe?g|png|gif|webp)$/i.test(file.name);
   if (!allowed) {
     throw new Error('Allowed types: JPEG, JPG, PNG, GIF, WebP');
   }
@@ -308,5 +336,3 @@ export async function uploadEmployeeImage(
   );
   return data;
 }
-
-

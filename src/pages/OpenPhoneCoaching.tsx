@@ -29,13 +29,26 @@ import {
   Typography,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import { fetchAllEmployees, type Employee } from '../api/appointmentSettings';
+import {
+  fetchEmployeeRoles,
+  fetchEmployeesByRole,
+  type Employee,
+  type EmployeeRole,
+} from '../api/appointmentSettings';
 import {
   getEmployeeCsrCoachingBatch,
   postEmployeeCsrCoachingBatch,
   type EmployeeCsrCoachingBatchReport,
   type EmployeeCsrCoachingBatchResponse,
 } from '../api/openphoneCsrCoaching';
+
+/** Receptionist rows for the coaching dropdown (from GET /employees/by-role for the Receptionist role). */
+type ReceptionistOption = {
+  id: number;
+  firstName: string;
+  lastName: string;
+  openPhoneUserId?: string | null;
+};
 
 function dateInputDefaultFrom(): string {
   const d = new Date();
@@ -84,10 +97,35 @@ function apiErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : 'Something went wrong';
 }
 
-function sortEmployees(a: Employee, b: Employee): number {
+function sortReceptionists(a: ReceptionistOption, b: ReceptionistOption): number {
   const ln = a.lastName.localeCompare(b.lastName);
   if (ln !== 0) return ln;
   return a.firstName.localeCompare(b.firstName);
+}
+
+function normRoleToken(s: string): string {
+  return s.trim().toLowerCase();
+}
+
+/**
+ * Match the EVet “Receptionist” role: exact name (case-insensitive), then roleValue, then name contains “receptionist”.
+ */
+function findReceptionistRoleId(roles: EmployeeRole[]): number | null {
+  const byName = roles.find((r) => normRoleToken(r.name) === 'receptionist');
+  if (byName) return byName.id;
+  const byValue = roles.find((r) => normRoleToken(r.roleValue) === 'receptionist');
+  if (byValue) return byValue.id;
+  const fuzzy = roles.find((r) => normRoleToken(r.name).includes('receptionist'));
+  return fuzzy?.id ?? null;
+}
+
+function receptionistOptionsFromEmployees(emps: Employee[]): ReceptionistOption[] {
+  return emps.map((e) => ({
+    id: e.id,
+    firstName: e.firstName,
+    lastName: e.lastName,
+    openPhoneUserId: e.openPhoneUserId ?? null,
+  }));
 }
 
 function StringList({ items, dense }: { items: string[]; dense?: boolean }) {
@@ -442,8 +480,9 @@ function ReportSections({ report }: { report: EmployeeCsrCoachingBatchReport }) 
 }
 
 export default function OpenPhoneCoaching() {
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [employeesError, setEmployeesError] = useState<string | null>(null);
+  const [receptionists, setReceptionists] = useState<ReceptionistOption[]>([]);
+  const [receptionistsError, setReceptionistsError] = useState<string | null>(null);
+  const [staffLoading, setStaffLoading] = useState(true);
   const [employeeId, setEmployeeId] = useState<number | ''>('');
   const [fromDate, setFromDate] = useState(dateInputDefaultFrom);
   const [toDate, setToDate] = useState(dateInputDefaultTo);
@@ -456,22 +495,40 @@ export default function OpenPhoneCoaching() {
 
   useEffect(() => {
     let alive = true;
-    fetchAllEmployees()
-      .then((list) => {
-        if (alive) setEmployees(list.slice().sort(sortEmployees));
-      })
-      .catch((e) => {
-        if (alive) setEmployeesError(apiErrorMessage(e));
-      });
+    setReceptionistsError(null);
+    setStaffLoading(true);
+    (async () => {
+      try {
+        const roles = await fetchEmployeeRoles();
+        if (!alive) return;
+        const roleId = findReceptionistRoleId(roles);
+        if (roleId == null) {
+          setReceptionists([]);
+          setReceptionistsError(
+            'No employee role named “Receptionist” was found. Add or activate that role in your practice configuration.'
+          );
+          return;
+        }
+        const emps = await fetchEmployeesByRole(roleId);
+        if (!alive) return;
+        setReceptionists(receptionistOptionsFromEmployees(emps).sort(sortReceptionists));
+      } catch (e) {
+        if (alive) setReceptionistsError(apiErrorMessage(e));
+      } finally {
+        if (alive) setStaffLoading(false);
+      }
+    })();
     return () => {
       alive = false;
     };
   }, []);
 
-  const selectedEmployee = useMemo(
+  const selectedReceptionist = useMemo(
     () =>
-      typeof employeeId === 'number' ? (employees.find((e) => e.id === employeeId) ?? null) : null,
-    [employeeId, employees]
+      typeof employeeId === 'number'
+        ? (receptionists.find((e) => e.id === employeeId) ?? null)
+        : null,
+    [employeeId, receptionists]
   );
 
   const pollBatch = useCallback(async () => {
@@ -533,23 +590,43 @@ export default function OpenPhoneCoaching() {
     <div className="settings-section">
       <h2 className="settings-section-title">Open Phone Coaching</h2>
       <p className="settings-section-description">
-        Batch CSR coaching from transcribed OpenPhone voice calls for one employee over a date
-        range. Generating a new report calls OpenAI and may take up to a minute. Loading cached
-        results does not re-run the model.
+        Batch CSR coaching from transcribed OpenPhone voice calls for one receptionist over a date
+        range. The dropdown lists everyone assigned the Receptionist employee role (from{' '}
+        <code>GET /employees/roles</code> and <code>GET /employees/by-role</code>). Generating a new
+        report calls OpenAI and may take up to a minute. Loading cached results does not re-run the
+        model.
       </p>
 
-      {employeesError ? (
+      {receptionistsError ? (
         <Paper sx={{ p: 2, mb: 2, bgcolor: 'error.light' }}>
-          <Typography color="error.dark">Could not load employees: {employeesError}</Typography>
+          <Typography color="error.dark">
+            Could not load receptionists: {receptionistsError}
+          </Typography>
         </Paper>
+      ) : null}
+
+      {!receptionistsError && !staffLoading && receptionists.length === 0 ? (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          No employees are assigned the Receptionist role, or the role has no members in your
+          practice.
+        </Alert>
+      ) : null}
+
+      {staffLoading && !receptionistsError ? (
+        <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 2 }}>
+          <CircularProgress size={20} />
+          <Typography variant="body2" color="text.secondary">
+            Loading receptionists…
+          </Typography>
+        </Stack>
       ) : null}
 
       <Stack spacing={2} sx={{ mb: 2, maxWidth: 720 }}>
         <FormControl fullWidth size="small">
-          <InputLabel id="openphone-coaching-employee-label">Employee</InputLabel>
+          <InputLabel id="openphone-coaching-employee-label">Receptionist</InputLabel>
           <Select
             labelId="openphone-coaching-employee-label"
-            label="Employee"
+            label="Receptionist"
             value={employeeId === '' ? '' : String(employeeId)}
             onChange={(e) => {
               const v = e.target.value;
@@ -557,12 +634,12 @@ export default function OpenPhoneCoaching() {
               setBatch(null);
               setActionError(null);
             }}
-            disabled={formLocked}
+            disabled={formLocked || staffLoading}
           >
             <MenuItem value="">
-              <em>Select an employee</em>
+              <em>Select a receptionist</em>
             </MenuItem>
-            {employees.map((e) => (
+            {receptionists.map((e) => (
               <MenuItem key={e.id} value={String(e.id)}>
                 {e.lastName}, {e.firstName}
                 {e.openPhoneUserId ? '' : ' (no OpenPhone user id)'}
@@ -571,10 +648,10 @@ export default function OpenPhoneCoaching() {
           </Select>
         </FormControl>
 
-        {selectedEmployee && !selectedEmployee.openPhoneUserId ? (
+        {selectedReceptionist && !selectedReceptionist.openPhoneUserId ? (
           <Alert severity="warning">
-            This employee has no <code>openPhoneUserId</code>. Sync OpenPhone on the backend before
-            coaching can run.
+            This receptionist has no <code>openPhoneUserId</code>. Sync OpenPhone on the backend
+            before coaching can run.
           </Alert>
         ) : null}
 
