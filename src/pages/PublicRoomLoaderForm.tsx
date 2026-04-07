@@ -2607,6 +2607,48 @@ export default function PublicRoomLoaderForm() {
         const p = getClientAdjustedPrice(patientId, comprehensiveFecalItem) ?? getSearchItemPrice(comprehensiveFecalItem);
         if (p != null) petSubtotal += p;
       }
+      // Commonly selected items (checked) — must match summaryLineItems / membership simulate so grand total matches the summary UI
+      {
+        const apptsForCommon = data?.appointments ?? [];
+        const apptForSpeciesTotal = getAppointmentForRoomLoaderPet(apptsForCommon, patient, petIdx);
+        const speciesPartsTotal = [
+          patient?.species,
+          (patient as any)?.patient?.species,
+          apptForSpeciesTotal?.patient?.species,
+        ].filter(Boolean) as string[];
+        const speciesLowerTotal = speciesPartsTotal.join(' ').toLowerCase();
+        const isDogPetTotal =
+          isDogSpeciesTokens(speciesLowerTotal) || (speciesLowerTotal.trim() === '' && !isCatSpeciesTokens(speciesLowerTotal));
+        const existingCommonNames = new Set<string>();
+        (Object.values(optedInVaccinesByPatientId[patientId] || {}).filter(Boolean) as SearchableItem[]).forEach((item) => {
+          if (item?.name) existingCommonNames.add(String(item.name).toLowerCase());
+        });
+        const nameMatchesCommon = (a: string, b: string) => {
+          const x = a.toLowerCase();
+          const y = b.toLowerCase();
+          return x.includes(y) || y.includes(x);
+        };
+        COMMON_ITEMS_CONFIG.forEach((c) => {
+          if ((c as any).dogOnly && !isDogPetTotal) return;
+          const hasDisplayName = 'displayName' in c && c.displayName;
+          let item: SearchableItem | null = null;
+          if (hasDisplayName && (c as any).displayName === 'Pedicure') {
+            const searchQueryDog = 'searchQueryDog' in c ? (c as any).searchQueryDog : null;
+            item = isDogPetTotal && searchQueryDog ? commonItemsFetched[searchQueryDog] : commonItemsFetched[c.searchQuery];
+          } else {
+            item = commonItemsFetched[c.searchQuery];
+          }
+          if (!item?.name) return;
+          const n = String(item.name).toLowerCase();
+          if ([...existingCommonNames].some((ex) => nameMatchesCommon(ex, n))) return;
+          const itemId = getItemId(item) ?? c.searchQuery;
+          const commonKey = `summary_common_${patientId}_${itemId}`;
+          if (formData[commonKey] === true) {
+            const p = getClientAdjustedPrice(patientId, item) ?? getSearchItemPrice(item) ?? 0;
+            petSubtotal += p;
+          }
+        });
+      }
       petSubtotals.push(petSubtotal);
       grandTotal += petSubtotal;
     });
