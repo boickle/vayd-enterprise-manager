@@ -17,6 +17,7 @@ export async function searchPatients(params?: {
   primaryProviderId?: string | number;
   practiceId?: string | number;
   activeOnly?: boolean;
+  clientId?: string | number;
 }) {
   return http.get('/patients/search', { params });
 }

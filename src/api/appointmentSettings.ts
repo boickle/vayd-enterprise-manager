@@ -16,6 +16,10 @@ export type AppointmentType = {
   isDeleted: boolean;
   pimsId: string;
   pimsType: string;
+  /** When set by the API, scheduler uses this for event fill color */
+  calendarColor?: string | null;
+  colorHex?: string | null;
+  color?: string | null;
   practice?: {
     id: number;
     name: string;
