@@ -83,6 +83,8 @@ export type ReminderWithPrice = {
     name?: string;
     price?: string;
     category?: string;
+    /** Display category (e.g. Vaccines, Injections) when inventory API provides it. */
+    categoryName?: string;
     cost?: string;
     serviceFee?: string;
   } | null;
@@ -459,6 +461,9 @@ export async function searchItemsPublic(params: ItemSearchParams): Promise<Searc
   queryParams.append('q', params.q);
   queryParams.append('practiceId', String(params.practiceId));
   queryParams.append('limit', String(params.limit ?? 50));
+  if (params.code != null && params.code !== '') {
+    queryParams.append('code', params.code);
+  }
 
   const { data } = await http.get<SearchableItem[]>(`/public/room-loader/items/search?${queryParams.toString()}`);
   return data;
