@@ -391,6 +391,10 @@ export default function App() {
                 ) : p.path === '/analytics' ? (
                   <Route key={p.path} path={p.path} element={p.element}>
                     <Route index element={<Navigate to="/analytics/payments" replace />} />
+                    <Route
+                      path="routing"
+                      element={<Navigate to="/analytics/appointments" replace />}
+                    />
                     {getAnalyticsTabPages().map((tab) => (
                       <Route key={tab.path} path={tab.path} element={tab.element} />
                     ))}
