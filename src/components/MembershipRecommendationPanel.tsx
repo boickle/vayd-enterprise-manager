@@ -16,7 +16,12 @@ type Props = {
   pets: RoomLoaderPlansForPetForDisplay[];
   membershipPanelByPatientId: Record<
     number,
-    { monthly: RoomLoaderSimulateBillPublicResponse | null; annual: RoomLoaderSimulateBillPublicResponse | null }
+    {
+      monthly: RoomLoaderSimulateBillPublicResponse | null;
+      annual: RoomLoaderSimulateBillPublicResponse | null;
+      /** Visit + declined lines — use `lineItemAdjustments` for comparison table when present. */
+      monthlyExtended?: RoomLoaderSimulateBillPublicResponse | null;
+    }
   >;
   membershipPanelLoading: boolean;
   summaryLineItems: Array<{
@@ -25,6 +30,20 @@ type Props = {
     price: number;
     patientId?: number;
     category?: string;
+    itemType?: 'lab' | 'procedure' | 'inventory';
+    itemId?: number;
+    membershipComparisonDeclinedOnly?: boolean;
+  }>;
+  /** Unchecked visit recommendations still shown in Care Coverage Comparison (not in visit total). */
+  membershipComparisonDeclinedLines: Array<{
+    name: string;
+    quantity: number;
+    price: number;
+    patientId?: number;
+    category?: string;
+    itemType?: 'lab' | 'procedure' | 'inventory';
+    itemId?: number;
+    membershipComparisonDeclinedOnly?: boolean;
   }>;
   firstPatientId: number;
   allPatients: any[];
@@ -86,6 +105,7 @@ export default function MembershipRecommendationPanel({
   membershipPanelByPatientId,
   membershipPanelLoading,
   summaryLineItems,
+  membershipComparisonDeclinedLines,
   firstPatientId,
   allPatients,
   membershipPlanDisplayName,
@@ -115,10 +135,18 @@ export default function MembershipRecommendationPanel({
         const planShortLabel =
           planBase === 'golden' ? 'Golden' : planDisplayName.replace(/\s+Plan$/i, '').replace(/\s+Care$/i, '').trim();
         const filteredLines = filterLineItemsForPatientSimulate(summaryLineItems, petPlans.patientId, firstPatientId);
-        const adjustments = monthly?.lineItemAdjustments ?? [];
+        const declinedForPet = filterLineItemsForPatientSimulate(
+          membershipComparisonDeclinedLines,
+          petPlans.patientId,
+          firstPatientId
+        );
+        const monthlyExtended = membershipPanelByPatientId[petPlans.patientId]?.monthlyExtended;
+        const adjustments = monthlyExtended?.lineItemAdjustments ?? monthly?.lineItemAdjustments ?? [];
         const usedAdj = new Set<number>();
 
-        const coverageRows = filteredLines.map((line) => {
+        const comparisonLines = [...filteredLines, ...declinedForPet];
+        const coverageRows = comparisonLines.map((line) => {
+          const declinedForVisit = line.membershipComparisonDeclinedOnly === true;
           const matchIdx = adjustments.findIndex(
             (a, i) =>
               !usedAdj.has(i) &&
@@ -144,7 +172,7 @@ export default function MembershipRecommendationPanel({
             right = 'Not included in membership';
             covered = false;
           }
-          return { left: line.name, right, covered };
+          return { left: line.name, right, covered, declinedForVisit };
         });
 
         const otherPets = allPatients.filter((p: any) => {
@@ -180,6 +208,7 @@ export default function MembershipRecommendationPanel({
                 left: '$75 multi pet discount',
                 right: '✔ Applied at membership signup',
                 covered: true,
+                declinedForVisit: false,
               },
             ]
           : coverageRows;
@@ -318,7 +347,37 @@ export default function MembershipRecommendationPanel({
               </div>
               {coverageRowsWithCredit.map((row, idx) => (
                 <div key={idx} className="membership-rec-coverage-row">
-                  <div style={{ fontSize: '14px', color: '#1a2f24', padding: '5px 0', borderBottom: '1px solid #e0efe8' }}>{row.left}</div>
+                  <div
+                    style={{
+                      fontSize: '14px',
+                      padding: '5px 0',
+                      borderBottom: '1px solid #e0efe8',
+                      ...(row.declinedForVisit
+                        ? {
+                            color: '#92400e',
+                            textDecoration: 'line-through',
+                            fontStyle: 'italic' as const,
+                          }
+                        : { color: '#1a2f24' }),
+                    }}
+                  >
+                    {row.left}
+                    {row.declinedForVisit ? (
+                      <span
+                        style={{
+                          display: 'block',
+                          marginTop: '4px',
+                          fontSize: '12px',
+                          fontStyle: 'normal',
+                          textDecoration: 'none',
+                          color: '#b45309',
+                          fontWeight: 600,
+                        }}
+                      >
+                        Not selected for this visit
+                      </span>
+                    ) : null}
+                  </div>
                   <div
                     style={{
                       fontSize: '14px',
@@ -329,6 +388,11 @@ export default function MembershipRecommendationPanel({
                     }}
                   >
                     {row.right}
+                    {row.declinedForVisit && row.covered ? (
+                      <div style={{ marginTop: '4px', fontSize: '12px', fontWeight: 500, color: '#b45309' }}>
+                        You can still use this benefit on a future visit.
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ))}
