@@ -2987,13 +2987,23 @@ export default function MyWeek(props: MyWeekProps = {}) {
                       {showWindow && (
                         <span>
                           <b>Window of arrival:</b>{' '}
-                          {hoverCard.windowStartIso
-                            ? DateTime.fromISO(hoverCard.windowStartIso).toFormat('t')
-                            : '—'}
-                          {' – '}
-                          {hoverCard.windowEndIso
-                            ? DateTime.fromISO(hoverCard.windowEndIso).toFormat('t')
-                            : '—'}
+                          {hoverCard.isFixedTime ? (
+                            <>
+                              {DateTime.fromISO(hoverCard.startIso).toFormat('t')}
+                              {' – '}
+                              {DateTime.fromISO(hoverCard.endIso).toFormat('t')}
+                            </>
+                          ) : (
+                            <>
+                              {hoverCard.windowStartIso
+                                ? DateTime.fromISO(hoverCard.windowStartIso).toFormat('t')
+                                : '—'}
+                              {' – '}
+                              {hoverCard.windowEndIso
+                                ? DateTime.fromISO(hoverCard.windowEndIso).toFormat('t')
+                                : '—'}
+                            </>
+                          )}
                         </span>
                       )}
                     </div>

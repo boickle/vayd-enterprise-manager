@@ -3165,8 +3165,17 @@ export default function DoctorDayVisual({
                     {showWindow && (
                       <span>
                         <b>Window of arrival:</b>{' '}
-                        {DateTime.fromISO(winStartIso).toLocaleString(DateTime.TIME_SIMPLE)} –{' '}
-                        {DateTime.fromISO(winEndIso).toLocaleString(DateTime.TIME_SIMPLE)}
+                        {hoverCard.isFixedTime ? (
+                          <>
+                            {DateTime.fromISO(hoverCard.sIso).toLocaleString(DateTime.TIME_SIMPLE)} –{' '}
+                            {DateTime.fromISO(hoverCard.eIso).toLocaleString(DateTime.TIME_SIMPLE)}
+                          </>
+                        ) : (
+                          <>
+                            {DateTime.fromISO(winStartIso).toLocaleString(DateTime.TIME_SIMPLE)} –{' '}
+                            {DateTime.fromISO(winEndIso).toLocaleString(DateTime.TIME_SIMPLE)}
+                          </>
+                        )}
                       </span>
                     )}
                   </div>
