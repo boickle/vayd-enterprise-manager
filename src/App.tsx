@@ -12,6 +12,7 @@ import UserMenu from './components/UserMenu';
 import { getAccessiblePages } from './app-pages';
 import { getAdminTabPages } from './admin-tabs';
 import { getAnalyticsTabPages } from './analytics-tabs';
+import { getToolsTabPages } from './tools-tabs';
 import CreateClientUser from './pages/CreateClientUser';
 import ClientPortal from './pages/ClientPortal';
 import MembershipSignup from './pages/MembershipSignup';
@@ -88,6 +89,7 @@ function RouteGuard() {
     '/analytics',
     '/schedule-loader',
     '/survey/responses',
+    '/tools',
     '/home',
   ];
 
@@ -248,7 +250,7 @@ export default function App() {
         location.pathname !== '/reset-password' &&
         location.pathname !== '/request-reset' &&
         !location.pathname.startsWith('/public/room-loader') &&
-        !location.pathname.startsWith('/survey/post-appointment') && (
+        !location.pathname.startsWith('/survey/') && (
           <header className="navbar">
             <div className="brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <img
@@ -363,9 +365,9 @@ export default function App() {
           {/* Public membership signup when started from appointment request (no auth required) */}
           <Route path="/client-portal/request-appointment/membership-signup" element={<MembershipSignup />} />
 
-          {/* Public survey (no login) – exact path and any subpath (e.g. duplicate path in email link) */}
-          <Route path="/survey/post-appointment" element={<PostAppointmentSurvey />} />
-          <Route path="/survey/post-appointment/*" element={<PostAppointmentSurvey />} />
+          {/* Public surveys by slug (no login), e.g. post-appointment, exit-interview; * catches duplicate path in email links */}
+          <Route path="/survey/:surveySlug" element={<PostAppointmentSurvey />} />
+          <Route path="/survey/:surveySlug/*" element={<PostAppointmentSurvey />} />
           {/* Public room loader form (no authentication required) */}
           <Route path="/public/room-loader/form" element={<PublicRoomLoaderForm />} />
 
@@ -396,6 +398,13 @@ export default function App() {
                       element={<Navigate to="/analytics/appointments" replace />}
                     />
                     {getAnalyticsTabPages().map((tab) => (
+                      <Route key={tab.path} path={tab.path} element={tab.element} />
+                    ))}
+                  </Route>
+                ) : p.path === '/tools' ? (
+                  <Route key={p.path} path={p.path} element={p.element}>
+                    <Route index element={<Navigate to="/tools/exit-survey" replace />} />
+                    {getToolsTabPages().map((tab) => (
                       <Route key={tab.path} path={tab.path} element={tab.element} />
                     ))}
                   </Route>

@@ -15,7 +15,11 @@ import {
 } from '../api/survey';
 import './Settings.css';
 
-const SURVEY_SLUG = 'post-appointment';
+/** Surveys available in Admin → Survey Results (slug must match the API). Add entries when new surveys go live. */
+const ADMIN_SURVEY_OPTIONS: { slug: string; label: string }[] = [
+  { slug: 'post-appointment', label: 'Post-appointment' },
+  { slug: 'exit-interview', label: 'Exit interview' },
+];
 
 function surveyDateFrom(d: Date) {
   return d.toISOString().slice(0, 10);
@@ -44,6 +48,7 @@ const ALL_QUESTIONS_VALUE = '';
 const ALL_ANSWERS_VALUE = '';
 
 export default function SurveyResults() {
+  const [surveySlug, setSurveySlug] = useState(() => ADMIN_SURVEY_OPTIONS[0]?.slug ?? 'post-appointment');
   const [surveyFrom, setSurveyFrom] = useState(() =>
     surveyDateFrom(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))
   );
@@ -85,10 +90,10 @@ export default function SurveyResults() {
       selectedAnswerValue !== ALL_ANSWERS_VALUE
   );
 
-  // Load questions for filter dropdowns (once)
+  // Load questions for filter dropdowns when survey changes
   useEffect(() => {
     let alive = true;
-    getSurveyReportQuestions(SURVEY_SLUG)
+    getSurveyReportQuestions(surveySlug)
       .then((data) => {
         if (alive) setReportQuestions(data);
       })
@@ -98,7 +103,7 @@ export default function SurveyResults() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [surveySlug]);
 
   // Reset answer when question changes
   useEffect(() => {
@@ -111,7 +116,7 @@ export default function SurveyResults() {
     let alive = true;
     setSurveyLoading(true);
     const reportParams = {
-      surveySlug: SURVEY_SLUG,
+      surveySlug,
       from: surveyFrom,
       to: surveyTo,
       questionId:
@@ -124,7 +129,7 @@ export default function SurveyResults() {
           : undefined,
     };
     const listParams = {
-      surveySlug: SURVEY_SLUG,
+      surveySlug,
       from: surveyFrom,
       to: surveyTo,
       page: 1,
@@ -151,7 +156,7 @@ export default function SurveyResults() {
     return () => {
       alive = false;
     };
-  }, [surveyFrom, surveyTo, selectedQuestionId, selectedAnswerValue]);
+  }, [surveySlug, surveyFrom, surveyTo, selectedQuestionId, selectedAnswerValue]);
 
   useEffect(() => {
     if (surveyDetailId == null) {
@@ -182,14 +187,34 @@ export default function SurveyResults() {
     <div className="container">
       <h1 className="settings-title">Survey Results</h1>
       <p className="settings-section-description">
-        View per-question summary and individual responses for the post-appointment survey. Filter
-        by date range, question, and answer.
+        View per-question summary and individual responses. Pick a survey, then filter by date range,
+        question, and answer.
       </p>
 
       <div
         className="settings-form-group"
         style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-end' }}
       >
+        <label className="settings-label" style={{ flexDirection: 'column', display: 'flex', gap: '4px' }}>
+          Survey
+          <select
+            className="settings-input"
+            value={surveySlug}
+            onChange={(e) => {
+              setSurveySlug(e.target.value);
+              setSelectedQuestionId('');
+              setSelectedAnswerValue(ALL_ANSWERS_VALUE);
+            }}
+            style={{ width: '260px', minHeight: '34px' }}
+            aria-label="Survey"
+          >
+            {ADMIN_SURVEY_OPTIONS.map((opt) => (
+              <option key={opt.slug} value={opt.slug}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="settings-label" style={{ flexDirection: 'column', display: 'flex', gap: '4px' }}>
           From
           <input
@@ -265,7 +290,10 @@ export default function SurveyResults() {
             )}
           </h3>
           {surveyReport?.questions?.length ? (
-            <div className="settings-survey-report" key={`report-${selectedQuestionId}-${selectedAnswerValue}`}>
+            <div
+              className="settings-survey-report"
+              key={`report-${surveySlug}-${selectedQuestionId}-${selectedAnswerValue}`}
+            >
               {surveyReport.questions.map((q) => (
                 <div key={q.questionKey} className="settings-survey-report-item">
                   <strong className="settings-survey-report-question">{q.questionText}</strong>
