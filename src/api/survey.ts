@@ -214,31 +214,28 @@ export type SurveyReportQuestionsResponse = {
 // ---------------------------------------------------------------------------
 
 /**
- * Load post-appointment survey form by invite token.
- * GET /survey/post-appointment/form?token={token}
+ * Load a public survey form by slug and invite token.
+ * GET /survey/{surveySlug}/form?token={token}
  * No auth. 400/404 on invalid or expired token.
  */
-export async function getSurveyForm(token: string): Promise<SurveyFormResponse> {
-  const { data } = await publicSurveyClient.get<SurveyFormResponse>(
-    '/survey/post-appointment/form',
-    { params: { token } }
-  );
+export async function getSurveyForm(surveySlug: string, token: string): Promise<SurveyFormResponse> {
+  const path = `/survey/${encodeURIComponent(surveySlug)}/form`;
+  const { data } = await publicSurveyClient.get<SurveyFormResponse>(path, { params: { token } });
   return data;
 }
 
 /**
- * Submit post-appointment survey answers.
- * POST /survey/post-appointment/submit
+ * Submit survey answers for a slug (e.g. post-appointment, exit-interview).
+ * POST /survey/{surveySlug}/submit
  * No auth. 201 on success; 400/404 on invalid, expired, or already submitted.
  */
 export async function submitSurvey(
+  surveySlug: string,
   token: string,
   answers: SurveyAnswerInput[]
 ): Promise<SurveySubmitResponse> {
-  const { data } = await publicSurveyClient.post<SurveySubmitResponse>(
-    '/survey/post-appointment/submit',
-    { token, answers }
-  );
+  const path = `/survey/${encodeURIComponent(surveySlug)}/submit`;
+  const { data } = await publicSurveyClient.post<SurveySubmitResponse>(path, { token, answers });
   return data;
 }
 
@@ -343,6 +340,36 @@ export async function getSurveyReportSummary(params: {
 export async function getSurveyReportQuestions(surveySlug: string): Promise<SurveyReportQuestionsResponse> {
   const { data } = await http.get<SurveyReportQuestionsResponse>('/survey/reports/questions', {
     params: { surveySlug },
+    headers: authHeaders(),
+  });
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Authenticated: send survey invite (e.g. exit interview)
+// ---------------------------------------------------------------------------
+
+export type SendSurveyInviteRequest = {
+  surveySlug: string;
+  clientId: number;
+  /** Omit when the server resolves the visit from the client only. */
+  appointmentId?: number;
+};
+
+export type SendSurveyInviteResponse = {
+  inviteId: number;
+  sentTo: string;
+  intendedRecipientEmail: string;
+  surveySlug: string;
+  surveyUrl: string;
+};
+
+/**
+ * POST /survey/send-invite
+ * Requires: Authorization: Bearer token
+ */
+export async function sendExitSurveyInvite(body: SendSurveyInviteRequest): Promise<SendSurveyInviteResponse> {
+  const { data } = await http.post<SendSurveyInviteResponse>('/survey/send-invite', body, {
     headers: authHeaders(),
   });
   return data;
