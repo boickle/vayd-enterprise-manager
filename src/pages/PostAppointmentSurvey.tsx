@@ -1,6 +1,6 @@
 // src/pages/PostAppointmentSurvey.tsx
 import React, { useState, useEffect, useMemo } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, Link, useParams } from 'react-router-dom';
 import {
   getSurveyForm,
   submitSurvey,
@@ -426,6 +426,10 @@ function SurveyQuestion({
 // ---------------------------------------------------------------------------
 
 export default function PostAppointmentSurvey() {
+  const { surveySlug: surveySlugParam } = useParams<{ surveySlug: string }>();
+  const surveySlug = (surveySlugParam ?? '').trim();
+  const isPostAppointmentSurvey = surveySlug === 'post-appointment';
+
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token') ?? '';
 
@@ -450,6 +454,10 @@ export default function PostAppointmentSurvey() {
   const [referralExpanded, setReferralExpanded] = useState(false);
 
   useEffect(() => {
+    if (!surveySlug) {
+      setState('invalid');
+      return;
+    }
     if (!token) {
       setState('invalid');
       return;
@@ -465,7 +473,7 @@ export default function PostAppointmentSurvey() {
     setReferralError(null);
     setReferralSuccess(false);
     setReferralExpanded(false);
-    getSurveyForm(token)
+    getSurveyForm(surveySlug, token)
       .then((data) => {
         if (!cancelled) {
           setFormData(data);
@@ -484,7 +492,7 @@ export default function PostAppointmentSurvey() {
             code === 'SURVEY_ALREADY_COMPLETED' ||
             (typeof message === 'string' && /already\s+(been\s+)?used|already\s+submitted|already\s+completed/i.test(message));
           if (isAlreadyUsed) {
-            setPromoterThankYou({ standoutText: '' });
+            setPromoterThankYou(surveySlug === 'post-appointment' ? { standoutText: '' } : null);
             setSurveyReplay(true);
             setState('success');
           } else {
@@ -498,7 +506,7 @@ export default function PostAppointmentSurvey() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, surveySlug]);
 
   const blocks = useMemo(() => {
     if (!formData) return [];
@@ -637,10 +645,14 @@ export default function PostAppointmentSurvey() {
       if (typeof raw === 'string') standoutText = raw.trim();
     }
 
-    submitSurvey(token, answerList)
+    submitSurvey(surveySlug, token, answerList)
       .then(() => {
         setSurveyReplay(false);
-        setPromoterThankYou(isPromoter ? { standoutText } : null);
+        if (isPostAppointmentSurvey) {
+          setPromoterThankYou(isPromoter ? { standoutText } : null);
+        } else {
+          setPromoterThankYou(null);
+        }
         setCopiedStandout(false);
         setReferralSuccess(false);
         setReferralError(null);
@@ -653,6 +665,17 @@ export default function PostAppointmentSurvey() {
         setState('form');
       });
   };
+
+  if (!surveySlug) {
+    return (
+      <div className="survey-page">
+        <div className="survey-card survey-invalid">
+          <h1>This link is invalid</h1>
+          <p>The survey address is not valid. If you have questions, please contact us.</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!token) {
     return (
@@ -698,7 +721,7 @@ export default function PostAppointmentSurvey() {
   }
 
   if (state === 'success') {
-    if (promoterThankYou) {
+    if (promoterThankYou && isPostAppointmentSurvey) {
       const { standoutText } = promoterThankYou;
       const hasStandout = standoutText.length > 0;
 
@@ -896,6 +919,9 @@ export default function PostAppointmentSurvey() {
     return (
       <div className="survey-page">
         <div className="survey-card survey-success">
+          {surveyReplay && (
+            <p className="survey-replay-banner">You&apos;ve already submitted this survey—thanks again!</p>
+          )}
           <h1>Thank you for your feedback</h1>
           <p>Your responses have been submitted. You can close this window.</p>
           <p className="survey-success-blurb">
