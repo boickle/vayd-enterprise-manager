@@ -90,6 +90,82 @@
   border-top: 2px solid #e0e0e0;
 }
 
+/* Flea/tick disclosure — align with search field (no extra horizontal inset); color matches “Additional items” title (#084298) */
+.public-room-loader .public-room-loader-parasite-prevention-details {
+  margin-top: 14px;
+  padding: 14px 0 0;
+  border-top: 1px solid #dee2e6;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.public-room-loader .public-room-loader-parasite-prevention-details > summary {
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+  color: #084298;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 0;
+  user-select: none;
+}
+
+.public-room-loader .public-room-loader-parasite-prevention-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.public-room-loader .public-room-loader-parasite-prevention-details > summary::marker {
+  content: '';
+}
+
+/* Larger chevron (collapsed → right, open → down) — clearer than small text glyphs */
+.public-room-loader .public-room-loader-parasite-prevention-details > summary::before {
+  content: '';
+  flex-shrink: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 8px 0 8px 12px;
+  border-color: transparent transparent transparent #084298;
+  transform-origin: 35% 50%;
+  transition: transform 0.18s ease;
+}
+
+.public-room-loader .public-room-loader-parasite-prevention-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+/* Summary: subtle pulse on “See how a membership could change your bill” (collapsed only) */
+.public-room-loader-membership-explainer-trigger--throb {
+  animation: publicRoomLoaderMembershipExplainerThrob 2.8s ease-in-out infinite;
+}
+
+@keyframes publicRoomLoaderMembershipExplainerThrob {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(8, 66, 152, 0);
+    transform: scale(1);
+    border-color: #b6d4fe;
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(8, 66, 152, 0.08), 0 2px 8px rgba(8, 66, 152, 0.06);
+    transform: scale(1.015);
+    border-color: #a8c9ec;
+  }
+}
+
+.public-room-loader-membership-explainer-trigger--throb:hover {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .public-room-loader-membership-explainer-trigger--throb {
+    animation: none;
+  }
+}
+
 /* Checkbox/radio touch targets */
 .public-room-loader input[type="checkbox"],
 .public-room-loader input[type="radio"] {
