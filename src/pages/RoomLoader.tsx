@@ -1,5 +1,5 @@
 // src/pages/RoomLoader.tsx
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import { DateTime } from 'luxon';
 import {
   searchRoomLoaders,
@@ -774,7 +774,7 @@ export default function RoomLoaderPage() {
       appointmentType: string;
       doctor: string;
       clientName: string;
-      pets: string[];
+      pets: Array<{ id: number; name: string; isMember: boolean; membershipName?: string | null }>;
       sentStatus: SentStatus;
       timesSentToClient: number;
       dueStatus: DueStatus | null;
@@ -782,30 +782,47 @@ export default function RoomLoaderPage() {
       clientHasNoEmail: boolean;
       /** Token for public PDF URL when completed */
       token?: string | null;
-      /** True if any patient in this room loader is a care plan member */
-      hasMemberPatient: boolean;
-      /** Membership plan name(s) when hasMemberPatient is true */
-      membershipNames: string[];
     }> = [];
 
     roomLoaders.forEach((rl) => {
-      // Collect all unique pets from appointments and room loader patients
-      const patientIds = new Set<number>();
-      const pets: string[] = [];
-      
-      // Get pets from appointments first
-      rl.appointments.forEach((apt) => {
-        if (apt.patient?.id && !patientIds.has(apt.patient.id)) {
-          patientIds.add(apt.patient.id);
-          pets.push(apt.patient.name || 'Unknown Pet');
+      const patientMembershipById = new Map<number, { isMember: boolean; membershipName?: string | null }>();
+      (rl.patients || []).forEach((p) => {
+        if (p.id) {
+          patientMembershipById.set(p.id, {
+            isMember: p.isMember === true,
+            membershipName: p.membershipName,
+          });
         }
       });
 
-      // Add any additional patients from room loader that aren't in appointments
+      // Collect all unique pets from appointments and room loader patients (membership from rl.patients by id)
+      const patientIds = new Set<number>();
+      const pets: Array<{ id: number; name: string; isMember: boolean; membershipName?: string | null }> = [];
+
+      rl.appointments.forEach((apt) => {
+        const pat = apt.patient;
+        if (pat?.id && !patientIds.has(pat.id)) {
+          patientIds.add(pat.id);
+          const fromRl = patientMembershipById.get(pat.id);
+          const isMember = fromRl?.isMember ?? pat.isMember === true;
+          pets.push({
+            id: pat.id,
+            name: pat.name || 'Unknown Pet',
+            isMember,
+            membershipName: fromRl?.membershipName ?? pat.membershipName,
+          });
+        }
+      });
+
       rl.patients.forEach((p) => {
         if (p.id && !patientIds.has(p.id)) {
           patientIds.add(p.id);
-          pets.push(p.name || 'Unknown Pet');
+          pets.push({
+            id: p.id,
+            name: p.name || 'Unknown Pet',
+            isMember: p.isMember === true,
+            membershipName: p.membershipName,
+          });
         }
       });
 
@@ -896,15 +913,6 @@ export default function RoomLoaderPage() {
         });
       });
 
-      const hasMemberPatient = rl.patients?.some((p) => p.isMember === true) ?? false;
-      const membershipNames = Array.from(
-        new Set(
-          (rl.patients ?? [])
-            .filter((p) => p.isMember === true)
-            .map((p) => (p.membershipName?.trim() || null) ?? 'Membership')
-        )
-      );
-
       rows.push({
         roomLoaderId: rl.id,
         apptDate,
@@ -919,8 +927,6 @@ export default function RoomLoaderPage() {
         roomLoader: rl,
         clientHasNoEmail,
         token: rl.token ?? null,
-        hasMemberPatient,
-        membershipNames,
       });
     });
 
@@ -944,7 +950,7 @@ export default function RoomLoaderPage() {
     return tableRows.filter((row) => {
       const doctorMatch = row.doctor.toLowerCase().includes(searchLower);
       const clientMatch = row.clientName.toLowerCase().includes(searchLower);
-      const patientMatch = row.pets.some((petName) => petName.toLowerCase().includes(searchLower));
+      const patientMatch = row.pets.some((pet) => pet.name.toLowerCase().includes(searchLower));
       return doctorMatch || clientMatch || patientMatch;
     });
   }, [tableRows, tableSearch]);
@@ -2640,22 +2646,30 @@ export default function RoomLoaderPage() {
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.doctor}</td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.clientName}</td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                        {row.pets.join(', ')}
-                        {row.hasMemberPatient && (
-                          <span
-                            title={row.membershipNames.length > 0 ? row.membershipNames.join(', ') : 'Member'}
-                            aria-label={row.membershipNames.length > 0 ? row.membershipNames.join(', ') : 'Member'}
-                          >
-                            <Heart
-                              size={16}
-                              fill="#e91e63"
-                              color="#e91e63"
-                              style={{ flexShrink: 0 }}
-                              aria-hidden
-                            />
-                          </span>
-                        )}
+                      <span style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px', rowGap: '2px' }}>
+                        {row.pets.map((pet, i) => (
+                          <Fragment key={pet.id}>
+                            {i > 0 ? <span aria-hidden>, </span> : null}
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                              <span>{pet.name}</span>
+                              {pet.isMember ? (
+                                <span
+                                  title={pet.membershipName?.trim() || 'Member'}
+                                  aria-label={pet.membershipName?.trim() || 'Member'}
+                                  style={{ display: 'inline-flex', flexShrink: 0, lineHeight: 0 }}
+                                >
+                                  <Heart
+                                    size={16}
+                                    fill="#e91e63"
+                                    color="#e91e63"
+                                    style={{ flexShrink: 0 }}
+                                    aria-hidden
+                                  />
+                                </span>
+                              ) : null}
+                            </span>
+                          </Fragment>
+                        ))}
                       </span>
                     </td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>
@@ -2751,22 +2765,30 @@ export default function RoomLoaderPage() {
                 </div>
                 <div className="room-loader-mobile-card-row">
                   <span className="room-loader-mobile-card-label">Pets</span>
-                  <span className="room-loader-mobile-card-value" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                    {row.pets.join(', ')}
-                    {row.hasMemberPatient && (
-                      <span
-                        title={row.membershipNames.length > 0 ? row.membershipNames.join(', ') : 'Member'}
-                        aria-label={row.membershipNames.length > 0 ? row.membershipNames.join(', ') : 'Member'}
-                      >
-                        <Heart
-                          size={16}
-                          fill="#e91e63"
-                          color="#e91e63"
-                          style={{ flexShrink: 0 }}
-                          aria-hidden
-                        />
-                      </span>
-                    )}
+                  <span className="room-loader-mobile-card-value" style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px', rowGap: '2px' }}>
+                    {row.pets.map((pet, i) => (
+                      <Fragment key={pet.id}>
+                        {i > 0 ? <span aria-hidden>, </span> : null}
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <span>{pet.name}</span>
+                          {pet.isMember ? (
+                            <span
+                              title={pet.membershipName?.trim() || 'Member'}
+                              aria-label={pet.membershipName?.trim() || 'Member'}
+                              style={{ display: 'inline-flex', flexShrink: 0, lineHeight: 0 }}
+                            >
+                              <Heart
+                                size={16}
+                                fill="#e91e63"
+                                color="#e91e63"
+                                style={{ flexShrink: 0 }}
+                                aria-hidden
+                              />
+                            </span>
+                          ) : null}
+                        </span>
+                      </Fragment>
+                    ))}
                   </span>
                 </div>
                 <div className="room-loader-mobile-card-badges">

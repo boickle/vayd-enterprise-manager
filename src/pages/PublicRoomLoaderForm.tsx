@@ -164,17 +164,36 @@ function patientVisitHasSeniorScreen865Generic(patient: any): boolean {
   );
 }
 
+/** Raw reminder/added item looks like a standalone fecal line (any common code or name), excluding full bundled panels. */
+function patientItemLooksLikeFecalForStaffBundling(item: any): boolean {
+  if (!item) return false;
+  const c = (item.code ?? item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code ?? '')
+    .trim()
+    .toUpperCase();
+  if (BUNDLED_LAB_PANEL_CODES.has(c)) return false;
+  if (codeIsBundledFecal(c)) return true;
+  const n = (item.name ?? item.lab?.name ?? item.procedure?.name ?? '').toLowerCase();
+  return (
+    n.includes('fecal') ||
+    n.includes('stool parasite') ||
+    (n.includes('stool') && n.includes('parasite')) ||
+    n.includes('intestinal parasite')
+  );
+}
+
 /**
- * Separate labs that pair with generic Senior Screen on the plan: 4Dx, feline triple (IL3755), fecal (FIL5010 / FIL24639).
+ * Separate labs that pair with generic Senior Screen on the plan: 4Dx, feline triple (IL3755), fecal (known codes or fecal-like names).
  * When combined with FIL8659999, we recommend the full bundled senior panel (FIL25659999 dog / FIL45129999 cat).
  */
 function patientVisitHasStaffBundlingLabCompanion(patient: any): boolean {
-  return (
-    patientVisitHasItemCode(patient, 'F4DX') ||
-    patientVisitHasItemCode(patient, 'IL3755') ||
-    patientVisitHasItemCode(patient, 'FIL5010') ||
-    patientVisitHasItemCode(patient, 'FIL24639')
-  );
+  if (patientVisitHasItemCode(patient, 'F4DX') || patientVisitHasItemCode(patient, 'IL3755')) return true;
+  for (const r of patient?.reminders ?? []) {
+    if (r?.item && patientItemLooksLikeFecalForStaffBundling(r.item)) return true;
+  }
+  for (const item of patient?.addedItems ?? []) {
+    if (patientItemLooksLikeFecalForStaffBundling(item)) return true;
+  }
+  return false;
 }
 
 /** Like listContains but uses client-visible labels (reminderText first) so e.g. "Stool Parasite Check" doesn't count as "early detection". */
@@ -347,15 +366,20 @@ function getRecommendedWellnessPlanFromList(
 /**
  * Same total as each pet card’s “If you enroll in membership today” (`dueAtVisit`): member-priced visit + store/tax,
  * with multi-pet credit applied — does not add the first month’s membership charge (that’s called out separately in the panel).
+ * Can be negative when the multi-pet credit exceeds visit due; the summary footer shows that as “-$X.XX (credit)”.
  */
 const VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD_FOOTER = 75;
 
+/** Optional extended simulate (visit + declined lines) for Care Coverage Comparison only; totals use `monthly`. */
+type MembershipPanelSimulateEntry = {
+  monthly: RoomLoaderSimulateBillPublicResponse | null;
+  annual: RoomLoaderSimulateBillPublicResponse | null;
+  monthlyExtended?: RoomLoaderSimulateBillPublicResponse | null;
+};
+
 function estimatedDueTodayWithMembershipForUpsellPets(
   pets: RoomLoaderPlansForPetForDisplay[],
-  membershipPanelByPatientId: Record<
-    number,
-    { monthly: RoomLoaderSimulateBillPublicResponse | null; annual: RoomLoaderSimulateBillPublicResponse | null }
-  >,
+  membershipPanelByPatientId: Record<number, MembershipPanelSimulateEntry>,
   allPatients: any[],
   patientHasMembershipFlag: (p: any) => boolean
 ): number | null {
@@ -384,13 +408,13 @@ function estimatedDueTodayWithMembershipForUpsellPets(
       !thisPetIsMember && (otherMembers.length >= 1 || (allPatients.length > 1 && !isFirstHouseholdPet));
     const multiPetCreditUsd = qualifiesForMultiPetCredit ? VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD_FOOTER : 0;
 
-    sumMemberVisit += Math.max(0, monthly.withMembershipVisitSubtotal - multiPetCreditUsd);
+    sumMemberVisit += Number(monthly.withMembershipVisitSubtotal) - multiPetCreditUsd;
 
     const st = Math.max(0, Number(monthly.originalTotal) - Number(monthly.originalVisitSubtotal));
     if (storeTax === null) storeTax = st;
   }
 
-  return Math.max(0, sumMemberVisit + (storeTax ?? 0));
+  return sumMemberVisit + (storeTax ?? 0);
 }
 
 function getFirstPlanIdFromCatalogNode(node: any): string | null {
@@ -761,6 +785,36 @@ function getCodeFromDisplayItem(item: any): string | undefined {
   return item.code ?? getSearchItemCode(item?.searchableItem) ?? undefined;
 }
 
+/**
+ * Care-plan / summary line items use stable `_publicRecKeySuffix` (reminder id, added-item id, synthetic, etc.)
+ * so `pet{n}_rec_*` does not drift when bundled lab logic removes fecal/triple rows and shifts indices.
+ */
+function publicCarePlanRecKeySuffixFromRow(row: any, displayIndexFallback: number): string {
+  const s = row?._publicRecKeySuffix;
+  if (s != null && String(s) !== '') return String(s);
+  return `i${displayIndexFallback}`;
+}
+
+function publicFormCarePlanRecKey(petIdx: number, row: any, displayIndexFallback: number): string {
+  return `pet${petIdx}_rec_${publicCarePlanRecKeySuffixFromRow(row, displayIndexFallback)}`;
+}
+
+/** Reads checkbox state; prefers stable key, then legacy index key for in-session migration. */
+function publicFormCarePlanRecRowChecked(
+  formData: Record<string, unknown>,
+  petIdx: number,
+  row: any,
+  displayIndexFallback: number
+): boolean {
+  const sk = publicFormCarePlanRecKey(petIdx, row, displayIndexFallback);
+  const lk = `pet${petIdx}_rec_${displayIndexFallback}`;
+  let raw: unknown;
+  if (Object.prototype.hasOwnProperty.call(formData, sk)) raw = formData[sk];
+  else if (Object.prototype.hasOwnProperty.call(formData, lk)) raw = formData[lk];
+  else raw = undefined;
+  return raw !== false;
+}
+
 /** Build a SearchableItem from a row with id, name, price, itemType (for check-item-pricing lookup). */
 function rowToSearchableItem(row: {
   id?: number | null;
@@ -842,6 +896,8 @@ function buildPublicPetLineItemsWithoutSharps(patient: any): any[] {
           code: row.code,
           categoryName,
         });
+        const rid = reminder.reminderId;
+        if (rid != null && String(rid) !== '') row._publicRecKeySuffix = `r${rid}`;
         petItems.push(row);
       } else {
         const text = (reminder.reminderText ?? reminder.description ?? '').toLowerCase();
@@ -854,6 +910,8 @@ function buildPublicPetLineItemsWithoutSharps(patient: any): any[] {
           };
           if (reminder.wellnessPlanPricing) row.wellnessPlanPricing = reminder.wellnessPlanPricing;
           if (reminder.discountPricing) row.discountPricing = reminder.discountPricing;
+          const rid = reminder.reminderId;
+          if (rid != null && String(rid) !== '') row._publicRecKeySuffix = `r${rid}`;
           petItems.push(row);
         }
       }
@@ -883,13 +941,15 @@ function buildPublicPetLineItemsWithoutSharps(patient: any): any[] {
         code: row.code,
         categoryName,
       });
+      const aid = item.id;
+      if (aid != null && String(aid) !== '') row._publicRecKeySuffix = `a${aid}`;
       petItems.push(row);
     });
   }
   return petItems;
 }
 
-function publicFormFecalFourDxContext(patientId: number, formData: Record<string, unknown>) {
+function publicFormFecalFourDxContext(patientId: number, formData: Record<string, unknown>, isCatPatient: boolean) {
   const earlyDetectionYes = formData[`lab_early_detection_feline_${patientId}`] === 'yes';
   const earlyDetectionCanineYes = formData[`lab_early_detection_canine_${patientId}`] === 'yes';
   const seniorFelineYes = formData[`lab_senior_feline_${patientId}`] === 'yes';
@@ -897,10 +957,11 @@ function publicFormFecalFourDxContext(patientId: number, formData: Record<string
   const seniorFelineTwoPanel = formData[`lab_senior_feline_two_panel_${patientId}`];
   const fecalReplacedBy: string[] = [];
   if (earlyDetectionYes || earlyDetectionCanineYes) fecalReplacedBy.push('Early Detection Panel');
-  if (seniorFelineYes) fecalReplacedBy.push('Senior Screen Feline');
+  if (isCatPatient && seniorFelineYes) fecalReplacedBy.push('Senior Screen Feline');
   if (seniorCaninePanel === 'extended' || seniorFelineTwoPanel === 'extended') fecalReplacedBy.push('Extended Comprehensive Panel');
-  const fourDxReplacedBy: string[] =
-    seniorCaninePanel === 'extended' || seniorFelineTwoPanel === 'extended' ? ['Extended Comprehensive Panel'] : [];
+  const fourDxReplacedBy: string[] = [];
+  if (earlyDetectionYes || earlyDetectionCanineYes) fourDxReplacedBy.push('Early Detection Panel');
+  if (seniorCaninePanel === 'extended' || seniorFelineTwoPanel === 'extended') fourDxReplacedBy.push('Extended Comprehensive Panel');
   return { fecalReplacedBy, fourDxReplacedBy };
 }
 
@@ -910,15 +971,14 @@ function publicFormDisplayLineChecked(
   petIdx: number,
   formData: Record<string, unknown>,
   fecalReplacedBy: string[],
-  fourDxReplacedBy: string[]
+  fourDxReplacedBy: string[],
+  isCatPatient: boolean
 ): boolean {
   const isVisitOrConsult = publicFormNameHasPhrase(item, 'visit') || publicFormNameHasPhrase(item, 'consult');
-  const isFecalReplaced = publicFormNameHasPhrase(item, 'fecal') && fecalReplacedBy.length > 0;
-  const is4dxReplaced =
-    (publicFormNameHasPhrase(item, '4dx') || publicFormNameHasPhrase(item, 'heartworm')) && fourDxReplacedBy.length > 0;
+  const isFecalReplaced = bundledLineLooksLikeFecal(item) && fecalReplacedBy.length > 0;
+  const is4dxReplaced = bundledLineLooksLikePanelInfectiousCompanion(item, isCatPatient) && fourDxReplacedBy.length > 0;
   const isReplaced = isFecalReplaced || is4dxReplaced;
-  const recKey = `pet${petIdx}_rec_${idx}`;
-  return isReplaced ? false : isVisitOrConsult || formData[recKey] !== false;
+  return isReplaced ? false : isVisitOrConsult || publicFormCarePlanRecRowChecked(formData, petIdx, item, idx);
 }
 
 function getInventoryCategoryNameFromPublicRow(item: any): string | undefined {
@@ -999,12 +1059,17 @@ function publicFormPetNeedsSharpsDisposal(opts: {
   formData: Record<string, unknown>;
   optedInVaccines: Partial<Record<VaccineOptKey, SearchableItem>> | undefined;
   panelLabs: Array<{ searchItem: SearchableItem | null; included: boolean }>;
+  isCatPatient: boolean;
 }): boolean {
-  const { fecalReplacedBy, fourDxReplacedBy } = publicFormFecalFourDxContext(opts.patientId, opts.formData);
+  const { fecalReplacedBy, fourDxReplacedBy } = publicFormFecalFourDxContext(
+    opts.patientId,
+    opts.formData,
+    opts.isCatPatient
+  );
   for (let idx = 0; idx < opts.displayItems.length; idx++) {
     const item = opts.displayItems[idx];
     const cat = (item.type ?? item.itemType ?? 'procedure').toString().toLowerCase();
-    if (!publicFormDisplayLineChecked(item, idx, opts.petIdx, opts.formData, fecalReplacedBy, fourDxReplacedBy)) continue;
+    if (!publicFormDisplayLineChecked(item, idx, opts.petIdx, opts.formData, fecalReplacedBy, fourDxReplacedBy, opts.isCatPatient)) continue;
     if (cat === 'inventory') {
       const cn = getInventoryCategoryNameFromPublicRow(item);
       if (inventoryCategoryRequiresSharpsDisposal(cn)) return true;
@@ -1042,44 +1107,27 @@ function publicSpeciesLowerForPet(patient: any, appointments: any[], petIdx: num
   return parts.join(' ').toLowerCase();
 }
 
-/** Dog age > 7 or cat age > 8 — same thresholds as lab senior recommendations. */
+/** Same senior threshold as Golden membership (`MEMBERSHIP_GOLDEN_MIN_AGE_YEARS`) for both species. */
 function publicPatientIsSeniorAgeForLabPanels(ageYears: number | null, speciesLower: string): 'dog' | 'cat' | null {
   if (ageYears == null) return null;
-  if (isDogSpeciesTokens(speciesLower) && ageYears > 7) return 'dog';
-  if (isCatSpeciesTokens(speciesLower) && ageYears > 8) return 'cat';
+  if (ageYears < MEMBERSHIP_GOLDEN_MIN_AGE_YEARS) return null;
+  if (isDogSpeciesTokens(speciesLower)) return 'dog';
+  if (isCatSpeciesTokens(speciesLower)) return 'cat';
   return null;
 }
 
-/** Client-only: Early Detection on visit list but patient is senior → show Comprehensive Senior panel item instead. */
+/**
+ * Previously replaced FIL48719999 / FIL48119999 rows with Senior Screen catalog items for senior pets.
+ * That overwrote staff-scheduled Early Detection panel names/prices in the care plan list. Keep visit
+ * lines as returned by the API so e.g. "Early Detection Panel - Canine (...)" stays visible.
+ */
 function replaceEarlyPanelRowsWithSeniorComprehensive(
   rows: any[],
-  seniorKind: 'dog' | 'cat' | null,
-  seniorFelineItem: SearchableItem | null,
-  seniorCanineExtendedItem: SearchableItem | null
+  _seniorKind: 'dog' | 'cat' | null,
+  _seniorFelineItem: SearchableItem | null,
+  _seniorCanineExtendedItem: SearchableItem | null
 ): any[] {
-  if (seniorKind == null) return rows;
-  const target =
-    seniorKind === 'cat'
-      ? seniorFelineItem
-      : seniorCanineExtendedItem;
-  if (!target) return rows;
-  const wantEarly = seniorKind === 'cat' ? 'FIL48119999' : 'FIL48719999';
-  return rows.map((row) => {
-    const code = (getCodeFromDisplayItem(row) ?? '').trim().toUpperCase();
-    if (code !== wantEarly) return row;
-    const id = getItemId(target);
-    const st = (target.itemType ?? 'lab').toString();
-    return {
-      ...row,
-      name: target.name ?? row.name,
-      price: getSearchItemPrice(target) ?? row.price,
-      code: getSearchItemCode(target) ?? code,
-      id: id ?? row.id,
-      itemType: st,
-      type: st,
-      searchableItem: id != null ? target : row.searchableItem,
-    };
-  });
+  return rows;
 }
 
 /** Bundled panel row on the client list is still checked (visit/reminder line). */
@@ -1093,25 +1141,20 @@ function visitBundledPanelActiveFromDisplayRows(
   rows.forEach((row, i) => {
     const code = (getCodeFromDisplayItem(row) ?? '').trim().toUpperCase();
     if (!BUNDLED_LAB_PANEL_CODES.has(code)) return;
-    const recKey = `pet${petIdx}_rec_${i}`;
-    if (formData[recKey] === false) return;
+    if (!publicFormCarePlanRecRowChecked(formData, petIdx, row, i)) return;
     if (code === 'FIL25659999' || code === 'FIL48719999') canineActive = true;
     if (code === 'FIL45129999' || code === 'FIL48119999') felineActive = true;
   });
   return { canineActive, felineActive };
 }
 
-function bundledLabPanelActiveOnClient(opts: {
-  patientId: number;
-  formData: Record<string, unknown>;
-  petIdx: number;
-  displayRows: any[];
-}): { canineBundled: boolean; felineBundled: boolean } {
-  const visit = visitBundledPanelActiveFromDisplayRows(opts.displayRows, opts.petIdx, opts.formData);
-  let canineBundled = visit.canineActive;
-  let felineBundled = visit.felineActive;
-  const pid = opts.patientId;
-  const fd = opts.formData;
+/** Bundling from Labs/summary form fields only (no visit-row index scan). */
+function bundledLabPanelActiveFromFormFieldsOnly(pid: number, fd: Record<string, unknown>): {
+  canineBundled: boolean;
+  felineBundled: boolean;
+} {
+  let canineBundled = false;
+  let felineBundled = false;
   if (
     fd[`lab_early_detection_canine_${pid}`] === 'yes' &&
     fd[`summary_exclude_lab_early_detection_canine_${pid}`] !== true
@@ -1140,6 +1183,48 @@ function bundledLabPanelActiveOnClient(opts: {
     felineBundled = true;
   }
   return { canineBundled, felineBundled };
+}
+
+/**
+ * Full bundled state for duplicate-line filtering. Visit-list FIL* panels use the same `pet{n}_rec_*`
+ * keys as the post-filter care plan/summary list (stable suffix + legacy index fallback), so we apply
+ * form-only filter first, then scan visit panels on that list, then re-filter if the visit panel also bundles fecal/4Dx.
+ */
+function bundledLabPanelActiveOnClient(opts: {
+  patientId: number;
+  formData: Record<string, unknown>;
+  petIdx: number;
+  mergedRowsBeforeDuplicateFilter: any[];
+  isDog: boolean;
+  isCat: boolean;
+}): { canineBundled: boolean; felineBundled: boolean } {
+  const pid = opts.patientId;
+  const fd = opts.formData;
+  const bForm = bundledLabPanelActiveFromFormFieldsOnly(pid, fd);
+  let filtered = filterBundledDuplicateLabLines(
+    opts.mergedRowsBeforeDuplicateFilter,
+    opts.isDog,
+    opts.isCat,
+    bForm
+  );
+  const noTripSharps = filtered.filter(
+    (row: any) =>
+      !publicFormNameHasPhrase(row, 'trip fee') && !publicFormNameHasPhrase(row, 'sharps')
+  );
+  const visit = visitBundledPanelActiveFromDisplayRows(noTripSharps, opts.petIdx, fd);
+  const bFull = {
+    canineBundled: bForm.canineBundled || visit.canineActive,
+    felineBundled: bForm.felineBundled || visit.felineActive,
+  };
+  if (bFull.canineBundled !== bForm.canineBundled || bFull.felineBundled !== bForm.felineBundled) {
+    filtered = filterBundledDuplicateLabLines(
+      opts.mergedRowsBeforeDuplicateFilter,
+      opts.isDog,
+      opts.isCat,
+      bFull
+    );
+  }
+  return bFull;
 }
 
 function bundledLineLooksLikeCanine4dx(row: any): boolean {
@@ -1174,6 +1259,52 @@ function bundledLineLooksLikeFelineTriple(row: any): boolean {
     n.includes('felv/fiv') ||
     n.includes('hw/felv')
   );
+}
+
+/**
+ * Summary lists the Early Detection panel from Labs separately.
+ * - Always omit the visit-list bundled early panel row (FIL48119999 / FIL48719999) when Labs answered Yes,
+ *   so unchecking the catalog panel on summary does not resurrect a second checked "early detection" line.
+ * - Omit fecal / triple / 4Dx visit lines only while the catalog early panel is still included on summary;
+ *   when the client excludes that panel, those lines should appear as normal à la carte options.
+ */
+function summaryVisitLabRowOmittedWhenEarlyDetectionChosenOnLabs(
+  item: any,
+  opts: {
+    earlyFelineLabsYes: boolean;
+    earlyCanineLabsYes: boolean;
+    earlyFelineIncluded: boolean;
+    earlyCanineIncluded: boolean;
+    isCatPatient: boolean;
+    isDogPatient: boolean;
+  }
+): boolean {
+  const {
+    earlyFelineLabsYes,
+    earlyCanineLabsYes,
+    earlyFelineIncluded,
+    earlyCanineIncluded,
+    isCatPatient,
+    isDogPatient,
+  } = opts;
+  const code = (getCodeFromDisplayItem(item) ?? '').trim().toUpperCase();
+  if (earlyFelineLabsYes && code === 'FIL48119999') return true;
+  if (earlyCanineLabsYes && code === 'FIL48719999') return true;
+  if (earlyFelineIncluded || earlyCanineIncluded) {
+    if (bundledLineLooksLikeFecal(item)) return true;
+    if (isCatPatient && earlyFelineIncluded && bundledLineLooksLikeFelineTriple(item)) return true;
+    if (isDogPatient && earlyCanineIncluded && bundledLineLooksLikeCanine4dx(item)) return true;
+  }
+  return false;
+}
+
+/**
+ * Row on the care plan that is superseded when a bundled panel includes heartworm/tick (dogs) or FIV/FeLV/HW (cats).
+ * For cats, do not use the canine matcher (name includes "heartworm") — that false-matches unrelated lines (e.g. some vaccine names).
+ */
+function bundledLineLooksLikePanelInfectiousCompanion(row: any, isCatPatient: boolean): boolean {
+  if (isCatPatient) return bundledLineLooksLikeFelineTriple(row);
+  return bundledLineLooksLikeCanine4dx(row);
 }
 
 /** Feline triple rows render last on the care plan list; scroll into view when they first become relevant (outdoor yes + at least one row). */
@@ -1228,7 +1359,8 @@ function staffCanineRowsFormSeniorComprehensiveTrio(rows: any[]): boolean {
     if (bundledLineLooksLikeCanine4dx(row)) has4dx = true;
     if (bundledLineLooksLikeFecal(row)) hasFecal = true;
   }
-  return hasSeniorChem && has4dx && hasFecal;
+  /** Staff often adds only Senior Screen + fecal or only Senior + 4Dx; either warrants merging to the full canine comprehensive panel. */
+  return hasSeniorChem && (has4dx || hasFecal);
 }
 
 function staffFelineRowsFormSeniorComprehensiveTrio(rows: any[]): boolean {
@@ -1244,7 +1376,7 @@ function staffFelineRowsFormSeniorComprehensiveTrio(rows: any[]): boolean {
     if (bundledLineLooksLikeFelineTriple(row)) hasTriple = true;
     if (bundledLineLooksLikeFecal(row)) hasFecal = true;
   }
-  return hasSeniorChem && hasTriple && hasFecal;
+  return hasSeniorChem && (hasTriple || hasFecal);
 }
 
 function displayRowFromSearchableLabItem(si: SearchableItem): any {
@@ -1282,7 +1414,7 @@ function shouldRemoveRowForStaffSeniorComprehensiveMerge(
 }
 
 /**
- * Staff room loader often adds generic Senior Screen + 4Dx + fecal (or + triple + fecal for cats) as separate lines.
+ * Staff room loader often adds generic Senior Screen with 4Dx and/or fecal (cats: triple and/or fecal) as separate lines.
  * Merge into one Senior Screen Canine / Feline comprehensive row when the fetched catalog item is available.
  */
 function mergeStaffSeniorComprehensiveTrioRows(
@@ -1294,6 +1426,9 @@ function mergeStaffSeniorComprehensiveTrioRows(
 ): any[] {
   if (isDog && seniorCanineExtendedItem && staffCanineRowsFormSeniorComprehensiveTrio(rows)) {
     const newRow = displayRowFromSearchableLabItem(seniorCanineExtendedItem);
+    const mId = getItemId(seniorCanineExtendedItem);
+    const mCode = getSearchItemCode(seniorCanineExtendedItem) ?? 'lab';
+    newRow._publicRecKeySuffix = `m_${String(mCode).replace(/[^a-zA-Z0-9]/g, '_')}_${mId ?? 'x'}`;
     const out: any[] = [];
     let inserted = false;
     for (const row of rows) {
@@ -1311,6 +1446,9 @@ function mergeStaffSeniorComprehensiveTrioRows(
   }
   if (isCat && seniorFelineExtendedItem && staffFelineRowsFormSeniorComprehensiveTrio(rows)) {
     const newRow = displayRowFromSearchableLabItem(seniorFelineExtendedItem);
+    const mId = getItemId(seniorFelineExtendedItem);
+    const mCode = getSearchItemCode(seniorFelineExtendedItem) ?? 'lab';
+    newRow._publicRecKeySuffix = `m_${String(mCode).replace(/[^a-zA-Z0-9]/g, '_')}_${mId ?? 'x'}`;
     const out: any[] = [];
     let inserted = false;
     for (const row of rows) {
@@ -1443,6 +1581,9 @@ function syntheticRowFromSearchableItem(
   if (opts.panelDeclineBlurb) {
     row._panelDeclineBlurb = { title: 'Why we recommend this', body: opts.panelDeclineBlurb };
   }
+  const synCode = getSearchItemCode(si) ?? 'lab';
+  const synId = getItemId(si);
+  row._publicRecKeySuffix = `syn_${String(synCode).replace(/[^a-zA-Z0-9]/g, '_')}_${synId ?? 'x'}`;
   return row;
 }
 
@@ -1482,23 +1623,29 @@ function appendBundledPanelDeclineInjections(opts: {
   const seniorCanineExtOff =
     fd[`lab_senior_canine_panel_${pid}`] === 'extended' &&
     fd[`summary_exclude_lab_senior_canine_extended_${pid}`] === true;
+  const seniorCanineStdOff =
+    fd[`lab_senior_canine_panel_${pid}`] === 'standard' &&
+    fd[`summary_exclude_lab_senior_canine_standard_${pid}`] === true;
   const seniorFelineOff =
     fd[`lab_senior_feline_${pid}`] === 'yes' && fd[`summary_exclude_lab_senior_feline_${pid}`] === true;
   const seniorFelineTwoExtOff =
     fd[`lab_senior_feline_two_panel_${pid}`] === 'extended' &&
     fd[`summary_exclude_lab_senior_feline_two_extended_${pid}`] === true;
+  const seniorFelineTwoStdOff =
+    fd[`lab_senior_feline_two_panel_${pid}`] === 'standard' &&
+    fd[`summary_exclude_lab_senior_feline_two_standard_${pid}`] === true;
 
   const visitUnc = visitBundledPanelUnchecked(out, opts.petIdx, fd);
 
   const resolveCanineDeclinePhrase = (): 'early detection' | 'full comprehensive' => {
     if (earlyCanineOff) return 'early detection';
-    if (seniorCanineExtOff) return 'full comprehensive';
+    if (seniorCanineExtOff || seniorCanineStdOff) return 'full comprehensive';
     if (visitUnc.canine) return bundledPanelDeclinePhraseCanine(patient, seniorKind);
     return 'full comprehensive';
   };
   const resolveFelineDeclinePhrase = (): 'early detection' | 'full comprehensive' => {
     if (earlyFelineOff) return 'early detection';
-    if (seniorFelineOff || seniorFelineTwoExtOff) return 'full comprehensive';
+    if (seniorFelineOff || seniorFelineTwoExtOff || seniorFelineTwoStdOff) return 'full comprehensive';
     if (visitUnc.feline) return bundledPanelDeclinePhraseFeline(patient, seniorKind);
     return 'full comprehensive';
   };
@@ -1507,8 +1654,9 @@ function appendBundledPanelDeclineInjections(opts: {
   const isDog = isDogSpeciesTokens(speciesLower) || (speciesLower.trim() === '' && !isCatSpeciesTokens(speciesLower));
   const isCat = isCatSpeciesTokens(speciesLower);
 
-  const dogPanelDecline = earlyCanineOff || seniorCanineExtOff || visitUnc.canine;
-  const catPanelDecline = earlyFelineOff || seniorFelineOff || seniorFelineTwoExtOff || visitUnc.feline;
+  const dogPanelDecline = earlyCanineOff || seniorCanineExtOff || seniorCanineStdOff || visitUnc.canine;
+  const catPanelDecline =
+    earlyFelineOff || seniorFelineOff || seniorFelineTwoExtOff || seniorFelineTwoStdOff || visitUnc.feline;
 
   const caninePhrase = resolveCanineDeclinePhrase();
   const felinePhrase = resolveFelineDeclinePhrase();
@@ -1517,30 +1665,28 @@ function appendBundledPanelDeclineInjections(opts: {
     const had4dx = treatmentHistoryHadAnyCodeInLastMonths(history, ['F4DX'], 10, true);
     const ok4dxReminder = dogHasHeartwormTickReminderDue6PlusMonths(patient);
     const alreadyHas4dx = displayHasBundledLineExceptSynthetic(out, bundledLineLooksLikeCanine4dx);
-    if (!had4dx && !ok4dxReminder) {
-      if (alreadyHas4dx) {
-        attachPanelDeclineBlurbToFirstMatchingRow(out, bundledLineLooksLikeCanine4dx, panelDeclineBlurbBody(caninePhrase, 'dog4dx'));
-      } else if (f4dxItem) {
-        out.push(
-          syntheticRowFromSearchableItem(f4dxItem, {
-            panelDeclineBlurb: panelDeclineBlurbBody(caninePhrase, 'dog4dx'),
-          })
-        );
-      }
+    // Always attach decline copy to an existing visit 4Dx row when the client declines a bundled panel;
+    // history/reminder skips apply only to *adding* a synthetic line (avoid duplicate recommendations).
+    if (alreadyHas4dx) {
+      attachPanelDeclineBlurbToFirstMatchingRow(out, bundledLineLooksLikeCanine4dx, panelDeclineBlurbBody(caninePhrase, 'dog4dx'));
+    } else if (!had4dx && !ok4dxReminder && f4dxItem) {
+      out.push(
+        syntheticRowFromSearchableItem(f4dxItem, {
+          panelDeclineBlurb: panelDeclineBlurbBody(caninePhrase, 'dog4dx'),
+        })
+      );
     }
     const hadFecal = treatmentHistoryHadAnyCodeInLastMonths(history, ['FIL24639', 'FIL5010'], 10, true);
     const okStoolReminder = patientHasStoolParasiteReminderDue6PlusMonths(patient);
     const alreadyHasFecal = displayHasBundledLineExceptSynthetic(out, bundledLineLooksLikeFecal);
-    if (!hadFecal && !okStoolReminder) {
-      if (alreadyHasFecal) {
-        attachPanelDeclineBlurbToFirstMatchingRow(out, bundledLineLooksLikeFecal, panelDeclineBlurbBody(caninePhrase, 'dogFecal'));
-      } else if (fecalItem) {
-        out.push(
-          syntheticRowFromSearchableItem(fecalItem, {
-            panelDeclineBlurb: panelDeclineBlurbBody(caninePhrase, 'dogFecal'),
-          })
-        );
-      }
+    if (alreadyHasFecal) {
+      attachPanelDeclineBlurbToFirstMatchingRow(out, bundledLineLooksLikeFecal, panelDeclineBlurbBody(caninePhrase, 'dogFecal'));
+    } else if (!hadFecal && !okStoolReminder && fecalItem) {
+      out.push(
+        syntheticRowFromSearchableItem(fecalItem, {
+          panelDeclineBlurb: panelDeclineBlurbBody(caninePhrase, 'dogFecal'),
+        })
+      );
     }
   }
 
@@ -1548,32 +1694,28 @@ function appendBundledPanelDeclineInjections(opts: {
     const hadTriple = treatmentHistoryHadAnyCodeInLastMonths(history, ['IL3755'], 10, true);
     const okTripleReminder = patientHasFivFelvReminderDue6PlusMonths(patient);
     const alreadyHasTriple = displayHasBundledLineExceptSynthetic(out, bundledLineLooksLikeFelineTriple);
-    if (!hadTriple && !okTripleReminder) {
-      if (alreadyHasTriple) {
-        attachPanelDeclineBlurbToFirstMatchingRow(out, bundledLineLooksLikeFelineTriple, panelDeclineBlurbBody(felinePhrase, 'catTriple'));
-      } else if (tripleItem) {
-        out.push(
-          syntheticRowFromSearchableItem(tripleItem, {
-            panelDeclineBlurb: panelDeclineBlurbBody(felinePhrase, 'catTriple'),
-          })
-        );
-      }
+    if (alreadyHasTriple) {
+      attachPanelDeclineBlurbToFirstMatchingRow(out, bundledLineLooksLikeFelineTriple, panelDeclineBlurbBody(felinePhrase, 'catTriple'));
+    } else if (!hadTriple && !okTripleReminder && tripleItem) {
+      out.push(
+        syntheticRowFromSearchableItem(tripleItem, {
+          panelDeclineBlurb: panelDeclineBlurbBody(felinePhrase, 'catTriple'),
+        })
+      );
     }
   }
   if (catPanelDecline && isCat) {
     const hadFecal = treatmentHistoryHadAnyCodeInLastMonths(history, ['FIL24639', 'FIL5010'], 10, true);
     const okStoolReminder = patientHasStoolParasiteReminderDue6PlusMonths(patient);
     const alreadyHasFecal = displayHasBundledLineExceptSynthetic(out, bundledLineLooksLikeFecal);
-    if (!hadFecal && !okStoolReminder) {
-      if (alreadyHasFecal) {
-        attachPanelDeclineBlurbToFirstMatchingRow(out, bundledLineLooksLikeFecal, panelDeclineBlurbBody(felinePhrase, 'catFecal'));
-      } else if (fecalItem) {
-        out.push(
-          syntheticRowFromSearchableItem(fecalItem, {
-            panelDeclineBlurb: panelDeclineBlurbBody(felinePhrase, 'catFecal'),
-          })
-        );
-      }
+    if (alreadyHasFecal) {
+      attachPanelDeclineBlurbToFirstMatchingRow(out, bundledLineLooksLikeFecal, panelDeclineBlurbBody(felinePhrase, 'catFecal'));
+    } else if (!hadFecal && !okStoolReminder && fecalItem) {
+      out.push(
+        syntheticRowFromSearchableItem(fecalItem, {
+          panelDeclineBlurb: panelDeclineBlurbBody(felinePhrase, 'catFecal'),
+        })
+      );
     }
   }
 
@@ -1581,7 +1723,7 @@ function appendBundledPanelDeclineInjections(opts: {
 }
 
 /**
- * Bundled panel unchecked on care plan, using the same row list and `pet{n}_rec_{i}` indices as
+ * Bundled panel unchecked on care plan, using the same row list and `pet{n}_rec_*` keys as
  * care plan / summary display rows (trip fee + sharps filtered out). Must match checkbox keys:
  * full `petItems` can include trip/sharps between other rows and would desync indices if unfiltered.
  */
@@ -1593,12 +1735,34 @@ function carePlanBundledPanelUncheckedFlagsFromDisplayRows(
   let canine = false;
   let feline = false;
   displayRows.forEach((row, i) => {
-    if (formData[`pet${petIdx}_rec_${i}`] !== false) return;
+    if (publicFormCarePlanRecRowChecked(formData, petIdx, row, i)) return;
     const code = (getCodeFromDisplayItem(row) ?? '').trim().toUpperCase();
     if (code === 'FIL45129999' || code === 'FIL48119999') feline = true;
     else if (code === 'FIL25659999' || code === 'FIL48719999' || rowLooksLikeGenericSeniorChemScreen(row)) canine = true;
   });
   return { canine, feline };
+}
+
+/** Visit-list lab row that is the bundled canine senior screen panel (merged or coded). */
+function rowIsCanineBundledSeniorScreenVisitLine(row: any): boolean {
+  const code = (getCodeFromDisplayItem(row) ?? '').trim().toUpperCase();
+  if (code === 'FIL25659999' || code === 'FIL48719999') return true;
+  if (rowLooksLikeGenericSeniorChemScreen(row)) return true;
+  const n = (row.name ?? '').toLowerCase();
+  if (
+    n.includes('senior screen') &&
+    n.includes('canine') &&
+    (n.includes('chem') || n.includes('cbc') || n.includes('comprehensive'))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Visit-list lab row that is the bundled feline senior screen panel. */
+function rowIsFelineBundledSeniorScreenVisitLine(row: any): boolean {
+  const code = (getCodeFromDisplayItem(row) ?? '').trim().toUpperCase();
+  return code === 'FIL45129999' || code === 'FIL48119999';
 }
 
 function visitBundledPanelUnchecked(
@@ -2246,8 +2410,42 @@ const RABIES_UNCHECK_INFO_CODES = new Set([
   'RABIES3',
 ]);
 
-function getVaccineRecommendationUncheckInfo(code: string | null | undefined): { title: string; body: string } | null {
+/** Canine distemper/adenovirus/parainfluenza/parvo combo — match catalog codes when present. */
+const DAPP_UNCHECK_INFO_CODES = new Set([
+  'DAPP',
+  'DAPP1',
+  'DAPP2',
+  'DAPP5',
+  'DAPPBOOST',
+  'DAPP-1',
+  'DAPP-2',
+  'DHPP',
+  'DA2PP',
+]);
+
+function displayItemLooksLikeCanineDappVaccine(name: string | null | undefined): boolean {
+  const n = (name ?? '').toLowerCase();
+  if (!n.trim()) return false;
+  if (n.includes('feline') || n.includes('fvrcp') || /\bcat\b/.test(n)) return false;
+  if (/\bdapp\b/.test(n) || /\bdhpp\b/.test(n) || /\bda2pp\b/.test(n)) return true;
+  if (n.includes('distemper') && (n.includes('parvo') || n.includes('parvovirus'))) return true;
+  return false;
+}
+
+function getVaccineRecommendationUncheckInfo(
+  code: string | null | undefined,
+  itemName?: string | null,
+  petName?: string | null
+): { title: string; body: string } | null {
   const c = (code ?? '').trim().toUpperCase();
+  const petLabel = (petName ?? '').trim() || 'Your pet';
+  if (DAPP_UNCHECK_INFO_CODES.has(c) || displayItemLooksLikeCanineDappVaccine(itemName)) {
+    return {
+      title: 'What We Recommend',
+      body:
+        'DAPP is a core vaccine that protects dogs from four serious diseases: distemper, adenovirus (hepatitis), parainfluenza, and parvovirus. These viruses are highly contagious and can cause severe illness or death, so regular vaccination is an important part of keeping your dog protected.',
+    };
+  }
   if (!c) return null;
   if (LYME_UNCHECK_INFO_CODES.has(c)) {
     return {
@@ -2272,9 +2470,9 @@ function getVaccineRecommendationUncheckInfo(code: string | null | undefined): {
   }
   if (FVRCP_UNCHECK_INFO_CODES.has(c)) {
     return {
-      title: 'Why we recommend this',
+      title: 'What We Recommend',
       body:
-        'FVRCP protects cats against three serious viral diseases: feline viral rhinotracheitis, calicivirus, and panleukopenia. Because these infections are common and can cause severe illness, Vet At Your Door considers FVRCP a core vaccine for all indoor and outdoor cats.',
+        'FVRCP is a core vaccine for cats that protects against three serious viral diseases: feline viral rhinotracheitis (herpesvirus), calicivirus, and panleukopenia. These infections spread easily between cats and can cause severe illness, so keeping this vaccine current is an important part of protecting your cat.',
     };
   }
   if (FELV_UNCHECK_INFO_CODES.has(c)) {
@@ -2294,18 +2492,42 @@ function getVaccineRecommendationUncheckInfo(code: string | null | undefined): {
   if (FOUR_DX_UNCHECK_INFO_CODES.has(c)) {
     return {
       title: 'Why we recommend this',
-      body:
-        'The 4Dx test screens for heartworm disease and common tick-borne infections such as Lyme, Anaplasma, and Ehrlichia. Because heartworm disease can be serious and prevention medications require a current negative heartworm test for safe prescribing, we recommend this screening annually.',
+      body: `${petLabel} is due for an annual heartworm/tick test (4Dx). This test screens for heartworm disease and common tick-borne infections, and a current negative heartworm test is required before heartworm prevention medications can be safely prescribed.`,
     };
   }
   if (FECAL_UNCHECK_INFO_CODES.has(c)) {
     return {
       title: 'Why we recommend this',
-      body:
-        'A fecal test screens for intestinal parasites such as roundworms, hookworms, whipworms, and giardia. Because these parasites are common and some can spread to people, we recommend periodic screening to detect infections early and treat them appropriately.',
+      body: `${petLabel} is due for a fecal test. This test screens for intestinal parasites such as roundworms, hookworms, whipworms, and giardia. Because these parasites are common and some can spread to people, periodic screening helps detect infections early and allows us to treat them appropriately.`,
     };
   }
   return null;
+}
+
+/** Intro line for the client Labs page when staff flagged medical-concern lab work vs default age/species copy. */
+function buildLabsWeRecommendIntro(formData: Record<string, unknown>, patients: any[]): string {
+  const petList = patients ?? [];
+  const names: string[] = [];
+  petList.forEach((p: any, i: number) => {
+    const petKey = `pet${i}`;
+    const staffLabWorkYes =
+      formData[`${petKey}_labWork`] === true ||
+      formData[`${petKey}_labWork`] === 'yes' ||
+      p?.questions?.labWork === true;
+    if (staffLabWorkYes) {
+      names.push((p?.patientName ?? p?.name ?? `Pet ${i + 1}`).trim() || `Pet ${i + 1}`);
+    }
+  });
+  if (names.length === 0) {
+    return "Based on your pet's age, species, and today's visit, here are lab panels we suggest.";
+  }
+  const namePhrase =
+    names.length === 1
+      ? names[0]
+      : names.length === 2
+        ? `${names[0]} and ${names[1]}`
+        : `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
+  return `Because of the symptoms you mentioned for ${namePhrase}, the doctor recommends lab work to help us better understand what may be going on.`;
 }
 
 function VaccineUncheckRecommendationInfo({ title, body }: { title: string; body: string }) {
@@ -2687,6 +2909,22 @@ function buildRoomLoaderPdf(responseFromClient: any, options?: PdfOptions): jsPD
   return doc;
 }
 
+/**
+ * Maps saved `currentPage` from the older layout (one combined check-in, one combined labs)
+ * to the current layout (one check-in page and one labs page per pet). Only applies when N ≥ 2.
+ */
+function migrateSavedRoomLoaderCurrentPage(oldPage: number, patientCount: number): number {
+  const n = patientCount;
+  if (n <= 1) return oldPage;
+  const oldLabs = n + 2;
+  const oldSummary = n + 3;
+  if (oldPage === 1) return 1;
+  if (oldPage >= 2 && oldPage <= n + 1) return n + oldPage - 1;
+  if (oldPage === oldLabs) return 2 * n + 1;
+  if (oldPage === oldSummary) return 3 * n + 1;
+  return oldPage;
+}
+
 export default function PublicRoomLoaderForm() {
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token');
@@ -2746,7 +2984,7 @@ export default function PublicRoomLoaderForm() {
   const [fieldValidationErrors, setFieldValidationErrors] = useState<Record<string, string>>({});
   /** Per-pet membership simulate (recommended plan) when recommendation panel is open. */
   const [membershipPanelByPatientId, setMembershipPanelByPatientId] = useState<
-    Record<number, { monthly: RoomLoaderSimulateBillPublicResponse | null; annual: RoomLoaderSimulateBillPublicResponse | null }>
+    Record<number, MembershipPanelSimulateEntry>
   >({});
   const [membershipPanelLoading, setMembershipPanelLoading] = useState(false);
   /**
@@ -2771,6 +3009,13 @@ export default function PublicRoomLoaderForm() {
     { searchQuery: 'Ear Cleaning 1', displayName: 'Ear Cleaning', dogOnly: true },
     { searchQuery: 'HomeAgain Microchip', dogOnly: false },
   ] as const;
+
+  useLayoutEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  }, [currentPage]);
 
   useEffect(() => {
     const tokenValue = token;
@@ -2864,7 +3109,12 @@ export default function PublicRoomLoaderForm() {
 
         // Restore current page (e.g. summary) so user returns to where they left off
         if (typeof savedForm?.currentPage === 'number' && savedForm.currentPage >= 1) {
-          setCurrentPage(savedForm.currentPage);
+          const n = (responseData?.patients ?? []).length;
+          let restored = migrateSavedRoomLoaderCurrentPage(savedForm.currentPage, n);
+          const maxPage = n > 0 ? 3 * n + 1 : 1;
+          if (restored > maxPage) restored = maxPage;
+          if (restored < 1) restored = 1;
+          setCurrentPage(restored);
         }
 
         // When API returns submitStatus === 'completed', form was submitted — show PDF view (and read-only)
@@ -3182,10 +3432,11 @@ export default function PublicRoomLoaderForm() {
     setRoomLoaderSessionMembership({ enrollmentOrder: [], multiPetCreditPatientIds: {} });
   }, [token]);
 
-  // Fetch treatment history per patient when user reaches Care Plan (page 2) or later. Uses public endpoint with token; defers N requests until needed for vaccine/lab logic.
+  // Fetch treatment history per patient when user reaches the first Veterinary Care Plan page or later.
   useEffect(() => {
     const tokenValue = token;
-    if (!tokenValue || currentPage < 2) return;
+    const n = data?.patients?.length ?? 0;
+    if (!tokenValue || n === 0 || currentPage <= n) return;
     if (!treatmentHistoryPatientIdsKey) return;
     const patientIds = treatmentHistoryPatientIdsKey.split(',').map((s: string) => Number(s));
 
@@ -3215,7 +3466,7 @@ export default function PublicRoomLoaderForm() {
     return () => {
       cancelled = true;
     };
-  }, [token, treatmentHistoryPatientIdsKey, currentPage]);
+  }, [token, treatmentHistoryPatientIdsKey, currentPage, data?.patients?.length]);
 
   useEffect(() => {
     setFieldValidationErrors((prev) => {
@@ -3239,7 +3490,7 @@ export default function PublicRoomLoaderForm() {
   /** Load membership simulate when the explainer panel is open or on the visit summary (footer “due with membership” line). Refetch when summary lines / store totals change (debounced). */
   useEffect(() => {
     const patientsLen = data?.patients?.length ?? 0;
-    const summaryPageIndexCalc = patientsLen > 0 ? 3 + patientsLen : -1;
+    const summaryPageIndexCalc = patientsLen > 0 ? 3 * patientsLen + 1 : -1;
     const onVisitSummaryPage = patientsLen > 0 && currentPage === summaryPageIndexCalc;
     const shouldLoadMembershipSimulate =
       !formAlreadySubmitted &&
@@ -3272,6 +3523,7 @@ export default function PublicRoomLoaderForm() {
           }
           const snapshot = buildFullFormSnapshot();
           const summaryLineItems = snapshot?.summaryLineItems ?? [];
+          const membershipComparisonDeclinedLines = snapshot?.membershipComparisonDeclinedLines ?? [];
           const totals = snapshot?.totals ?? {};
           const patientsData = data?.patients ?? [];
           const firstPid = Number(
@@ -3284,36 +3536,37 @@ export default function PublicRoomLoaderForm() {
             data?.patients?.[0]?.clientId ??
             (data?.patients?.[0] as any)?.client?.id ??
             data?.appointments?.[0]?.client?.id;
-          const next: Record<
-            number,
-            { monthly: RoomLoaderSimulateBillPublicResponse | null; annual: RoomLoaderSimulateBillPublicResponse | null }
-          > = {};
+          const next: Record<number, MembershipPanelSimulateEntry> = {};
           for (const petPlans of availablePlansForPetsForDisplay) {
             const rec = getRecommendedWellnessPlanFromList(petPlans.plans, petPlans.meetsGolden);
             if (!rec) continue;
             const filtered = filterLineItemsForPatientSimulate(summaryLineItems, petPlans.patientId, firstPid).filter(
               (li) => (li as { category?: string }).category !== 'store'
             );
-            const lineItems: RoomLoaderSimulateLineItem[] = filtered.map(
-              (li: {
-                name: string;
-                quantity: number;
-                price: number;
-                patientId?: number;
-                patientName?: string;
-                category?: string;
-                itemType?: 'lab' | 'procedure' | 'inventory';
-                itemId?: number;
-              }) => ({
-                name: li.name,
-                quantity: li.quantity,
-                price: li.price,
-                patientId: li.patientId ?? 0,
-                patientName: li.patientName,
-                category: li.category,
-                ...(li.itemType && li.itemId != null && { itemType: li.itemType, itemId: li.itemId }),
-              })
-            );
+            const toSimLine = (li: {
+              name: string;
+              quantity: number;
+              price: number;
+              patientId?: number;
+              patientName?: string;
+              category?: string;
+              itemType?: 'lab' | 'procedure' | 'inventory';
+              itemId?: number;
+            }): RoomLoaderSimulateLineItem => ({
+              name: li.name,
+              quantity: li.quantity,
+              price: li.price,
+              patientId: li.patientId ?? 0,
+              patientName: li.patientName,
+              category: li.category,
+              ...(li.itemType && li.itemId != null && { itemType: li.itemType, itemId: li.itemId }),
+            });
+            const lineItems: RoomLoaderSimulateLineItem[] = filtered.map(toSimLine);
+            const declinedForPet = filterLineItemsForPatientSimulate(
+              membershipComparisonDeclinedLines,
+              petPlans.patientId,
+              firstPid
+            ).filter((li) => (li as { category?: string }).category !== 'store');
             const request = {
               token: tokenValue as string,
               practiceId,
@@ -3329,7 +3582,20 @@ export default function PublicRoomLoaderForm() {
               simulateBillWithMembershipPublic({ ...request, pricingOption: 'monthly' }),
               simulateBillWithMembershipPublic({ ...request, pricingOption: 'annual' }),
             ]);
-            if (membershipSimulateSeqRef.current === seq) next[petPlans.patientId] = { monthly, annual };
+            let monthlyExtended: RoomLoaderSimulateBillPublicResponse | null = null;
+            if (declinedForPet.length > 0) {
+              const extendedLineItems: RoomLoaderSimulateLineItem[] = [
+                ...lineItems,
+                ...declinedForPet.map((li) => toSimLine(li)),
+              ];
+              monthlyExtended = await simulateBillWithMembershipPublic({
+                ...request,
+                lineItems: extendedLineItems,
+                pricingOption: 'monthly',
+              });
+            }
+            if (membershipSimulateSeqRef.current === seq)
+              next[petPlans.patientId] = { monthly, annual, monthlyExtended };
           }
           if (membershipSimulateSeqRef.current === seq) setMembershipPanelByPatientId(next);
         } catch (err) {
@@ -3535,28 +3801,59 @@ export default function PublicRoomLoaderForm() {
     const petSubtotals: number[] = [];
     let grandTotal = 0;
 
+    const apptsSnapshot = data?.appointments ?? [];
     patientsData.forEach((patient: any, petIdx: number) => {
       const patientId = patient.patientId ?? patient.patient?.id ?? petIdx;
       const petName = patient.patientName || `Pet ${petIdx + 1}`;
       const allItems = recommendedByPet[petIdx] ?? [];
       const displayItems = allItems.filter((item: any) => !hasPhrase(item, 'trip fee') && !hasPhrase(item, 'sharps'));
       const tripFeeItems = allItems.filter((item: any) => hasPhrase(item, 'trip fee') || hasPhrase(item, 'sharps'));
+      const speciesLowerCheckedPet = publicSpeciesLowerForPet(patient, apptsSnapshot, petIdx);
+      const isCatCheckedPet = isCatSpeciesTokens(speciesLowerCheckedPet);
       const checked = displayItems.map((item: any, idx: number) => {
         const isVisitOrConsult = hasPhrase(item, 'visit') || hasPhrase(item, 'consult');
         const earlyDetectionYes = formData[`lab_early_detection_feline_${patientId}`] === 'yes';
         const earlyDetectionCanineYes = formData[`lab_early_detection_canine_${patientId}`] === 'yes';
+        const earlyDetFelineExcludedSnap = formData[`summary_exclude_lab_early_detection_feline_${patientId}`] === true;
+        const earlyDetCanineExcludedSnap = formData[`summary_exclude_lab_early_detection_canine_${patientId}`] === true;
         const seniorFelineYes = formData[`lab_senior_feline_${patientId}`] === 'yes';
+        const seniorFelineExcludedSnap = formData[`summary_exclude_lab_senior_feline_${patientId}`] === true;
         const seniorCaninePanel = formData[`lab_senior_canine_panel_${patientId}`];
         const seniorFelineTwoPanel = formData[`lab_senior_feline_two_panel_${patientId}`];
+        const seniorCanineExtExcludedSnap = formData[`summary_exclude_lab_senior_canine_extended_${patientId}`] === true;
+        const seniorFelTwoExtExcludedSnap = formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] === true;
         const fecalReplacedBy: string[] = [];
-        if (earlyDetectionYes || earlyDetectionCanineYes) fecalReplacedBy.push('Early Detection Panel');
-        if (seniorFelineYes) fecalReplacedBy.push('Senior Screen Feline');
-        if (seniorCaninePanel === 'extended' || seniorFelineTwoPanel === 'extended') fecalReplacedBy.push('Extended Comprehensive Panel');
-        const fourDxReplacedBy: string[] = seniorCaninePanel === 'extended' || seniorFelineTwoPanel === 'extended' ? ['Extended Comprehensive Panel'] : [];
-        const isFecalReplaced = hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0;
-        const is4dxReplaced = (hasPhrase(item, '4dx') || hasPhrase(item, 'heartworm')) && fourDxReplacedBy.length > 0;
-        const recKey = `pet${petIdx}_rec_${idx}`;
-        return (isFecalReplaced || is4dxReplaced) ? false : isVisitOrConsult || formData[recKey] !== false;
+        if (
+          (earlyDetectionYes && !earlyDetFelineExcludedSnap) ||
+          (earlyDetectionCanineYes && !earlyDetCanineExcludedSnap)
+        ) {
+          fecalReplacedBy.push('Early Detection Panel');
+        }
+        if (isCatCheckedPet && seniorFelineYes && !seniorFelineExcludedSnap) fecalReplacedBy.push('Senior Screen Feline');
+        if (
+          (seniorCaninePanel === 'extended' && !seniorCanineExtExcludedSnap) ||
+          (seniorFelineTwoPanel === 'extended' && !seniorFelTwoExtExcludedSnap)
+        ) {
+          fecalReplacedBy.push('Extended Comprehensive Panel');
+        }
+        const fourDxReplacedBy: string[] = [];
+        if (
+          (earlyDetectionYes && !earlyDetFelineExcludedSnap) ||
+          (earlyDetectionCanineYes && !earlyDetCanineExcludedSnap)
+        ) {
+          fourDxReplacedBy.push('Early Detection Panel');
+        }
+        if (
+          (seniorCaninePanel === 'extended' && !seniorCanineExtExcludedSnap) ||
+          (seniorFelineTwoPanel === 'extended' && !seniorFelTwoExtExcludedSnap)
+        ) {
+          fourDxReplacedBy.push('Extended Comprehensive Panel');
+        }
+        const isFecalReplaced = bundledLineLooksLikeFecal(item) && fecalReplacedBy.length > 0;
+        const is4dxReplaced = bundledLineLooksLikePanelInfectiousCompanion(item, isCatCheckedPet) && fourDxReplacedBy.length > 0;
+        return (isFecalReplaced || is4dxReplaced)
+          ? false
+          : isVisitOrConsult || publicFormCarePlanRecRowChecked(formData, petIdx, item, idx);
       });
       remindersByPet.push({
         patientId,
@@ -3585,34 +3882,55 @@ export default function PublicRoomLoaderForm() {
           if (p != null) petSubtotal += p;
         });
       }
-      // Lab panels selected for this pet
-      if (formData[`lab_early_detection_feline_${patientId}`] === 'yes') {
+      // Lab panels selected for this pet (respect summary uncheck — must match summary page and membership lines)
+      if (
+        formData[`lab_early_detection_feline_${patientId}`] === 'yes' &&
+        formData[`summary_exclude_lab_early_detection_feline_${patientId}`] !== true
+      ) {
         const p = getClientAdjustedPrice(patientId, earlyDetectionFelineItem) ?? getSearchItemPrice(earlyDetectionFelineItem);
         if (p != null) petSubtotal += p;
       }
-      if (formData[`lab_early_detection_canine_${patientId}`] === 'yes') {
+      if (
+        formData[`lab_early_detection_canine_${patientId}`] === 'yes' &&
+        formData[`summary_exclude_lab_early_detection_canine_${patientId}`] !== true
+      ) {
         const p = getClientAdjustedPrice(patientId, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem);
         if (p != null) petSubtotal += p;
       }
-      if (formData[`lab_senior_feline_${patientId}`] === 'yes') {
+      if (
+        formData[`lab_senior_feline_${patientId}`] === 'yes' &&
+        formData[`summary_exclude_lab_senior_feline_${patientId}`] !== true
+      ) {
         const p = getClientAdjustedPrice(patientId, seniorFelineItem) ?? getSearchItemPrice(seniorFelineItem);
         if (p != null) petSubtotal += p;
       }
       const seniorCaninePanelVal = formData[`lab_senior_canine_panel_${patientId}`];
-      if (seniorCaninePanelVal === 'standard') {
+      if (
+        seniorCaninePanelVal === 'standard' &&
+        formData[`summary_exclude_lab_senior_canine_standard_${patientId}`] !== true
+      ) {
         const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem);
         if (p != null) petSubtotal += p;
       }
-      if (seniorCaninePanelVal === 'extended') {
+      if (
+        seniorCaninePanelVal === 'extended' &&
+        formData[`summary_exclude_lab_senior_canine_extended_${patientId}`] !== true
+      ) {
         const p = getClientAdjustedPrice(patientId, seniorCanineExtendedItem) ?? getSearchItemPrice(seniorCanineExtendedItem);
         if (p != null) petSubtotal += p;
       }
       const seniorFelineTwoPanelVal = formData[`lab_senior_feline_two_panel_${patientId}`];
-      if (seniorFelineTwoPanelVal === 'standard') {
+      if (
+        seniorFelineTwoPanelVal === 'standard' &&
+        formData[`summary_exclude_lab_senior_feline_two_standard_${patientId}`] !== true
+      ) {
         const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem);
         if (p != null) petSubtotal += p;
       }
-      if (seniorFelineTwoPanelVal === 'extended') {
+      if (
+        seniorFelineTwoPanelVal === 'extended' &&
+        formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] !== true
+      ) {
         const p = getClientAdjustedPrice(patientId, seniorFelineExtendedItem) ?? getSearchItemPrice(seniorFelineExtendedItem);
         if (p != null) petSubtotal += p;
       }
@@ -3717,15 +4035,89 @@ export default function PublicRoomLoaderForm() {
       category?: string;
       itemType?: 'lab' | 'procedure' | 'inventory';
       itemId?: number;
+      /** Unchecked on care plan/summary — listed only in membership comparison, not in visit total or primary simulate. */
+      membershipComparisonDeclinedOnly?: boolean;
     };
     const summaryLineItems: LineItem[] = [];
+    const membershipComparisonDeclinedLines: LineItem[] = [];
 
+    const apptsMembership = data?.appointments ?? [];
     remindersByPet.forEach((entry, petIdx) => {
       const patient = patientsData[petIdx];
       const patientId = entry.patientId ?? patient?.patientId ?? patient?.patient?.id ?? petIdx;
       const patientName = entry.patientName || `Pet ${petIdx + 1}`;
+      const speciesLowerMemb = publicSpeciesLowerForPet(patient, apptsMembership, petIdx);
+      const isCatMemb = isCatSpeciesTokens(speciesLowerMemb);
+      const earlyDetFel = formData[`lab_early_detection_feline_${patientId}`] === 'yes';
+      const earlyDetCan = formData[`lab_early_detection_canine_${patientId}`] === 'yes';
+      const earlyDetFelineExcludedMemb = formData[`summary_exclude_lab_early_detection_feline_${patientId}`] === true;
+      const earlyDetCanineExcludedMemb = formData[`summary_exclude_lab_early_detection_canine_${patientId}`] === true;
+      const seniorFelYes = formData[`lab_senior_feline_${patientId}`] === 'yes';
+      const seniorFelineExcludedMemb = formData[`summary_exclude_lab_senior_feline_${patientId}`] === true;
+      const seniorCanPanel = formData[`lab_senior_canine_panel_${patientId}`];
+      const seniorFelTwo = formData[`lab_senior_feline_two_panel_${patientId}`];
+      const seniorCanExtExcludedMemb = formData[`summary_exclude_lab_senior_canine_extended_${patientId}`] === true;
+      const seniorFelTwoExtExcludedMemb = formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] === true;
+      const fecalRb: string[] = [];
+      if (
+        (earlyDetFel && !earlyDetFelineExcludedMemb) ||
+        (earlyDetCan && !earlyDetCanineExcludedMemb)
+      ) {
+        fecalRb.push('Early Detection Panel');
+      }
+      if (isCatMemb && seniorFelYes && !seniorFelineExcludedMemb) fecalRb.push('Senior Screen Feline');
+      if (
+        (seniorCanPanel === 'extended' && !seniorCanExtExcludedMemb) ||
+        (seniorFelTwo === 'extended' && !seniorFelTwoExtExcludedMemb)
+      ) {
+        fecalRb.push('Extended Comprehensive Panel');
+      }
+      const fourDxRb: string[] = [];
+      if (
+        (earlyDetFel && !earlyDetFelineExcludedMemb) ||
+        (earlyDetCan && !earlyDetCanineExcludedMemb)
+      ) {
+        fourDxRb.push('Early Detection Panel');
+      }
+      if (
+        (seniorCanPanel === 'extended' && !seniorCanExtExcludedMemb) ||
+        (seniorFelTwo === 'extended' && !seniorFelTwoExtExcludedMemb)
+      ) {
+        fourDxRb.push('Extended Comprehensive Panel');
+      }
+      const labsEarlyFelIncludedMemb = earlyDetFel && !earlyDetFelineExcludedMemb;
+      const labsEarlyCanIncludedMemb = earlyDetCan && !earlyDetCanineExcludedMemb;
       entry.displayItems.forEach((item: any, idx: number) => {
-        if (!entry.checked[idx]) return;
+        const isVisitOrConsult = hasPhrase(item, 'visit') || hasPhrase(item, 'consult');
+        const isFecalRep = bundledLineLooksLikeFecal(item) && fecalRb.length > 0;
+        const is4dxRep = bundledLineLooksLikePanelInfectiousCompanion(item, isCatMemb) && fourDxRb.length > 0;
+        const lineCode = (getCodeFromDisplayItem(item) ?? '').trim().toUpperCase();
+        const isVisitListBundledEarlyPanelDuplicate =
+          (labsEarlyFelIncludedMemb && lineCode === 'FIL48119999') ||
+          (labsEarlyCanIncludedMemb && lineCode === 'FIL48719999');
+        if (!entry.checked[idx]) {
+          if (isVisitOrConsult || isFecalRep || is4dxRep) return;
+          if (isVisitListBundledEarlyPanelDuplicate) return;
+          const unitPrice =
+            item.searchableItem != null
+              ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0)
+              : (Number(item.price) ?? 0);
+          const qty = Number(item.quantity) || 1;
+          if (unitPrice <= 0) return;
+          const typeAndId = getItemTypeAndId(item);
+          membershipComparisonDeclinedLines.push({
+            name: item.name,
+            quantity: qty,
+            price: unitPrice,
+            patientId,
+            patientName,
+            category: 'reminder',
+            membershipComparisonDeclinedOnly: true,
+            ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
+          });
+          return;
+        }
+        if (isVisitListBundledEarlyPanelDuplicate) return;
         const unitPrice = item.searchableItem != null ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) ?? 0);
         const qty = Number(item.quantity) || 1;
         const typeAndId = getItemTypeAndId(item);
@@ -4027,14 +4419,41 @@ export default function PublicRoomLoaderForm() {
 
       const earlyDetectionYes = formData[`lab_early_detection_feline_${patientId}`] === 'yes';
       const earlyDetectionCanineYes = formData[`lab_early_detection_canine_${patientId}`] === 'yes';
+      const earlyDetFelineExcludedPdf = formData[`summary_exclude_lab_early_detection_feline_${patientId}`] === true;
+      const earlyDetCanineExcludedPdf = formData[`summary_exclude_lab_early_detection_canine_${patientId}`] === true;
       const seniorFelineYes = formData[`lab_senior_feline_${patientId}`] === 'yes';
+      const seniorFelineExcludedPdf = formData[`summary_exclude_lab_senior_feline_${patientId}`] === true;
       const seniorCaninePanelVal = formData[`lab_senior_canine_panel_${patientId}`];
       const seniorFelineTwoPanelVal = formData[`lab_senior_feline_two_panel_${patientId}`];
+      const seniorCanExtExcludedPdf = formData[`summary_exclude_lab_senior_canine_extended_${patientId}`] === true;
+      const seniorFelTwoExtExcludedPdf = formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] === true;
       const fecalReplacedBy: string[] = [];
-      if (earlyDetectionYes || earlyDetectionCanineYes) fecalReplacedBy.push('Early Detection Panel');
-      if (seniorFelineYes) fecalReplacedBy.push('Senior Screen Feline');
-      if (seniorCaninePanelVal === 'extended' || seniorFelineTwoPanelVal === 'extended') fecalReplacedBy.push('Extended Comprehensive Panel');
-      const fourDxReplacedBy: string[] = seniorCaninePanelVal === 'extended' || seniorFelineTwoPanelVal === 'extended' ? ['Extended Comprehensive Panel'] : [];
+      if (
+        (earlyDetectionYes && !earlyDetFelineExcludedPdf) ||
+        (earlyDetectionCanineYes && !earlyDetCanineExcludedPdf)
+      ) {
+        fecalReplacedBy.push('Early Detection Panel');
+      }
+      if (isCatForPet && seniorFelineYes && !seniorFelineExcludedPdf) fecalReplacedBy.push('Senior Screen Feline');
+      if (
+        (seniorCaninePanelVal === 'extended' && !seniorCanExtExcludedPdf) ||
+        (seniorFelineTwoPanelVal === 'extended' && !seniorFelTwoExtExcludedPdf)
+      ) {
+        fecalReplacedBy.push('Extended Comprehensive Panel');
+      }
+      const fourDxReplacedBy: string[] = [];
+      if (
+        (earlyDetectionYes && !earlyDetFelineExcludedPdf) ||
+        (earlyDetectionCanineYes && !earlyDetCanineExcludedPdf)
+      ) {
+        fourDxReplacedBy.push('Early Detection Panel');
+      }
+      if (
+        (seniorCaninePanelVal === 'extended' && !seniorCanExtExcludedPdf) ||
+        (seniorFelineTwoPanelVal === 'extended' && !seniorFelTwoExtExcludedPdf)
+      ) {
+        fourDxReplacedBy.push('Extended Comprehensive Panel');
+      }
 
       const displayItems = entry.displayItems;
       const tripFeeItems = entry.tripFeeItems;
@@ -4083,11 +4502,20 @@ export default function PublicRoomLoaderForm() {
           wellnessPlanPricing: getMembershipInfoForPdf(pricing),
         });
       });
+      const pdfLabsEarlyFelIncluded = earlyDetectionYes && !earlyDetFelineExcludedPdf;
+      const pdfLabsEarlyCanIncluded = earlyDetectionCanineYes && !earlyDetCanineExcludedPdf;
       checkableDisplay.forEach(({ item, idx }: { item: any; idx: number }) => {
-        const isFecalReplaced = hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0;
-        const is4dxReplaced = (hasPhrase(item, '4dx') || hasPhrase(item, 'heartworm')) && fourDxReplacedBy.length > 0;
-        const recKey = `pet${petIdx}_rec_${idx}`;
-        const isChecked = (isFecalReplaced || is4dxReplaced) ? false : formData[recKey] !== false;
+        const rowCode = (getCodeFromDisplayItem(item) ?? '').trim().toUpperCase();
+        if (
+          (pdfLabsEarlyFelIncluded && rowCode === 'FIL48119999') ||
+          (pdfLabsEarlyCanIncluded && rowCode === 'FIL48719999')
+        ) {
+          return;
+        }
+        const isFecalReplaced = bundledLineLooksLikeFecal(item) && fecalReplacedBy.length > 0;
+        const is4dxReplaced = bundledLineLooksLikePanelInfectiousCompanion(item, isCatForPet) && fourDxReplacedBy.length > 0;
+        const isChecked =
+          isFecalReplaced || is4dxReplaced ? false : publicFormCarePlanRecRowChecked(formData, petIdx, item, idx);
         const pricing = item.wellnessPlanPricing != null ? { wellnessPlanPricing: item.wellnessPlanPricing } : (item.searchableItem ? getClientPricing(patientId, item.searchableItem) : null);
         const price = item.searchableItem != null ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) ?? 0);
         const qty = Number(item.quantity) || 1;
@@ -4130,12 +4558,24 @@ export default function PublicRoomLoaderForm() {
       if (earlyDetectionYes && formData[`summary_exclude_lab_early_detection_feline_${patientId}`] !== true) {
         const pricing = getClientPricing(patientId, earlyDetectionFelineItem);
         const p = getClientAdjustedPrice(patientId, earlyDetectionFelineItem) ?? getSearchItemPrice(earlyDetectionFelineItem);
-        if (p != null) labRows.push({ name: 'Early Detection Panel - Feline', price: p, code: getSearchItemCode(earlyDetectionFelineItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
+        if (p != null)
+          labRows.push({
+            name: 'Early Detection Panel - Feline',
+            price: p,
+            code: getSearchItemCode(earlyDetectionFelineItem),
+            wellnessPlanPricing: getMembershipInfoForPdf(pricing),
+          });
       }
       if (earlyDetectionCanineYes && formData[`summary_exclude_lab_early_detection_canine_${patientId}`] !== true) {
         const pricing = getClientPricing(patientId, earlyDetectionCanineItem);
         const p = getClientAdjustedPrice(patientId, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem);
-        if (p != null) labRows.push({ name: 'Early Detection Panel - Canine', price: p, code: getSearchItemCode(earlyDetectionCanineItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
+        if (p != null)
+          labRows.push({
+            name: 'Early Detection Panel - Canine',
+            price: p,
+            code: getSearchItemCode(earlyDetectionCanineItem),
+            wellnessPlanPricing: getMembershipInfoForPdf(pricing),
+          });
       }
       if (seniorFelineYes && formData[`summary_exclude_lab_senior_feline_${patientId}`] !== true) {
         const pricing = getClientPricing(patientId, seniorFelineItem);
@@ -4282,9 +4722,9 @@ export default function PublicRoomLoaderForm() {
     type PageSection = { pageNumber: number; title: string; sections: Section[] };
     const formAnswersPages: PageSection[] = [];
 
-    // Page 1: Time to Check-in for your Appointment (only include questions that were actually shown to the client)
-    const page1Sections: Section[] = [];
+    // Check-in: one PDF page per pet (matches on-screen flow)
     const appts = data?.appointments ?? [];
+    const nPdfPets = patientsData.length;
     patientsData.forEach((patient: any, petIdx: number) => {
       const petKey = `pet${petIdx}`;
       const patientId = patient.patientId ?? patient.patient?.id ?? petIdx;
@@ -4327,12 +4767,16 @@ export default function PublicRoomLoaderForm() {
         }
       }
       if (questions.length > 0) {
-        page1Sections.push({ sectionLabel: `Pet ${petIdx + 1}: ${petName}`, patientId, patientName: petName, questions });
+        formAnswersPages.push({
+          pageNumber: petIdx + 1,
+          title:
+            nPdfPets > 1
+              ? `Time to Check-in — ${petName} (${petIdx + 1} of ${nPdfPets})`
+              : 'Time to Check-in for your Appointment',
+          sections: [{ sectionLabel: `Pet ${petIdx + 1}: ${petName}`, patientId, patientName: petName, questions }],
+        });
       }
     });
-    if (page1Sections.length > 0) {
-      formAnswersPages.push({ pageNumber: 1, title: 'Time to Check-in for your Appointment', sections: page1Sections });
-    }
 
     // Care Plan pages (one section per pet): only include vaccine/outdoor questions that were shown (same species logic as form UI)
     patientsData.forEach((patient: any, petIdx: number) => {
@@ -4421,16 +4865,14 @@ export default function PublicRoomLoaderForm() {
       if (showFeLV && isCatExplicit && !isDogExplicit) add('Do you want us to give the FeLV vaccine? For initial immunity, two vaccines must be given, 3-4 weeks apart.', `${petKey}_felvVaccine`, { yes: 'Yes', no: 'No' });
       if (questions.length > 0) {
         formAnswersPages.push({
-          pageNumber: 2 + petIdx,
+          pageNumber: nPdfPets + 1 + petIdx,
           title: patientsData.length > 1 ? `Veterinary Care Plan — ${petName}` : 'Veterinary Care Plan',
           sections: [{ sectionLabel: `${petName} — Optional Vaccines & Questions`, patientId, patientName: petName, questions }],
         });
       }
     });
 
-    // Labs We Recommend: only include lab questions that were shown (same logic as validation)
-    const labsPageNum = 2 + patientsData.length;
-    const labsSections: Section[] = [];
+    // Labs We Recommend: one PDF page per pet; ongoing-care question only on the last pet’s page
     const labRecs = labRecommendationsByPet ?? [];
     const labAppts = data?.appointments ?? [];
     labRecs.forEach((entry: { patientId?: number; patientName?: string; recommendations: { code?: string }[] }, idx: number) => {
@@ -4498,33 +4940,41 @@ export default function PublicRoomLoaderForm() {
           add('Would you like to add a comprehensive fecal today?', `lab_comprehensive_fecal_${pidStr}`, { yes: 'Yes', no: 'No' });
         }
       });
+      const labSectionsForThisPet: Section[] = [];
       if (questions.length > 0) {
-        labsSections.push({ sectionLabel: petName, patientId, patientName: petName, questions });
+        labSectionsForThisPet.push({ sectionLabel: petName, patientId, patientName: petName, questions });
+      }
+      const isLastLabPetPdf = idx === patientsData.length - 1;
+      if (isLastLabPetPdf && patientsData.length > 0) {
+        const og = formData['ongoingCareInterest'];
+        const ogLabel =
+          og === 'yes' ? 'Yes, I would like that.' : og === 'no' ? 'No, thank you.' : og === 'unsure' ? 'I am not sure.' : null;
+        labSectionsForThisPet.push({
+          sectionLabel: 'Dedicated veterinary team',
+          questions: [
+            {
+              question: 'Are you looking for ongoing care with a consistent, dedicated veterinary team?',
+              answer: og ?? null,
+              answerLabel: ogLabel,
+            },
+          ],
+        });
+      }
+      if (labSectionsForThisPet.length > 0) {
+        const labPageNum = 2 * nPdfPets + 1 + idx;
+        formAnswersPages.push({
+          pageNumber: labPageNum,
+          title: nPdfPets > 1 ? `Labs We Recommend — ${petName}` : 'Labs We Recommend',
+          sections: labSectionsForThisPet,
+        });
       }
     });
-    if (patientsData.length > 0) {
-      const og = formData['ongoingCareInterest'];
-      const ogLabel =
-        og === 'yes' ? 'Yes, I would like that.' : og === 'no' ? 'No, thank you.' : og === 'unsure' ? 'I am not sure.' : null;
-      labsSections.push({
-        sectionLabel: 'Dedicated veterinary team',
-        questions: [
-          {
-            question: 'Are you looking for ongoing care with a consistent, dedicated veterinary team?',
-            answer: og ?? null,
-            answerLabel: ogLabel,
-          },
-        ],
-      });
-    }
-    if (labsSections.length > 0) {
-      formAnswersPages.push({ pageNumber: labsPageNum, title: 'Labs We Recommend', sections: labsSections });
-    }
 
     // Review page: Anything else you want us to know?
     const anythingElseNotes = (formData['anythingElseNotes'] ?? '').toString().trim();
+    const summaryPdfPageNumber = nPdfPets > 0 ? 3 * nPdfPets + 1 : 2;
     formAnswersPages.push({
-      pageNumber: labsPageNum + 1,
+      pageNumber: summaryPdfPageNumber,
       title: 'Review Your Care Plan & Estimate',
       sections: [{
         sectionLabel: 'Additional notes',
@@ -4700,6 +5150,7 @@ export default function PublicRoomLoaderForm() {
       commonlySelectedItems,
       remindersByPet,
       summaryLineItems,
+      membershipComparisonDeclinedLines,
       summaryForPdf,
       formAnswersForPdf,
       totals: {
@@ -4926,17 +5377,24 @@ export default function PublicRoomLoaderForm() {
     return { valid: true };
   }
 
-  /** Validate required fields when leaving Labs page (only for lab blocks that are actually shown). */
-  function validateRequiredForLabsPage(): { valid: boolean; message?: string; errors?: Record<string, string> } {
+  /** Validate required fields when leaving a Labs page for one pet; ongoing-care question only when `requireOngoing` (last pet’s labs page). */
+  function validateRequiredForLabsPetPage(
+    labsPetIndex: number,
+    requireOngoing: boolean
+  ): { valid: boolean; message?: string; errors?: Record<string, string> } {
     const errors: Record<string, string> = {};
     const labRecs = labRecommendationsByPet ?? [];
     const patientsData = data?.patients ?? [];
     const appts = data?.appointments ?? [];
-    labRecs.forEach((entry, idx) => {
+    const entry = labRecs[labsPetIndex];
+    if (entry) {
+      const idx = labsPetIndex;
       const petName = entry.patientName || `Pet ${idx + 1}`;
       const pid = entry.patientId ?? idx;
       const pidStr = String(pid);
-      const patientForEntry = patientsData.find((p: any) => String(p.patientId ?? p.patient?.id ?? '') === String(entry.patientId ?? idx)) ?? patientsData[idx];
+      const patientForEntry =
+        patientsData.find((p: any) => String(p.patientId ?? p.patient?.id ?? '') === String(entry.patientId ?? idx)) ??
+        patientsData[idx];
       const apptForEntry = getAppointmentForRoomLoaderPet(appts, patientForEntry, idx);
       const apptPatientEntry = apptForEntry?.patient;
       const speciesPartsEntry = [
@@ -4998,11 +5456,13 @@ export default function PublicRoomLoaderForm() {
           }
         }
       });
-    });
-    const ongoingLabs = formData['ongoingCareInterest'];
-    if (ongoingLabs !== 'yes' && ongoingLabs !== 'no' && ongoingLabs !== 'unsure') {
-      errors['ongoingCareInterest'] =
-        "Please answer whether you're interested in ongoing care with a dedicated veterinary team.";
+    }
+    if (requireOngoing) {
+      const ongoingLabs = formData['ongoingCareInterest'];
+      if (ongoingLabs !== 'yes' && ongoingLabs !== 'no' && ongoingLabs !== 'unsure') {
+        errors['ongoingCareInterest'] =
+          "Please answer whether you're interested in ongoing care with a dedicated veterinary team.";
+      }
     }
     if (Object.keys(errors).length > 0) {
       return { valid: false, message: Object.values(errors)[0], errors };
@@ -5010,46 +5470,45 @@ export default function PublicRoomLoaderForm() {
     return { valid: true };
   }
 
-  /** Validate required fields when leaving page 1 (Check-in): food allergies only when that block is shown (new patients). Outdoor (cats) is on the Veterinary Care Plan only. */
-  function validateRequiredForPage1(): { valid: boolean; message?: string; errors?: Record<string, string> } {
+  /** Validate required check-in fields for one pet (reason follow-ups, eating/normal, new-patient blocks). Outdoor (cats) is on the Veterinary Care Plan only. */
+  function validateRequiredForCheckInPet(petIdx: number): { valid: boolean; message?: string; errors?: Record<string, string> } {
     const patientsData = data?.patients ?? [];
     const appts = data?.appointments ?? [];
+    const patient = patientsData[petIdx];
+    if (!patient) return { valid: true };
     const errors: Record<string, string> = {};
-    for (let petIdx = 0; petIdx < patientsData.length; petIdx++) {
-      const patient = patientsData[petIdx];
-      const petKey = `pet${petIdx}`;
-      const petName = patient.patientName || `Pet ${petIdx + 1}`;
-      const apptRowP1 = getAppointmentForRoomLoaderPet(appts, patient, petIdx);
-      const markedNewByApi = patient.isNewPatient === true || apptRowP1?.isNewPatient === true;
-      const explicitlyNotNew = patient.isNewPatient === false || apptRowP1?.isNewPatient === false;
-      const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
-      const treatAsNewWhenNoReminders = patient.isNewPatient !== false && apptRowP1?.isNewPatient !== false;
-      const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
+    const petKey = `pet${petIdx}`;
+    const petName = patient.patientName || `Pet ${petIdx + 1}`;
+    const apptRowP1 = getAppointmentForRoomLoaderPet(appts, patient, petIdx);
+    const markedNewByApi = patient.isNewPatient === true || apptRowP1?.isNewPatient === true;
+    const explicitlyNotNew = patient.isNewPatient === false || apptRowP1?.isNewPatient === false;
+    const hasReminders = Array.isArray(patient.reminders) && patient.reminders.length > 0;
+    const treatAsNewWhenNoReminders = patient.isNewPatient !== false && apptRowP1?.isNewPatient !== false;
+    const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
 
-      const eatingNormal = formData[`${petKey}_eatingDrinkingNormal`];
-      if (eatingNormal !== 'yes' && eatingNormal !== 'no') {
-        errors[`${petKey}_eatingDrinkingNormal`] = `Please answer whether ${petName} is eating, drinking, defecating, and urinating normally.`;
+    const eatingNormal = formData[`${petKey}_eatingDrinkingNormal`];
+    if (eatingNormal !== 'yes' && eatingNormal !== 'no') {
+      errors[`${petKey}_eatingDrinkingNormal`] = `Please answer whether ${petName} is eating, drinking, defecating, and urinating normally.`;
+    }
+    if (eatingNormal === 'no') {
+      const details = (formData[`${petKey}_eatingDrinkingNormalDetails`] ?? '').toString().trim();
+      if (!details) {
+        errors[`${petKey}_eatingDrinkingNormalDetails`] = `Please describe ${petName}'s eating, drinking, or elimination.`;
       }
-      if (eatingNormal === 'no') {
-        const details = (formData[`${petKey}_eatingDrinkingNormalDetails`] ?? '').toString().trim();
+    }
+    if (isNewPatient) {
+      const behavior = (formData[`${petKey}_newPatientBehavior`] ?? '').toString().trim();
+      if (!behavior) {
+        errors[`${petKey}_newPatientBehavior`] = `Please describe ${petName}'s behavior at home, around strangers, and at a typical vet office before continuing.`;
+      }
+      const foodAllergies = formData[`${petKey}_foodAllergies`];
+      if (foodAllergies !== 'yes' && foodAllergies !== 'no') {
+        errors[`${petKey}_foodAllergies`] = `Please answer the Food Allergies question for ${petName} before continuing.`;
+      }
+      if (foodAllergies === 'yes') {
+        const details = (formData[`${petKey}_foodAllergiesDetails`] ?? '').toString().trim();
         if (!details) {
-          errors[`${petKey}_eatingDrinkingNormalDetails`] = `Please describe ${petName}'s eating, drinking, or elimination.`;
-        }
-      }
-      if (isNewPatient) {
-        const behavior = (formData[`${petKey}_newPatientBehavior`] ?? '').toString().trim();
-        if (!behavior) {
-          errors[`${petKey}_newPatientBehavior`] = `Please describe ${petName}'s behavior at home, around strangers, and at a typical vet office before continuing.`;
-        }
-        const foodAllergies = formData[`${petKey}_foodAllergies`];
-        if (foodAllergies !== 'yes' && foodAllergies !== 'no') {
-          errors[`${petKey}_foodAllergies`] = `Please answer the Food Allergies question for ${petName} before continuing.`;
-        }
-        if (foodAllergies === 'yes') {
-          const details = (formData[`${petKey}_foodAllergiesDetails`] ?? '').toString().trim();
-          if (!details) {
-            errors[`${petKey}_foodAllergiesDetails`] = `Please describe ${petName}'s food allergies before continuing.`;
-          }
+          errors[`${petKey}_foodAllergiesDetails`] = `Please describe ${petName}'s food allergies before continuing.`;
         }
       }
     }
@@ -5110,7 +5569,7 @@ export default function PublicRoomLoaderForm() {
         errors[`${petKey}_outdoorAccess`] = msg;
       }
     }
-    // Eating / elimination is collected on Check-in (page 1) only — do not re-validate here or errors have no visible field on the Care Plan and block Next: Labs.
+    // Eating / elimination is collected on per-pet Check-in pages only — do not re-validate here or errors have no visible field on the Care Plan and block Next: Labs.
 
     // Same rule as Care Plan UI: hide Optional Vaccines section for QOL Exam unless lab work was said Yes — so don't require vaccine answers in that case
     const appointmentTypeName = (
@@ -5204,15 +5663,41 @@ export default function PublicRoomLoaderForm() {
     if (!validation.valid) {
       setFieldValidationErrors(validation.errors || {});
       const firstErrorKey = Object.keys(validation.errors || {})[0] ?? '';
-      const patientsCount = (data?.patients ?? []).length;
+      const N = (data?.patients ?? []).length;
+      const firstCarePlanPage = N > 0 ? N + 1 : 1;
+      const firstLabPage = N > 0 ? 2 * N + 1 : 1;
+      const lastLabPage = N > 0 ? 3 * N : 1;
       if (firstErrorKey.startsWith('lab_')) {
-        setCurrentPage(2 + patientsCount);
+        const m = firstErrorKey.match(/_(\d+)$/);
+        const idStr = m?.[1];
+        let labIdx = 0;
+        if (idStr != null) {
+          const ix = (data?.patients ?? []).findIndex((p: any) => String(p.patientId ?? p.patient?.id) === idStr);
+          if (ix >= 0) labIdx = ix;
+        }
+        setCurrentPage(N > 0 ? firstLabPage + labIdx : 1);
       } else if (firstErrorKey.includes('ongoingCareInterest')) {
-        setCurrentPage(2 + patientsCount);
+        setCurrentPage(N > 0 ? lastLabPage : 1);
       } else if (firstErrorKey.startsWith('pet')) {
         const petNum = firstErrorKey.match(/pet(\d+)/)?.[1];
-        const page = petNum != null ? 2 + Math.min(Number(petNum), patientsCount - 1) : 2;
-        setCurrentPage(page);
+        const piRaw = petNum != null ? Number(petNum) : 0;
+        const pi = N > 0 ? Math.min(Math.max(0, piRaw), N - 1) : 0;
+        const isCarePlanField =
+          firstErrorKey.includes('outdoorAccess') ||
+          firstErrorKey.includes('labWork') ||
+          firstErrorKey.includes('crLymeBooster') ||
+          firstErrorKey.includes('leptoVaccine') ||
+          firstErrorKey.includes('bordetellaVaccine') ||
+          firstErrorKey.includes('lymeVaccine') ||
+          firstErrorKey.includes('rabiesPreference') ||
+          firstErrorKey.includes('felvVaccine') ||
+          firstErrorKey.includes('optionalVaccines') ||
+          firstErrorKey.includes('_rec_');
+        if (isCarePlanField) {
+          setCurrentPage(firstCarePlanPage + pi);
+        } else {
+          setCurrentPage(pi + 1);
+        }
       }
       return;
     }
@@ -5267,24 +5752,36 @@ export default function PublicRoomLoaderForm() {
       }
       const recs: LabRec[] = [];
 
-      // Build Care Plan display items for this pet (same as Veterinary Care Plan page) to detect unchecked items
-      const carePlanItems: { name: string }[] = [];
-      (patient?.reminders ?? []).forEach((r: any) => {
-        const name = r?.item?.name ?? (r?.reminderText ?? r?.description ?? '');
-        if (r?.item) {
-          carePlanItems.push({ name: name || '' });
-        } else if ((r?.reminderText ?? r?.description ?? '').toLowerCase().match(/visit|consult/)) {
-          carePlanItems.push({ name: r?.reminderText ?? r?.description ?? 'Visit/Consult' });
-        }
-      });
-      (patient?.addedItems ?? []).forEach((item: any) => {
-        carePlanItems.push({ name: item?.name ?? '' });
-      });
-      const carePlanDisplayItems = carePlanItems.filter((item) => !itemNameMatch(item.name, 'trip fee'));
-      const uncheckedOnCarePlan = (...phrases: string[]) =>
-        carePlanDisplayItems.some(
-          (item, i) => itemNameMatch(item.name, ...phrases) && formData[`pet${idx}_rec_${i}`] === false
-        );
+      /** Match care-plan checkbox keys (`r{reminderId}` / `a{id}` + legacy index fallback). */
+      const uncheckedOnCarePlan = (...phrases: string[]) => {
+        const rows: { name: string; stableSuffix: string | null }[] = [];
+        (patient?.reminders ?? []).forEach((r: any) => {
+          if (r?.item) {
+            const name = r?.item?.name ?? '';
+            const suff = r.reminderId != null && String(r.reminderId) !== '' ? `r${r.reminderId}` : null;
+            rows.push({ name: name || '', stableSuffix: suff });
+          } else if ((r?.reminderText ?? r?.description ?? '').toLowerCase().match(/visit|consult/)) {
+            const name = r?.reminderText ?? r?.description ?? 'Visit/Consult';
+            const suff = r.reminderId != null && String(r.reminderId) !== '' ? `r${r.reminderId}` : null;
+            rows.push({ name, stableSuffix: suff });
+          }
+        });
+        (patient?.addedItems ?? []).forEach((item: any) => {
+          const name = item?.name ?? '';
+          const suff = item?.id != null && String(item.id) !== '' ? `a${item.id}` : null;
+          rows.push({ name, stableSuffix: suff });
+        });
+        return rows
+          .filter((row) => !itemNameMatch(row.name, 'trip fee'))
+          .some((row, i) => {
+            if (!itemNameMatch(row.name, ...phrases)) return false;
+            if (row.stableSuffix != null) {
+              const sk = `pet${idx}_rec_${row.stableSuffix}`;
+              if (formData[sk] === false) return true;
+            }
+            return formData[`pet${idx}_rec_${i}`] === false;
+          });
+      };
 
       const speciesParts = [
         patient.species,
@@ -5325,7 +5822,14 @@ export default function PublicRoomLoaderForm() {
         });
       }
 
-      if (age != null && isCat && standard && shouldRecommendSenior && !hadSenior8Mo && age > 8) {
+      if (
+        age != null &&
+        isCat &&
+        standard &&
+        shouldRecommendSenior &&
+        !hadSenior8Mo &&
+        age >= MEMBERSHIP_GOLDEN_MIN_AGE_YEARS
+      ) {
         if (listHasFIVOrFecal) {
           recs.push({
             code: 'FIL45129999',
@@ -5341,7 +5845,14 @@ export default function PublicRoomLoaderForm() {
         }
       }
 
-      if (age != null && isDog && standard && shouldRecommendSenior && !hadSenior8Mo && age > 7) {
+      if (
+        age != null &&
+        isDog &&
+        standard &&
+        shouldRecommendSenior &&
+        !hadSenior8Mo &&
+        age >= MEMBERSHIP_GOLDEN_MIN_AGE_YEARS
+      ) {
         if (listHas4dxOrFecal) {
           recs.push({
             code: 'FIL25659999',
@@ -5395,14 +5906,30 @@ export default function PublicRoomLoaderForm() {
         }
       }
 
-      if (age != null && isCat && standard && shouldRecommendYoungOrEarly && !hadYoungEarly8Mo && age > 1 && age <= 8) {
+      if (
+        age != null &&
+        isCat &&
+        standard &&
+        shouldRecommendYoungOrEarly &&
+        !hadYoungEarly8Mo &&
+        age > 1 &&
+        age < MEMBERSHIP_GOLDEN_MIN_AGE_YEARS
+      ) {
         const msg = listHasFIVOrFecal
           ? "We recommend our Early Detection Panel - Feline (Chem 10, lytes, CBC, Fecal Dx, FeLV/FIV/HWT). Since you already have FIV or fecal on the list, it isn't much more to add on a lot more info."
           : 'We recommend our Early Detection Panel - Feline (Chem 10, lytes, CBC, Fecal Dx, FeLV/FIV/HWT).';
         recs.push({ code: 'FIL48119999', title: 'Early Detection Panel - Feline', message: msg });
       }
 
-      if (age != null && isDog && standard && shouldRecommendYoungOrEarly && !hadYoungEarly8Mo && age > 1 && age <= 7) {
+      if (
+        age != null &&
+        isDog &&
+        standard &&
+        shouldRecommendYoungOrEarly &&
+        !hadYoungEarly8Mo &&
+        age > 1 &&
+        age < MEMBERSHIP_GOLDEN_MIN_AGE_YEARS
+      ) {
         const msg = listHas4dxOrFecal
           ? "We recommend our Early Detection Panel - Canine (Chem 10, lytes, CBC, Fecal Dx, 4Dx). Since you already have 4Dx or fecal on the list, it isn't much more to add on a lot more info."
           : 'We recommend our Early Detection Panel - Canine (Chem 10, lytes, CBC, Fecal Dx, 4Dx).';
@@ -5427,9 +5954,10 @@ export default function PublicRoomLoaderForm() {
     return result;
   }, [patients, appointments, treatmentHistoryByPatientId, formData]);
 
-  /** Single batched effect: fetch all lab-panel items and common items in one Promise.all. Deferred until user reaches Care Plan (page 2) or later to reduce initial load. */
+  /** Single batched effect: fetch all lab-panel items and common items in one Promise.all. Deferred until the first Care Plan page or later. */
   useEffect(() => {
-    if (!data || currentPage < 2) return;
+    const n = data?.patients?.length ?? 0;
+    if (!data || n === 0 || currentPage <= n) return;
     const pid = data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1;
     const appts = data?.appointments ?? [];
     const pts = data?.patients ?? [];
@@ -5612,7 +6140,7 @@ export default function PublicRoomLoaderForm() {
         setCommonItemsFetched({});
       });
     return () => { cancelled = true; };
-  }, [data, labRecommendationsByPet, currentPage]);
+  }, [data, data?.patients?.length, labRecommendationsByPet, currentPage]);
 
   /** Fetch client-adjusted pricing (discounts/membership) for lab and vaccine items per patient. */
   useEffect(() => {
@@ -5723,12 +6251,14 @@ export default function PublicRoomLoaderForm() {
       );
       const seniorCaninePanel = formData[`lab_senior_canine_panel_${patientId}`];
       const seniorFelineTwoPanel = formData[`lab_senior_feline_two_panel_${patientId}`];
+      const speciesLowerPricingPet = publicSpeciesLowerForPet(p, data?.appointments ?? [], idx);
       const needsSharps = publicFormPetNeedsSharpsDisposal({
         petIdx: idx,
         patientId,
         displayItems: displayForSharps,
         formData,
         optedInVaccines: optedInVaccinesByPatientId[patientId],
+        isCatPatient: isCatSpeciesTokens(speciesLowerPricingPet),
         panelLabs: publicFormPanelLabsForSharps(
           patientId,
           formData,
@@ -6136,10 +6666,19 @@ export default function PublicRoomLoaderForm() {
   const arrivalWindowSame = arrivalWindowStart !== '____' && arrivalWindowStart === arrivalWindowEnd;
   const appointmentReason = firstPatient?.appointmentReason || '';
 
-  const labsPageIndex = 2 + patients.length;
-  const isLabsPage = patients.length > 0 && currentPage === labsPageIndex;
-  const summaryPageIndex = 3 + patients.length;
-  const isSummaryPage = patients.length > 0 && currentPage === summaryPageIndex;
+  const nPets = patients.length;
+  const firstCarePlanPage = nPets > 0 ? nPets + 1 : 1;
+  const lastCheckInPage = nPets;
+  const firstLabPage = nPets > 0 ? 2 * nPets + 1 : 1;
+  const lastLabPage = nPets > 0 ? 3 * nPets : 0;
+  const summaryPageIndex = nPets > 0 ? 3 * nPets + 1 : 1;
+  const isCheckInPage = nPets > 0 && currentPage >= 1 && currentPage <= lastCheckInPage;
+  const checkInPetIndex = isCheckInPage ? currentPage - 1 : 0;
+  const isLabsPage = nPets > 0 && currentPage >= firstLabPage && currentPage <= lastLabPage;
+  const labsPetIndex = isLabsPage ? currentPage - firstLabPage : 0;
+  const isSummaryPage = nPets > 0 && currentPage === summaryPageIndex;
+  const isLastLabsPet = isLabsPage && currentPage === lastLabPage;
+  const isFirstLabsPet = isLabsPage && currentPage === firstLabPage;
 
   // Recommended line items per pet (reminders + added), then optional required sharps (code SHARPS) from live rules
   const recommendedItemsByPet: any[][] = patients.map((patient: any, petIdx: number) => {
@@ -6173,7 +6712,9 @@ export default function PublicRoomLoaderForm() {
       patientId,
       formData,
       petIdx,
-      displayRows: petItems,
+      mergedRowsBeforeDuplicateFilter: petItems,
+      isDog: isDogPetItems,
+      isCat: isCatPetItems,
     });
     petItems = filterBundledDuplicateLabLines(petItems, isDogPetItems, isCatPetItems, bundledActive);
 
@@ -6203,12 +6744,15 @@ export default function PublicRoomLoaderForm() {
     );
     const seniorCaninePanel = formData[`lab_senior_canine_panel_${patientId}`];
     const seniorFelineTwoPanel = formData[`lab_senior_feline_two_panel_${patientId}`];
+    const speciesLowerSharps = publicSpeciesLowerForPet(patient, appointments, petIdx);
+    const isCatPatientSharps = isCatSpeciesTokens(speciesLowerSharps);
     const needsSharps = publicFormPetNeedsSharpsDisposal({
       petIdx,
       patientId,
       displayItems: displayForSharps,
       formData,
       optedInVaccines: optedInVaccinesByPatientId[patientId],
+      isCatPatient: isCatPatientSharps,
       panelLabs: publicFormPanelLabsForSharps(
         patientId,
         formData,
@@ -6238,16 +6782,17 @@ export default function PublicRoomLoaderForm() {
       code: getSearchItemCode(sharpsDisposalItem) ?? 'SHARPS',
     };
     sharpsRow.searchableItem = sharpsId != null ? sharpsDisposalItem : null;
+    sharpsRow._publicRecKeySuffix = sharpsId != null ? `sharps_${sharpsId}` : 'sharps';
     return [...petItems, sharpsRow];
   });
 
-  // Care plan: one page per pet. Page 1 = check-in; Page 2 = care plan pet 0; Page 2 + i = care plan pet i.
-  const isCarePlanPage = patients.length > 0 && currentPage >= 2 && currentPage <= 1 + patients.length;
-  const carePlanPetIndex = isCarePlanPage ? currentPage - 2 : 0;
+  // Flow: pages 1..N check-in, N+1..2N care plan, 2N+1..3N labs, 3N+1 summary.
+  const isCarePlanPage = nPets > 0 && currentPage >= firstCarePlanPage && currentPage <= 2 * nPets;
+  const carePlanPetIndex = isCarePlanPage ? currentPage - firstCarePlanPage : 0;
   const currentCarePlanPatient = isCarePlanPage ? patients[carePlanPetIndex] : null;
   const currentPetRecommendedItems = currentCarePlanPatient != null ? recommendedItemsByPet[carePlanPetIndex] ?? [] : [];
-  const isLastCarePlanPet = isCarePlanPage && currentPage === 1 + patients.length;
-  const isFirstCarePlanPet = currentPage === 2;
+  const isLastCarePlanPet = isCarePlanPage && currentPage === 2 * nPets;
+  const isFirstCarePlanPet = isCarePlanPage && currentPage === firstCarePlanPage;
 
   // Check if cat and age conditions
   const firstPatientSpeciesLower = [firstPatient?.species, firstPatient?.speciesEntity?.name]
@@ -6275,6 +6820,28 @@ export default function PublicRoomLoaderForm() {
   };
   const readOnly = formAlreadySubmitted;
 
+  const checkInPatientForPage = isCheckInPage ? patients[checkInPetIndex] : null;
+  const checkInApptForPage =
+    checkInPatientForPage != null
+      ? getAppointmentForRoomLoaderPet(appointments, checkInPatientForPage, checkInPetIndex)
+      : null;
+  const checkInDoctorName =
+    checkInApptForPage?.primaryProvider?.firstName && checkInApptForPage?.primaryProvider?.lastName
+      ? `${checkInApptForPage.primaryProvider.title || 'Dr.'} ${checkInApptForPage.primaryProvider.firstName} ${checkInApptForPage.primaryProvider.lastName}`
+      : doctorName;
+  const checkInPetName = checkInPatientForPage?.patientName || `Pet ${checkInPetIndex + 1}`;
+  const checkInAppointmentDate = checkInApptForPage?.appointmentStart
+    ? formatDate(checkInApptForPage.appointmentStart)
+    : appointmentDate;
+  const checkInAw = checkInPatientForPage?.arrivalWindow;
+  const checkInArrivalStartIso = checkInAw?.start ?? checkInAw?.windowStartIso;
+  const checkInArrivalEndIso = checkInAw?.end ?? checkInAw?.windowEndIso;
+  const checkInArrivalStart = checkInArrivalStartIso
+    ? formatTime(checkInArrivalStartIso)
+    : (checkInAw?.windowStartLocal ?? '____');
+  const checkInArrivalEnd = checkInArrivalEndIso ? formatTime(checkInArrivalEndIso) : (checkInAw?.windowEndLocal ?? '____');
+  const checkInArrivalSame = checkInArrivalStart !== '____' && checkInArrivalStart === checkInArrivalEnd;
+
   return (
     <div className="public-room-loader">
       {readOnly && (
@@ -6294,11 +6861,13 @@ export default function PublicRoomLoaderForm() {
           This form has already been submitted. Your answers are shown for your records only. No changes can be saved.
         </div>
       )}
-      {/* Page 1 - Check-in Form */}
-      {currentPage === 1 && (
+      {/* Check-in — one page per pet */}
+      {isCheckInPage && checkInPatientForPage != null && (
         <div className="public-room-loader-form-page">
           <div className="public-room-loader-page-label" style={{ position: 'absolute', top: '14px', right: '14px', fontSize: '13px', color: '#666' }}>
-            PAGE 1
+            {nPets > 1
+              ? `Check-in — ${checkInPetName} (${checkInPetIndex + 1} of ${nPets})`
+              : `PAGE ${currentPage}`}
           </div>
 
           <div style={{ marginBottom: '10px', paddingBottom: '12px', borderBottom: '3px solid #e0e0e0' }}>
@@ -6306,17 +6875,20 @@ export default function PublicRoomLoaderForm() {
               Time to Check-in for your Appointment
             </h1>
             <p style={{ fontSize: '16px', lineHeight: '1.42', color: '#555', marginTop: '7px', marginBottom: '8px' }}>
-              {doctorName} is looking forward to {petNames}'s appointment on {appointmentDate}.
+              {checkInDoctorName} is looking forward to {checkInPetName}&apos;s appointment on {checkInAppointmentDate}.
             </p>
             <p style={{ fontSize: '16px', lineHeight: '1.42', color: '#555', marginBottom: '8px' }}>
-              Window of arrival: {arrivalWindowSame ? arrivalWindowStart : `${arrivalWindowStart} – ${arrivalWindowEnd}`}
+              Window of arrival:{' '}
+              {checkInArrivalSame ? checkInArrivalStart : `${checkInArrivalStart} – ${checkInArrivalEnd}`}
             </p>
             <p style={{ fontSize: '16px', lineHeight: '1.42', color: '#555', marginBottom: '0' }}>
-              To best prepare for your appointment, please answer the questions below. We'll give you an estimate of costs after you answer some questions.
+              To best prepare for your appointment, please answer the questions below. We&apos;ll give you an estimate of costs after you answer some questions.
             </p>
           </div>
 
-          {patients.map((patient: any, petIdx: number) => {
+          {(() => {
+            const patient: any = checkInPatientForPage;
+            const petIdx = checkInPetIndex;
             const petKey = `pet${petIdx}`;
             const petName = patient.patientName || `Pet ${petIdx + 1}`;
             const apptRowCheckin = getAppointmentForRoomLoaderPet(appointments, patient, petIdx);
@@ -6535,19 +7107,23 @@ export default function PublicRoomLoaderForm() {
                 )}
               </div>
             );
-          })}
+          })()}
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '18px', paddingTop: '12px', borderTop: '2px solid #e0e0e0' }}>
             <button
               type="button"
               onClick={() => {
-                const v = validateRequiredForPage1();
+                const v = validateRequiredForCheckInPet(checkInPetIndex);
                 if (!v.valid) {
                   setFieldValidationErrors(v.errors || {});
                   return;
                 }
                 setFieldValidationErrors({});
-                setCurrentPage(2);
+                if (checkInPetIndex < nPets - 1) {
+                  setCurrentPage(currentPage + 1);
+                } else {
+                  setCurrentPage(firstCarePlanPage);
+                }
               }}
               style={{
                 padding: '12px 28px',
@@ -6560,7 +7136,7 @@ export default function PublicRoomLoaderForm() {
                 cursor: 'pointer',
               }}
             >
-              Continue to Care Plan →
+              {nPets > 1 && checkInPetIndex < nPets - 1 ? 'Next pet →' : 'Continue to Care Plan →'}
             </button>
           </div>
         </div>
@@ -6572,7 +7148,9 @@ export default function PublicRoomLoaderForm() {
           position: 'relative',
         }}>
           <div style={{ position: 'absolute', top: '14px', right: '14px', fontSize: '13px', color: '#666' }}>
-            {patients.length > 1 ? `Care Plan — ${currentCarePlanPatient.patientName || `Pet ${carePlanPetIndex + 1}`} (${carePlanPetIndex + 1} of ${patients.length})` : 'PAGE 2'}
+            {patients.length > 1
+              ? `Care Plan — ${currentCarePlanPatient.patientName || `Pet ${carePlanPetIndex + 1}`} (${carePlanPetIndex + 1} of ${patients.length})`
+              : `PAGE ${firstCarePlanPage}`}
           </div>
 
           <div style={{ marginBottom: '14px', paddingBottom: '9px', borderBottom: '3px solid #e0e0e0' }}>
@@ -6610,11 +7188,15 @@ export default function PublicRoomLoaderForm() {
               const seniorFelineYes = currentCarePlanPatient != null && formData[`lab_senior_feline_${currentCarePlanPatient.patientId ?? carePlanPetIndex}`] === 'yes';
               const seniorCanineExtended = currentCarePlanPatient != null && formData[`lab_senior_canine_panel_${currentCarePlanPatient.patientId ?? carePlanPetIndex}`] === 'extended';
               const seniorFelineTwoPanelExtended = currentCarePlanPatient != null && formData[`lab_senior_feline_two_panel_${currentCarePlanPatient.patientId ?? carePlanPetIndex}`] === 'extended';
+              const speciesLowerCp = publicSpeciesLowerForPet(currentCarePlanPatient, appointments, carePlanPetIndex);
+              const isCatCp = isCatSpeciesTokens(speciesLowerCp);
               const fecalReplacedBy: string[] = [];
               if (earlyDetectionYes || earlyDetectionCanineYes) fecalReplacedBy.push('Early Detection Panel');
-              if (seniorFelineYes) fecalReplacedBy.push('Senior Screen Feline');
+              if (isCatCp && seniorFelineYes) fecalReplacedBy.push('Senior Screen Feline');
               if (seniorCanineExtended || seniorFelineTwoPanelExtended) fecalReplacedBy.push('Extended Comprehensive Panel');
-              const fourDxReplacedBy: string[] = seniorCanineExtended || seniorFelineTwoPanelExtended ? ['Extended Comprehensive Panel'] : [];
+              const fourDxReplacedBy: string[] = [];
+              if (earlyDetectionYes || earlyDetectionCanineYes) fourDxReplacedBy.push('Early Detection Panel');
+              if (seniorCanineExtended || seniorFelineTwoPanelExtended) fourDxReplacedBy.push('Extended Comprehensive Panel');
               if (displayItems.length === 0) {
                 return <p style={{ color: '#666', fontStyle: 'italic', margin: 0 }}>No recommended items at this time.</p>;
               }
@@ -6624,19 +7206,9 @@ export default function PublicRoomLoaderForm() {
                 if (t === 'inventory') return 'inventory';
                 return 'procedure';
               };
-              const is4dxItem = (it: any) => hasPhrase(it, '4dx') || hasPhrase(it, 'heartworm');
-              // Sort so uncheckable items (visit/consult, fecal-replaced, 4dx-replaced) appear on top
-              const sortedWithOriginalIdx = displayItems
-                .map((item, originalIdx) => ({ item, originalIdx }))
-                .sort((a, b) => {
-                  const aReplaced = (hasPhrase(a.item, 'fecal') && fecalReplacedBy.length > 0) || (is4dxItem(a.item) && fourDxReplacedBy.length > 0);
-                  const bReplaced = (hasPhrase(b.item, 'fecal') && fecalReplacedBy.length > 0) || (is4dxItem(b.item) && fourDxReplacedBy.length > 0);
-                  const aUncheckable = hasPhrase(a.item, 'visit') || hasPhrase(a.item, 'consult') || aReplaced;
-                  const bUncheckable = hasPhrase(b.item, 'visit') || hasPhrase(b.item, 'consult') || bReplaced;
-                  if (aUncheckable && !bUncheckable) return -1;
-                  if (!aUncheckable && bUncheckable) return 1;
-                  return 0;
-                });
+              // Keep API/reminder order stable: do not re-sort when Early Detection / senior panel toggles
+              // change which rows are "replaced" (fecal/4Dx), or rows would jump position after unchecking.
+              const sortedWithOriginalIdx = displayItems.map((item, originalIdx) => ({ item, originalIdx }));
               const procedureItems = sortedWithOriginalIdx.filter(({ item }) => itemCategory(item) === 'procedure');
               const labItemsNonTriple = sortedWithOriginalIdx.filter(
                 ({ item }) => itemCategory(item) === 'lab' && !bundledLineLooksLikeFelineTriple(item)
@@ -6647,20 +7219,27 @@ export default function PublicRoomLoaderForm() {
               const inventoryItems = sortedWithOriginalIdx.filter(({ item }) => itemCategory(item) === 'inventory');
               const outdoorYesForTripleScroll =
                 formData[`pet${carePlanPetIndex}_outdoorAccess`] === 'yes' && labItemsFelineTriple.length > 0;
+              const isDogCp =
+                isDogSpeciesTokens(speciesLowerCp) ||
+                (speciesLowerCp.trim() === '' && !isCatCp);
               const CarePlanSeparator = () => <div style={{ height: '1px', backgroundColor: '#e0e0e0', margin: '6px 0' }} />;
               const renderRow = ({ item, originalIdx }: { item: any; originalIdx: number }, displayIdx: number, groupLength: number) => {
                 const isVisitOrConsult = hasPhrase(item, 'visit') || hasPhrase(item, 'consult');
-                const isFecalReplacedForItem = hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0;
-                const is4dxReplacedForItem = is4dxItem(item) && fourDxReplacedBy.length > 0;
+                const isFecalReplacedForItem = bundledLineLooksLikeFecal(item) && fecalReplacedBy.length > 0;
+                const is4dxReplacedForItem = bundledLineLooksLikePanelInfectiousCompanion(item, isCatCp) && fourDxReplacedBy.length > 0;
                 const isReplacedForItem = isFecalReplacedForItem || is4dxReplacedForItem;
-                const recKey = `pet${carePlanPetIndex}_rec_${originalIdx}`;
+                const recKey = publicFormCarePlanRecKey(carePlanPetIndex, item, originalIdx);
                 const isChecked = isReplacedForItem
                   ? false
-                  : isVisitOrConsult || formData[recKey] !== false;
+                  : isVisitOrConsult || publicFormCarePlanRecRowChecked(formData, carePlanPetIndex, item, originalIdx);
                 const disabled = isVisitOrConsult || isReplacedForItem;
                 const replacedByLabel = isFecalReplacedForItem ? fecalReplacedBy.join(' or ') : is4dxReplacedForItem ? fourDxReplacedBy.join(' or ') : '';
                 const lineCode = getCodeFromDisplayItem(item);
-                const uncheckRecInfo = !isChecked && !disabled ? getVaccineRecommendationUncheckInfo(lineCode) : null;
+                const carePlanPetName =
+                  currentCarePlanPatient?.patientName || `Pet ${carePlanPetIndex + 1}`;
+                const uncheckRecInfo = !isChecked && !disabled
+                  ? getVaccineRecommendationUncheckInfo(lineCode, item.name, carePlanPetName)
+                  : null;
                 const panelDeclineBlurb = item._panelDeclineBlurb as { title: string; body: string } | undefined;
                 return (
                   <div
@@ -6684,7 +7263,17 @@ export default function PublicRoomLoaderForm() {
                         readOnly={disabled}
                         style={{ marginRight: '12px', width: '18px', height: '18px', cursor: disabled ? 'default' : 'pointer' }}
                         onChange={() => {
-                          if (!disabled) handleInputChange(recKey, !isChecked);
+                          if (!disabled) {
+                            const next = !isChecked;
+                            handleInputChange(recKey, next);
+                            const pid = currentCarePlanPatient?.patientId ?? carePlanPetIndex;
+                            if (isDogCp && rowIsCanineBundledSeniorScreenVisitLine(item)) {
+                              handleInputChange(`summary_decline_canine_senior_visit_row_${pid}`, false);
+                            }
+                            if (isCatCp && rowIsFelineBundledSeniorScreenVisitLine(item)) {
+                              handleInputChange(`summary_decline_feline_senior_visit_row_${pid}`, false);
+                            }
+                          }
                         }}
                       />
                       <span
@@ -7236,7 +7825,7 @@ export default function PublicRoomLoaderForm() {
             <button
               type="button"
               className="public-room-loader-btn"
-              onClick={() => setCurrentPage(isFirstCarePlanPet ? 1 : currentPage - 1)}
+              onClick={() => setCurrentPage(isFirstCarePlanPet ? lastCheckInPage : currentPage - 1)}
               style={{
                 backgroundColor: '#fff',
                 color: '#333',
@@ -7258,7 +7847,7 @@ export default function PublicRoomLoaderForm() {
                     return;
                   }
                   setFieldValidationErrors({});
-                  setCurrentPage(labsPageIndex);
+                  setCurrentPage(firstLabPage);
                 }}
                 style={{
                   backgroundColor: '#0d6efd',
@@ -7297,22 +7886,33 @@ export default function PublicRoomLoaderForm() {
         </div>
       )}
 
-      {/* Labs We Recommend */}
+      {/* Labs We Recommend — one page per pet */}
       {isLabsPage && (
-        <div className="public-room-loader-form-page">
+        <div className="public-room-loader-form-page" style={{ position: 'relative' }}>
+          <div style={{ position: 'absolute', top: '14px', right: '14px', fontSize: '13px', color: '#666' }}>
+            {nPets > 1
+              ? `Labs — ${labRecommendationsByPet[labsPetIndex]?.patientName ?? `Pet ${labsPetIndex + 1}`} (${labsPetIndex + 1} of ${nPets})`
+              : `PAGE ${currentPage}`}
+          </div>
           <div style={{ marginBottom: '14px', paddingBottom: '9px', borderBottom: '3px solid #e0e0e0' }}>
             <h1 style={{ margin: 0, color: '#212529', fontSize: '24px', fontWeight: 700 }}>Labs We Recommend</h1>
             <p style={{ fontSize: '16px', lineHeight: '1.42', color: '#555', marginTop: '10px', marginBottom: 0 }}>
-              Based on your pet's age, species, and today's visit, here are lab panels we suggest.
+              {buildLabsWeRecommendIntro(formData, patients)}
             </p>
           </div>
-          {Object.keys(fieldValidationErrors).some((k) => k.startsWith('lab_') || k === 'ongoingCareInterest') && (
+          {Object.keys(fieldValidationErrors).some(
+            (k) =>
+              k.startsWith('lab_') || (isLastLabsPet && k === 'ongoingCareInterest')
+          ) && (
             <p style={{ marginBottom: '10px', padding: '12px', backgroundColor: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: '6px', color: '#721c24', fontSize: '14px' }}>
               Please complete all required lab questions below before continuing.
             </p>
           )}
 
-          {labRecommendationsByPet.map((entry, idx) => {
+          {(() => {
+            const idx = labsPetIndex;
+            const entry = labRecommendationsByPet[idx];
+            if (!entry) return null;
             const labSectionPatient =
               patients.find((p: any) => String(p.patientId ?? p.patient?.id ?? '') === String(entry.patientId ?? '')) ??
               patients[idx];
@@ -7331,10 +7931,8 @@ export default function PublicRoomLoaderForm() {
                 <h3 style={{ margin: 0, color: '#212529', fontSize: '18px', fontWeight: 700 }}>{entry.patientName}</h3>
                 <RoomLoaderPatientMemberBadge patient={labSectionPatient} appointments={appointments} />
               </div>
-              {entry.recommendations.length === 0 ? (
-                <p style={{ margin: 0, color: '#666', fontStyle: 'italic' }}>We have no further specific lab recommendations at this time for this visit.</p>
-              ) : (
-                entry.recommendations.map((rec, rIdx) => {
+              {(() => {
+                const labRecBlocks = entry.recommendations.map((rec, rIdx) => {
                   const isEarlyDetectionFeline = rec.code === 'FIL48119999';
                   const isEarlyDetectionCanine = rec.code === 'FIL48719999';
                   const petName = entry.patientName || 'your pet';
@@ -7344,27 +7942,11 @@ export default function PublicRoomLoaderForm() {
                   const earlyDetValue = formData[earlyDetKey];
                   const earlyDetCanineKey = `lab_early_detection_canine_${labIdStr}`;
                   const earlyDetCanineValue = formData[earlyDetCanineKey];
-                  // For "replace fecal" copy and price diff: find this pet's fecal reminder
+                  // Care-plan line items (same list as Veterinary Care Plan) — detect fecal / 4Dx by row, not reminders-only
                   const patientForEntry = patients.find((p: any) => String(p.patientId ?? p.patient?.id ?? '') === String(entry.patientId ?? '')) ?? patients[idx];
-                  const fecalReminder = patientForEntry?.reminders?.find((r: any) => ((r?.item?.name ?? '').toLowerCase().includes('fecal')));
-                  const fecalPrice = fecalReminder?.item?.price != null ? Number(fecalReminder.item.price) : null;
-                  const panelPrice = getClientAdjustedPrice(patientIdForPricing, earlyDetectionFelineItem) ?? getSearchItemPrice(earlyDetectionFelineItem);
-                  const priceDiff = panelPrice != null && fecalPrice != null ? panelPrice - fecalPrice : null;
-                  const earlyDetCaninePanelPrice = getClientAdjustedPrice(patientIdForPricing, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem);
-                  const earlyDetCaninePriceDiff = earlyDetCaninePanelPrice != null && fecalPrice != null ? earlyDetCaninePanelPrice - fecalPrice : null;
-                  const hasFecalReminder = !!fecalReminder;
-                  // When user says Yes, uncheck the fecal item on Care Plan (recKey for this pet's fecal in displayItems)
                   const nameLower = (n: string | undefined) => (n ?? '').toLowerCase();
                   const hasPhrase = (item: { name?: string }, phrase: string) => nameLower(item.name).includes(phrase);
                   const entryDisplayItems = (recommendedItemsByPet[idx] ?? []).filter((item: any) => !hasPhrase(item, 'trip fee') && !hasPhrase(item, 'sharps'));
-                  const fecalDisplayIdx = entryDisplayItems.findIndex((item: any) => hasPhrase(item, 'fecal'));
-                  const fecalRecKey = fecalDisplayIdx >= 0 ? `pet${idx}_rec_${fecalDisplayIdx}` : null;
-                  const fourDxReminder = patientForEntry?.reminders?.find((r: any) => hasPhrase(r?.item, '4dx') || hasPhrase(r?.item, 'heartworm'));
-                  const fourDxPrice = fourDxReminder?.item?.price != null ? Number(fourDxReminder.item.price) : null;
-                  const fourDxDisplayIdx = entryDisplayItems.findIndex((item: any) => hasPhrase(item, '4dx') || hasPhrase(item, 'heartworm'));
-                  const fourDxRecKey = fourDxDisplayIdx >= 0 ? `pet${idx}_rec_${fourDxDisplayIdx}` : null;
-                  const has4dxReminder = !!fourDxReminder;
-
                   const apptForEntry = getAppointmentForRoomLoaderPet(appointments, patientForEntry, idx);
                   const apptPatientEntry = apptForEntry?.patient;
                   const speciesPartsEntry = [
@@ -7379,6 +7961,48 @@ export default function PublicRoomLoaderForm() {
                   const isCatEntry = isCatSpeciesTokens(speciesLowerEntry);
                   const isDogEntry =
                     isDogSpeciesTokens(speciesLowerEntry) || (speciesLowerEntry.trim() === '' && !isCatEntry);
+                  const unitPriceFromDisplayRow = (row: any): number | null => {
+                    const p = getClientAdjustedPrice(patientIdForPricing, row.searchableItem) ?? Number(row.price);
+                    return p != null && !Number.isNaN(Number(p)) ? Number(p) : null;
+                  };
+                  const fecalDisplayRow = entryDisplayItems.find((item: any) => bundledLineLooksLikeFecal(item));
+                  const fecalReminder = patientForEntry?.reminders?.find((r: any) => {
+                    const n = (r?.item?.name ?? '').toLowerCase();
+                    const rt = (r?.reminderText ?? r?.description ?? '').toLowerCase();
+                    return (
+                      n.includes('fecal') ||
+                      n.includes('stool parasite') ||
+                      (n.includes('stool') && n.includes('parasite')) ||
+                      (rt.includes('stool') && (rt.includes('parasite') || rt.includes('ova'))) ||
+                      rt.includes('fecal')
+                    );
+                  });
+                  const hasFecalReminder = !!fecalDisplayRow || !!fecalReminder;
+                  const fecalPrice =
+                    fecalDisplayRow != null
+                      ? unitPriceFromDisplayRow(fecalDisplayRow)
+                      : fecalReminder?.item?.price != null
+                        ? Number(fecalReminder.item.price)
+                        : null;
+                  const fecalLineName = (fecalDisplayRow?.name ?? fecalReminder?.item?.name)?.trim() || undefined;
+                  const panelPrice = getClientAdjustedPrice(patientIdForPricing, earlyDetectionFelineItem) ?? getSearchItemPrice(earlyDetectionFelineItem);
+                  const priceDiff = panelPrice != null && fecalPrice != null ? panelPrice - fecalPrice : null;
+                  const fourDxDisplayRow = isDogEntry
+                    ? entryDisplayItems.find((item: any) => bundledLineLooksLikeCanine4dx(item))
+                    : undefined;
+                  const fourDxReminder = patientForEntry?.reminders?.find((r: any) => {
+                    if (hasPhrase(r?.item, '4dx') || hasPhrase(r?.item, 'heartworm')) return true;
+                    const rt = `${r?.reminderText ?? ''} ${r?.description ?? ''}`.toLowerCase();
+                    return rt.includes('4dx') || (rt.includes('heartworm') && rt.includes('tick'));
+                  });
+                  const has4dxReminder = !!fourDxDisplayRow || !!fourDxReminder;
+                  const fourDxPrice =
+                    fourDxDisplayRow != null
+                      ? unitPriceFromDisplayRow(fourDxDisplayRow)
+                      : fourDxReminder?.item?.price != null
+                        ? Number(fourDxReminder.item.price)
+                        : null;
+                  const fourDxLineName = (fourDxDisplayRow?.name ?? fourDxReminder?.item?.name)?.trim() || undefined;
                   // Show full Senior Screen Canine for generic "lab work yes" (8659999) too—when crLyme is Annual we may only get 8659999, so details would otherwise be missing.
                   const isSeniorCanine = (rec.code === 'FIL25659999' || rec.code === 'FIL8659999' || rec.code === '8659999') && isDogEntry;
                   const hasLabWorkYesSeniorCanine = entry.recommendations.some((r: any) => r.code === '8659999');
@@ -7469,7 +8093,6 @@ export default function PublicRoomLoaderForm() {
                               onChange={(e) => {
                                 const val = e.target.value;
                                 handleInputChange(earlyDetKey, val);
-                                if (val === 'yes' && fecalRecKey != null) handleInputChange(fecalRecKey, false);
                               }}
                               style={{ marginRight: '8px', cursor: 'pointer' }}
                             />
@@ -7496,9 +8119,14 @@ export default function PublicRoomLoaderForm() {
                               Great!<br /><br />
                               <strong>NOTE:</strong> Please try to have a stool sample (non-frozen, fresher is better!) ready for us when we arrive!
                             </p>
-                            {hasFecalReminder && fecalReminder?.item?.name && (
+                            {hasFecalReminder && fecalLineName && (
                               <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
-                                Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalReminder.item.name}</span> (included in Early Detection Panel)
+                                Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalLineName}</span> (included in Early Detection Panel)
+                              </p>
+                            )}
+                            {has4dxReminder && fourDxLineName && (
+                              <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
+                                Replacing: <span style={{ textDecoration: 'line-through' }}>{fourDxLineName}</span> (included in Early Detection Panel)
                               </p>
                             )}
                           </>
@@ -7508,13 +8136,22 @@ export default function PublicRoomLoaderForm() {
                   }
 
                   if (isEarlyDetectionCanine) {
-                    const fourDxReminder = patientForEntry?.reminders?.find((r: any) => hasPhrase(r?.item, '4dx') || hasPhrase(r?.item, 'heartworm'));
-                    const has4dxReminder = !!fourDxReminder;
                     const testsAlreadyRecommended: string[] = [];
                     if (hasFecalReminder) testsAlreadyRecommended.push('fecal test');
                     if (has4dxReminder) testsAlreadyRecommended.push('4Dx');
                     const hasTestsAlreadyRecommended = testsAlreadyRecommended.length > 0;
                     const earlyDetCanineCost = getClientAdjustedPrice(patientIdForPricing, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem);
+                    let earlyDetCanineIncremental: number | null = null;
+                    if (earlyDetCanineCost != null && !Number.isNaN(Number(earlyDetCanineCost))) {
+                      const panel = Number(earlyDetCanineCost);
+                      if (hasFecalReminder && has4dxReminder && fecalPrice != null && fourDxPrice != null) {
+                        earlyDetCanineIncremental = panel - fecalPrice - fourDxPrice;
+                      } else if (hasFecalReminder && fecalPrice != null) {
+                        earlyDetCanineIncremental = panel - fecalPrice;
+                      } else if (has4dxReminder && fourDxPrice != null) {
+                        earlyDetCanineIncremental = panel - fourDxPrice;
+                      }
+                    }
                     return (
                       <div key={rIdx} style={{ marginBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, paddingBottom: rIdx < entry.recommendations.length - 1 ? '16px' : 0, borderBottom: rIdx < entry.recommendations.length - 1 ? '1px solid #e0e0e0' : 'none' }}>
                         <div style={{ fontWeight: 600, color: '#333', fontSize: '18px', marginBottom: '8px', textDecoration: 'underline' }}>Early Detection Screening for {petName}</div>
@@ -7546,11 +8183,11 @@ export default function PublicRoomLoaderForm() {
                         {hasTestsAlreadyRecommended && (
                           <p style={{ fontSize: '14px', color: '#555', marginBottom: '8px' }}>
                             This bundled panel includes the {testsAlreadyRecommended.join(' and ')} already recommended for today&apos;s visit and provides a more complete picture of {petName}&apos;s health
-                            {hasFecalReminder && earlyDetCaninePriceDiff != null && !Number.isNaN(earlyDetCaninePriceDiff)
-                              ? earlyDetCaninePriceDiff > 0
-                                ? <> for <strong>${earlyDetCaninePriceDiff.toFixed(2)}</strong> more.</>
-                                : earlyDetCaninePriceDiff < 0
-                                  ? <> and saves you <strong>${(-earlyDetCaninePriceDiff).toFixed(2)}</strong>.</>
+                            {earlyDetCanineIncremental != null && !Number.isNaN(earlyDetCanineIncremental)
+                              ? earlyDetCanineIncremental > 0
+                                ? <> for <strong>${earlyDetCanineIncremental.toFixed(2)}</strong> more.</>
+                                : earlyDetCanineIncremental < 0
+                                  ? <> and saves you <strong>${(-earlyDetCanineIncremental).toFixed(2)}</strong>.</>
                                   : ' at no extra cost.'
                               : '.'}
                           </p>
@@ -7569,7 +8206,6 @@ export default function PublicRoomLoaderForm() {
                               onChange={(e) => {
                                 const val = e.target.value;
                                 handleInputChange(earlyDetCanineKey, val);
-                                if (val === 'yes' && fecalRecKey != null) handleInputChange(fecalRecKey, false);
                               }}
                               style={{ marginRight: '8px', cursor: 'pointer' }}
                             />
@@ -7596,9 +8232,14 @@ export default function PublicRoomLoaderForm() {
                               Great!<br /><br />
                               <strong>NOTE:</strong> Please try to have a stool sample (non-frozen, fresher is better!) ready for us when we arrive!
                             </p>
-                            {hasFecalReminder && fecalReminder?.item?.name && (
+                            {hasFecalReminder && fecalLineName && (
                               <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
-                                Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalReminder.item.name}</span> (included in Early Detection Panel)
+                                Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalLineName}</span> (included in Early Detection Panel)
+                              </p>
+                            )}
+                            {has4dxReminder && fourDxLineName && (
+                              <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
+                                Replacing: <span style={{ textDecoration: 'line-through' }}>{fourDxLineName}</span> (included in Early Detection Panel)
                               </p>
                             )}
                           </>
@@ -7649,9 +8290,20 @@ export default function PublicRoomLoaderForm() {
                         </ul>
                         {(hasFecalReminder || has4dxReminder) && (
                           <p style={{ fontSize: '14px', color: '#555', marginBottom: '8px' }}>
-                            The Extended Comprehensive Panel includes 4Dx and fecal, so it would replace {has4dxReminder && hasFecalReminder ? 'the 4Dx and fecal' : has4dxReminder ? 'the 4Dx' : 'the fecal'} already on your care plan.
+                            The Extended Comprehensive Panel includes 4Dx and fecal, so it would replace{' '}
+                            {has4dxReminder && hasFecalReminder
+                              ? 'the 4Dx and Fecal'
+                              : has4dxReminder
+                                ? 'the 4Dx'
+                                : 'the fecal'}{' '}
+                            already on your care plan.
                             {(() => {
-                              const diff = has4dxReminder && hasFecalReminder ? extendedMinusBoth : has4dxReminder ? extendedMinus4dx : extendedMinusFecal;
+                              const diff =
+                                has4dxReminder && hasFecalReminder
+                                  ? extendedMinusBoth
+                                  : has4dxReminder
+                                    ? extendedMinus4dx
+                                    : extendedMinusFecal;
                               return diff != null && !Number.isNaN(diff)
                                 ? diff > 0
                                   ? <> It costs <strong>${diff.toFixed(2)}</strong> more.</>
@@ -7663,7 +8315,17 @@ export default function PublicRoomLoaderForm() {
                           </p>
                         )}
                         <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: '10px' }}>
-                          Conducting annual lab work aligns with the proactive essence of our philosophy by enabling early detection and tailored care strategies, ensuring optimal health outcomes for {petName}.
+                          {labWorkYesForEntry ? (
+                            <>
+                              Lab work can help identify underlying causes of {petName}&apos;s symptoms and guide the doctor in choosing the most
+                              appropriate treatment plan.
+                            </>
+                          ) : (
+                            <>
+                              Conducting annual lab work aligns with the proactive essence of our philosophy by enabling early detection and
+                              tailored care strategies, ensuring optimal health outcomes for {petName}.
+                            </>
+                          )}
                         </p>
                         <p style={{ fontSize: '15px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Which panel would you like {petName} to receive?</p>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -7686,8 +8348,6 @@ export default function PublicRoomLoaderForm() {
                               checked={seniorPanelValue === 'extended'}
                               onChange={() => {
                                 handleInputChange(seniorPanelKey, 'extended');
-                                if (fecalRecKey != null) handleInputChange(fecalRecKey, false);
-                                if (fourDxRecKey != null) handleInputChange(fourDxRecKey, false);
                               }}
                               style={{ marginRight: '8px', cursor: 'pointer' }}
                             />
@@ -7720,14 +8380,14 @@ export default function PublicRoomLoaderForm() {
                         {fieldValidationErrors[seniorPanelKey] && (
                           <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[seniorPanelKey]}</p>
                         )}
-                        {seniorPanelValue === 'extended' && hasFecalReminder && fecalReminder?.item?.name && (
+                        {seniorPanelValue === 'extended' && hasFecalReminder && fecalLineName && (
                           <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
-                            Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalReminder.item.name}</span> (included in Extended Comprehensive Panel)
+                            Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalLineName}</span> (included in Extended Comprehensive Panel)
                           </p>
                         )}
-                        {seniorPanelValue === 'extended' && has4dxReminder && fourDxReminder?.item?.name && (
+                        {seniorPanelValue === 'extended' && has4dxReminder && fourDxLineName && (
                           <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
-                            Replacing: <span style={{ textDecoration: 'line-through' }}>{fourDxReminder.item.name}</span> (included in Extended Comprehensive Panel)
+                            Replacing: <span style={{ textDecoration: 'line-through' }}>{fourDxLineName}</span> (included in Extended Comprehensive Panel)
                           </p>
                         )}
                         {seniorPanelValue === 'extended' && (
@@ -7786,7 +8446,8 @@ export default function PublicRoomLoaderForm() {
                           </p>
                         )}
                         <p style={{ fontSize: '14px', color: '#555', lineHeight: 1.42, marginBottom: '10px' }}>
-                          Conducting annual lab work aligns with the proactive essence of our philosophy by enabling early detection and tailored care strategies, ensuring optimal health outcomes for {petName}.
+                          Lab work can help identify underlying causes of {petName}&apos;s symptoms and guide the doctor in choosing the most
+                          appropriate treatment plan.
                         </p>
                         <p style={{ fontSize: '15px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Which panel would you like {petName} to receive?</p>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -7809,7 +8470,6 @@ export default function PublicRoomLoaderForm() {
                               checked={seniorFelineTwoPanelValue === 'extended'}
                               onChange={() => {
                                 handleInputChange(seniorFelineTwoPanelKey, 'extended');
-                                if (fecalRecKey != null) handleInputChange(fecalRecKey, false);
                               }}
                               style={{ marginRight: '8px', cursor: 'pointer' }}
                             />
@@ -7842,9 +8502,9 @@ export default function PublicRoomLoaderForm() {
                         {fieldValidationErrors[seniorFelineTwoPanelKey] && (
                           <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[seniorFelineTwoPanelKey]}</p>
                         )}
-                        {seniorFelineTwoPanelValue === 'extended' && hasFecalReminder && fecalReminder?.item?.name && (
+                        {seniorFelineTwoPanelValue === 'extended' && hasFecalReminder && fecalLineName && (
                           <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
-                            Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalReminder.item.name}</span> (included in Extended Comprehensive Panel)
+                            Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalLineName}</span> (included in Extended Comprehensive Panel)
                           </p>
                         )}
                         {seniorFelineTwoPanelValue === 'extended' && (
@@ -7927,7 +8587,6 @@ export default function PublicRoomLoaderForm() {
                               checked={seniorFelineTwoPanelValue === 'extended'}
                               onChange={() => {
                                 handleInputChange(seniorFelineTwoPanelKey, 'extended');
-                                if (fecalRecKey != null) handleInputChange(fecalRecKey, false);
                               }}
                               style={{ marginRight: '8px', cursor: 'pointer' }}
                             />
@@ -7960,9 +8619,9 @@ export default function PublicRoomLoaderForm() {
                         {fieldValidationErrors[seniorFelineTwoPanelKey] && (
                           <p style={{ marginTop: '6px', marginBottom: 0, fontSize: '13px', color: '#dc3545' }}>{fieldValidationErrors[seniorFelineTwoPanelKey]}</p>
                         )}
-                        {seniorFelineTwoPanelValue === 'extended' && hasFecalReminder && fecalReminder?.item?.name && (
+                        {seniorFelineTwoPanelValue === 'extended' && hasFecalReminder && fecalLineName && (
                           <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
-                            Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalReminder.item.name}</span> (included in Extended Comprehensive Panel)
+                            Replacing: <span style={{ textDecoration: 'line-through' }}>{fecalLineName}</span> (included in Extended Comprehensive Panel)
                           </p>
                         )}
                         {seniorFelineTwoPanelValue === 'extended' && (
@@ -8018,12 +8677,21 @@ export default function PublicRoomLoaderForm() {
                       <div style={{ fontSize: '14px', color: '#555', lineHeight: 1.5 }}>{rec.message}</div>
                     </div>
                   );
-                })
-              )}
+                });
+                if (labRecBlocks.every((node) => node == null)) {
+                  return (
+                    <p style={{ margin: 0, color: '#666', fontStyle: 'italic' }}>
+                      We have no further specific lab recommendations at this time for this visit.
+                    </p>
+                  );
+                }
+                return labRecBlocks;
+              })()}
             </div>
             );
-          })}
+          })()}
 
+          {isLastLabsPet && (
           <div
             style={{
               marginTop: '18px',
@@ -8109,12 +8777,13 @@ export default function PublicRoomLoaderForm() {
               </div>
             )}
           </div>
+          )}
 
           <div className="public-room-loader-nav-buttons">
             <button
               type="button"
               className="public-room-loader-btn"
-              onClick={() => setCurrentPage(labsPageIndex - 1)}
+              onClick={() => setCurrentPage(isFirstLabsPet ? 2 * nPets : currentPage - 1)}
               style={{
                 backgroundColor: '#fff',
                 color: '#333',
@@ -8122,19 +8791,23 @@ export default function PublicRoomLoaderForm() {
                 cursor: 'pointer',
               }}
             >
-              ← Back to Care Plan
+              {isFirstLabsPet ? '← Back to Care Plan' : '← Previous pet'}
             </button>
             <button
               type="button"
               className="public-room-loader-btn"
               onClick={() => {
-                const v = validateRequiredForLabsPage();
+                const v = validateRequiredForLabsPetPage(labsPetIndex, isLastLabsPet);
                 if (!v.valid) {
                   setFieldValidationErrors(v.errors || {});
                   return;
                 }
                 setFieldValidationErrors({});
-                setCurrentPage(summaryPageIndex);
+                if (isLastLabsPet) {
+                  setCurrentPage(summaryPageIndex);
+                } else {
+                  setCurrentPage(currentPage + 1);
+                }
               }}
               style={{
                 backgroundColor: '#0d6efd',
@@ -8143,7 +8816,7 @@ export default function PublicRoomLoaderForm() {
                 cursor: 'pointer',
               }}
             >
-              Next: Summary →
+              {isLastLabsPet ? 'Next: Summary →' : 'Next pet →'}
             </button>
           </div>
         </div>
@@ -8154,6 +8827,13 @@ export default function PublicRoomLoaderForm() {
         const nameLower = (n: string | undefined) => (n ?? '').toLowerCase();
         const hasPhrase = (item: { name?: string }, phrase: string) => nameLower(item.name).includes(phrase);
         const formatPrice = (p: number | null | undefined) => (p != null && !Number.isNaN(Number(p)) ? `$${Number(p).toFixed(2)}` : '$0.00');
+        const summaryPetGroupHasDog = patients.some((p: any, i: number) => {
+          const sp = publicSpeciesLowerForPet(p, appointments, i);
+          return isDogSpeciesTokens(sp) || (sp.trim() === '' && !isCatSpeciesTokens(sp));
+        });
+        const summaryPetGroupHasCat = patients.some((p: any, i: number) =>
+          isCatSpeciesTokens(publicSpeciesLowerForPet(p, appointments, i))
+        );
         const summarySnapshot = buildFullFormSnapshot();
         const canonicalGrandTotal = summarySnapshot.totals.grandTotal;
         const estimatedDueTodayWithMembership = estimatedDueTodayWithMembershipForUpsellPets(
@@ -8201,22 +8881,55 @@ export default function PublicRoomLoaderForm() {
               const seniorFelineYes = formData[`lab_senior_feline_${patientId}`] === 'yes';
               const seniorCaninePanel = formData[`lab_senior_canine_panel_${patientId}`];
               const seniorFelineTwoPanel = formData[`lab_senior_feline_two_panel_${patientId}`];
+              const apptRowSummary = getAppointmentForRoomLoaderPet(appointments, patient, petIdx);
+              const speciesPartsPet = [
+                patient.species,
+                patient.speciesEntity?.name,
+                (patient as any).patient?.species,
+                apptRowSummary?.patient?.species,
+              ].filter(Boolean) as string[];
+              const speciesLowerPet = speciesPartsPet.join(' ').toLowerCase();
+              const isCatForPetSummary = isCatSpeciesTokens(speciesLowerPet);
+              const isDogPet =
+                isDogSpeciesTokens(speciesLowerPet) || (speciesLowerPet.trim() === '' && !isCatForPetSummary);
+              const outdoorYesSummary = formData[`pet${petIdx}_outdoorAccess`] === 'yes';
               const fecalReplacedBy: string[] = [];
               const earlyDetFelineExcluded = formData[`summary_exclude_lab_early_detection_feline_${patientId}`] === true;
               const earlyDetCanineExcluded = formData[`summary_exclude_lab_early_detection_canine_${patientId}`] === true;
               const seniorFelineExcluded = formData[`summary_exclude_lab_senior_feline_${patientId}`] === true;
+              const seniorCanineStandardExcluded = formData[`summary_exclude_lab_senior_canine_standard_${patientId}`] === true;
               const seniorCanineExtendedExcluded = formData[`summary_exclude_lab_senior_canine_extended_${patientId}`] === true;
+              const seniorFelineTwoStandardExcluded = formData[`summary_exclude_lab_senior_feline_two_standard_${patientId}`] === true;
               const seniorFelineTwoExtendedExcluded = formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] === true;
               if ((earlyDetectionYes && !earlyDetFelineExcluded) || (earlyDetectionCanineYes && !earlyDetCanineExcluded)) fecalReplacedBy.push('Early Detection Panel');
-              if (seniorFelineYes && !seniorFelineExcluded) fecalReplacedBy.push('Senior Screen Feline');
+              if (isCatForPetSummary && seniorFelineYes && !seniorFelineExcluded) fecalReplacedBy.push('Senior Screen Feline');
               if ((seniorCaninePanel === 'extended' && !seniorCanineExtendedExcluded) || (seniorFelineTwoPanel === 'extended' && !seniorFelineTwoExtendedExcluded)) fecalReplacedBy.push('Extended Comprehensive Panel');
-              const fourDxReplacedBy: string[] = (seniorCaninePanel === 'extended' && !seniorCanineExtendedExcluded) || (seniorFelineTwoPanel === 'extended' && !seniorFelineTwoExtendedExcluded) ? ['Extended Comprehensive Panel'] : [];
-              const is4dxItem = (it: any) => hasPhrase(it, '4dx') || hasPhrase(it, 'heartworm');
+              const fourDxReplacedBy: string[] = [];
+              if ((earlyDetectionYes && !earlyDetFelineExcluded) || (earlyDetectionCanineYes && !earlyDetCanineExcluded)) fourDxReplacedBy.push('Early Detection Panel');
+              if ((seniorCaninePanel === 'extended' && !seniorCanineExtendedExcluded) || (seniorFelineTwoPanel === 'extended' && !seniorFelineTwoExtendedExcluded)) fourDxReplacedBy.push('Extended Comprehensive Panel');
+
+              const earlyFelineLabsIncludedOnSummary = earlyDetectionYes && !earlyDetFelineExcluded;
+              const earlyCanineLabsIncludedOnSummary = earlyDetectionCanineYes && !earlyDetCanineExcluded;
+              const labDisplayForSummary = labDisplay.filter(
+                ({ item }) =>
+                  !summaryVisitLabRowOmittedWhenEarlyDetectionChosenOnLabs(item, {
+                    earlyFelineLabsYes: earlyDetectionYes,
+                    earlyCanineLabsYes: earlyDetectionCanineYes,
+                    earlyFelineIncluded: earlyFelineLabsIncludedOnSummary,
+                    earlyCanineIncluded: earlyCanineLabsIncludedOnSummary,
+                    isCatPatient: isCatForPetSummary,
+                    isDogPatient: isDogPet,
+                  })
+              );
 
               /** When a panel that replaces items (e.g. fecal, 4Dx) is unchecked on summary, re-check those items so they are no longer crossed out. */
               const replacedItemRecKeys = displayWithIdx
-                .filter(({ item }) => (hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0) || (is4dxItem(item) && fourDxReplacedBy.length > 0))
-                .map(({ idx }) => `pet${petIdx}_rec_${idx}`);
+                .filter(
+                  ({ item }) =>
+                    (bundledLineLooksLikeFecal(item) && fecalReplacedBy.length > 0) ||
+                    (bundledLineLooksLikePanelInfectiousCompanion(item, isCatForPetSummary) && fourDxReplacedBy.length > 0)
+                )
+                .map(({ item, idx }) => publicFormCarePlanRecKey(petIdx, item, idx));
               /** Exclude panel from summary (row stays visible, unchecked); restore replaced items when applicable. */
               const excludePanelOnSummary = (summaryExcludeKey: string, shouldRestoreReplaced: boolean) => {
                 handleInputChange(summaryExcludeKey, true);
@@ -8234,32 +8947,16 @@ export default function PublicRoomLoaderForm() {
                 !roomLoaderHasAnyPetWithMembership &&
                 roomLoaderPetEligibleForMultiPetMembershipUpsell(patient, patients, appointments);
 
-              const apptRowSummary = getAppointmentForRoomLoaderPet(appointments, patient, petIdx);
-              const speciesPartsPet = [
-                patient.species,
-                patient.speciesEntity?.name,
-                (patient as any).patient?.species,
-                apptRowSummary?.patient?.species,
-              ].filter(Boolean) as string[];
-              const speciesLowerPet = speciesPartsPet.join(' ').toLowerCase();
-              const isCatForPetSummary = isCatSpeciesTokens(speciesLowerPet);
-              const isDogPet =
-                isDogSpeciesTokens(speciesLowerPet) || (speciesLowerPet.trim() === '' && !isCatForPetSummary);
-              const { canine: bundledCanineUncheckedOnCarePlan, feline: bundledFelineUncheckedOnCarePlan } =
-                carePlanBundledPanelUncheckedFlagsFromDisplayRows(displayItems, petIdx, formData);
-              const bundledPanelUncheckedOnCarePlan =
-                (isDogPet && bundledCanineUncheckedOnCarePlan) || (isCatForPetSummary && bundledFelineUncheckedOnCarePlan);
-
               const renderDisplayRow = (item: any, idx: number) => {
                 const isVisitOrConsult = hasPhrase(item, 'visit') || hasPhrase(item, 'consult');
-                const isFecalReplaced = hasPhrase(item, 'fecal') && fecalReplacedBy.length > 0;
-                const is4dxReplaced = is4dxItem(item) && fourDxReplacedBy.length > 0;
+                const isFecalReplaced = bundledLineLooksLikeFecal(item) && fecalReplacedBy.length > 0;
+                const is4dxReplaced = bundledLineLooksLikePanelInfectiousCompanion(item, isCatForPetSummary) && fourDxReplacedBy.length > 0;
                 const isReplaced = isFecalReplaced || is4dxReplaced;
-                const recKey = `pet${petIdx}_rec_${idx}`;
+                const recKey = publicFormCarePlanRecKey(petIdx, item, idx);
                 const canUncheck = !isVisitOrConsult && !isReplaced && !readOnly;
                 const isChecked = isReplaced
                   ? false
-                  : isVisitOrConsult || formData[recKey] !== false;
+                  : isVisitOrConsult || publicFormCarePlanRecRowChecked(formData, petIdx, item, idx);
                 const searchableItem = item.searchableItem as SearchableItem | null | undefined;
                 const { unitPrice, displayPricing } = resolveSummaryLinePrice(
                   patientId,
@@ -8280,13 +8977,52 @@ export default function PublicRoomLoaderForm() {
                 const displayNote = isMembershipRelated ? `From your care plan — ${discountNote}` : discountNote;
                 const lineCode = getCodeFromDisplayItem(item);
                 const uncheckRecInfo =
-                  !isChecked && !isReplaced && canUncheck ? getVaccineRecommendationUncheckInfo(lineCode) : null;
+                  !isChecked && !isReplaced && canUncheck
+                    ? getVaccineRecommendationUncheckInfo(lineCode, item.name, petName)
+                    : null;
                 const panelDeclineBlurb = item._panelDeclineBlurb as { title: string; body: string } | undefined;
-                /** Care Plan shows blurb whenever injected. Summary: same as unchecking the line here, or when bundled panel was unchecked on care plan but this row stays checked. */
+                /** Summary only: tidbits when this line is unchecked here, or senior/feline panel was unchecked on this page (summary_exclude_*), not merely declined on the care plan. */
+                const seniorCaninePanelDeclinedOnSummary =
+                  (seniorCaninePanel === 'standard' && seniorCanineStandardExcluded) ||
+                  (seniorCaninePanel === 'extended' && seniorCanineExtendedExcluded);
+                const seniorFelinePanelDeclinedOnSummary =
+                  (seniorFelineYes && seniorFelineExcluded) ||
+                  (seniorFelineTwoPanel === 'standard' && seniorFelineTwoStandardExcluded) ||
+                  (seniorFelineTwoPanel === 'extended' && seniorFelineTwoExtendedExcluded);
+                const summaryVisitRowDeclineCanineSenior =
+                  formData[`summary_decline_canine_senior_visit_row_${patientId}`] === true;
+                const summaryVisitRowDeclineFelineSenior =
+                  formData[`summary_decline_feline_senior_visit_row_${patientId}`] === true;
+                const earlyDetectionFelineDeclinedOnSummary =
+                  earlyDetectionYes && earlyDetFelineExcluded;
+                const earlyDetectionCanineDeclinedOnSummary =
+                  earlyDetectionCanineYes && earlyDetCanineExcluded;
+                const panelDeclineCompanionRowOnSummary =
+                  (isDogPet &&
+                    seniorCaninePanelDeclinedOnSummary &&
+                    (bundledLineLooksLikeCanine4dx(item) || bundledLineLooksLikeFecal(item))) ||
+                  (isDogPet &&
+                    summaryVisitRowDeclineCanineSenior &&
+                    (bundledLineLooksLikeCanine4dx(item) || bundledLineLooksLikeFecal(item))) ||
+                  (isDogPet &&
+                    earlyDetectionCanineDeclinedOnSummary &&
+                    (bundledLineLooksLikeCanine4dx(item) || bundledLineLooksLikeFecal(item))) ||
+                  (isCatForPetSummary &&
+                    seniorFelinePanelDeclinedOnSummary &&
+                    (bundledLineLooksLikeFecal(item) ||
+                      (outdoorYesSummary && bundledLineLooksLikeFelineTriple(item)))) ||
+                  (isCatForPetSummary &&
+                    summaryVisitRowDeclineFelineSenior &&
+                    (bundledLineLooksLikeFecal(item) ||
+                      (outdoorYesSummary && bundledLineLooksLikeFelineTriple(item)))) ||
+                  (isCatForPetSummary &&
+                    earlyDetectionFelineDeclinedOnSummary &&
+                    (bundledLineLooksLikeFecal(item) ||
+                      (outdoorYesSummary && bundledLineLooksLikeFelineTriple(item))));
                 const showPanelDeclineBlurbOnSummary =
                   Boolean(panelDeclineBlurb) &&
                   !isReplaced &&
-                  (!isChecked || bundledPanelUncheckedOnCarePlan);
+                  (!isChecked || panelDeclineCompanionRowOnSummary);
                 return (
                   <div
                     key={`d-${petIdx}-${idx}-${showPanelDeclineBlurbOnSummary ? 'why' : 'plain'}`}
@@ -8299,7 +9035,26 @@ export default function PublicRoomLoaderForm() {
                           type="checkbox"
                           checked={isChecked}
                           disabled={!canUncheck || readOnly}
-                          onChange={canUncheck ? () => handleInputChange(recKey, !isChecked) : undefined}
+                          onChange={
+                            canUncheck
+                              ? () => {
+                                  const nextChecked = !isChecked;
+                                  handleInputChange(recKey, nextChecked);
+                                  if (isDogPet && rowIsCanineBundledSeniorScreenVisitLine(item)) {
+                                    handleInputChange(
+                                      `summary_decline_canine_senior_visit_row_${patientId}`,
+                                      nextChecked ? false : true
+                                    );
+                                  }
+                                  if (isCatForPetSummary && rowIsFelineBundledSeniorScreenVisitLine(item)) {
+                                    handleInputChange(
+                                      `summary_decline_feline_senior_visit_row_${patientId}`,
+                                      nextChecked ? false : true
+                                    );
+                                  }
+                                }
+                              : undefined
+                          }
                           style={{
                             marginRight: '12px',
                             width: '18px',
@@ -8310,13 +9065,25 @@ export default function PublicRoomLoaderForm() {
                             accentColor: canUncheck ? undefined : '#999',
                           }}
                         />
-                        <span style={{ ...(isReplaced ? { textDecoration: 'line-through', color: '#888' } : !isChecked ? { color: '#888' } : { color: '#333' }) }}>
+                        <span
+                          style={{
+                            ...(isReplaced || !isChecked
+                              ? { textDecoration: 'line-through', color: '#888' }
+                              : { color: '#333' }),
+                          }}
+                        >
                           {item.name}
                           {qty > 1 && <span style={{ color: '#666', marginLeft: '6px', fontSize: '14px' }}>(Qty: {qty})</span>}
                           {isReplaced && <span style={{ fontSize: '13px', color: '#666', marginLeft: '8px', fontStyle: 'italic' }}>(replaced by {replacedByLabel})</span>}
                         </span>
                       </label>
-                      <span style={{ fontWeight: 700, flexShrink: 0, ...(isReplaced ? { textDecoration: 'line-through', color: '#888' } : !isChecked ? { color: '#888' } : {}) }}>
+                      <span
+                        style={{
+                          fontWeight: 700,
+                          flexShrink: 0,
+                          ...(isReplaced || !isChecked ? { textDecoration: 'line-through', color: '#888' } : {}),
+                        }}
+                      >
                         {formatPrice(isChecked && !isReplaced ? lineTotal : 0)}
                       </span>
                     </div>
@@ -8397,13 +9164,12 @@ export default function PublicRoomLoaderForm() {
                       );
                     })}
                     {(procedureDisplay.length > 0 || tripFeeItems.length > 0) ? <SummarySeparator id={`p${petIdx}-after-procedures`} /> : null}
-                    {/* Labs: care plan lab items + lab panels */}
-                    {labDisplay.map(({ item, idx }) => renderDisplayRow(item, idx))}
-                    {/* Lab panels selected - with checkbox (uncheck excludes from total but row stays so they can re-check) */}
-                    {earlyDetectionYes && (getClientAdjustedPrice(patientId, earlyDetectionFelineItem) ?? getSearchItemPrice(earlyDetectionFelineItem)) != null && (() => {
+                    {/* Labs: Labs-page panels first (stable position), then visit reminder/added lab lines */}
+                    {/* Lab panels — always keep rows visible when the client chose Yes on Labs; price can be 0 while items load */}
+                    {earlyDetectionYes && (() => {
                       const summaryExcludeKey = `summary_exclude_lab_early_detection_feline_${patientId}`;
                       const isExcluded = formData[summaryExcludeKey] === true;
-                      const p = getClientAdjustedPrice(patientId, earlyDetectionFelineItem) ?? getSearchItemPrice(earlyDetectionFelineItem)!;
+                      const p = getClientAdjustedPrice(patientId, earlyDetectionFelineItem) ?? getSearchItemPrice(earlyDetectionFelineItem) ?? 0;
                       const labPricing = getClientPricing(patientId, earlyDetectionFelineItem);
                       const hasDiscount = hasDiscountPricingNote(labPricing);
                       if (!isExcluded) petSubtotal += p;
@@ -8426,10 +9192,10 @@ export default function PublicRoomLoaderForm() {
                         </div>
                       );
                     })()}
-                    {earlyDetectionCanineYes && (getClientAdjustedPrice(patientId, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem)) != null && (() => {
+                    {earlyDetectionCanineYes && (() => {
                       const summaryExcludeKey = `summary_exclude_lab_early_detection_canine_${patientId}`;
                       const isExcluded = formData[summaryExcludeKey] === true;
-                      const p = getClientAdjustedPrice(patientId, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem)!;
+                      const p = getClientAdjustedPrice(patientId, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem) ?? 0;
                       const labPricing = getClientPricing(patientId, earlyDetectionCanineItem);
                       const hasDiscount = hasDiscountPricingNote(labPricing);
                       if (!isExcluded) petSubtotal += p;
@@ -8452,10 +9218,10 @@ export default function PublicRoomLoaderForm() {
                         </div>
                       );
                     })()}
-                    {formData[`lab_comprehensive_fecal_${patientId}`] === 'yes' && (getClientAdjustedPrice(patientId, comprehensiveFecalItem) ?? getSearchItemPrice(comprehensiveFecalItem)) != null && (() => {
+                    {formData[`lab_comprehensive_fecal_${patientId}`] === 'yes' && (() => {
                       const summaryExcludeKey = `summary_exclude_lab_comprehensive_fecal_${patientId}`;
                       const isExcluded = formData[summaryExcludeKey] === true;
-                      const p = getClientAdjustedPrice(patientId, comprehensiveFecalItem) ?? getSearchItemPrice(comprehensiveFecalItem)!;
+                      const p = getClientAdjustedPrice(patientId, comprehensiveFecalItem) ?? getSearchItemPrice(comprehensiveFecalItem) ?? 0;
                       const compFecalName = comprehensiveFecalItem?.name ?? 'Comprehensive Fecal';
                       const labPricing = getClientPricing(patientId, comprehensiveFecalItem);
                       const hasDiscount = hasDiscountPricingNote(labPricing);
@@ -8479,10 +9245,10 @@ export default function PublicRoomLoaderForm() {
                         </div>
                       );
                     })()}
-                    {seniorFelineYes && (getClientAdjustedPrice(patientId, seniorFelineItem) ?? getSearchItemPrice(seniorFelineItem)) != null && (() => {
+                    {seniorFelineYes && (() => {
                       const summaryExcludeKey = `summary_exclude_lab_senior_feline_${patientId}`;
                       const isExcluded = formData[summaryExcludeKey] === true;
-                      const p = getClientAdjustedPrice(patientId, seniorFelineItem) ?? getSearchItemPrice(seniorFelineItem)!;
+                      const p = getClientAdjustedPrice(patientId, seniorFelineItem) ?? getSearchItemPrice(seniorFelineItem) ?? 0;
                       const labPricing = getClientPricing(patientId, seniorFelineItem);
                       const hasDiscount = hasDiscountPricingNote(labPricing);
                       if (!isExcluded) petSubtotal += p;
@@ -8505,10 +9271,10 @@ export default function PublicRoomLoaderForm() {
                         </div>
                       );
                     })()}
-                    {seniorCaninePanel === 'standard' && (getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem)) != null && (() => {
+                    {seniorCaninePanel === 'standard' && (() => {
                       const summaryExcludeKey = `summary_exclude_lab_senior_canine_standard_${patientId}`;
                       const isExcluded = formData[summaryExcludeKey] === true;
-                      const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem)!;
+                      const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem) ?? 0;
                       const labPricing = getClientPricing(patientId, seniorCanineStandardItem);
                       const hasDiscount = hasDiscountPricingNote(labPricing);
                       if (!isExcluded) petSubtotal += p;
@@ -8531,10 +9297,10 @@ export default function PublicRoomLoaderForm() {
                         </div>
                       );
                     })()}
-                    {seniorCaninePanel === 'extended' && (getClientAdjustedPrice(patientId, seniorCanineExtendedItem) ?? getSearchItemPrice(seniorCanineExtendedItem)) != null && (() => {
+                    {seniorCaninePanel === 'extended' && (() => {
                       const summaryExcludeKey = `summary_exclude_lab_senior_canine_extended_${patientId}`;
                       const isExcluded = formData[summaryExcludeKey] === true;
-                      const p = getClientAdjustedPrice(patientId, seniorCanineExtendedItem) ?? getSearchItemPrice(seniorCanineExtendedItem)!;
+                      const p = getClientAdjustedPrice(patientId, seniorCanineExtendedItem) ?? getSearchItemPrice(seniorCanineExtendedItem) ?? 0;
                       const labPricing = getClientPricing(patientId, seniorCanineExtendedItem);
                       const hasDiscount = hasDiscountPricingNote(labPricing);
                       if (!isExcluded) petSubtotal += p;
@@ -8557,9 +9323,9 @@ export default function PublicRoomLoaderForm() {
                         </div>
                       );
                     })()}
-                    {seniorFelineTwoPanel === 'standard' && (getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem)) != null && (() => {
+                    {seniorFelineTwoPanel === 'standard' && (() => {
                       const key = `lab_senior_feline_two_panel_${patientId}`;
-                      const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem)!;
+                      const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem) ?? 0;
                       const labPricing = getClientPricing(patientId, seniorCanineStandardItem);
                       const hasDiscount = hasDiscountPricingNote(labPricing);
                       petSubtotal += p;
@@ -8586,10 +9352,10 @@ export default function PublicRoomLoaderForm() {
                         </div>
                       );
                     })()}
-                    {seniorFelineTwoPanel === 'extended' && (getClientAdjustedPrice(patientId, seniorFelineExtendedItem) ?? getSearchItemPrice(seniorFelineExtendedItem)) != null && (() => {
+                    {seniorFelineTwoPanel === 'extended' && (() => {
                       const summaryExcludeKey = `summary_exclude_lab_senior_feline_two_extended_${patientId}`;
                       const isExcluded = formData[summaryExcludeKey] === true;
-                      const p = getClientAdjustedPrice(patientId, seniorFelineExtendedItem) ?? getSearchItemPrice(seniorFelineExtendedItem)!;
+                      const p = getClientAdjustedPrice(patientId, seniorFelineExtendedItem) ?? getSearchItemPrice(seniorFelineExtendedItem) ?? 0;
                       const labPricing = getClientPricing(patientId, seniorFelineExtendedItem);
                       const hasDiscount = hasDiscountPricingNote(labPricing);
                       if (!isExcluded) petSubtotal += p;
@@ -8612,10 +9378,12 @@ export default function PublicRoomLoaderForm() {
                         </div>
                       );
                     })()}
-                    {(labDisplay.length > 0 || earlyDetectionYes || earlyDetectionCanineYes || formData[`lab_comprehensive_fecal_${patientId}`] === 'yes' || seniorFelineYes || seniorCaninePanel || seniorFelineTwoPanel) ? <SummarySeparator id={`p${petIdx}-after-labs`} /> : null}
+                    {/* Visit / reminder lab lines (same relative block as care plan; panels above stay put when unchecked) */}
+                    {labDisplayForSummary.map(({ item, idx }) => renderDisplayRow(item, idx))}
+                    {(labDisplayForSummary.length > 0 || earlyDetectionYes || earlyDetectionCanineYes || formData[`lab_comprehensive_fecal_${patientId}`] === 'yes' || seniorFelineYes || seniorCaninePanel || seniorFelineTwoPanel) ? <SummarySeparator id={`p${petIdx}-after-labs`} /> : null}
                     {/* Inventory */}
                     {inventoryDisplay.map(({ item, idx }) => renderDisplayRow(item, idx))}
-                    {(patientId != null && optedInVaccinesByPatientId[patientId] && Object.keys(optedInVaccinesByPatientId[patientId]).length > 0 && (procedureDisplay.length > 0 || tripFeeItems.length > 0 || labDisplay.length > 0 || inventoryDisplay.length > 0 || earlyDetectionYes || earlyDetectionCanineYes || formData[`lab_comprehensive_fecal_${patientId}`] === 'yes' || seniorFelineYes || seniorCaninePanel || seniorFelineTwoPanel)) ? <SummarySeparator id={`p${petIdx}-before-vaccines`} /> : null}
+                    {(patientId != null && optedInVaccinesByPatientId[patientId] && Object.keys(optedInVaccinesByPatientId[patientId]).length > 0 && (procedureDisplay.length > 0 || tripFeeItems.length > 0 || labDisplayForSummary.length > 0 || inventoryDisplay.length > 0 || earlyDetectionYes || earlyDetectionCanineYes || formData[`lab_comprehensive_fecal_${patientId}`] === 'yes' || seniorFelineYes || seniorCaninePanel || seniorFelineTwoPanel)) ? <SummarySeparator id={`p${petIdx}-before-vaccines`} /> : null}
                     {/* Vaccines */}
                     {(patientId != null ? optedInVaccinesByPatientId[patientId] : undefined) && (() => {
                       const optedIn = optedInVaccinesByPatientId[patientId];
@@ -8628,7 +9396,9 @@ export default function PublicRoomLoaderForm() {
                         const vaccinePricing = getClientPricing(patientId, item);
                         const hasDiscount = hasDiscountPricingNote(vaccinePricing);
                         if (isChecked) petSubtotal += price;
-                        const vaccineUncheckInfo = !isChecked ? getVaccineRecommendationUncheckInfo(getSearchItemCode(item)) : null;
+                        const vaccineUncheckInfo = !isChecked
+                          ? getVaccineRecommendationUncheckInfo(getSearchItemCode(item), item.name, petName)
+                          : null;
                         return (
                           <div key={`v-${i}`} style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
@@ -8956,6 +9726,212 @@ export default function PublicRoomLoaderForm() {
                   })}
                 </ul>
               )}
+              {(summaryPetGroupHasDog || summaryPetGroupHasCat) && (
+                <details className="public-room-loader-parasite-prevention-details">
+                  <summary>Learn more about flea, tick &amp; heartworm prevention we offer</summary>
+                  <div style={{ marginTop: '14px', paddingTop: '4px' }}>
+                    {summaryPetGroupHasDog && (
+                      <div style={{ marginBottom: summaryPetGroupHasCat ? '20px' : 0 }}>
+                        <div style={{ fontSize: '15px', fontWeight: 700, color: '#212529', marginBottom: '10px' }}>
+                          Recommended parasite prevention options for dogs
+                        </div>
+                        <p
+                          style={{
+                            margin: '0 0 12px',
+                            fontSize: '13px',
+                            color: '#495057',
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          <strong>Note:</strong> We recently transitioned from Simparica Trio to Credelio Quattro as our
+                          primary all-in-one parasite prevention for dogs. Credelio Quattro also includes tapeworm
+                          coverage.
+                        </p>
+                        <div style={{ overflowX: 'auto' }}>
+                          <table
+                            style={{
+                              width: '100%',
+                              minWidth: '640px',
+                              borderCollapse: 'collapse',
+                              fontSize: '14px',
+                              color: '#333',
+                              tableLayout: 'fixed',
+                            }}
+                          >
+                            <colgroup>
+                              <col style={{ width: '148px', minWidth: '148px' }} />
+                              <col style={{ width: '22%' }} />
+                              <col style={{ width: '34%' }} />
+                              <col />
+                            </colgroup>
+                            <thead>
+                              <tr>
+                                {(['Approach', 'Medication', 'Schedule', 'Covers'] as const).map((h, colIdx) => (
+                                  <th
+                                    key={h}
+                                    style={{
+                                      textAlign: 'left',
+                                      padding: '8px 10px',
+                                      borderBottom: '2px solid #ced4da',
+                                      fontWeight: 700,
+                                      color: '#212529',
+                                      ...(colIdx === 0 ? { whiteSpace: 'nowrap' } : {}),
+                                    }}
+                                  >
+                                    {h}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr>
+                                <td
+                                  style={{
+                                    padding: '10px',
+                                    borderBottom: '1px solid #e9ecef',
+                                    fontWeight: 700,
+                                    verticalAlign: 'top',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  One and Done
+                                </td>
+                                <td style={{ padding: '10px', borderBottom: '1px solid #e9ecef', verticalAlign: 'top' }}>Credelio Quattro</td>
+                                <td style={{ padding: '10px', borderBottom: '1px solid #e9ecef', verticalAlign: 'top' }}>Monthly chew</td>
+                                <td style={{ padding: '10px', borderBottom: '1px solid #e9ecef', verticalAlign: 'top' }}>
+                                  Fleas, ticks, heartworm, intestinal parasites
+                                </td>
+                              </tr>
+                              <tr>
+                                <td
+                                  style={{
+                                    padding: '10px',
+                                    verticalAlign: 'top',
+                                    fontWeight: 700,
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  Less is More
+                                </td>
+                                <td style={{ padding: '10px', verticalAlign: 'top' }}>Bravecto + Interceptor Plus</td>
+                                <td style={{ padding: '10px', verticalAlign: 'top' }}>
+                                  Bravecto every 3 months + monthly Interceptor Plus
+                                </td>
+                                <td style={{ padding: '10px', verticalAlign: 'top', lineHeight: 1.45 }}>
+                                  <div>• Bravecto: Fleas and ticks</div>
+                                  <div>• Interceptor Plus: Heartworm and intestinal parasites</div>
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                        <p
+                          style={{
+                            fontSize: '13px',
+                            color: '#555',
+                            marginTop: '12px',
+                            marginBottom: 0,
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          These options are commonly used for dogs in our area. If you&apos;d like us to bring one of these medications,
+                          simply search for it above and add it to your visit.
+                        </p>
+                      </div>
+                    )}
+                    {summaryPetGroupHasCat && (
+                      <div>
+                        <div style={{ fontSize: '15px', fontWeight: 700, color: '#212529', marginBottom: '10px' }}>
+                          Recommended parasite prevention options for cats
+                        </div>
+                        <div style={{ overflowX: 'auto' }}>
+                          <table
+                            style={{
+                              width: '100%',
+                              minWidth: '560px',
+                              borderCollapse: 'collapse',
+                              fontSize: '14px',
+                              color: '#333',
+                            }}
+                          >
+                            <thead>
+                              <tr>
+                                {(['Approach', 'Medication', 'Schedule', 'Covers'] as const).map((h) => (
+                                  <th
+                                    key={h}
+                                    style={{
+                                      textAlign: 'left',
+                                      padding: '8px 10px',
+                                      borderBottom: '2px solid #ced4da',
+                                      fontWeight: 700,
+                                      color: '#212529',
+                                    }}
+                                  >
+                                    {h}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr>
+                                <td style={{ padding: '10px', borderBottom: '1px solid #e9ecef', fontWeight: 700, verticalAlign: 'top' }}>
+                                  All-in-One Protection
+                                </td>
+                                <td style={{ padding: '10px', borderBottom: '1px solid #e9ecef', fontWeight: 700, verticalAlign: 'top' }}>
+                                  Revolution Plus
+                                </td>
+                                <td style={{ padding: '10px', borderBottom: '1px solid #e9ecef', verticalAlign: 'top' }}>Monthly topical</td>
+                                <td style={{ padding: '10px', borderBottom: '1px solid #e9ecef', verticalAlign: 'top' }}>
+                                  Fleas, ticks, heartworm, and intestinal parasites (except tapeworms)
+                                </td>
+                              </tr>
+                              <tr>
+                                <td style={{ padding: '10px', borderBottom: '1px solid #e9ecef', fontWeight: 700, verticalAlign: 'top' }}>
+                                  Oral Option
+                                </td>
+                                <td style={{ padding: '10px', borderBottom: '1px solid #e9ecef', fontWeight: 700, verticalAlign: 'top' }}>
+                                  Credelio + Profender
+                                </td>
+                                <td style={{ padding: '10px', borderBottom: '1px solid #e9ecef', verticalAlign: 'top' }}>
+                                  Credelio monthly chew + Profender every 3 months
+                                </td>
+                                <td style={{ padding: '10px', borderBottom: '1px solid #e9ecef', verticalAlign: 'top' }}>
+                                  Fleas, ticks, and intestinal parasites including tapeworms
+                                </td>
+                              </tr>
+                              <tr>
+                                <td style={{ padding: '10px', verticalAlign: 'top', fontWeight: 700 }}>
+                                  Less Frequent Flea/Tick Dosing
+                                </td>
+                                <td style={{ padding: '10px', verticalAlign: 'top', fontWeight: 700 }}>Bravecto + Profender</td>
+                                <td style={{ padding: '10px', verticalAlign: 'top' }}>
+                                  Bravecto topical every 3 months + Profender every 3 months
+                                </td>
+                                <td style={{ padding: '10px', verticalAlign: 'top' }}>
+                                  Fleas, ticks, and intestinal parasites including tapeworms
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                        <p
+                          style={{
+                            fontSize: '13px',
+                            color: '#555',
+                            marginTop: '12px',
+                            marginBottom: 0,
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          Credelio and Bravecto provide excellent flea and tick protection but do not cover intestinal parasites. For{' '}
+                          <strong>outdoor cats</strong>, we typically recommend adding <strong>Profender every 3 months</strong> for broader
+                          parasite protection.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              )}
             </div>
 
             {/* Anything else you want us to know? */}
@@ -9120,6 +10096,9 @@ export default function PublicRoomLoaderForm() {
                     id="membership-bill-explainer-trigger"
                     aria-expanded={membershipBillSectionExpanded}
                     aria-controls="membership-bill-explainer-panel"
+                    className={
+                      !membershipBillSectionExpanded ? 'public-room-loader-membership-explainer-trigger--throb' : undefined
+                    }
                     onClick={() =>
                       setMembershipBillSectionExpanded((v) => {
                         const opening = !v;
@@ -9170,6 +10149,7 @@ export default function PublicRoomLoaderForm() {
                       membershipPanelByPatientId={membershipPanelByPatientId}
                       membershipPanelLoading={membershipPanelLoading}
                       summaryLineItems={summarySnapshot?.summaryLineItems ?? []}
+                      membershipComparisonDeclinedLines={summarySnapshot?.membershipComparisonDeclinedLines ?? []}
                       firstPatientId={firstPid}
                       todayVisitTotalAlignedWithSummary={
                         availablePlansForPetsForDisplay.length === 1 ? canonicalGrandTotal : undefined
@@ -9226,7 +10206,11 @@ export default function PublicRoomLoaderForm() {
                   {showMembershipFooterComparison && (
                     <span style={{ fontSize: '18px', fontWeight: 700, color: '#166534' }}>
                       Estimated Due At Visit With Membership:{' '}
-                      <strong>{formatPrice(estimatedDueTodayWithMembership)}</strong>
+                      <strong>
+                        {estimatedDueTodayWithMembership < 0
+                          ? `-${formatPrice(Math.abs(estimatedDueTodayWithMembership))} (credit)`
+                          : formatPrice(estimatedDueTodayWithMembership)}
+                      </strong>
                     </span>
                   )}
                 </div>
@@ -9279,7 +10263,7 @@ export default function PublicRoomLoaderForm() {
               <button
                 type="button"
                 className="public-room-loader-btn"
-                onClick={() => setCurrentPage(labsPageIndex)}
+                onClick={() => setCurrentPage(lastLabPage)}
                 style={{
                   backgroundColor: '#fff',
                   color: '#333',
