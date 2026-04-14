@@ -1,0 +1,169 @@
+/* Appointment lengths popover (Routing doctor field) */
+
+.routing-appt-lengths-backdrop {
+  display: none;
+}
+
+.routing-appt-lengths-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: auto;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  max-height: min(320px, 52vh);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+  padding: 12px;
+  z-index: 3000;
+  box-sizing: border-box;
+}
+
+.routing-appt-lengths-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: -4px 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.routing-appt-lengths-popover-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.routing-appt-lengths-close {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
+  margin: -8px -8px -8px 0;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.routing-appt-lengths-close:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.routing-appt-lengths-popover .routing-appt-lengths-help {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #64748b;
+  margin-bottom: 10px;
+  max-width: min(22rem, calc(100vw - 48px));
+}
+
+.routing-appt-lengths-popover table {
+  font-size: 13px;
+  border-collapse: collapse;
+  width: auto;
+}
+
+.routing-appt-lengths-popover th,
+.routing-appt-lengths-popover td {
+  padding: 8px 6px;
+}
+
+.routing-appt-lengths-popover th {
+  border-bottom: 1px solid #e5e7eb;
+  font-weight: 600;
+  color: #334155;
+}
+
+.routing-appt-lengths-popover th:first-child,
+.routing-appt-lengths-popover td:first-child {
+  text-align: left;
+  padding-left: 0;
+}
+
+.routing-appt-lengths-popover th:not(:first-child),
+.routing-appt-lengths-popover td:not(:first-child) {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.routing-appt-lengths-popover td:first-child {
+  vertical-align: top;
+}
+
+@media (min-width: 641px) {
+  .routing-appt-lengths-popover-header {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .routing-appt-lengths-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 2999;
+    background: rgba(15, 23, 42, 0.4);
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+  }
+
+  .routing-appt-lengths-popover {
+    position: fixed;
+    left: max(10px, env(safe-area-inset-left, 0px));
+    right: max(10px, env(safe-area-inset-right, 0px));
+    top: max(10px, env(safe-area-inset-top, 0px));
+    bottom: max(10px, env(safe-area-inset-bottom, 0px));
+    width: auto;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+  }
+
+  .routing-appt-lengths-popover .routing-appt-lengths-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  .routing-appt-lengths-popover .routing-appt-lengths-help {
+    max-width: none;
+    font-size: 13px;
+  }
+
+  .routing-appt-lengths-popover table {
+    font-size: 14px;
+  }
+
+  .routing-appt-lengths-popover th,
+  .routing-appt-lengths-popover td {
+    padding: 10px 8px;
+  }
+
+  .routing-appt-lengths-close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

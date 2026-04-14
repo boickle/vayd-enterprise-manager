@@ -1,11 +1,18 @@
 // src/pages/Routing.tsx
 import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { fetchDoctorMonth } from '../api/appointments';
 import { http } from '../api/http';
+import {
+  monthsCoveringRange,
+  summarizeAvgMinutesByAppointmentType,
+  type AvgMinutesByTypeRow,
+} from '../analytics/appointmentTypeTimeStats';
 import { Field } from '../components/Field';
 import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
 import { PreviewMyDayModal } from '../components/PreviewMyDayModal';
 import { validateAddress } from '../api/geo';
+import './Routing.css';
 // Removed fetchPrimaryProviders import - now using /employees/veterinarians endpoint directly
 
 // =========================
@@ -482,6 +489,11 @@ export default function Routing() {
   const [doctorSearching, setDoctorSearching] = useState(false);
   const [showDoctorDropdown, setShowDoctorDropdown] = useState(false);
   const doctorBoxRef = useRef<HTMLDivElement | null>(null);
+  const apptLengthsWrapRef = useRef<HTMLDivElement | null>(null);
+  const [apptLengthsOpen, setApptLengthsOpen] = useState(false);
+  const [apptLengthsLoading, setApptLengthsLoading] = useState(false);
+  const [apptLengthsRows, setApptLengthsRows] = useState<AvgMinutesByTypeRow[]>([]);
+  const [apptLengthsError, setApptLengthsError] = useState<string | null>(null);
   const latestDoctorQueryRef = useRef('');
   const [doctorActiveIdx, setDoctorActiveIdx] = useState<number>(-1);
   const [clientActiveIdx, setClientActiveIdx] = useState<number>(-1);
@@ -790,10 +802,67 @@ export default function Routing() {
       if (doctorBoxRef.current && !doctorBoxRef.current.contains(e.target as Node)) {
         setShowDoctorDropdown(false);
       }
+      if (apptLengthsWrapRef.current && !apptLengthsWrapRef.current.contains(e.target as Node)) {
+        setApptLengthsOpen(false);
+      }
     }
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
+
+  useEffect(() => {
+    setApptLengthsOpen(false);
+  }, [form.doctorId]);
+
+  const loadApptLengthStats = useCallback(async () => {
+    const doctorId = form.doctorId.trim();
+    if (!doctorId) return;
+    setApptLengthsLoading(true);
+    setApptLengthsError(null);
+    try {
+      const end = DateTime.now().startOf('day');
+      const start = end.minus({ days: 29 });
+      const startStr = start.toISODate()!;
+      const endStr = end.toISODate()!;
+      const months = monthsCoveringRange(startStr, endStr);
+      const responses = await Promise.all(
+        months.map(({ year, month }) => fetchDoctorMonth(year, month, doctorId))
+      );
+      const allDays = responses.flatMap((r) => r.days ?? []);
+      const rows = summarizeAvgMinutesByAppointmentType(allDays, startStr, endStr, doctorId);
+      setApptLengthsRows(rows);
+    } catch (e) {
+      setApptLengthsError(extractErrorMessage(e));
+      setApptLengthsRows([]);
+    } finally {
+      setApptLengthsLoading(false);
+    }
+  }, [form.doctorId]);
+
+  useEffect(() => {
+    if (!apptLengthsOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setApptLengthsOpen(false);
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [apptLengthsOpen]);
+
+  useEffect(() => {
+    if (!apptLengthsOpen) return;
+    const mq = window.matchMedia('(max-width: 640px)');
+    if (!mq.matches) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onMq = () => {
+      document.body.style.overflow = mq.matches ? 'hidden' : prev;
+    };
+    mq.addEventListener('change', onMq);
+    return () => {
+      mq.removeEventListener('change', onMq);
+      document.body.style.overflow = prev;
+    };
+  }, [apptLengthsOpen]);
 
   // Fetch doctor name if missing
   useEffect(() => {
@@ -1318,72 +1387,94 @@ export default function Routing() {
         <h2 style={{ marginTop: 0 }}>Get Best Route</h2>
         <form onSubmit={onSubmit} className="grid" style={{ gap: 12 }}>
           {/* Doctor picker */}
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className="grid" style={{ gridTemplateColumns: 'minmax(16rem, 1fr) 1fr', gap: 12 }}>
             <Field label="Doctor">
-              <div ref={doctorBoxRef} style={{ position: 'relative' }}>
-                <input
-                  className="input"
-                  value={doctorQuery}
-                  onChange={(e) => {
-                    setDoctorQuery(e.target.value);
-                    setDoctorActiveIdx(-1);
-                  }}
-                  placeholder="Type doctor name..."
-                  onFocus={() => doctorResults.length && setShowDoctorDropdown(true)}
-                  onKeyDown={(e) => {
-                    if (!doctorResults.length) return;
-
-                    if (e.key === 'ArrowDown') {
+              <div ref={apptLengthsWrapRef} style={{ position: 'relative', width: '100%' }}>
+                {apptLengthsOpen && (
+                  <div
+                    className="routing-appt-lengths-backdrop"
+                    onMouseDown={(e) => {
                       e.preventDefault();
-                      setShowDoctorDropdown(true);
-                      setDoctorActiveIdx((i) => (i < doctorResults.length - 1 ? i + 1 : 0));
-                    } else if (e.key === 'ArrowUp') {
-                      e.preventDefault();
-                      setShowDoctorDropdown(true);
-                      setDoctorActiveIdx((i) => (i <= 0 ? doctorResults.length - 1 : i - 1));
-                    } else if (e.key === 'Enter') {
-                      e.preventDefault();
-                      const pick =
-                        doctorActiveIdx >= 0 ? doctorResults[doctorActiveIdx] : doctorResults[0];
-                      if (pick) {
-                        pickDoctor(pick);
-                        setShowDoctorDropdown(false);
-                        setDoctorResults([]); // ensure no later “auto-pick” overrides
-                      }
-                    } else if (e.key === 'Escape') {
-                      setShowDoctorDropdown(false);
-                    }
-                  }}
-                  required
-                />
-
-                {doctorSearching && (
-                  <div className="muted" style={{ marginTop: 6 }}>
-                    Searching...
-                  </div>
+                      setApptLengthsOpen(false);
+                    }}
+                    aria-hidden
+                  />
                 )}
-
-                {showDoctorDropdown && doctorResults.length > 0 && (
-                  <ul
-                    className="dropdown"
-                    role="listbox"
+                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <div
+                    ref={doctorBoxRef}
                     style={{
-                      position: 'absolute',
-                      top: 'calc(100% + 6px)',
-                      left: 0,
-                      right: 0,
-                      background: '#fff',
-                      border: '1px solid #ccc',
-                      borderRadius: 8,
-                      boxShadow: '0 6px 16px rgba(0,0,0,0.15)',
-                      listStyle: 'none',
-                      margin: 0,
-                      padding: 0,
-                      maxHeight: 260,
-                      overflowY: 'auto',
-                      zIndex: 1000,
+                      position: 'relative',
+                      flexGrow: 1,
+                      flexShrink: 0,
+                      flexBasis: 'auto',
+                      minWidth: '16rem',
                     }}
                   >
+                  <input
+                    className="input"
+                    style={{ width: '100%', boxSizing: 'border-box' }}
+                    value={doctorQuery}
+                    onChange={(e) => {
+                      setDoctorQuery(e.target.value);
+                      setDoctorActiveIdx(-1);
+                    }}
+                    placeholder="Type doctor name..."
+                    onFocus={() => doctorResults.length && setShowDoctorDropdown(true)}
+                    onKeyDown={(e) => {
+                      if (!doctorResults.length) return;
+
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setShowDoctorDropdown(true);
+                        setDoctorActiveIdx((i) => (i < doctorResults.length - 1 ? i + 1 : 0));
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setShowDoctorDropdown(true);
+                        setDoctorActiveIdx((i) => (i <= 0 ? doctorResults.length - 1 : i - 1));
+                      } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const pick =
+                          doctorActiveIdx >= 0 ? doctorResults[doctorActiveIdx] : doctorResults[0];
+                        if (pick) {
+                          pickDoctor(pick);
+                          setShowDoctorDropdown(false);
+                          setDoctorResults([]); // ensure no later “auto-pick” overrides
+                        }
+                      } else if (e.key === 'Escape') {
+                        setShowDoctorDropdown(false);
+                      }
+                    }}
+                    required
+                  />
+
+                  {doctorSearching && (
+                    <div className="muted" style={{ marginTop: 6 }}>
+                      Searching...
+                    </div>
+                  )}
+
+                  {showDoctorDropdown && doctorResults.length > 0 && (
+                    <ul
+                      className="dropdown"
+                      role="listbox"
+                      style={{
+                        position: 'absolute',
+                        top: 'calc(100% + 6px)',
+                        left: 0,
+                        right: 0,
+                        background: '#fff',
+                        border: '1px solid #ccc',
+                        borderRadius: 8,
+                        boxShadow: '0 6px 16px rgba(0,0,0,0.15)',
+                        listStyle: 'none',
+                        margin: 0,
+                        padding: 0,
+                        maxHeight: 260,
+                        overflowY: 'auto',
+                        zIndex: 1000,
+                      }}
+                    >
                     {doctorResults.map((d, i) => {
                       const selected = i === doctorActiveIdx;
                       const key = doctorPimsIdOf(d) || String(d.id ?? localDoctorDisplayName(d));
@@ -1428,6 +1519,96 @@ export default function Routing() {
                     })}
                   </ul>
                 )}
+                  </div>
+
+                  <div style={{ position: 'relative', flexShrink: 0, paddingTop: 2 }}>
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      disabled={!form.doctorId.trim()}
+                      title={
+                        form.doctorId.trim()
+                          ? 'Average booked minutes by appointment type (last 30 days)'
+                          : 'Select a doctor first'
+                      }
+                      style={{
+                        fontSize: 12,
+                        padding: '8px 10px',
+                        whiteSpace: 'nowrap',
+                        lineHeight: 1.2,
+                      }}
+                      onClick={() => {
+                        if (!form.doctorId.trim()) return;
+                        if (apptLengthsOpen) {
+                          setApptLengthsOpen(false);
+                          return;
+                        }
+                        setApptLengthsOpen(true);
+                        void loadApptLengthStats();
+                      }}
+                    >
+                      Appt lengths
+                    </button>
+
+                    {apptLengthsOpen && (
+                      <div
+                        className="routing-appt-lengths-popover"
+                        role="dialog"
+                        aria-labelledby="routing-appt-lengths-heading"
+                      >
+                        <div className="routing-appt-lengths-popover-header">
+                          <span id="routing-appt-lengths-heading" className="routing-appt-lengths-popover-title">
+                            Appt lengths
+                          </span>
+                          <button
+                            type="button"
+                            className="routing-appt-lengths-close"
+                            aria-label="Close"
+                            onClick={() => setApptLengthsOpen(false)}
+                          >
+                            ×
+                          </button>
+                        </div>
+                        <div className="routing-appt-lengths-scroll">
+                          <div className="routing-appt-lengths-help">
+                            Average booked minutes per appointment by type over the last 30 days (same rules as
+                            Analytics → Time Spent; blocks excluded). Regular vs multi-pet slots are split into
+                            separate averages.
+                          </div>
+                          {apptLengthsLoading && <div className="muted">Loading…</div>}
+                          {apptLengthsError && (
+                            <div style={{ color: '#b91c1c', fontSize: 13 }}>{apptLengthsError}</div>
+                          )}
+                          {!apptLengthsLoading && !apptLengthsError && apptLengthsRows.length === 0 && (
+                            <div className="muted" style={{ fontSize: 13 }}>
+                              No appointments in this window.
+                            </div>
+                          )}
+                          {!apptLengthsLoading && !apptLengthsError && apptLengthsRows.length > 0 && (
+                            <table>
+                              <thead>
+                                <tr>
+                                  <th>Type</th>
+                                  <th>Avg min</th>
+                                  <th>Multipet avg</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {apptLengthsRows.map((row) => (
+                                  <tr key={row.typeName}>
+                                    <td>{row.typeName}</td>
+                                    <td>{row.count > 0 ? row.avgMinutes : '—'}</td>
+                                    <td>{row.multipetAvgMinutes != null ? row.multipetAvgMinutes : '—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </Field>
           </div>
