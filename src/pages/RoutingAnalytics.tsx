@@ -13,6 +13,7 @@ import {
   TableBody,
   TableCell,
   TableContainer,
+  TableFooter,
   TableHead,
   TableRow,
   Paper,
@@ -21,11 +22,10 @@ import {
   InputLabel,
   Select,
   MenuItem,
+  TextField,
 } from '@mui/material';
 import ChevronLeft from '@mui/icons-material/ChevronLeft';
 import ChevronRight from '@mui/icons-material/ChevronRight';
-import { LocalizationProvider } from '@mui/x-date-pickers';
-import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import dayjs, { Dayjs } from 'dayjs';
 import {
   ResponsiveContainer,
@@ -444,10 +444,9 @@ export default function RoutingAnalyticsPage() {
     if (!allowed.has(selectedOverviewUserEmail)) setSelectedOverviewUserEmail(ALL_USERS);
   }, [restrictEmployeeAnalytics, overviewUserOptions, selectedOverviewUserEmail]);
 
-  /** Single calendar day: per-employee routing, schedule loader, and booking counts. */
-  const singleDayEmployeeBookingRows = useMemo(() => {
-    if (!isSingleDay) return [];
-    const dayKey = startStr;
+  /** Per-employee routing, schedule loader, and booking counts summed over the selected date range. */
+  const employeeBookingTableRows = useMemo(() => {
+    const datesSet = new Set(dates);
     const bookingUsers = bookingsData?.users ?? [];
     const routingUsers = data?.users ?? [];
     const fillUsers = fillDayData?.users ?? [];
@@ -456,9 +455,28 @@ export default function RoutingAnalyticsPage() {
       const bu = bookingUsers.find((x) => x.userEmail === email);
       const ru = routingUsers.find((x) => x.userEmail === email);
       const fu = fillUsers.find((x) => x.userEmail === email);
-      const dayRow = bu?.bookingsByDay?.find((d) => d?.date?.slice(0, 10) === dayKey);
-      const rDay = ru?.requestsByDay?.find((d) => d?.date?.slice(0, 10) === dayKey);
-      const fDay = fu?.requestsByDay?.find((d) => d?.date?.slice(0, 10) === dayKey);
+      let totalBooked = 0;
+      let existingPatientBooked = 0;
+      let newPatientBooked = 0;
+      let routingRequests = 0;
+      let scheduleLoaderRequests = 0;
+      for (const d of bu?.bookingsByDay ?? []) {
+        const date = d?.date?.slice(0, 10);
+        if (!date || !datesSet.has(date)) continue;
+        totalBooked += d.totalBooked ?? 0;
+        existingPatientBooked += d.existingPatientBooked ?? 0;
+        newPatientBooked += d.newPatientBooked ?? 0;
+      }
+      for (const d of ru?.requestsByDay ?? []) {
+        const date = d?.date?.slice(0, 10);
+        if (!date || !datesSet.has(date)) continue;
+        routingRequests += d.requestCount ?? 0;
+      }
+      for (const d of fu?.requestsByDay ?? []) {
+        const date = d?.date?.slice(0, 10);
+        if (!date || !datesSet.has(date)) continue;
+        scheduleLoaderRequests += d.requestCount ?? 0;
+      }
       const name = bu
         ? displayName(bu)
         : ru
@@ -469,11 +487,11 @@ export default function RoutingAnalyticsPage() {
       return {
         key: email,
         name,
-        totalBooked: dayRow?.totalBooked ?? 0,
-        existingPatientBooked: dayRow?.existingPatientBooked ?? 0,
-        newPatientBooked: dayRow?.newPatientBooked ?? 0,
-        routingRequests: rDay?.requestCount ?? 0,
-        scheduleLoaderRequests: fDay?.requestCount ?? 0,
+        totalBooked,
+        existingPatientBooked,
+        newPatientBooked,
+        routingRequests,
+        scheduleLoaderRequests,
       };
     };
 
@@ -504,15 +522,28 @@ export default function RoutingAnalyticsPage() {
 
     const email = selectedOverviewUserEmail;
     return [collectMetrics(email)];
-  }, [
-    isSingleDay,
-    startStr,
-    bookingsData,
-    data,
-    fillDayData,
-    selectedOverviewUserEmail,
-    overviewUserOptions,
-  ]);
+  }, [dates, bookingsData, data, fillDayData, selectedOverviewUserEmail, overviewUserOptions]);
+
+  const employeeBookingTableColumnTotals = useMemo(
+    () =>
+      employeeBookingTableRows.reduce(
+        (acc, r) => ({
+          routingRequests: acc.routingRequests + r.routingRequests,
+          scheduleLoaderRequests: acc.scheduleLoaderRequests + r.scheduleLoaderRequests,
+          newPatientBooked: acc.newPatientBooked + r.newPatientBooked,
+          existingPatientBooked: acc.existingPatientBooked + r.existingPatientBooked,
+          totalBooked: acc.totalBooked + r.totalBooked,
+        }),
+        {
+          routingRequests: 0,
+          scheduleLoaderRequests: 0,
+          newPatientBooked: 0,
+          existingPatientBooked: 0,
+          totalBooked: 0,
+        }
+      ),
+    [employeeBookingTableRows]
+  );
 
   const overviewBookingDetails = useMemo(
     () => collectBookingDetails(bookingsData?.users, dates, selectedOverviewUserEmail),
@@ -664,8 +695,7 @@ export default function RoutingAnalyticsPage() {
   }, [fillDayData]);
 
   return (
-    <LocalizationProvider dateAdapter={AdapterDayjs}>
-      <Box sx={{ pb: 3 }}>
+    <Box sx={{ pb: 3 }}>
         <Typography variant="h6" sx={{ mb: 2 }}>
           Appointments & routing usage
         </Typography>
@@ -697,40 +727,99 @@ export default function RoutingAnalyticsPage() {
               </Box>
             }
           />
-          <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <IconButton
-              aria-label={isSingleDay ? 'Previous day' : 'Previous period'}
-              onClick={() => (isSingleDay ? setRange((r) => ({ from: r.from.subtract(1, 'day'), to: r.from.subtract(1, 'day') })) : shiftRange(-1))}
-              size="small"
-            >
-              <ChevronLeft />
-            </IconButton>
-            <Typography variant="body1" component="span" sx={{ minWidth: 220, textAlign: 'center' }}>
-              {isSingleDay
-                ? range.from.format('ddd, MMM D, YYYY')
-                : `${range.from.format('MMM D')} – ${range.to.format('MMM D, YYYY')}`}
+          <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+            <Typography variant="body2" color="text.secondary">
+              Use Start date / End date for a specific range (browser date picker); presets and arrows still work.
             </Typography>
-            <IconButton
-              aria-label={isSingleDay ? 'Next day' : 'Next period'}
-              onClick={() => (isSingleDay ? setRange((r) => ({ from: r.from.add(1, 'day'), to: r.from.add(1, 'day') })) : shiftRange(1))}
-              size="small"
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 2,
+                flexWrap: 'wrap',
+                rowGap: 1.5,
+              }}
             >
-              <ChevronRight />
-            </IconButton>
+              <IconButton
+                aria-label={isSingleDay ? 'Previous day' : 'Previous period'}
+                onClick={() =>
+                  isSingleDay
+                    ? setRange((r) => ({ from: r.from.subtract(1, 'day'), to: r.from.subtract(1, 'day') }))
+                    : shiftRange(-1)
+                }
+                size="small"
+              >
+                <ChevronLeft />
+              </IconButton>
+              <Typography variant="body1" component="span" sx={{ minWidth: 200, textAlign: 'center' }}>
+                {isSingleDay
+                  ? range.from.format('ddd, MMM D, YYYY')
+                  : `${range.from.format('MMM D')} – ${range.to.format('MMM D, YYYY')}`}
+              </Typography>
+              <IconButton
+                aria-label={isSingleDay ? 'Next day' : 'Next period'}
+                onClick={() =>
+                  isSingleDay
+                    ? setRange((r) => ({ from: r.from.add(1, 'day'), to: r.from.add(1, 'day') }))
+                    : shiftRange(1)
+                }
+                size="small"
+              >
+                <ChevronRight />
+              </IconButton>
+              <TextField
+                label="Start date"
+                type="date"
+                size="small"
+                value={startStr}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (!v) return;
+                  const next = dayjs(v, 'YYYY-MM-DD', true);
+                  if (!next.isValid()) return;
+                  setPreset('');
+                  setRange((r) => {
+                    const to = r.to.startOf('day');
+                    const from = next.startOf('day');
+                    return { from, to: from.isAfter(to) ? from : to };
+                  });
+                }}
+                InputLabelProps={{ shrink: true }}
+                inputProps={{ 'aria-label': 'Custom range start date' }}
+                sx={{ minWidth: 168 }}
+              />
+              <TextField
+                label="End date"
+                type="date"
+                size="small"
+                value={endStr}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (!v) return;
+                  const next = dayjs(v, 'YYYY-MM-DD', true);
+                  if (!next.isValid()) return;
+                  setPreset('');
+                  setRange((r) => {
+                    const from = r.from.startOf('day');
+                    const to = next.startOf('day');
+                    return { from: to.isBefore(from) ? to : from, to };
+                  });
+                }}
+                InputLabelProps={{ shrink: true }}
+                inputProps={{ 'aria-label': 'Custom range end date' }}
+                sx={{ minWidth: 168 }}
+              />
+            </Box>
           </CardContent>
         </Card>
 
         <Card sx={{ mb: 3 }}>
           <CardHeader
-            title={
-              isSingleDay
-                ? 'Bookings & tool usage by employee'
-                : 'Bookings, routing & schedule loader'
-            }
+            title="Bookings & tool usage by employee"
             subheader={
               isSingleDay
-                ? 'Per employee: routing requests, schedule loader (fill-day) requests, and appointments booked (new patient, existing patient, total). Entire practice lists anyone with activity that day; one employee shows that row even if all counts are zero. Change the day with the arrows above.'
-                : 'Appointments (total, existing patient, new patient), routing requests, and schedule loader requests. Dashed blue line is a linear trend of total appointments. Click a legend label to show or hide a series.'
+                ? 'Per employee: routing requests, schedule loader (fill-day) requests, and appointments booked (new patient, existing patient, total) for the selected day. Entire practice lists anyone with activity that day; one employee shows that row even if all counts are zero. Totals at the bottom sum the visible rows.'
+                : 'Per employee: totals over the selected date range (same columns as single-day). Entire practice lists anyone with activity in the range. The chart below shows daily trends for the employee filter; dashed blue line is a linear trend of total appointments. Click a legend label to show or hide a series. Totals at the bottom sum the visible rows.'
             }
           />
           <CardContent>
@@ -765,218 +854,243 @@ export default function RoutingAnalyticsPage() {
               <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
                 <CircularProgress />
               </Box>
-            ) : isSingleDay ? (
-              <TableContainer component={Paper} variant="outlined">
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Employee</TableCell>
-                      <TableCell align="right">Routing requests</TableCell>
-                      <TableCell align="right">Schedule loader requests</TableCell>
-                      <TableCell align="right">New patient</TableCell>
-                      <TableCell align="right">Existing patient</TableCell>
-                      <TableCell align="right">Total appointments</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {singleDayEmployeeBookingRows.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={6} align="center">
-                          <Typography variant="body2" color="text.secondary">
-                            {selectedOverviewUserEmail !== ALL_USERS
-                              ? 'No data for this employee on this day.'
-                              : 'No routing, schedule loader, or booking activity on this day.'}
-                          </Typography>
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      singleDayEmployeeBookingRows.map((row) => (
-                        <TableRow key={row.key}>
-                          <TableCell>{row.name}</TableCell>
-                          <TableCell align="right">{row.routingRequests}</TableCell>
-                          <TableCell align="right">{row.scheduleLoaderRequests}</TableCell>
-                          <TableCell align="right">{row.newPatientBooked}</TableCell>
-                          <TableCell align="right">{row.existingPatientBooked}</TableCell>
-                          <TableCell align="right">{row.totalBooked}</TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
             ) : (
-              <Box sx={{ width: '100%', height: 400 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart
-                    data={overviewChartDataWithTrend}
-                    margin={{ top: 8, right: 16, left: 8, bottom: 8 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                    <YAxis
-                      yAxisId="left"
-                      label={{ value: 'Appointments booked', angle: -90, position: 'insideLeft' }}
-                      tick={{ fontSize: 11 }}
-                      allowDecimals={false}
-                    />
-                    <YAxis
-                      yAxisId="right"
-                      orientation="right"
-                      label={{
-                        value: 'Routing & schedule loader requests',
-                        angle: 90,
-                        position: 'insideRight',
-                      }}
-                      tick={{ fontSize: 11 }}
-                      allowDecimals={false}
-                    />
-                    <Tooltip
-                      formatter={(value: unknown, name: unknown) => {
-                        const n = name != null ? String(name) : '';
-                        const isTrend = n.includes('trend');
-                        const v =
-                          value != null
-                            ? isTrend
-                              ? Number(value).toFixed(1)
-                              : String(Math.round(Number(value)))
-                            : '0';
-                        return [v, n];
-                      }}
-                      labelFormatter={(label) => String(label)}
-                    />
-                    <Legend
-                      wrapperStyle={{ paddingTop: 8 }}
-                      content={({ payload }) => (
-                        <Box
-                          component="ul"
-                          sx={{
-                            display: 'flex',
-                            flexWrap: 'wrap',
-                            justifyContent: 'center',
-                            gap: 1,
-                            listStyle: 'none',
-                            m: 0,
-                            p: 0,
-                          }}
-                        >
-                          {(payload ?? []).map((entry) => {
-                            const raw = String(entry.dataKey ?? '');
-                            if (!(raw in OVERVIEW_LINE_DEFAULTS)) return null;
-                            const key = raw as OverviewLineKey;
-                            const visible = overviewLinesVisible[key];
-                            return (
-                              <Box
-                                component="li"
-                                key={String(entry.dataKey)}
-                              >
-                                <button
-                                  type="button"
-                                  aria-pressed={visible}
-                                  title={visible ? 'Hide series' : 'Show series'}
-                                  onClick={() =>
-                                    setOverviewLinesVisible((v) => ({
-                                      ...v,
-                                      [key]: !v[key],
-                                    }))
-                                  }
-                                  style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: 6,
-                                    padding: '4px 10px',
-                                    border: `1px solid ${visible ? (entry.color ?? '#ccc') : '#e0e0e0'}`,
-                                    borderRadius: 6,
-                                    background: visible ? 'rgba(0,0,0,0.02)' : '#f5f5f5',
-                                    cursor: 'pointer',
-                                    fontSize: 13,
-                                    color: visible ? 'inherit' : '#9e9e9e',
-                                    textDecoration: visible ? 'none' : 'line-through',
-                                  }}
-                                >
-                                  <span
-                                    style={{
-                                      width: 10,
-                                      height: 10,
-                                      borderRadius: 2,
-                                      background: entry.color,
-                                      opacity: visible ? 1 : 0.35,
-                                      flexShrink: 0,
-                                    }}
-                                    aria-hidden
-                                  />
-                                  {entry.value}
-                                </button>
-                              </Box>
-                            );
-                          })}
-                        </Box>
+              <>
+                <TableContainer component={Paper} variant="outlined">
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Employee</TableCell>
+                        <TableCell align="right">Routing requests</TableCell>
+                        <TableCell align="right">Schedule loader requests</TableCell>
+                        <TableCell align="right">New patient</TableCell>
+                        <TableCell align="right">Existing patient</TableCell>
+                        <TableCell align="right">Total appointments</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {employeeBookingTableRows.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={6} align="center">
+                            <Typography variant="body2" color="text.secondary">
+                              {selectedOverviewUserEmail !== ALL_USERS
+                                ? 'No data for this employee in this date range.'
+                                : 'No routing, schedule loader, or booking activity in this date range.'}
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        employeeBookingTableRows.map((row) => (
+                          <TableRow key={row.key}>
+                            <TableCell>{row.name}</TableCell>
+                            <TableCell align="right">{row.routingRequests}</TableCell>
+                            <TableCell align="right">{row.scheduleLoaderRequests}</TableCell>
+                            <TableCell align="right">{row.newPatientBooked}</TableCell>
+                            <TableCell align="right">{row.existingPatientBooked}</TableCell>
+                            <TableCell align="right">{row.totalBooked}</TableCell>
+                          </TableRow>
+                        ))
                       )}
-                    />
-                    <Line
-                      yAxisId="left"
-                      type="monotone"
-                      dataKey="totalBooked"
-                      name="Total appointments booked"
-                      stroke="#1565c0"
-                      strokeWidth={2}
-                      dot={{ r: 3 }}
-                      hide={!overviewLinesVisible.totalBooked}
-                    />
-                    <Line
-                      yAxisId="left"
-                      type="monotone"
-                      dataKey="totalBookedTrend"
-                      name="Total appointments (trend)"
-                      stroke="#1565c0"
-                      strokeWidth={1.5}
-                      strokeDasharray="6 4"
-                      dot={false}
-                      legendType="none"
-                      hide={!overviewLinesVisible.totalBooked}
-                    />
-                    <Line
-                      yAxisId="left"
-                      type="monotone"
-                      dataKey="existingPatientBooked"
-                      name="Existing patient bookings"
-                      stroke="#2e7d32"
-                      strokeWidth={2}
-                      dot={{ r: 3 }}
-                      hide={!overviewLinesVisible.existingPatientBooked}
-                    />
-                    <Line
-                      yAxisId="left"
-                      type="monotone"
-                      dataKey="newPatientBooked"
-                      name="New patient bookings"
-                      stroke="#ed6c02"
-                      strokeWidth={2}
-                      dot={{ r: 3 }}
-                      hide={!overviewLinesVisible.newPatientBooked}
-                    />
-                    <Line
-                      yAxisId="right"
-                      type="monotone"
-                      dataKey="routingRequests"
-                      name="Routing requests"
-                      stroke="#7b1fa2"
-                      strokeWidth={2}
-                      dot={{ r: 3 }}
-                      hide={!overviewLinesVisible.routingRequests}
-                    />
-                    <Line
-                      yAxisId="right"
-                      type="monotone"
-                      dataKey="scheduleLoaderRequests"
-                      name="Schedule loader requests"
-                      stroke="#00838f"
-                      strokeWidth={2}
-                      dot={{ r: 3 }}
-                      hide={!overviewLinesVisible.scheduleLoaderRequests}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </Box>
+                    </TableBody>
+                    {employeeBookingTableRows.length > 0 ? (
+                      <TableFooter>
+                        <TableRow>
+                          <TableCell sx={{ fontWeight: 600 }}>Total</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 600 }}>
+                            {employeeBookingTableColumnTotals.routingRequests}
+                          </TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 600 }}>
+                            {employeeBookingTableColumnTotals.scheduleLoaderRequests}
+                          </TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 600 }}>
+                            {employeeBookingTableColumnTotals.newPatientBooked}
+                          </TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 600 }}>
+                            {employeeBookingTableColumnTotals.existingPatientBooked}
+                          </TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 600 }}>
+                            {employeeBookingTableColumnTotals.totalBooked}
+                          </TableCell>
+                        </TableRow>
+                      </TableFooter>
+                    ) : null}
+                  </Table>
+                </TableContainer>
+                {!isSingleDay ? (
+                  <Box sx={{ width: '100%', height: 400, mt: 3 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart
+                        data={overviewChartDataWithTrend}
+                        margin={{ top: 8, right: 16, left: 8, bottom: 8 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                        <YAxis
+                          yAxisId="left"
+                          label={{ value: 'Appointments booked', angle: -90, position: 'insideLeft' }}
+                          tick={{ fontSize: 11 }}
+                          allowDecimals={false}
+                        />
+                        <YAxis
+                          yAxisId="right"
+                          orientation="right"
+                          label={{
+                            value: 'Routing & schedule loader requests',
+                            angle: 90,
+                            position: 'insideRight',
+                          }}
+                          tick={{ fontSize: 11 }}
+                          allowDecimals={false}
+                        />
+                        <Tooltip
+                          formatter={(value: unknown, name: unknown) => {
+                            const n = name != null ? String(name) : '';
+                            const isTrend = n.includes('trend');
+                            const v =
+                              value != null
+                                ? isTrend
+                                  ? Number(value).toFixed(1)
+                                  : String(Math.round(Number(value)))
+                                : '0';
+                            return [v, n];
+                          }}
+                          labelFormatter={(label) => String(label)}
+                        />
+                        <Legend
+                          wrapperStyle={{ paddingTop: 8 }}
+                          content={({ payload }) => (
+                            <Box
+                              component="ul"
+                              sx={{
+                                display: 'flex',
+                                flexWrap: 'wrap',
+                                justifyContent: 'center',
+                                gap: 1,
+                                listStyle: 'none',
+                                m: 0,
+                                p: 0,
+                              }}
+                            >
+                              {(payload ?? []).map((entry) => {
+                                const raw = String(entry.dataKey ?? '');
+                                if (!(raw in OVERVIEW_LINE_DEFAULTS)) return null;
+                                const key = raw as OverviewLineKey;
+                                const visible = overviewLinesVisible[key];
+                                return (
+                                  <Box
+                                    component="li"
+                                    key={String(entry.dataKey)}
+                                  >
+                                    <button
+                                      type="button"
+                                      aria-pressed={visible}
+                                      title={visible ? 'Hide series' : 'Show series'}
+                                      onClick={() =>
+                                        setOverviewLinesVisible((v) => ({
+                                          ...v,
+                                          [key]: !v[key],
+                                        }))
+                                      }
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: 6,
+                                        padding: '4px 10px',
+                                        border: `1px solid ${visible ? (entry.color ?? '#ccc') : '#e0e0e0'}`,
+                                        borderRadius: 6,
+                                        background: visible ? 'rgba(0,0,0,0.02)' : '#f5f5f5',
+                                        cursor: 'pointer',
+                                        fontSize: 13,
+                                        color: visible ? 'inherit' : '#9e9e9e',
+                                        textDecoration: visible ? 'none' : 'line-through',
+                                      }}
+                                    >
+                                      <span
+                                        style={{
+                                          width: 10,
+                                          height: 10,
+                                          borderRadius: 2,
+                                          background: entry.color,
+                                          opacity: visible ? 1 : 0.35,
+                                          flexShrink: 0,
+                                        }}
+                                        aria-hidden
+                                      />
+                                      {entry.value}
+                                    </button>
+                                  </Box>
+                                );
+                              })}
+                            </Box>
+                          )}
+                        />
+                        <Line
+                          yAxisId="left"
+                          type="monotone"
+                          dataKey="totalBooked"
+                          name="Total appointments booked"
+                          stroke="#1565c0"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                          hide={!overviewLinesVisible.totalBooked}
+                        />
+                        <Line
+                          yAxisId="left"
+                          type="monotone"
+                          dataKey="totalBookedTrend"
+                          name="Total appointments (trend)"
+                          stroke="#1565c0"
+                          strokeWidth={1.5}
+                          strokeDasharray="6 4"
+                          dot={false}
+                          legendType="none"
+                          hide={!overviewLinesVisible.totalBooked}
+                        />
+                        <Line
+                          yAxisId="left"
+                          type="monotone"
+                          dataKey="existingPatientBooked"
+                          name="Existing patient bookings"
+                          stroke="#2e7d32"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                          hide={!overviewLinesVisible.existingPatientBooked}
+                        />
+                        <Line
+                          yAxisId="left"
+                          type="monotone"
+                          dataKey="newPatientBooked"
+                          name="New patient bookings"
+                          stroke="#ed6c02"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                          hide={!overviewLinesVisible.newPatientBooked}
+                        />
+                        <Line
+                          yAxisId="right"
+                          type="monotone"
+                          dataKey="routingRequests"
+                          name="Routing requests"
+                          stroke="#7b1fa2"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                          hide={!overviewLinesVisible.routingRequests}
+                        />
+                        <Line
+                          yAxisId="right"
+                          type="monotone"
+                          dataKey="scheduleLoaderRequests"
+                          name="Schedule loader requests"
+                          stroke="#00838f"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                          hide={!overviewLinesVisible.scheduleLoaderRequests}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </Box>
+                ) : null}
+              </>
             )}
           </CardContent>
         </Card>
@@ -1305,7 +1419,6 @@ export default function RoutingAnalyticsPage() {
             )}
           </CardContent>
         </Card>
-      </Box>
-    </LocalizationProvider>
+    </Box>
   );
 }
