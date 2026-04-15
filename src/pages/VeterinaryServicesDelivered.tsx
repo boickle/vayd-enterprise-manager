@@ -189,13 +189,14 @@ function addLinearTrend<T extends { total: number }>(
   }));
 }
 
-/** Points from appointments (same rules as My Day: 1 normal, 0.5 tech, 2 euthanasia; skip personal blocks). */
+/** Points from appointments (same rules as My Day: 1 normal, 0.5 tech, 2 euthanasia; skip personal blocks; Ash Drop Off excluded). */
 function pointsFromAppts(
   appts: { appointmentType?: string; isPersonalBlock?: boolean }[]
 ): number {
   return (appts ?? []).reduce((total, a) => {
     if ((a as any)?.isPersonalBlock) return total;
-    const type = (a?.appointmentType || '').toLowerCase();
+    const type = (a?.appointmentType || '').toLowerCase().replace(/-/g, ' ');
+    if (type.includes('ash drop off')) return total;
     if (type === 'euthanasia') return total + 2;
     if (type.includes('tech appointment')) return total + 0.5;
     return total + 1;
