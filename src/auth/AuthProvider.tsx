@@ -4,6 +4,7 @@ import { http, setToken } from '../api/http';
 import { setLogoutHandler } from '../api/http';
 import { getCurrentUser } from '../api/users';
 import { trackLogin, trackLogout } from '../utils/analytics';
+import { collectAssignedDoctorIds } from '../utils/analyticsAccess';
 
 const MOCK = import.meta.env.VITE_MOCK_AUTH === '1';
 
@@ -30,6 +31,8 @@ type AuthContextType = {
   clientInfo: any | null; // Store client information for clients
   /** Doctor/provider id from users table (when set). Used to default provider selection in My Day / My Week. */
   doctorId: string | null;
+  /** All doctor/provider ids linked to this user (for analytics scoping). Includes `doctorId`. */
+  assignedDoctorIds: string[];
   // ⬅️ now returns a LoginResult instead of void
   login: (email: string, password: string) => Promise<LoginResult>;
   logout: () => Promise<void>;
@@ -143,6 +146,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   });
   const [doctorId, setDoctorId] = useState<string | null>(null);
+  const [assignedDoctorIds, setAssignedDoctorIds] = useState<string[]>([]);
   const [clientInfo, setClientInfo] = useState<any | null>(() => {
     try {
       const stored = localStorage.getItem('vayd_clientInfo');
@@ -272,6 +276,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setTokenState(fakeAccessToken);
       setEmail(emailInput);
       setUserId('mock-client');
+      setAssignedDoctorIds([]);
       return {
         token: fakeAccessToken, // Keep for backward compatibility
         accessToken: fakeAccessToken,
@@ -318,6 +323,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (userDoctorId != null && String(userDoctorId).trim() !== '') {
           setDoctorId(String(userDoctorId));
         }
+        setAssignedDoctorIds(collectAssignedDoctorIds((user ?? {}) as Record<string, unknown>));
         
         // Extract and set role from login response immediately
         const roles: string[] = Array.isArray((user as any)?.role)
@@ -414,6 +420,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(null);
     setUserId(null);
     setDoctorId(null);
+    setAssignedDoctorIds([]);
     setClientInfo(null);
   }
 
@@ -451,6 +458,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(null);
     setUserId(null);
     setDoctorId(null);
+    setAssignedDoctorIds([]);
     setClientInfo(null);
   }
 
@@ -458,6 +466,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!tokenState) {
       setDoctorId(null);
+      setAssignedDoctorIds([]);
       return;
     }
     let on = true;
@@ -468,9 +477,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (on && id != null && String(id).trim() !== '') {
           setDoctorId(String(id));
         }
+        if (on) {
+          setAssignedDoctorIds(collectAssignedDoctorIds((data ?? {}) as Record<string, unknown>));
+        }
       })
       .catch(() => {
-        if (on) setDoctorId(null);
+        if (on) {
+          setDoctorId(null);
+          setAssignedDoctorIds([]);
+        }
       });
     return () => {
       on = false;
@@ -485,11 +500,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       role,
       clientInfo,
       doctorId,
+      assignedDoctorIds,
       login,
       logout,
       logoutAll,
     }),
-    [tokenState, email, userId, role, clientInfo, doctorId]
+    [tokenState, email, userId, role, clientInfo, doctorId, assignedDoctorIds]
   );
 
 

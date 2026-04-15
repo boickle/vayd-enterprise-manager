@@ -1,4 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '../auth/useAuth';
+import {
+  appointmentMatchesAssignedDoctorIds,
+  isEmployeeAnalyticsRestricted,
+  normalizeAuthRoles,
+} from '../utils/analyticsAccess';
 import {
   Alert,
   Box,
@@ -194,6 +200,26 @@ function primaryProviderIdSet(appt: CancelledAppointmentAnalyticsRow): Set<strin
   return s;
 }
 
+function primaryProviderLabelForViewer(
+  appt: CancelledAppointmentAnalyticsRow,
+  opts: {
+    restrict: boolean;
+    assignedDoctorIds: string[];
+    selectedProviderId: string;
+  }
+): string {
+  const { restrict, assignedDoctorIds, selectedProviderId } = opts;
+  if (
+    restrict &&
+    assignedDoctorIds.length > 0 &&
+    selectedProviderId === ALL_PROVIDERS &&
+    !appointmentMatchesAssignedDoctorIds(assignedDoctorIds, primaryProviderIdSet(appt))
+  ) {
+    return '—';
+  }
+  return primaryProviderLabel(appt);
+}
+
 function matchesProviderFilter(
   appt: CancelledAppointmentAnalyticsRow,
   selected: string,
@@ -303,6 +329,16 @@ export default function CancellationsAnalytics() {
   const [selectedProviderId, setSelectedProviderId] = useState<string>(ALL_PROVIDERS);
   const [detailRow, setDetailRow] = useState<CancelledAppointmentAnalyticsRow | null>(null);
 
+  const { role, assignedDoctorIds } = useAuth() as {
+    role?: string[];
+    assignedDoctorIds?: string[];
+  };
+  const normalizedRoles = normalizeAuthRoles(role);
+  const restrictEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles);
+  const assignedDoctorIdSet = useMemo(
+    () => new Set((assignedDoctorIds ?? []).map((x) => String(x).trim()).filter(Boolean)),
+    [assignedDoctorIds]
+  );
   const start = range.from.startOf('day');
   const end = range.to.startOf('day');
   const startStr = toLocalDateStr(start);
@@ -405,12 +441,30 @@ export default function CancellationsAnalytics() {
   }, [filtered]);
 
   const providerOptions = useMemo(() => {
-    const opts = [{ value: ALL_PROVIDERS, label: 'All primary providers' }];
+    const allLabel = restrictEmployeeAnalytics ? 'Entire practice' : 'All primary providers';
+    const opts = [{ value: ALL_PROVIDERS, label: allLabel }];
+    if (!restrictEmployeeAnalytics) {
+      for (const p of providers) {
+        opts.push({ value: String(p.id), label: p.name || String(p.id) });
+      }
+      return opts;
+    }
+    if (!assignedDoctorIdSet.size) return opts;
     for (const p of providers) {
-      opts.push({ value: String(p.id), label: p.name || String(p.id) });
+      if (
+        assignedDoctorIdSet.has(String(p.id)) ||
+        (p.pimsId != null && assignedDoctorIdSet.has(String(p.pimsId)))
+      ) {
+        opts.push({ value: String(p.id), label: p.name || String(p.id) });
+      }
     }
     return opts;
-  }, [providers]);
+  }, [providers, restrictEmployeeAnalytics, assignedDoctorIdSet]);
+
+  useEffect(() => {
+    const allowed = new Set(providerOptions.map((o) => o.value));
+    if (!allowed.has(selectedProviderId)) setSelectedProviderId(ALL_PROVIDERS);
+  }, [providerOptions, selectedProviderId]);
 
   const listKey = (appt: CancelledAppointmentAnalyticsRow, index: number) => {
     const id = appt.id ?? appt.pimsId ?? appt.appointmentId;
@@ -601,7 +655,13 @@ export default function CancellationsAnalytics() {
                               </TableCell>
                               <TableCell>{patientLabel(appt)}</TableCell>
                               <TableCell>{clientLabel(appt)}</TableCell>
-                              <TableCell>{primaryProviderLabel(appt)}</TableCell>
+                              <TableCell>
+                                {primaryProviderLabelForViewer(appt, {
+                                  restrict: restrictEmployeeAnalytics,
+                                  assignedDoctorIds: Array.from(assignedDoctorIdSet),
+                                  selectedProviderId,
+                                })}
+                              </TableCell>
                               <TableCell>{status}</TableCell>
                             </TableRow>
                           );

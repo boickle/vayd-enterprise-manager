@@ -61,6 +61,8 @@ import {
   type DoctorMonthDay,
 } from '../api/appointments';
 import { fetchEmployee, type EmployeeWeeklySchedule } from '../api/appointmentSettings';
+import { useAuth } from '../auth/useAuth';
+import { isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
 
 dayjs.extend(utc);
 
@@ -338,6 +340,28 @@ export default function VeterinaryServicesDeliveredPage() {
   const isViewingCalendarToday = isSingleDay && startStr === todayCalStr;
   const canGoNext = end.isBefore(today);
 
+  const { role, assignedDoctorIds } = useAuth() as {
+    role?: string[];
+    assignedDoctorIds?: string[];
+  };
+  const normalizedRoles = normalizeAuthRoles(role);
+  const restrictEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles);
+  const assignedDoctorIdSet = useMemo(
+    () => new Set((assignedDoctorIds ?? []).map((x) => String(x).trim()).filter(Boolean)),
+    [assignedDoctorIds]
+  );
+
+  /** Providers we may call revenue / calendar APIs for (all for admins; assigned-only for employees). */
+  const providersForApi = useMemo(() => {
+    if (!restrictEmployeeAnalytics) return providers;
+    if (!assignedDoctorIdSet.size) return [];
+    return providers.filter((p) => {
+      const id = String(p.id ?? '').trim();
+      const pims = p.pimsId != null ? String(p.pimsId).trim() : '';
+      return (id && assignedDoctorIdSet.has(id)) || (pims && assignedDoctorIdSet.has(pims));
+    });
+  }, [providers, restrictEmployeeAnalytics, assignedDoctorIdSet]);
+
   // Load providers
   useEffect(() => {
     let alive = true;
@@ -359,7 +383,7 @@ export default function VeterinaryServicesDeliveredPage() {
 
   // Load goals and weekly schedules for each provider; keep only those with at least one goal set
   useEffect(() => {
-    if (!providers.length) {
+    if (!providersForApi.length) {
       setEmployeesWithGoals([]);
       return;
     }
@@ -368,7 +392,7 @@ export default function VeterinaryServicesDeliveredPage() {
     (async () => {
       try {
         const results = await Promise.allSettled(
-          providers.map(async (p) => {
+          providersForApi.map(async (p) => {
             const id = String(p.id);
             const empId = Number(p.id);
             if (!Number.isFinite(empId)) return null;
@@ -392,8 +416,12 @@ export default function VeterinaryServicesDeliveredPage() {
           .map((r) => r.value)
           .filter((v): v is { id: string; name: string; goals: EmployeeGoalsResponseDto; weeklySchedules: EmployeeWeeklySchedule[] } => v != null);
         setEmployeesWithGoals(withGoals);
-        // Default goal scope to company if current selection is no longer valid
         setGoalScope((prev) => {
+          if (restrictEmployeeAnalytics) {
+            const scoped = withGoals.filter((e) => assignedDoctorIdSet.has(String(e.id)));
+            if (scoped.some((e) => e.id === prev)) return prev;
+            return scoped[0]?.id ?? PRACTICE_TOTAL_ID;
+          }
           if (prev === PRACTICE_TOTAL_ID) return prev;
           if (withGoals.some((e) => e.id === prev)) return prev;
           return PRACTICE_TOTAL_ID;
@@ -409,7 +437,7 @@ export default function VeterinaryServicesDeliveredPage() {
     return () => {
       alive = false;
     };
-  }, [providers]);
+  }, [providersForApi, restrictEmployeeAnalytics, assignedDoctorIdSet]);
 
   // Load each doctor's revenue series for the date range, plus "Not Specified" (doctorId null/empty)
   useEffect(() => {
@@ -418,7 +446,7 @@ export default function VeterinaryServicesDeliveredPage() {
     setError(null);
     (async () => {
       try {
-        const providerPromises = providers.map(async (p) => {
+        const providerPromises = providersForApi.map(async (p) => {
           const id = String(p.id);
           const response = await fetchDoctorRevenueSeries({
             start: startStr,
@@ -427,17 +455,21 @@ export default function VeterinaryServicesDeliveredPage() {
           });
           return { doctorId: id, name: p.name, response };
         });
-        const notSpecifiedPromise = fetchDoctorRevenueSeries({
-          start: startStr,
-          end: endStr,
-          doctorId: '',
-        }).then((response) => ({
-          doctorId: NOT_SPECIFIED_DOCTOR_ID,
-          name: 'Not Specified',
-          response,
-        }));
-        const results = await Promise.all([...providerPromises, notSpecifiedPromise]);
+        const includeNotSpecified = !restrictEmployeeAnalytics;
+        const notSpecifiedPromise = includeNotSpecified
+          ? fetchDoctorRevenueSeries({
+              start: startStr,
+              end: endStr,
+              doctorId: '',
+            }).then((response) => ({
+              doctorId: NOT_SPECIFIED_DOCTOR_ID,
+              name: 'Not Specified',
+              response,
+            }))
+          : Promise.resolve(null);
+        const settled = await Promise.all([...providerPromises, notSpecifiedPromise]);
         if (!alive) return;
+        const results = settled.filter((x): x is NonNullable<typeof x> => x != null);
         setDoctorResponses(results);
       } catch (e) {
         if (!alive) return;
@@ -451,11 +483,11 @@ export default function VeterinaryServicesDeliveredPage() {
     return () => {
       alive = false;
     };
-  }, [providers.length, startStr, endStr]);
+  }, [providersForApi, startStr, endStr, restrictEmployeeAnalytics]);
 
   // Load appointments per doctor per month for points (one request per doctor per month in range; includes single-day)
   useEffect(() => {
-    if (!providers.length) {
+    if (!providersForApi.length) {
       setPointsByDoctorByDate({});
       setServiceMinutesByDoctorByDate({});
       setPointsLoading(false);
@@ -466,7 +498,7 @@ export default function VeterinaryServicesDeliveredPage() {
     setPointsLoading(true);
     (async () => {
       try {
-        const entries = providers.flatMap((p) =>
+        const entries = providersForApi.flatMap((p) =>
           monthPairs.map(({ year, month }) => ({ doctorId: String(p.id), year, month }))
         );
         const results = await Promise.all(
@@ -503,11 +535,11 @@ export default function VeterinaryServicesDeliveredPage() {
     return () => {
       alive = false;
     };
-  }, [providers.length, startStr, endStr]);
+  }, [providersForApi, startStr, endStr]);
 
   // Trailing history for "estimated day revenue" when the selected day is calendar today
   useEffect(() => {
-    if (!isViewingCalendarToday || !providers.length) {
+    if (!isViewingCalendarToday || !providersForApi.length) {
       setEstHistDoctorResponses([]);
       setEstHistPointsByDoctorByDate({});
       setEstHistLoading(false);
@@ -525,7 +557,7 @@ export default function VeterinaryServicesDeliveredPage() {
     setEstHistLoading(true);
     (async () => {
       try {
-        const providerPromises = providers.map(async (p) => {
+        const providerPromises = providersForApi.map(async (p) => {
           const id = String(p.id);
           const response = await fetchDoctorRevenueSeries({
             start: histStartStr,
@@ -534,18 +566,22 @@ export default function VeterinaryServicesDeliveredPage() {
           });
           return { doctorId: id, name: p.name, response };
         });
-        const notSpecifiedPromise = fetchDoctorRevenueSeries({
-          start: histStartStr,
-          end: histEndStr,
-          doctorId: '',
-        }).then((response) => ({
-          doctorId: NOT_SPECIFIED_DOCTOR_ID,
-          name: 'Not Specified',
-          response,
-        }));
-        const revenueResults = await Promise.all([...providerPromises, notSpecifiedPromise]);
+        const includeNotSpecified = !restrictEmployeeAnalytics;
+        const notSpecifiedPromise = includeNotSpecified
+          ? fetchDoctorRevenueSeries({
+              start: histStartStr,
+              end: histEndStr,
+              doctorId: '',
+            }).then((response) => ({
+              doctorId: NOT_SPECIFIED_DOCTOR_ID,
+              name: 'Not Specified',
+              response,
+            }))
+          : Promise.resolve(null);
+        const revenueSettled = await Promise.all([...providerPromises, notSpecifiedPromise]);
+        const revenueResults = revenueSettled.filter((x): x is NonNullable<typeof x> => x != null);
 
-        const entries = providers.flatMap((p) =>
+        const entries = providersForApi.flatMap((p) =>
           monthPairs.map(({ year, month }) => ({ doctorId: String(p.id), year, month }))
         );
         const pointResults = await Promise.all(
@@ -581,7 +617,7 @@ export default function VeterinaryServicesDeliveredPage() {
     return () => {
       alive = false;
     };
-  }, [isViewingCalendarToday, providers]);
+  }, [isViewingCalendarToday, providersForApi, restrictEmployeeAnalytics]);
 
   const practiceSeries = useMemo(() => {
     if (loading) return [];
@@ -634,7 +670,7 @@ export default function VeterinaryServicesDeliveredPage() {
     if (graphSelection === PRACTICE_TOTAL_ID) {
       for (const date of dates) {
         let sum = 0;
-        for (const p of providers) {
+        for (const p of providersForApi) {
           const id = String(p.id);
           sum += pointsByDoctorByDate[id]?.[date] ?? 0;
         }
@@ -647,7 +683,7 @@ export default function VeterinaryServicesDeliveredPage() {
       }
     }
     return map;
-  }, [loading, graphSelection, pointsByDoctorByDate, start, end, providers]);
+  }, [loading, graphSelection, pointsByDoctorByDate, start, end, providersForApi]);
 
   /** Time at appointments (minutes) per date for current graph selection. */
   const timeAtApptsPerDateForSelection = useMemo(() => {
@@ -657,7 +693,7 @@ export default function VeterinaryServicesDeliveredPage() {
     if (graphSelection === PRACTICE_TOTAL_ID) {
       for (const date of dates) {
         let sum = 0;
-        for (const p of providers) {
+        for (const p of providersForApi) {
           const id = String(p.id);
           sum += serviceMinutesByDoctorByDate[id]?.[date] ?? 0;
         }
@@ -670,7 +706,7 @@ export default function VeterinaryServicesDeliveredPage() {
       }
     }
     return map;
-  }, [loading, graphSelection, serviceMinutesByDoctorByDate, start, end, providers]);
+  }, [loading, graphSelection, serviceMinutesByDoctorByDate, start, end, providersForApi]);
 
   const timeAtApptsChartData = useMemo(() => {
     if (loading) return [];
@@ -710,15 +746,88 @@ export default function VeterinaryServicesDeliveredPage() {
     }));
   }, [loading, vsdPerPointChartData, excludeZeroRevenueDays]);
 
+  /** Combined assigned-doctor series in the graph (employees); admins see "Practice total". */
+  const vsdAggregateSeriesLabel = useMemo(() => {
+    if (!restrictEmployeeAnalytics) return 'Practice total';
+    const names = doctorResponses
+      .filter((r) => {
+        const id = String(r.doctorId);
+        if (id === NOT_SPECIFIED_DOCTOR_ID || id === '') return false;
+        if (!assignedDoctorIdSet.size) return false;
+        return assignedDoctorIdSet.has(id);
+      })
+      .map((r) => String(r.name ?? '').trim())
+      .filter(Boolean);
+    if (names.length === 1) return `${names[0]} total`;
+    if (names.length > 1) {
+      return names.length === 2
+        ? `${names[0]} & ${names[1]} total`
+        : `${names.slice(0, -1).join(', ')} & ${names[names.length - 1]} total`;
+    }
+    return 'Total';
+  }, [restrictEmployeeAnalytics, doctorResponses, assignedDoctorIdSet]);
+
+  const assignedDoctorOnlyResponses = useMemo(() => {
+    if (!restrictEmployeeAnalytics) return [];
+    return doctorResponses.filter((r) => {
+      const id = String(r.doctorId);
+      if (id === NOT_SPECIFIED_DOCTOR_ID || id === '') return false;
+      if (!assignedDoctorIdSet.size) return false;
+      return assignedDoctorIdSet.has(id);
+    });
+  }, [restrictEmployeeAnalytics, doctorResponses, assignedDoctorIdSet]);
+
   const graphOptions = useMemo(() => {
     const options: { id: string; label: string }[] = [
-      { id: PRACTICE_TOTAL_ID, label: 'Practice total' },
+      { id: PRACTICE_TOTAL_ID, label: vsdAggregateSeriesLabel },
     ];
+    const hideDuplicateSingleDoctor =
+      restrictEmployeeAnalytics && assignedDoctorOnlyResponses.length === 1;
     doctorResponses.forEach((r) => {
-      options.push({ id: String(r.doctorId), label: r.name });
+      const id = String(r.doctorId);
+      if (restrictEmployeeAnalytics) {
+        if (!assignedDoctorIdSet.size) return;
+        if (id === NOT_SPECIFIED_DOCTOR_ID || id === '') return;
+        if (!assignedDoctorIdSet.has(id)) return;
+        if (
+          hideDuplicateSingleDoctor &&
+          assignedDoctorOnlyResponses[0] &&
+          id === String(assignedDoctorOnlyResponses[0].doctorId)
+        ) {
+          return;
+        }
+      }
+      options.push({ id, label: r.name });
     });
     return options;
-  }, [doctorResponses]);
+  }, [
+    doctorResponses,
+    restrictEmployeeAnalytics,
+    assignedDoctorIdSet,
+    vsdAggregateSeriesLabel,
+    assignedDoctorOnlyResponses,
+  ]);
+
+  const employeesForGoalScopeSelect = useMemo(() => {
+    if (!restrictEmployeeAnalytics) return employeesWithGoals;
+    if (!assignedDoctorIdSet.size) return [];
+    return employeesWithGoals.filter((e) => assignedDoctorIdSet.has(String(e.id)));
+  }, [restrictEmployeeAnalytics, assignedDoctorIdSet, employeesWithGoals]);
+
+  useEffect(() => {
+    if (!restrictEmployeeAnalytics) return;
+    if (graphSelection !== PRACTICE_TOTAL_ID && !graphOptions.some((o) => o.id === graphSelection)) {
+      setGraphSelection(PRACTICE_TOTAL_ID);
+    }
+  }, [restrictEmployeeAnalytics, graphSelection, graphOptions]);
+
+  useEffect(() => {
+    if (!restrictEmployeeAnalytics) return;
+    if (!employeesForGoalScopeSelect.length) return;
+    if (goalScope === PRACTICE_TOTAL_ID || !employeesForGoalScopeSelect.some((e) => e.id === goalScope)) {
+      setGoalScope(employeesForGoalScopeSelect[0].id);
+    }
+  }, [restrictEmployeeAnalytics, goalScope, employeesForGoalScopeSelect]);
 
   /** Goal totals for the selected scope and date range (only on days the doctor(s) are working). */
   const goalTotalsForRange = useMemo(() => {
@@ -727,7 +836,9 @@ export default function VeterinaryServicesDeliveredPage() {
     let totalRevenueGoal = 0;
     const emps =
       goalScope === PRACTICE_TOTAL_ID
-        ? employeesWithGoals
+        ? restrictEmployeeAnalytics
+          ? employeesForGoalScopeSelect
+          : employeesWithGoals
         : employeesWithGoals.filter((e) => e.id === goalScope);
     for (const dateStr of dates) {
       const dayOfWeek = dayjs(dateStr).day();
@@ -739,7 +850,7 @@ export default function VeterinaryServicesDeliveredPage() {
       }
     }
     return { totalPointGoal, totalRevenueGoal };
-  }, [goalScope, employeesWithGoals, start, end]);
+  }, [goalScope, employeesWithGoals, employeesForGoalScopeSelect, restrictEmployeeAnalytics, start, end]);
 
   /** Actual points and revenue for the selected scope (only on days the doctor(s) are working). */
   const actualsForGoalScope = useMemo(() => {
@@ -747,9 +858,9 @@ export default function VeterinaryServicesDeliveredPage() {
     let actualPoints = 0;
     let actualRevenue = 0;
     if (goalScope === PRACTICE_TOTAL_ID) {
-      // Sum only over employees with goals, and only for dates they are working
+      const empsForActuals = restrictEmployeeAnalytics ? employeesForGoalScopeSelect : employeesWithGoals;
       for (const dateStr of dates) {
-        for (const emp of employeesWithGoals) {
+        for (const emp of empsForActuals) {
           if (!isWorkingDay(emp, dateStr)) continue;
           const id = emp.id;
           actualPoints += pointsByDoctorByDate[id]?.[dateStr] ?? 0;
@@ -770,7 +881,16 @@ export default function VeterinaryServicesDeliveredPage() {
       }
     }
     return { actualPoints, actualRevenue };
-  }, [goalScope, start, end, employeesWithGoals, pointsByDoctorByDate, doctorResponses]);
+  }, [
+    goalScope,
+    start,
+    end,
+    employeesWithGoals,
+    employeesForGoalScopeSelect,
+    restrictEmployeeAnalytics,
+    pointsByDoctorByDate,
+    doctorResponses,
+  ]);
 
   const goalsSummary = useMemo(() => {
     const { totalPointGoal, totalRevenueGoal } = goalTotalsForRange;
@@ -797,7 +917,7 @@ export default function VeterinaryServicesDeliveredPage() {
     const histEnd = todayD.subtract(1, 'day');
     const histStart = histEnd.subtract(VSD_ESTIMATE_LOOKBACK_DAYS - 1, 'day');
 
-    const providerIds = providers.map((p) => String(p.id));
+    const providerIds = providersForApi.map((p) => String(p.id));
     const practiceAvgVsd = meanPracticeHistoricalVsdPerPoint(
       providerIds,
       estHistDoctorResponses,
@@ -854,7 +974,7 @@ export default function VeterinaryServicesDeliveredPage() {
     isViewingCalendarToday,
     todayCalStr,
     doctorResponses,
-    providers,
+    providersForApi,
     pointsByDoctorByDate,
     estHistDoctorResponses,
     estHistPointsByDoctorByDate,
@@ -1006,6 +1126,11 @@ export default function VeterinaryServicesDeliveredPage() {
                   <Typography variant="body2" color="text.secondary">
                     No employee goals configured. Set goals in Settings → Employee Goals.
                   </Typography>
+                ) : restrictEmployeeAnalytics && employeesForGoalScopeSelect.length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">
+                    No goals are configured for providers assigned to your account, or no providers are
+                    assigned. Goals here only apply to your assigned providers.
+                  </Typography>
                 ) : (
                   <>
                     <FormControl size="small" sx={{ minWidth: 260, mb: 2 }}>
@@ -1016,12 +1141,16 @@ export default function VeterinaryServicesDeliveredPage() {
                         label="View goals for"
                         onChange={(e) => setGoalScope(e.target.value)}
                       >
-                        <MenuItem value={PRACTICE_TOTAL_ID}>Whole company</MenuItem>
-                        {employeesWithGoals.map((e) => (
-                          <MenuItem key={e.id} value={e.id}>
-                            {e.name}
-                          </MenuItem>
-                        ))}
+                        {!restrictEmployeeAnalytics && (
+                          <MenuItem value={PRACTICE_TOTAL_ID}>Whole company</MenuItem>
+                        )}
+                        {(restrictEmployeeAnalytics ? employeesForGoalScopeSelect : employeesWithGoals).map(
+                          (e) => (
+                            <MenuItem key={e.id} value={e.id}>
+                              {e.name}
+                            </MenuItem>
+                          )
+                        )}
                       </Select>
                     </FormControl>
                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
@@ -1077,7 +1206,11 @@ export default function VeterinaryServicesDeliveredPage() {
             <Card sx={{ mb: 3 }}>
               <CardHeader
                 title="VSD over time"
-                subheader="Switch between practice total and individual doctors"
+                subheader={
+                  restrictEmployeeAnalytics
+                    ? 'Switch between your combined total and individual assigned providers'
+                    : 'Switch between practice total and individual doctors'
+                }
               />
               <CardContent>
               <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2, mb: 2 }}>
@@ -1235,7 +1368,8 @@ export default function VeterinaryServicesDeliveredPage() {
           />
           <CardContent>
             <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
-              Practice total: {fmtUSD(practiceTotal)}
+              {restrictEmployeeAnalytics ? `${vsdAggregateSeriesLabel}: ` : 'Practice total: '}
+              {fmtUSD(practiceTotal)}
             </Typography>
             {isViewingCalendarToday && (
               <Box sx={{ mb: 2 }}>
@@ -1280,10 +1414,22 @@ export default function VeterinaryServicesDeliveredPage() {
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               By doctor
             </Typography>
+            {restrictEmployeeAnalytics && !assignedDoctorIdSet.size && (
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                No providers are assigned to your user account, so revenue totals are unavailable here.
+              </Typography>
+            )}
             <List dense disablePadding>
               {doctorResponses
                 .slice()
                 .sort((a, b) => Number(b.response.total ?? 0) - Number(a.response.total ?? 0))
+                .filter((r) => {
+                  if (!restrictEmployeeAnalytics) return true;
+                  if (!assignedDoctorIdSet.size) return false;
+                  const id = String(r.doctorId);
+                  if (id === NOT_SPECIFIED_DOCTOR_ID || id === '') return false;
+                  return assignedDoctorIdSet.has(id);
+                })
                 .map((r) => {
                   const estRow = isViewingCalendarToday
                     ? todayRevenueEstimates?.byDoctor[String(r.doctorId)]
