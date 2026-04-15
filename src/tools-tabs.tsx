@@ -1,4 +1,5 @@
 // Sub-routes under /tools (mirrors admin-tabs pattern).
+import CareOutreachPage from './pages/CareOutreachPage';
 import ExitSurveyPage from './pages/ExitSurveyPage';
 
 export type ToolsTabPage = {
@@ -8,6 +9,11 @@ export type ToolsTabPage = {
 };
 
 export const TOOLS_TAB_PAGES: ToolsTabPage[] = [
+  {
+    path: 'care-outreach',
+    label: 'Care Outreach',
+    element: <CareOutreachPage />,
+  },
   {
     path: 'exit-survey',
     label: 'Exit Survey',
