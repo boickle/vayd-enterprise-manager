@@ -594,6 +594,18 @@ function getRoomLoaderMembershipDetailText(p: any, appointments: any[] | undefin
   return s || undefined;
 }
 
+/**
+ * Foundations wellness members (not on Golden): routine senior-age labs use Early Detection unless staff
+ * answered Yes to “medical concern / lab work” (then the Senior Screen path via 8659999 applies).
+ */
+function roomLoaderPatientMembershipIsFoundationsNotGolden(p: any, appointments: any[] | undefined): boolean {
+  const detail = getRoomLoaderMembershipDetailText(p, appointments);
+  if (!detail) return false;
+  const s = detail.toLowerCase();
+  if (s.includes('golden')) return false;
+  return s.includes('foundations');
+}
+
 function RoomLoaderPatientMemberBadge({
   patient,
   appointments,
@@ -691,8 +703,10 @@ function resolveSummaryLinePrice(
   patientId: number,
   displayRow: any,
   getClientPricing: (pid: number, si: SearchableItem | null) => CheckItemPricingResponse | null,
-  getClientAdjustedPrice: (pid: number, si: SearchableItem | null) => number | null
+  getClientAdjustedPrice: (pid: number, si: SearchableItem | null) => number | null,
+  foundationsNotGolden?: boolean
 ): { unitPrice: number; displayPricing: SummaryLineDisplayPricing } {
+  const fg = foundationsNotGolden === true;
   const searchableItem = displayRow?.searchableItem as SearchableItem | null | undefined;
   const wp = displayRow?.wellnessPlanPricing;
   if (
@@ -701,8 +715,16 @@ function resolveSummaryLinePrice(
     !Number.isNaN(Number(wp.adjustedPrice)) &&
     wellnessPlanHasDiscountSignal(wp)
   ) {
+    let unitPrice = Number(wp.adjustedPrice);
+    if (fg && unitPrice < 0.005 && searchableItem != null) {
+      const cached = getClientPricing(patientId, searchableItem);
+      if (suppressFalseIncludedWellnessForFoundations(cached, true)) {
+        const corrected = catalogLabDisplayUnitPriceForFoundations(cached, true);
+        if (corrected != null && corrected > 0.005) unitPrice = corrected;
+      }
+    }
     return {
-      unitPrice: Number(wp.adjustedPrice),
+      unitPrice,
       displayPricing: {
         wellnessPlanPricing: wp,
         discountPricing: displayRow.discountPricing,
@@ -714,7 +736,10 @@ function resolveSummaryLinePrice(
   if (searchableItem != null && sid != null) {
     const cached = getClientPricing(patientId, searchableItem);
     if (cached != null) {
-      const adjusted = getClientAdjustedPrice(patientId, searchableItem);
+      const catalogDisp = catalogLabDisplayUnitPriceForFoundations(cached, fg);
+      const adjusted = suppressFalseIncludedWellnessForFoundations(cached, fg)
+        ? catalogDisp
+        : getClientAdjustedPrice(patientId, searchableItem) ?? catalogDisp;
       if (adjusted != null) {
         return { unitPrice: adjusted, displayPricing: cached };
       }
@@ -1041,7 +1066,10 @@ function publicFormPanelLabsForSharps(
     });
   }
   if (seniorFelineTwoPanel === 'standard' && items.seniorCanineStandardItem) {
-    rows.push({ searchItem: items.seniorCanineStandardItem, included: true });
+    rows.push({
+      searchItem: items.seniorCanineStandardItem,
+      included: formData[`summary_exclude_lab_senior_feline_two_standard_${patientId}`] !== true,
+    });
   }
   if (seniorFelineTwoPanel === 'extended' && items.seniorFelineExtendedItem) {
     rows.push({
@@ -1561,6 +1589,12 @@ function panelDeclineBlurbBody(
   return `If you choose not to proceed with the ${p} panel, we still strongly recommend a fecal test. This test screens for intestinal parasites that are common in cats and can sometimes spread to people, helping us ensure we prescribe the right deworming treatment if needed.`;
 }
 
+/** Senior chem-only screen (FIL8659999 / legacy 8659999) — no bundled fecal or 4Dx; skip fecal/4Dx decline blurbs when this is what was declined. */
+function seniorScreenChemPanelItemIs865(si: SearchableItem | null | undefined): boolean {
+  const c = (getSearchItemCode(si) ?? '').toString().trim().toUpperCase();
+  return c === 'FIL8659999' || c === '8659999';
+}
+
 function syntheticRowFromSearchableItem(
   si: SearchableItem,
   opts: { panelDeclineBlurb?: string; quantity?: number }
@@ -1600,6 +1634,8 @@ function appendBundledPanelDeclineInjections(opts: {
   fecalItem: SearchableItem | null;
   tripleItem: SearchableItem | null;
   seniorKind: 'dog' | 'cat' | null;
+  /** When canine “standard” is unchecked, used to detect chem-only FIL8659999 (no fecal/4Dx blurb). */
+  seniorCanineStandardItem: SearchableItem | null;
 }): any[] {
   const {
     patient,
@@ -1611,6 +1647,7 @@ function appendBundledPanelDeclineInjections(opts: {
     fecalItem,
     tripleItem,
     seniorKind,
+    seniorCanineStandardItem,
   } = opts;
   const pid = patientId;
   const fd = formData;
@@ -1626,26 +1663,26 @@ function appendBundledPanelDeclineInjections(opts: {
   const seniorCanineStdOff =
     fd[`lab_senior_canine_panel_${pid}`] === 'standard' &&
     fd[`summary_exclude_lab_senior_canine_standard_${pid}`] === true;
+  const seniorCanineStdBundledFecal4dxBlurb =
+    seniorCanineStdOff && !seniorScreenChemPanelItemIs865(seniorCanineStandardItem);
   const seniorFelineOff =
     fd[`lab_senior_feline_${pid}`] === 'yes' && fd[`summary_exclude_lab_senior_feline_${pid}`] === true;
   const seniorFelineTwoExtOff =
     fd[`lab_senior_feline_two_panel_${pid}`] === 'extended' &&
     fd[`summary_exclude_lab_senior_feline_two_extended_${pid}`] === true;
-  const seniorFelineTwoStdOff =
-    fd[`lab_senior_feline_two_panel_${pid}`] === 'standard' &&
-    fd[`summary_exclude_lab_senior_feline_two_standard_${pid}`] === true;
 
   const visitUnc = visitBundledPanelUnchecked(out, opts.petIdx, fd);
 
   const resolveCanineDeclinePhrase = (): 'early detection' | 'full comprehensive' => {
     if (earlyCanineOff) return 'early detection';
-    if (seniorCanineExtOff || seniorCanineStdOff) return 'full comprehensive';
+    if (seniorCanineExtOff || seniorCanineStdBundledFecal4dxBlurb) return 'full comprehensive';
     if (visitUnc.canine) return bundledPanelDeclinePhraseCanine(patient, seniorKind);
     return 'full comprehensive';
   };
   const resolveFelineDeclinePhrase = (): 'early detection' | 'full comprehensive' => {
     if (earlyFelineOff) return 'early detection';
-    if (seniorFelineOff || seniorFelineTwoExtOff || seniorFelineTwoStdOff) return 'full comprehensive';
+    /** Feline two-panel *standard* (chem/CBC/T4/UA only) does not bundle fecal/FIV triple — omit from “full comprehensive” decline. */
+    if (seniorFelineOff || seniorFelineTwoExtOff) return 'full comprehensive';
     if (visitUnc.feline) return bundledPanelDeclinePhraseFeline(patient, seniorKind);
     return 'full comprehensive';
   };
@@ -1654,9 +1691,10 @@ function appendBundledPanelDeclineInjections(opts: {
   const isDog = isDogSpeciesTokens(speciesLower) || (speciesLower.trim() === '' && !isCatSpeciesTokens(speciesLower));
   const isCat = isCatSpeciesTokens(speciesLower);
 
-  const dogPanelDecline = earlyCanineOff || seniorCanineExtOff || seniorCanineStdOff || visitUnc.canine;
+  const dogPanelDecline =
+    earlyCanineOff || seniorCanineExtOff || seniorCanineStdBundledFecal4dxBlurb || visitUnc.canine;
   const catPanelDecline =
-    earlyFelineOff || seniorFelineOff || seniorFelineTwoExtOff || seniorFelineTwoStdOff || visitUnc.feline;
+    earlyFelineOff || seniorFelineOff || seniorFelineTwoExtOff || visitUnc.feline;
 
   const caninePhrase = resolveCanineDeclinePhrase();
   const felinePhrase = resolveFelineDeclinePhrase();
@@ -1828,6 +1866,51 @@ function getStoreItemPricingCacheKey(patientId: number, product: EcwidProduct, i
   return `p${patientId}-store-${String(product.id)}-${index}`;
 }
 
+/**
+ * eVet lab “Senior Screen (chem 25, CBC, T4, UA)” — correct list-price anchor for Standard vs Extended on cats
+ * (e.g. $303.10). Prefer over FIL25659999, which is the canine bundled standard and can price higher.
+ */
+const SENIOR_SCREEN_CHEM_ONLY_PANEL_CODE = 'FIL8659999';
+/** Canine standard comprehensive bundle; fallback when FIL8659999 is not returned by search. */
+const SENIOR_SCREEN_CANINE_STANDARD_BUNDLE_CODE = 'FIL25659999';
+
+function isBogusSeniorStandardSearchItem(it: SearchableItem | null | undefined): boolean {
+  if (!it) return true;
+  const code = (getSearchItemCode(it) ?? (it as any).code ?? '').toString().toUpperCase();
+  /** Fecal add-on often ranks first on “Senior Screen (chem…)” text search — not the standard panel row. */
+  if (code === 'IL50130') return true;
+  /** Full feline extended bundle belongs on the Extended option, not Standard. */
+  if (code === 'FIL45129999') return true;
+  const name = String((it as any).name ?? '').toLowerCase();
+  const listPrice = getSearchItemPrice(it) ?? Number((it as any).price ?? (it as any).lab?.price);
+  if (code.startsWith('IL') && name.includes('fecal') && !name.includes('chem')) return true;
+  if (code.startsWith('IL') && Number.isFinite(listPrice) && listPrice < 0.01) return true;
+  return false;
+}
+
+function pickLabByCodeFromSearchResult(res: unknown, wantCode: string): SearchableItem | null {
+  const arr = Array.isArray(res) ? res : [];
+  const u = wantCode.toUpperCase();
+  return (
+    arr.find(
+      (it: SearchableItem) =>
+        (getSearchItemCode(it) ?? (it as any).code ?? '').toString().toUpperCase() === u
+    ) ?? null
+  );
+}
+
+/** Prefer FIL8659999, then canine standard bundle, then first non-bogus text hit. */
+function pickSeniorStandardPanelFromTextSearchResults(res: unknown): SearchableItem | null {
+  const fil865 = pickLabByCodeFromSearchResult(res, SENIOR_SCREEN_CHEM_ONLY_PANEL_CODE);
+  if (fil865 && !isBogusSeniorStandardSearchItem(fil865)) return fil865;
+  const fil256 = pickLabByCodeFromSearchResult(res, SENIOR_SCREEN_CANINE_STANDARD_BUNDLE_CODE);
+  if (fil256 && !isBogusSeniorStandardSearchItem(fil256)) return fil256;
+  const arr = Array.isArray(res) ? res : [];
+  const ok = arr.find((it: SearchableItem) => !isBogusSeniorStandardSearchItem(it));
+  if (ok) return ok;
+  return arr[0] ?? null;
+}
+
 function pickAdjustedUnitPriceFromCheckResponse(pricing: CheckItemPricingResponse | null): number | null {
   if (!pricing) return null;
   const wp = pricing.wellnessPlanPricing as any;
@@ -1841,6 +1924,83 @@ function pickAdjustedUnitPriceFromCheckResponse(pricing: CheckItemPricingRespons
   }
   if (pricing.adjustedPrice != null) return Number(pricing.adjustedPrice);
   return null;
+}
+
+function pricingCheckItemCodeUpper(pricing: CheckItemPricingResponse | null): string {
+  const it = pricing?.item as any;
+  return String(it?.code ?? it?.lab?.code ?? '').trim().toUpperCase();
+}
+
+/**
+ * Senior bundled / chem panel codes that Foundations (non-Golden) may mark as $0 with `hasCoverage: true` even though
+ * they are not Golden-included. Trip/sharps/visit use other codes — they keep real $0 when hasCoverage is true.
+ */
+const FOUNDATIONS_FALSE_ZERO_SENIOR_PANEL_CODES = new Set([
+  'FIL8659999',
+  'FIL25659999',
+  'FIL45129999',
+]);
+
+function foundationsMayFalseZeroSeniorPanel(pricing: CheckItemPricingResponse | null): boolean {
+  const code = pricingCheckItemCodeUpper(pricing);
+  return code !== '' && FOUNDATIONS_FALSE_ZERO_SENIOR_PANEL_CODES.has(code);
+}
+
+/**
+ * Backend check-item-pricing can return $0 “wellness” adjusted price for senior comprehensive panels on Foundations
+ * (non-Golden) as if they were Golden-included. Prefer catalog original for display in that case.
+ */
+function suppressFalseIncludedWellnessForFoundations(
+  pricing: CheckItemPricingResponse | null,
+  foundationsNotGolden: boolean
+): boolean {
+  if (!foundationsNotGolden || !pricing?.wellnessPlanPricing) return false;
+  const wp = pricing.wellnessPlanPricing as any;
+  /** Real plan-covered rows (trip, sharps, visit) stay at $0; senior panel codes may still be wrongly covered at $0. */
+  if (wp.hasCoverage === true && !foundationsMayFalseZeroSeniorPanel(pricing)) return false;
+  const picked = pickAdjustedUnitPriceFromCheckResponse(pricing);
+  if (!(picked != null && picked < 0.005)) return false;
+  const orig = wp.originalPrice != null ? Number(wp.originalPrice) : Number(pricing.originalPrice);
+  return Number.isFinite(orig) && orig > 0.005 && wellnessPlanHasDiscountSignal(wp);
+}
+
+function catalogLabDisplayUnitPriceForFoundations(
+  pricing: CheckItemPricingResponse | null,
+  foundationsNotGolden: boolean
+): number | null {
+  if (!pricing) return null;
+  if (suppressFalseIncludedWellnessForFoundations(pricing, foundationsNotGolden)) {
+    const wp = pricing.wellnessPlanPricing as any;
+    const orig = wp?.originalPrice != null ? Number(wp.originalPrice) : Number(pricing.originalPrice);
+    if (Number.isFinite(orig) && orig > 0.005) return orig;
+  }
+  return pickAdjustedUnitPriceFromCheckResponse(pricing);
+}
+
+function catalogLabPricingFootnoteLine(
+  pricing: CheckItemPricingResponse | null,
+  foundationsNotGolden: boolean,
+  getDiscountNoteFn: (p: CheckItemPricingResponse | { discountPricing?: any } | null) => string | null
+): string | null {
+  if (!pricing) return null;
+  if (suppressFalseIncludedWellnessForFoundations(pricing, foundationsNotGolden)) {
+    if (pricing.discountPricing?.priceAdjustedByDiscount) {
+      return getDiscountNoteFn({ discountPricing: pricing.discountPricing });
+    }
+    return null;
+  }
+  return getDiscountNoteFn(pricing);
+}
+
+function catalogLabShowPricingFootnote(
+  pricing: CheckItemPricingResponse | null,
+  foundationsNotGolden: boolean
+): boolean {
+  if (!pricing) return false;
+  if (suppressFalseIncludedWellnessForFoundations(pricing, foundationsNotGolden)) {
+    return !!pricing.discountPricing?.priceAdjustedByDiscount;
+  }
+  return hasDiscountPricingNote(pricing);
 }
 
 /** True if text looks like a question to ignore (e.g. "What/Which pet is this for?", prescription disclaimer). */
@@ -4522,6 +4682,8 @@ export default function PublicRoomLoaderForm() {
         const isReplaced = isFecalReplaced || is4dxReplaced;
         const lineTotal = isChecked && !isReplaced ? price * qty : 0;
         if (isChecked && !isReplaced) petSubtotal += lineTotal;
+        /** Match summary UI: strikethrough when unchecked or replaced by bundled panel (backend PDF uses crossedOut). */
+        const crossedOut = !isChecked || isReplaced;
         rows.push({
           type: 'reminder',
           name: item.name,
@@ -4530,7 +4692,7 @@ export default function PublicRoomLoaderForm() {
           lineTotal,
           checked: isChecked,
           uncheckable: false,
-          crossedOut: isReplaced,
+          crossedOut,
           fecalReplacedBy: isReplaced ? (isFecalReplaced ? fecalReplacedBy.join(' or ') : fourDxReplacedBy.join(' or ')) : undefined,
           code: getCodeFromDisplayItem(item),
           wellnessPlanPricing: getMembershipInfoForPdf(pricing),
@@ -4554,8 +4716,15 @@ export default function PublicRoomLoaderForm() {
         }
       });
 
-      const labRows: { name: string; price: number; code?: string; wellnessPlanPricing?: Record<string, unknown> }[] = [];
-      if (earlyDetectionYes && formData[`summary_exclude_lab_early_detection_feline_${patientId}`] !== true) {
+      const labRows: {
+        name: string;
+        price: number;
+        code?: string;
+        wellnessPlanPricing?: Record<string, unknown>;
+        crossedOut: boolean;
+      }[] = [];
+      if (earlyDetectionYes) {
+        const crossedOut = earlyDetFelineExcludedPdf;
         const pricing = getClientPricing(patientId, earlyDetectionFelineItem);
         const p = getClientAdjustedPrice(patientId, earlyDetectionFelineItem) ?? getSearchItemPrice(earlyDetectionFelineItem);
         if (p != null)
@@ -4563,10 +4732,12 @@ export default function PublicRoomLoaderForm() {
             name: 'Early Detection Panel - Feline',
             price: p,
             code: getSearchItemCode(earlyDetectionFelineItem),
-            wellnessPlanPricing: getMembershipInfoForPdf(pricing),
+            wellnessPlanPricing: crossedOut ? undefined : getMembershipInfoForPdf(pricing),
+            crossedOut,
           });
       }
-      if (earlyDetectionCanineYes && formData[`summary_exclude_lab_early_detection_canine_${patientId}`] !== true) {
+      if (earlyDetectionCanineYes) {
+        const crossedOut = earlyDetCanineExcludedPdf;
         const pricing = getClientPricing(patientId, earlyDetectionCanineItem);
         const p = getClientAdjustedPrice(patientId, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem);
         if (p != null)
@@ -4574,37 +4745,88 @@ export default function PublicRoomLoaderForm() {
             name: 'Early Detection Panel - Canine',
             price: p,
             code: getSearchItemCode(earlyDetectionCanineItem),
-            wellnessPlanPricing: getMembershipInfoForPdf(pricing),
+            wellnessPlanPricing: crossedOut ? undefined : getMembershipInfoForPdf(pricing),
+            crossedOut,
           });
       }
-      if (seniorFelineYes && formData[`summary_exclude_lab_senior_feline_${patientId}`] !== true) {
+      if (seniorFelineYes) {
+        const crossedOut = seniorFelineExcludedPdf;
         const pricing = getClientPricing(patientId, seniorFelineItem);
         const p = getClientAdjustedPrice(patientId, seniorFelineItem) ?? getSearchItemPrice(seniorFelineItem);
-        if (p != null) labRows.push({ name: 'Senior Screen Feline', price: p, code: getSearchItemCode(seniorFelineItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
+        if (p != null)
+          labRows.push({
+            name: 'Senior Screen Feline',
+            price: p,
+            code: getSearchItemCode(seniorFelineItem),
+            wellnessPlanPricing: crossedOut ? undefined : getMembershipInfoForPdf(pricing),
+            crossedOut,
+          });
       }
-      if (seniorCaninePanelVal === 'standard' && formData[`summary_exclude_lab_senior_canine_standard_${patientId}`] !== true) {
+      if (seniorCaninePanelVal === 'standard') {
+        const crossedOut = formData[`summary_exclude_lab_senior_canine_standard_${patientId}`] === true;
         const pricing = getClientPricing(patientId, seniorCanineStandardItem);
         const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem);
-        if (p != null) labRows.push({ name: 'Senior Screen - Standard Comprehensive Panel', price: p, code: getSearchItemCode(seniorCanineStandardItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
+        if (p != null)
+          labRows.push({
+            name: 'Senior Screen - Standard Comprehensive Panel',
+            price: p,
+            code: getSearchItemCode(seniorCanineStandardItem),
+            wellnessPlanPricing: crossedOut ? undefined : getMembershipInfoForPdf(pricing),
+            crossedOut,
+          });
       }
-      if (seniorCaninePanelVal === 'extended' && formData[`summary_exclude_lab_senior_canine_extended_${patientId}`] !== true) {
+      if (seniorCaninePanelVal === 'extended') {
+        const crossedOut = seniorCanExtExcludedPdf;
         const pricing = getClientPricing(patientId, seniorCanineExtendedItem);
         const p = getClientAdjustedPrice(patientId, seniorCanineExtendedItem) ?? getSearchItemPrice(seniorCanineExtendedItem);
-        if (p != null) labRows.push({ name: 'Senior Screen - Extended Comprehensive Panel', price: p, code: getSearchItemCode(seniorCanineExtendedItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
+        if (p != null)
+          labRows.push({
+            name: 'Senior Screen - Extended Comprehensive Panel',
+            price: p,
+            code: getSearchItemCode(seniorCanineExtendedItem),
+            wellnessPlanPricing: crossedOut ? undefined : getMembershipInfoForPdf(pricing),
+            crossedOut,
+          });
       }
-      if (seniorFelineTwoPanelVal === 'standard' && formData[`summary_exclude_lab_senior_feline_two_standard_${patientId}`] !== true) {
+      if (seniorFelineTwoPanelVal === 'standard') {
+        const crossedOut = formData[`summary_exclude_lab_senior_feline_two_standard_${patientId}`] === true;
         const pricing = getClientPricing(patientId, seniorCanineStandardItem);
         const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem);
-        if (p != null) labRows.push({ name: 'Senior Screen Feline - Standard Panel', price: p, code: getSearchItemCode(seniorCanineStandardItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
+        if (p != null)
+          labRows.push({
+            name: 'Senior Screen Feline - Standard Panel',
+            price: p,
+            code: getSearchItemCode(seniorCanineStandardItem),
+            wellnessPlanPricing: crossedOut ? undefined : getMembershipInfoForPdf(pricing),
+            crossedOut,
+          });
       }
-      if (seniorFelineTwoPanelVal === 'extended' && formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] !== true) {
+      if (seniorFelineTwoPanelVal === 'extended') {
+        const crossedOut = seniorFelTwoExtExcludedPdf;
         const pricing = getClientPricing(patientId, seniorFelineExtendedItem);
         const p = getClientAdjustedPrice(patientId, seniorFelineExtendedItem) ?? getSearchItemPrice(seniorFelineExtendedItem);
-        if (p != null) labRows.push({ name: 'Senior Screen Feline - Extended Panel', price: p, code: getSearchItemCode(seniorFelineExtendedItem), wellnessPlanPricing: getMembershipInfoForPdf(pricing) });
+        if (p != null)
+          labRows.push({
+            name: 'Senior Screen Feline - Extended Panel',
+            price: p,
+            code: getSearchItemCode(seniorFelineExtendedItem),
+            wellnessPlanPricing: crossedOut ? undefined : getMembershipInfoForPdf(pricing),
+            crossedOut,
+          });
       }
-      labRows.forEach(({ name, price, code, wellnessPlanPricing }) => {
-        petSubtotal += price;
-        rows.push({ type: 'lab', name, quantity: 1, price, lineTotal: price, code, wellnessPlanPricing });
+      labRows.forEach(({ name, price, code, wellnessPlanPricing, crossedOut }) => {
+        if (!crossedOut) petSubtotal += price;
+        rows.push({
+          type: 'lab',
+          name,
+          quantity: 1,
+          price,
+          lineTotal: crossedOut ? 0 : price,
+          crossedOut,
+          checked: !crossedOut,
+          code,
+          wellnessPlanPricing,
+        });
       });
 
       const existingNames = new Set<string>();
@@ -5814,6 +6036,11 @@ export default function PublicRoomLoaderForm() {
       const treatAsNewWhenNoReminders = patient.isNewPatient !== false && appt?.isNewPatient !== false;
       const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
 
+      const foundationsNotGoldenMember = roomLoaderPatientMembershipIsFoundationsNotGolden(patient, appointments);
+      /** Age-based Senior Screen recs: skip for Foundations when staff did not flag lab work (Early Detection is offered instead). */
+      const ageBasedSeniorScreenForMember =
+        !(foundationsNotGoldenMember && !labWorkYes);
+
       if (labWorkYes) {
         recs.push({
           code: '8659999',
@@ -5823,6 +6050,7 @@ export default function PublicRoomLoaderForm() {
       }
 
       if (
+        ageBasedSeniorScreenForMember &&
         age != null &&
         isCat &&
         standard &&
@@ -5846,6 +6074,7 @@ export default function PublicRoomLoaderForm() {
       }
 
       if (
+        ageBasedSeniorScreenForMember &&
         age != null &&
         isDog &&
         standard &&
@@ -5866,6 +6095,40 @@ export default function PublicRoomLoaderForm() {
             message: 'We recommend our Senior Screen Canine or Senior Screen for your senior dog.',
           });
         }
+      }
+
+      // Foundations (non-Golden) members at senior age: routine care → Early Detection, unless staff flagged lab work (8659999 above).
+      if (
+        foundationsNotGoldenMember &&
+        !labWorkYes &&
+        age != null &&
+        isCat &&
+        standard &&
+        shouldRecommendYoungOrEarly &&
+        !hadYoungEarly8Mo &&
+        age > 1 &&
+        age >= MEMBERSHIP_GOLDEN_MIN_AGE_YEARS
+      ) {
+        const msg = listHasFIVOrFecal
+          ? "We recommend our Early Detection Panel - Feline (Chem 10, lytes, CBC, Fecal Dx, FeLV/FIV/HWT). Since you already have FIV or fecal on the list, it isn't much more to add on a lot more info."
+          : 'We recommend our Early Detection Panel - Feline (Chem 10, lytes, CBC, Fecal Dx, FeLV/FIV/HWT).';
+        recs.push({ code: 'FIL48119999', title: 'Early Detection Panel - Feline', message: msg });
+      }
+      if (
+        foundationsNotGoldenMember &&
+        !labWorkYes &&
+        age != null &&
+        isDog &&
+        standard &&
+        shouldRecommendYoungOrEarly &&
+        !hadYoungEarly8Mo &&
+        age > 1 &&
+        age >= MEMBERSHIP_GOLDEN_MIN_AGE_YEARS
+      ) {
+        const msg = listHas4dxOrFecal
+          ? "We recommend our Early Detection Panel - Canine (Chem 10, lytes, CBC, Fecal Dx, 4Dx). Since you already have 4Dx or fecal on the list, it isn't much more to add on a lot more info."
+          : 'We recommend our Early Detection Panel - Canine (Chem 10, lytes, CBC, Fecal Dx, 4Dx).';
+        recs.push({ code: 'FIL48719999', title: 'Early Detection Panel - Canine', message: msg });
       }
 
       // Staff room loader: Senior Screen (FIL8659999 / 8659999) plus 4Dx, triple (IL3755), or fecal → recommend bundled senior panel
@@ -6009,6 +6272,16 @@ export default function PublicRoomLoaderForm() {
     if (hasEarlyFeline) labQueries.push({ q: 'Early Detection Panel - Feline', type: 'earlyFeline' });
     if (hasEarlyCanine) labQueries.push({ q: 'Early Detection Panel - Canine (chem 10, cbc, lytes, fecal Dx, 4dx)', type: 'earlyCanine' });
     if (needStandard) {
+      labQueries.push({
+        q: SENIOR_SCREEN_CHEM_ONLY_PANEL_CODE,
+        code: SENIOR_SCREEN_CHEM_ONLY_PANEL_CODE,
+        type: 'seniorStandardByFil8659',
+      });
+      labQueries.push({
+        q: SENIOR_SCREEN_CANINE_STANDARD_BUNDLE_CODE,
+        code: SENIOR_SCREEN_CANINE_STANDARD_BUNDLE_CODE,
+        type: 'seniorStandardByFil25659',
+      });
       labQueries.push({ q: 'Senior Screen (chem 25, CBC, T4, UA)', type: 'seniorStandard' });
       if (hasSeniorCanine || has8659999) labQueries.push({ q: 'Senior Screen Canine (4Dx, Fecal O&P, chem 25, CBC, T4, UA)', type: 'seniorCanineExt' });
       if (needFelineExtended) labQueries.push({ q: 'Senior Screen Feline (Fecal Dx, felv/fiv/hw, fPL, chem 25, CBC, T4, UA)', type: 'seniorFelineExt' });
@@ -6043,7 +6316,9 @@ export default function PublicRoomLoaderForm() {
           x.code === 'SHARPS' ||
           x.code === 'F4DX' ||
           x.code === 'FIL5010' ||
-          x.code === 'IL3755',
+          x.code === 'IL3755' ||
+          x.code === SENIOR_SCREEN_CHEM_ONLY_PANEL_CODE ||
+          x.code === SENIOR_SCREEN_CANINE_STANDARD_BUNDLE_CODE,
       })),
       ...commonQueries.map((q) => ({ q, wide: false })),
     ];
@@ -6083,6 +6358,8 @@ export default function PublicRoomLoaderForm() {
           );
         };
         let idx = 0;
+        let seniorStdFil865: SearchableItem | null = null;
+        let seniorStdFil256: SearchableItem | null = null;
         labQueries.forEach(({ type }) => {
           const res = results[idx++];
           let item: SearchableItem | null = null;
@@ -6091,10 +6368,29 @@ export default function PublicRoomLoaderForm() {
           else if (type === 'declineFecal')
             item = pickLabByCode(res, 'FIL5010') ?? pickLabByCode(res, 'FIL24639') ?? first(res) ?? null;
           else if (type === 'declineTriple') item = pickLabByCode(res, 'IL3755') ?? first(res) ?? null;
-          else item = first(res) || null;
+          else if (type === 'seniorStandardByFil8659') {
+            seniorStdFil865 = pickLabByCodeFromSearchResult(res, SENIOR_SCREEN_CHEM_ONLY_PANEL_CODE);
+            return;
+          } else if (type === 'seniorStandardByFil25659') {
+            seniorStdFil256 = pickLabByCodeFromSearchResult(res, SENIOR_SCREEN_CANINE_STANDARD_BUNDLE_CODE);
+            return;
+          } else if (type === 'seniorStandard') {
+            const fromText = pickSeniorStandardPanelFromTextSearchResults(res);
+            item =
+              seniorStdFil865 != null && !isBogusSeniorStandardSearchItem(seniorStdFil865)
+                ? seniorStdFil865
+                : seniorStdFil256 != null && !isBogusSeniorStandardSearchItem(seniorStdFil256)
+                  ? seniorStdFil256
+                  : !isBogusSeniorStandardSearchItem(fromText)
+                    ? fromText
+                    : seniorStdFil865 ?? seniorStdFil256 ?? fromText;
+          } else item = first(res) || null;
           switch (type) {
             case 'earlyFeline': setEarlyDetectionFelineItem(item); break;
             case 'earlyCanine': setEarlyDetectionCanineItem(item); break;
+            case 'seniorStandardByFil8659':
+            case 'seniorStandardByFil25659':
+              break;
             case 'seniorStandard': setSeniorCanineStandardItem(item); break;
             case 'seniorCanineExt': setSeniorCanineExtendedItem(item); break;
             case 'seniorFelineExt': setSeniorFelineExtendedItem(item); break;
@@ -6737,6 +7033,7 @@ export default function PublicRoomLoaderForm() {
       fecalItem: panelDeclineFecalItem,
       tripleItem: panelDeclineTripleItem,
       seniorKind: seniorKindForPanels,
+      seniorCanineStandardItem,
     });
 
     const displayForSharps = petItems.filter(
@@ -8010,19 +8307,40 @@ export default function PublicRoomLoaderForm() {
                   const isSeniorFelineFullPanel = (rec.code === 'FIL45129999' || rec.code === 'FIL8659999') && isCatEntry;
                   const isLabWorkYesFelineTwoPanel = rec.code === '8659999' && isCatEntry;
 
+                  const foundationsNotGoldenLab = roomLoaderPatientMembershipIsFoundationsNotGolden(
+                    patientForEntry,
+                    appointments
+                  );
+                  const standardPricingSenior = getClientPricing(patientIdForPricing, seniorCanineStandardItem);
+                  const extendedCaninePricingSenior = getClientPricing(patientIdForPricing, seniorCanineExtendedItem);
+                  const extendedFelinePricingSenior = getClientPricing(patientIdForPricing, seniorFelineExtendedItem);
+                  const felineSeniorItemPricing = getClientPricing(patientIdForPricing, seniorFelineItem);
+
                   const formatPrice = (p: number | null | undefined) => (p != null && !Number.isNaN(Number(p)) ? `$${Number(p).toFixed(2)}` : null);
-                  const standardPrice = getClientAdjustedPrice(patientIdForPricing, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem);
-                  const extendedPrice = getClientAdjustedPrice(patientIdForPricing, seniorCanineExtendedItem) ?? getSearchItemPrice(seniorCanineExtendedItem);
+                  const standardPrice =
+                    catalogLabDisplayUnitPriceForFoundations(standardPricingSenior, foundationsNotGoldenLab) ??
+                    getClientAdjustedPrice(patientIdForPricing, seniorCanineStandardItem) ??
+                    getSearchItemPrice(seniorCanineStandardItem);
+                  const extendedPrice =
+                    catalogLabDisplayUnitPriceForFoundations(extendedCaninePricingSenior, foundationsNotGoldenLab) ??
+                    getClientAdjustedPrice(patientIdForPricing, seniorCanineExtendedItem) ??
+                    getSearchItemPrice(seniorCanineExtendedItem);
                   const seniorCanineDiff = standardPrice != null && extendedPrice != null ? extendedPrice - standardPrice : null;
                   const seniorPanelKey = `lab_senior_canine_panel_${labIdStr}`;
                   const seniorPanelValue = formData[seniorPanelKey];
                   const seniorFelineKey = `lab_senior_feline_${labIdStr}`;
                   const seniorFelineValue = formData[seniorFelineKey];
-                  const seniorFelinePrice = getClientAdjustedPrice(patientIdForPricing, seniorFelineItem) ?? getSearchItemPrice(seniorFelineItem);
+                  const seniorFelinePrice =
+                    catalogLabDisplayUnitPriceForFoundations(felineSeniorItemPricing, foundationsNotGoldenLab) ??
+                    getClientAdjustedPrice(patientIdForPricing, seniorFelineItem) ??
+                    getSearchItemPrice(seniorFelineItem);
                   const seniorFelinePriceDiff = seniorFelinePrice != null && fecalPrice != null ? seniorFelinePrice - fecalPrice : null;
 
-                  const seniorFelineStandardPrice = getClientAdjustedPrice(patientIdForPricing, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem);
-                  const seniorFelineExtendedPrice = getClientAdjustedPrice(patientIdForPricing, seniorFelineExtendedItem) ?? getSearchItemPrice(seniorFelineExtendedItem);
+                  const seniorFelineStandardPrice = standardPrice;
+                  const seniorFelineExtendedPrice =
+                    catalogLabDisplayUnitPriceForFoundations(extendedFelinePricingSenior, foundationsNotGoldenLab) ??
+                    getClientAdjustedPrice(patientIdForPricing, seniorFelineExtendedItem) ??
+                    getSearchItemPrice(seniorFelineExtendedItem);
                   const seniorFelineTwoPanelDiff = seniorFelineStandardPrice != null && seniorFelineExtendedPrice != null ? seniorFelineExtendedPrice - seniorFelineStandardPrice : null;
                   const seniorFelineTwoPanelKey = `lab_senior_feline_two_panel_${labIdStr}`;
                   const seniorFelineTwoPanelValue = formData[seniorFelineTwoPanelKey];
@@ -8366,14 +8684,20 @@ export default function PublicRoomLoaderForm() {
                           </label>
                         </div>
                         {(() => {
-                          const standardPricing = getClientPricing(patientIdForPricing, seniorCanineStandardItem);
-                          const extendedPricing = getClientPricing(patientIdForPricing, seniorCanineExtendedItem);
-                          const hasStandardDiscount = hasDiscountPricingNote(standardPricing);
-                          const hasExtendedDiscount = hasDiscountPricingNote(extendedPricing);
-                          const hasAnyDiscount = hasStandardDiscount || hasExtendedDiscount;
+                          const standardPricing = standardPricingSenior;
+                          const extendedPricing = extendedCaninePricingSenior;
+                          const showStd = catalogLabShowPricingFootnote(standardPricing, foundationsNotGoldenLab);
+                          const showExt = catalogLabShowPricingFootnote(extendedPricing, foundationsNotGoldenLab);
+                          const hasAnyDiscount = showStd || showExt;
                           return hasAnyDiscount ? (
                             <p style={{ fontSize: '12px', color: '#1976d2', marginTop: '8px', marginBottom: 0 }}>
-                              {hasStandardDiscount && hasExtendedDiscount ? (getDiscountNote(standardPricing) ?? 'Discount applied to prices above') : hasStandardDiscount ? (getDiscountNote(standardPricing) ?? 'Discount applied') : (getDiscountNote(extendedPricing) ?? 'Discount applied')}
+                              {showStd && showExt
+                                ? (catalogLabPricingFootnoteLine(standardPricing, foundationsNotGoldenLab, getDiscountNote) ??
+                                    catalogLabPricingFootnoteLine(extendedPricing, foundationsNotGoldenLab, getDiscountNote) ??
+                                    'Discount applied to prices above')
+                                : showStd
+                                  ? (catalogLabPricingFootnoteLine(standardPricing, foundationsNotGoldenLab, getDiscountNote) ?? 'Discount applied')
+                                  : (catalogLabPricingFootnoteLine(extendedPricing, foundationsNotGoldenLab, getDiscountNote) ?? 'Discount applied')}
                             </p>
                           ) : null;
                         })()}
@@ -8488,14 +8812,20 @@ export default function PublicRoomLoaderForm() {
                           </label>
                         </div>
                         {(() => {
-                          const standardPricing = getClientPricing(patientIdForPricing, seniorCanineStandardItem);
-                          const extendedPricing = getClientPricing(patientIdForPricing, seniorFelineExtendedItem);
-                          const hasStandardDiscount = hasDiscountPricingNote(standardPricing);
-                          const hasExtendedDiscount = hasDiscountPricingNote(extendedPricing);
-                          const hasAnyDiscount = hasStandardDiscount || hasExtendedDiscount;
+                          const standardPricing = standardPricingSenior;
+                          const extendedPricing = extendedFelinePricingSenior;
+                          const showStd = catalogLabShowPricingFootnote(standardPricing, foundationsNotGoldenLab);
+                          const showExt = catalogLabShowPricingFootnote(extendedPricing, foundationsNotGoldenLab);
+                          const hasAnyDiscount = showStd || showExt;
                           return hasAnyDiscount ? (
                             <p style={{ fontSize: '12px', color: '#1976d2', marginTop: '8px', marginBottom: 0 }}>
-                              {hasStandardDiscount && hasExtendedDiscount ? (getDiscountNote(standardPricing) ?? 'Discount applied to prices above') : hasStandardDiscount ? (getDiscountNote(standardPricing) ?? 'Discount applied') : (getDiscountNote(extendedPricing) ?? 'Discount applied')}
+                              {showStd && showExt
+                                ? (catalogLabPricingFootnoteLine(standardPricing, foundationsNotGoldenLab, getDiscountNote) ??
+                                    catalogLabPricingFootnoteLine(extendedPricing, foundationsNotGoldenLab, getDiscountNote) ??
+                                    'Discount applied to prices above')
+                                : showStd
+                                  ? (catalogLabPricingFootnoteLine(standardPricing, foundationsNotGoldenLab, getDiscountNote) ?? 'Discount applied')
+                                  : (catalogLabPricingFootnoteLine(extendedPricing, foundationsNotGoldenLab, getDiscountNote) ?? 'Discount applied')}
                             </p>
                           ) : null;
                         })()}
@@ -8605,14 +8935,20 @@ export default function PublicRoomLoaderForm() {
                           </label>
                         </div>
                         {(() => {
-                          const standardPricing = getClientPricing(patientIdForPricing, seniorCanineStandardItem);
-                          const extendedPricing = getClientPricing(patientIdForPricing, seniorFelineExtendedItem);
-                          const hasStandardDiscount = hasDiscountPricingNote(standardPricing);
-                          const hasExtendedDiscount = hasDiscountPricingNote(extendedPricing);
-                          const hasAnyDiscount = hasStandardDiscount || hasExtendedDiscount;
+                          const standardPricing = standardPricingSenior;
+                          const extendedPricing = extendedFelinePricingSenior;
+                          const showStd = catalogLabShowPricingFootnote(standardPricing, foundationsNotGoldenLab);
+                          const showExt = catalogLabShowPricingFootnote(extendedPricing, foundationsNotGoldenLab);
+                          const hasAnyDiscount = showStd || showExt;
                           return hasAnyDiscount ? (
                             <p style={{ fontSize: '12px', color: '#1976d2', marginTop: '8px', marginBottom: 0 }}>
-                              {hasStandardDiscount && hasExtendedDiscount ? (getDiscountNote(standardPricing) ?? 'Discount applied to prices above') : hasStandardDiscount ? (getDiscountNote(standardPricing) ?? 'Discount applied') : (getDiscountNote(extendedPricing) ?? 'Discount applied')}
+                              {showStd && showExt
+                                ? (catalogLabPricingFootnoteLine(standardPricing, foundationsNotGoldenLab, getDiscountNote) ??
+                                    catalogLabPricingFootnoteLine(extendedPricing, foundationsNotGoldenLab, getDiscountNote) ??
+                                    'Discount applied to prices above')
+                                : showStd
+                                  ? (catalogLabPricingFootnoteLine(standardPricing, foundationsNotGoldenLab, getDiscountNote) ?? 'Discount applied')
+                                  : (catalogLabPricingFootnoteLine(extendedPricing, foundationsNotGoldenLab, getDiscountNote) ?? 'Discount applied')}
                             </p>
                           ) : null;
                         })()}
@@ -8899,7 +9235,6 @@ export default function PublicRoomLoaderForm() {
               const seniorFelineExcluded = formData[`summary_exclude_lab_senior_feline_${patientId}`] === true;
               const seniorCanineStandardExcluded = formData[`summary_exclude_lab_senior_canine_standard_${patientId}`] === true;
               const seniorCanineExtendedExcluded = formData[`summary_exclude_lab_senior_canine_extended_${patientId}`] === true;
-              const seniorFelineTwoStandardExcluded = formData[`summary_exclude_lab_senior_feline_two_standard_${patientId}`] === true;
               const seniorFelineTwoExtendedExcluded = formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] === true;
               if ((earlyDetectionYes && !earlyDetFelineExcluded) || (earlyDetectionCanineYes && !earlyDetCanineExcluded)) fecalReplacedBy.push('Early Detection Panel');
               if (isCatForPetSummary && seniorFelineYes && !seniorFelineExcluded) fecalReplacedBy.push('Senior Screen Feline');
@@ -8921,6 +9256,8 @@ export default function PublicRoomLoaderForm() {
                     isDogPatient: isDogPet,
                   })
               );
+
+              const foundationsNotGoldenSummary = roomLoaderPatientMembershipIsFoundationsNotGolden(patient, appointments);
 
               /** When a panel that replaces items (e.g. fecal, 4Dx) is unchecked on summary, re-check those items so they are no longer crossed out. */
               const replacedItemRecKeys = displayWithIdx
@@ -8962,19 +9299,39 @@ export default function PublicRoomLoaderForm() {
                   patientId,
                   item,
                   getClientPricing,
-                  getClientAdjustedPrice
+                  getClientAdjustedPrice,
+                  foundationsNotGoldenSummary
                 );
                 const qty = Number(item.quantity) || 1;
                 const lineTotal = isChecked && !isReplaced ? unitPrice * qty : 0;
                 petSubtotal += lineTotal;
                 const replacedByLabel = isFecalReplaced ? fecalReplacedBy.join(' or ') : is4dxReplaced ? fourDxReplacedBy.join(' or ') : '';
-                const hasDiscount = hasDiscountPricingNote(displayPricing);
+                const pricingForSummaryFoot = displayPricing as CheckItemPricingResponse | null;
+                const suppressedWellnessFoot = suppressFalseIncludedWellnessForFoundations(
+                  pricingForSummaryFoot,
+                  foundationsNotGoldenSummary
+                );
+                const discountNoteFromCatalog = catalogLabPricingFootnoteLine(
+                  pricingForSummaryFoot,
+                  foundationsNotGoldenSummary,
+                  getDiscountNote
+                );
+                const discountNote =
+                  discountNoteFromCatalog ??
+                  (!suppressedWellnessFoot ? getDiscountNote(displayPricing) : null) ??
+                  (!suppressedWellnessFoot && hasDiscountPricingNote(displayPricing) ? 'Membership or discount applied' : null);
                 const quantityUsedNote = displayPricing?.wellnessPlanPricing?.hasCoverage && displayPricing.wellnessPlanPricing.isWithinLimit === false;
-                const hasPricingNote = hasDiscount || quantityUsedNote;
+                const hasPricingNote = discountNote != null || quantityUsedNote;
                 const isMembershipRelated =
                   quantityUsedNote || isMembershipCarePlanContext(displayPricing);
-                const discountNote = getDiscountNote(displayPricing) ?? 'Membership or discount applied';
-                const displayNote = isMembershipRelated ? `From your care plan — ${discountNote}` : discountNote;
+                const displayNote =
+                  discountNote != null
+                    ? isMembershipRelated
+                      ? `From your care plan — ${discountNote}`
+                      : discountNote
+                    : quantityUsedNote
+                      ? 'From your care plan — Membership quantity used — full price applies'
+                      : null;
                 const lineCode = getCodeFromDisplayItem(item);
                 const uncheckRecInfo =
                   !isChecked && !isReplaced && canUncheck
@@ -8982,12 +9339,15 @@ export default function PublicRoomLoaderForm() {
                     : null;
                 const panelDeclineBlurb = item._panelDeclineBlurb as { title: string; body: string } | undefined;
                 /** Summary only: tidbits when this line is unchecked here, or senior/feline panel was unchecked on this page (summary_exclude_*), not merely declined on the care plan. */
+                /** Chem-only FIL8659999 standard does not bundle fecal/4Dx for dogs either — no companion blurbs on those rows. */
                 const seniorCaninePanelDeclinedOnSummary =
-                  (seniorCaninePanel === 'standard' && seniorCanineStandardExcluded) ||
-                  (seniorCaninePanel === 'extended' && seniorCanineExtendedExcluded);
+                  (seniorCaninePanel === 'extended' && seniorCanineExtendedExcluded) ||
+                  (seniorCaninePanel === 'standard' &&
+                    seniorCanineStandardExcluded &&
+                    !seniorScreenChemPanelItemIs865(seniorCanineStandardItem));
+                /** Standard feline two-panel (FIL8659999 / chem screen) does not replace fecal or triple — no companion “why fecal/triple” when it is unchecked on summary. */
                 const seniorFelinePanelDeclinedOnSummary =
                   (seniorFelineYes && seniorFelineExcluded) ||
-                  (seniorFelineTwoPanel === 'standard' && seniorFelineTwoStandardExcluded) ||
                   (seniorFelineTwoPanel === 'extended' && seniorFelineTwoExtendedExcluded);
                 const summaryVisitRowDeclineCanineSenior =
                   formData[`summary_decline_canine_senior_visit_row_${patientId}`] === true;
@@ -9130,7 +9490,8 @@ export default function PublicRoomLoaderForm() {
                         patientId,
                         item,
                         getClientPricing,
-                        getClientAdjustedPrice
+                        getClientAdjustedPrice,
+                        foundationsNotGoldenSummary
                       );
                       const qty = Number(item.quantity) || 1;
                       const lineTotal = unitPrice * qty;
@@ -9169,9 +9530,13 @@ export default function PublicRoomLoaderForm() {
                     {earlyDetectionYes && (() => {
                       const summaryExcludeKey = `summary_exclude_lab_early_detection_feline_${patientId}`;
                       const isExcluded = formData[summaryExcludeKey] === true;
-                      const p = getClientAdjustedPrice(patientId, earlyDetectionFelineItem) ?? getSearchItemPrice(earlyDetectionFelineItem) ?? 0;
                       const labPricing = getClientPricing(patientId, earlyDetectionFelineItem);
-                      const hasDiscount = hasDiscountPricingNote(labPricing);
+                      const p =
+                        catalogLabDisplayUnitPriceForFoundations(labPricing, foundationsNotGoldenSummary) ??
+                        getClientAdjustedPrice(patientId, earlyDetectionFelineItem) ??
+                        getSearchItemPrice(earlyDetectionFelineItem) ??
+                        0;
+                      const showLabFoot = catalogLabShowPricingFootnote(labPricing, foundationsNotGoldenSummary);
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -9188,16 +9553,24 @@ export default function PublicRoomLoaderForm() {
                             </label>
                             <span style={{ fontWeight: 700, flexShrink: 0, ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{formatPrice(isExcluded ? 0 : p)}</span>
                           </div>
-                          {!isExcluded && hasDiscount && <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>{getDiscountNote(labPricing) ?? 'Membership or discount applied'}</div>}
+                          {!isExcluded && showLabFoot && (
+                            <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>
+                              {catalogLabPricingFootnoteLine(labPricing, foundationsNotGoldenSummary, getDiscountNote) ?? 'Membership or discount applied'}
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
                     {earlyDetectionCanineYes && (() => {
                       const summaryExcludeKey = `summary_exclude_lab_early_detection_canine_${patientId}`;
                       const isExcluded = formData[summaryExcludeKey] === true;
-                      const p = getClientAdjustedPrice(patientId, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem) ?? 0;
                       const labPricing = getClientPricing(patientId, earlyDetectionCanineItem);
-                      const hasDiscount = hasDiscountPricingNote(labPricing);
+                      const p =
+                        catalogLabDisplayUnitPriceForFoundations(labPricing, foundationsNotGoldenSummary) ??
+                        getClientAdjustedPrice(patientId, earlyDetectionCanineItem) ??
+                        getSearchItemPrice(earlyDetectionCanineItem) ??
+                        0;
+                      const showLabFoot = catalogLabShowPricingFootnote(labPricing, foundationsNotGoldenSummary);
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -9214,17 +9587,25 @@ export default function PublicRoomLoaderForm() {
                             </label>
                             <span style={{ fontWeight: 700, flexShrink: 0, ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{formatPrice(isExcluded ? 0 : p)}</span>
                           </div>
-                          {!isExcluded && hasDiscount && <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>{getDiscountNote(labPricing) ?? 'Membership or discount applied'}</div>}
+                          {!isExcluded && showLabFoot && (
+                            <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>
+                              {catalogLabPricingFootnoteLine(labPricing, foundationsNotGoldenSummary, getDiscountNote) ?? 'Membership or discount applied'}
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
                     {formData[`lab_comprehensive_fecal_${patientId}`] === 'yes' && (() => {
                       const summaryExcludeKey = `summary_exclude_lab_comprehensive_fecal_${patientId}`;
                       const isExcluded = formData[summaryExcludeKey] === true;
-                      const p = getClientAdjustedPrice(patientId, comprehensiveFecalItem) ?? getSearchItemPrice(comprehensiveFecalItem) ?? 0;
                       const compFecalName = comprehensiveFecalItem?.name ?? 'Comprehensive Fecal';
                       const labPricing = getClientPricing(patientId, comprehensiveFecalItem);
-                      const hasDiscount = hasDiscountPricingNote(labPricing);
+                      const p =
+                        catalogLabDisplayUnitPriceForFoundations(labPricing, foundationsNotGoldenSummary) ??
+                        getClientAdjustedPrice(patientId, comprehensiveFecalItem) ??
+                        getSearchItemPrice(comprehensiveFecalItem) ??
+                        0;
+                      const showLabFoot = catalogLabShowPricingFootnote(labPricing, foundationsNotGoldenSummary);
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -9241,16 +9622,24 @@ export default function PublicRoomLoaderForm() {
                             </label>
                             <span style={{ fontWeight: 700, flexShrink: 0, ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{formatPrice(isExcluded ? 0 : p)}</span>
                           </div>
-                          {!isExcluded && hasDiscount && <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>{getDiscountNote(labPricing) ?? 'Membership or discount applied'}</div>}
+                          {!isExcluded && showLabFoot && (
+                            <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>
+                              {catalogLabPricingFootnoteLine(labPricing, foundationsNotGoldenSummary, getDiscountNote) ?? 'Membership or discount applied'}
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
                     {seniorFelineYes && (() => {
                       const summaryExcludeKey = `summary_exclude_lab_senior_feline_${patientId}`;
                       const isExcluded = formData[summaryExcludeKey] === true;
-                      const p = getClientAdjustedPrice(patientId, seniorFelineItem) ?? getSearchItemPrice(seniorFelineItem) ?? 0;
                       const labPricing = getClientPricing(patientId, seniorFelineItem);
-                      const hasDiscount = hasDiscountPricingNote(labPricing);
+                      const p =
+                        catalogLabDisplayUnitPriceForFoundations(labPricing, foundationsNotGoldenSummary) ??
+                        getClientAdjustedPrice(patientId, seniorFelineItem) ??
+                        getSearchItemPrice(seniorFelineItem) ??
+                        0;
+                      const showLabFoot = catalogLabShowPricingFootnote(labPricing, foundationsNotGoldenSummary);
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -9267,16 +9656,24 @@ export default function PublicRoomLoaderForm() {
                             </label>
                             <span style={{ fontWeight: 700, flexShrink: 0, ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{formatPrice(isExcluded ? 0 : p)}</span>
                           </div>
-                          {!isExcluded && hasDiscount && <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>{getDiscountNote(labPricing) ?? 'Membership or discount applied'}</div>}
+                          {!isExcluded && showLabFoot && (
+                            <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>
+                              {catalogLabPricingFootnoteLine(labPricing, foundationsNotGoldenSummary, getDiscountNote) ?? 'Membership or discount applied'}
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
                     {seniorCaninePanel === 'standard' && (() => {
                       const summaryExcludeKey = `summary_exclude_lab_senior_canine_standard_${patientId}`;
                       const isExcluded = formData[summaryExcludeKey] === true;
-                      const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem) ?? 0;
                       const labPricing = getClientPricing(patientId, seniorCanineStandardItem);
-                      const hasDiscount = hasDiscountPricingNote(labPricing);
+                      const p =
+                        catalogLabDisplayUnitPriceForFoundations(labPricing, foundationsNotGoldenSummary) ??
+                        getClientAdjustedPrice(patientId, seniorCanineStandardItem) ??
+                        getSearchItemPrice(seniorCanineStandardItem) ??
+                        0;
+                      const showLabFoot = catalogLabShowPricingFootnote(labPricing, foundationsNotGoldenSummary);
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -9293,16 +9690,24 @@ export default function PublicRoomLoaderForm() {
                             </label>
                             <span style={{ fontWeight: 700, flexShrink: 0, ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{formatPrice(isExcluded ? 0 : p)}</span>
                           </div>
-                          {!isExcluded && hasDiscount && <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>{getDiscountNote(labPricing) ?? 'Membership or discount applied'}</div>}
+                          {!isExcluded && showLabFoot && (
+                            <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>
+                              {catalogLabPricingFootnoteLine(labPricing, foundationsNotGoldenSummary, getDiscountNote) ?? 'Membership or discount applied'}
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
                     {seniorCaninePanel === 'extended' && (() => {
                       const summaryExcludeKey = `summary_exclude_lab_senior_canine_extended_${patientId}`;
                       const isExcluded = formData[summaryExcludeKey] === true;
-                      const p = getClientAdjustedPrice(patientId, seniorCanineExtendedItem) ?? getSearchItemPrice(seniorCanineExtendedItem) ?? 0;
                       const labPricing = getClientPricing(patientId, seniorCanineExtendedItem);
-                      const hasDiscount = hasDiscountPricingNote(labPricing);
+                      const p =
+                        catalogLabDisplayUnitPriceForFoundations(labPricing, foundationsNotGoldenSummary) ??
+                        getClientAdjustedPrice(patientId, seniorCanineExtendedItem) ??
+                        getSearchItemPrice(seniorCanineExtendedItem) ??
+                        0;
+                      const showLabFoot = catalogLabShowPricingFootnote(labPricing, foundationsNotGoldenSummary);
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -9319,45 +9724,71 @@ export default function PublicRoomLoaderForm() {
                             </label>
                             <span style={{ fontWeight: 700, flexShrink: 0, ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{formatPrice(isExcluded ? 0 : p)}</span>
                           </div>
-                          {!isExcluded && hasDiscount && <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>{getDiscountNote(labPricing) ?? 'Membership or discount applied'}</div>}
+                          {!isExcluded && showLabFoot && (
+                            <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>
+                              {catalogLabPricingFootnoteLine(labPricing, foundationsNotGoldenSummary, getDiscountNote) ?? 'Membership or discount applied'}
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
                     {seniorFelineTwoPanel === 'standard' && (() => {
-                      const key = `lab_senior_feline_two_panel_${patientId}`;
-                      const p = getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem) ?? 0;
+                      const summaryExcludeKey = `summary_exclude_lab_senior_feline_two_standard_${patientId}`;
+                      const isExcluded = formData[summaryExcludeKey] === true;
                       const labPricing = getClientPricing(patientId, seniorCanineStandardItem);
-                      const hasDiscount = hasDiscountPricingNote(labPricing);
-                      petSubtotal += p;
+                      const p =
+                        catalogLabDisplayUnitPriceForFoundations(labPricing, foundationsNotGoldenSummary) ??
+                        getClientAdjustedPrice(patientId, seniorCanineStandardItem) ??
+                        getSearchItemPrice(seniorCanineStandardItem) ??
+                        0;
+                      const showLabFoot = catalogLabShowPricingFootnote(labPricing, foundationsNotGoldenSummary);
+                      if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                             <label style={{ display: 'flex', alignItems: 'center', flex: 1, cursor: readOnly ? 'default' : 'pointer', margin: 0 }}>
                               <input
                                 type="checkbox"
-                                checked
+                                checked={!isExcluded}
                                 disabled={readOnly}
-                                onChange={() => {
-                                  if (readOnly) return;
-                                  handleInputChange(key, 'no');
-                                  replacedItemRecKeys.forEach((recKey) => handleInputChange(recKey, true));
-                                }}
+                                onChange={() =>
+                                  !readOnly &&
+                                  (isExcluded ? includePanelOnSummary(summaryExcludeKey) : excludePanelOnSummary(summaryExcludeKey, false))
+                                }
                                 style={{ marginRight: '12px', width: '18px', height: '18px', cursor: readOnly ? 'default' : 'pointer', flexShrink: 0 }}
                               />
-                              <span style={{ color: '#333' }}>Senior Screen Feline - Standard Panel</span>
+                              <span style={{ ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : { color: '#333' }) }}>
+                                Senior Screen Feline - Standard Panel
+                              </span>
                             </label>
-                            <span style={{ fontWeight: 700, flexShrink: 0 }}>{formatPrice(p)}</span>
+                            <span
+                              style={{
+                                fontWeight: 700,
+                                flexShrink: 0,
+                                ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : {}),
+                              }}
+                            >
+                              {formatPrice(isExcluded ? 0 : p)}
+                            </span>
                           </div>
-                          {hasDiscount && <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>{getDiscountNote(labPricing) ?? 'Membership or discount applied'}</div>}
+                          {!isExcluded && showLabFoot && (
+                            <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>
+                              {catalogLabPricingFootnoteLine(labPricing, foundationsNotGoldenSummary, getDiscountNote) ?? 'Membership or discount applied'}
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
                     {seniorFelineTwoPanel === 'extended' && (() => {
                       const summaryExcludeKey = `summary_exclude_lab_senior_feline_two_extended_${patientId}`;
                       const isExcluded = formData[summaryExcludeKey] === true;
-                      const p = getClientAdjustedPrice(patientId, seniorFelineExtendedItem) ?? getSearchItemPrice(seniorFelineExtendedItem) ?? 0;
                       const labPricing = getClientPricing(patientId, seniorFelineExtendedItem);
-                      const hasDiscount = hasDiscountPricingNote(labPricing);
+                      const p =
+                        catalogLabDisplayUnitPriceForFoundations(labPricing, foundationsNotGoldenSummary) ??
+                        getClientAdjustedPrice(patientId, seniorFelineExtendedItem) ??
+                        getSearchItemPrice(seniorFelineExtendedItem) ??
+                        0;
+                      const showLabFoot = catalogLabShowPricingFootnote(labPricing, foundationsNotGoldenSummary);
                       if (!isExcluded) petSubtotal += p;
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
@@ -9374,7 +9805,11 @@ export default function PublicRoomLoaderForm() {
                             </label>
                             <span style={{ fontWeight: 700, flexShrink: 0, ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : {}) }}>{formatPrice(isExcluded ? 0 : p)}</span>
                           </div>
-                          {!isExcluded && hasDiscount && <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>{getDiscountNote(labPricing) ?? 'Membership or discount applied'}</div>}
+                          {!isExcluded && showLabFoot && (
+                            <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>
+                              {catalogLabPricingFootnoteLine(labPricing, foundationsNotGoldenSummary, getDiscountNote) ?? 'Membership or discount applied'}
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
