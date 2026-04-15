@@ -29,14 +29,14 @@ export type AnalyticsTabPage = {
 };
 
 export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
-  { path: 'payments', label: 'Payments', element: <PaymentsAnalyticsPage />, role: ['admin', 'superadmin'] },
-  { path: 'vsd', label: 'Veterinary Services Delivered', element: <VeterinaryServicesDeliveredPage />, role: ['admin', 'superadmin'] },
-  { path: 'time-spent', label: 'Time Spent', element: <TimeSpentAnalyticsPage />, role: ['admin', 'superadmin'] },
-  { path: 'appointments', label: 'Appointments', element: <RoutingAnalyticsPage />, role: ['admin', 'superadmin'] },
-  { path: 'cancellations', label: 'Cancellations', element: <CancellationsAnalyticsPage />, role: ['admin', 'superadmin'] },
+  { path: 'payments', label: 'Payments', element: <PaymentsAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
+  { path: 'vsd', label: 'Veterinary Services Delivered', element: <VeterinaryServicesDeliveredPage />, role: ['employee', 'admin', 'superadmin'] },
+  { path: 'time-spent', label: 'Time Spent', element: <TimeSpentAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
+  { path: 'appointments', label: 'Appointments', element: <RoutingAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
+  { path: 'cancellations', label: 'Cancellations', element: <CancellationsAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
   { path: 'square-reconciliation', label: 'Square Reconciliation', element: <SquareReconciliationPage />, role: ['superadmin'] },
-  { path: 'openphone-calls', label: 'OpenPhone Calls', element: <OpenPhoneCallsAnalyticsPage />, role: ['admin', 'superadmin'] },
-  { path: 'memberships', label: 'Memberships', element: <MembershipPurchasesAnalyticsPage />, role: ['admin', 'superadmin'] },
+  { path: 'openphone-calls', label: 'OpenPhone Calls', element: <OpenPhoneCallsAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
+  { path: 'memberships', label: 'Memberships', element: <MembershipPurchasesAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
 ];
 
 export function getAnalyticsTabPages(): AnalyticsTabPage[] {
