@@ -510,7 +510,11 @@ function resolveSubscriptionPlanDisplayNameForSpecies(
 }
 
 function normItemName(n: string): string {
-  return (n ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return (n ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\u2013\u2014\u2212]/g, '-')
+    .replace(/\s+/g, ' ');
 }
 
 /** Line items for simulate: one pet's visit lines; store/tax only on first patient in list. */
@@ -4208,16 +4212,45 @@ export default function PublicRoomLoaderForm() {
       const patientName = entry.patientName || `Pet ${petIdx + 1}`;
       const speciesLowerMemb = publicSpeciesLowerForPet(patient, apptsMembership, petIdx);
       const isCatMemb = isCatSpeciesTokens(speciesLowerMemb);
-      const earlyDetFel = formData[`lab_early_detection_feline_${patientId}`] === 'yes';
-      const earlyDetCan = formData[`lab_early_detection_canine_${patientId}`] === 'yes';
-      const earlyDetFelineExcludedMemb = formData[`summary_exclude_lab_early_detection_feline_${patientId}`] === true;
-      const earlyDetCanineExcludedMemb = formData[`summary_exclude_lab_early_detection_canine_${patientId}`] === true;
+      const isDogMemb =
+        isDogSpeciesTokens(speciesLowerMemb) || (speciesLowerMemb.trim() === '' && !isCatMemb);
+      const earlyDetFel =
+        formData[`lab_early_detection_feline_${patientId}`] === 'yes' ||
+        formData[`lab_early_detection_feline_${petIdx}`] === 'yes';
+      const earlyDetCan =
+        formData[`lab_early_detection_canine_${patientId}`] === 'yes' ||
+        formData[`lab_early_detection_canine_${petIdx}`] === 'yes';
+      const earlyDetFelineExcludedMemb =
+        formData[`summary_exclude_lab_early_detection_feline_${patientId}`] === true ||
+        formData[`summary_exclude_lab_early_detection_feline_${petIdx}`] === true;
+      const earlyDetCanineExcludedMemb =
+        formData[`summary_exclude_lab_early_detection_canine_${patientId}`] === true ||
+        formData[`summary_exclude_lab_early_detection_canine_${petIdx}`] === true;
       const seniorFelYes = formData[`lab_senior_feline_${patientId}`] === 'yes';
       const seniorFelineExcludedMemb = formData[`summary_exclude_lab_senior_feline_${patientId}`] === true;
-      const seniorCanPanel = formData[`lab_senior_canine_panel_${patientId}`];
-      const seniorFelTwo = formData[`lab_senior_feline_two_panel_${patientId}`];
-      const seniorCanExtExcludedMemb = formData[`summary_exclude_lab_senior_canine_extended_${patientId}`] === true;
-      const seniorFelTwoExtExcludedMemb = formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] === true;
+      const seniorCanPanel = String(
+        (formData[`lab_senior_canine_panel_${patientId}`] as string | undefined) ||
+          (formData[`lab_senior_canine_panel_${petIdx}`] as string | undefined) ||
+          ''
+      )
+        .trim()
+        .toLowerCase();
+      const seniorFelTwo = String(
+        (formData[`lab_senior_feline_two_panel_${patientId}`] as string | undefined) ||
+          (formData[`lab_senior_feline_two_panel_${petIdx}`] as string | undefined) ||
+          ''
+      )
+        .trim()
+        .toLowerCase();
+      const seniorCanExtExcludedMemb =
+        formData[`summary_exclude_lab_senior_canine_extended_${patientId}`] === true ||
+        formData[`summary_exclude_lab_senior_canine_extended_${petIdx}`] === true;
+      const seniorCanStdExcludedMemb =
+        formData[`summary_exclude_lab_senior_canine_standard_${patientId}`] === true ||
+        formData[`summary_exclude_lab_senior_canine_standard_${petIdx}`] === true;
+      const seniorFelTwoExtExcludedMemb =
+        formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] === true ||
+        formData[`summary_exclude_lab_senior_feline_two_extended_${petIdx}`] === true;
       const fecalRb: string[] = [];
       if (
         (earlyDetFel && !earlyDetFelineExcludedMemb) ||
@@ -4258,11 +4291,63 @@ export default function PublicRoomLoaderForm() {
         if (!entry.checked[idx]) {
           if (isVisitOrConsult || isFecalRep || is4dxRep) return;
           if (isVisitListBundledEarlyPanelDuplicate) return;
-          const unitPrice =
+          let unitPrice =
             item.searchableItem != null
               ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0)
               : (Number(item.price) ?? 0);
           const qty = Number(item.quantity) || 1;
+          /** Bundled visit rows show $0 when the client declines the panel on the summary; membership compare/simulate still need a positive unit price. */
+          if (unitPrice <= 0) {
+            const nm = String(item?.name ?? '').toLowerCase();
+            if (
+              earlyDetFel &&
+              (lineCode === 'FIL48119999' ||
+                (isCatMemb && nm.includes('early detection') && nm.includes('feline')))
+            ) {
+              const back =
+                getClientAdjustedPrice(patientId, earlyDetectionFelineItem) ?? getSearchItemPrice(earlyDetectionFelineItem);
+              if (back != null && back > 0) unitPrice = back;
+            } else if (
+              earlyDetCan &&
+              (lineCode === 'FIL48719999' || (isDogMemb && nm.includes('early detection')))
+            ) {
+              const back =
+                getClientAdjustedPrice(patientId, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem);
+              if (back != null && back > 0) unitPrice = back;
+            } else if (
+              seniorFelTwo === 'extended' &&
+              (lineCode === 'FIL45129999' ||
+                (isCatMemb && nm.includes('senior') && nm.includes('feline') && nm.includes('extended')))
+            ) {
+              const back =
+                getClientAdjustedPrice(patientId, seniorFelineExtendedItem) ?? getSearchItemPrice(seniorFelineExtendedItem);
+              if (back != null && back > 0) unitPrice = back;
+            } else if (
+              seniorFelTwo === 'standard' &&
+              (lineCode === 'FIL45129999' ||
+                (isCatMemb && nm.includes('senior') && nm.includes('feline') && !nm.includes('extended')))
+            ) {
+              const back =
+                getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem);
+              if (back != null && back > 0) unitPrice = back;
+            } else if (
+              seniorCanPanel === 'extended' &&
+              (lineCode === 'FIL25659999' ||
+                (isDogMemb && nm.includes('senior') && nm.includes('extended') && !nm.includes('feline')))
+            ) {
+              const back =
+                getClientAdjustedPrice(patientId, seniorCanineExtendedItem) ?? getSearchItemPrice(seniorCanineExtendedItem);
+              if (back != null && back > 0) unitPrice = back;
+            } else if (
+              seniorCanPanel === 'standard' &&
+              (lineCode === 'FIL25659999' ||
+                (isDogMemb && nm.includes('senior') && nm.includes('standard') && !nm.includes('feline')))
+            ) {
+              const back =
+                getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem);
+              if (back != null && back > 0) unitPrice = back;
+            }
+          }
           if (unitPrice <= 0) return;
           const typeAndId = getItemTypeAndId(item);
           membershipComparisonDeclinedLines.push({
@@ -4291,6 +4376,158 @@ export default function PublicRoomLoaderForm() {
           ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
         });
       });
+      {
+        const felTwoExtExcludedSnap =
+          formData[`summary_exclude_lab_senior_feline_two_extended_${patientId}`] === true ||
+          formData[`summary_exclude_lab_senior_feline_two_extended_${petIdx}`] === true;
+        if (isCatMemb && seniorFelTwo === 'extended' && felTwoExtExcludedSnap && seniorFelineExtendedItem) {
+          const targetName = seniorFelineExtendedItem.name ?? 'Senior Screen Feline - Extended Panel';
+          const want = normItemName(targetName);
+          const already = membershipComparisonDeclinedLines.some(
+            (l) => (l.patientId ?? 0) === patientId && normItemName(l.name ?? '') === want
+          );
+          if (!already) {
+            const p =
+              getClientAdjustedPrice(patientId, seniorFelineExtendedItem) ?? getSearchItemPrice(seniorFelineExtendedItem);
+            if (p != null && p > 0) {
+              const typeAndId = getItemTypeAndId(seniorFelineExtendedItem);
+              membershipComparisonDeclinedLines.push({
+                name: targetName,
+                quantity: 1,
+                price: p,
+                patientId,
+                patientName,
+                category: 'lab',
+                membershipComparisonDeclinedOnly: true,
+                ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
+              });
+            }
+          }
+        }
+        const felTwoStdExcludedSnap =
+          formData[`summary_exclude_lab_senior_feline_two_standard_${patientId}`] === true ||
+          formData[`summary_exclude_lab_senior_feline_two_standard_${petIdx}`] === true;
+        if (isCatMemb && seniorFelTwo === 'standard' && felTwoStdExcludedSnap && seniorCanineStandardItem) {
+          const targetName = seniorCanineStandardItem.name ?? 'Senior Screen Feline - Standard Panel';
+          const wantStd = normItemName(targetName);
+          const alreadyStd = membershipComparisonDeclinedLines.some(
+            (l) => (l.patientId ?? 0) === patientId && normItemName(l.name ?? '') === wantStd
+          );
+          if (!alreadyStd) {
+            const p =
+              getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem);
+            if (p != null && p > 0) {
+              const typeAndId = getItemTypeAndId(seniorCanineStandardItem);
+              membershipComparisonDeclinedLines.push({
+                name: targetName,
+                quantity: 1,
+                price: p,
+                patientId,
+                patientName,
+                category: 'lab',
+                membershipComparisonDeclinedOnly: true,
+                ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
+              });
+            }
+          }
+        }
+        if (isDogMemb && seniorCanPanel === 'extended' && seniorCanExtExcludedMemb && seniorCanineExtendedItem) {
+          const targetName = seniorCanineExtendedItem.name ?? 'Senior Screen - Extended Comprehensive Panel';
+          const wantCanExt = normItemName(targetName);
+          const alreadyCanExt = membershipComparisonDeclinedLines.some(
+            (l) => (l.patientId ?? 0) === patientId && normItemName(l.name ?? '') === wantCanExt
+          );
+          if (!alreadyCanExt) {
+            const p =
+              getClientAdjustedPrice(patientId, seniorCanineExtendedItem) ?? getSearchItemPrice(seniorCanineExtendedItem);
+            if (p != null && p > 0) {
+              const typeAndId = getItemTypeAndId(seniorCanineExtendedItem);
+              membershipComparisonDeclinedLines.push({
+                name: targetName,
+                quantity: 1,
+                price: p,
+                patientId,
+                patientName,
+                category: 'lab',
+                membershipComparisonDeclinedOnly: true,
+                ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
+              });
+            }
+          }
+        }
+        if (isDogMemb && seniorCanPanel === 'standard' && seniorCanStdExcludedMemb && seniorCanineStandardItem) {
+          const targetName = seniorCanineStandardItem.name ?? 'Senior Screen - Standard Comprehensive Panel';
+          const wantCanStd = normItemName(targetName);
+          const alreadyCanStd = membershipComparisonDeclinedLines.some(
+            (l) => (l.patientId ?? 0) === patientId && normItemName(l.name ?? '') === wantCanStd
+          );
+          if (!alreadyCanStd) {
+            const p =
+              getClientAdjustedPrice(patientId, seniorCanineStandardItem) ?? getSearchItemPrice(seniorCanineStandardItem);
+            if (p != null && p > 0) {
+              const typeAndId = getItemTypeAndId(seniorCanineStandardItem);
+              membershipComparisonDeclinedLines.push({
+                name: targetName,
+                quantity: 1,
+                price: p,
+                patientId,
+                patientName,
+                category: 'lab',
+                membershipComparisonDeclinedOnly: true,
+                ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
+              });
+            }
+          }
+        }
+        if (isCatMemb && earlyDetFel && earlyDetFelineExcludedMemb && earlyDetectionFelineItem) {
+          const targetName = earlyDetectionFelineItem.name ?? 'Early Detection Panel - Feline';
+          const wantEarlyFel = normItemName(targetName);
+          const alreadyEarlyFel = membershipComparisonDeclinedLines.some(
+            (l) => (l.patientId ?? 0) === patientId && normItemName(l.name ?? '') === wantEarlyFel
+          );
+          if (!alreadyEarlyFel) {
+            const p =
+              getClientAdjustedPrice(patientId, earlyDetectionFelineItem) ?? getSearchItemPrice(earlyDetectionFelineItem);
+            if (p != null && p > 0) {
+              const typeAndId = getItemTypeAndId(earlyDetectionFelineItem);
+              membershipComparisonDeclinedLines.push({
+                name: targetName,
+                quantity: 1,
+                price: p,
+                patientId,
+                patientName,
+                category: 'lab',
+                membershipComparisonDeclinedOnly: true,
+                ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
+              });
+            }
+          }
+        }
+        if (isDogMemb && earlyDetCan && earlyDetCanineExcludedMemb && earlyDetectionCanineItem) {
+          const targetName = earlyDetectionCanineItem.name ?? 'Early Detection Panel - Canine';
+          const wantEarlyCan = normItemName(targetName);
+          const alreadyEarlyCan = membershipComparisonDeclinedLines.some(
+            (l) => (l.patientId ?? 0) === patientId && normItemName(l.name ?? '') === wantEarlyCan
+          );
+          if (!alreadyEarlyCan) {
+            const p =
+              getClientAdjustedPrice(patientId, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem);
+            if (p != null && p > 0) {
+              const typeAndId = getItemTypeAndId(earlyDetectionCanineItem);
+              membershipComparisonDeclinedLines.push({
+                name: targetName,
+                quantity: 1,
+                price: p,
+                patientId,
+                patientName,
+                category: 'lab',
+                membershipComparisonDeclinedOnly: true,
+                ...(typeAndId && { itemType: typeAndId.itemType, itemId: typeAndId.itemId }),
+              });
+            }
+          }
+        }
+      }
       entry.tripFeeItems.forEach((item: any) => {
         const unitPrice = item.searchableItem != null ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) ?? 0);
         const qty = Number(item.quantity) || 1;
@@ -4323,12 +4560,10 @@ export default function PublicRoomLoaderForm() {
           }
         });
       }
-      const earlyDetectionYes = formData[`lab_early_detection_feline_${patientId}`] === 'yes';
-      const earlyDetectionCanineYes = formData[`lab_early_detection_canine_${patientId}`] === 'yes';
       const seniorFelineYes = formData[`lab_senior_feline_${patientId}`] === 'yes';
-      const seniorCaninePanelVal = formData[`lab_senior_canine_panel_${patientId}`];
-      const seniorFelineTwoPanelVal = formData[`lab_senior_feline_two_panel_${patientId}`];
-      if (earlyDetectionYes && formData[`summary_exclude_lab_early_detection_feline_${patientId}`] !== true) {
+      const seniorCaninePanelVal = seniorCanPanel;
+      const seniorFelineTwoPanelVal = seniorFelTwo;
+      if (earlyDetFel && !earlyDetFelineExcludedMemb) {
         const p = getClientAdjustedPrice(patientId, earlyDetectionFelineItem) ?? getSearchItemPrice(earlyDetectionFelineItem);
         if (p != null) {
           const typeAndId = earlyDetectionFelineItem ? getItemTypeAndId(earlyDetectionFelineItem) : null;
@@ -4343,7 +4578,7 @@ export default function PublicRoomLoaderForm() {
           });
         }
       }
-      if (earlyDetectionCanineYes && formData[`summary_exclude_lab_early_detection_canine_${patientId}`] !== true) {
+      if (earlyDetCan && !earlyDetCanineExcludedMemb) {
         const p = getClientAdjustedPrice(patientId, earlyDetectionCanineItem) ?? getSearchItemPrice(earlyDetectionCanineItem);
         if (p != null) {
           const typeAndId = earlyDetectionCanineItem ? getItemTypeAndId(earlyDetectionCanineItem) : null;
@@ -7122,10 +7357,6 @@ export default function PublicRoomLoaderForm() {
     checkInPatientForPage != null
       ? getAppointmentForRoomLoaderPet(appointments, checkInPatientForPage, checkInPetIndex)
       : null;
-  const checkInDoctorName =
-    checkInApptForPage?.primaryProvider?.firstName && checkInApptForPage?.primaryProvider?.lastName
-      ? `${checkInApptForPage.primaryProvider.title || 'Dr.'} ${checkInApptForPage.primaryProvider.firstName} ${checkInApptForPage.primaryProvider.lastName}`
-      : doctorName;
   const checkInPetName = checkInPatientForPage?.patientName || `Pet ${checkInPetIndex + 1}`;
   const checkInAppointmentDate = checkInApptForPage?.appointmentStart
     ? formatDate(checkInApptForPage.appointmentStart)
@@ -7168,11 +7399,28 @@ export default function PublicRoomLoaderForm() {
           </div>
 
           <div style={{ marginBottom: '10px', paddingBottom: '12px', borderBottom: '3px solid #e0e0e0' }}>
+            <div style={{ marginBottom: '10px', textAlign: 'center' }}>
+              <img
+                src="/final_thick_lines_cropped.jpeg"
+                alt="VAYD"
+                style={{
+                  height: '44px',
+                  width: 'auto',
+                  opacity: 0.92,
+                  mixBlendMode: 'multiply',
+                  display: 'inline-block',
+                  verticalAlign: 'middle',
+                }}
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                }}
+              />
+            </div>
             <h1 style={{ margin: 0, color: '#212529', fontSize: '24px', fontWeight: 700 }}>
               Time to Check-in for your Appointment
             </h1>
             <p style={{ fontSize: '16px', lineHeight: '1.42', color: '#555', marginTop: '7px', marginBottom: '8px' }}>
-              {checkInDoctorName} is looking forward to {checkInPetName}&apos;s appointment on {checkInAppointmentDate}.
+              We are looking forward to {checkInPetName}&apos;s appointment on {checkInAppointmentDate}.
             </p>
             <p style={{ fontSize: '16px', lineHeight: '1.42', color: '#555', marginBottom: '8px' }}>
               Window of arrival:{' '}
