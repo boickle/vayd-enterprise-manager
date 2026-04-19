@@ -12,12 +12,21 @@ export type PatientDormancyAnalyticsResponse = {
   activePatientsByDay?: PatientDormancyByDay[];
   /** Calendar-day active client (owner–practice) counts; same shape as `byDay`. */
   activeClientsByDay?: PatientDormancyByDay[];
+  /** Distinct patients with ≥1 visit in rolling 12m window ending each day T. */
+  patientsWithAppointmentLast12MonthsByDay?: PatientDormancyByDay[];
+  /** Distinct clients with visit in window and ≥1 active pet for practice. */
+  clientsWithAppointmentLast12MonthsWithActivePetByDay?: PatientDormancyByDay[];
+  /** Distinct clients with visit in window and no active pet (mutually exclusive with …WithActivePet…). */
+  clientsWithAppointmentLast12MonthsNoActivePetByDay?: PatientDormancyByDay[];
   totalDormantTransitionsInRange?: number;
   totalReturningTransitionsInRange?: number;
   definition?: string;
   returningDefinition?: string;
   activePatientsDefinition?: string;
   activeClientsDefinition?: string;
+  patientsLast12MonthsByDayDefinition?: string;
+  clientsWithActivePetLast12MonthsByDayDefinition?: string;
+  clientsWithoutActivePetLast12MonthsByDayDefinition?: string;
   startDate?: string;
   endDate?: string;
   asOf?: string;

@@ -6,7 +6,9 @@ import {
   Card,
   CardContent,
   CardHeader,
+  Checkbox,
   CircularProgress,
+  FormControlLabel,
   Grid,
   IconButton,
   Stack,
@@ -179,19 +181,37 @@ function addSeriesTrends(rows: DormancyChartRow[]): DormancyChartRowWithTrends[]
   }));
 }
 
-type ActiveStockChartRow = { date: string; activePatients: number; activeClients: number };
+type ActiveStockChartRow = {
+  date: string;
+  activePatients: number;
+  activeClients: number;
+  patientsWithApptLast12m: number;
+  clientsWithApptActivePetLast12m: number;
+  clientsWithApptNoActivePetLast12m: number;
+};
 
 function mergeActiveStockRows(
   dates: string[],
-  activePatientsByDay: PatientDormancyAnalyticsResponse['activePatientsByDay'],
-  activeClientsByDay: PatientDormancyAnalyticsResponse['activeClientsByDay']
+  series: {
+    activePatientsByDay?: PatientDormancyAnalyticsResponse['activePatientsByDay'];
+    activeClientsByDay?: PatientDormancyAnalyticsResponse['activeClientsByDay'];
+    patientsWithAppointmentLast12MonthsByDay?: PatientDormancyAnalyticsResponse['patientsWithAppointmentLast12MonthsByDay'];
+    clientsWithAppointmentLast12MonthsWithActivePetByDay?: PatientDormancyAnalyticsResponse['clientsWithAppointmentLast12MonthsWithActivePetByDay'];
+    clientsWithAppointmentLast12MonthsNoActivePetByDay?: PatientDormancyAnalyticsResponse['clientsWithAppointmentLast12MonthsNoActivePetByDay'];
+  }
 ): ActiveStockChartRow[] {
-  const patientMap = countsByDateFromSeries(activePatientsByDay);
-  const clientMap = countsByDateFromSeries(activeClientsByDay);
+  const patientMap = countsByDateFromSeries(series.activePatientsByDay);
+  const clientMap = countsByDateFromSeries(series.activeClientsByDay);
+  const p12 = countsByDateFromSeries(series.patientsWithAppointmentLast12MonthsByDay);
+  const cAp = countsByDateFromSeries(series.clientsWithAppointmentLast12MonthsWithActivePetByDay);
+  const cNo = countsByDateFromSeries(series.clientsWithAppointmentLast12MonthsNoActivePetByDay);
   return dates.map((date) => ({
     date,
     activePatients: patientMap.get(date) ?? 0,
     activeClients: clientMap.get(date) ?? 0,
+    patientsWithApptLast12m: p12.get(date) ?? 0,
+    clientsWithApptActivePetLast12m: cAp.get(date) ?? 0,
+    clientsWithApptNoActivePetLast12m: cNo.get(date) ?? 0,
   }));
 }
 
@@ -211,14 +231,36 @@ function addActiveStockTrends(rows: ActiveStockChartRow[]): ActiveStockChartRowW
   }));
 }
 
+type ActiveChartLineKey =
+  | 'activePatients'
+  | 'activeClients'
+  | 'patientsTrend'
+  | 'clientsTrend'
+  | 'patientsLast12m'
+  | 'clientsApptActivePet'
+  | 'clientsApptNoActivePet';
+
+const DEFAULT_ACTIVE_LINE_ON: Record<ActiveChartLineKey, boolean> = {
+  activePatients: true,
+  activeClients: true,
+  patientsTrend: true,
+  clientsTrend: true,
+  patientsLast12m: true,
+  clientsApptActivePet: true,
+  clientsApptNoActivePet: true,
+};
+
 export default function PatientDormancyAnalyticsPage() {
-  const [preset, setPreset] = useState<PresetKey | ''>('30D');
-  const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['30D']());
+  const [preset, setPreset] = useState<PresetKey | ''>('Today');
+  const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS.Today());
   const [timezoneInput, setTimezoneInput] = useState(DEFAULT_TIMEZONE);
   const [practiceIdInput, setPracticeIdInput] = useState('');
   const [data, setData] = useState<PatientDormancyAnalyticsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeLineOn, setActiveLineOn] = useState<Record<ActiveChartLineKey, boolean>>(
+    () => ({ ...DEFAULT_ACTIVE_LINE_ON })
+  );
 
   const start = range.from.startOf('day');
   const end = range.to.startOf('day');
@@ -287,8 +329,24 @@ export default function PatientDormancyAnalyticsPage() {
   const chartDataWithTrend = useMemo(() => addSeriesTrends(chartData), [chartData]);
 
   const activeChartData = useMemo(
-    () => mergeActiveStockRows(dates, data?.activePatientsByDay, data?.activeClientsByDay),
-    [dates, data?.activePatientsByDay, data?.activeClientsByDay]
+    () =>
+      mergeActiveStockRows(dates, {
+        activePatientsByDay: data?.activePatientsByDay,
+        activeClientsByDay: data?.activeClientsByDay,
+        patientsWithAppointmentLast12MonthsByDay: data?.patientsWithAppointmentLast12MonthsByDay,
+        clientsWithAppointmentLast12MonthsWithActivePetByDay:
+          data?.clientsWithAppointmentLast12MonthsWithActivePetByDay,
+        clientsWithAppointmentLast12MonthsNoActivePetByDay:
+          data?.clientsWithAppointmentLast12MonthsNoActivePetByDay,
+      }),
+    [
+      dates,
+      data?.activePatientsByDay,
+      data?.activeClientsByDay,
+      data?.patientsWithAppointmentLast12MonthsByDay,
+      data?.clientsWithAppointmentLast12MonthsWithActivePetByDay,
+      data?.clientsWithAppointmentLast12MonthsNoActivePetByDay,
+    ]
   );
   const activeChartWithTrend = useMemo(() => addActiveStockTrends(activeChartData), [activeChartData]);
 
@@ -311,58 +369,63 @@ export default function PatientDormancyAnalyticsPage() {
 
   const netTotalDisplayed = totalDisplayed - totalReturningDisplayed;
 
-  const definitionText =
-    typeof data?.definition === 'string' && data.definition.trim() ? data.definition.trim() : null;
-  const returningDefinitionText =
-    typeof data?.returningDefinition === 'string' && data.returningDefinition.trim()
-      ? data.returningDefinition.trim()
-      : null;
-  const activePatientsDefinitionText =
-    typeof data?.activePatientsDefinition === 'string' && data.activePatientsDefinition.trim()
-      ? data.activePatientsDefinition.trim()
-      : null;
-  const activeClientsDefinitionText =
-    typeof data?.activeClientsDefinition === 'string' && data.activeClientsDefinition.trim()
-      ? data.activeClientsDefinition.trim()
-      : null;
-
   const hasActivePatientsSeries =
     data != null &&
     Array.isArray(data.activePatientsByDay) &&
     data.activePatientsByDay.length > 0;
   const hasActiveClientsSeries =
     data != null && Array.isArray(data.activeClientsByDay) && data.activeClientsByDay.length > 0;
-  const hasActiveChartData = hasActivePatientsSeries || hasActiveClientsSeries;
+  const hasPatientsLast12mSeries =
+    data != null &&
+    Array.isArray(data.patientsWithAppointmentLast12MonthsByDay) &&
+    data.patientsWithAppointmentLast12MonthsByDay.length > 0;
+  const hasClientsActivePetLast12mSeries =
+    data != null &&
+    Array.isArray(data.clientsWithAppointmentLast12MonthsWithActivePetByDay) &&
+    data.clientsWithAppointmentLast12MonthsWithActivePetByDay.length > 0;
+  const hasClientsNoActivePetLast12mSeries =
+    data != null &&
+    Array.isArray(data.clientsWithAppointmentLast12MonthsNoActivePetByDay) &&
+    data.clientsWithAppointmentLast12MonthsNoActivePetByDay.length > 0;
+  const hasActiveChartData =
+    hasActivePatientsSeries ||
+    hasActiveClientsSeries ||
+    hasPatientsLast12mSeries ||
+    hasClientsActivePetLast12mSeries ||
+    hasClientsNoActivePetLast12mSeries;
 
-  /** Calendar today when it lies in the selected range; otherwise the range end (for headline counts). */
-  const activeReferenceDayStr = useMemo(() => {
-    const todayCal = toLocalDateStr(dayjs().startOf('day'));
-    if (todayCal >= startStr && todayCal <= endStr) return todayCal;
-    return endStr;
-  }, [startStr, endStr]);
-
-  const activeSnapshotRow = useMemo(() => {
+  /** Values for the last calendar day in the selected range (`endStr`). */
+  const activeLastDayRow = useMemo(() => {
     if (!activeChartData.length) return null;
-    return activeChartData.find((r) => r.date === activeReferenceDayStr) ?? null;
-  }, [activeChartData, activeReferenceDayStr]);
+    return activeChartData.find((r) => r.date === endStr) ?? null;
+  }, [activeChartData, endStr]);
 
-  const activePatientsOnReferenceDay =
-    hasActiveChartData && activeSnapshotRow != null ? activeSnapshotRow.activePatients : null;
-  const activeClientsOnReferenceDay =
-    hasActiveChartData && activeSnapshotRow != null ? activeSnapshotRow.activeClients : null;
-  const patientsPerClientRatio =
-    hasActivePatientsSeries &&
-    hasActiveClientsSeries &&
-    activeClientsOnReferenceDay != null &&
-    activePatientsOnReferenceDay != null &&
-    activeClientsOnReferenceDay > 0
-      ? activePatientsOnReferenceDay / activeClientsOnReferenceDay
+  const activePatientsOnLastDay =
+    hasActivePatientsSeries && activeLastDayRow != null ? activeLastDayRow.activePatients : null;
+  const activeClientsOnLastDay =
+    hasActiveClientsSeries && activeLastDayRow != null ? activeLastDayRow.activeClients : null;
+  const patientsWithApptLast12mOnLastDay =
+    hasPatientsLast12mSeries && activeLastDayRow != null ? activeLastDayRow.patientsWithApptLast12m : null;
+  const clientsWithApptActivePetOnLastDay =
+    hasClientsActivePetLast12mSeries && activeLastDayRow != null
+      ? activeLastDayRow.clientsWithApptActivePetLast12m
+      : null;
+  const clientsWithApptNoActivePetOnLastDay =
+    hasClientsNoActivePetLast12mSeries && activeLastDayRow != null
+      ? activeLastDayRow.clientsWithApptNoActivePetLast12m
       : null;
 
-  const todayCalendarLabel = toLocalDateStr(dayjs().startOf('day'));
-  const activeReferenceDayCaption = `${activeReferenceDayStr}${
-    activeReferenceDayStr === todayCalendarLabel ? ' (today)' : ''
-  }`;
+  /** Active patients (point-in-time) ÷ clients with active pet (12m window cohort), same day T. */
+  const activePatientsPerClientWithActivePetLastDay =
+    hasActivePatientsSeries &&
+    hasClientsActivePetLast12mSeries &&
+    activePatientsOnLastDay != null &&
+    clientsWithApptActivePetOnLastDay != null &&
+    clientsWithApptActivePetOnLastDay > 0
+      ? activePatientsOnLastDay / clientsWithApptActivePetOnLastDay
+      : null;
+
+  const lastDayKpiSubtitle = `Last day in range (${endStr})`;
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -371,10 +434,11 @@ export default function PatientDormancyAnalyticsPage() {
           Patient dormancy
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Daily newly dormant, returning, and net (dormant minus returning) share the same dormancy calendar day{' '}
-          <strong>D</strong> (see definitions below). Active patients and active clients use each calendar day in the
-          selected range (see definitions). Optional filters: IANA timezone for day boundaries (defaults to{' '}
-          {DEFAULT_TIMEZONE} on the server) and practice ID to limit to one location.
+          Daily newly dormant, returning, and net (dormant minus returning) use dormancy calendar day{' '}
+          <strong>D</strong>. The lower chart combines point-in-time active counts, rolling 12-month visit cohorts for
+          patients and clients, and optional trend lines; use the checkboxes to reduce clutter. Optional filters: IANA
+          timezone for day boundaries (defaults to {DEFAULT_TIMEZONE} on the server) and practice ID to limit to one
+          location.
         </Typography>
 
         <Card sx={{ mb: 3 }}>
@@ -490,39 +554,6 @@ export default function PatientDormancyAnalyticsPage() {
           </CardContent>
         </Card>
 
-        {definitionText ? (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            <Typography component="span" variant="subtitle2" display="block" gutterBottom>
-              Dormant (by day)
-            </Typography>
-            {definitionText}
-          </Alert>
-        ) : null}
-        {returningDefinitionText ? (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            <Typography component="span" variant="subtitle2" display="block" gutterBottom>
-              Returning (by day)
-            </Typography>
-            {returningDefinitionText}
-          </Alert>
-        ) : null}
-        {activePatientsDefinitionText ? (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            <Typography component="span" variant="subtitle2" display="block" gutterBottom>
-              Active patients (by day)
-            </Typography>
-            {activePatientsDefinitionText}
-          </Alert>
-        ) : null}
-        {activeClientsDefinitionText ? (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            <Typography component="span" variant="subtitle2" display="block" gutterBottom>
-              Active clients (by day)
-            </Typography>
-            {activeClientsDefinitionText}
-          </Alert>
-        ) : null}
-
         {error ? (
           <Alert severity="error" sx={{ mb: 2 }}>
             {error}
@@ -561,48 +592,92 @@ export default function PatientDormancyAnalyticsPage() {
 
             {hasActiveChartData ? (
               <Grid container spacing={2} sx={{ mb: 3 }}>
-                <Grid item xs={12} sm={6} md={4}>
-                  <KpiCard
-                    title="Active patients (reference day)"
-                    value={
-                      activePatientsOnReferenceDay != null
-                        ? activePatientsOnReferenceDay.toLocaleString()
-                        : '—'
-                    }
-                    subtitle={activeReferenceDayCaption}
-                  />
+                <Grid item xs={12}>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                    Patient and client counts on the last day of the selected range
+                  </Typography>
                 </Grid>
-                <Grid item xs={12} sm={6} md={4}>
-                  <KpiCard
-                    title="Active clients (reference day)"
-                    value={
-                      activeClientsOnReferenceDay != null
-                        ? activeClientsOnReferenceDay.toLocaleString()
-                        : '—'
-                    }
-                    subtitle={activeReferenceDayCaption}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6} md={4}>
-                  <KpiCard
-                    title="Patients ÷ clients"
-                    value={
-                      patientsPerClientRatio != null
-                        ? patientsPerClientRatio.toLocaleString(undefined, {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 3,
-                          })
-                        : '—'
-                    }
-                    subtitle={
-                      !hasActivePatientsSeries || !hasActiveClientsSeries
-                        ? 'Requires both activePatientsByDay and activeClientsByDay from the API'
-                        : activeClientsOnReferenceDay === 0
-                          ? 'No active clients on that day'
-                          : 'Active patient–practice pairs per active client–practice pair'
-                    }
-                  />
-                </Grid>
+                {hasActivePatientsSeries ? (
+                  <Grid item xs={12} sm={6} md={4}>
+                    <KpiCard
+                      title="Active patients"
+                      value={
+                        activePatientsOnLastDay != null ? activePatientsOnLastDay.toLocaleString() : '—'
+                      }
+                      subtitle={lastDayKpiSubtitle}
+                    />
+                  </Grid>
+                ) : null}
+                {hasClientsActivePetLast12mSeries ? (
+                  <Grid item xs={12} sm={6} md={4}>
+                    <KpiCard
+                      title="Clients + active pet"
+                      value={
+                        clientsWithApptActivePetOnLastDay != null
+                          ? clientsWithApptActivePetOnLastDay.toLocaleString()
+                          : '—'
+                      }
+                      subtitle={lastDayKpiSubtitle}
+                    />
+                  </Grid>
+                ) : null}
+                {hasActiveClientsSeries ? (
+                  <Grid item xs={12} sm={6} md={4}>
+                    <KpiCard
+                      title="Active clients"
+                      value={
+                        activeClientsOnLastDay != null ? activeClientsOnLastDay.toLocaleString() : '—'
+                      }
+                      subtitle={lastDayKpiSubtitle}
+                    />
+                  </Grid>
+                ) : null}
+                {hasActivePatientsSeries && hasClientsActivePetLast12mSeries ? (
+                  <Grid item xs={12} sm={6} md={4}>
+                    <KpiCard
+                      title="Active patients ÷ clients (with active pet)"
+                      value={
+                        activePatientsPerClientWithActivePetLastDay != null
+                          ? activePatientsPerClientWithActivePetLastDay.toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 3,
+                            })
+                          : '—'
+                      }
+                      subtitle={
+                        clientsWithApptActivePetOnLastDay === 0
+                          ? `${lastDayKpiSubtitle} — no clients with active pet`
+                          : `${lastDayKpiSubtitle} — active patients per client with active pet`
+                      }
+                    />
+                  </Grid>
+                ) : null}
+                {hasPatientsLast12mSeries ? (
+                  <Grid item xs={12} sm={6} md={4}>
+                    <KpiCard
+                      title="Patients (visit in 12m)"
+                      value={
+                        patientsWithApptLast12mOnLastDay != null
+                          ? patientsWithApptLast12mOnLastDay.toLocaleString()
+                          : '—'
+                      }
+                      subtitle={lastDayKpiSubtitle}
+                    />
+                  </Grid>
+                ) : null}
+                {hasClientsNoActivePetLast12mSeries ? (
+                  <Grid item xs={12} sm={6} md={4}>
+                    <KpiCard
+                      title="Clients, no active pet"
+                      value={
+                        clientsWithApptNoActivePetOnLastDay != null
+                          ? clientsWithApptNoActivePetOnLastDay.toLocaleString()
+                          : '—'
+                      }
+                      subtitle={lastDayKpiSubtitle}
+                    />
+                  </Grid>
+                ) : null}
               </Grid>
             ) : null}
 
@@ -682,78 +757,231 @@ export default function PatientDormancyAnalyticsPage() {
             </Card>
 
             <Card sx={{ mt: 3 }}>
-              <CardHeader title="Active patients and clients by calendar day" />
+              <CardHeader
+                title="Active patients and clients by calendar day"
+                subheader="Use the checkboxes to show or hide each series (including trends)."
+              />
               <CardContent>
                 {hasActiveChartData ? (
-                  <Box sx={{ height: 420 }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={activeChartWithTrend} margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="date" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
-                        <YAxis
-                          tick={{ fontSize: 11 }}
-                          tickFormatter={(v) => {
-                            const n = Number(v);
-                            if (!Number.isFinite(n)) return String(v);
-                            if (Math.abs(n) >= 1000) return `${(n / 1000).toFixed(1)}k`;
-                            return String(n);
-                          }}
-                        />
-                        <Tooltip
-                          formatter={(value: unknown, name: unknown) => {
-                            const num = Number(value ?? 0);
-                            const nm = String(name ?? '').toLowerCase();
-                            if (nm.includes('trend')) {
-                              return [
-                                num.toLocaleString(undefined, { maximumFractionDigits: 1 }),
-                                String(name ?? ''),
-                              ];
+                  <>
+                    <Stack direction="row" flexWrap="wrap" columnGap={2} rowGap={0.5} sx={{ mb: 1.5 }}>
+                      {hasActivePatientsSeries ? (
+                        <>
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                size="small"
+                                checked={activeLineOn.activePatients}
+                                onChange={(_, c) =>
+                                  setActiveLineOn((p) => ({ ...p, activePatients: c }))
+                                }
+                              />
                             }
-                            return [Math.round(num).toLocaleString(), String(name ?? '')];
-                          }}
+                            label="Active patients"
+                            sx={{ mr: 0 }}
+                          />
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                size="small"
+                                checked={activeLineOn.patientsTrend}
+                                onChange={(_, c) =>
+                                  setActiveLineOn((p) => ({ ...p, patientsTrend: c }))
+                                }
+                              />
+                            }
+                            label="Patients trend"
+                            sx={{ mr: 0 }}
+                          />
+                        </>
+                      ) : null}
+                      {hasActiveClientsSeries ? (
+                        <>
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                size="small"
+                                checked={activeLineOn.activeClients}
+                                onChange={(_, c) =>
+                                  setActiveLineOn((p) => ({ ...p, activeClients: c }))
+                                }
+                              />
+                            }
+                            label="Active clients"
+                            sx={{ mr: 0 }}
+                          />
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                size="small"
+                                checked={activeLineOn.clientsTrend}
+                                onChange={(_, c) =>
+                                  setActiveLineOn((p) => ({ ...p, clientsTrend: c }))
+                                }
+                              />
+                            }
+                            label="Clients trend"
+                            sx={{ mr: 0 }}
+                          />
+                        </>
+                      ) : null}
+                      {hasPatientsLast12mSeries ? (
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              size="small"
+                              checked={activeLineOn.patientsLast12m}
+                              onChange={(_, c) =>
+                                setActiveLineOn((p) => ({ ...p, patientsLast12m: c }))
+                              }
+                            />
+                          }
+                          label="Patients (visit in 12m)"
+                          sx={{ mr: 0 }}
                         />
-                        <Legend wrapperStyle={{ fontSize: 11 }} />
-                        <Line
-                          type="monotone"
-                          dataKey="activePatients"
-                          name="Active patients"
-                          stroke="#1565c0"
-                          strokeWidth={2}
-                          dot={false}
+                      ) : null}
+                      {hasClientsActivePetLast12mSeries ? (
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              size="small"
+                              checked={activeLineOn.clientsApptActivePet}
+                              onChange={(_, c) =>
+                                setActiveLineOn((p) => ({ ...p, clientsApptActivePet: c }))
+                              }
+                            />
+                          }
+                          label="Clients + active pet"
+                          sx={{ mr: 0 }}
                         />
-                        <Line
-                          type="monotone"
-                          dataKey="activeClients"
-                          name="Active clients"
-                          stroke="#2e7d32"
-                          strokeWidth={2}
-                          dot={false}
+                      ) : null}
+                      {hasClientsNoActivePetLast12mSeries ? (
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              size="small"
+                              checked={activeLineOn.clientsApptNoActivePet}
+                              onChange={(_, c) =>
+                                setActiveLineOn((p) => ({ ...p, clientsApptNoActivePet: c }))
+                              }
+                            />
+                          }
+                          label="Clients, no active pet"
+                          sx={{ mr: 0 }}
                         />
-                        <Line
-                          type="monotone"
-                          dataKey="activePatientsTrend"
-                          name="Patients trend"
-                          stroke="#1565c0"
-                          strokeWidth={1.5}
-                          strokeDasharray="5 5"
-                          dot={false}
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="activeClientsTrend"
-                          name="Clients trend"
-                          stroke="#2e7d32"
-                          strokeWidth={1.5}
-                          strokeDasharray="5 5"
-                          dot={false}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </Box>
+                      ) : null}
+                    </Stack>
+                    <Box sx={{ height: 420 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={activeChartWithTrend} margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="date" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
+                          <YAxis
+                            tick={{ fontSize: 11 }}
+                            tickFormatter={(v) => {
+                              const n = Number(v);
+                              if (!Number.isFinite(n)) return String(v);
+                              if (Math.abs(n) >= 1000) return `${(n / 1000).toFixed(1)}k`;
+                              return String(n);
+                            }}
+                          />
+                          <Tooltip
+                            formatter={(value: unknown, name: unknown) => {
+                              const num = Number(value ?? 0);
+                              const nm = String(name ?? '').toLowerCase();
+                              if (nm.includes('trend')) {
+                                return [
+                                  num.toLocaleString(undefined, { maximumFractionDigits: 1 }),
+                                  String(name ?? ''),
+                                ];
+                              }
+                              return [Math.round(num).toLocaleString(), String(name ?? '')];
+                            }}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 10 }} />
+                          {activeLineOn.activePatients && hasActivePatientsSeries ? (
+                            <Line
+                              type="monotone"
+                              dataKey="activePatients"
+                              name="Active patients"
+                              stroke="#1565c0"
+                              strokeWidth={2}
+                              dot={false}
+                            />
+                          ) : null}
+                          {activeLineOn.activeClients && hasActiveClientsSeries ? (
+                            <Line
+                              type="monotone"
+                              dataKey="activeClients"
+                              name="Active clients"
+                              stroke="#2e7d32"
+                              strokeWidth={2}
+                              dot={false}
+                            />
+                          ) : null}
+                          {activeLineOn.patientsTrend && hasActivePatientsSeries ? (
+                            <Line
+                              type="monotone"
+                              dataKey="activePatientsTrend"
+                              name="Patients trend"
+                              stroke="#1565c0"
+                              strokeWidth={1.5}
+                              strokeDasharray="5 5"
+                              dot={false}
+                            />
+                          ) : null}
+                          {activeLineOn.clientsTrend && hasActiveClientsSeries ? (
+                            <Line
+                              type="monotone"
+                              dataKey="activeClientsTrend"
+                              name="Clients trend"
+                              stroke="#2e7d32"
+                              strokeWidth={1.5}
+                              strokeDasharray="5 5"
+                              dot={false}
+                            />
+                          ) : null}
+                          {activeLineOn.patientsLast12m && hasPatientsLast12mSeries ? (
+                            <Line
+                              type="monotone"
+                              dataKey="patientsWithApptLast12m"
+                              name="Patients (visit in 12m)"
+                              stroke="#7b1fa2"
+                              strokeWidth={2}
+                              dot={false}
+                            />
+                          ) : null}
+                          {activeLineOn.clientsApptActivePet && hasClientsActivePetLast12mSeries ? (
+                            <Line
+                              type="monotone"
+                              dataKey="clientsWithApptActivePetLast12m"
+                              name="Clients + active pet"
+                              stroke="#6d4c41"
+                              strokeWidth={2}
+                              dot={false}
+                            />
+                          ) : null}
+                          {activeLineOn.clientsApptNoActivePet && hasClientsNoActivePetLast12mSeries ? (
+                            <Line
+                              type="monotone"
+                              dataKey="clientsWithApptNoActivePetLast12m"
+                              name="Clients, no active pet"
+                              stroke="#c62828"
+                              strokeWidth={2}
+                              dot={false}
+                            />
+                          ) : null}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </Box>
+                  </>
                 ) : (
                   <Typography color="text.secondary">
-                    No <code>activePatientsByDay</code> or <code>activeClientsByDay</code> in the response; the chart
-                    appears when the API includes at least one of these series.
+                    None of the active / 12-month series were returned (
+                    <code>activePatientsByDay</code>, <code>activeClientsByDay</code>,{' '}
+                    <code>patientsWithAppointmentLast12MonthsByDay</code>,{' '}
+                    <code>clientsWithAppointmentLast12MonthsWithActivePetByDay</code>,{' '}
+                    <code>clientsWithAppointmentLast12MonthsNoActivePetByDay</code>).
                   </Typography>
                 )}
               </CardContent>
