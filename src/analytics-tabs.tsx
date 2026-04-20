@@ -20,6 +20,7 @@ const MembershipPurchasesAnalyticsPage = React.lazy(
   () => import('./pages/MembershipPurchasesAnalytics')
 );
 const CancellationsAnalyticsPage = React.lazy(() => import('./pages/CancellationsAnalytics'));
+const PatientDormancyAnalyticsPage = React.lazy(() => import('./pages/PatientDormancyAnalytics'));
 
 export type AnalyticsTabPage = {
   path: string;
@@ -37,6 +38,12 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
   { path: 'square-reconciliation', label: 'Square Reconciliation', element: <SquareReconciliationPage />, role: ['superadmin'] },
   { path: 'openphone-calls', label: 'OpenPhone Calls', element: <OpenPhoneCallsAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
   { path: 'memberships', label: 'Memberships', element: <MembershipPurchasesAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
+  {
+    path: 'patient-dormancy',
+    label: 'Patient Dormancy',
+    element: <PatientDormancyAnalyticsPage />,
+    role: ['employee', 'admin', 'superadmin'],
+  },
 ];
 
 export function getAnalyticsTabPages(): AnalyticsTabPage[] {
