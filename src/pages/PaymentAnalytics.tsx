@@ -10,6 +10,9 @@ import {
   Stack,
   Divider,
   CircularProgress,
+  FormControlLabel,
+  Checkbox,
+  FormGroup,
 } from '@mui/material';
 import Alert from '@mui/material/Alert';
 import Grid from '@mui/material/Grid';
@@ -38,6 +41,21 @@ dayjs.extend(utc);
 export type DateRange = {
   from: Dayjs;
   to: Dayjs;
+};
+
+type ChartLineKey =
+  | 'practiceRevenue'
+  | 'onlinePharmacyRevenue'
+  | 'subscriptionRevenue'
+  | 'totalRevenue'
+  | 'trend';
+
+const defaultChartLineVisibility: Record<ChartLineKey, boolean> = {
+  practiceRevenue: true,
+  onlinePharmacyRevenue: true,
+  subscriptionRevenue: true,
+  totalRevenue: true,
+  trend: true,
 };
 
 // ----------------------------------
@@ -97,7 +115,13 @@ export default function PaymentsAnalyticsPage() {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [chartLineVisible, setChartLineVisible] =
+    useState<Record<ChartLineKey, boolean>>(defaultChartLineVisibility);
   const open = Boolean(anchorEl);
+
+  const toggleChartLine = (key: ChartLineKey) => {
+    setChartLineVisible((v) => ({ ...v, [key]: !v[key] }));
+  };
 
   // Fetch selected-range series (for chart + header totals)
   useEffect(() => {
@@ -149,13 +173,25 @@ export default function PaymentsAnalyticsPage() {
 
   const totals = useMemo(() => {
     const revenue = series.reduce((s, p) => s + p.revenue, 0);
+    const practiceRevenue = series.reduce((s, p) => s + (p.practiceRevenue ?? 0), 0);
+    const onlinePharmacyRevenue = series.reduce(
+      (s, p) => s + (p.onlinePharmacyRevenue ?? 0),
+      0
+    );
     const subscriptionRevenue = series.reduce(
       (s, p) => s + (p.subscriptionRevenue ?? 0),
       0
     );
     const total = revenue + subscriptionRevenue;
     const avg = series.length ? total / series.length : 0;
-    return { revenue, subscriptionRevenue, total, avg };
+    return {
+      revenue,
+      practiceRevenue,
+      onlinePharmacyRevenue,
+      subscriptionRevenue,
+      total,
+      avg,
+    };
   }, [series]);
 
   const chartData = useMemo(
@@ -178,9 +214,19 @@ export default function PaymentsAnalyticsPage() {
     const matches = (p: PaymentPoint) => p.date === localKey || p.date === utcKey || dayKeyUTC(p.date) === utcKey;
     return series.find(matches) ?? (seriesAll ?? []).find(matches) ?? null;
   }, [series, seriesAll]);
-  const todaysRevenue = todaysRow?.revenue ?? 0;
+  const todaysPracticeRevenue = todaysRow?.practiceRevenue ?? 0;
+  const todaysOnlinePharmacyRevenue = todaysRow?.onlinePharmacyRevenue ?? 0;
   const todaysSubscriptionRevenue = todaysRow?.subscriptionRevenue ?? 0;
-  const todaysTotalRevenue = todaysRevenue + todaysSubscriptionRevenue;
+  const todaysPaymentsBreakdown = todaysPracticeRevenue + todaysOnlinePharmacyRevenue;
+  const todaysRecordedRevenue = todaysRow?.revenue ?? 0;
+  const todaysUseLegacyPaymentsRow =
+    todaysPaymentsBreakdown === 0 && todaysRecordedRevenue !== 0;
+  const todaysPaymentsTotal = todaysUseLegacyPaymentsRow
+    ? todaysRecordedRevenue
+    : todaysPaymentsBreakdown > 0
+      ? todaysPaymentsBreakdown
+      : todaysRecordedRevenue;
+  const todaysTotalRevenue = todaysPaymentsTotal + todaysSubscriptionRevenue;
   const todayLabel = dayjs().format('dddd, MMM D, YYYY');
 
   const topDays = useMemo(() => {
@@ -305,6 +351,38 @@ export default function PaymentsAnalyticsPage() {
             <Card variant="outlined">
               <CardHeader
                 titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
+                title="Practice Revenue (range)"
+              />
+              <CardContent>
+                <Typography variant="h5" fontWeight={700}>
+                  {fmtUSD(totals.practiceRevenue)}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {series.length} days
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid item xs={12} sm={6} md={4}>
+            <Card variant="outlined">
+              <CardHeader
+                titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
+                title="Online Pharmacy Revenue (range)"
+              />
+              <CardContent>
+                <Typography variant="h5" fontWeight={700}>
+                  {fmtUSD(totals.onlinePharmacyRevenue)}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {series.length} days
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid item xs={12} sm={6} md={4}>
+            <Card variant="outlined">
+              <CardHeader
+                titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
                 title="Subscription Revenue (range)"
               />
               <CardContent>
@@ -356,14 +434,35 @@ export default function PaymentsAnalyticsPage() {
           <CardHeader title="Today's Revenue" />
           <CardContent>
             <Stack spacing={0.5}>
-              <Box display="flex" justifyContent="space-between" alignItems="baseline">
-                <Typography variant="body2" color="text.secondary">
-                  Payments revenue
-                </Typography>
-                <Typography variant="body1" fontWeight={600}>
-                  {fmtUSD(todaysRevenue)}
-                </Typography>
-              </Box>
+              {todaysUseLegacyPaymentsRow ? (
+                <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                  <Typography variant="body2" color="text.secondary">
+                    Payments revenue
+                  </Typography>
+                  <Typography variant="body1" fontWeight={600}>
+                    {fmtUSD(todaysRecordedRevenue)}
+                  </Typography>
+                </Box>
+              ) : (
+                <>
+                  <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                    <Typography variant="body2" color="text.secondary">
+                      Practice revenue
+                    </Typography>
+                    <Typography variant="body1" fontWeight={600}>
+                      {fmtUSD(todaysPracticeRevenue)}
+                    </Typography>
+                  </Box>
+                  <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                    <Typography variant="body2" color="text.secondary">
+                      Online pharmacy revenue
+                    </Typography>
+                    <Typography variant="body1" fontWeight={600}>
+                      {fmtUSD(todaysOnlinePharmacyRevenue)}
+                    </Typography>
+                  </Box>
+                </>
+              )}
               <Box display="flex" justifyContent="space-between" alignItems="baseline">
                 <Typography variant="body2" color="text.secondary">
                   Subscription revenue
@@ -392,6 +491,58 @@ export default function PaymentsAnalyticsPage() {
         <Card variant="outlined">
           <CardHeader title="Trend" />
           <CardContent>
+            <FormGroup row sx={{ flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={chartLineVisible.practiceRevenue}
+                    onChange={() => toggleChartLine('practiceRevenue')}
+                  />
+                }
+                label={<Typography variant="body2">Practice</Typography>}
+              />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={chartLineVisible.onlinePharmacyRevenue}
+                    onChange={() => toggleChartLine('onlinePharmacyRevenue')}
+                  />
+                }
+                label={<Typography variant="body2">Pharmacy</Typography>}
+              />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={chartLineVisible.subscriptionRevenue}
+                    onChange={() => toggleChartLine('subscriptionRevenue')}
+                  />
+                }
+                label={<Typography variant="body2">Subscription</Typography>}
+              />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={chartLineVisible.totalRevenue}
+                    onChange={() => toggleChartLine('totalRevenue')}
+                  />
+                }
+                label={<Typography variant="body2">Total</Typography>}
+              />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={chartLineVisible.trend}
+                    onChange={() => toggleChartLine('trend')}
+                  />
+                }
+                label={<Typography variant="body2">Trend</Typography>}
+              />
+            </FormGroup>
             <Box height={320} minHeight={320}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
@@ -418,22 +569,35 @@ export default function PaymentsAnalyticsPage() {
                   <Line
                     yAxisId="left"
                     type="monotone"
-                    dataKey="revenue"
-                    name="Revenue"
-                    stroke="#1976d2"
+                    dataKey="practiceRevenue"
+                    name="Practice revenue"
+                    stroke="#1565c0"
                     strokeWidth={2}
                     dot={false}
                     isAnimationActive
+                    hide={!chartLineVisible.practiceRevenue}
+                  />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="onlinePharmacyRevenue"
+                    name="Online pharmacy revenue"
+                    stroke="#7b1fa2"
+                    strokeWidth={2}
+                    dot={false}
+                    isAnimationActive
+                    hide={!chartLineVisible.onlinePharmacyRevenue}
                   />
                   <Line
                     yAxisId="left"
                     type="monotone"
                     dataKey="subscriptionRevenue"
-                    name="Subscription Revenue"
+                    name="Subscription revenue"
                     stroke="#2e7d32"
                     strokeWidth={2}
                     dot={false}
                     isAnimationActive
+                    hide={!chartLineVisible.subscriptionRevenue}
                   />
                   <Line
                     yAxisId="left"
@@ -444,17 +608,19 @@ export default function PaymentsAnalyticsPage() {
                     strokeWidth={2}
                     dot={false}
                     isAnimationActive
+                    hide={!chartLineVisible.totalRevenue}
                   />
                   <Line
                     yAxisId="left"
                     type="monotone"
                     dataKey="trend"
                     name="Trend"
-                    stroke="#ed6c02"
+                    stroke="#607d8b"
                     strokeWidth={1.5}
                     strokeDasharray="5 5"
                     dot={false}
                     isAnimationActive
+                    hide={!chartLineVisible.trend}
                   />
                 </LineChart>
               </ResponsiveContainer>

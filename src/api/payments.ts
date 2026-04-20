@@ -3,9 +3,11 @@ import { http } from './http';
 
 export type PaymentPoint = {
   date: string; // "YYYY-MM-DD"
-  revenue: number; // daily total
+  revenue: number; // daily total (typically practice + online pharmacy)
   count: number; // number of payments
   subscriptionRevenue?: number; // daily subscription revenue
+  onlinePharmacyRevenue?: number;
+  practiceRevenue?: number;
 };
 
 export type PaymentProviderType = 'square';
@@ -117,6 +119,8 @@ export async function fetchPaymentsAnalytics(params: {
     revenue: Number(r.revenue ?? 0),
     count: Number(r.count ?? 0),
     subscriptionRevenue: Number(r.subscriptionRevenue ?? 0),
+    onlinePharmacyRevenue: Number(r.onlinePharmacyRevenue ?? 0),
+    practiceRevenue: Number(r.practiceRevenue ?? 0),
   }));
 }
 
