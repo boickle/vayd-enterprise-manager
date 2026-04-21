@@ -91,6 +91,13 @@ a:hover {
   padding: 24px;
 }
 
+/* Scheduler tab only: nearly full viewport width */
+.container.container--scheduler {
+  max-width: calc(100vw - 24px);
+  width: 100%;
+  box-sizing: border-box;
+}
+
 /* Ensure main element fills screen for client portal */
 main:not(.container) {
   width: 100%;

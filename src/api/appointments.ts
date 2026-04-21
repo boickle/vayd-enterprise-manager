@@ -1,5 +1,66 @@
 // src/api/appointments.ts
 import { http } from './http';
+import type { Appointment } from './roomLoader';
+
+export type RangeAppointment = Appointment;
+
+/**
+ * GET /appointments/range — appointments overlapping [start, end] (ISO 8601, UTC).
+ * Optional primaryProviderId scopes to one doctor; omit for entire practice.
+ */
+export async function fetchAppointmentsRange(params: {
+  practiceId: number | string;
+  start: string;
+  end: string;
+  primaryProviderId?: number | string;
+}): Promise<Appointment[]> {
+  const query: Record<string, string> = {
+    practiceId: String(params.practiceId),
+    start: params.start,
+    end: params.end,
+  };
+  if (params.primaryProviderId != null && String(params.primaryProviderId).trim() !== '') {
+    query.primaryProviderId = String(params.primaryProviderId);
+  }
+  const { data } = await http.get('/appointments/range', { params: query });
+  return Array.isArray(data) ? data : (data?.items ?? []);
+}
+
+/** POST /appointments — Vayd-native appointment (pimsType VAYD on server) */
+export type CreateAppointmentPayload = {
+  practiceId: number;
+  primaryProviderId: number;
+  clientId: number;
+  patientId: number;
+  appointmentTypeId: number;
+  appointmentStart: string;
+  appointmentEnd: string;
+  description?: string;
+  instructions?: string;
+  equipment?: string;
+  medications?: string;
+  treatmentId?: number;
+  allDay?: boolean;
+};
+
+export async function createAppointment(body: CreateAppointmentPayload): Promise<Appointment> {
+  const { data } = await http.post<Appointment>('/appointments', body);
+  return data;
+}
+
+/** PATCH /appointments/:id — partial update (field names match Appointment / server contract). */
+export async function patchAppointment(
+  id: number | string,
+  body: Record<string, unknown>
+): Promise<Appointment> {
+  const { data } = await http.patch<Appointment>(`/appointments/${encodeURIComponent(String(id))}`, body);
+  return data;
+}
+
+/** DELETE /appointments/:id */
+export async function deleteAppointment(id: number | string): Promise<void> {
+  await http.delete(`/appointments/${encodeURIComponent(String(id))}`);
+}
 
 export type Depot = { lat: number; lon: number };
 

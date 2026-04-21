@@ -83,6 +83,7 @@ function RouteGuard() {
   // Get all possible pages (not filtered by user access) to check if route exists
   const allPages = [
     '/routing',
+    '/scheduler',
     '/doctor',
     '/doctormonth',
     '/admin',
@@ -223,6 +224,15 @@ export default function App() {
 
   const isProd = isProduction();
 
+  const mainClassName = useMemo(() => {
+    if (isClient && location.pathname.startsWith('/client-portal')) return '';
+    const path = location.pathname;
+    if (path === '/scheduler' || path.startsWith('/scheduler/')) {
+      return 'container container--scheduler';
+    }
+    return 'container';
+  }, [isClient, location.pathname]);
+
   return (
     <div>
       {!isProd && (
@@ -298,9 +308,7 @@ export default function App() {
           </header>
         )}
 
-      <main
-        className={isClient && location.pathname.startsWith('/client-portal') ? '' : 'container'}
-      >
+      <main className={mainClassName}>
         <Routes>
           {/* Root redirect: client -> client-portal, else -> routing */}
           <Route

@@ -17,6 +17,7 @@ export async function searchPatients(params?: {
   primaryProviderId?: string | number;
   practiceId?: string | number;
   activeOnly?: boolean;
+  clientId?: string | number;
 }) {
   return http.get('/patients/search', { params });
 }
@@ -39,6 +40,12 @@ export async function getLatestModifiedPatient() {
 // export async function savePatients(patients: PatientDto | PatientDto[]) {
 //   return http.post('/patients', patients);
 // }
+
+/** PATCH /patients/:id — partial update (e.g. weight). */
+export async function patchPatient(id: number | string, body: Record<string, unknown>): Promise<unknown> {
+  const { data } = await http.patch(`/patients/${encodeURIComponent(String(id))}`, body);
+  return data;
+}
 
 // ---------------------------
 // Delete

@@ -1,5 +1,6 @@
 // src/app-pages.ts
 import Routing from './pages/Routing';
+import Scheduler from './pages/Scheduler';
 import { isProduction } from './utils/env';
 import DoctorDay from './pages/DoctorDay';
 import CreateUser from './pages/CreateUser';
@@ -39,6 +40,13 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       path: '/routing',
       label: 'Routing',
       element: <Routing />,
+      permission: 'canSeeRouting',
+      role: ['employee', 'admin'],
+    },
+    {
+      path: '/scheduler',
+      label: 'Scheduler',
+      element: <Scheduler />,
       permission: 'canSeeRouting',
       role: ['employee', 'admin'],
     },
