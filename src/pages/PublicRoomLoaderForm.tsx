@@ -16,7 +16,11 @@ import {
   type RoomLoaderSimulateBillPublicResponse,
   type RoomLoaderSimulateLineItem,
 } from '../api/roomLoader';
-import { getPatientTreatmentHistoryPublic, type TreatmentWithItems } from '../api/treatments';
+import {
+  getPatientTreatmentHistoryPublic,
+  type TreatmentItem,
+  type TreatmentWithItems,
+} from '../api/treatments';
 import type { Pet } from '../api/clientPortal';
 import MembershipRecommendationPanel, {
   type RoomLoaderPlanForDisplay,
@@ -2255,14 +2259,27 @@ function isDogSpeciesTokens(speciesJoinedLower: string): boolean {
   return /\b(dog|dogs|canine|canines|puppy|puppies)\b/.test(t);
 }
 
+/**
+ * Optional vaccine + crLyme booster logic on treatment history: only lines with a non-null `inventoryItem`
+ * (actual product), so labs/procedures (F4DX, Lepto PCR, etc.) never count as vaccines.
+ */
+function treatmentHistoryItemHasInventoryProduct(item: TreatmentItem): boolean {
+  return item.inventoryItem != null;
+}
+
+function treatmentHistoryInventoryNameCode(item: TreatmentItem): { name: string; code: string } {
+  const inv = item.inventoryItem;
+  return { name: String(inv?.name ?? ''), code: String(inv?.code ?? '') };
+}
+
 /** True if patient has ever had crLyme in their treatment history. */
 function everHadCrLyme(history: TreatmentWithItems[]): boolean {
   for (const tx of history ?? []) {
     if ((tx as any).isEstimate === true) continue;
     for (const item of tx.treatmentItems || []) {
       if (item.isDeclined) continue;
-      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
-      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!treatmentHistoryItemHasInventoryProduct(item)) continue;
+      const { name, code } = treatmentHistoryInventoryNameCode(item);
       if (isCrLymeItem(name, code)) return true;
     }
   }
@@ -2323,9 +2340,66 @@ function hasInitialSeriesCrLymeOnCarePlan(patient: any): boolean {
   return false;
 }
 
-/** Eligible for "schedule crLyme booster?" once history is loaded: getting crLyme this visit and either no prior crLyme or this visit is explicitly the initial product. */
+/**
+ * Heartworm/tick panels and Lyme *tests* can carry "Lyme" in the name/code; they must not count as Lyme vaccination
+ * for overdue / booster logic (e.g. F4DX lines would otherwise look like "recent Lyme").
+ */
+function historyItemLooksLikeLymeDiagnostics(name?: string | null, code?: string | null): boolean {
+  const n = (name ?? '').toLowerCase();
+  const c = (code ?? '').trim().toUpperCase();
+  if (c === 'F4DX') return true;
+  if (/\b4dx\b|4-dx|heartworm\s*\/\s*tick|tick\s*\/\s*heartworm|snap\s*4/.test(n)) return true;
+  if ((n.includes('lyme') || c.includes('LYME')) && /\b(test|tests|screen|panel|titer|c6|antibody|diagnostic|profile)\b/.test(n))
+    return true;
+  return false;
+}
+
+/** Lyme vaccination rows in treatment history (excludes 4dx / Lyme diagnostics). */
+function isLymeVaccineHistoryItem(name?: string | null, code?: string | null): boolean {
+  return isLymeItem(name, code) && !historyItemLooksLikeLymeDiagnostics(name, code);
+}
+
+/**
+ * PIMS may use LYMECRINITIAL while the reminder text still reflects an annual / Lyme–Lepto combo renewal (not a naive
+ * first puppy dose). In that case the booster is protocol, not an optional owner choice — hide the question even when
+ * treatment history has not yet matched a prior Lyme product.
+ */
+function crLymeOnCarePlanLooksLikeSeriesRenewalNotNaiveFirstDose(patient: any): boolean {
+  const parts: string[] = [];
+  for (const r of patient?.reminders ?? []) {
+    const { name, code } = getRoomLoaderReminderLineNameCode(r);
+    if (!isCrLymeItem(name, code)) continue;
+    parts.push(
+      String(r?.reminderText ?? ''),
+      String(r?.description ?? ''),
+      String(r?.reminder?.description ?? ''),
+      name
+    );
+  }
+  for (const item of patient?.addedItems ?? []) {
+    const { name, code } = getPublicFormLineNameCode(item);
+    if (!isCrLymeItem(name, code)) continue;
+    parts.push(name);
+  }
+  const blob = parts.join(' ').toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!blob) return false;
+  if (/\bannual\b/.test(blob)) return true;
+  if (/combo/.test(blob) && (blob.includes('lyme') || blob.includes('lepto'))) return true;
+  if (/lyme\s*\/?\s*lepto|lepto\s*\/?\s*lyme/.test(blob)) return true;
+  return false;
+}
+
+/**
+ * Eligible for "schedule crLyme booster?" once history is loaded: getting crLyme this visit and either no prior
+ * crLyme or this visit is explicitly the initial product.
+ * If they have any prior Lyme vaccination but nothing in the last 15 months, the booster is required (not optional),
+ * so we do not ask — staff handles follow-up.
+ */
 function showCrLymeBoosterWhenHistoryReady(patient: any, history: TreatmentWithItems[]): boolean {
   if (!gettingCrLymeThisTime(patient)) return false;
+  if (everHadAnyLymeVaccine(history) && !hadLymeInLast15Months(history)) return false;
+  if (hasInitialSeriesCrLymeOnCarePlan(patient) && crLymeOnCarePlanLooksLikeSeriesRenewalNotNaiveFirstDose(patient))
+    return false;
   return !everHadCrLyme(history) || hasInitialSeriesCrLymeOnCarePlan(patient);
 }
 
@@ -2340,9 +2414,9 @@ function isLymeItem(name?: string | null, code?: string | null): boolean {
 function declinedLymeInPast(history: TreatmentWithItems[]): boolean {
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
-      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
-      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
-      if (isLymeItem(name, code) && item.isDeclined) return true;
+      if (!treatmentHistoryItemHasInventoryProduct(item)) continue;
+      const { name, code } = treatmentHistoryInventoryNameCode(item);
+      if (isLymeVaccineHistoryItem(name, code) && item.isDeclined) return true;
     }
   }
   return false;
@@ -2353,9 +2427,9 @@ function hadLymeInLastYear(history: TreatmentWithItems[]): boolean {
   const oneYearAgo = DateTime.now().minus({ years: 1 });
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
-      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
-      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
-      if (!isLymeItem(name, code)) continue;
+      if (!treatmentHistoryItemHasInventoryProduct(item)) continue;
+      const { name, code } = treatmentHistoryInventoryNameCode(item);
+      if (!isLymeVaccineHistoryItem(name, code)) continue;
       const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
       if (serviceDate && serviceDate >= oneYearAgo) return true;
     }
@@ -2369,9 +2443,9 @@ function hadLymeInLast15Months(history: TreatmentWithItems[]): boolean {
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
       if (item.isDeclined) continue;
-      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
-      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
-      if (!isLymeItem(name, code)) continue;
+      if (!treatmentHistoryItemHasInventoryProduct(item)) continue;
+      const { name, code } = treatmentHistoryInventoryNameCode(item);
+      if (!isLymeVaccineHistoryItem(name, code)) continue;
       const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
       if (serviceDate && serviceDate >= cutoff) return true;
     }
@@ -2383,9 +2457,9 @@ function hadLymeInLast15Months(history: TreatmentWithItems[]): boolean {
 function everHadAnyLymeVaccine(history: TreatmentWithItems[]): boolean {
   for (const tx of history ?? []) {
     for (const item of tx.treatmentItems || []) {
-      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
-      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
-      if (isLymeItem(name, code) && !item.isDeclined) return true;
+      if (!treatmentHistoryItemHasInventoryProduct(item)) continue;
+      const { name, code } = treatmentHistoryInventoryNameCode(item);
+      if (isLymeVaccineHistoryItem(name, code) && !item.isDeclined) return true;
     }
   }
   return false;
@@ -2419,8 +2493,8 @@ function isLeptoItem(name?: string | null, code?: string | null): boolean {
 function declinedLeptoInPast(history: TreatmentWithItems[]): boolean {
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
-      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
-      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!treatmentHistoryItemHasInventoryProduct(item)) continue;
+      const { name, code } = treatmentHistoryInventoryNameCode(item);
       if (isLeptoItem(name, code) && item.isDeclined) return true;
     }
   }
@@ -2432,8 +2506,8 @@ function hadLeptoInLastYear(history: TreatmentWithItems[]): boolean {
   const oneYearAgo = DateTime.now().minus({ years: 1 });
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
-      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
-      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!treatmentHistoryItemHasInventoryProduct(item)) continue;
+      const { name, code } = treatmentHistoryInventoryNameCode(item);
       if (!isLeptoItem(name, code)) continue;
       const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
       if (serviceDate && serviceDate >= oneYearAgo) return true;
@@ -2448,8 +2522,8 @@ function hadLeptoInLast15Months(history: TreatmentWithItems[]): boolean {
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
       if (item.isDeclined) continue;
-      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
-      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!treatmentHistoryItemHasInventoryProduct(item)) continue;
+      const { name, code } = treatmentHistoryInventoryNameCode(item);
       if (!isLeptoItem(name, code)) continue;
       const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
       if (serviceDate && serviceDate >= cutoff) return true;
@@ -2486,8 +2560,8 @@ function isBordetellaItem(name?: string | null, code?: string | null): boolean {
 function declinedBordetellaInPast(history: TreatmentWithItems[]): boolean {
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
-      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
-      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!treatmentHistoryItemHasInventoryProduct(item)) continue;
+      const { name, code } = treatmentHistoryInventoryNameCode(item);
       if (isBordetellaItem(name, code) && item.isDeclined) return true;
     }
   }
@@ -2499,8 +2573,8 @@ function hadBordetellaInLastYear(history: TreatmentWithItems[]): boolean {
   const oneYearAgo = DateTime.now().minus({ years: 1 });
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
-      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
-      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!treatmentHistoryItemHasInventoryProduct(item)) continue;
+      const { name, code } = treatmentHistoryInventoryNameCode(item);
       if (!isBordetellaItem(name, code)) continue;
       const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
       if (serviceDate && serviceDate >= oneYearAgo) return true;
@@ -2515,8 +2589,8 @@ function hadBordetellaInLast15Months(history: TreatmentWithItems[]): boolean {
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
       if (item.isDeclined) continue;
-      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
-      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!treatmentHistoryItemHasInventoryProduct(item)) continue;
+      const { name, code } = treatmentHistoryInventoryNameCode(item);
       if (!isBordetellaItem(name, code)) continue;
       const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
       if (serviceDate && serviceDate >= cutoff) return true;
@@ -2730,8 +2804,8 @@ function VaccineUncheckRecommendationInfo({ title, body }: { title: string; body
 function declinedFeLVInPast(history: TreatmentWithItems[]): boolean {
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
-      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
-      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!treatmentHistoryItemHasInventoryProduct(item)) continue;
+      const { name, code } = treatmentHistoryInventoryNameCode(item);
       if (isFeLVItem(name, code) && item.isDeclined) return true;
     }
   }
@@ -2743,8 +2817,8 @@ function hadFeLVInLastYear(history: TreatmentWithItems[]): boolean {
   const oneYearAgo = DateTime.now().minus({ years: 1 });
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
-      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
-      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!treatmentHistoryItemHasInventoryProduct(item)) continue;
+      const { name, code } = treatmentHistoryInventoryNameCode(item);
       if (!isFeLVItem(name, code)) continue;
       const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
       if (serviceDate && serviceDate >= oneYearAgo) return true;
@@ -2757,8 +2831,8 @@ function hadFeLVInLastYear(history: TreatmentWithItems[]): boolean {
 function everHadFeLV(history: TreatmentWithItems[]): boolean {
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
-      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
-      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!treatmentHistoryItemHasInventoryProduct(item)) continue;
+      const { name, code } = treatmentHistoryInventoryNameCode(item);
       if (isFeLVItem(name, code) && !item.isDeclined) return true;
     }
   }
@@ -2770,8 +2844,8 @@ function hadFeLVInLast15Months(history: TreatmentWithItems[]): boolean {
   const cutoff = DateTime.now().minus({ months: 15 });
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
-      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
-      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!treatmentHistoryItemHasInventoryProduct(item)) continue;
+      const { name, code } = treatmentHistoryInventoryNameCode(item);
       if (!isFeLVItem(name, code)) continue;
       const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
       if (serviceDate && serviceDate >= cutoff) return true;
@@ -2785,8 +2859,8 @@ function hadFeLVInLast24Months(history: TreatmentWithItems[]): boolean {
   const cutoff = DateTime.now().minus({ months: 24 });
   for (const tx of history) {
     for (const item of tx.treatmentItems || []) {
-      const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name;
-      const code = item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code;
+      if (!treatmentHistoryItemHasInventoryProduct(item)) continue;
+      const { name, code } = treatmentHistoryInventoryNameCode(item);
       if (!isFeLVItem(name, code)) continue;
       const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
       if (serviceDate && serviceDate >= cutoff) return true;
