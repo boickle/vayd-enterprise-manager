@@ -1,5 +1,6 @@
 // src/pages/RoomLoader.tsx
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { DateTime } from 'luxon';
 import {
   searchRoomLoaders,
@@ -191,6 +192,8 @@ function hasEffectivePhone(phone: string | null | undefined): boolean {
 }
 
 export default function RoomLoaderPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [roomLoaders, setRoomLoaders] = useState<RoomLoader[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -246,6 +249,14 @@ export default function RoomLoaderPage() {
       (selectedRoomLoader.sentStatus !== 'not_sent' || (selectedRoomLoader.timesSentToClient ?? 0) > 0),
     [selectedRoomLoader]
   );
+
+  // Open a specific room loader when navigated from Scheduler (Send Form)
+  useEffect(() => {
+    const id = (location.state as { openRoomLoaderId?: number } | null)?.openRoomLoaderId;
+    if (id == null || !Number.isFinite(id)) return;
+    setSelectedRoomLoaderId(id);
+    navigate(location.pathname, { replace: true, state: {} });
+  }, [location.state, location.pathname, navigate]);
 
   // Load room loaders
   useEffect(() => {

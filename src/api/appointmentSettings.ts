@@ -19,7 +19,10 @@ export type AppointmentType = {
   /** When set by the API, scheduler uses this for event fill color */
   calendarColor?: string | null;
   colorHex?: string | null;
+  /** Fill color: hex (e.g. #00CC66) or CSS named color (e.g. pink) from API */
   color?: string | null;
+  /** Text on colored chips: hex or named (e.g. black, #FFFFFF) from API */
+  textColor?: string | null;
   practice?: {
     id: number;
     name: string;

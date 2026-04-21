@@ -8,8 +8,16 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { DateTime } from 'luxon';
-import { fetchAppointmentsRange } from '../api/appointments';
+import { Heart } from 'lucide-react';
+import {
+  deleteAppointment,
+  fetchAppointmentsRange,
+  patchAppointment,
+} from '../api/appointments';
+import { createRoomLoaders } from '../api/roomLoader';
+import { patchPatient } from '../api/patients';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { fetchAllAppointmentTypes, type AppointmentType } from '../api/appointmentSettings';
 import type { Appointment, Client, Patient } from '../api/roomLoader';
@@ -18,7 +26,17 @@ import {
   rectFromElement,
 } from '../utils/hoverPopoverPosition';
 import { useAuth } from '../auth/useAuth';
+import {
+  fetchSchedulerDriveIsoByAppointmentId,
+  type DriveIsoPair,
+} from '../utils/schedulerDriveEta';
+import { evetClientLink, evetPatientLink } from '../utils/evet';
 import { SchedulerBookModal, type SchedulerBookSlot } from './SchedulerBookModal';
+import {
+  SchedulerAppointmentContextMenu,
+  type SchedulerContextMenuAction,
+} from './SchedulerContextMenu';
+import { SchedulerEditVisitModal } from './SchedulerEditVisitModal';
 import './Scheduler.css';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -29,6 +47,11 @@ const PPM = 1.15;
 const SLOT_MINUTES = 15;
 const DEFAULT_GRID_START = 7 * 60;
 const DEFAULT_GRID_END = 17 * 60;
+
+/** Unified all-day strip: row height, vertical padding, max visible rows (then scroll inside strip). */
+const SCHEDULER_ALL_DAY_ROW_PX = 22;
+const SCHEDULER_ALL_DAY_PAD_Y = 6;
+const SCHEDULER_ALL_DAY_MAX_VISIBLE_ROWS = 8;
 
 const TYPE_COLOR_FALLBACK = [
   '#16a34a',
@@ -56,30 +79,134 @@ function normalizeHex(c: string | null | undefined): string | null {
   return null;
 }
 
-function buildTypeColorMap(types: AppointmentType[]): Map<number, string> {
+/** Background from appointment type row: calendarColor / colorHex / color (hex or CSS named e.g. pink). */
+function typeBackgroundFromRow(
+  t: { calendarColor?: string | null; colorHex?: string | null; color?: string | null } | null | undefined
+): string | null {
+  if (!t) return null;
+  const hex =
+    normalizeHex(t.calendarColor) ?? normalizeHex(t.colorHex) ?? normalizeHex(t.color);
+  if (hex) return hex;
+  const named = pickStr(t.color);
+  if (named && /^[a-z]{2,20}$/i.test(named)) return named.toLowerCase();
+  return null;
+}
+
+function hexToRgbChannels(hex7: string): { r: number; g: number; b: number } | null {
+  let h = hex7.trim();
+  if (!h.startsWith('#')) return null;
+  h = h.slice(1);
+  if (!/^[0-9a-f]+$/i.test(h)) return null;
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  if (h.length !== 6) return null;
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16),
+  };
+}
+
+/** Readable default label color on top of arbitrary fill (hex or simple named). */
+function readableTextOnBackground(fill: string): string {
+  const hx = normalizeHex(fill);
+  if (hx) {
+    const rgb = hexToRgbChannels(hx);
+    if (rgb) {
+      const lum = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
+      return lum > 0.55 ? '#0f172a' : '#f8fafc';
+    }
+  }
+  const named = fill.trim().toLowerCase();
+  const lightish = new Set([
+    'white',
+    'yellow',
+    'pink',
+    'lightgray',
+    'wheat',
+    'ivory',
+    'beige',
+    'honeydew',
+    'azure',
+    'mintcream',
+    'lemonchiffon',
+    'cornsilk',
+    'linen',
+    'oldlace',
+    'floralwhite',
+    'snow',
+    'ghostwhite',
+    'lightyellow',
+    'lightcyan',
+  ]);
+  if (lightish.has(named)) return '#0f172a';
+  return '#f8fafc';
+}
+
+function resolveForegroundCss(raw: string | null | undefined): string | null {
+  const t = pickStr(raw);
+  if (!t) return null;
+  const hx = normalizeHex(t);
+  if (hx) return hx;
+  if (/^rgba?\(/i.test(t)) return t;
+  if (/^hsla?\(/i.test(t)) return t;
+  if (/^[a-z]{2,20}$/i.test(t)) return t.toLowerCase();
+  return null;
+}
+
+function buildTypeFillMap(types: AppointmentType[]): Map<number, string> {
   const m = new Map<number, string>();
   for (const t of types) {
-    const hex = normalizeHex(t.calendarColor) ?? normalizeHex(t.colorHex) ?? normalizeHex(t.color);
-    if (hex) m.set(t.id, hex);
+    const bg = typeBackgroundFromRow(t);
+    if (bg) m.set(t.id, bg);
   }
   return m;
 }
 
-function colorForAppointment(a: Appointment, typeColors: Map<number, string>): string {
+function colorsForAppointment(
+  a: Appointment,
+  typeList: AppointmentType[],
+  typeFillMap: Map<number, string>
+): { fill: string; text: string } {
   const tid = a.appointmentType?.id;
-  if (tid != null && typeColors.has(tid)) return typeColors.get(tid)!;
-  const fromApptType =
-    normalizeHex((a.appointmentType as { calendarColor?: string })?.calendarColor) ??
-    normalizeHex((a.appointmentType as { colorHex?: string })?.colorHex);
-  if (fromApptType) return fromApptType;
-  const name = a.appointmentType?.prettyName || a.appointmentType?.name || 'type';
-  return hashColorKey(`${tid ?? ''}:${name}`);
+  const fromList = tid != null ? typeList.find((x) => x.id === tid) : undefined;
+  const mergedRow = fromList ?? (a.appointmentType as AppointmentType | undefined);
+
+  let fill =
+    typeBackgroundFromRow(mergedRow) ??
+    (tid != null && typeFillMap.has(tid) ? typeFillMap.get(tid)! : null) ??
+    typeBackgroundFromRow(a.appointmentType as AppointmentType);
+
+  if (!fill) {
+    const name = a.appointmentType?.prettyName || a.appointmentType?.name || 'type';
+    fill = hashColorKey(`${tid ?? ''}:${name}`);
+  }
+
+  const textRaw = pickStr(fromList?.textColor) ?? pickStr((a.appointmentType as { textColor?: string })?.textColor);
+  const text = resolveForegroundCss(textRaw) ?? readableTextOnBackground(fill);
+  return { fill, text };
 }
 
 function clientLabel(c: Appointment['client']): string {
   if (!c) return '—';
   const parts = [c.firstName, c.lastName].filter(Boolean);
   return parts.join(' ').trim() || '—';
+}
+
+/** Same membership source as My Week: appointment root or nested patient. */
+function appointmentPatientMember(appt: Appointment): {
+  isMember: boolean;
+  membershipName: string | null;
+} {
+  const pat = appt.patient;
+  const isMember = Boolean(appt.isMember ?? pat?.isMember);
+  const raw = appt.membershipName ?? pat?.membershipName;
+  const membershipName =
+    typeof raw === 'string' && raw.trim()
+      ? raw.trim()
+      : raw != null && String(raw).trim()
+        ? String(raw).trim()
+        : null;
+  return { isMember, membershipName };
 }
 
 function providerLabel(p: Appointment['primaryProvider']): string {
@@ -180,6 +307,23 @@ function clientAddressMultiline(c: Client | undefined): string | null {
   const line3 = [cityState, zip].filter(Boolean).join(cityState && zip ? ' ' : '');
   const lines = [line1, line2, line3].filter(Boolean);
   return lines.length ? lines.join('\n') : null;
+}
+
+/** Single-stop Google Maps link from client address or coordinates. */
+function googleMapsUrlForAppointment(a: Appointment): string | null {
+  const c = a.client;
+  if (!c) return null;
+  if (typeof c.lat === 'number' && typeof c.lon === 'number') {
+    return `https://www.google.com/maps?q=${c.lat},${c.lon}`;
+  }
+  const line = clientAddressOneLine(c);
+  if (!line) return null;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(line)}`;
+}
+
+function telHref(phone: string): string {
+  const digits = phone.replace(/[^\d+]/g, '');
+  return digits ? `tel:${digits}` : `tel:${phone}`;
 }
 
 function formatDobDisplay(iso: string | null | undefined): string | null {
@@ -607,6 +751,49 @@ function dayKeyFromIso(iso: string): string | null {
   return dt.isValid ? dt.toISODate() : null;
 }
 
+/**
+ * All-day span in practice TZ: half-open [start, end) by local start-of-day — `appointmentEnd` at
+ * local midnight is the first day NOT included (e.g. Apr 20 … Apr 28 end → Apr 20–27).
+ */
+function allDayLocalStartEndExclusive(a: Appointment): {
+  start: DateTime;
+  endExclusive: DateTime;
+} | null {
+  const start = DateTime.fromISO(a.appointmentStart, { zone: 'utc' }).setZone(PRACTICE_TZ).startOf('day');
+  const endExclusive = DateTime.fromISO(a.appointmentEnd, { zone: 'utc' }).setZone(PRACTICE_TZ).startOf('day');
+  if (!start.isValid) return null;
+  return { start, endExclusive };
+}
+
+function allDayRangeContainsLocalDate(a: Appointment, dateIso: string): boolean {
+  const bounds = allDayLocalStartEndExclusive(a);
+  if (!bounds) return false;
+  const { start, endExclusive } = bounds;
+  const d = DateTime.fromISO(dateIso, { zone: PRACTICE_TZ }).startOf('day');
+  if (!d.isValid) return false;
+  if (!endExclusive.isValid || endExclusive <= start) return d.equals(start);
+  return d >= start && d < endExclusive;
+}
+
+function dayKeysForAllDayRange(a: Appointment): string[] {
+  const bounds = allDayLocalStartEndExclusive(a);
+  if (!bounds) return [];
+  const { start, endExclusive } = bounds;
+  if (!endExclusive.isValid || endExclusive <= start) {
+    return [start.toISODate()!];
+  }
+  const keys: string[] = [];
+  for (let d = start; d < endExclusive; d = d.plus({ days: 1 })) {
+    keys.push(d.toISODate()!);
+  }
+  return keys;
+}
+
+function appointmentCoversPracticeLocalDate(a: Appointment, dateIso: string): boolean {
+  if (a.allDay) return allDayRangeContainsLocalDate(a, dateIso);
+  return dayKeyFromIso(a.appointmentStart) === dateIso;
+}
+
 type ViewMode = 'month' | 'week' | 'day';
 
 type PlacedAppt = {
@@ -615,15 +802,20 @@ type PlacedAppt = {
   colCount: number;
 };
 
-function assignColumns(appointments: Appointment[]): PlacedAppt[] {
+function assignColumns(
+  appointments: Appointment[],
+  displayRange: (a: Appointment) => { startIso: string; endIso: string }
+): PlacedAppt[] {
   const sorted = [...appointments].sort(
-    (a, b) => new Date(a.appointmentStart).getTime() - new Date(b.appointmentStart).getTime()
+    (a, b) =>
+      new Date(displayRange(a).startIso).getTime() - new Date(displayRange(b).startIso).getTime()
   );
   const colEnds: number[] = [];
   const placed: PlacedAppt[] = [];
   for (const appt of sorted) {
-    const start = new Date(appt.appointmentStart).getTime();
-    const end = new Date(appt.appointmentEnd).getTime();
+    const { startIso, endIso } = displayRange(appt);
+    const start = new Date(startIso).getTime();
+    const end = new Date(endIso).getTime();
     let col = colEnds.findIndex((e) => e <= start);
     if (col === -1) {
       col = colEnds.length;
@@ -645,6 +837,7 @@ function isAppointmentVisible(a: Appointment): boolean {
 }
 
 export default function Scheduler() {
+  const navigate = useNavigate();
   const [view, setView] = useState<ViewMode>('week');
   const [anchorDate, setAnchorDate] = useState(() =>
     DateTime.now().setZone(PRACTICE_TZ).toISODate()
@@ -660,6 +853,15 @@ export default function Scheduler() {
   const [error, setError] = useState<string | null>(null);
 
   const [modalAppt, setModalAppt] = useState<Appointment | null>(null);
+  const [editAppt, setEditAppt] = useState<Appointment | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ appt: Appointment; x: number; y: number } | null>(
+    null
+  );
+  const [toast, setToast] = useState<string | null>(null);
+  /** When true and a single provider is selected, timed events use ETA/ETD from /appointments/doctor + /routing/eta (same as My Week). */
+  const [showByDriveTime, setShowByDriveTime] = useState(false);
+  const [driveIsoByApptId, setDriveIsoByApptId] = useState<Map<string, DriveIsoPair> | null>(null);
+  const [driveEtaLoading, setDriveEtaLoading] = useState(false);
   const [bookSlot, setBookSlot] = useState<SchedulerBookSlot | null>(null);
   const [hover, setHover] = useState<{
     appt: Appointment;
@@ -670,7 +872,7 @@ export default function Scheduler() {
 
   const { doctorId: authDoctorId } = useAuth() as { doctorId: string | null };
 
-  const typeColors = useMemo(() => buildTypeColorMap(typeList), [typeList]);
+  const typeFillMap = useMemo(() => buildTypeFillMap(typeList), [typeList]);
 
   const rangeUtc = useMemo(() => {
     const anchor = DateTime.fromISO(anchorDate!, { zone: PRACTICE_TZ }).startOf('day');
@@ -705,6 +907,11 @@ export default function Scheduler() {
     }
     return weekDays;
   }, [view, anchorDate, weekDays]);
+
+  const driveFetchKey = useMemo(
+    () => dayColumnDates.map((d) => d.toISODate()).join(','),
+    [dayColumnDates]
+  );
 
   const rangeTitle = useMemo(() => {
     if (view === 'day') {
@@ -776,6 +983,43 @@ export default function Scheduler() {
     loadRange();
   }, [loadRange]);
 
+  useEffect(() => {
+    if (!providerFilter.trim()) setShowByDriveTime(false);
+  }, [providerFilter]);
+
+  useEffect(() => {
+    if (view === 'month') setShowByDriveTime(false);
+  }, [view]);
+
+  useEffect(() => {
+    const canDrive =
+      Boolean(providerFilter.trim()) && showByDriveTime && (view === 'week' || view === 'day');
+    if (!canDrive) {
+      setDriveIsoByApptId(null);
+      setDriveEtaLoading(false);
+      return;
+    }
+    let on = true;
+    setDriveEtaLoading(true);
+    const dates = driveFetchKey.split(',').filter(Boolean);
+    fetchSchedulerDriveIsoByAppointmentId(dates, providerFilter.trim())
+      .then((m) => {
+        if (on) setDriveIsoByApptId(m);
+      })
+      .catch(() => {
+        if (on) {
+          setDriveIsoByApptId(null);
+          setToast('Could not load drive times; showing scheduled times.');
+        }
+      })
+      .finally(() => {
+        if (on) setDriveEtaLoading(false);
+      });
+    return () => {
+      on = false;
+    };
+  }, [driveFetchKey, providerFilter, showByDriveTime, view]);
+
   const filteredAppointments = useMemo(() => {
     return rawAppointments.filter((a) => {
       if (!isAppointmentVisible(a)) return false;
@@ -801,13 +1045,24 @@ export default function Scheduler() {
     return [...set].sort((x, y) => x.localeCompare(y));
   }, [rawAppointments]);
 
+  const displayRangeForAppt = useMemo(() => {
+    return (a: Appointment) => {
+      if (showByDriveTime && providerFilter.trim() && driveIsoByApptId?.has(String(a.id))) {
+        const p = driveIsoByApptId.get(String(a.id))!;
+        return { startIso: p.startIso, endIso: p.endIso };
+      }
+      return { startIso: a.appointmentStart, endIso: a.appointmentEnd };
+    };
+  }, [showByDriveTime, providerFilter, driveIsoByApptId]);
+
   const gridBounds = useMemo(() => {
     let start = DEFAULT_GRID_START;
     let end = DEFAULT_GRID_END;
     for (const a of filteredAppointments) {
       if (a.allDay) continue;
-      const sm = wallMinutes(a.appointmentStart);
-      const em = wallMinutes(a.appointmentEnd);
+      const { startIso, endIso } = displayRangeForAppt(a);
+      const sm = wallMinutes(startIso);
+      const em = wallMinutes(endIso);
       start = Math.min(start, Math.floor(sm / SLOT_MINUTES) * SLOT_MINUTES);
       end = Math.max(end, Math.ceil(em / SLOT_MINUTES) * SLOT_MINUTES);
     }
@@ -815,7 +1070,7 @@ export default function Scheduler() {
     end = Math.min(24 * 60, end + SLOT_MINUTES);
     if (end <= start) end = start + 60;
     return { gridStartMin: start, gridEndMin: end, totalMin: end - start };
-  }, [filteredAppointments]);
+  }, [filteredAppointments, displayRangeForAppt]);
 
   const gridHeightPx = gridBounds.totalMin * PPM;
 
@@ -841,10 +1096,76 @@ export default function Scheduler() {
       map.set(key, []);
     }
     for (const a of filteredAppointments) {
-      const key = dayKeyFromIso(a.appointmentStart);
-      if (key && map.has(key)) map.get(key)!.push(a);
+      if (a.allDay) {
+        for (const key of dayKeysForAllDayRange(a)) {
+          if (map.has(key)) map.get(key)!.push(a);
+        }
+      } else {
+        const key = dayKeyFromIso(a.appointmentStart);
+        if (key && map.has(key)) map.get(key)!.push(a);
+      }
     }
     return map;
+  }, [filteredAppointments, dayColumnDates]);
+
+  /** Spanning all-day bars + lane stacking; visible strip height capped at 8 rows with internal scroll. */
+  const allDaySpanLayout = useMemo(() => {
+    const visibleDayIsos = dayColumnDates.map((d) => d.toISODate()!);
+    const n = visibleDayIsos.length;
+    if (n === 0) {
+      return { bars: [] as Array<{ appt: Appointment; s: number; e: number; lane: number }>, visibleHeightPx: 28, contentHeightPx: 28 };
+    }
+
+    const segments: { appt: Appointment; s: number; e: number }[] = [];
+    for (const a of filteredAppointments) {
+      if (!a.allDay) continue;
+      const keys = new Set(dayKeysForAllDayRange(a));
+      let s = -1;
+      let e = -1;
+      for (let i = 0; i < n; i++) {
+        if (!keys.has(visibleDayIsos[i])) continue;
+        if (s < 0) s = i;
+        e = i;
+      }
+      if (s < 0) continue;
+      segments.push({ appt: a, s, e });
+    }
+
+    function intervalsOverlap(x: { s: number; e: number }, y: { s: number; e: number }) {
+      return x.s <= y.e && y.s <= x.e;
+    }
+
+    segments.sort((a, b) => a.s - b.s || b.e - b.s - (a.e - a.s));
+
+    const lastOnLane: { s: number; e: number }[] = [];
+    const bars: Array<{ appt: Appointment; s: number; e: number; lane: number }> = [];
+
+    for (const seg of segments) {
+      let lane = 0;
+      for (; ; lane++) {
+        if (lane === lastOnLane.length) {
+          lastOnLane.push({ s: seg.s, e: seg.e });
+          bars.push({ appt: seg.appt, s: seg.s, e: seg.e, lane });
+          break;
+        }
+        const prev = lastOnLane[lane];
+        if (!intervalsOverlap(prev, seg)) {
+          lastOnLane[lane] = { s: seg.s, e: seg.e };
+          bars.push({ appt: seg.appt, s: seg.s, e: seg.e, lane });
+          break;
+        }
+      }
+    }
+
+    const laneCount = lastOnLane.length;
+    const innerPad = SCHEDULER_ALL_DAY_PAD_Y;
+    const contentHeightPx =
+      segments.length === 0 ? 28 : innerPad + laneCount * SCHEDULER_ALL_DAY_ROW_PX;
+    const maxContent =
+      innerPad + SCHEDULER_ALL_DAY_MAX_VISIBLE_ROWS * SCHEDULER_ALL_DAY_ROW_PX;
+    const visibleHeightPx = Math.min(Math.max(28, contentHeightPx), Math.max(28, maxContent));
+
+    return { bars, visibleHeightPx, contentHeightPx };
   }, [filteredAppointments, dayColumnDates]);
 
   const monthCells = useMemo(() => {
@@ -856,7 +1177,7 @@ export default function Scheduler() {
       const d = gridStart.plus({ days: i });
       const inMonth = d.month === monthStart.month;
       const key = d.toISODate()!;
-      const count = filteredAppointments.filter((a) => dayKeyFromIso(a.appointmentStart) === key).length;
+      const count = filteredAppointments.filter((a) => appointmentCoversPracticeLocalDate(a, key)).length;
       cells.push({ date: d, inMonth, count });
     }
     return cells;
@@ -923,8 +1244,193 @@ export default function Scheduler() {
     [gridBounds.gridStartMin, gridBounds.gridEndMin]
   );
 
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const id = window.setTimeout(() => setToast(null), 6000);
+    return () => clearTimeout(id);
+  }, [toast]);
+
+  const handleAppointmentContextMenu = useCallback((e: MouseEvent<HTMLDivElement>, appt: Appointment) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setHover(null);
+    setContextMenu({ appt, x: e.clientX, y: e.clientY });
+  }, []);
+
+  const handleAppointmentMenuAction = useCallback(
+    async (action: SchedulerContextMenuAction, appt: Appointment) => {
+      if (action.kind !== 'remove') setContextMenu(null);
+      const patients = patientsForAppointment(appt);
+      const client = appt.client;
+      const firstPatient = patients[0];
+
+      const fail = (msg: string) => showToast(msg);
+
+      try {
+        switch (action.kind) {
+          case 'view':
+            setModalAppt(appt);
+            return;
+          case 'edit':
+            setEditAppt(appt);
+            return;
+          case 'complete':
+            await patchAppointment(appt.id, { isComplete: true });
+            await loadRange();
+            return;
+          case 'remove':
+            if (!window.confirm('Remove this appointment?')) return;
+            setContextMenu(null);
+            await deleteAppointment(appt.id);
+            await loadRange();
+            return;
+          case 'setStatus':
+            await patchAppointment(appt.id, { statusName: action.value });
+            await loadRange();
+            return;
+          case 'setConfirm':
+            await patchAppointment(appt.id, { confirmStatusName: action.value });
+            await loadRange();
+            return;
+          case 'googleMaps': {
+            const url = googleMapsUrlForAppointment(appt);
+            if (!url) {
+              fail('No address or coordinates for this client.');
+              return;
+            }
+            window.open(url, '_blank', 'noopener,noreferrer');
+            return;
+          }
+          case 'sendForm': {
+            const patientIds = patients
+              .map((p) => p.id)
+              .filter((id) => id != null)
+              .map((id) => Number(id))
+              .filter((n) => Number.isFinite(n));
+            const body: {
+              practice: { id: number };
+              appointments: { id: number }[];
+              patients?: { id: number }[];
+            } = {
+              practice: { id: PRACTICE_ID },
+              appointments: [{ id: Number(appt.id) }],
+            };
+            if (patientIds.length) body.patients = patientIds.map((id) => ({ id }));
+            const created = await createRoomLoaders(body);
+            const rows = Array.isArray(created) ? created : [];
+            const rl = rows[0];
+            if (!rl?.id) {
+              fail('Could not create a room loader for this visit.');
+              return;
+            }
+            navigate('/room-loader', { state: { openRoomLoaderId: rl.id } });
+            return;
+          }
+          case 'enterWeight': {
+            if (!firstPatient?.id) {
+              fail('No patient on this appointment.');
+              return;
+            }
+            const raw = window.prompt(
+              'Weight (lbs)',
+              firstPatient.weight != null ? String(firstPatient.weight) : ''
+            );
+            if (raw == null || raw.trim() === '') return;
+            const n = parseFloat(raw.replace(/,/g, ''));
+            if (!Number.isFinite(n)) {
+              fail('Enter a valid number.');
+              return;
+            }
+            await patchPatient(firstPatient.id, { weight: n });
+            showToast('Weight saved.');
+            await loadRange();
+            return;
+          }
+          case 'goMr': {
+            const pid = pickStr(firstPatient?.pimsId);
+            if (!pid) {
+              fail('Patient has no PIMS id (eVet link unavailable).');
+              return;
+            }
+            window.open(evetPatientLink(pid), '_blank', 'noopener,noreferrer');
+            return;
+          }
+          case 'goClient': {
+            const cid = pickStr(client?.pimsId);
+            if (!cid) {
+              fail('Client has no PIMS id (eVet link unavailable).');
+              return;
+            }
+            window.open(evetClientLink(cid), '_blank', 'noopener,noreferrer');
+            return;
+          }
+          case 'quickInvoice': {
+            const cid = pickStr(client?.pimsId);
+            if (!cid) {
+              fail('Client has no PIMS id (eVet link unavailable).');
+              return;
+            }
+            window.open(evetClientLink(cid), '_blank', 'noopener,noreferrer');
+            return;
+          }
+          case 'checkout': {
+            const pid = pickStr(firstPatient?.pimsId);
+            if (!pid) {
+              fail('Patient has no PIMS id (eVet link unavailable).');
+              return;
+            }
+            window.open(evetPatientLink(pid), '_blank', 'noopener,noreferrer');
+            return;
+          }
+          case 'contact': {
+            if (!client) {
+              fail('No client on this appointment.');
+              return;
+            }
+            if (action.channel === 'phone1' && client.phone1) {
+              window.location.href = telHref(client.phone1);
+              return;
+            }
+            if (action.channel === 'phone2' && client.phone2) {
+              window.location.href = telHref(client.phone2);
+              return;
+            }
+            if (action.channel === 'email1' && client.email) {
+              window.location.href = `mailto:${client.email}`;
+              return;
+            }
+            if (action.channel === 'email2' && client.secondEmail) {
+              window.location.href = `mailto:${client.secondEmail}`;
+              return;
+            }
+            return;
+          }
+          default:
+            return;
+        }
+      } catch (e: unknown) {
+        const ax = e as { response?: { data?: { message?: string | string[] } }; message?: string };
+        const m = ax?.response?.data?.message;
+        if (Array.isArray(m)) fail(m.join(', '));
+        else if (typeof m === 'string' && m.trim()) fail(m);
+        else if (ax?.message) fail(ax.message);
+        else fail('Something went wrong.');
+      }
+    },
+    [loadRange, navigate, showToast]
+  );
+
   return (
     <div className="scheduler-page">
+      {toast ? (
+        <div className="scheduler-toast" role="status">
+          {toast}
+        </div>
+      ) : null}
       <div className="scheduler-toolbar">
         <div className="scheduler-toolbar-row">
           <label className="scheduler-go-date">
@@ -979,6 +1485,22 @@ export default function Scheduler() {
                   </option>
                 ))}
               </select>
+            </label>
+            <label
+              className="scheduler-drive-toggle"
+              title={
+                providerFilter.trim()
+                  ? 'Place visits by routed arrive/leave times (same as My Week).'
+                  : 'Select a single primary provider to load drive times.'
+              }
+            >
+              <input
+                type="checkbox"
+                checked={showByDriveTime}
+                disabled={!providerFilter.trim() || view === 'month'}
+                onChange={(e) => setShowByDriveTime(e.target.checked)}
+              />
+              <span>Show actual drive time (arrive/leave)</span>
             </label>
           </div>
         </div>
@@ -1059,7 +1581,12 @@ export default function Scheduler() {
           <div className="scheduler-grid-wrap">
             <div className="scheduler-time-col" style={{ paddingTop: 0 }}>
               <div style={{ height: 36, flexShrink: 0 }} aria-hidden />
-              <div style={{ minHeight: 28, flexShrink: 0 }} aria-hidden />
+              <div
+                className="scheduler-time-col-allday"
+                style={{ height: allDaySpanLayout.visibleHeightPx, flexShrink: 0 }}
+              >
+                <span className="scheduler-time-col-allday-label">all-day</span>
+              </div>
               <div style={{ height: gridHeightPx, position: 'relative' }}>
                 {timeLabels.map(({ min, label, major }) => (
                   <div
@@ -1079,128 +1606,199 @@ export default function Scheduler() {
                 ))}
               </div>
             </div>
-            <div className="scheduler-days" style={{ flex: 1 }}>
-              {dayColumnDates.map((dayDt) => {
-                const key = dayDt.toISODate()!;
-                const dayAppts = appointmentsByDay.get(key) ?? [];
-                const allDay = dayAppts.filter((a) => a.allDay);
-                const timed = dayAppts.filter((a) => !a.allDay);
-                const placed = assignColumns(timed);
-
-                return (
-                  <div key={key} className="scheduler-day-col">
-                    <div className="scheduler-day-header">
+            <div className="scheduler-days-stack">
+              <div className="scheduler-day-headers-row">
+                {dayColumnDates.map((dayDt) => {
+                  const key = dayDt.toISODate()!;
+                  return (
+                    <div key={key} className="scheduler-day-header">
                       {dayDt.toFormat('ccc')}, {dayDt.month}/{dayDt.day}
                     </div>
-                    <div className="scheduler-all-day">
-                      {allDay.map((a) => (
-                        <div
-                          key={a.id}
-                          role="button"
-                          tabIndex={0}
-                          className="scheduler-all-day-event"
-                          style={{
-                            background: colorForAppointment(a, typeColors),
-                          }}
-                          onClick={() => setModalAppt(a)}
-                          onKeyDown={(e) => e.key === 'Enter' && setModalAppt(a)}
-                          onMouseEnter={(e) =>
-                            setHover({ appt: a, x: e.clientX, y: e.clientY, el: e.currentTarget })
-                          }
-                          onMouseMove={(e) =>
-                            setHover((h) =>
-                              h ? { ...h, x: e.clientX, y: e.clientY } : h
-                            )
-                          }
-                          onMouseLeave={() => setHover(null)}
-                          onDoubleClick={(e) => e.stopPropagation()}
-                        >
-                          {clientLabel(a.client) || a.appointmentType?.name || 'Appointment'}
-                        </div>
-                      ))}
-                    </div>
-                    <div
-                      className="scheduler-day-body"
-                      style={{ height: gridHeightPx, position: 'relative' }}
-                      onDoubleClick={(e) => handleDayBodyDoubleClick(e, dayDt)}
-                      title="Double-click to book"
-                    >
-                      {timeLabels.map(({ min, major }) => (
-                        <div
-                          key={min}
-                          className={`scheduler-grid-line ${major ? 'major' : ''}`}
-                          style={{
-                            position: 'absolute',
-                            left: 0,
-                            right: 0,
-                            top: (min - gridBounds.gridStartMin) * PPM,
-                            height: 1,
-                          }}
-                        />
-                      ))}
-                      {placed.map(({ appt, col, colCount }) => {
-                        const sm = wallMinutes(appt.appointmentStart);
-                        const em = wallMinutes(appt.appointmentEnd);
-                        const rawTop = (sm - gridBounds.gridStartMin) * PPM;
-                        const rawH = (em - sm) * PPM;
-                        const top = Math.max(0, rawTop);
-                        const bottom = Math.min(gridHeightPx, rawTop + Math.max(rawH, 16));
-                        const h = Math.max(18, bottom - top);
-                        const wPct = 100 / colCount;
-                        const leftPct = col * wPct;
-                        const title =
-                          clientLabel(appt.client) ||
-                          appt.appointmentType?.prettyName ||
-                          appt.appointmentType?.name ||
-                          'Appointment';
-                        return (
-                          <div
-                            key={appt.id}
-                            className="scheduler-event"
-                            style={{
-                              top,
-                              height: h,
-                              left: `calc(${leftPct}% + 1px)`,
-                              width: `calc(${wPct}% - 2px)`,
-                              background: colorForAppointment(appt, typeColors),
-                            }}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => setModalAppt(appt)}
-                            onKeyDown={(e) => e.key === 'Enter' && setModalAppt(appt)}
-                            onMouseEnter={(e) =>
-                              setHover({
-                                appt,
-                                x: e.clientX,
-                                y: e.clientY,
-                                el: e.currentTarget,
-                              })
-                            }
-                            onMouseMove={(e) =>
-                              setHover((prev) =>
-                                prev && prev.appt.id === appt.id
-                                  ? { ...prev, x: e.clientX, y: e.clientY }
-                                  : prev
-                              )
-                            }
-                            onMouseLeave={() =>
-                              setHover((prev) => (prev?.appt.id === appt.id ? null : prev))
-                            }
-                            onDoubleClick={(e) => e.stopPropagation()}
+                  );
+                })}
+              </div>
+              <div
+                className="scheduler-all-day-unified-outer"
+                style={{ height: allDaySpanLayout.visibleHeightPx }}
+              >
+                <div
+                  className="scheduler-all-day-unified-inner"
+                  style={{ height: allDaySpanLayout.contentHeightPx }}
+                >
+                  {allDaySpanLayout.bars.map(({ appt, s, e, lane }) => {
+                    const n = dayColumnDates.length;
+                    const leftPct = (s / n) * 100;
+                    const widthPct = ((e - s + 1) / n) * 100;
+                    const apptColors = colorsForAppointment(appt, typeList, typeFillMap);
+                    const baseTitle =
+                      pickStr(appt.description) ||
+                      clientLabel(appt.client) ||
+                      appt.appointmentType?.prettyName ||
+                      appt.appointmentType?.name ||
+                      'Appointment';
+                    const prov = providerLabel(appt.primaryProvider);
+                    const showProv = !providerFilter.trim() && prov && prov !== '—';
+                    const title = showProv ? `${baseTitle} · ${prov}` : baseTitle;
+                    const topPad = SCHEDULER_ALL_DAY_PAD_Y / 2;
+                    const member = appointmentPatientMember(appt);
+                    return (
+                      <div
+                        key={appt.id}
+                        role="button"
+                        tabIndex={0}
+                        className="scheduler-all-day-span-bar"
+                        style={{
+                          left: `calc(${leftPct}% + 1px)`,
+                          width: `calc(${widthPct}% - 2px)`,
+                          top: topPad + lane * SCHEDULER_ALL_DAY_ROW_PX,
+                          height: SCHEDULER_ALL_DAY_ROW_PX - 2,
+                          background: apptColors.fill,
+                          color: apptColors.text,
+                        }}
+                        onClick={() => setModalAppt(appt)}
+                        onKeyDown={(ke) => ke.key === 'Enter' && setModalAppt(appt)}
+                        onMouseEnter={(ev) =>
+                          setHover({ appt, x: ev.clientX, y: ev.clientY, el: ev.currentTarget })
+                        }
+                        onMouseMove={(ev) =>
+                          setHover((h) => (h ? { ...h, x: ev.clientX, y: ev.clientY } : h))
+                        }
+                        onMouseLeave={() => setHover(null)}
+                        onDoubleClick={(ev) => ev.stopPropagation()}
+                        onContextMenu={(ev) => handleAppointmentContextMenu(ev, appt)}
+                        title={title}
+                      >
+                        {member.isMember && (
+                          <span
+                            className="scheduler-appt-member-heart"
+                            title={member.membershipName?.trim() || 'Member'}
+                            aria-hidden
                           >
-                            <div className="scheduler-event-time">
-                              {DateTime.fromISO(appt.appointmentStart, { zone: 'utc' })
-                                .setZone(PRACTICE_TZ)
-                                .toFormat('h:mm a')}
+                            <Heart size={10} fill="#dc2626" color="#dc2626" strokeWidth={1.5} />
+                          </span>
+                        )}
+                        <span
+                          className="scheduler-all-day-span-bar-text"
+                          style={{ paddingRight: member.isMember ? 12 : undefined }}
+                        >
+                          {title}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="scheduler-day-bodies-row">
+                {dayColumnDates.map((dayDt) => {
+                  const key = dayDt.toISODate()!;
+                  const dayAppts = appointmentsByDay.get(key) ?? [];
+                  const timed = dayAppts.filter((a) => !a.allDay);
+                  const placed = assignColumns(timed, displayRangeForAppt);
+
+                  return (
+                    <div key={key} className="scheduler-day-col">
+                      <div
+                        className="scheduler-day-body"
+                        style={{ height: gridHeightPx, position: 'relative' }}
+                        onDoubleClick={(e) => handleDayBodyDoubleClick(e, dayDt)}
+                        title="Double-click to book"
+                      >
+                        {timeLabels.map(({ min, major }) => (
+                          <div
+                            key={min}
+                            className={`scheduler-grid-line ${major ? 'major' : ''}`}
+                            style={{
+                              position: 'absolute',
+                              left: 0,
+                              right: 0,
+                              top: (min - gridBounds.gridStartMin) * PPM,
+                              height: 1,
+                            }}
+                          />
+                        ))}
+                        {placed.map(({ appt, col, colCount }) => {
+                          const { startIso, endIso } = displayRangeForAppt(appt);
+                          const sm = wallMinutes(startIso);
+                          const em = wallMinutes(endIso);
+                          const rawTop = (sm - gridBounds.gridStartMin) * PPM;
+                          const rawH = (em - sm) * PPM;
+                          const top = Math.max(0, rawTop);
+                          const bottom = Math.min(gridHeightPx, rawTop + Math.max(rawH, 16));
+                          const h = Math.max(18, bottom - top);
+                          const wPct = 100 / colCount;
+                          const leftPct = col * wPct;
+                          const title =
+                            clientLabel(appt.client) ||
+                            appt.appointmentType?.prettyName ||
+                            appt.appointmentType?.name ||
+                            'Appointment';
+                          const apptColors = colorsForAppointment(appt, typeList, typeFillMap);
+                          const member = appointmentPatientMember(appt);
+                          return (
+                            <div
+                              key={appt.id}
+                              className="scheduler-event"
+                              style={{
+                                top,
+                                height: h,
+                                left: `calc(${leftPct}% + 1px)`,
+                                width: `calc(${wPct}% - 2px)`,
+                                background: apptColors.fill,
+                                color: apptColors.text,
+                              }}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => setModalAppt(appt)}
+                              onKeyDown={(e) => e.key === 'Enter' && setModalAppt(appt)}
+                              onMouseEnter={(e) =>
+                                setHover({
+                                  appt,
+                                  x: e.clientX,
+                                  y: e.clientY,
+                                  el: e.currentTarget,
+                                })
+                              }
+                              onMouseMove={(e) =>
+                                setHover((prev) =>
+                                  prev && prev.appt.id === appt.id
+                                    ? { ...prev, x: e.clientX, y: e.clientY }
+                                    : prev
+                                )
+                              }
+                              onMouseLeave={() =>
+                                setHover((prev) => (prev?.appt.id === appt.id ? null : prev))
+                              }
+                              onDoubleClick={(e) => e.stopPropagation()}
+                              onContextMenu={(e) => handleAppointmentContextMenu(e, appt)}
+                            >
+                              {member.isMember && (
+                                <span
+                                  className="scheduler-appt-member-heart"
+                                  title={member.membershipName?.trim() || 'Member'}
+                                  aria-hidden
+                                >
+                                  <Heart size={10} fill="#dc2626" color="#dc2626" strokeWidth={1.5} />
+                                </span>
+                              )}
+                              <div className="scheduler-event-time">
+                                {DateTime.fromISO(startIso, { zone: 'utc' })
+                                  .setZone(PRACTICE_TZ)
+                                  .toFormat('h:mm a')}
+                              </div>
+                              <div
+                                className="scheduler-event-title"
+                                style={member.isMember ? { paddingRight: 12 } : undefined}
+                              >
+                                {title}
+                              </div>
                             </div>
-                            <div className="scheduler-event-title">{title}</div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
@@ -1209,8 +1807,20 @@ export default function Scheduler() {
       <div className="scheduler-legend">
         {typeList.map((t) => (
           <span key={t.id}>
-            <i style={{ background: typeColors.get(t.id) ?? hashColorKey(String(t.id)) }} />
-            {t.prettyName || t.name}
+            <i
+              style={{
+                background: typeBackgroundFromRow(t) ?? hashColorKey(String(t.id)),
+              }}
+            />
+            <span
+              style={{
+                color:
+                  resolveForegroundCss(t.textColor) ??
+                  readableTextOnBackground(typeBackgroundFromRow(t) ?? hashColorKey(String(t.id))),
+              }}
+            >
+              {t.prettyName || t.name}
+            </span>
           </span>
         ))}
       </div>
@@ -1234,7 +1844,7 @@ export default function Scheduler() {
         createPortal(
           <SchedulerAppointmentModal
             appt={modalAppt}
-            accentColor={colorForAppointment(modalAppt, typeColors)}
+            accentColor={colorsForAppointment(modalAppt, typeList, typeFillMap).fill}
             onClose={() => setModalAppt(null)}
           />,
           document.body
@@ -1247,10 +1857,51 @@ export default function Scheduler() {
         practiceTz={PRACTICE_TZ}
         appointmentTypes={typeList}
         providers={providers}
-        defaultProviderId={authDoctorId}
+        defaultProviderId={providerFilter.trim() || authDoctorId}
         onClose={() => setBookSlot(null)}
         onBooked={() => loadRange()}
       />
+
+      {contextMenu ? (
+        <SchedulerAppointmentContextMenu
+          appt={contextMenu.appt}
+          client={contextMenu.appt.client ?? undefined}
+          anchorPoint={{ x: contextMenu.x, y: contextMenu.y }}
+          onClose={() => setContextMenu(null)}
+          onAction={(a) => {
+            void handleAppointmentMenuAction(a, contextMenu.appt);
+          }}
+        />
+      ) : null}
+
+      {editAppt &&
+        createPortal(
+          <SchedulerEditVisitModal
+            appt={editAppt}
+            practiceTz={PRACTICE_TZ}
+            appointmentTypes={typeList}
+            providers={providers}
+            accentColor={colorsForAppointment(editAppt, typeList, typeFillMap).fill}
+            onClose={() => setEditAppt(null)}
+            onSaved={() => loadRange()}
+          />,
+          document.body
+        )}
+
+      {driveEtaLoading ? (
+        <div
+          className="scheduler-drive-overlay"
+          role="alert"
+          aria-busy="true"
+          aria-live="polite"
+          aria-label="Loading drive times"
+        >
+          <div className="scheduler-drive-overlay-card">
+            <div className="scheduler-drive-spinner" aria-hidden />
+            <p className="scheduler-drive-overlay-text">Loading drive times…</p>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

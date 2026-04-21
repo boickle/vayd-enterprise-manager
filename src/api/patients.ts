@@ -41,6 +41,12 @@ export async function getLatestModifiedPatient() {
 //   return http.post('/patients', patients);
 // }
 
+/** PATCH /patients/:id — partial update (e.g. weight). */
+export async function patchPatient(id: number | string, body: Record<string, unknown>): Promise<unknown> {
+  const { data } = await http.patch(`/patients/${encodeURIComponent(String(id))}`, body);
+  return data;
+}
+
 // ---------------------------
 // Delete
 // ---------------------------

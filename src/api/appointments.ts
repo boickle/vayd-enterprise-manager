@@ -48,6 +48,20 @@ export async function createAppointment(body: CreateAppointmentPayload): Promise
   return data;
 }
 
+/** PATCH /appointments/:id — partial update (field names match Appointment / server contract). */
+export async function patchAppointment(
+  id: number | string,
+  body: Record<string, unknown>
+): Promise<Appointment> {
+  const { data } = await http.patch<Appointment>(`/appointments/${encodeURIComponent(String(id))}`, body);
+  return data;
+}
+
+/** DELETE /appointments/:id */
+export async function deleteAppointment(id: number | string): Promise<void> {
+  await http.delete(`/appointments/${encodeURIComponent(String(id))}`);
+}
+
 export type Depot = { lat: number; lon: number };
 
 export type MiniZone = { id: number | string; name: string | null } | null;
