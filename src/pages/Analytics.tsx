@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Box, CircularProgress } from '@mui/material';
 import { useAuth } from '../auth/useAuth';
 import { getAnalyticsTabPages, type AnalyticsTabPage } from '../analytics-tabs';
+import { isAnalyticsAdmin, isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
 import './Settings.css';
 
 function matchesRole(required: AnalyticsTabPage['role'], userRoles: string[]): boolean {
@@ -17,13 +18,15 @@ export default function Analytics() {
   const { role } = useAuth() as { role?: string | string[] };
   const location = useLocation();
   const navigate = useNavigate();
-  const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
-  const normalizedRoles = roles.map((r) => String(r).toLowerCase().trim()).filter(Boolean);
-  const isAdmin = normalizedRoles.some((r) => ['admin', 'superadmin'].includes(r));
+  const normalizedRoles = normalizeAuthRoles(role);
+  const isAdmin = isAnalyticsAdmin(normalizedRoles);
+  const isEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles);
+  const canAccessAnalytics = isAdmin || isEmployeeAnalytics;
 
   const visibleTabs = getAnalyticsTabPages().filter((tab) => matchesRole(tab.role, normalizedRoles));
   const canSeePayments = visibleTabs.some((t) => t.path === 'payments');
   const canSeeSquareReconciliation = visibleTabs.some((t) => t.path === 'square-reconciliation');
+  const firstVisiblePath = visibleTabs[0]?.path ?? 'payments';
 
   // When pathname changes, render only spinner first so it paints before the heavy child mounts.
   const pathnameRef = useRef(location.pathname);
@@ -40,9 +43,8 @@ export default function Analytics() {
     }
   }, [pathJustChanged]);
 
-  // Analytics is admin-only: redirect non-admins away
   useEffect(() => {
-    if (!isAdmin) {
+    if (!canAccessAnalytics) {
       navigate('/routing', { replace: true });
       return;
     }
@@ -50,11 +52,18 @@ export default function Analytics() {
       navigate('/analytics/vsd', { replace: true });
     }
     if (location.pathname === '/analytics/square-reconciliation' && !canSeeSquareReconciliation) {
-      navigate('/analytics/payments', { replace: true });
+      navigate(`/analytics/${firstVisiblePath}`, { replace: true });
     }
-  }, [isAdmin, location.pathname, canSeePayments, canSeeSquareReconciliation, navigate]);
+  }, [
+    canAccessAnalytics,
+    firstVisiblePath,
+    location.pathname,
+    canSeePayments,
+    canSeeSquareReconciliation,
+    navigate,
+  ]);
 
-  if (!isAdmin) {
+  if (!canAccessAnalytics) {
     return null;
   }
 
@@ -63,7 +72,9 @@ export default function Analytics() {
       <div className="settings-page">
         <h1 className="settings-title">Analytics</h1>
         <p className="settings-section-description" style={{ marginBottom: 24 }}>
-          View payments, operations metrics, and OpenPhone receptionist call analytics.
+          {isEmployeeAnalytics
+            ? 'Practice-wide totals and metrics for your role; doctor-level detail is limited to providers assigned to your account.'
+            : 'View payments, membership purchases, operations metrics, and OpenPhone receptionist call analytics.'}
         </p>
         <div className="settings-tabs">
           {visibleTabs.map((tab) => (

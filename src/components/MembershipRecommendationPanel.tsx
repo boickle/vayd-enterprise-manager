@@ -16,7 +16,12 @@ type Props = {
   pets: RoomLoaderPlansForPetForDisplay[];
   membershipPanelByPatientId: Record<
     number,
-    { monthly: RoomLoaderSimulateBillPublicResponse | null; annual: RoomLoaderSimulateBillPublicResponse | null }
+    {
+      monthly: RoomLoaderSimulateBillPublicResponse | null;
+      annual: RoomLoaderSimulateBillPublicResponse | null;
+      /** Visit + declined lines — use `lineItemAdjustments` for comparison table when present. */
+      monthlyExtended?: RoomLoaderSimulateBillPublicResponse | null;
+    }
   >;
   membershipPanelLoading: boolean;
   summaryLineItems: Array<{
@@ -25,6 +30,20 @@ type Props = {
     price: number;
     patientId?: number;
     category?: string;
+    itemType?: 'lab' | 'procedure' | 'inventory';
+    itemId?: number;
+    membershipComparisonDeclinedOnly?: boolean;
+  }>;
+  /** Unchecked visit recommendations still shown in Care Coverage Comparison (not in visit total). */
+  membershipComparisonDeclinedLines: Array<{
+    name: string;
+    quantity: number;
+    price: number;
+    patientId?: number;
+    category?: string;
+    itemType?: 'lab' | 'procedure' | 'inventory';
+    itemId?: number;
+    membershipComparisonDeclinedOnly?: boolean;
   }>;
   firstPatientId: number;
   allPatients: any[];
@@ -86,6 +105,7 @@ export default function MembershipRecommendationPanel({
   membershipPanelByPatientId,
   membershipPanelLoading,
   summaryLineItems,
+  membershipComparisonDeclinedLines,
   firstPatientId,
   allPatients,
   membershipPlanDisplayName,
@@ -105,20 +125,29 @@ export default function MembershipRecommendationPanel({
       {membershipPanelLoading && Object.keys(membershipPanelByPatientId).length === 0 && (
         <p style={{ margin: 0, fontSize: '14px', color: '#3d5347' }}>Loading your membership estimate…</p>
       )}
-      {pets.map((petPlans) => {
+      {pets.map((petPlans, petIndex) => {
         const rec = getRecommendedWellnessPlanFromList(petPlans.plans, petPlans.meetsGolden);
         if (!rec) return null;
         const petName = petPlans.patientName || 'your pet';
+        const showSharedOneTeamIntro = pets.length === 1 || petIndex === 0;
         const monthly = membershipPanelByPatientId[petPlans.patientId]?.monthly;
         const planDisplayName = rec.planName || membershipPlanDisplayName[rec.planId] || rec.planId;
         const planBase = normalizePlanBaseId(rec.planId);
         const planShortLabel =
           planBase === 'golden' ? 'Golden' : planDisplayName.replace(/\s+Plan$/i, '').replace(/\s+Care$/i, '').trim();
         const filteredLines = filterLineItemsForPatientSimulate(summaryLineItems, petPlans.patientId, firstPatientId);
-        const adjustments = monthly?.lineItemAdjustments ?? [];
+        const declinedForPet = filterLineItemsForPatientSimulate(
+          membershipComparisonDeclinedLines,
+          petPlans.patientId,
+          firstPatientId
+        );
+        const monthlyExtended = membershipPanelByPatientId[petPlans.patientId]?.monthlyExtended;
+        const adjustments = monthlyExtended?.lineItemAdjustments ?? monthly?.lineItemAdjustments ?? [];
         const usedAdj = new Set<number>();
 
-        const coverageRows = filteredLines.map((line) => {
+        const comparisonLines = [...filteredLines, ...declinedForPet];
+        const coverageRows = comparisonLines.map((line) => {
+          const declinedForVisit = line.membershipComparisonDeclinedOnly === true;
           const matchIdx = adjustments.findIndex(
             (a, i) =>
               !usedAdj.has(i) &&
@@ -144,7 +173,7 @@ export default function MembershipRecommendationPanel({
             right = 'Not included in membership';
             covered = false;
           }
-          return { left: line.name, right, covered };
+          return { left: line.name, right, covered, declinedForVisit };
         });
 
         const otherPets = allPatients.filter((p: any) => {
@@ -180,6 +209,7 @@ export default function MembershipRecommendationPanel({
                 left: '$75 multi pet discount',
                 right: '✔ Applied at membership signup',
                 covered: true,
+                declinedForVisit: false,
               },
             ]
           : coverageRows;
@@ -212,10 +242,23 @@ export default function MembershipRecommendationPanel({
             ? Number(monthly.withMembershipVisitSubtotal) + storeAndTaxPortion
             : null;
         const dueAtVisit =
-          monthly != null
-            ? Math.max(0, (dueBeforeMultiPetCredit ?? 0) - multiPetCreditUsd)
-            : null;
+          monthly != null ? (dueBeforeMultiPetCredit ?? 0) - multiPetCreditUsd : null;
         const monthlyFee = monthly?.monthlyCharge ?? monthly?.monthlyMembershipFee ?? monthly?.membershipFee;
+        const annualSim = membershipPanelByPatientId[petPlans.patientId]?.annual;
+        let annualPaymentSavePercent: number | null = null;
+        if (
+          annualSim != null &&
+          monthlyFee != null &&
+          Number(monthlyFee) > 0 &&
+          Number.isFinite(Number(annualSim.membershipFee)) &&
+          Number(annualSim.membershipFee) > 0
+        ) {
+          const payMonthlyOverYear = Number(monthlyFee) * 12;
+          const payAnnual = Number(annualSim.membershipFee);
+          if (payMonthlyOverYear > payAnnual + 0.005) {
+            annualPaymentSavePercent = Math.round(((payMonthlyOverYear - payAnnual) / payMonthlyOverYear) * 100);
+          }
+        }
 
         const subtext =
           planBase === 'golden' || planBase === 'foundations' ? (
@@ -263,9 +306,11 @@ export default function MembershipRecommendationPanel({
             <h3 style={{ margin: '0 0 6px', fontSize: '18px', fontWeight: 700, color: '#14532d', letterSpacing: '-0.01em' }}>
               Recommended Care Option for {petName}
             </h3>
-            <p style={{ margin: '0 0 12px', fontSize: '15px', fontWeight: 500, color: '#3d5347', lineHeight: 1.45 }}>
-              Pets do best when the same veterinary team knows them over time.
-            </p>
+            {showSharedOneTeamIntro && (
+              <p style={{ margin: '0 0 12px', fontSize: '15px', fontWeight: 500, color: '#3d5347', lineHeight: 1.45 }}>
+                Pets do best when the same veterinary team knows them over time.
+              </p>
+            )}
             {showSignUpOtherPetsBoldBlurb && (
               <div
                 style={{
@@ -285,26 +330,71 @@ export default function MembershipRecommendationPanel({
                 </p>
               </div>
             )}
-            <div style={{ marginBottom: '14px' }}>
-              <h4 style={{ margin: '0 0 10px', fontSize: '15px', fontWeight: 700, color: '#14532d' }}>
-                Why families choose One-Team membership
-              </h4>
-              <ul style={{ margin: 0, paddingLeft: '20px', color: '#1a2f24', fontSize: '14px', lineHeight: 1.5 }}>
-                <li style={{ marginBottom: '6px' }}>✔ Priority access to a dedicated One-Team who knows {petName} over time</li>
-                <li style={{ marginBottom: '6px' }}>✔ Preferred booking with your veterinary team</li>
-                <li style={{ marginBottom: '6px' }}>
-                  ✔ After-hours support from Vet At Your Door staff through the Client Portal when something comes up and
-                  you&apos;re worried
-                </li>
-                <li style={{ marginBottom: '6px' }}>✔ Care designed for long-term health, not just sick visits</li>
-              </ul>
-            </div>
-            <p style={{ margin: '0 0 6px', fontSize: '15px', fontWeight: 600, color: '#1e4d2d', lineHeight: 1.45 }}>
-              This is the care we recommend for {petName} each year.
-              <br />
-              Membership covers this care and supports ongoing care with {petName}&apos;s dedicated Vet At Your Door One-Team.
-            </p>
+            {showSharedOneTeamIntro && (
+              <>
+                <div style={{ marginBottom: '14px' }}>
+                  <h4 style={{ margin: '0 0 10px', fontSize: '15px', fontWeight: 700, color: '#14532d' }}>
+                    Why families choose One-Team membership
+                  </h4>
+                  <ul style={{ margin: 0, paddingLeft: '20px', color: '#1a2f24', fontSize: '14px', lineHeight: 1.5 }}>
+                    <li style={{ marginBottom: '6px' }}>✔ Priority access to a dedicated One-Team who knows {petName} over time</li>
+                    <li style={{ marginBottom: '6px' }}>✔ Preferred booking with your veterinary team</li>
+                    <li style={{ marginBottom: '6px' }}>
+                      ✔ After-hours support from Vet At Your Door staff through the Client Portal when something comes up and
+                      you&apos;re worried
+                    </li>
+                    <li style={{ marginBottom: '6px' }}>✔ Care designed for long-term health, not just sick visits</li>
+                  </ul>
+                </div>
+                <p style={{ margin: '0 0 6px', fontSize: '15px', fontWeight: 600, color: '#1e4d2d', lineHeight: 1.45 }}>
+                  This is the care we recommend for {petName} each year.
+                  <br />
+                  Membership covers this care and supports ongoing care with {petName}&apos;s dedicated Vet At Your Door One-Team.
+                </p>
+              </>
+            )}
             <p style={{ margin: '0 0 12px', fontSize: '14px', color: '#3d5347', lineHeight: 1.45 }}>{subtext}</p>
+
+            {monthlyFee != null && monthlyFee > 0 && (
+              <div
+                style={{
+                  marginBottom: '18px',
+                  padding: '18px 20px',
+                  backgroundColor: '#fff',
+                  border: '1px solid #d8e8df',
+                  borderRadius: '10px',
+                  boxShadow: '0 1px 4px rgba(15, 61, 36, 0.06)',
+                }}
+              >
+                <div style={{ fontSize: '17px', fontWeight: 700, color: '#14532d', marginBottom: '12px', lineHeight: 1.35 }}>
+                  {planBase === 'golden' ? 'Golden Membership' : planDisplayName}
+                </div>
+                <div
+                  style={{
+                    fontSize: '26px',
+                    fontWeight: 700,
+                    color: '#0f3d24',
+                    marginBottom: '8px',
+                    letterSpacing: '-0.02em',
+                    lineHeight: 1.2,
+                  }}
+                >
+                  {new Intl.NumberFormat('en-US', {
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 2,
+                  }).format(Number(monthlyFee))}
+                  <span style={{ fontWeight: 700, color: '#3d5347', fontSize: '0.72em', marginLeft: '6px' }}>/ month</span>
+                </div>
+                <div style={{ fontSize: '14px', color: '#5a6b6c', fontWeight: 500, marginBottom: '10px' }}>
+                  12-month membership
+                </div>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: '#166534', lineHeight: 1.45 }}>
+                  {`Save ${
+                    annualPaymentSavePercent != null && annualPaymentSavePercent > 0 ? annualPaymentSavePercent : 10
+                  }% with annual payment`}
+                </div>
+              </div>
+            )}
 
             <h4 style={{ margin: '0 0 8px', fontSize: '15px', fontWeight: 700, color: '#14532d' }}>Care Coverage Comparison</h4>
             <div style={{ marginBottom: '12px' }}>
@@ -318,7 +408,37 @@ export default function MembershipRecommendationPanel({
               </div>
               {coverageRowsWithCredit.map((row, idx) => (
                 <div key={idx} className="membership-rec-coverage-row">
-                  <div style={{ fontSize: '14px', color: '#1a2f24', padding: '5px 0', borderBottom: '1px solid #e0efe8' }}>{row.left}</div>
+                  <div
+                    style={{
+                      fontSize: '14px',
+                      padding: '5px 0',
+                      borderBottom: '1px solid #e0efe8',
+                      ...(row.declinedForVisit
+                        ? {
+                            color: '#92400e',
+                            textDecoration: 'line-through',
+                            fontStyle: 'italic' as const,
+                          }
+                        : { color: '#1a2f24' }),
+                    }}
+                  >
+                    {row.left}
+                    {row.declinedForVisit ? (
+                      <span
+                        style={{
+                          display: 'block',
+                          marginTop: '4px',
+                          fontSize: '12px',
+                          fontStyle: 'normal',
+                          textDecoration: 'none',
+                          color: '#b45309',
+                          fontWeight: 600,
+                        }}
+                      >
+                        Not selected for this visit
+                      </span>
+                    ) : null}
+                  </div>
                   <div
                     style={{
                       fontSize: '14px',
@@ -329,6 +449,11 @@ export default function MembershipRecommendationPanel({
                     }}
                   >
                     {row.right}
+                    {row.declinedForVisit && row.covered ? (
+                      <div style={{ marginTop: '4px', fontSize: '12px', fontWeight: 500, color: '#b45309' }}>
+                        You can still add this for today’s visit or save the benefit for a future visit.
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ))}
@@ -399,7 +524,11 @@ export default function MembershipRecommendationPanel({
                 </div>
               )}
               <div style={{ fontSize: '20px', fontWeight: 700, color: '#14532d', marginBottom: '12px' }}>
-                {dueAtVisit != null ? formatPrice(dueAtVisit) : '—'}
+                {dueAtVisit != null
+                  ? dueAtVisit < 0
+                    ? `-${formatPrice(Math.abs(dueAtVisit))} (credit)`
+                    : formatPrice(dueAtVisit)
+                  : '—'}
               </div>
               {multiPetCreditUsd > 0 && (
                 <div style={{ marginTop: '4px', fontSize: '13px', color: '#166534', lineHeight: 1.45 }}>
@@ -407,15 +536,10 @@ export default function MembershipRecommendationPanel({
                 </div>
               )}
               {monthlyFee != null && monthlyFee > 0 && (
-                <>
-                  <div style={{ marginTop: '10px', fontSize: '13px', color: '#5a6b6c', fontStyle: 'normal' }}>
-                    {planBase === 'golden' ? 'Golden Membership' : planDisplayName} · {formatPrice(monthlyFee)}/month · 12-month membership
-                  </div>
-                  <p style={{ margin: '8px 0 0', fontSize: '13px', color: '#5a6b6c', lineHeight: 1.45 }}>
-                    Membership is how families access the Vet At Your Door One-Team model — ongoing care with one dedicated veterinary team who knows you
-                    and your pet over time, preferred booking with that team, and after-hours support through the Client Portal.
-                  </p>
-                </>
+                <p style={{ margin: '10px 0 0', fontSize: '13px', color: '#5a6b6c', lineHeight: 1.45 }}>
+                  Membership is how families access the Vet At Your Door One-Team model — ongoing care with one dedicated veterinary team who knows you
+                  and your pet over time, preferred booking with that team, and after-hours support through the Client Portal.
+                </p>
               )}
             </div>
 
@@ -433,7 +557,7 @@ export default function MembershipRecommendationPanel({
                 <p style={{ margin: '0 0 10px', fontSize: '13px', color: '#3d5347', lineHeight: 1.5 }}>
                   Designed for pets who may need additional visits or closer monitoring.
                 </p>
-                <div style={{ fontSize: '16px', fontWeight: 700, color: '#1a2f24', marginBottom: '8px' }}>$49/month</div>
+                <div style={{ fontSize: '16px', fontWeight: 700, color: '#1a2f24', marginBottom: '8px' }}>49/month</div>
                 <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '13px', color: '#3d5347', lineHeight: 1.45 }}>
                   <li>50% off additional exams</li>
                   <li>10% off labs, services, and medications</li>

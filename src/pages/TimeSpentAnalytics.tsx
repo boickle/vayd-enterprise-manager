@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '../auth/useAuth';
+import { isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
 import {
   Backdrop,
   Box,
@@ -31,11 +33,13 @@ import {
   Cell,
 } from 'recharts';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
-import { fetchDoctorMonth, type DoctorMonthDay, type DoctorMonthAppt } from '../api/appointments';
+import { fetchDoctorMonth, type DoctorMonthDay } from '../api/appointments';
 import { fetchDriveTime } from '../api/driveTime';
-
-/** Appointment with optional doctorId (set when merging multi-doctor data for multi-pet detection). */
-type ApptWithDoctor = DoctorMonthAppt & { doctorId?: string };
+import {
+  normalizeAppointmentType,
+  processMultiPet,
+  type ApptWithDoctor,
+} from '../analytics/appointmentTypeTimeStats';
 
 dayjs.extend(utc);
 dayjs.extend(isoWeek);
@@ -71,122 +75,6 @@ type ChartRow = { period: string; [typeName: string]: number | string };
 
 /** Row for stacked chart with segments ordered by value (largest at bottom) per period. */
 export type ChartRowOrdered = { period: string; [key: string]: number | string | undefined };
-
-/** Appointment types to lump into "Other" (case-insensitive match). */
-const OTHER_APPT_TYPES = new Set([
-  'acupuncture',
-  'ash drop off',
-  'laser',
-  'needs pre-appt meds',
-  'ha - exisiting client',
-  'ha - existing client', // in case of correct spelling
-]);
-
-/** Normalize type for chart: lump "Tech appointment*" into one type; specific types into Other. */
-function normalizeAppointmentType(name: string | undefined): string {
-  const s = (name && String(name).trim()) || '';
-  if (!s) return 'Other';
-  if (s.toLowerCase().startsWith('tech appointment')) return 'Tech appointment';
-  if (OTHER_APPT_TYPES.has(s.toLowerCase())) return 'Other';
-  return s;
-}
-
-/** True if this appointment type should be hidden from time-spent analytics (e.g. Block). */
-function isBlockAppointmentType(name: string | undefined): boolean {
-  const s = ((name != null ? String(name).trim() : '') || '').toLowerCase();
-  return s === 'block' || s === 'personal block' || s.startsWith('block');
-}
-
-/**
- * Multi-pet detection:
- * 1) Same client, same day, same start time: one block; if same duration divide by N, else use individual minutes.
- * 2) Same client, same day, different start times: each appt is multipet with its own serviceMinutes.
- * When client id is missing, only (1) applies via same doctor + same start time.
- */
-function processMultiPet(
-  days: { date: string; appts: ApptWithDoctor[] }[]
-): { date: string; appts: { appointmentType?: string; serviceMinutes?: number }[] }[] {
-  return days.map((day) => {
-    const appts = (day.appts ?? []).filter((a) => !isBlockAppointmentType(a.appointmentType));
-    const clientKey = (a: ApptWithDoctor) =>
-      a.clientId != null ? String(a.clientId) : (a.clientPimsId != null ? String(a.clientPimsId) : '');
-    const hasClient = (a: ApptWithDoctor) => clientKey(a) !== '';
-
-    const out: { appointmentType?: string; serviceMinutes?: number }[] = [];
-
-    // Group by (doctorId, clientKey) for the day so we can treat "same client, multiple appts" as multi-pet
-    const byClient = new Map<string, ApptWithDoctor[]>();
-    for (const a of appts) {
-      const k = hasClient(a) ? `${a.doctorId ?? ''}|${clientKey(a)}` : `${a.doctorId ?? ''}|__no_client__|${a.startIso ?? ''}`;
-      if (!byClient.has(k)) byClient.set(k, []);
-      byClient.get(k)!.push(a);
-    }
-
-    for (const clientGroup of byClient.values()) {
-      const n = clientGroup.length;
-      const useMultipet = n > 1;
-      const isNoClientSlot = n === 1 && clientGroup[0] && !hasClient(clientGroup[0]);
-
-      if (isNoClientSlot) {
-        // Single appt with no client: output as regular (key was doctor|__no_client__|startIso so only one)
-        const a = clientGroup[0]!;
-        out.push({
-          appointmentType: a.appointmentType,
-          serviceMinutes: Number.isFinite(a.serviceMinutes) ? a.serviceMinutes : 0,
-        });
-        continue;
-      }
-
-      if (!useMultipet) {
-        // Single appt with client: regular
-        const a = clientGroup[0]!;
-        out.push({
-          appointmentType: a.appointmentType,
-          serviceMinutes: Number.isFinite(a.serviceMinutes) ? a.serviceMinutes : 0,
-        });
-        continue;
-      }
-
-      // Same client (or same slot when no client), multiple appts: sub-group by startIso
-      const bySlot = new Map<string, ApptWithDoctor[]>();
-      for (const a of clientGroup) {
-        const slot = a.startIso ?? '';
-        if (!bySlot.has(slot)) bySlot.set(slot, []);
-        bySlot.get(slot)!.push(a);
-      }
-
-      for (const slotGroup of bySlot.values()) {
-        const slotN = slotGroup.length;
-        const blockMinutes = Number.isFinite(slotGroup[0]?.serviceMinutes) ? slotGroup[0]!.serviceMinutes! : 0;
-        const allSameDuration =
-          slotN > 0 &&
-          slotGroup.every((a) => (Number.isFinite(a.serviceMinutes) ? a.serviceMinutes! : 0) === blockMinutes);
-
-        if (slotN > 1 && allSameDuration) {
-          const perPetMinutes = blockMinutes / slotN;
-          for (const a of slotGroup) {
-            const baseType = normalizeAppointmentType(a.appointmentType);
-            out.push({
-              appointmentType: `multipet-${baseType}`,
-              serviceMinutes: Math.round(perPetMinutes * 10) / 10,
-            });
-          }
-        } else {
-          for (const a of slotGroup) {
-            const baseType = normalizeAppointmentType(a.appointmentType);
-            const mins = Number.isFinite(a.serviceMinutes) ? a.serviceMinutes! : 0;
-            out.push({
-              appointmentType: `multipet-${baseType}`,
-              serviceMinutes: Math.round(mins * 10) / 10,
-            });
-          }
-        }
-      }
-    }
-
-    return { date: day.date, appts: out };
-  });
-}
 
 /** Aggregate appts into buckets (key -> sumByType, countByType). */
 function aggregateByBuckets(
@@ -409,6 +297,27 @@ export default function TimeSpentAnalyticsPage() {
   /** Chart shows either regular (single) appointment types only or multi-pet types only. */
   const [timeSpentViewMode, setTimeSpentViewMode] = useState<'regular' | 'multipet'>('regular');
 
+  const { role, assignedDoctorIds } = useAuth() as {
+    role?: string[];
+    assignedDoctorIds?: string[];
+  };
+  const normalizedRoles = normalizeAuthRoles(role);
+  const restrictEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles);
+  const assignedDoctorIdSet = useMemo(
+    () => new Set((assignedDoctorIds ?? []).map((x) => String(x).trim()).filter(Boolean)),
+    [assignedDoctorIds]
+  );
+
+  const providersForApi = useMemo(() => {
+    if (!restrictEmployeeAnalytics) return providers;
+    if (!assignedDoctorIdSet.size) return [];
+    return providers.filter((p) => {
+      const id = String(p.id ?? '').trim();
+      const pims = p.pimsId != null ? String(p.pimsId).trim() : '';
+      return (id && assignedDoctorIdSet.has(id)) || (pims && assignedDoctorIdSet.has(pims));
+    });
+  }, [providers, restrictEmployeeAnalytics, assignedDoctorIdSet]);
+
   const start = range.from.startOf('day');
   const end = range.to.startOf('day');
   const startStr = toLocalDateStr(start);
@@ -440,7 +349,9 @@ export default function TimeSpentAnalyticsPage() {
 
     (async () => {
       try {
-        if (doctorId === ALL_DVMS && providers.length === 0) {
+        const bulkProviders =
+          restrictEmployeeAnalytics && doctorId === ALL_DVMS ? providersForApi : providers;
+        if (doctorId === ALL_DVMS && bulkProviders.length === 0) {
           setRawDays([]);
           setLoading(false);
           return;
@@ -448,7 +359,7 @@ export default function TimeSpentAnalyticsPage() {
 
         const requests: Promise<{ days: DoctorMonthDay[]; doctorId: string }>[] = [];
         if (doctorId === ALL_DVMS) {
-          for (const p of providers) {
+          for (const p of bulkProviders) {
             const docId = String(p.id ?? p.pimsId ?? '');
             for (const { year, month } of monthPairs) {
               requests.push(
@@ -509,7 +420,15 @@ export default function TimeSpentAnalyticsPage() {
     return () => {
       alive = false;
     };
-  }, [startStr, endStr, doctorId, monthPairs.length, providers.length]);
+  }, [
+    startStr,
+    endStr,
+    doctorId,
+    monthPairs.length,
+    providers.length,
+    providersForApi,
+    restrictEmployeeAnalytics,
+  ]);
 
   /** Days with multi-pet slots converted to multipet-{type} and per-pet service minutes. */
   const processedDays = useMemo(() => processMultiPet(rawDays), [rawDays]);
@@ -549,8 +468,18 @@ export default function TimeSpentAnalyticsPage() {
         const rows: { date: string; totalDriveMinutes: number; averageDriveMinutes: number | null }[] = dates.map((date, i) => {
           const res = results[i];
           if (driveTimeDoctorId === ALL_DVMS) {
-            const total = res?.totalDriveMinutes ?? 0;
-            const byDoctor = res?.byDoctor ?? [];
+            let byDoctor = res?.byDoctor ?? [];
+            if (restrictEmployeeAnalytics && assignedDoctorIdSet.size > 0) {
+              byDoctor = byDoctor.filter(
+                (d) =>
+                  assignedDoctorIdSet.has(String(d.doctorId ?? '')) ||
+                  (d.pimsId != null && assignedDoctorIdSet.has(String(d.pimsId)))
+              );
+            }
+            const total =
+              restrictEmployeeAnalytics && assignedDoctorIdSet.size > 0
+                ? byDoctor.reduce((sum, d) => sum + (d.driveMinutes ?? 0), 0)
+                : (res?.totalDriveMinutes ?? 0);
             const withDrive = byDoctor.filter((d) => (d.driveMinutes ?? 0) > 0);
             const avg =
               withDrive.length > 0
@@ -584,7 +513,7 @@ export default function TimeSpentAnalyticsPage() {
     return () => {
       alive = false;
     };
-  }, [startStr, endStr, driveTimeDoctorId]);
+  }, [startStr, endStr, driveTimeDoctorId, restrictEmployeeAnalytics, assignedDoctorIdSet]);
 
   const chartData = useMemo(() => {
     if (loading) return [];
@@ -628,12 +557,32 @@ export default function TimeSpentAnalyticsPage() {
   }, [viewDays]);
 
   const doctorOptions = useMemo(() => {
-    const list: { id: string; label: string }[] = [{ id: ALL_DVMS, label: 'All DVMs' }];
+    const allLabel = restrictEmployeeAnalytics ? 'Entire practice (all DVMs)' : 'All DVMs';
+    const list: { id: string; label: string }[] = [{ id: ALL_DVMS, label: allLabel }];
     for (const p of providers) {
-      list.push({ id: String(p.id ?? p.pimsId ?? ''), label: p.name });
+      const id = String(p.id ?? p.pimsId ?? '');
+      if (restrictEmployeeAnalytics && assignedDoctorIdSet.size > 0) {
+        const ok =
+          assignedDoctorIdSet.has(String(p.id ?? '')) ||
+          (p.pimsId != null && assignedDoctorIdSet.has(String(p.pimsId)));
+        if (!ok) continue;
+      }
+      list.push({ id, label: p.name });
     }
     return list;
-  }, [providers]);
+  }, [providers, restrictEmployeeAnalytics, assignedDoctorIdSet]);
+
+  useEffect(() => {
+    if (!restrictEmployeeAnalytics) return;
+    const allowed = new Set(doctorOptions.map((o) => o.id));
+    if (!allowed.has(doctorId)) setDoctorId(ALL_DVMS);
+  }, [restrictEmployeeAnalytics, doctorOptions, doctorId]);
+
+  useEffect(() => {
+    if (!restrictEmployeeAnalytics) return;
+    const allowed = new Set(doctorOptions.map((o) => o.id));
+    if (!allowed.has(driveTimeDoctorId)) setDriveTimeDoctorId(ALL_DVMS);
+  }, [restrictEmployeeAnalytics, doctorOptions, driveTimeDoctorId]);
 
   const driveTimeData = useMemo(() => {
     const daily = driveTimeRawData

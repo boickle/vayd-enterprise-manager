@@ -90,11 +90,96 @@
   border-top: 2px solid #e0e0e0;
 }
 
+/* Flea/tick disclosure — align with search field (no extra horizontal inset); color matches “Additional items” title (#084298) */
+.public-room-loader .public-room-loader-parasite-prevention-details {
+  margin-top: 14px;
+  padding: 14px 0 0;
+  border-top: 1px solid #dee2e6;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.public-room-loader .public-room-loader-parasite-prevention-details > summary {
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+  color: #084298;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 0;
+  user-select: none;
+}
+
+.public-room-loader .public-room-loader-parasite-prevention-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.public-room-loader .public-room-loader-parasite-prevention-details > summary::marker {
+  content: '';
+}
+
+/* Larger chevron (collapsed → right, open → down) — clearer than small text glyphs */
+.public-room-loader .public-room-loader-parasite-prevention-details > summary::before {
+  content: '';
+  flex-shrink: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 8px 0 8px 12px;
+  border-color: transparent transparent transparent #084298;
+  transform-origin: 35% 50%;
+  transition: transform 0.18s ease;
+}
+
+.public-room-loader .public-room-loader-parasite-prevention-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+/* Summary: gentle pulse on “See how a membership could change your bill” (collapsed only) */
+.public-room-loader-membership-explainer-trigger--throb {
+  animation: publicRoomLoaderMembershipExplainerThrob 2.35s ease-in-out infinite;
+  will-change: transform, box-shadow;
+}
+
+@keyframes publicRoomLoaderMembershipExplainerThrob {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(8, 66, 152, 0), 0 1px 2px rgba(8, 66, 152, 0.04);
+    transform: scale(1);
+    border-color: #b6d4fe;
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px rgba(8, 66, 152, 0.11),
+      0 4px 14px rgba(8, 66, 152, 0.1);
+    transform: scale(1.028);
+    border-color: #9bbfe8;
+  }
+}
+
+.public-room-loader-membership-explainer-trigger--throb:hover {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .public-room-loader-membership-explainer-trigger--throb {
+    animation: none;
+  }
+}
+
 /* Checkbox/radio touch targets */
 .public-room-loader input[type="checkbox"],
 .public-room-loader input[type="radio"] {
   min-width: 20px;
   min-height: 20px;
+}
+
+.public-room-loader textarea:focus:not(:disabled):not([readonly]) {
+  outline: none;
+  border-color: #0d6efd;
+  box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.18);
 }
 
 /* Thank you / completed state */
@@ -225,5 +310,46 @@
   .public-room-loader-btn {
     min-height: 48px;
     padding: 14px 20px;
+  }
+}
+
+/* Panel decline: highlight fecal/4Dx/triple row + “Why we recommend this” (bursts once when blurb appears) */
+@keyframes public-room-loader-decline-burst {
+  0% {
+    transform: scale(0.97);
+    opacity: 0.88;
+  }
+  45% {
+    transform: scale(1.015);
+    opacity: 1;
+    box-shadow:
+      0 0 0 4px rgba(25, 118, 210, 0.12),
+      0 6px 22px rgba(25, 118, 210, 0.18);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+    box-shadow: 0 2px 14px rgba(25, 118, 210, 0.1);
+  }
+}
+
+/* No extra padding-left so the checkbox lines up with other list rows; keep right/bottom inset for the card. */
+.public-room-loader-panel-decline-emphasis {
+  animation: public-room-loader-decline-burst 0.8s cubic-bezier(0.25, 0.9, 0.35, 1.15) 1 both;
+  border-radius: 10px;
+  padding: 6px 10px 10px 0;
+  margin: 2px 0 10px;
+  background: linear-gradient(165deg, rgba(227, 242, 253, 0.65) 0%, rgba(255, 255, 255, 0.45) 100%);
+  border: 1px solid rgba(25, 118, 210, 0.3);
+  box-shadow: 0 2px 14px rgba(25, 118, 210, 0.1);
+}
+
+.public-room-loader-panel-decline-blurb-below {
+  margin-top: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .public-room-loader-panel-decline-emphasis {
+    animation: none;
   }
 }

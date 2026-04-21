@@ -1,5 +1,5 @@
 // src/pages/RoomLoader.tsx
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import { DateTime } from 'luxon';
 import {
   searchRoomLoaders,
@@ -22,7 +22,79 @@ import { http } from '../api/http';
 import { Heart } from 'lucide-react';
 import { KeyValue } from '../components/KeyValue';
 import { evetPatientLink, evetClientLink } from '../utils/evet';
+import {
+  inventoryCategoryRequiresSharpsDisposal,
+  labCodeRequiresSharpsDisposal,
+} from '../utils/roomLoaderSharps';
 import './RoomLoader.css';
+
+type StaffVaccineCheckboxes = { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean };
+
+function normalizeStaffVaccineCheckboxes(
+  v: { felv?: boolean; lepto?: boolean; lyme?: boolean; bordatella?: boolean; sharps?: boolean } | undefined | null
+): StaffVaccineCheckboxes {
+  return {
+    felv: v?.felv ?? true,
+    lepto: v?.lepto ?? true,
+    lyme: v?.lyme ?? true,
+    bordatella: v?.bordatella ?? true,
+  };
+}
+
+function roomLoaderReminderTriggersSharpsDisposal(
+  rwp: ReminderWithPrice,
+  selectedCorrectionItem: SearchableItem | null | undefined
+): boolean {
+  if (selectedCorrectionItem) {
+    const t = (selectedCorrectionItem.itemType ?? '').toLowerCase();
+    if (t === 'inventory') {
+      return inventoryCategoryRequiresSharpsDisposal((selectedCorrectionItem.inventoryItem as { categoryName?: string } | undefined)?.categoryName);
+    }
+    if (t === 'lab') {
+      const code = selectedCorrectionItem.lab?.code ?? selectedCorrectionItem.code;
+      return labCodeRequiresSharpsDisposal(code);
+    }
+    return false;
+  }
+  const t = (rwp.itemType ?? '').toLowerCase();
+  if (t === 'inventory' && rwp.matchedItem) {
+    return inventoryCategoryRequiresSharpsDisposal((rwp.matchedItem as { categoryName?: string }).categoryName);
+  }
+  if (t === 'lab' && rwp.matchedItem) {
+    return labCodeRequiresSharpsDisposal(rwp.matchedItem.code);
+  }
+  return false;
+}
+
+function roomLoaderAddedItemTriggersSharpsDisposal(item: SearchableItem): boolean {
+  const t = (item.itemType ?? '').toLowerCase();
+  if (t === 'inventory') {
+    return inventoryCategoryRequiresSharpsDisposal((item.inventoryItem as { categoryName?: string } | undefined)?.categoryName);
+  }
+  if (t === 'lab') {
+    return labCodeRequiresSharpsDisposal(item.lab?.code ?? item.code);
+  }
+  return false;
+}
+
+function roomLoaderPatientNeedsSharpsDisposal(opts: {
+  reminders: ReminderWithPrice[];
+  removedReminderIds: Set<number>;
+  reminderCorrections: Record<string, { selectedItem: SearchableItem | null }>;
+  addedItems: SearchableItem[];
+}): boolean {
+  for (const rwp of opts.reminders) {
+    const id = rwp.reminder?.id;
+    if (id == null || opts.removedReminderIds.has(id)) continue;
+    const corKey = `reminder-${id}`;
+    const correctionItem = opts.reminderCorrections[corKey]?.selectedItem ?? null;
+    if (roomLoaderReminderTriggersSharpsDisposal(rwp, correctionItem)) return true;
+  }
+  for (const item of opts.addedItems) {
+    if (roomLoaderAddedItemTriggersSharpsDisposal(item)) return true;
+  }
+  return false;
+}
 
 /** True if reminder description or matched item name/code contains any of the substrings (case-insensitive). */
 function reminderContains(r: ReminderWithPrice, ...substrings: string[]): boolean {
@@ -339,9 +411,14 @@ export default function RoomLoaderPage() {
           setPetAnswers(savedForm.petAnswers);
         }
         
-        // Restore vaccine checkboxes
+        // Restore vaccine checkboxes (strip legacy sharps field)
         if (savedForm.vaccineCheckboxes) {
-          setVaccineCheckboxes(savedForm.vaccineCheckboxes);
+          const raw = savedForm.vaccineCheckboxes as Record<number, { felv?: boolean; lepto?: boolean; lyme?: boolean; bordatella?: boolean; sharps?: boolean }>;
+          const next: Record<number, StaffVaccineCheckboxes> = {};
+          Object.keys(raw).forEach((k) => {
+            next[Number(k)] = normalizeStaffVaccineCheckboxes(raw[Number(k)]);
+          });
+          setVaccineCheckboxes(next);
         }
         
         // Restore reminder corrections
@@ -378,7 +455,13 @@ export default function RoomLoaderPage() {
         const sentPatients = data?.sentToClient?.patients;
         const hasBeenSent = data?.sentStatus !== 'not_sent' || (data?.timesSentToClient ?? 0) > 0;
         if (sentPatients?.length) {
-          const vaccines = { ...savedForm.vaccineCheckboxes } as Record<number, { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean; sharps: boolean }>;
+          const rawVc = savedForm.vaccineCheckboxes as Record<number, { felv?: boolean; lepto?: boolean; lyme?: boolean; bordatella?: boolean; sharps?: boolean }> | undefined;
+          const vaccines: Record<number, StaffVaccineCheckboxes> = {};
+          if (rawVc) {
+            Object.keys(rawVc).forEach((k) => {
+              vaccines[Number(k)] = normalizeStaffVaccineCheckboxes(rawVc[Number(k)]);
+            });
+          }
           const reasons = { ...(savedForm.appointmentReasons || {}) } as Record<number, string>;
           const windows = { ...(savedForm.arrivalWindows || {}) } as Record<number, string>;
           const added: Record<number, SearchableItem[]> = hasBeenSent ? {} : (() => {
@@ -401,13 +484,7 @@ export default function RoomLoaderPage() {
             if (patientId == null) return;
 
             if (vaccines[patientId] == null && sp.vaccines) {
-              vaccines[patientId] = {
-                felv: sp.vaccines.felv ?? true,
-                lepto: sp.vaccines.lepto ?? true,
-                lyme: sp.vaccines.lyme ?? true,
-                bordatella: sp.vaccines.bordatella ?? true,
-                sharps: sp.vaccines.sharps ?? true,
-              };
+              vaccines[patientId] = normalizeStaffVaccineCheckboxes(sp.vaccines);
             }
             if (reasons[patientId] == null && sp.appointmentReason != null) {
               reasons[patientId] = sp.appointmentReason;
@@ -499,7 +576,7 @@ export default function RoomLoaderPage() {
           const arrivalFromSent: Record<number, string> = {};
           const reasonsFromSent: Record<number, string> = {};
           const answersFromSent: Record<number, { mobility: boolean | null; labWork: boolean | null; preMedsAsk: boolean }> = {};
-          const vaccinesFromSent: Record<number, { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean; sharps: boolean }> = {};
+          const vaccinesFromSent: Record<number, StaffVaccineCheckboxes> = {};
           const notesFromSent: Record<number, string> = {};
           const addedFromSent: Record<number, SearchableItem[]> = {};
           const addedQtyFromSent: Record<string, number> = {};
@@ -530,13 +607,7 @@ export default function RoomLoaderPage() {
               };
             }
             if (sp.vaccines) {
-              vaccinesFromSent[patientId] = {
-                felv: sp.vaccines.felv ?? true,
-                lepto: sp.vaccines.lepto ?? true,
-                lyme: sp.vaccines.lyme ?? true,
-                bordatella: sp.vaccines.bordatella ?? true,
-                sharps: sp.vaccines.sharps ?? true,
-              };
+              vaccinesFromSent[patientId] = normalizeStaffVaccineCheckboxes(sp.vaccines);
             }
             (sp.reminders || []).forEach((r) => {
               if (r.reminderId != null) {
@@ -652,12 +723,11 @@ export default function RoomLoaderPage() {
               if (patient.id in updated) return;
 
                 // Default all to checked
-                const initial = {
+                const initial: StaffVaccineCheckboxes = {
                   felv: true,
                   lepto: true,
                   lyme: true,
                   bordatella: true,
-                  sharps: true, // Will be set based on vaccine selections
                 };
                 
                 // Check declined items for THIS specific patient (declined items are nested under each patient)
@@ -681,10 +751,7 @@ export default function RoomLoaderPage() {
                     initial.bordatella = false;
                   }
                 });
-                
-                // Sharps is checked if any vaccine is checked
-                initial.sharps = initial.felv || initial.lepto || initial.lyme || initial.bordatella;
-                
+
                 updated[patient.id] = initial;
             });
             return updated;
@@ -707,7 +774,7 @@ export default function RoomLoaderPage() {
       appointmentType: string;
       doctor: string;
       clientName: string;
-      pets: string[];
+      pets: Array<{ id: number; name: string; isMember: boolean; membershipName?: string | null }>;
       sentStatus: SentStatus;
       timesSentToClient: number;
       dueStatus: DueStatus | null;
@@ -715,30 +782,47 @@ export default function RoomLoaderPage() {
       clientHasNoEmail: boolean;
       /** Token for public PDF URL when completed */
       token?: string | null;
-      /** True if any patient in this room loader is a care plan member */
-      hasMemberPatient: boolean;
-      /** Membership plan name(s) when hasMemberPatient is true */
-      membershipNames: string[];
     }> = [];
 
     roomLoaders.forEach((rl) => {
-      // Collect all unique pets from appointments and room loader patients
-      const patientIds = new Set<number>();
-      const pets: string[] = [];
-      
-      // Get pets from appointments first
-      rl.appointments.forEach((apt) => {
-        if (apt.patient?.id && !patientIds.has(apt.patient.id)) {
-          patientIds.add(apt.patient.id);
-          pets.push(apt.patient.name || 'Unknown Pet');
+      const patientMembershipById = new Map<number, { isMember: boolean; membershipName?: string | null }>();
+      (rl.patients || []).forEach((p) => {
+        if (p.id) {
+          patientMembershipById.set(p.id, {
+            isMember: p.isMember === true,
+            membershipName: p.membershipName,
+          });
         }
       });
 
-      // Add any additional patients from room loader that aren't in appointments
+      // Collect all unique pets from appointments and room loader patients (membership from rl.patients by id)
+      const patientIds = new Set<number>();
+      const pets: Array<{ id: number; name: string; isMember: boolean; membershipName?: string | null }> = [];
+
+      rl.appointments.forEach((apt) => {
+        const pat = apt.patient;
+        if (pat?.id && !patientIds.has(pat.id)) {
+          patientIds.add(pat.id);
+          const fromRl = patientMembershipById.get(pat.id);
+          const isMember = fromRl?.isMember ?? pat.isMember === true;
+          pets.push({
+            id: pat.id,
+            name: pat.name || 'Unknown Pet',
+            isMember,
+            membershipName: fromRl?.membershipName ?? pat.membershipName,
+          });
+        }
+      });
+
       rl.patients.forEach((p) => {
         if (p.id && !patientIds.has(p.id)) {
           patientIds.add(p.id);
-          pets.push(p.name || 'Unknown Pet');
+          pets.push({
+            id: p.id,
+            name: p.name || 'Unknown Pet',
+            isMember: p.isMember === true,
+            membershipName: p.membershipName,
+          });
         }
       });
 
@@ -829,15 +913,6 @@ export default function RoomLoaderPage() {
         });
       });
 
-      const hasMemberPatient = rl.patients?.some((p) => p.isMember === true) ?? false;
-      const membershipNames = Array.from(
-        new Set(
-          (rl.patients ?? [])
-            .filter((p) => p.isMember === true)
-            .map((p) => (p.membershipName?.trim() || null) ?? 'Membership')
-        )
-      );
-
       rows.push({
         roomLoaderId: rl.id,
         apptDate,
@@ -852,8 +927,6 @@ export default function RoomLoaderPage() {
         roomLoader: rl,
         clientHasNoEmail,
         token: rl.token ?? null,
-        hasMemberPatient,
-        membershipNames,
       });
     });
 
@@ -877,7 +950,7 @@ export default function RoomLoaderPage() {
     return tableRows.filter((row) => {
       const doctorMatch = row.doctor.toLowerCase().includes(searchLower);
       const clientMatch = row.clientName.toLowerCase().includes(searchLower);
-      const patientMatch = row.pets.some((petName) => petName.toLowerCase().includes(searchLower));
+      const patientMatch = row.pets.some((pet) => pet.name.toLowerCase().includes(searchLower));
       return doctorMatch || clientMatch || patientMatch;
     });
   }, [tableRows, tableSearch]);
@@ -1313,7 +1386,7 @@ export default function RoomLoaderPage() {
   // Store edited arrival window for each patient (keyed by patient.id)
   const [arrivalWindows, setArrivalWindows] = useState<Record<number, string>>({});
   // Store checkbox states for each patient (keyed by patient.id)
-  const [vaccineCheckboxes, setVaccineCheckboxes] = useState<Record<number, { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean; sharps: boolean }>>({});
+  const [vaccineCheckboxes, setVaccineCheckboxes] = useState<Record<number, StaffVaccineCheckboxes>>({});
 
   // Loading state for sending to client
   const [sendingToClient, setSendingToClient] = useState(false);
@@ -1679,6 +1752,12 @@ export default function RoomLoaderPage() {
         if (finalItem && effectivePrice != null) {
           finalItem = { ...finalItem, price: Number(effectivePrice) };
         }
+        if (finalItem && String(finalItem.type).toLowerCase() === 'inventory') {
+          const cat = correction?.selectedItem
+            ? (correction.selectedItem.inventoryItem as { categoryName?: string } | undefined)?.categoryName
+            : (reminderWithPrice.matchedItem as { categoryName?: string } | undefined)?.categoryName;
+          if (cat) finalItem.categoryName = cat;
+        }
 
         const reminderPayload: any = {
           reminderId: reminderId,
@@ -1716,6 +1795,10 @@ export default function RoomLoaderPage() {
           price: effectivePrice,
           quantity,
         };
+        if (String(item.itemType).toLowerCase() === 'inventory') {
+          const cat = (item.inventoryItem as { categoryName?: string } | undefined)?.categoryName;
+          if (cat) payload.categoryName = cat;
+        }
         if ((item as any).wellnessPlanPricing) {
           payload.wellnessPlanPricing = (item as any).wellnessPlanPricing;
         }
@@ -1728,8 +1811,15 @@ export default function RoomLoaderPage() {
       // Get answers
       const answers = petAnswers[patient.id] || { mobility: null, labWork: null, preMedsAsk: false };
 
-      // Get vaccine checkboxes
-      const vaccines = vaccineCheckboxes[patient.id] || { felv: true, lepto: true, lyme: true, bordatella: true, sharps: true };
+      // Get vaccine checkboxes (sharps is derived from line items, not staff UI)
+      const vaccines = vaccineCheckboxes[patient.id] || { felv: true, lepto: true, lyme: true, bordatella: true };
+      const addedForSharps = getAddedItemsForPatient(patient.id);
+      const sharpsRequired = roomLoaderPatientNeedsSharpsDisposal({
+        reminders: reminders || [],
+        removedReminderIds: removedReminders,
+        reminderCorrections,
+        addedItems: addedForSharps,
+      });
 
       return {
         patientId: patient.id,
@@ -1752,7 +1842,7 @@ export default function RoomLoaderPage() {
           lepto: vaccines.lepto,
           lyme: vaccines.lyme,
           bordatella: vaccines.bordatella,
-          sharps: vaccines.sharps,
+          sharps: sharpsRequired,
         },
         notesToClient: (notesToClient[patient.id] ?? '')?.trim() || undefined,
       };
@@ -2556,22 +2646,30 @@ export default function RoomLoaderPage() {
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.doctor}</td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>{row.clientName}</td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                        {row.pets.join(', ')}
-                        {row.hasMemberPatient && (
-                          <span
-                            title={row.membershipNames.length > 0 ? row.membershipNames.join(', ') : 'Member'}
-                            aria-label={row.membershipNames.length > 0 ? row.membershipNames.join(', ') : 'Member'}
-                          >
-                            <Heart
-                              size={16}
-                              fill="#e91e63"
-                              color="#e91e63"
-                              style={{ flexShrink: 0 }}
-                              aria-hidden
-                            />
-                          </span>
-                        )}
+                      <span style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px', rowGap: '2px' }}>
+                        {row.pets.map((pet, i) => (
+                          <Fragment key={pet.id}>
+                            {i > 0 ? <span aria-hidden>, </span> : null}
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                              <span>{pet.name}</span>
+                              {pet.isMember ? (
+                                <span
+                                  title={pet.membershipName?.trim() || 'Member'}
+                                  aria-label={pet.membershipName?.trim() || 'Member'}
+                                  style={{ display: 'inline-flex', flexShrink: 0, lineHeight: 0 }}
+                                >
+                                  <Heart
+                                    size={16}
+                                    fill="#e91e63"
+                                    color="#e91e63"
+                                    style={{ flexShrink: 0 }}
+                                    aria-hidden
+                                  />
+                                </span>
+                              ) : null}
+                            </span>
+                          </Fragment>
+                        ))}
                       </span>
                     </td>
                     <td style={{ padding: '12px', border: '1px solid #ddd' }}>
@@ -2667,22 +2765,30 @@ export default function RoomLoaderPage() {
                 </div>
                 <div className="room-loader-mobile-card-row">
                   <span className="room-loader-mobile-card-label">Pets</span>
-                  <span className="room-loader-mobile-card-value" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                    {row.pets.join(', ')}
-                    {row.hasMemberPatient && (
-                      <span
-                        title={row.membershipNames.length > 0 ? row.membershipNames.join(', ') : 'Member'}
-                        aria-label={row.membershipNames.length > 0 ? row.membershipNames.join(', ') : 'Member'}
-                      >
-                        <Heart
-                          size={16}
-                          fill="#e91e63"
-                          color="#e91e63"
-                          style={{ flexShrink: 0 }}
-                          aria-hidden
-                        />
-                      </span>
-                    )}
+                  <span className="room-loader-mobile-card-value" style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px', rowGap: '2px' }}>
+                    {row.pets.map((pet, i) => (
+                      <Fragment key={pet.id}>
+                        {i > 0 ? <span aria-hidden>, </span> : null}
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <span>{pet.name}</span>
+                          {pet.isMember ? (
+                            <span
+                              title={pet.membershipName?.trim() || 'Member'}
+                              aria-label={pet.membershipName?.trim() || 'Member'}
+                              style={{ display: 'inline-flex', flexShrink: 0, lineHeight: 0 }}
+                            >
+                              <Heart
+                                size={16}
+                                fill="#e91e63"
+                                color="#e91e63"
+                                style={{ flexShrink: 0 }}
+                                aria-hidden
+                              />
+                            </span>
+                          ) : null}
+                        </span>
+                      </Fragment>
+                    ))}
                   </span>
                 </div>
                 <div className="room-loader-mobile-card-badges">
@@ -4382,36 +4488,6 @@ export default function RoomLoaderPage() {
                           No items found
                         </div>
                       )}
-                  </div>
-
-                  {/* Sharps Checkbox */}
-                  <div style={{ marginTop: '20px', marginBottom: '20px', padding: '15px', backgroundColor: '#f8f9fa', borderRadius: '4px', border: '1px solid #dee2e6' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      {(() => {
-                        const checkboxes = vaccineCheckboxes[patient.id] || { felv: true, lepto: true, lyme: true, bordatella: true, sharps: true };
-                        
-                        // Calculate sharps based on any vaccine being checked (logic preserved but UI hidden)
-                        const anyVaccineChecked = checkboxes.felv || checkboxes.lepto || checkboxes.lyme || checkboxes.bordatella;
-                        const sharpsChecked = checkboxes.sharps !== undefined ? checkboxes.sharps : anyVaccineChecked;
-
-                        return (
-                          <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}>
-                            <input
-                              type="checkbox"
-                              checked={sharpsChecked}
-                              onChange={(e) => {
-                                setVaccineCheckboxes((prev) => ({
-                                  ...prev,
-                                  [patient.id]: { ...checkboxes, sharps: e.target.checked },
-                                }));
-                              }}
-                              style={{ cursor: 'pointer', width: '18px', height: '18px' }}
-                            />
-                            <span style={{ fontSize: '14px', color: '#333', fontWeight: 500 }}>Charge for Sharps</span>
-                          </label>
-                        );
-                      })()}
-                    </div>
                   </div>
                 </div>
 

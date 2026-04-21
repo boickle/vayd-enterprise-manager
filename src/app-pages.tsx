@@ -13,6 +13,7 @@ import Settings from './pages/Settings';
 import RoomLoaderPage from './pages/RoomLoader';
 import SurveyResponsesPage from './pages/SurveyResponses';
 import SurveyResults from './pages/SurveyResults';
+import Tools from './pages/Tools';
 
 export type AppPage = {
   path: string;
@@ -82,7 +83,7 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       path: '/analytics',
       label: 'Analytics',
       element: <Analytics />,
-      role: ['admin', 'superadmin'],
+      role: ['employee', 'admin', 'superadmin'],
       showInMainTabs: true,
     },
     {
@@ -95,6 +96,12 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       path: '/room-loader',
       label: 'Room Loader',
       element: <RoomLoaderPage />,
+      role: ['employee', 'admin', 'superadmin'],
+    },
+    {
+      path: '/tools',
+      label: 'Tools',
+      element: <Tools />,
       role: ['employee', 'admin', 'superadmin'],
     },
     {
