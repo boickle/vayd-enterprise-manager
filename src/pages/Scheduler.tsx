@@ -830,6 +830,68 @@ function assignColumns(
   return placed;
 }
 
+function intervalsOverlapMs(a: { start: number; end: number }, b: { start: number; end: number }) {
+  return a.start < b.end && b.start < a.end;
+}
+
+/** Split into connected overlap groups so non-overlapping visits each get full column width. */
+function buildOverlapComponents(
+  appointments: Appointment[],
+  displayRange: (a: Appointment) => { startIso: string; endIso: string }
+): Appointment[][] {
+  if (appointments.length === 0) return [];
+  const items = appointments.map((appt) => {
+    const { startIso, endIso } = displayRange(appt);
+    return {
+      appt,
+      start: new Date(startIso).getTime(),
+      end: new Date(endIso).getTime(),
+    };
+  });
+  const n = items.length;
+  const adj: number[][] = Array.from({ length: n }, () => []);
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (intervalsOverlapMs(items[i], items[j])) {
+        adj[i].push(j);
+        adj[j].push(i);
+      }
+    }
+  }
+  const visited = new Array(n).fill(false);
+  const components: Appointment[][] = [];
+  for (let i = 0; i < n; i++) {
+    if (visited[i]) continue;
+    const stack = [i];
+    visited[i] = true;
+    const comp: Appointment[] = [];
+    while (stack.length) {
+      const u = stack.pop()!;
+      comp.push(items[u].appt);
+      for (const v of adj[u]) {
+        if (!visited[v]) {
+          visited[v] = true;
+          stack.push(v);
+        }
+      }
+    }
+    components.push(comp);
+  }
+  return components;
+}
+
+function assignColumnsForDay(
+  appointments: Appointment[],
+  displayRange: (a: Appointment) => { startIso: string; endIso: string }
+): PlacedAppt[] {
+  const components = buildOverlapComponents(appointments, displayRange);
+  const out: PlacedAppt[] = [];
+  for (const comp of components) {
+    out.push(...assignColumns(comp, displayRange));
+  }
+  return out;
+}
+
 function isAppointmentVisible(a: Appointment): boolean {
   if (a.isDeleted) return false;
   if (a.isActive === false) return false;
@@ -1693,7 +1755,7 @@ export default function Scheduler() {
                   const key = dayDt.toISODate()!;
                   const dayAppts = appointmentsByDay.get(key) ?? [];
                   const timed = dayAppts.filter((a) => !a.allDay);
-                  const placed = assignColumns(timed, displayRangeForAppt);
+                  const placed = assignColumnsForDay(timed, displayRangeForAppt);
 
                   return (
                     <div key={key} className="scheduler-day-col">
@@ -1726,7 +1788,7 @@ export default function Scheduler() {
                           const bottom = Math.min(gridHeightPx, rawTop + Math.max(rawH, 16));
                           const h = Math.max(18, bottom - top);
                           const wPct = 100 / colCount;
-                          const leftPct = col * wPct;
+                          const leftPct = (100 * col) / colCount;
                           const title =
                             clientLabel(appt.client) ||
                             appt.appointmentType?.prettyName ||
@@ -1741,8 +1803,8 @@ export default function Scheduler() {
                               style={{
                                 top,
                                 height: h,
-                                left: `calc(${leftPct}% + 1px)`,
-                                width: `calc(${wPct}% - 2px)`,
+                                left: `${leftPct}%`,
+                                width: `${wPct}%`,
                                 background: apptColors.fill,
                                 color: apptColors.text,
                               }}
