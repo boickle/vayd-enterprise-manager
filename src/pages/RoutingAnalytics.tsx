@@ -159,6 +159,19 @@ function displayNameFillDay(u: FillDayUsageUser): string {
   return name ? name : u.userEmail;
 }
 
+/** Entire-practice total vs period goal: green when booked ≥ goal, orange when within 10% under goal (≥90%), red otherwise. */
+function totalBookedGoalMuiColor(
+  booked: number,
+  goal: number
+): 'success' | 'warning' | 'error' | undefined {
+  const b = Number(booked);
+  const g = Number(goal);
+  if (!(g > 0) || Number.isNaN(b) || Number.isNaN(g)) return undefined;
+  if (b >= g) return 'success';
+  if (b >= g * 0.9) return 'warning';
+  return 'error';
+}
+
 function aggregateBookingsByDay(
   users: AppointmentBookingsAnalyticsUser[] | undefined,
   dates: string[],
@@ -310,9 +323,10 @@ export default function RoutingAnalyticsPage() {
   const [selectedUserEmail, setSelectedUserEmail] = useState<string>(ALL_USERS);
   const [selectedFillDayUserEmail, setSelectedFillDayUserEmail] = useState<string>(ALL_USERS);
   const [data, setData] = useState<{ users: RoutingUsageUser[] } | null>(null);
-  const [bookingsData, setBookingsData] = useState<{ users: AppointmentBookingsAnalyticsUser[] } | null>(
-    null
-  );
+  const [bookingsData, setBookingsData] = useState<{
+    users: AppointmentBookingsAnalyticsUser[];
+    appointmentBookingsGoal?: number;
+  } | null>(null);
   const [fillDayData, setFillDayData] = useState<{ users: FillDayUsageUser[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -363,7 +377,10 @@ export default function RoutingAnalyticsPage() {
     fetchAppointmentBookingsAnalytics({ startDate: startStr, endDate: endStr })
       .then((res) => {
         if (!alive) return;
-        setBookingsData({ users: res?.users ?? [] });
+        setBookingsData({
+          users: res?.users ?? [],
+          appointmentBookingsGoal: res?.appointmentBookingsGoal,
+        });
       })
       .catch((e) => {
         if (!alive) return;
@@ -544,6 +561,22 @@ export default function RoutingAnalyticsPage() {
       ),
     [employeeBookingTableRows]
   );
+
+  /** Goal vs booked (colored) is shown only for a single selected day; multi-day ranges show a plain total. */
+  const practiceBookingGoalDisplay = useMemo(() => {
+    if (!isSingleDay) return null;
+    const rawGoal = bookingsData?.appointmentBookingsGoal;
+    const goal =
+      typeof rawGoal === 'number' && Number.isFinite(rawGoal) && rawGoal > 0 ? rawGoal : undefined;
+    if (goal === undefined) return null;
+    const booked = employeeBookingTableColumnTotals.totalBooked;
+    const color = totalBookedGoalMuiColor(booked, goal);
+    return { booked, goal, color };
+  }, [
+    isSingleDay,
+    bookingsData?.appointmentBookingsGoal,
+    employeeBookingTableColumnTotals.totalBooked,
+  ]);
 
   const overviewBookingDetails = useMemo(
     () => collectBookingDetails(bookingsData?.users, dates, selectedOverviewUserEmail),
@@ -909,7 +942,25 @@ export default function RoutingAnalyticsPage() {
                             {employeeBookingTableColumnTotals.existingPatientBooked}
                           </TableCell>
                           <TableCell align="right" sx={{ fontWeight: 600 }}>
-                            {employeeBookingTableColumnTotals.totalBooked}
+                            {selectedOverviewUserEmail === ALL_USERS && practiceBookingGoalDisplay ? (
+                              <Typography
+                                component="span"
+                                variant="body2"
+                                sx={{
+                                  fontWeight: 600,
+                                  color:
+                                    practiceBookingGoalDisplay.color === 'success'
+                                      ? 'success.main'
+                                      : practiceBookingGoalDisplay.color === 'warning'
+                                        ? 'warning.main'
+                                        : 'error.main',
+                                }}
+                              >
+                                {practiceBookingGoalDisplay.booked}/{practiceBookingGoalDisplay.goal} booked
+                              </Typography>
+                            ) : (
+                              employeeBookingTableColumnTotals.totalBooked
+                            )}
                           </TableCell>
                         </TableRow>
                       </TableFooter>
