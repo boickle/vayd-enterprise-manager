@@ -21,6 +21,7 @@ import MembershipUpgrade from './pages/MembershipUpgrade';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
 import PublicRoomLoaderForm from './pages/PublicRoomLoaderForm';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
+import PublicReferAFriend from './pages/PublicReferAFriend';
 import ErrorPage from './pages/ErrorPage';
 import { usePageTracking } from './hooks/usePageTracking';
 import { isCreateClientEnabled, isProduction } from './utils/env';
@@ -250,7 +251,8 @@ export default function App() {
         location.pathname !== '/reset-password' &&
         location.pathname !== '/request-reset' &&
         !location.pathname.startsWith('/public/room-loader') &&
-        !location.pathname.startsWith('/survey/') && (
+        !location.pathname.startsWith('/survey/') &&
+        !location.pathname.startsWith('/refer-a-friend') && (
           <header className="navbar">
             <div className="brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <img
@@ -368,6 +370,7 @@ export default function App() {
           {/* Public surveys by slug (no login), e.g. post-appointment, exit-interview; * catches duplicate path in email links */}
           <Route path="/survey/:surveySlug" element={<PostAppointmentSurvey />} />
           <Route path="/survey/:surveySlug/*" element={<PostAppointmentSurvey />} />
+          <Route path="/refer-a-friend" element={<PublicReferAFriend />} />
           {/* Public room loader form (no authentication required) */}
           <Route path="/public/room-loader/form" element={<PublicRoomLoaderForm />} />
 
