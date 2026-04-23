@@ -32,6 +32,13 @@ import {
   colorForHDRatio,
   colorForDrive,
 } from '../utils/statsFormat';
+import {
+  DEFAULT_PRACTICE_TIMEZONE,
+  practiceTimeZoneOrDefault,
+  formatIsoInPracticeZone,
+  dayWallClockStartIso,
+  isoFromSecondsSincePracticeMidnight,
+} from '../utils/practiceTimezone';
 import './DoctorDay.css';
 
 // ===== Vertical scale: match My Week column density =====
@@ -65,21 +72,16 @@ function timeStrToMinutesFromMidnight(s: string): number {
   return h * 60 + (Number.isNaN(m) ? 0 : m);
 }
 
-function dayBaseIso(gridStartMinutesFromMidnight: number, dateIso: string): string {
-  const hh = Math.floor(gridStartMinutesFromMidnight / 60);
-  const mm = gridStartMinutesFromMidnight % 60;
-  return DateTime.fromISO(dateIso)
-    .set({ hour: hh, minute: mm, second: 0, millisecond: 0 })
-    .toISO()!;
-}
-
 function minutesFromDayStart(
   gridStartMinutesFromMidnight: number,
   totalMinutes: number,
   iso: string,
-  dateIso: string
+  dateIso: string,
+  practiceTz: string
 ): number {
-  const base = DateTime.fromISO(dayBaseIso(gridStartMinutesFromMidnight, dateIso));
+  const base = DateTime.fromISO(
+    dayWallClockStartIso(dateIso, gridStartMinutesFromMidnight, practiceTz)
+  );
   const t = DateTime.fromISO(iso);
   const mins = t.diff(base, 'minutes').minutes;
   return Math.max(0, Math.min(totalMinutes, Math.round(mins)));
@@ -90,19 +92,14 @@ function isoFromMinutesFromGridStart(
   gridStartMinutesFromMidnight: number,
   totalMinutes: number,
   minFromGridStart: number,
-  dateIso: string
+  dateIso: string,
+  practiceTz: string
 ): string {
-  const base = DateTime.fromISO(dayBaseIso(gridStartMinutesFromMidnight, dateIso));
+  const base = DateTime.fromISO(
+    dayWallClockStartIso(dateIso, gridStartMinutesFromMidnight, practiceTz)
+  );
   const clamped = Math.max(0, Math.min(totalMinutes, minFromGridStart));
   return base.plus({ minutes: clamped }).toISO()!;
-}
-
-/** Routing-v2 `validationReturnSec`: seconds after local midnight on `dateIso`. */
-function isoFromSecSinceLocalMidnight(dateIso: string, secFromMidnight: number): string | null {
-  if (!Number.isFinite(secFromMidnight) || secFromMidnight < 0) return null;
-  const d = DateTime.fromISO(dateIso);
-  if (!d.isValid) return null;
-  return d.startOf('day').plus({ seconds: Math.round(secFromMidnight) }).toISO()!;
 }
 
 function depotTimeToPx(
@@ -460,17 +457,24 @@ function pickScheduleBounds(
 }
 
 /* ----------------- visual window helpers (8:30–10:30 + day-start clamp) ----------------- */
-function eightThirtyIsoFor(date: string): string {
-  return DateTime.fromISO(date).set({ hour: 8, minute: 30, second: 0, millisecond: 0 }).toISO()!;
+function eightThirtyIsoFor(date: string, practiceTz: string): string {
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  return DateTime.fromISO(date, { zone: tz })
+    .set({ hour: 8, minute: 30, second: 0, millisecond: 0 })
+    .toISO()!;
 }
-function tenThirtyIsoFor(date: string): string {
-  return DateTime.fromISO(date).set({ hour: 10, minute: 30, second: 0, millisecond: 0 }).toISO()!;
+function tenThirtyIsoFor(date: string, practiceTz: string): string {
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  return DateTime.fromISO(date, { zone: tz })
+    .set({ hour: 10, minute: 30, second: 0, millisecond: 0 })
+    .toISO()!;
 }
 /** Return doctor's visual work start for the date (schedStartIso if valid time/ISO; else 08:30) */
-function workStartIsoFor(date: string, schedStartIso?: string | null): string {
+function workStartIsoFor(date: string, schedStartIso: string | null | undefined, practiceTz: string): string {
+  const tz = practiceTimeZoneOrDefault(practiceTz);
   if (schedStartIso && /^\d{2}:\d{2}(:\d{2})?$/.test(schedStartIso)) {
     const [hh, mm] = schedStartIso.split(':');
-    return DateTime.fromISO(date)
+    return DateTime.fromISO(date, { zone: tz })
       .set({
         hour: Math.min(23, Number(hh) || 0),
         minute: Math.min(59, Number(mm) || 0),
@@ -480,18 +484,19 @@ function workStartIsoFor(date: string, schedStartIso?: string | null): string {
       .toISO()!;
   }
   if (schedStartIso && DateTime.fromISO(schedStartIso).isValid) return schedStartIso;
-  return eightThirtyIsoFor(date);
+  return eightThirtyIsoFor(date, practiceTz);
 }
 /** Visual rule: given an appointment start, return [winStartIso, winEndIso] */
 function adjustedWindowForStart(
   date: string,
   startIso: string,
-  schedStartIso?: string | null
+  schedStartIso: string | null | undefined,
+  practiceTz: string
 ): { winStartIso: string; winEndIso: string } {
   const start = DateTime.fromISO(startIso);
-  const workStart = DateTime.fromISO(workStartIsoFor(date, schedStartIso));
-  const eightThirty = DateTime.fromISO(eightThirtyIsoFor(date));
-  const tenThirty = DateTime.fromISO(tenThirtyIsoFor(date));
+  const workStart = DateTime.fromISO(workStartIsoFor(date, schedStartIso, practiceTz));
+  const eightThirty = DateTime.fromISO(eightThirtyIsoFor(date, practiceTz));
+  const tenThirty = DateTime.fromISO(tenThirtyIsoFor(date, practiceTz));
 
   const symmetricEarly = start.minus({ hours: 1 });
   if (symmetricEarly < eightThirty && start <= tenThirty) {
@@ -565,6 +570,7 @@ export default function DoctorDayVisual({
   const [schedEndIso, setSchedEndIso] = useState<string | null>(null);
   const [startDepotTimeStr, setStartDepotTimeStr] = useState<string | null>(null);
   const [endDepotTimeStr, setEndDepotTimeStr] = useState<string | null>(null);
+  const [practiceTimeZone, setPracticeTimeZone] = useState<string>(DEFAULT_PRACTICE_TIMEZONE);
 
   // pretty depot addresses
   const [startDepotAddr, setStartDepotAddr] = useState<string | null>(null);
@@ -746,6 +752,7 @@ export default function DoctorDayVisual({
         setAppts(final);
         setStartDepot(resp.startDepot ?? null);
         setEndDepot(resp.endDepot ?? null);
+        setPracticeTimeZone(resp.timezone);
 
         const sdt = str(resp as any, 'startDepotTime');
         const edt = str(resp as any, 'endDepotTime');
@@ -1090,7 +1097,7 @@ export default function DoctorDayVisual({
             } else {
               const winStartIso =
                 h.primary?.effectiveWindow?.startIso ??
-                adjustedWindowForStart(date, h.startIso, schedStartIso).winStartIso;
+                adjustedWindowForStart(date, h.startIso, schedStartIso, practiceTimeZone).winStartIso;
               tl[viewIdx].eta = winStartIso;
             }
           }
@@ -1265,7 +1272,17 @@ export default function DoctorDayVisual({
     return () => {
       on = false;
     };
-  }, [households, startDepot, endDepot, date, selectedDoctorId, appts, schedStartIso, virtualAppt]);
+  }, [
+    households,
+    startDepot,
+    endDepot,
+    date,
+    selectedDoctorId,
+    appts,
+    schedStartIso,
+    virtualAppt,
+    practiceTimeZone,
+  ]);
 
   /* ---------- Display order: byIndex order when ETA returned it ---------- */
   const displayHouseholds = useMemo(
@@ -1306,6 +1323,7 @@ export default function DoctorDayVisual({
 
   /* ------------ full-day grid (same span logic as My Week: ~6:30–7:30 PM) ------------ */
   const dayVisualGrid = useMemo(() => {
+    const dayTz = practiceTimeZoneOrDefault(practiceTimeZone);
     const candidates: number[] = [];
     if (startDepotTimeStr) {
       candidates.push(timeStrToMinutesFromMidnight(startDepotTimeStr));
@@ -1314,20 +1332,20 @@ export default function DoctorDayVisual({
       if (/^\d{1,2}:\d{2}/.test(schedStartIso.trim())) {
         candidates.push(timeStrToMinutesFromMidnight(schedStartIso));
       } else {
-        const dt = DateTime.fromISO(schedStartIso);
+        const dt = DateTime.fromISO(schedStartIso).setZone(dayTz);
         if (dt.isValid) candidates.push(dt.hour * 60 + dt.minute);
       }
     }
     for (const hh of displayHouseholds) {
       if (hh.startIso) {
-        const dt = DateTime.fromISO(hh.startIso);
+        const dt = DateTime.fromISO(hh.startIso).setZone(dayTz);
         if (dt.isValid) candidates.push(dt.hour * 60 + dt.minute);
       }
     }
     for (const t of displayTimeline) {
       const eta = t?.eta ?? t?.etd;
       if (eta) {
-        const dt = DateTime.fromISO(eta);
+        const dt = DateTime.fromISO(eta).setZone(dayTz);
         if (dt.isValid) candidates.push(dt.hour * 60 + dt.minute);
       }
     }
@@ -1341,9 +1359,10 @@ export default function DoctorDayVisual({
       END_MINUTES_FROM_MIDNIGHT - gridStartMinutesFromMidnight
     );
     return { gridStartMinutesFromMidnight, totalMinutes };
-  }, [displayHouseholds, displayTimeline, schedStartIso, startDepotTimeStr]);
+  }, [displayHouseholds, displayTimeline, schedStartIso, startDepotTimeStr, practiceTimeZone]);
 
   const hourTicksForLabels = useMemo(() => {
+    const labelTz = practiceTimeZoneOrDefault(practiceTimeZone);
     const out: { top: number; label: string }[] = [];
     const startH = Math.floor(dayVisualGrid.gridStartMinutesFromMidnight / 60);
     for (let h = startH; h <= DAY_END_HOUR; h++) {
@@ -1352,12 +1371,12 @@ export default function DoctorDayVisual({
       if (minutesFromGridStart >= 0 && minutesFromGridStart <= dayVisualGrid.totalMinutes) {
         out.push({
           top: minutesFromGridStart * PPM,
-          label: DateTime.fromObject({ hour: h, minute: 0 }).toFormat('h a'),
+          label: DateTime.fromObject({ hour: h, minute: 0 }, { zone: labelTz }).toFormat('h a'),
         });
       }
     }
     return out;
-  }, [dayVisualGrid.gridStartMinutesFromMidnight, dayVisualGrid.totalMinutes]);
+  }, [dayVisualGrid.gridStartMinutesFromMidnight, dayVisualGrid.totalMinutes, practiceTimeZone]);
 
   const timeTicks = useMemo(() => {
     const out: { top: number; isHour: boolean }[] = [];
@@ -1455,8 +1474,8 @@ export default function DoctorDayVisual({
       const nextAnchorIso = nextSlot?.eta ?? nextHi.startIso ?? null;
       if (!prevEndIso || !nextAnchorIso) continue;
 
-      const prevEndMin = minutesFromDayStart(g0, gTot, prevEndIso, date);
-      const nextEtaMin = minutesFromDayStart(g0, gTot, nextAnchorIso, date);
+      const prevEndMin = minutesFromDayStart(g0, gTot, prevEndIso, date, practiceTimeZone);
+      const nextEtaMin = minutesFromDayStart(g0, gTot, nextAnchorIso, date, practiceTimeZone);
       const gapAvailMin = Math.max(0, nextEtaMin - prevEndMin - bufferMinAfter(hop));
 
       let interSec = 0;
@@ -1493,6 +1512,7 @@ export default function DoctorDayVisual({
     dayVisualGrid.totalMinutes,
     date,
     appointmentBufferMinutes,
+    practiceTimeZone,
   ]);
 
   // Resolved start/end for a household: personal blocks use effectiveWindow (scheduled time) when available.
@@ -1555,7 +1575,8 @@ export default function DoctorDayVisual({
           dayVisualGrid.gridStartMinutesFromMidnight,
           dayVisualGrid.totalMinutes,
           anchorIso,
-          date
+          date,
+          practiceTimeZone
         ) * PPM;
       const durMin = Math.max(1, Math.round(e.diff(s).as('minutes')));
       const height = Math.max(22, durMin * PPM);
@@ -1591,6 +1612,7 @@ export default function DoctorDayVisual({
     appointmentBufferMinutes,
     driveBetweenMinForLayout,
     etaBlockLabelByKey,
+    practiceTimeZone,
   ]);
 
   // Between stops: buffer (see-through) then drive (hatched), same split as My Week.
@@ -1851,7 +1873,7 @@ export default function DoctorDayVisual({
       virtualAppt.date === date &&
       typeof virtualAppt.validationReturnSec === 'number' &&
       Number.isFinite(virtualAppt.validationReturnSec)
-        ? isoFromSecSinceLocalMidnight(date, virtualAppt.validationReturnSec)
+        ? isoFromSecondsSincePracticeMidnight(date, virtualAppt.validationReturnSec, practiceTimeZone)
         : null;
     const returnClockIso =
       backToDepotIso && DateTime.fromISO(backToDepotIso).isValid
@@ -1864,7 +1886,7 @@ export default function DoctorDayVisual({
     if (mins != null && mins > 0) {
       dMin = mins;
     } else if (returnClockIso) {
-      const endMin = minutesFromDayStart(g0, gTot, returnClockIso, date);
+      const endMin = minutesFromDayStart(g0, gTot, returnClockIso, date, practiceTimeZone);
       dMin = Math.max(1, Math.round(Math.max(0, endMin - winStartMin)));
     } else {
       return empty;
@@ -1934,14 +1956,14 @@ export default function DoctorDayVisual({
         const paintedMin = Math.min(dMin, availAfter);
         driveEndMin = driveStartMin + paintedMin;
         if (paintedMin < 1e-6 && returnClockIso) {
-          const endMin = minutesFromDayStart(g0, gTot, returnClockIso, date);
+          const endMin = minutesFromDayStart(g0, gTot, returnClockIso, date, practiceTimeZone);
           const dMinCap = Math.min(dMin, Math.max(0, endMin - winStartMin));
           driveStartMin = Math.max(winStartMin, endMin - dMinCap);
           driveEndMin = endMin;
         }
       }
     } else if (returnClockIso) {
-      const endMin = minutesFromDayStart(g0, gTot, returnClockIso, date);
+      const endMin = minutesFromDayStart(g0, gTot, returnClockIso, date, practiceTimeZone);
       driveStartMin = winStartMin;
       driveEndMin = endMin;
     } else {
@@ -1955,7 +1977,7 @@ export default function DoctorDayVisual({
       const tBot = (blockGeom[kTrail].top + blockGeom[kTrail].height) / PPM;
       if (driveEndMin > tTop + 1e-6 && driveStartMin < tBot - 1e-6) {
         driveStartMin = tBot;
-        const endMin = minutesFromDayStart(g0, gTot, returnClockIso, date);
+        const endMin = minutesFromDayStart(g0, gTot, returnClockIso, date, practiceTimeZone);
         let ceilingMin = gTot;
         if (kTrail + 1 < N && blockGeom[kTrail + 1]) {
           ceilingMin = blockGeom[kTrail + 1].top / PPM;
@@ -1976,12 +1998,15 @@ export default function DoctorDayVisual({
       const gridEndPx = gTot * PPM;
       let driveEndPx = nextTopPx;
       if (validationReturnIso && DateTime.fromISO(validationReturnIso).isValid) {
-        driveEndPx = Math.max(driveEndPx, minutesFromDayStart(g0, gTot, validationReturnIso, date) * PPM);
+        driveEndPx = Math.max(
+          driveEndPx,
+          minutesFromDayStart(g0, gTot, validationReturnIso, date, practiceTimeZone) * PPM
+        );
       }
       if (backToDepotIso && DateTime.fromISO(backToDepotIso).isValid) {
         driveEndPx = Math.max(
           driveEndPx,
-          minutesFromDayStart(g0, gTot, backToDepotIso, date) * PPM
+          minutesFromDayStart(g0, gTot, backToDepotIso, date, practiceTimeZone) * PPM
         );
       }
       driveEndPx = Math.min(gridEndPx, driveEndPx);
@@ -2026,8 +2051,14 @@ export default function DoctorDayVisual({
       const routeDm = Math.max(1, Math.round(dMin));
       arrivalDisplayIso =
         arrivalFromNextBlockEta ??
-        isoFromMinutesFromGridStart(g0, gTot, (driveTopPx + drivePx) / PPM, date);
-      const arrivalLabel = DateTime.fromISO(arrivalDisplayIso).toLocaleString(DateTime.TIME_SIMPLE);
+        isoFromMinutesFromGridStart(
+          g0,
+          gTot,
+          (driveTopPx + drivePx) / PPM,
+          date,
+          practiceTimeZone
+        );
+      const arrivalLabel = formatIsoInPracticeZone(arrivalDisplayIso, practiceTimeZone);
       const driveTitle =
         routeDm !== schedDm
           ? `Drive back to depot: ${schedDm} min scheduled · ${routeDm} min route — Arrival ${arrivalLabel}`
@@ -2060,6 +2091,7 @@ export default function DoctorDayVisual({
     virtualAppt,
     driveSecondsForLayout,
     backToDepotSec,
+    practiceTimeZone,
   ]);
 
   /** Lowest Y on the day column (blocks + drive); "Back to depot" in hovers only for that last strip/card. */
@@ -2137,7 +2169,7 @@ export default function DoctorDayVisual({
       isPreviewDay &&
       typeof virtualAppt?.validationReturnSec === 'number' &&
       Number.isFinite(virtualAppt.validationReturnSec)
-        ? isoFromSecSinceLocalMidnight(date, virtualAppt.validationReturnSec)
+        ? isoFromSecondsSincePracticeMidnight(date, virtualAppt.validationReturnSec, practiceTimeZone)
         : null;
 
     // Fallback booked-service (excludes preview & blocks)
@@ -2358,12 +2390,13 @@ export default function DoctorDayVisual({
     schedEndIso,
     virtualAppt,
     date,
+    practiceTimeZone,
   ]);
 
   /* ---------- UI helpers ---------- */
   function fmtTime(iso?: string | null) {
     if (!iso) return '';
-    return DateTime.fromISO(iso).toLocaleString(DateTime.TIME_SIMPLE);
+    return formatIsoInPracticeZone(iso, practiceTimeZone);
   }
 
   const driveColor = colorForDrive(stats.driveMin);
@@ -2712,7 +2745,8 @@ export default function DoctorDayVisual({
                   dayVisualGrid.gridStartMinutesFromMidnight,
                   dayVisualGrid.totalMinutes,
                   anchorIso,
-                  date
+                  date,
+                  practiceTimeZone
                 ) * PPM;
             const height = geom ? geom.height : Math.max(22, durMinForHeight * PPM);
 
@@ -2725,7 +2759,7 @@ export default function DoctorDayVisual({
                 ? { winStartIso: slotWindow.windowStartIso, winEndIso: slotWindow.windowEndIso }
                 : ew?.startIso && ew?.endIso
                   ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
-                  : adjustedWindowForStart(date, h.startIso!, schedStartIso);
+                  : adjustedWindowForStart(date, h.startIso!, schedStartIso, practiceTimeZone);
 
             const windowWarning =
               showByDriveTime &&
@@ -3044,8 +3078,6 @@ export default function DoctorDayVisual({
             });
             const { left, top, maxCardH, width: popoverW } = pos;
 
-            const s = DateTime.fromISO(hoverCard.sIso);
-
             const winStartIso = hoverCard.resolvedWinStartIso;
             const winEndIso = hoverCard.resolvedWinEndIso;
             const addrNoZip = stripZipFromAddressLine(hoverCard.address);
@@ -3116,7 +3148,8 @@ export default function DoctorDayVisual({
                 )}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'baseline', marginBottom: 4, fontSize: 13, color: '#334155' }}>
                   <span>
-                    <b>Scheduled:</b> {s.toLocaleString(DateTime.TIME_SIMPLE)}
+                    <b>Scheduled:</b>{' '}
+                    {formatIsoInPracticeZone(hoverCard.sIso, practiceTimeZone)}
                   </span>
                   <span>
                     <b>Duration:</b> {hoverCard.durMin} min
@@ -3133,7 +3166,7 @@ export default function DoctorDayVisual({
                   {showBackToDepotInHover && (
                     <span>
                       <b>Back to depot:</b>{' '}
-                      {DateTime.fromISO(stats.backToDepotIso!).toLocaleString(DateTime.TIME_SIMPLE)}
+                      {formatIsoInPracticeZone(stats.backToDepotIso!, practiceTimeZone)}
                     </span>
                   )}
                 </div>
@@ -3154,11 +3187,11 @@ export default function DoctorDayVisual({
                       <span>
                         <b>Arrive/Leave:</b>{' '}
                         {hoverCard.etaIso
-                          ? DateTime.fromISO(hoverCard.etaIso).toLocaleString(DateTime.TIME_SIMPLE)
+                          ? formatIsoInPracticeZone(hoverCard.etaIso, practiceTimeZone)
                           : '—'}
                         {' – '}
                         {hoverCard.etdIso
-                          ? DateTime.fromISO(hoverCard.etdIso).toLocaleString(DateTime.TIME_SIMPLE)
+                          ? formatIsoInPracticeZone(hoverCard.etdIso, practiceTimeZone)
                           : '—'}
                       </span>
                     )}
@@ -3167,13 +3200,13 @@ export default function DoctorDayVisual({
                         <b>Window of arrival:</b>{' '}
                         {hoverCard.isFixedTime ? (
                           <>
-                            {DateTime.fromISO(hoverCard.sIso).toLocaleString(DateTime.TIME_SIMPLE)} –{' '}
-                            {DateTime.fromISO(hoverCard.eIso).toLocaleString(DateTime.TIME_SIMPLE)}
+                            {formatIsoInPracticeZone(hoverCard.sIso, practiceTimeZone)} –{' '}
+                            {formatIsoInPracticeZone(hoverCard.eIso, practiceTimeZone)}
                           </>
                         ) : (
                           <>
-                            {DateTime.fromISO(winStartIso).toLocaleString(DateTime.TIME_SIMPLE)} –{' '}
-                            {DateTime.fromISO(winEndIso).toLocaleString(DateTime.TIME_SIMPLE)}
+                            {formatIsoInPracticeZone(winStartIso, practiceTimeZone)} –{' '}
+                            {formatIsoInPracticeZone(winEndIso, practiceTimeZone)}
                           </>
                         )}
                       </span>
@@ -3296,7 +3329,7 @@ export default function DoctorDayVisual({
                 {showBackToDepotOnDriveHover && (
                   <div style={{ marginTop: 10, fontSize: 13, color: '#334155' }}>
                     <b>Back to depot:</b>{' '}
-                    {DateTime.fromISO(stats.backToDepotIso!).toLocaleString(DateTime.TIME_SIMPLE)}
+                    {formatIsoInPracticeZone(stats.backToDepotIso!, practiceTimeZone)}
                   </div>
                 )}
               </div>

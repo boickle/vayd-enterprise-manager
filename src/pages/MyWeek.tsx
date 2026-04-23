@@ -27,6 +27,14 @@ import {
   type HoverAnchorRect,
 } from '../utils/hoverPopoverPosition';
 import { colorForDrive } from '../utils/statsFormat';
+import {
+  practiceTimeZoneOrDefault,
+  formatIsoInPracticeZone,
+  formatIsoTimeShortInPracticeZone,
+  dayWallClockStartIso,
+  formatDepotWallClockOnDate,
+  isoFromSecondsSincePracticeMidnight,
+} from '../utils/practiceTimezone';
 import './DoctorDay.css';
 
 type ZonePatientStat = {
@@ -52,16 +60,6 @@ function timeStrToMinutesFromMidnight(s: string): number {
   const m = parts.length >= 2 ? parseInt(parts[1], 10) : 0;
   if (Number.isNaN(h)) return 0;
   return h * 60 + (Number.isNaN(m) ? 0 : m);
-}
-
-/** Format depot HH:mm / HH:mm:ss on the given calendar day for locale display (e.g. hover). */
-function formatDepotWallTimeOnDate(timeStr: string | null | undefined, dateIso: string): string | null {
-  const raw = timeStr?.trim();
-  if (!raw) return null;
-  const isoTime = raw.split(':').length === 2 ? `${raw}:00` : raw;
-  const dt = DateTime.fromISO(`${dateIso}T${isoTime}`);
-  if (!dt.isValid) return raw;
-  return dt.toFormat('t');
 }
 
 /** Start / end of day (leave depot / return) — thicker than hour grid lines */
@@ -348,6 +346,8 @@ function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
 
 type DayData = {
   date: string;
+  /** IANA practice timezone for wall times on this day (from doctor-day API). */
+  timezone: string;
   households: WeekHousehold[];
   timeline: {
     eta?: string | null;
@@ -465,23 +465,17 @@ function householdMinutes(h: WeekHousehold): number {
   return Math.max(1, Math.round(end.diff(start).as('minutes')));
 }
 
-/** Base time for the day column (grid start on that date). */
-function dayBaseIso(gridStartMinutesFromMidnight: number, dateIso: string): string {
-  const h = Math.floor(gridStartMinutesFromMidnight / 60);
-  const m = gridStartMinutesFromMidnight % 60;
-  return DateTime.fromISO(dateIso)
-    .set({ hour: h, minute: m, second: 0, millisecond: 0 })
-    .toISO()!;
-}
-
 /** Minutes from grid start to the given ISO time; clamp to [0, totalMinutes]. */
 function minutesFromDayStart(
   gridStartMinutesFromMidnight: number,
   totalMinutes: number,
   iso: string,
-  dateIso: string
+  dateIso: string,
+  practiceTz: string
 ): number {
-  const base = DateTime.fromISO(dayBaseIso(gridStartMinutesFromMidnight, dateIso));
+  const base = DateTime.fromISO(
+    dayWallClockStartIso(dateIso, gridStartMinutesFromMidnight, practiceTz)
+  );
   const t = DateTime.fromISO(iso);
   const mins = t.diff(base, 'minutes').minutes;
   return Math.max(0, Math.min(totalMinutes, Math.round(mins)));
@@ -491,18 +485,14 @@ function isoFromMinutesFromGridStart(
   gridStartMinutesFromMidnight: number,
   totalMinutes: number,
   minFromGridStart: number,
-  dateIso: string
+  dateIso: string,
+  practiceTz: string
 ): string {
-  const base = DateTime.fromISO(dayBaseIso(gridStartMinutesFromMidnight, dateIso));
+  const base = DateTime.fromISO(
+    dayWallClockStartIso(dateIso, gridStartMinutesFromMidnight, practiceTz)
+  );
   const clamped = Math.max(0, Math.min(totalMinutes, minFromGridStart));
   return base.plus({ minutes: clamped }).toISO()!;
-}
-
-function isoFromSecSinceLocalMidnight(dateIso: string, secFromMidnight: number): string | null {
-  if (!Number.isFinite(secFromMidnight) || secFromMidnight < 0) return null;
-  const d = DateTime.fromISO(dateIso);
-  if (!d.isValid) return null;
-  return d.startOf('day').plus({ seconds: Math.round(secFromMidnight) }).toISO()!;
 }
 
 /** Convert startDepotTime/endDepotTime ("HH:mm" or "HH:mm:ss") to pixels from grid top. */
@@ -537,6 +527,7 @@ function computeMyWeekDayColumnLayout(
   showByDriveTime: boolean,
   bufferMin: number
 ): MyWeekDayColumnLayout | null {
+  const practiceTz = practiceTimeZoneOrDefault(dayData.timezone);
   const households = dayData.households ?? [];
   const tl = dayData.timeline ?? [];
   const order = dayData.routingOrderIndices;
@@ -591,13 +582,15 @@ function computeMyWeekDayColumnLayout(
       weekGrid.gridStartMinutesFromMidnight,
       weekGrid.totalMinutes,
       anchorIso,
-      dateIso
+      dateIso,
+      practiceTz
     );
     const eMin = minutesFromDayStart(
       weekGrid.gridStartMinutesFromMidnight,
       weekGrid.totalMinutes,
       endIsoForHeight,
-      dateIso
+      dateIso,
+      practiceTz
     );
     const dMin = Math.max(1, eMin - tMin);
     topMinByIdx.push(tMin);
@@ -623,7 +616,8 @@ function computeMyWeekDayColumnLayout(
           weekGrid.gridStartMinutesFromMidnight,
           weekGrid.totalMinutes,
           prevEndIsoForClock,
-          dateIso
+          dateIso,
+          practiceTz
         );
         const gapAvailMinClock = Math.max(0, tMin - prevEndMinClock - bufferMinAfterStopK(i - 1));
 
@@ -677,6 +671,7 @@ function buildMyWeekDriveSegmentsFromLayout(
   weekGrid: WeekGridMetrics,
   dateIso: string
 ): { top: number; height: number; title: string; kind: 'buffer' | 'drive' }[] {
+  const practiceTz = practiceTimeZoneOrDefault(dayData.timezone);
   const segs: { top: number; height: number; title: string; kind: 'buffer' | 'drive' }[] = [];
   const { topMinByIdx, durMinByIdx, driveOffsets, ds, N, displayHouseholds, displayTimeline } = layout;
   const apptBufDefault = dayData.appointmentBufferMinutes ?? 5;
@@ -695,7 +690,13 @@ function buildMyWeekDriveSegmentsFromLayout(
     return `${kind}: ${routeMin} min drive`;
   };
   const toMin = (iso: string) =>
-    minutesFromDayStart(weekGrid.gridStartMinutesFromMidnight, weekGrid.totalMinutes, iso, dateIso);
+    minutesFromDayStart(
+      weekGrid.gridStartMinutesFromMidnight,
+      weekGrid.totalMinutes,
+      iso,
+      dateIso,
+      practiceTz
+    );
   const toPx = (min: number) => Math.max(0, Math.min(weekGrid.totalMinutes, min)) * PPM;
 
   /** Fixed blocks and flex blocks — drive cannot overlap these; placement hugs appointment or barricade edge. */
@@ -946,7 +947,7 @@ function buildMyWeekDriveSegmentsFromLayout(
 
     const vrIsoForBack =
       typeof dayData.validationReturnSec === 'number' && Number.isFinite(dayData.validationReturnSec)
-        ? isoFromSecSinceLocalMidnight(dateIso, dayData.validationReturnSec)
+        ? isoFromSecondsSincePracticeMidnight(dateIso, dayData.validationReturnSec, practiceTz)
         : null;
     const returnWeekClockIso =
       dayData.backToDepotIso && DateTime.fromISO(dayData.backToDepotIso).isValid
@@ -1109,7 +1110,7 @@ function buildMyWeekDriveSegmentsFromLayout(
           const vrIso =
             typeof dayData.validationReturnSec === 'number' &&
             Number.isFinite(dayData.validationReturnSec)
-              ? isoFromSecSinceLocalMidnight(dateIso, dayData.validationReturnSec)
+              ? isoFromSecondsSincePracticeMidnight(dateIso, dayData.validationReturnSec, practiceTz)
               : null;
           if (vrIso && DateTime.fromISO(vrIso).isValid) {
             driveEndPx = Math.max(driveEndPx, toPx(toMin(vrIso)));
@@ -1131,14 +1132,16 @@ function buildMyWeekDriveSegmentsFromLayout(
                   weekGrid.gridStartMinutesFromMidnight,
                   weekGrid.totalMinutes,
                   driveEndPx / PPM,
-                  dateIso
+                  dateIso,
+                  practiceTz
                 ));
         } else {
           arrivalIso = isoFromMinutesFromGridStart(
             weekGrid.gridStartMinutesFromMidnight,
             weekGrid.totalMinutes,
             driveEndMin,
-            dateIso
+            dateIso,
+            practiceTz
           );
         }
 
@@ -1148,7 +1151,7 @@ function buildMyWeekDriveSegmentsFromLayout(
           segs.push({
             top: driveTopPx,
             height: Math.max(4, drivePx),
-            title: `${titleBase} — Arrival: ${DateTime.fromISO(arrivalIso).toLocaleString(DateTime.TIME_SIMPLE)}`,
+            title: `${titleBase} — Arrival: ${formatIsoInPracticeZone(arrivalIso, practiceTz)}`,
             kind: 'drive',
           });
         }
@@ -1184,7 +1187,11 @@ function buildMyWeekDriveSegmentsFromLayout(
       const driveStartPx = toPx(lastBottomMin);
       const segH = Math.max(4, endDepotPx - driveStartPx);
       if (segH > 2) {
-        const gridBaseIso = dayBaseIso(weekGrid.gridStartMinutesFromMidnight, dateIso);
+        const gridBaseIso = dayWallClockStartIso(
+          dateIso,
+          weekGrid.gridStartMinutesFromMidnight,
+          practiceTz
+        );
         const fallbackArrivalIso = DateTime.fromISO(gridBaseIso)
           .plus({ minutes: lastBottomMin + segH / PPM })
           .toISO()!;
@@ -1212,7 +1219,7 @@ function buildMyWeekDriveSegmentsFromLayout(
             height: Math.max(4, drivePx),
             title:
               driveLabel(Math.round(drivePx / PPM), 'Drive back to depot') +
-              ` — Arrival: ${DateTime.fromISO(dayData.backToDepotIso ?? fallbackArrivalIso).toLocaleString(DateTime.TIME_SIMPLE)}`,
+              ` — Arrival: ${formatIsoInPracticeZone(dayData.backToDepotIso ?? fallbackArrivalIso, practiceTz)}`,
             kind: 'drive',
           });
         }
@@ -1296,6 +1303,8 @@ export default function MyWeek(props: MyWeekProps = {}) {
     windowWarning?: boolean;
     /** Last stop of the day: scheduled end depot (wall clock), same as grid line */
     endDepotTimeFormatted?: string | null;
+    /** IANA zone for displaying times on this card */
+    practiceTimeZone: string;
     /** Viewport rect of the hovered appointment block — drives popover placement */
     anchor?: HoverAnchorRect;
   } | null>(null);
@@ -1496,6 +1505,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
           const households = buildHouseholds(appts);
           return {
             date,
+            timezone: resp.timezone,
             households,
             timeline: households.map(() => ({ eta: null, etd: null })),
             startDepot: resp?.startDepot ?? null,
@@ -1822,13 +1832,14 @@ export default function MyWeek(props: MyWeekProps = {}) {
   const weekGrid = useMemo(() => {
     let earliestMinutesFromMidnight: number | null = null;
     for (const day of dayDataList) {
+      const dayTz = practiceTimeZoneOrDefault(day.timezone);
       const candidates: number[] = [];
       if (day.startDepotTime) {
         candidates.push(timeStrToMinutesFromMidnight(day.startDepotTime));
       }
       const first = day.households?.[0];
       if (first?.startIso) {
-        const dt = DateTime.fromISO(first.startIso);
+        const dt = DateTime.fromISO(first.startIso).setZone(dayTz);
         if (dt.isValid) {
           candidates.push(dt.hour * 60 + dt.minute);
         }
@@ -1836,7 +1847,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
       const firstSlot = day.timeline?.[0];
       const eta = firstSlot?.eta ?? firstSlot?.etd;
       if (eta) {
-        const dt = DateTime.fromISO(eta);
+        const dt = DateTime.fromISO(eta).setZone(dayTz);
         if (dt.isValid) {
           candidates.push(dt.hour * 60 + dt.minute);
         }
@@ -1863,6 +1874,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
   }, [dayDataList]);
 
   const hours = useMemo(() => {
+    const labelTz = practiceTimeZoneOrDefault(dayDataList[0]?.timezone);
     const out: { top: number; label: string }[] = [];
     const startH = Math.floor(weekGrid.gridStartMinutesFromMidnight / 60);
     for (let h = startH; h <= DAY_END_HOUR; h++) {
@@ -1871,12 +1883,12 @@ export default function MyWeek(props: MyWeekProps = {}) {
       if (minutesFromGridStart >= 0 && minutesFromGridStart <= weekGrid.totalMinutes) {
         out.push({
           top: minutesFromGridStart * PPM,
-          label: DateTime.fromObject({ hour: h, minute: 0 }).toFormat('h a'),
+          label: DateTime.fromObject({ hour: h, minute: 0 }, { zone: labelTz }).toFormat('h a'),
         });
       }
     }
     return out;
-  }, [weekGrid.gridStartMinutesFromMidnight, weekGrid.totalMinutes]);
+  }, [weekGrid.gridStartMinutesFromMidnight, weekGrid.totalMinutes, dayDataList]);
 
   /** Hour and half-hour tick positions (lighter than depot start/end lines) */
   const timeTicks = useMemo(() => {
@@ -2391,7 +2403,10 @@ export default function MyWeek(props: MyWeekProps = {}) {
           {/* Day columns */}
           {dates.map((dateIso, colIndex) => {
             const dayData = dayDataList[colIndex];
-            const dt = DateTime.fromISO(dateIso);
+            const practiceTzCol = practiceTimeZoneOrDefault(
+              dayData?.timezone ?? dayDataList.find((d) => d?.timezone)?.timezone
+            );
+            const dt = DateTime.fromISO(dateIso, { zone: practiceTzCol });
             const isToday = dateIso === DateTime.local().toISODate();
             const hasApptsOrBlocks = (dayData?.households?.length ?? 0) > 0;
             return (
@@ -2658,7 +2673,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                             shouldShowEtaWindowWarning(etaIso, windowEndForWarn);
                           const isLastStopOfDay = idx === displayHouseholds.length - 1;
                           const endDepotTimeFormatted = isLastStopOfDay
-                            ? formatDepotWallTimeOnDate(dayData.endDepotTime, dateIso)
+                            ? formatDepotWallClockOnDate(dayData.endDepotTime, dateIso, dayData.timezone)
                             : null;
                           return (
                             <div
@@ -2692,6 +2707,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                                   isNoLocation: h.isNoLocation,
                                   patients: h.patients,
                                   windowWarning,
+                                  practiceTimeZone: dayData.timezone,
                                   ...(endDepotTimeFormatted ? { endDepotTimeFormatted } : {}),
                                 });
                               }}
@@ -2856,7 +2872,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
               preferSide: 'left',
             });
             const { left, top, maxCardH, width: popoverW } = pos;
-            const s = DateTime.fromISO(hoverCard.startIso);
+            const practiceTzHover = practiceTimeZoneOrDefault(hoverCard.practiceTimeZone);
             const addrNoZip = stripZipFromAddressLine(hoverCard.address);
             return (
               <div
@@ -2934,7 +2950,8 @@ export default function MyWeek(props: MyWeekProps = {}) {
                 )}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'baseline', marginBottom: 4, fontSize: 13, color: '#334155' }}>
                   <span>
-                    <b>Scheduled:</b> {s.toFormat('t')}
+                    <b>Scheduled:</b>{' '}
+                    {formatIsoTimeShortInPracticeZone(hoverCard.startIso, practiceTzHover)}
                   </span>
                   <span>
                     <b>Duration:</b> {hoverCard.durMin} min
@@ -2976,11 +2993,11 @@ export default function MyWeek(props: MyWeekProps = {}) {
                         <span>
                           <b>Arrive/Leave:</b>{' '}
                           {hoverCard.etaIso
-                            ? DateTime.fromISO(hoverCard.etaIso).toFormat('t')
+                            ? formatIsoTimeShortInPracticeZone(hoverCard.etaIso, practiceTzHover)
                             : '—'}
                           {' – '}
                           {hoverCard.etdIso
-                            ? DateTime.fromISO(hoverCard.etdIso).toFormat('t')
+                            ? formatIsoTimeShortInPracticeZone(hoverCard.etdIso, practiceTzHover)
                             : '—'}
                         </span>
                       )}
@@ -2989,18 +3006,18 @@ export default function MyWeek(props: MyWeekProps = {}) {
                           <b>Window of arrival:</b>{' '}
                           {hoverCard.isFixedTime ? (
                             <>
-                              {DateTime.fromISO(hoverCard.startIso).toFormat('t')}
+                              {formatIsoTimeShortInPracticeZone(hoverCard.startIso, practiceTzHover)}
                               {' – '}
-                              {DateTime.fromISO(hoverCard.endIso).toFormat('t')}
+                              {formatIsoTimeShortInPracticeZone(hoverCard.endIso, practiceTzHover)}
                             </>
                           ) : (
                             <>
                               {hoverCard.windowStartIso
-                                ? DateTime.fromISO(hoverCard.windowStartIso).toFormat('t')
+                                ? formatIsoTimeShortInPracticeZone(hoverCard.windowStartIso, practiceTzHover)
                                 : '—'}
                               {' – '}
                               {hoverCard.windowEndIso
-                                ? DateTime.fromISO(hoverCard.windowEndIso).toFormat('t')
+                                ? formatIsoTimeShortInPracticeZone(hoverCard.windowEndIso, practiceTzHover)
                                 : '—'}
                             </>
                           )}
