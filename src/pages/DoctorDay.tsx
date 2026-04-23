@@ -19,6 +19,11 @@ import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { reverseGeocode } from '../api/geo';
 import { formatHM, colorForWhitespace, colorForHDRatio, colorForDrive } from '../utils/statsFormat';
+import {
+  DEFAULT_PRACTICE_TIMEZONE,
+  practiceTimeZoneOrDefault,
+  formatIsoInPracticeZone,
+} from '../utils/practiceTimezone';
 import { Heart } from 'lucide-react';
 
 /* =========================================================================
@@ -177,16 +182,23 @@ function assignEtaKeysForSameAddress<T extends { key: string; lat: number; lon: 
   }
 }
 
-function eightThirtyIsoFor(date: string): string {
-  return DateTime.fromISO(date).set({ hour: 8, minute: 30, second: 0, millisecond: 0 }).toISO()!;
+function eightThirtyIsoFor(date: string, practiceTz: string): string {
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  return DateTime.fromISO(date, { zone: tz })
+    .set({ hour: 8, minute: 30, second: 0, millisecond: 0 })
+    .toISO()!;
 }
-function tenThirtyIsoFor(date: string): string {
-  return DateTime.fromISO(date).set({ hour: 10, minute: 30, second: 0, millisecond: 0 }).toISO()!;
+function tenThirtyIsoFor(date: string, practiceTz: string): string {
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  return DateTime.fromISO(date, { zone: tz })
+    .set({ hour: 10, minute: 30, second: 0, millisecond: 0 })
+    .toISO()!;
 }
-function workStartIsoFor(date: string, schedStartIso?: string | null): string {
+function workStartIsoFor(date: string, schedStartIso: string | null | undefined, practiceTz: string): string {
+  const tz = practiceTimeZoneOrDefault(practiceTz);
   if (schedStartIso && /^\d{2}:\d{2}(:\d{2})?$/.test(schedStartIso)) {
     const [hh, mm] = schedStartIso.split(':');
-    return DateTime.fromISO(date)
+    return DateTime.fromISO(date, { zone: tz })
       .set({
         hour: Math.min(23, Number(hh) || 0),
         minute: Math.min(59, Number(mm) || 0),
@@ -196,17 +208,18 @@ function workStartIsoFor(date: string, schedStartIso?: string | null): string {
       .toISO()!;
   }
   if (schedStartIso && DateTime.fromISO(schedStartIso).isValid) return schedStartIso;
-  return eightThirtyIsoFor(date);
+  return eightThirtyIsoFor(date, practiceTz);
 }
 function adjustedWindowForStart(
   date: string,
   startIso: string,
-  schedStartIso?: string | null
+  schedStartIso: string | null | undefined,
+  practiceTz: string
 ): { winStartIso: string; winEndIso: string } {
   const start = DateTime.fromISO(startIso);
-  const workStart = DateTime.fromISO(workStartIsoFor(date, schedStartIso));
-  const eightThirty = DateTime.fromISO(eightThirtyIsoFor(date));
-  const tenThirty = DateTime.fromISO(tenThirtyIsoFor(date));
+  const workStart = DateTime.fromISO(workStartIsoFor(date, schedStartIso, practiceTz));
+  const eightThirty = DateTime.fromISO(eightThirtyIsoFor(date, practiceTz));
+  const tenThirty = DateTime.fromISO(tenThirtyIsoFor(date, practiceTz));
   const symmetricEarly = start.minus({ hours: 1 });
   if (symmetricEarly < eightThirty && start <= tenThirty) {
     const ws = workStart > eightThirty ? workStart : eightThirty;
@@ -296,6 +309,7 @@ export default function DoctorDay({
   // schedule bounds (optional)
   const [schedStartIso, setSchedStartIso] = useState<string | null>(null);
   const [schedEndIso, setSchedEndIso] = useState<string | null>(null);
+  const [practiceTimeZone, setPracticeTimeZone] = useState<string>(DEFAULT_PRACTICE_TIMEZONE);
 
   // pretty depot addresses
   const [startDepotAddr, setStartDepotAddr] = useState<string | null>(null);
@@ -457,6 +471,7 @@ export default function DoctorDay({
         setAppts(finalAppts);
         setStartDepot(resp.startDepot ?? null);
         setEndDepot(resp.endDepot ?? null);
+        setPracticeTimeZone(resp.timezone);
 
         const schedStart =
           str(resp as any, 'startDepotTime') ??
@@ -909,7 +924,7 @@ export default function DoctorDay({
               // Prefer backend effectiveWindow when available
               const winStartIso =
                 h.primary?.effectiveWindow?.startIso ??
-                adjustedWindowForStart(date, h.startIso, schedStartIso).winStartIso;
+                adjustedWindowForStart(date, h.startIso, schedStartIso, practiceTimeZone).winStartIso;
               tl[viewIdx].eta = winStartIso;
             }
           }
@@ -1006,7 +1021,16 @@ export default function DoctorDay({
     return () => {
       on = false;
     };
-  }, [households, startDepot, endDepot, date, selectedDoctorId, schedStartIso, virtualAppt]);
+  }, [
+    households,
+    startDepot,
+    endDepot,
+    date,
+    selectedDoctorId,
+    schedStartIso,
+    virtualAppt,
+    practiceTimeZone,
+  ]);
 
   /* ---------- Display order: byIndex order when ETA returned it ---------- */
   const displayHouseholds = useMemo(
@@ -1316,21 +1340,22 @@ export default function DoctorDay({
   /* ---------- UI helpers ---------- */
   function fmtTime(iso?: string | null) {
     if (!iso) return '';
-    return DateTime.fromISO(iso).toLocaleString(DateTime.TIME_SIMPLE);
+    return formatIsoInPracticeZone(iso, practiceTimeZone);
   }
   /** Window text: prefer byIndex row window when both present, else backend effectiveWindow, else frontend-calculated. */
   function windowTextForHousehold(h: Household, slot?: DisplaySlot | null): string {
+    const tz = practiceTimeZone;
     if (slot?.windowStartIso && slot?.windowEndIso) {
-      return `${DateTime.fromISO(slot.windowStartIso).toLocaleString(DateTime.TIME_SIMPLE)} – ${DateTime.fromISO(slot.windowEndIso).toLocaleString(DateTime.TIME_SIMPLE)}`;
+      return `${formatIsoInPracticeZone(slot.windowStartIso, tz)} – ${formatIsoInPracticeZone(slot.windowEndIso, tz)}`;
     }
     const ew = h.primary?.effectiveWindow;
     if (ew?.startIso && ew?.endIso) {
-      return `${DateTime.fromISO(ew.startIso).toLocaleString(DateTime.TIME_SIMPLE)} – ${DateTime.fromISO(ew.endIso).toLocaleString(DateTime.TIME_SIMPLE)}`;
+      return `${formatIsoInPracticeZone(ew.startIso, tz)} – ${formatIsoInPracticeZone(ew.endIso, tz)}`;
     }
     if (!h.startIso) return '';
-    const { winStartIso, winEndIso } = adjustedWindowForStart(date, h.startIso, schedStartIso);
-    const start = DateTime.fromISO(winStartIso).toLocaleString(DateTime.TIME_SIMPLE);
-    const end = DateTime.fromISO(winEndIso).toLocaleString(DateTime.TIME_SIMPLE);
+    const { winStartIso, winEndIso } = adjustedWindowForStart(date, h.startIso, schedStartIso, practiceTimeZone);
+    const start = formatIsoInPracticeZone(winStartIso, tz);
+    const end = formatIsoInPracticeZone(winEndIso, tz);
     return `${start} – ${end}`;
   }
   function pillClass(status?: string | null) {

@@ -1,5 +1,6 @@
 // src/api/appointments.ts
 import { http } from './http';
+import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 
 export type Depot = { lat: number; lon: number };
 
@@ -109,6 +110,8 @@ export function blockDisplayLabel(item: { blockLabel?: string; title?: string } 
 
 export type DoctorDayResponse = {
   date?: string;
+  /** IANA timezone for schedule wall times (e.g. America/New_York). */
+  timezone: string;
   startDepot?: Depot | null;
   endDepot?: Depot | null;
   startDepotTime: any;
@@ -254,6 +257,9 @@ export async function fetchDoctorDay(
 
   return {
     date: data?.date,
+    timezone: practiceTimeZoneOrDefault(
+      typeof (data as any)?.timezone === 'string' ? (data as any).timezone : undefined
+    ),
     startDepot: data?.startDepot ?? null,
     endDepot: data?.endDepot ?? null,
     startDepotTime: data?.startDepotTime,
