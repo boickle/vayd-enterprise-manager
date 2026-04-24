@@ -20,7 +20,10 @@ import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
 import { AlertTriangle, Heart } from 'lucide-react';
-import { shouldShowEtaWindowWarning } from '../utils/windowWarning';
+import {
+  fixedTimeRouteEtaMeaningfullyAfterScheduledStart,
+  shouldShowEtaWindowWarning,
+} from '../utils/windowWarning';
 import {
   computeHoverPopoverPosition,
   rectFromElement,
@@ -231,6 +234,55 @@ function sameAddressWeek(a: WeekHousehold, b: WeekHousehold): boolean {
   }
   const base = (k: string) => (k.includes(':') ? k.slice(0, k.indexOf(':')) : k);
   return base(a.key) === base(b.key);
+}
+
+/** Client appointment (not personal block) with Fixed Time type — reads nested appointmentType.name. */
+function weekHouseholdIsClientFixedTime(h: WeekHousehold): boolean {
+  if (h.isPersonalBlock) return false;
+  const at = (h.primary as any)?.appointmentType;
+  const nestedName =
+    at && typeof at === 'object'
+      ? String((at as { name?: string; prettyName?: string }).name ?? (at as { prettyName?: string }).prettyName ?? '')
+          .trim()
+          .toLowerCase()
+      : '';
+  const flat = (str(h.primary, 'appointmentType') ?? str(h.primary, 'appointmentTypeName') ?? '')
+    .trim()
+    .toLowerCase();
+  const typeLower = nestedName || flat;
+  if (typeLower === 'fixed time' || typeLower.includes('fixed time')) return true;
+  return (h.patients[0]?.type || '').toLowerCase() === 'fixed time';
+}
+
+/** Fixed chip / hover isFixedTime: non-flex personal blocks or client Fixed Time. */
+function weekHouseholdIsFixedTimeAppointment(h: WeekHousehold): boolean {
+  const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(h.primary));
+  if (h.isPersonalBlock && !flexBlock) return true;
+  return weekHouseholdIsClientFixedTime(h);
+}
+
+/**
+ * When true, block position (and matching hover arrive times) use doctor-day startIso/endIso.
+ * Client Fixed Time uses ETA when routing arrival is after the booked start (slippage); otherwise calendar start
+ * (e.g. early clamp). Non-flex personal blocks always use doctor day.
+ */
+function weekHouseholdUsesDoctorDayClockForLayout(
+  h: WeekHousehold,
+  slot: { eta?: string | null; etd?: string | null } | undefined,
+  showByDriveTime: boolean
+): boolean {
+  if (!showByDriveTime) return true;
+  const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(h.primary));
+  if (h.isPersonalBlock && !flexBlock) return true;
+  if (!weekHouseholdIsClientFixedTime(h)) return false;
+  const eta = slot?.eta;
+  const schedStart = h.startIso;
+  if (!eta || !schedStart) return true;
+  const etaDt = DateTime.fromISO(eta);
+  const schedDt = DateTime.fromISO(schedStart);
+  if (!etaDt.isValid || !schedDt.isValid) return true;
+  if (fixedTimeRouteEtaMeaningfullyAfterScheduledStart(schedStart, eta)) return false;
+  return true;
 }
 
 /** Household grouping key: same client at same location = one stop; different clients at same address = separate stops. */
@@ -558,13 +610,16 @@ function computeMyWeekDayColumnLayout(
       continue;
     }
     const slot = displayTimeline[i];
-    const useEta = showByDriveTime && (slot?.eta ?? slot?.etd);
+    const doctorDayClock = weekHouseholdUsesDoctorDayClockForLayout(hi, slot, showByDriveTime);
+    const useEta = showByDriveTime && !doctorDayClock && (slot?.eta ?? slot?.etd);
     let anchorIso = useEta ? (slot?.eta ?? startIso) : startIso;
     if (i >= 1) {
       const prev = displayHouseholds[i - 1];
       const prevSlot = displayTimeline[i - 1];
       if (sameAddressWeek(prev, hi)) {
-        const prevEtd = prevSlot?.etd ?? prev.endIso ?? null;
+        const prevDoctorDay = weekHouseholdUsesDoctorDayClockForLayout(prev, prevSlot, showByDriveTime);
+        const prevEtd =
+          showByDriveTime && !prevDoctorDay && prevSlot?.etd ? prevSlot.etd : (prev.endIso ?? null);
         if (prevEtd) {
           const minStartIso = DateTime.fromISO(prevEtd).plus({ minutes: bufferMin }).toISO();
           if (minStartIso) {
@@ -601,7 +656,8 @@ function computeMyWeekDayColumnLayout(
       const prevEndShifted = topMinByIdx[i - 1] + driveOffsets[i - 1] + durMinByIdx[i - 1];
       const prevHi = displayHouseholds[i - 1];
       const prevSlot = displayTimeline[i - 1];
-      const prevUseEta = showByDriveTime && (prevSlot?.eta ?? prevSlot?.etd);
+      const prevDoctorDay = weekHouseholdUsesDoctorDayClockForLayout(prevHi, prevSlot, showByDriveTime);
+      const prevUseEta = showByDriveTime && !prevDoctorDay && (prevSlot?.eta ?? prevSlot?.etd);
       const prevEndIsoForClock =
         prevUseEta && prevSlot?.etd ? prevSlot.etd : prevHi.endIso ?? '';
 
@@ -2652,10 +2708,8 @@ export default function MyWeek(props: MyWeekProps = {}) {
                           const height = Math.max(14, durMin * PPM);
 
                           const flexBlock = h.isPersonalBlock && isFlexBlockItem(h.primary);
-                          const isFixedTime =
-                            (h.isPersonalBlock && !flexBlock) ||
-                            (str(h.primary, 'appointmentType') || '').toLowerCase() === 'fixed time' ||
-                            (h.patients[0]?.type || '').toLowerCase() === 'fixed time';
+                          const isFixedTime = weekHouseholdIsFixedTimeAppointment(h);
+                          const doctorDayClock = weekHouseholdUsesDoctorDayClockForLayout(h, slot, showByDriveTime);
 
                           const etaIso = slot?.eta ?? null;
                           const etdIso = slot?.etd ?? null;
@@ -2666,11 +2720,17 @@ export default function MyWeek(props: MyWeekProps = {}) {
                             h.windowEndIso ??
                             h.effectiveWindow?.endIso ??
                             null;
+                          // Client Fixed Time: booked start should hold; ETA after start = route forced the stop off schedule.
+                          const clientFixedRoutePushedPastSchedule =
+                            showByDriveTime &&
+                            weekHouseholdIsClientFixedTime(h) &&
+                            !doctorDayClock;
                           const windowWarning =
                             showByDriveTime &&
                             !h.isPersonalBlock &&
-                            !isFixedTime &&
-                            shouldShowEtaWindowWarning(etaIso, windowEndForWarn);
+                            ((!isFixedTime &&
+                              shouldShowEtaWindowWarning(etaIso, windowEndForWarn)) ||
+                              clientFixedRoutePushedPastSchedule);
                           const isLastStopOfDay = idx === displayHouseholds.length - 1;
                           const endDepotTimeFormatted = isLastStopOfDay
                             ? formatDepotWallClockOnDate(dayData.endDepotTime, dateIso, dayData.timezone)
@@ -2698,8 +2758,18 @@ export default function MyWeek(props: MyWeekProps = {}) {
                                   startIso,
                                   endIso,
                                   durMin,
-                                  etaIso: showByDriveTime ? etaIso : null,
-                                  etdIso: showByDriveTime ? etdIso : null,
+                                  etaIso:
+                                    showByDriveTime && doctorDayClock
+                                      ? startIso
+                                      : showByDriveTime
+                                        ? etaIso
+                                        : null,
+                                  etdIso:
+                                    showByDriveTime && doctorDayClock
+                                      ? endIso
+                                      : showByDriveTime
+                                        ? etdIso
+                                        : null,
                                   windowStartIso: (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ?? h.windowStartIso ?? null,
                                   windowEndIso: (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ?? h.windowEndIso ?? null,
                                   isFixedTime,

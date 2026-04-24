@@ -18,8 +18,11 @@ import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
-import { Heart } from 'lucide-react';
-import { shouldShowEtaWindowWarning } from '../utils/windowWarning';
+import { AlertTriangle, Heart } from 'lucide-react';
+import {
+  fixedTimeRouteEtaMeaningfullyAfterScheduledStart,
+  shouldShowEtaWindowWarning,
+} from '../utils/windowWarning';
 import {
   computeHoverPopoverPosition,
   rectFromElement,
@@ -421,6 +424,51 @@ type Household = {
   firstApptIndex?: number;
 };
 
+/** Client appointment (not personal block) with Fixed Time — same rules as My Week `weekHouseholdIsClientFixedTime`. */
+function visualHouseholdIsClientFixedTime(h: Household): boolean {
+  if (h.isPersonalBlock) return false;
+  const at = (h.primary as any)?.appointmentType;
+  const nestedName =
+    at && typeof at === 'object'
+      ? String(
+          (at as { name?: string; prettyName?: string }).name ??
+            (at as { prettyName?: string }).prettyName ??
+            ''
+        )
+          .trim()
+          .toLowerCase()
+      : '';
+  const flat = (str(h.primary, 'appointmentType') ?? str(h.primary, 'appointmentTypeName') ?? '')
+    .trim()
+    .toLowerCase();
+  const typeLower = nestedName || flat;
+  if (typeLower === 'fixed time' || typeLower.includes('fixed time')) return true;
+  return (h.patients[0]?.type || '').toLowerCase() === 'fixed time';
+}
+
+/**
+ * When true, layout and hover Arrive/Leave use doctor-day start/end (My Week `weekHouseholdUsesDoctorDayClockForLayout`).
+ * Client Fixed Time uses route ETA when arrival is after booked start; otherwise calendar start.
+ */
+function visualHouseholdUsesDoctorDayClockForLayout(
+  h: Household,
+  slot: { eta?: string | null; etd?: string | null } | undefined,
+  showByDriveTime: boolean
+): boolean {
+  if (!showByDriveTime) return true;
+  const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(h.primary));
+  if (h.isPersonalBlock && !flexBlock) return true;
+  if (!visualHouseholdIsClientFixedTime(h)) return false;
+  const eta = slot?.eta;
+  const schedStart = h.startIso;
+  if (!eta || !schedStart) return true;
+  const etaDt = DateTime.fromISO(eta);
+  const schedDt = DateTime.fromISO(schedStart);
+  if (!etaDt.isValid || !schedDt.isValid) return true;
+  if (fixedTimeRouteEtaMeaningfullyAfterScheduledStart(schedStart, eta)) return false;
+  return true;
+}
+
 /* ----------------- schedule bounds (for work start) ----------------- */
 function pickScheduleBounds(
   resp: DoctorDayResponse,
@@ -603,6 +651,7 @@ export default function DoctorDayVisual({
     /** Same window as native `title` on the block (avoids recomputation drift for Flex Block / blocks). */
     resolvedWinStartIso: string;
     resolvedWinEndIso: string;
+    windowWarning?: boolean;
     anchor?: HoverAnchorRect;
   } | null>(null);
   const hoverCardDismissTimerRef = useRef<number | null>(null);
@@ -1546,13 +1595,19 @@ export default function DoctorDayVisual({
       const etaIso = slot?.eta ?? null;
       const etdIso = slot?.etd ?? null;
       const { startIso: sIso, endIso: eIso } = householdStartEnd(h, idx);
-      let anchorIso = etaIso ?? sIso ?? h.startIso!;
-      const endIso = etdIso ?? eIso ?? h.endIso!;
+      const doctorDayClock = visualHouseholdUsesDoctorDayClockForLayout(h, slot, showByDriveTime);
+      const useEta = showByDriveTime && !doctorDayClock && (slot?.eta ?? slot?.etd);
+      let anchorIso = useEta ? (slot?.eta ?? sIso) : sIso;
+      const endIso = useEta && slot?.etd ? slot.etd : eIso;
       if (idx >= 1) {
         const prev = displayHouseholds[idx - 1];
         const prevSlot = displayTimeline[idx - 1];
         if (sameAddress(prev, h)) {
-          const prevEtd = prevSlot?.etd ?? prev.endIso ?? null;
+          const prevDoctorDay = visualHouseholdUsesDoctorDayClockForLayout(prev, prevSlot, showByDriveTime);
+          const prevEtd =
+            showByDriveTime && !prevDoctorDay && prevSlot?.etd
+              ? prevSlot.etd
+              : householdStartEnd(prev, idx - 1).endIso ?? prev.endIso ?? null;
           if (prevEtd) {
             const minStart = DateTime.fromISO(prevEtd).plus({ minutes: bufferMin });
             const anchorDt = DateTime.fromISO(anchorIso);
@@ -1606,6 +1661,7 @@ export default function DoctorDayVisual({
   }, [
     displayHouseholds,
     displayTimeline,
+    showByDriveTime,
     dayVisualGrid.gridStartMinutesFromMidnight,
     dayVisualGrid.totalMinutes,
     date,
@@ -2727,10 +2783,12 @@ export default function DoctorDayVisual({
               primaryTypeLower === 'fixed time' ||
               firstPatientType === 'fixed time';
 
-            // ---- Positioning: use ETA/ETD when available so blocks match route times (incl. personal block at 11:00–11:45) ----
-            const etaIso = displayTimeline[idx]?.eta ?? null;
-            const etdIso = displayTimeline[idx]?.etd ?? null;
-            const useDriveTime = showByDriveTime && (etaIso ?? etdIso);
+            // ---- Positioning: ETA/ETD when route clock applies; client Fixed Time pins to schedule until ETA slips past booked start (My Week parity) ----
+            const slot = displayTimeline[idx];
+            const etaIso = slot?.eta ?? null;
+            const etdIso = slot?.etd ?? null;
+            const doctorDayClock = visualHouseholdUsesDoctorDayClockForLayout(h, slot, showByDriveTime);
+            const useDriveTime = showByDriveTime && !doctorDayClock && (etaIso ?? etdIso);
             const anchorIso = useDriveTime ? (etaIso ?? resolvedStartIso) : resolvedStartIso;
             const endIsoForHeight = useDriveTime && etdIso ? etdIso : resolvedEndIso;
             const durMinForHeight = Math.max(
@@ -2751,7 +2809,7 @@ export default function DoctorDayVisual({
             const height = geom ? geom.height : Math.max(22, durMinForHeight * PPM);
 
             // Window: prefer byIndex row window when both present, else appointment effectiveWindow, else frontend-calculated
-            const slotWindow = displayTimeline[idx];
+            const slotWindow = slot;
             const ew = h.primary?.effectiveWindow;
             const { winStartIso, winEndIso } = isFixedTime
               ? { winStartIso: resolvedStartIso, winEndIso: resolvedEndIso }
@@ -2761,12 +2819,18 @@ export default function DoctorDayVisual({
                   ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
                   : adjustedWindowForStart(date, h.startIso!, schedStartIso, practiceTimeZone);
 
+            // Client Fixed Time: scheduled start should hold; route ETA after start = forced move (Olivia-style).
+            const clientFixedRoutePushedPastSchedule =
+              showByDriveTime &&
+              visualHouseholdIsClientFixedTime(h) &&
+              !doctorDayClock;
             const windowWarning =
               showByDriveTime &&
-              useDriveTime &&
-              !isFixedTime &&
               !h.isPersonalBlock &&
-              shouldShowEtaWindowWarning(etaIso, winEndIso);
+              ((useDriveTime &&
+                !isFixedTime &&
+                shouldShowEtaWindowWarning(etaIso, winEndIso)) ||
+                clientFixedRoutePushedPastSchedule);
 
             const previewPatients = h.patients.slice(0, 3);
             const moreCount = Math.max(0, (h.patients?.length || 0) - 3);
@@ -2792,8 +2856,18 @@ export default function DoctorDayVisual({
                     client: blockTitleText,
                     address: h.address,
                     durMin,
-                    etaIso: isFixedTime ? h.startIso! : (etaIso ?? null),
-                    etdIso: isFixedTime ? h.endIso! : (etdIso ?? null),
+                    etaIso:
+                      showByDriveTime && doctorDayClock
+                        ? resolvedStartIso
+                        : showByDriveTime
+                          ? (etaIso ?? null)
+                          : null,
+                    etdIso:
+                      showByDriveTime && doctorDayClock
+                        ? resolvedEndIso
+                        : showByDriveTime
+                          ? (etdIso ?? null)
+                          : null,
                     sIso: h.startIso!,
                     eIso: h.endIso!,
                     patients: h.patients || [],
@@ -2807,6 +2881,7 @@ export default function DoctorDayVisual({
                       : undefined,
                     resolvedWinStartIso: winStartIso,
                     resolvedWinEndIso: winEndIso,
+                    windowWarning,
                   });
                 }}
                 onPointerMove={(ev) => {
@@ -3140,6 +3215,27 @@ export default function DoctorDayVisual({
                   <span style={{ fontWeight: 800, color: '#14532d' }}>{hoverCard.client}</span>
                   <span style={{ color: '#64748b' }}>·</span>
                   <span style={{ color: '#64748b', flex: '1 1 12rem', minWidth: 0 }}>{addrNoZip}</span>
+                  {hoverCard.windowWarning && (
+                    <span
+                      role="status"
+                      aria-label="Window Warning"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        color: '#b45309',
+                        fontWeight: 600,
+                        fontSize: 12,
+                        background: '#fef3c7',
+                        padding: '2px 6px',
+                        borderRadius: 6,
+                        border: '1px solid #f59e0b',
+                      }}
+                    >
+                      <AlertTriangle size={14} strokeWidth={2.25} aria-hidden />
+                      Window Warning
+                    </span>
+                  )}
                 </div>
                 {hoverCard?.clientAlert && (
                   <div style={{ marginBottom: 4, color: '#dc2626', fontSize: 12, lineHeight: 1.35 }}>
