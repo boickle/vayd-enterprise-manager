@@ -29,18 +29,21 @@ if (typeof window !== 'undefined') {
     lastTouchEnd = now;
   }, false);
 
-  // Initialize Google Analytics
+  // Initialize Google tags (GA + Google Ads)
   const gaMeasurementId = import.meta.env.VITE_GA_MEASUREMENT_ID;
-  if (gaMeasurementId) {
-    // Load Google Analytics script
+  const googleAdsTagId = import.meta.env.VITE_GOOGLE_ADS_TAG_ID;
+  const initialTagId = gaMeasurementId || googleAdsTagId;
+
+  if (initialTagId) {
+    // Load gtag script once
     const script = document.createElement('script');
     script.async = true;
-    script.src = `https://www.googletagmanager.com/gtag/js?id=${gaMeasurementId}`;
+    script.src = `https://www.googletagmanager.com/gtag/js?id=${initialTagId}`;
     document.head.appendChild(script);
 
-    // Initialize GA after script loads
+    // Initialize tags after script loads
     script.onload = () => {
-      initGA(gaMeasurementId);
+      initGA(gaMeasurementId, googleAdsTagId ? [googleAdsTagId] : []);
     };
   }
 }

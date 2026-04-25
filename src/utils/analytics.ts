@@ -20,8 +20,9 @@ declare global {
  * Initialize Google Analytics
  * This should be called once when the app loads
  */
-export const initGA = (measurementId: string): void => {
+export const initGA = (measurementId?: string, additionalTagIds: string[] = []): void => {
   if (typeof window === 'undefined') return;
+  if (!measurementId && additionalTagIds.length === 0) return;
 
   // Initialize dataLayer
   window.dataLayer = window.dataLayer || [];
@@ -29,9 +30,18 @@ export const initGA = (measurementId: string): void => {
     window.dataLayer.push(arguments);
   };
   window.gtag('js', new Date());
-  window.gtag('config', measurementId, {
-    send_page_view: false, // We'll handle page views manually for SPA
-  });
+
+  if (measurementId) {
+    window.gtag('config', measurementId, {
+      send_page_view: false, // We'll handle page views manually for SPA
+    });
+  }
+
+  additionalTagIds
+    .filter((tagId) => tagId && tagId !== measurementId)
+    .forEach((tagId) => {
+      window.gtag('config', tagId);
+    });
 };
 
 /**
@@ -39,6 +49,7 @@ export const initGA = (measurementId: string): void => {
  */
 export const trackPageView = (path: string, title?: string): void => {
   if (typeof window === 'undefined' || !window.gtag) return;
+  if (!import.meta.env.VITE_GA_MEASUREMENT_ID) return;
 
   window.gtag('config', import.meta.env.VITE_GA_MEASUREMENT_ID, {
     page_path: path,
@@ -81,7 +92,6 @@ export const trackClick = (elementName: string, location?: string): void => {
     location,
   });
 };
-
 
 /**
  * Ecommerce tracking functions for GA4
