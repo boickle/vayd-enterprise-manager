@@ -105,6 +105,75 @@ function reminderContains(r: ReminderWithPrice, ...substrings: string[]): boolea
   return substrings.some((s) => text.includes(s.toLowerCase()));
 }
 
+/** Matched inventory/lab line first, else PIMS reminder description (aligns with public room loader reminder rows). */
+function getStaffReminderLineNameCode(rwp: ReminderWithPrice): { name: string; code: string } {
+  const mi = rwp.matchedItem;
+  if (mi?.name || mi?.code) {
+    return { name: (mi.name ?? '').trim(), code: (mi.code ?? '').trim() };
+  }
+  return { name: (rwp.reminder?.description ?? '').trim(), code: '' };
+}
+
+function staffReminderLooksLikeLymeDiagnostics(name?: string | null, code?: string | null): boolean {
+  const n = (name ?? '').toLowerCase();
+  const c = (code ?? '').trim().toUpperCase();
+  if (c === 'F4DX') return true;
+  if (/\b4dx\b|4-dx|heartworm\s*\/\s*tick|tick\s*\/\s*heartworm|snap\s*4/.test(n)) return true;
+  if ((n.includes('lyme') || c.includes('LYME')) && /\b(test|tests|screen|panel|titer|c6|antibody|diagnostic|profile)\b/.test(n))
+    return true;
+  return false;
+}
+
+/** Lyme/crLyme vaccine reminder (includes Lyme/Lepto combo text; excludes tick panels and Lyme tests). */
+function staffReminderIsLymeVaccineLine(name?: string | null, code?: string | null): boolean {
+  const n = (name ?? '').toLowerCase();
+  const c = (code ?? '').toLowerCase();
+  if (!n.includes('lyme') && !c.includes('lyme')) return false;
+  return !staffReminderLooksLikeLymeDiagnostics(name, code);
+}
+
+function staffReminderLooksLikeLeptoDiagnostics(name?: string | null, code?: string | null): boolean {
+  const n = (name ?? '').toLowerCase();
+  const c = (code ?? '').toLowerCase();
+  if (!n.includes('lepto') && !n.includes('leptospirosis') && !c.includes('lepto')) return false;
+  if (/\b(pcr|culture|titer|urine|serolog|test|tests|screen|panel|profile|diagnostic|antibody)\b/.test(n)) return true;
+  return false;
+}
+
+function staffReminderIsLeptoVaccineLine(name?: string | null, code?: string | null): boolean {
+  const n = (name ?? '').toLowerCase();
+  const c = (code ?? '').toLowerCase();
+  if (!n.includes('lepto') && !n.includes('leptospirosis') && !c.includes('lepto')) return false;
+  return !staffReminderLooksLikeLeptoDiagnostics(name, code);
+}
+
+/** Due date is on or before rolling now − 3 months (same bar as public room loader crLyme booster suppression). */
+function staffReminderDueAtLeastThreeMonthsPastDue(rwp: ReminderWithPrice): boolean {
+  const dueStr = rwp.reminder?.dueDate;
+  if (dueStr == null || dueStr === '') return false;
+  const due = DateTime.fromISO(String(dueStr));
+  if (!due.isValid) return false;
+  return due <= DateTime.now().minus({ months: 3 });
+}
+
+/** PIMS description plus matched/corrected line for Lyme/Lepto protocol flags (staff alerts). */
+function getStaffReminderProtocolFlagNameCode(
+  rwp: ReminderWithPrice,
+  correction: { selectedItem: SearchableItem | null } | undefined,
+  feedbackStatus: string | null | undefined
+): { name: string; code: string } {
+  if (feedbackStatus === 'incorrect' && correction?.selectedItem) {
+    const si = correction.selectedItem;
+    return { name: (si.name ?? '').trim(), code: (si.code ?? '').trim() };
+  }
+  const desc = (rwp.reminder?.description ?? '').trim();
+  const { name: miName, code: miCode } = getStaffReminderLineNameCode(rwp);
+  if (miName || miCode) {
+    return { name: [desc, miName].filter(Boolean).join(' '), code: miCode };
+  }
+  return { name: desc, code: miCode };
+}
+
 /**
  * Parse arrival window display string into ISO start/end using the appointment date.
  * Accepts "9:00 AM - 10:00 AM" (range) or "9:30 AM" (single time = same start and end).
@@ -3336,6 +3405,49 @@ export default function RoomLoaderPage() {
                                       <span style={isPastDue ? { color: '#dc3545', fontWeight: 700 } : undefined}>
                                         {formatDate(reminderWithPrice.reminder.dueDate)}
                                       </span>
+                                    </div>
+                                  );
+                                })()}
+                                {(() => {
+                                  const overdue3mo = staffReminderDueAtLeastThreeMonthsPastDue(reminderWithPrice);
+                                  if (!overdue3mo) return null;
+                                  const { name: flagName, code: flagCode } = getStaffReminderProtocolFlagNameCode(
+                                    reminderWithPrice,
+                                    correction,
+                                    feedbackStatus
+                                  );
+                                  const lines: string[] = [];
+                                  if (staffReminderIsLymeVaccineLine(flagName, flagCode)) {
+                                    lines.push('Greater than 3 months overdue - put crLyme initial');
+                                  }
+                                  if (staffReminderIsLeptoVaccineLine(flagName, flagCode)) {
+                                    lines.push('Greater than 3 months overdue - put Lepto initial');
+                                  }
+                                  if (lines.length === 0) return null;
+                                  return (
+                                    <div
+                                      style={{
+                                        marginTop: '4px',
+                                        marginBottom: '10px',
+                                        padding: '8px 10px',
+                                        backgroundColor: '#fff7ed',
+                                        border: '1px solid #fdba74',
+                                        borderRadius: '4px',
+                                      }}
+                                    >
+                                      {lines.map((text) => (
+                                        <div
+                                          key={text}
+                                          style={{
+                                            fontSize: '13px',
+                                            fontWeight: 600,
+                                            color: '#9a3412',
+                                            lineHeight: 1.35,
+                                          }}
+                                        >
+                                          {text}
+                                        </div>
+                                      ))}
                                     </div>
                                   );
                                 })()}
