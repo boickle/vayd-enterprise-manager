@@ -1,5 +1,5 @@
 // src/pages/RoomLoader.tsx
-import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
 import { DateTime } from 'luxon';
 import {
   searchRoomLoaders,
@@ -259,6 +259,19 @@ function hasEffectivePhone(phone: string | null | undefined): boolean {
   return typeof phone === 'string' && phone.trim().length > 0;
 }
 
+/** Default how far back the room-loader list reaches (appointmentFrom). */
+const ROOM_LOADER_LIST_LOOKBACK_DEFAULT_DAYS = 30;
+/** Always include appointments up to this many days after today (appointmentTo). */
+const ROOM_LOADER_LIST_FUTURE_DAYS = 14;
+
+function roomLoaderListAppointmentToIso(): string {
+  return DateTime.now().plus({ days: ROOM_LOADER_LIST_FUTURE_DAYS }).toISODate() ?? '';
+}
+
+function roomLoaderListDefaultLookbackIso(): string {
+  return DateTime.now().minus({ days: ROOM_LOADER_LIST_LOOKBACK_DEFAULT_DAYS }).toISODate() ?? '';
+}
+
 export default function RoomLoaderPage() {
   const [roomLoaders, setRoomLoaders] = useState<RoomLoader[]>([]);
   const [loading, setLoading] = useState(false);
@@ -269,6 +282,8 @@ export default function RoomLoaderPage() {
   const [filters, setFilters] = useState<RoomLoaderSearchParams>({
     activeOnly: true,
   });
+  /** Earliest appointment date to load (`appointmentFrom`); list always runs through today + {@link ROOM_LOADER_LIST_FUTURE_DAYS}. */
+  const [appointmentLookbackDate, setAppointmentLookbackDate] = useState(() => roomLoaderListDefaultLookbackIso());
   // Search filter for table (doctor or client name)
   const [tableSearch, setTableSearch] = useState<string>('');
   // Store answers to questions for each pet
@@ -316,10 +331,38 @@ export default function RoomLoaderPage() {
     [selectedRoomLoader]
   );
 
+  const loadRoomLoaders = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const appointmentTo = roomLoaderListAppointmentToIso();
+      let from = DateTime.fromISO(appointmentLookbackDate).startOf('day');
+      if (!from.isValid) {
+        from = DateTime.fromISO(roomLoaderListDefaultLookbackIso()).startOf('day');
+      }
+      const toDt = DateTime.fromISO(appointmentTo).startOf('day');
+      if (from > toDt) {
+        from = toDt;
+      }
+      const appointmentFrom = from.toISODate() ?? roomLoaderListDefaultLookbackIso();
+      const data = await searchRoomLoaders({
+        ...filters,
+        appointmentFrom,
+        appointmentTo,
+      });
+      setRoomLoaders(data);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load room loaders');
+      console.error('Error loading room loaders:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [filters, appointmentLookbackDate]);
+
   // Load room loaders
   useEffect(() => {
-    loadRoomLoaders();
-  }, [filters]);
+    void loadRoomLoaders();
+  }, [loadRoomLoaders]);
 
   // Load selected room loader details
   useEffect(() => {
@@ -401,20 +444,6 @@ export default function RoomLoaderPage() {
     };
   }, [searchQuery, selectedRoomLoader]);
 
-
-  async function loadRoomLoaders() {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await searchRoomLoaders(filters);
-      setRoomLoaders(data);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load room loaders');
-      console.error('Error loading room loaders:', err);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function loadRoomLoaderDetails(id: number) {
     try {
@@ -999,14 +1028,16 @@ export default function RoomLoaderPage() {
       });
     });
 
-    // Sort by appointment date (soonest first), then by room loader ID
+    // Sort by appointment date (newest first), then by room loader ID descending
     return rows.sort((a, b) => {
       if (a.apptDate && b.apptDate) {
-        return a.apptDate.localeCompare(b.apptDate);
+        const cmp = b.apptDate.localeCompare(a.apptDate);
+        if (cmp !== 0) return cmp;
+        return b.roomLoaderId - a.roomLoaderId;
       }
       if (a.apptDate) return -1;
       if (b.apptDate) return 1;
-      return a.roomLoaderId - b.roomLoaderId;
+      return b.roomLoaderId - a.roomLoaderId;
     });
   }, [roomLoaders]);
 
@@ -2581,6 +2612,25 @@ export default function RoomLoaderPage() {
             }}
           />
         </div>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <span style={{ whiteSpace: 'nowrap' }}>Appointments from</span>
+          <input
+            type="date"
+            value={appointmentLookbackDate}
+            onChange={(e) => setAppointmentLookbackDate(e.target.value)}
+            style={{
+              padding: '6px 10px',
+              fontSize: '14px',
+              border: '1px solid #ced4da',
+              borderRadius: '4px',
+            }}
+            aria-describedby="room-loader-date-range-hint"
+          />
+          <span id="room-loader-date-range-hint" style={{ fontSize: '13px', color: '#555', maxWidth: '380px' }}>
+            Includes appointments through {roomLoaderListAppointmentToIso()} ({ROOM_LOADER_LIST_FUTURE_DAYS} days after
+            today). Default start date is {ROOM_LOADER_LIST_LOOKBACK_DEFAULT_DAYS} days ago.
+          </span>
+        </label>
         <label>
           <input
             type="checkbox"
