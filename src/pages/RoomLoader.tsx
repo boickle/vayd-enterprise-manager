@@ -259,9 +259,9 @@ function hasEffectivePhone(phone: string | null | undefined): boolean {
   return typeof phone === 'string' && phone.trim().length > 0;
 }
 
-/** Default how far back the room-loader list reaches (appointmentFrom). */
+/** Suggested “from” when turning on optional appointment date filter (not sent with the default list request). */
 const ROOM_LOADER_LIST_LOOKBACK_DEFAULT_DAYS = 30;
-/** Always include appointments up to this many days after today (appointmentTo). */
+/** Suggested “to” when turning on optional filter (matches common backend window: today + 14 days). */
 const ROOM_LOADER_LIST_FUTURE_DAYS = 14;
 
 function roomLoaderListAppointmentToIso(): string {
@@ -282,8 +282,10 @@ export default function RoomLoaderPage() {
   const [filters, setFilters] = useState<RoomLoaderSearchParams>({
     activeOnly: true,
   });
-  /** Earliest appointment date to load (`appointmentFrom`); list always runs through today + {@link ROOM_LOADER_LIST_FUTURE_DAYS}. */
-  const [appointmentLookbackDate, setAppointmentLookbackDate] = useState(() => roomLoaderListDefaultLookbackIso());
+  /** When true, pass appointmentFrom / appointmentTo to the list API; when false, request matches pre-filter API (no date params). */
+  const [useAppointmentDateFilter, setUseAppointmentDateFilter] = useState(false);
+  const [filterAppointmentFrom, setFilterAppointmentFrom] = useState(() => roomLoaderListDefaultLookbackIso());
+  const [filterAppointmentTo, setFilterAppointmentTo] = useState(() => roomLoaderListAppointmentToIso());
   // Search filter for table (doctor or client name)
   const [tableSearch, setTableSearch] = useState<string>('');
   // Store answers to questions for each pet
@@ -335,21 +337,17 @@ export default function RoomLoaderPage() {
     setLoading(true);
     setError(null);
     try {
-      const appointmentTo = roomLoaderListAppointmentToIso();
-      let from = DateTime.fromISO(appointmentLookbackDate).startOf('day');
-      if (!from.isValid) {
-        from = DateTime.fromISO(roomLoaderListDefaultLookbackIso()).startOf('day');
+      const params: RoomLoaderSearchParams = { ...filters };
+      if (useAppointmentDateFilter) {
+        let from = DateTime.fromISO(filterAppointmentFrom).startOf('day');
+        let toDt = DateTime.fromISO(filterAppointmentTo).startOf('day');
+        if (!from.isValid) from = DateTime.fromISO(roomLoaderListDefaultLookbackIso()).startOf('day');
+        if (!toDt.isValid) toDt = DateTime.fromISO(roomLoaderListAppointmentToIso()).startOf('day');
+        if (from > toDt) from = toDt;
+        params.appointmentFrom = from.toISODate() ?? roomLoaderListDefaultLookbackIso();
+        params.appointmentTo = toDt.toISODate() ?? roomLoaderListAppointmentToIso();
       }
-      const toDt = DateTime.fromISO(appointmentTo).startOf('day');
-      if (from > toDt) {
-        from = toDt;
-      }
-      const appointmentFrom = from.toISODate() ?? roomLoaderListDefaultLookbackIso();
-      const data = await searchRoomLoaders({
-        ...filters,
-        appointmentFrom,
-        appointmentTo,
-      });
+      const data = await searchRoomLoaders(params);
       setRoomLoaders(data);
     } catch (err: any) {
       setError(err?.message || 'Failed to load room loaders');
@@ -357,7 +355,7 @@ export default function RoomLoaderPage() {
     } finally {
       setLoading(false);
     }
-  }, [filters, appointmentLookbackDate]);
+  }, [filters, useAppointmentDateFilter, filterAppointmentFrom, filterAppointmentTo]);
 
   // Load room loaders
   useEffect(() => {
@@ -1028,16 +1026,14 @@ export default function RoomLoaderPage() {
       });
     });
 
-    // Sort by appointment date (newest first), then by room loader ID descending
+    // Sort by appointment date (soonest first), then by room loader ID
     return rows.sort((a, b) => {
       if (a.apptDate && b.apptDate) {
-        const cmp = b.apptDate.localeCompare(a.apptDate);
-        if (cmp !== 0) return cmp;
-        return b.roomLoaderId - a.roomLoaderId;
+        return a.apptDate.localeCompare(b.apptDate);
       }
       if (a.apptDate) return -1;
       if (b.apptDate) return 1;
-      return b.roomLoaderId - a.roomLoaderId;
+      return a.roomLoaderId - b.roomLoaderId;
     });
   }, [roomLoaders]);
 
@@ -2612,25 +2608,57 @@ export default function RoomLoaderPage() {
             }}
           />
         </div>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <span style={{ whiteSpace: 'nowrap' }}>Appointments from</span>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
           <input
-            type="date"
-            value={appointmentLookbackDate}
-            onChange={(e) => setAppointmentLookbackDate(e.target.value)}
-            style={{
-              padding: '6px 10px',
-              fontSize: '14px',
-              border: '1px solid #ced4da',
-              borderRadius: '4px',
+            type="checkbox"
+            checked={useAppointmentDateFilter}
+            onChange={(e) => {
+              const on = e.target.checked;
+              setUseAppointmentDateFilter(on);
+              if (on) {
+                setFilterAppointmentFrom((prev) => (prev?.trim() ? prev : roomLoaderListDefaultLookbackIso()));
+                setFilterAppointmentTo((prev) => (prev?.trim() ? prev : roomLoaderListAppointmentToIso()));
+              }
             }}
-            aria-describedby="room-loader-date-range-hint"
           />
-          <span id="room-loader-date-range-hint" style={{ fontSize: '13px', color: '#555', maxWidth: '380px' }}>
-            Includes appointments through {roomLoaderListAppointmentToIso()} ({ROOM_LOADER_LIST_FUTURE_DAYS} days after
-            today). Default start date is {ROOM_LOADER_LIST_LOOKBACK_DEFAULT_DAYS} days ago.
-          </span>
+          <span style={{ fontSize: '14px', color: '#333' }}>Filter list by appointment dates</span>
         </label>
+        {useAppointmentDateFilter && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '14px', color: '#333' }}>
+              From
+              <input
+                type="date"
+                value={filterAppointmentFrom}
+                onChange={(e) => setFilterAppointmentFrom(e.target.value)}
+                style={{
+                  padding: '6px 10px',
+                  fontSize: '14px',
+                  border: '1px solid #ced4da',
+                  borderRadius: '4px',
+                }}
+              />
+            </label>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '14px', color: '#333' }}>
+              Through
+              <input
+                type="date"
+                value={filterAppointmentTo}
+                onChange={(e) => setFilterAppointmentTo(e.target.value)}
+                style={{
+                  padding: '6px 10px',
+                  fontSize: '14px',
+                  border: '1px solid #ced4da',
+                  borderRadius: '4px',
+                }}
+              />
+            </label>
+            <span id="room-loader-date-range-hint" style={{ fontSize: '13px', color: '#555', maxWidth: '360px' }}>
+              Defaults when enabled: {ROOM_LOADER_LIST_LOOKBACK_DEFAULT_DAYS} days ago → today + {ROOM_LOADER_LIST_FUTURE_DAYS}{' '}
+              days. Leave unchecked to load the full default list (same as before date filters existed).
+            </span>
+          </div>
+        )}
         <label>
           <input
             type="checkbox"
