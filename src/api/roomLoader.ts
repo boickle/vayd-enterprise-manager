@@ -321,6 +321,10 @@ export type RoomLoaderSearchParams = {
   activeOnly?: boolean;
   sentStatus?: SentStatus;
   dueStatus?: DueStatus;
+  /** Inclusive lower bound for appointment date filter (`YYYY-MM-DD`). */
+  appointmentFrom?: string;
+  /** Inclusive upper bound for appointment date filter (`YYYY-MM-DD`). */
+  appointmentTo?: string;
 };
 
 export type CreateRoomLoaderRequest = {
@@ -344,6 +348,12 @@ export async function searchRoomLoaders(params?: RoomLoaderSearchParams): Promis
   if (params?.activeOnly !== undefined) queryParams.append('activeOnly', String(params.activeOnly));
   if (params?.sentStatus) queryParams.append('sentStatus', params.sentStatus);
   if (params?.dueStatus) queryParams.append('dueStatus', params.dueStatus);
+  if (params?.appointmentFrom != null && String(params.appointmentFrom).trim() !== '') {
+    queryParams.append('appointmentFrom', String(params.appointmentFrom).trim());
+  }
+  if (params?.appointmentTo != null && String(params.appointmentTo).trim() !== '') {
+    queryParams.append('appointmentTo', String(params.appointmentTo).trim());
+  }
 
   const queryString = queryParams.toString();
   const url = `/room-loader${queryString ? `?${queryString}` : ''}`;
