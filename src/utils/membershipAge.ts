@@ -1,8 +1,8 @@
 /**
- * Golden plan eligibility matches MembershipSignup / client portal (senior wellness track).
- * Change this single constant if the clinical threshold changes.
+ * Golden vs Foundations (membership) and senior screen vs early detection (public room loader labs)
+ * both use this age for dogs and cats. Change here only so they stay aligned.
  */
-export const MEMBERSHIP_GOLDEN_MIN_AGE_YEARS = 9;
+export const MEMBERSHIP_GOLDEN_MIN_AGE_YEARS = 8;
 
 const MAX_REASONABLE_PARSED_AGE_YEARS = 35;
 
