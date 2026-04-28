@@ -1,5 +1,5 @@
 // src/pages/RoomLoader.tsx
-import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
 import { DateTime } from 'luxon';
 import {
   searchRoomLoaders,
@@ -259,6 +259,19 @@ function hasEffectivePhone(phone: string | null | undefined): boolean {
   return typeof phone === 'string' && phone.trim().length > 0;
 }
 
+/** Suggested “from” when turning on optional appointment date filter (not sent with the default list request). */
+const ROOM_LOADER_LIST_LOOKBACK_DEFAULT_DAYS = 30;
+/** Suggested “to” when turning on optional filter (matches common backend window: today + 14 days). */
+const ROOM_LOADER_LIST_FUTURE_DAYS = 14;
+
+function roomLoaderListAppointmentToIso(): string {
+  return DateTime.now().plus({ days: ROOM_LOADER_LIST_FUTURE_DAYS }).toISODate() ?? '';
+}
+
+function roomLoaderListDefaultLookbackIso(): string {
+  return DateTime.now().minus({ days: ROOM_LOADER_LIST_LOOKBACK_DEFAULT_DAYS }).toISODate() ?? '';
+}
+
 export default function RoomLoaderPage() {
   const [roomLoaders, setRoomLoaders] = useState<RoomLoader[]>([]);
   const [loading, setLoading] = useState(false);
@@ -266,9 +279,11 @@ export default function RoomLoaderPage() {
   const [selectedRoomLoader, setSelectedRoomLoader] = useState<RoomLoader | null>(null);
   const [selectedRoomLoaderId, setSelectedRoomLoaderId] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [filters, setFilters] = useState<RoomLoaderSearchParams>({
-    activeOnly: true,
-  });
+  const [filters, setFilters] = useState<RoomLoaderSearchParams>({});
+  /** When true, pass appointmentFrom / appointmentTo to the list API; when false, request matches pre-filter API (no date params). */
+  const [useAppointmentDateFilter, setUseAppointmentDateFilter] = useState(false);
+  const [filterAppointmentFrom, setFilterAppointmentFrom] = useState(() => roomLoaderListDefaultLookbackIso());
+  const [filterAppointmentTo, setFilterAppointmentTo] = useState(() => roomLoaderListAppointmentToIso());
   // Search filter for table (doctor or client name)
   const [tableSearch, setTableSearch] = useState<string>('');
   // Store answers to questions for each pet
@@ -316,10 +331,36 @@ export default function RoomLoaderPage() {
     [selectedRoomLoader]
   );
 
+  const loadRoomLoaders = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params: RoomLoaderSearchParams = { ...filters };
+      delete params.dueStatus;
+      delete params.activeOnly;
+      if (useAppointmentDateFilter) {
+        let from = DateTime.fromISO(filterAppointmentFrom).startOf('day');
+        let toDt = DateTime.fromISO(filterAppointmentTo).startOf('day');
+        if (!from.isValid) from = DateTime.fromISO(roomLoaderListDefaultLookbackIso()).startOf('day');
+        if (!toDt.isValid) toDt = DateTime.fromISO(roomLoaderListAppointmentToIso()).startOf('day');
+        if (from > toDt) from = toDt;
+        params.appointmentFrom = from.toISODate() ?? roomLoaderListDefaultLookbackIso();
+        params.appointmentTo = toDt.toISODate() ?? roomLoaderListAppointmentToIso();
+      }
+      const data = await searchRoomLoaders(params);
+      setRoomLoaders(data);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load room loaders');
+      console.error('Error loading room loaders:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [filters, useAppointmentDateFilter, filterAppointmentFrom, filterAppointmentTo]);
+
   // Load room loaders
   useEffect(() => {
-    loadRoomLoaders();
-  }, [filters]);
+    void loadRoomLoaders();
+  }, [loadRoomLoaders]);
 
   // Load selected room loader details
   useEffect(() => {
@@ -401,20 +442,6 @@ export default function RoomLoaderPage() {
     };
   }, [searchQuery, selectedRoomLoader]);
 
-
-  async function loadRoomLoaders() {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await searchRoomLoaders(filters);
-      setRoomLoaders(data);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load room loaders');
-      console.error('Error loading room loaders:', err);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function loadRoomLoaderDetails(id: number) {
     try {
@@ -895,16 +922,18 @@ export default function RoomLoaderPage() {
         }
       });
 
-      // Get appointment date (use earliest appointment date if multiple)
+      // Get appointment date (earliest start among appointments — chronological, not string sort)
       let apptDate: string | null = null;
       if (rl.appointments.length > 0) {
-        const dates = rl.appointments
-          .map((apt) => apt.appointmentStart)
-          .filter((d): d is string => !!d)
-          .sort();
-        if (dates.length > 0) {
-          apptDate = DateTime.fromISO(dates[0]).toFormat('yyyy-MM-dd');
+        let earliest: DateTime | null = null;
+        for (const apt of rl.appointments) {
+          const raw = apt.appointmentStart;
+          if (!raw || typeof raw !== 'string') continue;
+          const dt = DateTime.fromISO(raw);
+          if (!dt.isValid) continue;
+          if (earliest == null || dt < earliest) earliest = dt;
         }
+        if (earliest != null) apptDate = earliest.toFormat('yyyy-MM-dd');
       }
 
       // Get booked date from appointment externalCreated (use earliest if multiple)
@@ -999,13 +1028,15 @@ export default function RoomLoaderPage() {
       });
     });
 
-    // Sort by appointment date (soonest first), then by room loader ID
+    // Earliest appointment at top (e.g. 4/27 before 5/11) for day-to-day oversight; undated rows last
+    const apptDayMillis = (ymd: string | null): number => {
+      if (!ymd) return Number.POSITIVE_INFINITY;
+      const dt = DateTime.fromISO(ymd, { zone: 'local' });
+      return dt.isValid ? dt.startOf('day').toMillis() : Number.POSITIVE_INFINITY;
+    };
     return rows.sort((a, b) => {
-      if (a.apptDate && b.apptDate) {
-        return a.apptDate.localeCompare(b.apptDate);
-      }
-      if (a.apptDate) return -1;
-      if (b.apptDate) return 1;
+      const cmp = apptDayMillis(a.apptDate) - apptDayMillis(b.apptDate);
+      if (cmp !== 0) return cmp;
       return a.roomLoaderId - b.roomLoaderId;
     });
   }, [roomLoaders]);
@@ -2581,14 +2612,57 @@ export default function RoomLoaderPage() {
             }}
           />
         </div>
-        <label>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
           <input
             type="checkbox"
-            checked={filters.activeOnly ?? true}
-            onChange={(e) => setFilters({ ...filters, activeOnly: e.target.checked })}
+            checked={useAppointmentDateFilter}
+            onChange={(e) => {
+              const on = e.target.checked;
+              setUseAppointmentDateFilter(on);
+              if (on) {
+                setFilterAppointmentFrom((prev) => (prev?.trim() ? prev : roomLoaderListDefaultLookbackIso()));
+                setFilterAppointmentTo((prev) => (prev?.trim() ? prev : roomLoaderListAppointmentToIso()));
+              }
+            }}
           />
-          {' '}Active Only
+          <span style={{ fontSize: '14px', color: '#333' }}>Filter list by appointment dates</span>
         </label>
+        {useAppointmentDateFilter && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '14px', color: '#333' }}>
+              From
+              <input
+                type="date"
+                value={filterAppointmentFrom}
+                onChange={(e) => setFilterAppointmentFrom(e.target.value)}
+                style={{
+                  padding: '6px 10px',
+                  fontSize: '14px',
+                  border: '1px solid #ced4da',
+                  borderRadius: '4px',
+                }}
+              />
+            </label>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '14px', color: '#333' }}>
+              Through
+              <input
+                type="date"
+                value={filterAppointmentTo}
+                onChange={(e) => setFilterAppointmentTo(e.target.value)}
+                style={{
+                  padding: '6px 10px',
+                  fontSize: '14px',
+                  border: '1px solid #ced4da',
+                  borderRadius: '4px',
+                }}
+              />
+            </label>
+            <span id="room-loader-date-range-hint" style={{ fontSize: '13px', color: '#555', maxWidth: '360px' }}>
+              Defaults when enabled: {ROOM_LOADER_LIST_LOOKBACK_DEFAULT_DAYS} days ago → today + {ROOM_LOADER_LIST_FUTURE_DAYS}{' '}
+              days. Leave unchecked to load the full default list (same as before date filters existed).
+            </span>
+          </div>
+        )}
         <label>
           Sent Status:
           <select
@@ -2606,27 +2680,6 @@ export default function RoomLoaderPage() {
             <option value="sent_1">Sent 1</option>
             <option value="sent_2">Sent 2</option>
             <option value="completed">Completed</option>
-          </select>
-        </label>
-        <label>
-          Due Status:
-          <select
-            value={filters.dueStatus || ''}
-            onChange={(e) =>
-              setFilters({
-                ...filters,
-                dueStatus: e.target.value ? (e.target.value as DueStatus) : undefined,
-              })
-            }
-            style={{ marginLeft: '5px' }}
-          >
-            <option value="">All</option>
-            <option value="due">Due</option>
-            <option value="past_due">Past Due</option>
-            <option value="upcoming">Upcoming</option>
-            <option value="10_days_before">10 Days Before</option>
-            <option value="6_days_before">6 Days Before</option>
-            <option value="10_days_past_due">10 Days Past Due</option>
           </select>
         </label>
         <button onClick={loadRoomLoaders} disabled={loading}>

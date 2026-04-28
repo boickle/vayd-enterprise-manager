@@ -901,6 +901,57 @@ function publicFormCarePlanRecKey(petIdx: number, row: any, displayIndexFallback
   return `pet${petIdx}_rec_${publicCarePlanRecKeySuffixFromRow(row, displayIndexFallback)}`;
 }
 
+/** FormData key for client-adjusted quantity on summary (inventory medications from check-item-pricing). */
+function publicFormSummaryMedicationQtyKey(petIdx: number, row: any, displayIndexFallback: number): string {
+  return `pet${petIdx}_rec_medqty_${publicCarePlanRecKeySuffixFromRow(row, displayIndexFallback)}`;
+}
+
+/** Lowest quantity the client may choose: 1 if staff suggested more than one (they may reduce); otherwise staff amount. */
+function publicMedicationQuantityClientMin(staffQty: number): number {
+  const s = Math.max(1, Math.floor(staffQty));
+  return s > 1 ? 1 : s;
+}
+
+/** True when public check-item-pricing returned an inventory catalog item flagged as medication. */
+function checkItemPricingResponseIsMedicationInventory(pricing: CheckItemPricingResponse | null): boolean {
+  if (!pricing?.item) return false;
+  const itemType = String(pricing.item.itemType ?? '').toLowerCase();
+  if (itemType !== 'inventory') return false;
+  return (pricing.item.inventoryItem as { isMedication?: boolean } | undefined)?.isMedication === true;
+}
+
+/** Inventory care-plan row: allow client qty edit on summary when pricing response marks the catalog item as medication. */
+function publicFormInventoryRowAllowsClientQuantityFromPricing(
+  patientId: number,
+  row: any,
+  getClientPricing: (pid: number, si: SearchableItem | null) => CheckItemPricingResponse | null
+): boolean {
+  const t = (row?.type ?? row?.itemType ?? '').toString().toLowerCase();
+  if (t !== 'inventory') return false;
+  const si = row?.searchableItem as SearchableItem | null | undefined;
+  if (!si) return false;
+  return checkItemPricingResponseIsMedicationInventory(getClientPricing(patientId, si));
+}
+
+/** Effective line quantity for care-plan / summary / snapshot (client may adjust medication qty on summary within min/max). */
+function effectivePublicMedicationInventoryQuantity(
+  formData: Record<string, unknown>,
+  petIdx: number,
+  item: any,
+  displayIndexFallback: number,
+  patientId: number,
+  getClientPricing: (pid: number, si: SearchableItem | null) => CheckItemPricingResponse | null
+): number {
+  const staffQty = Math.max(1, Math.floor(Number(item.quantity) || 1));
+  if (!publicFormInventoryRowAllowsClientQuantityFromPricing(patientId, item, getClientPricing)) return staffQty;
+  const key = publicFormSummaryMedicationQtyKey(petIdx, item, displayIndexFallback);
+  if (!Object.prototype.hasOwnProperty.call(formData, key)) return staffQty;
+  const v = Math.floor(Number(formData[key]));
+  if (!Number.isFinite(v)) return staffQty;
+  const minClient = publicMedicationQuantityClientMin(staffQty);
+  return Math.max(minClient, Math.min(999, v));
+}
+
 /** Reads checkbox state; prefers stable key, then legacy index key for in-session migration. */
 function publicFormCarePlanRecRowChecked(
   formData: Record<string, unknown>,
@@ -926,6 +977,7 @@ function rowToSearchableItem(row: {
   type?: string;
   code?: string;
   categoryName?: string | null;
+  isMedication?: boolean;
 }): SearchableItem | null {
   const id = row.id;
   if (id == null) return null;
@@ -941,7 +993,11 @@ function rowToSearchableItem(row: {
   if (itemType === 'lab') return { ...base, lab: entry } as SearchableItem;
   if (itemType === 'inventory') {
     const cn = row.categoryName != null && String(row.categoryName).trim() !== '' ? String(row.categoryName).trim() : null;
-    const inventoryEntry = cn ? { ...entry, categoryName: cn } : entry;
+    const inventoryEntry = {
+      ...entry,
+      ...(cn ? { categoryName: cn } : {}),
+      ...(row.isMedication === true ? { isMedication: true } : {}),
+    };
     return { ...base, inventoryItem: inventoryEntry } as SearchableItem;
   }
   return { ...base, procedure: entry } as SearchableItem;
@@ -1038,6 +1094,7 @@ function buildPublicPetLineItemsWithoutSharps(patient: any): any[] {
         };
         if (reminder.wellnessPlanPricing) row.wellnessPlanPricing = reminder.wellnessPlanPricing;
         if (reminder.discountPricing) row.discountPricing = reminder.discountPricing;
+        const invMed = reminder.item?.inventoryItem?.isMedication === true;
         row.searchableItem = rowToSearchableItem({
           id: row.id,
           name: row.name,
@@ -1045,6 +1102,7 @@ function buildPublicPetLineItemsWithoutSharps(patient: any): any[] {
           itemType: row.itemType,
           code: row.code,
           categoryName,
+          isMedication: invMed ? true : undefined,
         });
         const rid = reminder.reminderId;
         if (rid != null && String(rid) !== '') row._publicRecKeySuffix = `r${rid}`;
@@ -1083,6 +1141,7 @@ function buildPublicPetLineItemsWithoutSharps(patient: any): any[] {
       };
       if (item.wellnessPlanPricing) row.wellnessPlanPricing = item.wellnessPlanPricing;
       if (item.discountPricing) row.discountPricing = item.discountPricing;
+      const addedInvMed = item.inventoryItem?.isMedication === true;
       row.searchableItem = rowToSearchableItem({
         id: row.id,
         name: row.name,
@@ -1090,6 +1149,7 @@ function buildPublicPetLineItemsWithoutSharps(patient: any): any[] {
         itemType: row.itemType,
         code: row.code,
         categoryName,
+        isMedication: addedInvMed ? true : undefined,
       });
       const aid = item.id;
       if (aid != null && String(aid) !== '') row._publicRecKeySuffix = `a${aid}`;
@@ -4716,7 +4776,14 @@ export default function PublicRoomLoaderForm() {
       displayItems.forEach((item: any, idx: number) => {
         const isChecked = checked[idx];
         const unitPrice = item.searchableItem != null ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) || 0);
-        const qty = Number(item.quantity) || 1;
+        const qty = effectivePublicMedicationInventoryQuantity(
+          formData,
+          petIdx,
+          item,
+          idx,
+          Number(patientId),
+          getClientPricing
+        );
         if (isChecked) petSubtotal += unitPrice * qty;
       });
       tripFeeItems.forEach((item: any) => {
@@ -4980,7 +5047,14 @@ export default function PublicRoomLoaderForm() {
             item.searchableItem != null
               ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0)
               : (Number(item.price) ?? 0);
-          const qty = Number(item.quantity) || 1;
+          const qty = effectivePublicMedicationInventoryQuantity(
+            formData,
+            petIdx,
+            item,
+            idx,
+            Number(patientId),
+            getClientPricing
+          );
           /** Bundled visit rows show $0 when the client declines the panel on the summary; membership compare/simulate still need a positive unit price. */
           if (unitPrice <= 0) {
             const nm = String(item?.name ?? '').toLowerCase();
@@ -5049,7 +5123,14 @@ export default function PublicRoomLoaderForm() {
         }
         if (isVisitListBundledEarlyPanelDuplicate) return;
         const unitPrice = item.searchableItem != null ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) ?? 0);
-        const qty = Number(item.quantity) || 1;
+        const qty = effectivePublicMedicationInventoryQuantity(
+          formData,
+          petIdx,
+          item,
+          idx,
+          Number(patientId),
+          getClientPricing
+        );
         const typeAndId = getItemTypeAndId(item);
         summaryLineItems.push({
           name: item.name,
@@ -5620,7 +5701,14 @@ export default function PublicRoomLoaderForm() {
             : publicFormCarePlanRecRowChecked(formData, petIdx, item, idx);
         const pricing = item.wellnessPlanPricing != null ? { wellnessPlanPricing: item.wellnessPlanPricing } : (item.searchableItem ? getClientPricing(patientId, item.searchableItem) : null);
         const price = item.searchableItem != null ? (getClientAdjustedPrice(patientId, item.searchableItem) ?? Number(item.price) ?? 0) : (Number(item.price) ?? 0);
-        const qty = Number(item.quantity) || 1;
+        const qty = effectivePublicMedicationInventoryQuantity(
+          formData,
+          petIdx,
+          item,
+          idx,
+          Number(patientId),
+          getClientPricing
+        );
         const isReplaced =
           isFecalReplaced || is4dxReplaced || isUrinalysisReplaced || isSeniorVisitBundledSupersededByEarlyPdf;
         const lineTotal = isChecked && !isReplaced ? price * qty : 0;
@@ -8512,6 +8600,9 @@ export default function PublicRoomLoaderForm() {
               if (earlyDetectionYes || earlyDetectionCanineYes) fourDxReplacedBy.push('Early Detection Panel');
               if (seniorCanineExtended || seniorFelineTwoPanelExtended) fourDxReplacedBy.push('Extended Comprehensive Panel');
               const cpPid = currentCarePlanPatient?.patientId ?? carePlanPetIndex;
+              const carePlanPatientIdForPricing = Number(
+                currentCarePlanPatient?.patientId ?? currentCarePlanPatient?.patient?.id ?? carePlanPetIndex
+              );
               const staffFil910CarePlan = patientVisitHasItemCode(currentCarePlanPatient, 'FIL910');
               const urinalysisReplacedBy = buildUrinalysisReplacedByLabels(
                 cpPid,
@@ -8631,7 +8722,28 @@ export default function PublicRoomLoaderForm() {
                       >
                         {item.name}
                       </span>
-                      {item.quantity > 1 && <span style={{ fontSize: '14px', color: '#666', marginLeft: '8px' }}>(Qty: {item.quantity})</span>}
+                      {(() => {
+                        const qCare = effectivePublicMedicationInventoryQuantity(
+                          formData,
+                          carePlanPetIndex,
+                          item,
+                          originalIdx,
+                          carePlanPatientIdForPricing,
+                          getClientPricing
+                        );
+                        const showQtyLabel =
+                          qCare > 1 ||
+                          (publicFormInventoryRowAllowsClientQuantityFromPricing(
+                            carePlanPatientIdForPricing,
+                            item,
+                            getClientPricing
+                          ) &&
+                            isChecked &&
+                            !isReplacedForItem);
+                        return showQtyLabel ? (
+                          <span style={{ fontSize: '14px', color: '#666', marginLeft: '8px' }}>(Qty: {qCare})</span>
+                        ) : null;
+                      })()}
                       {isReplacedForItem && <span style={{ fontSize: '13px', color: '#666', marginLeft: '8px', fontStyle: 'italic' }}>(replaced by {replacedByLabel})</span>}
                     </div>
                     {uncheckRecInfo && !panelDeclineBlurb && (
@@ -10632,7 +10744,22 @@ export default function PublicRoomLoaderForm() {
                   getClientAdjustedPrice,
                   foundationsNotGoldenSummary
                 );
-                const qty = Number(item.quantity) || 1;
+                const summaryPatientIdN = Number(patientId);
+                const qty = effectivePublicMedicationInventoryQuantity(
+                  formData,
+                  petIdx,
+                  item,
+                  idx,
+                  summaryPatientIdN,
+                  getClientPricing
+                );
+                const staffQtyBaseline = Math.max(1, Math.floor(Number(item.quantity) || 1));
+                const medQtyInputMin = publicMedicationQuantityClientMin(staffQtyBaseline);
+                const showMedQtyControl =
+                  publicFormInventoryRowAllowsClientQuantityFromPricing(summaryPatientIdN, item, getClientPricing) &&
+                  isChecked &&
+                  !isReplaced &&
+                  !readOnly;
                 const lineTotal = isChecked && !isReplaced ? unitPrice * qty : 0;
                 petSubtotal += lineTotal;
                 const replacedByLabel = isFecalReplaced
@@ -10780,7 +10907,13 @@ export default function PublicRoomLoaderForm() {
                           }}
                         >
                           {item.name}
-                          {qty > 1 && <span style={{ color: '#666', marginLeft: '6px', fontSize: '14px' }}>(Qty: {qty})</span>}
+                          {(qty > 1 ||
+                            (publicFormInventoryRowAllowsClientQuantityFromPricing(summaryPatientIdN, item, getClientPricing) &&
+                              isChecked &&
+                              !isReplaced &&
+                              !showMedQtyControl)) && (
+                            <span style={{ color: '#666', marginLeft: '6px', fontSize: '14px' }}>(Qty: {qty})</span>
+                          )}
                           {isReplaced && <span style={{ fontSize: '13px', color: '#666', marginLeft: '8px', fontStyle: 'italic' }}>(replaced by {replacedByLabel})</span>}
                         </span>
                       </label>
@@ -10794,6 +10927,38 @@ export default function PublicRoomLoaderForm() {
                         {formatPrice(isChecked && !isReplaced ? lineTotal : 0)}
                       </span>
                     </div>
+                    {showMedQtyControl && (
+                      <div style={{ marginLeft: '30px', marginTop: '4px', marginBottom: '2px', fontSize: '14px', color: '#555' }}>
+                        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                          <span>
+                            {staffQtyBaseline > 1
+                              ? `Quantity (your team suggested ${staffQtyBaseline}; you may lower to ${medQtyInputMin} or increase up to 999)`
+                              : `Quantity (minimum ${medQtyInputMin} from your visit plan; increase if you need more)`}
+                          </span>
+                          <input
+                            type="number"
+                            min={medQtyInputMin}
+                            max={999}
+                            step={1}
+                            value={qty}
+                            onChange={(e) => {
+                              const raw = parseInt(e.target.value, 10);
+                              const v = Number.isFinite(raw)
+                                ? Math.max(medQtyInputMin, Math.min(999, raw))
+                                : staffQtyBaseline;
+                              handleInputChange(publicFormSummaryMedicationQtyKey(petIdx, item, idx), v);
+                            }}
+                            style={{
+                              width: '72px',
+                              padding: '6px 10px',
+                              fontSize: '15px',
+                              borderRadius: '6px',
+                              border: '1px solid #ccc',
+                            }}
+                          />
+                        </label>
+                      </div>
+                    )}
                     {isChecked && !isReplaced && hasPricingNote && <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>{displayNote}</div>}
                     {uncheckRecInfo && !panelDeclineBlurb && (
                       <VaccineUncheckRecommendationInfo title={uncheckRecInfo.title} body={uncheckRecInfo.body} />
