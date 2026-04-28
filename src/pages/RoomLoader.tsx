@@ -279,9 +279,7 @@ export default function RoomLoaderPage() {
   const [selectedRoomLoader, setSelectedRoomLoader] = useState<RoomLoader | null>(null);
   const [selectedRoomLoaderId, setSelectedRoomLoaderId] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [filters, setFilters] = useState<RoomLoaderSearchParams>({
-    activeOnly: true,
-  });
+  const [filters, setFilters] = useState<RoomLoaderSearchParams>({});
   /** When true, pass appointmentFrom / appointmentTo to the list API; when false, request matches pre-filter API (no date params). */
   const [useAppointmentDateFilter, setUseAppointmentDateFilter] = useState(false);
   const [filterAppointmentFrom, setFilterAppointmentFrom] = useState(() => roomLoaderListDefaultLookbackIso());
@@ -338,6 +336,8 @@ export default function RoomLoaderPage() {
     setError(null);
     try {
       const params: RoomLoaderSearchParams = { ...filters };
+      delete params.dueStatus;
+      delete params.activeOnly;
       if (useAppointmentDateFilter) {
         let from = DateTime.fromISO(filterAppointmentFrom).startOf('day');
         let toDt = DateTime.fromISO(filterAppointmentTo).startOf('day');
@@ -922,16 +922,18 @@ export default function RoomLoaderPage() {
         }
       });
 
-      // Get appointment date (use earliest appointment date if multiple)
+      // Get appointment date (earliest start among appointments — chronological, not string sort)
       let apptDate: string | null = null;
       if (rl.appointments.length > 0) {
-        const dates = rl.appointments
-          .map((apt) => apt.appointmentStart)
-          .filter((d): d is string => !!d)
-          .sort();
-        if (dates.length > 0) {
-          apptDate = DateTime.fromISO(dates[0]).toFormat('yyyy-MM-dd');
+        let earliest: DateTime | null = null;
+        for (const apt of rl.appointments) {
+          const raw = apt.appointmentStart;
+          if (!raw || typeof raw !== 'string') continue;
+          const dt = DateTime.fromISO(raw);
+          if (!dt.isValid) continue;
+          if (earliest == null || dt < earliest) earliest = dt;
         }
+        if (earliest != null) apptDate = earliest.toFormat('yyyy-MM-dd');
       }
 
       // Get booked date from appointment externalCreated (use earliest if multiple)
@@ -1026,13 +1028,15 @@ export default function RoomLoaderPage() {
       });
     });
 
-    // Sort by appointment date (soonest first), then by room loader ID
+    // Earliest appointment at top (e.g. 4/27 before 5/11) for day-to-day oversight; undated rows last
+    const apptDayMillis = (ymd: string | null): number => {
+      if (!ymd) return Number.POSITIVE_INFINITY;
+      const dt = DateTime.fromISO(ymd, { zone: 'local' });
+      return dt.isValid ? dt.startOf('day').toMillis() : Number.POSITIVE_INFINITY;
+    };
     return rows.sort((a, b) => {
-      if (a.apptDate && b.apptDate) {
-        return a.apptDate.localeCompare(b.apptDate);
-      }
-      if (a.apptDate) return -1;
-      if (b.apptDate) return 1;
+      const cmp = apptDayMillis(a.apptDate) - apptDayMillis(b.apptDate);
+      if (cmp !== 0) return cmp;
       return a.roomLoaderId - b.roomLoaderId;
     });
   }, [roomLoaders]);
@@ -2660,14 +2664,6 @@ export default function RoomLoaderPage() {
           </div>
         )}
         <label>
-          <input
-            type="checkbox"
-            checked={filters.activeOnly ?? true}
-            onChange={(e) => setFilters({ ...filters, activeOnly: e.target.checked })}
-          />
-          {' '}Active Only
-        </label>
-        <label>
           Sent Status:
           <select
             value={filters.sentStatus || ''}
@@ -2684,27 +2680,6 @@ export default function RoomLoaderPage() {
             <option value="sent_1">Sent 1</option>
             <option value="sent_2">Sent 2</option>
             <option value="completed">Completed</option>
-          </select>
-        </label>
-        <label>
-          Due Status:
-          <select
-            value={filters.dueStatus || ''}
-            onChange={(e) =>
-              setFilters({
-                ...filters,
-                dueStatus: e.target.value ? (e.target.value as DueStatus) : undefined,
-              })
-            }
-            style={{ marginLeft: '5px' }}
-          >
-            <option value="">All</option>
-            <option value="due">Due</option>
-            <option value="past_due">Past Due</option>
-            <option value="upcoming">Upcoming</option>
-            <option value="10_days_before">10 Days Before</option>
-            <option value="6_days_before">6 Days Before</option>
-            <option value="10_days_past_due">10 Days Past Due</option>
           </select>
         </label>
         <button onClick={loadRoomLoaders} disabled={loading}>
