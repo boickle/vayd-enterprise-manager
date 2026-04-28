@@ -260,6 +260,7 @@ function hadInLast8Months(history: TreatmentWithItems[], ...nameSubstrings: stri
   const cutoff = DateTime.now().minus({ months: 8 });
   for (const tx of history ?? []) {
     for (const item of tx.treatmentItems ?? []) {
+      if (item.isDeclined) continue;
       const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name ?? '';
       if (!itemNameMatch(name, ...nameSubstrings)) continue;
       const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
