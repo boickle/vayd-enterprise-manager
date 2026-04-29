@@ -259,6 +259,97 @@ function hasEffectivePhone(phone: string | null | undefined): boolean {
   return typeof phone === 'string' && phone.trim().length > 0;
 }
 
+type SameDayClientRoomLoaderLink = {
+  siblingRoomLoaderIds: number[];
+  /** This loader is still in progress and another same-day loader for the client is already client-completed. */
+  tripFeeRequirementWaived: boolean;
+  completedSiblingIds: number[];
+};
+
+function getRoomLoaderPrimaryClientId(rl: RoomLoader | null | undefined): number | null {
+  if (!rl) return null;
+  const fromAppt = rl.appointments?.[0]?.client;
+  if (fromAppt?.id != null) {
+    const n = Number(fromAppt.id);
+    return Number.isFinite(n) ? n : null;
+  }
+  const c0 = rl.patients?.[0]?.clients?.[0];
+  if (c0?.id != null) {
+    const n = Number(c0.id);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function getRoomLoaderEarliestAppointmentYmd(rl: RoomLoader | null | undefined): string | null {
+  if (!rl?.appointments?.length) return null;
+  let earliest: DateTime | null = null;
+  for (const apt of rl.appointments) {
+    const raw = apt.appointmentStart;
+    if (!raw || typeof raw !== 'string') continue;
+    const dt = DateTime.fromISO(raw);
+    if (!dt.isValid) continue;
+    if (earliest == null || dt < earliest) earliest = dt;
+  }
+  return earliest?.toISODate() ?? null;
+}
+
+/**
+ * Same practice, same client, same appointment calendar day, excluding self.
+ * Trip fee requirement is waived for the follow-up loader when another sibling is already client-completed.
+ */
+function computeSameDayClientCompletedSiblingLink(
+  target: RoomLoader | null | undefined,
+  allRoomLoaders: RoomLoader[]
+): SameDayClientRoomLoaderLink | null {
+  if (!target || !Array.isArray(allRoomLoaders) || allRoomLoaders.length < 2) return null;
+
+  const priorRaw = target.linkedPriorRoomLoaderId ?? target.linkedRoomLoaderId;
+  if (priorRaw != null && Number.isFinite(Number(priorRaw))) {
+    const linkedId = Number(priorRaw);
+    const other = allRoomLoaders.find((r) => r.id === linkedId);
+    if (other && other.id !== target.id) {
+      const completedSiblingIds = other.sentStatus === 'completed' ? [other.id] : [];
+      const tripFeeRequirementWaived = target.sentStatus !== 'completed' && completedSiblingIds.length > 0;
+      return {
+        siblingRoomLoaderIds: [other.id],
+        tripFeeRequirementWaived,
+        completedSiblingIds,
+      };
+    }
+  }
+
+  const clientId = getRoomLoaderPrimaryClientId(target);
+  const ymd = getRoomLoaderEarliestAppointmentYmd(target);
+  // Room loaders on this page are for one practice; API may omit `practice` on each row.
+  if (clientId == null || ymd == null) return null;
+
+  const siblings = allRoomLoaders.filter(
+    (rl) =>
+      rl.id !== target.id &&
+      getRoomLoaderPrimaryClientId(rl) === clientId &&
+      getRoomLoaderEarliestAppointmentYmd(rl) === ymd
+  );
+  if (siblings.length === 0) return null;
+
+  const completedSiblings = siblings.filter((s) => s.sentStatus === 'completed');
+  const tripFeeRequirementWaived = target.sentStatus !== 'completed' && completedSiblings.length > 0;
+
+  return {
+    siblingRoomLoaderIds: siblings.map((s) => s.id),
+    tripFeeRequirementWaived,
+    completedSiblingIds: completedSiblings.map((s) => s.id),
+  };
+}
+
+function sameDayLinkedTableNote(link: SameDayClientRoomLoaderLink | null): string | null {
+  if (!link || link.siblingRoomLoaderIds.length === 0) return null;
+  if (link.tripFeeRequirementWaived) {
+    return 'Linked (earlier submission today) — trip fee not required; avoid a second trip fee.';
+  }
+  return 'Same-day linked — see related room loader for this client.';
+}
+
 /** Suggested “from” when turning on optional appointment date filter (not sent with the default list request). */
 const ROOM_LOADER_LIST_LOOKBACK_DEFAULT_DAYS = 30;
 /** Suggested “to” when turning on optional filter (matches common backend window: today + 14 days). */
@@ -878,6 +969,7 @@ export default function RoomLoaderPage() {
       clientHasNoEmail: boolean;
       /** Token for public PDF URL when completed */
       token?: string | null;
+      sameDayLinkedNote: string | null;
     }> = [];
 
     roomLoaders.forEach((rl) => {
@@ -1011,6 +1103,9 @@ export default function RoomLoaderPage() {
         });
       });
 
+      const sameDayLink = computeSameDayClientCompletedSiblingLink(rl, roomLoaders);
+      const sameDayLinkedNote = sameDayLinkedTableNote(sameDayLink);
+
       rows.push({
         roomLoaderId: rl.id,
         apptDate,
@@ -1025,6 +1120,7 @@ export default function RoomLoaderPage() {
         roomLoader: rl,
         clientHasNoEmail,
         token: rl.token ?? null,
+        sameDayLinkedNote,
       });
     });
 
@@ -2034,7 +2130,9 @@ export default function RoomLoaderPage() {
       );
       return fromReminders || fromAddedItems;
     });
-    if (!hasTripFeeInAnyPet) {
+    const sameDayLink = computeSameDayClientCompletedSiblingLink(selectedRoomLoader, roomLoaders);
+    const waiveTripFeeRequirement = sameDayLink?.tripFeeRequirementWaived === true;
+    if (!hasTripFeeInAnyPet && !waiveTripFeeRequirement) {
       setTripFeeRequiredError(true);
       return false;
     }
@@ -2078,6 +2176,27 @@ export default function RoomLoaderPage() {
     return true;
   }
 
+  /** When this loader is a same-day follow-up after another pet’s form was completed, flag a Trip Fee line as likely duplicate billing. */
+  function buildLinkedFollowUpTripFeeWarning(): string | null {
+    if (!selectedRoomLoader) return null;
+    const link = computeSameDayClientCompletedSiblingLink(selectedRoomLoader, roomLoaders);
+    if (!link?.tripFeeRequirementWaived) return null;
+    const hasTripFeeLine = petsWithAppointments.some((item) => {
+      const activeReminders = (item.reminders || []).filter(
+        (r) => r.reminder?.id && !removedReminders.has(r.reminder.id)
+      );
+      const fromReminders = activeReminders.some((r) => reminderContains(r, 'Trip Fee'));
+      const fromAdded = getAddedItemsForPatient(item.patient.id).some((added) => itemContains(added, 'Trip Fee'));
+      return fromReminders || fromAdded;
+    });
+    if (!hasTripFeeLine) return null;
+    const ids =
+      link.completedSiblingIds.length > 0
+        ? link.completedSiblingIds.join(', ')
+        : link.siblingRoomLoaderIds.join(', ');
+    return `Same-day linked follow-up (related loader ID${link.siblingRoomLoaderIds.length !== 1 ? 's' : ''}: ${ids}): a Trip Fee is on this loader. The client usually already has one trip fee for this visit—remove it here unless you mean to charge twice.`;
+  }
+
   function buildSendWarnings(): string[] {
     const warnings: string[] = [];
     petsWithAppointments.forEach((item) => {
@@ -2102,6 +2221,8 @@ export default function RoomLoaderPage() {
         warnings.push(`${petName}: It doesn't look like a visit type line item was selected (e.g. annual wellness visit, medical visit, additional wellness visit, etc.). Please be sure that you put one in before submitting.`);
       }
     });
+    const linkedTrip = buildLinkedFollowUpTripFeeWarning();
+    if (linkedTrip) warnings.push(linkedTrip);
     return warnings;
   }
 
@@ -2205,7 +2326,9 @@ export default function RoomLoaderPage() {
       const fromAddedItems = getAddedItemsForPatient(item.patient.id).some((added) => itemContains(added, 'Trip Fee'));
       return fromReminders || fromAddedItems;
     });
-    if (!hasTripFeeInAnyPet) {
+    const sameDayLinkUpdate = computeSameDayClientCompletedSiblingLink(selectedRoomLoader, roomLoaders);
+    const waiveTripFeeRequirementUpdate = sameDayLinkUpdate?.tripFeeRequirementWaived === true;
+    if (!hasTripFeeInAnyPet && !waiveTripFeeRequirementUpdate) {
       setTripFeeRequiredError(true);
       return;
     }
@@ -2246,6 +2369,7 @@ export default function RoomLoaderPage() {
       return;
     }
     setDuplicateItemsError(null);
+    setSendWarningReasons(buildSendWarnings());
     setConfirmAction('update');
   }
 
@@ -2292,6 +2416,8 @@ export default function RoomLoaderPage() {
 
   function handleSaveForLater() {
     if (!selectedRoomLoader) return;
+    const tripLinked = buildLinkedFollowUpTripFeeWarning();
+    setSendWarningReasons(tripLinked ? [tripLinked] : []);
     setConfirmAction('save');
   }
 
@@ -2299,6 +2425,7 @@ export default function RoomLoaderPage() {
     if (!selectedRoomLoader) return;
     setSavingForm(true);
     setConfirmAction(null);
+    setSendWarningReasons([]);
     try {
       const remindersToSave: ReminderWithPrice[] = [];
       if (selectedRoomLoader.reminders) {
@@ -2584,6 +2711,23 @@ export default function RoomLoaderPage() {
     return !canSendFollowUpEmail;
   }, [selectedRoomLoader, canSendFollowUpEmail, canSendFollowUpSms]);
 
+  const selectedSameDayClientLink = useMemo(
+    () => computeSameDayClientCompletedSiblingLink(selectedRoomLoader, roomLoaders),
+    [selectedRoomLoader, roomLoaders]
+  );
+
+  const selectedLinkedLoaderHasTripFeeLine = useMemo(() => {
+    if (!selectedSameDayClientLink?.tripFeeRequirementWaived || !petsWithAppointments.length) return false;
+    return petsWithAppointments.some((item) => {
+      const activeReminders = (item.reminders || []).filter(
+        (r) => r.reminder?.id && !removedReminders.has(r.reminder.id)
+      );
+      const fromReminders = activeReminders.some((r) => reminderContains(r, 'Trip Fee'));
+      const fromAdded = getAddedItemsForPatient(item.patient.id).some((added) => itemContains(added, 'Trip Fee'));
+      return fromReminders || fromAdded;
+    });
+  }, [selectedSameDayClientLink, petsWithAppointments, removedReminders, addedItems]);
+
   return (
     <div className="room-loader-page">
       <style>{`
@@ -2834,6 +2978,11 @@ export default function RoomLoaderPage() {
                             {downloadingPdfRoomLoaderId === row.roomLoaderId ? 'Downloading…' : 'Download PDF'}
                           </button>
                         )}
+                        {row.sameDayLinkedNote ? (
+                          <span style={{ fontSize: '11px', color: '#664d03', lineHeight: 1.35, maxWidth: '220px' }}>
+                            {row.sameDayLinkedNote}
+                          </span>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -2913,6 +3062,23 @@ export default function RoomLoaderPage() {
                     ))}
                   </span>
                 </div>
+                {row.sameDayLinkedNote ? (
+                  <div
+                    style={{
+                      marginTop: '8px',
+                      padding: '8px 10px',
+                      fontSize: '12px',
+                      lineHeight: 1.35,
+                      color: '#664d03',
+                      backgroundColor: '#fff8e1',
+                      borderRadius: '6px',
+                      border: '1px solid #ffe082',
+                      textAlign: 'left',
+                    }}
+                  >
+                    {row.sameDayLinkedNote}
+                  </div>
+                ) : null}
                 <div className="room-loader-mobile-card-badges">
                   <span className="room-loader-status-badge" style={{ backgroundColor: sentBg }}>
                     {row.sentStatus.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
@@ -3012,6 +3178,59 @@ export default function RoomLoaderPage() {
               {hasClientWithReceptionEmail
                 ? 'Client has the default reception email on file. Please add a valid client email in the practice system before sending to client.'
                 : 'No email address on file for the client. Please add an email in the practice system before sending to client.'}
+            </div>
+          )}
+          {selectedSameDayClientLink && selectedSameDayClientLink.siblingRoomLoaderIds.length > 0 && (
+            <div
+              style={{
+                marginBottom: '20px',
+                padding: '14px 18px',
+                backgroundColor: '#fff3cd',
+                border: '1px solid #ffc107',
+                borderRadius: '6px',
+                color: '#664d03',
+                fontSize: '14px',
+                lineHeight: 1.45,
+              }}
+              role="status"
+            >
+              <strong>Same-day linked room loaders.</strong>{' '}
+              {selectedSameDayClientLink.tripFeeRequirementWaived ? (
+                <>
+                  This loader is linked because the client already completed a room loader for another pet on this
+                  appointment day (same visit). Related loader ID
+                  {selectedSameDayClientLink.completedSiblingIds.length !== 1 ? 's' : ''}:{' '}
+                  {selectedSameDayClientLink.completedSiblingIds.join(', ')}.{' '}
+                  <strong>Trip fee is not required</strong> on this follow-up loader—use a single trip fee for the
+                  combined stop.
+                </>
+              ) : (
+                <>
+                  Another room loader exists for this client on this appointment day (related ID
+                  {selectedSameDayClientLink.siblingRoomLoaderIds.length !== 1 ? 's' : ''}:{' '}
+                  {selectedSameDayClientLink.siblingRoomLoaderIds.join(', ')}). Trip fee rules still apply until another
+                  loader for this visit is client-completed, unless your team handles the fee elsewhere.
+                </>
+              )}
+            </div>
+          )}
+          {selectedSameDayClientLink?.tripFeeRequirementWaived && selectedLinkedLoaderHasTripFeeLine && (
+            <div
+              style={{
+                marginBottom: '20px',
+                padding: '12px 16px',
+                backgroundColor: '#fff8e1',
+                border: '1px solid #ffb300',
+                borderRadius: '6px',
+                color: '#5d4037',
+                fontSize: '14px',
+                lineHeight: 1.45,
+              }}
+              role="status"
+            >
+              <strong>Trip fee on this loader:</strong> This visit is linked to an earlier completed room loader for
+              another pet today. Clients should typically see only one trip fee for the combined stop—remove this trip
+              fee line if it was already included on the first pet’s room loader.
             </div>
           )}
           {/* Pet-by-Pet Information */}
@@ -4865,7 +5084,7 @@ export default function RoomLoaderPage() {
             <h2 style={{ marginTop: 0, marginBottom: '15px', color: '#333', fontSize: '20px' }}>
               {confirmAction === 'send' ? 'Send to Client?' : confirmAction === 'update' ? 'Update form data?' : 'Save for Later?'}
             </h2>
-            {confirmAction === 'send' && sendWarningReasons.length > 0 && (
+            {sendWarningReasons.length > 0 && (
               <div
                 style={{
                   marginBottom: '20px',
@@ -4886,7 +5105,11 @@ export default function RoomLoaderPage() {
                   ))}
                 </ul>
                 <div style={{ marginTop: '8px', fontWeight: 500 }}>
-                  You can still send, but please confirm to send anyway.
+                  {confirmAction === 'send'
+                    ? 'You can still send, but please confirm to send anyway.'
+                    : confirmAction === 'update'
+                      ? 'You can still update, but please confirm you intend to keep this as-is.'
+                      : 'You can still save, but please confirm you intend to keep this as-is.'}
                 </div>
               </div>
             )}
@@ -4942,7 +5165,10 @@ export default function RoomLoaderPage() {
             )}
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
               <button
-                onClick={() => setConfirmAction(null)}
+                onClick={() => {
+                  setConfirmAction(null);
+                  setSendWarningReasons([]);
+                }}
                 style={{
                   padding: '10px 20px',
                   fontSize: '14px',
