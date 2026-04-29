@@ -311,6 +311,12 @@ export type RoomLoader = {
   sentToClient?: SentToClient | null;
   /** Token for public form/PDF URL (when form has been sent). Used for View PDF link. */
   token?: string | null;
+  /**
+   * Optional server hint: this loader follows another same-day room loader for the same client/visit.
+   * When present and the prior loader is in the list as `completed`, the UI may waive duplicate trip-fee requirements.
+   */
+  linkedPriorRoomLoaderId?: number | null;
+  linkedRoomLoaderId?: number | null;
   created?: string;
   updated?: string;
 };
