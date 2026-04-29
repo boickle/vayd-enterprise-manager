@@ -13,6 +13,7 @@ import { getAccessiblePages } from './app-pages';
 import { getAdminTabPages } from './admin-tabs';
 import { getAnalyticsTabPages } from './analytics-tabs';
 import { getToolsTabPages } from './tools-tabs';
+import { getSchedulingToolsTabPages } from './scheduling-tools-tabs';
 import CreateClientUser from './pages/CreateClientUser';
 import ClientPortal from './pages/ClientPortal';
 import MembershipSignup from './pages/MembershipSignup';
@@ -88,6 +89,7 @@ function RouteGuard() {
     '/doctormonth',
     '/admin',
     '/analytics',
+    '/scheduling-tools',
     '/schedule-loader',
     '/survey/responses',
     '/tools',
@@ -385,6 +387,10 @@ export default function App() {
               }
             >
               <Route path="/home" element={<Home />} />
+              <Route
+                path="/schedule-loader"
+                element={<Navigate to="/scheduling-tools/schedule-loader" replace />}
+              />
               {pages.map((p: any) =>
                 p.path === '/admin' ? (
                   <Route key={p.path} path={p.path} element={p.element}>
@@ -404,8 +410,22 @@ export default function App() {
                       <Route key={tab.path} path={tab.path} element={tab.element} />
                     ))}
                   </Route>
+                ) : p.path === '/scheduling-tools' ? (
+                  <Route key={p.path} path={p.path} element={p.element}>
+                    <Route
+                      index
+                      element={<Navigate to="/scheduling-tools/schedule-loader" replace />}
+                    />
+                    {getSchedulingToolsTabPages().map((tab) => (
+                      <Route key={tab.path} path={tab.path} element={tab.element} />
+                    ))}
+                  </Route>
                 ) : p.path === '/tools' ? (
                   <Route key={p.path} path={p.path} element={p.element}>
+                    <Route
+                      path="care-outreach"
+                      element={<Navigate to="/scheduling-tools/care-outreach" replace />}
+                    />
                     <Route index element={<Navigate to="/tools/exit-survey" replace />} />
                     {getToolsTabPages().map((tab) => (
                       <Route key={tab.path} path={tab.path} element={tab.element} />

@@ -39,6 +39,7 @@ import {
 } from 'recharts';
 import { fetchRoutingUsage, type RoutingUsageUser } from '../api/routingUsage';
 import { fetchFillDayUsage, type FillDayUsageUser } from '../api/fillDayUsage';
+import { fetchUnscheduledRemindersUsage } from '../api/unscheduledRemindersUsage';
 import {
   fetchAppointmentBookingsAnalytics,
   type AppointmentBookingDetail,
@@ -322,16 +323,21 @@ export default function RoutingAnalyticsPage() {
     useState<Record<OverviewLineKey, boolean>>(OVERVIEW_LINE_DEFAULTS);
   const [selectedUserEmail, setSelectedUserEmail] = useState<string>(ALL_USERS);
   const [selectedFillDayUserEmail, setSelectedFillDayUserEmail] = useState<string>(ALL_USERS);
+  const [selectedCareOutreachUserEmail, setSelectedCareOutreachUserEmail] = useState<string>(ALL_USERS);
   const [data, setData] = useState<{ users: RoutingUsageUser[] } | null>(null);
   const [bookingsData, setBookingsData] = useState<{
     users: AppointmentBookingsAnalyticsUser[];
     appointmentBookingsGoal?: number;
   } | null>(null);
   const [fillDayData, setFillDayData] = useState<{ users: FillDayUsageUser[] } | null>(null);
+  const [careOutreachUsageData, setCareOutreachUsageData] = useState<{ users: FillDayUsageUser[] } | null>(
+    null
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [bookingsError, setBookingsError] = useState<string | null>(null);
   const [fillDayError, setFillDayError] = useState<string | null>(null);
+  const [careOutreachUsageError, setCareOutreachUsageError] = useState<string | null>(null);
 
   const start = range.from.startOf('day');
   const end = range.to.startOf('day');
@@ -354,11 +360,12 @@ export default function RoutingAnalyticsPage() {
     setError(null);
     setBookingsError(null);
     setFillDayError(null);
+    setCareOutreachUsageError(null);
     let alive = true;
     let done = 0;
     const checkDone = () => {
       done += 1;
-      if (done === 3 && alive) setLoading(false);
+      if (done === 4 && alive) setLoading(false);
     };
 
     fetchRoutingUsage({ startDate: startStr, endDate: endStr })
@@ -400,6 +407,19 @@ export default function RoutingAnalyticsPage() {
         console.error('Schedule loader usage fetch failed:', e);
         setFillDayError('Failed to load schedule loader usage');
         setFillDayData(null);
+      })
+      .finally(checkDone);
+
+    fetchUnscheduledRemindersUsage({ startDate: startStr, endDate: endStr })
+      .then((res) => {
+        if (!alive) return;
+        setCareOutreachUsageData({ users: res?.users ?? [] });
+      })
+      .catch((e) => {
+        if (!alive) return;
+        console.error('Care outreach (unscheduled reminders) usage fetch failed:', e);
+        setCareOutreachUsageError('Failed to load care outreach usage');
+        setCareOutreachUsageData(null);
       })
       .finally(checkDone);
 
@@ -678,6 +698,30 @@ export default function RoutingAnalyticsPage() {
     return dates.map((date) => ({ date, requestCount: byDate.get(date) ?? 0 }));
   }, [fillDayData, selectedFillDayUserEmail, dates]);
 
+  const careOutreachChartData = useMemo(() => {
+    if (!careOutreachUsageData?.users?.length) return [];
+    if (selectedCareOutreachUserEmail === ALL_USERS) {
+      const byDate = new Map<string, number>();
+      for (const date of dates) byDate.set(date, 0);
+      for (const u of careOutreachUsageData.users) {
+        for (const d of u.requestsByDay ?? []) {
+          const date = d?.date?.slice(0, 10);
+          if (date && byDate.has(date)) byDate.set(date, (byDate.get(date) ?? 0) + (d.requestCount ?? 0));
+        }
+      }
+      return dates.map((date) => ({ date, requestCount: byDate.get(date) ?? 0 }));
+    }
+    const user = careOutreachUsageData.users.find((u) => u.userEmail === selectedCareOutreachUserEmail);
+    if (!user) return [];
+    const byDate = new Map<string, number>();
+    for (const date of dates) byDate.set(date, 0);
+    for (const d of user.requestsByDay ?? []) {
+      const date = d?.date?.slice(0, 10);
+      if (date && byDate.has(date)) byDate.set(date, d.requestCount ?? 0);
+    }
+    return dates.map((date) => ({ date, requestCount: byDate.get(date) ?? 0 }));
+  }, [careOutreachUsageData, selectedCareOutreachUserEmail, dates]);
+
   const userOptions = useMemo(() => {
     const list: { value: string; label: string }[] = [{ value: ALL_USERS, label: 'All users' }];
     for (const u of data?.users ?? []) {
@@ -702,6 +746,18 @@ export default function RoutingAnalyticsPage() {
     return [list[0], ...(self ? [self] : [])];
   }, [fillDayData, restrictEmployeeAnalytics, userEmail]);
 
+  const careOutreachUserOptions = useMemo(() => {
+    const list: { value: string; label: string }[] = [{ value: ALL_USERS, label: 'All users' }];
+    for (const u of careOutreachUsageData?.users ?? []) {
+      if (u.userEmail) list.push({ value: u.userEmail, label: displayNameFillDay(u) });
+    }
+    if (!restrictEmployeeAnalytics) return list;
+    const selfEmail = userEmail ? String(userEmail).trim().toLowerCase() : '';
+    if (!selfEmail) return [list[0]];
+    const self = list.find((o) => String(o.value).trim().toLowerCase() === selfEmail);
+    return [list[0], ...(self ? [self] : [])];
+  }, [careOutreachUsageData, restrictEmployeeAnalytics, userEmail]);
+
   useEffect(() => {
     if (!restrictEmployeeAnalytics) return;
     const allowed = new Set(userOptions.map((o) => o.value));
@@ -714,8 +770,18 @@ export default function RoutingAnalyticsPage() {
     if (!allowed.has(selectedFillDayUserEmail)) setSelectedFillDayUserEmail(ALL_USERS);
   }, [restrictEmployeeAnalytics, fillDayUserOptions, selectedFillDayUserEmail]);
 
+  useEffect(() => {
+    if (!restrictEmployeeAnalytics) return;
+    const allowed = new Set(careOutreachUserOptions.map((o) => o.value));
+    if (!allowed.has(selectedCareOutreachUserEmail)) setSelectedCareOutreachUserEmail(ALL_USERS);
+  }, [restrictEmployeeAnalytics, careOutreachUserOptions, selectedCareOutreachUserEmail]);
+
   const chartDataWithTrend = useMemo(() => addLinearTrend(chartData), [chartData]);
   const fillDayChartDataWithTrend = useMemo(() => addLinearTrend(fillDayChartData), [fillDayChartData]);
+  const careOutreachChartDataWithTrend = useMemo(
+    () => addLinearTrend(careOutreachChartData),
+    [careOutreachChartData]
+  );
 
   const usersSorted = useMemo(() => {
     const users = data?.users ?? [];
@@ -726,6 +792,11 @@ export default function RoutingAnalyticsPage() {
     const users = fillDayData?.users ?? [];
     return [...users].sort((a, b) => (b.totalRequests ?? 0) - (a.totalRequests ?? 0));
   }, [fillDayData]);
+
+  const careOutreachUsersSorted = useMemo(() => {
+    const users = careOutreachUsageData?.users ?? [];
+    return [...users].sort((a, b) => (b.totalRequests ?? 0) - (a.totalRequests ?? 0));
+  }, [careOutreachUsageData]);
 
   return (
     <Box sx={{ pb: 3 }}>
@@ -1457,6 +1528,143 @@ export default function RoutingAnalyticsPage() {
                         <TableRow
                           key={u.userEmail}
                           onClick={() => !isSingleDay && setSelectedFillDayUserEmail(u.userEmail)}
+                          sx={!isSingleDay ? { cursor: 'pointer' } : undefined}
+                        >
+                          <TableCell>{displayNameFillDay(u)}</TableCell>
+                          <TableCell align="right">{u.totalRequests ?? 0}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </CardContent>
+        </Card>
+
+        <Typography variant="h6" sx={{ mt: 4, mb: 2 }}>
+          Care outreach usage
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          GET /reminders/unscheduled (Care outreach list loads), from audit — same date rules and
+          employee filter as schedule loader usage.
+        </Typography>
+
+        {careOutreachUsageError && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {careOutreachUsageError}
+          </Alert>
+        )}
+
+        {!isSingleDay && (
+          <Card sx={{ mb: 3 }}>
+            <CardHeader
+              title="Care outreach requests by day"
+              subheader="Overall or filter by user to see one user."
+            />
+            <CardContent>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2, mb: 2 }}>
+                <FormControl size="small" sx={{ minWidth: 280 }}>
+                  <InputLabel id="care-outreach-user-label">User</InputLabel>
+                  <Select
+                    labelId="care-outreach-user-label"
+                    value={selectedCareOutreachUserEmail}
+                    label="User"
+                    onChange={(e) => setSelectedCareOutreachUserEmail(e.target.value)}
+                  >
+                    {careOutreachUserOptions.map((opt) => (
+                      <MenuItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Box>
+              {loading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                  <CircularProgress />
+                </Box>
+              ) : (
+                <Box sx={{ width: '100%', height: 360 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                      data={careOutreachChartDataWithTrend}
+                      margin={{ top: 8, right: 24, left: 8, bottom: 8 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                      <YAxis
+                        label={{ value: 'Requests', angle: -90, position: 'insideLeft' }}
+                        tick={{ fontSize: 11 }}
+                        allowDecimals={false}
+                      />
+                      <Tooltip
+                        formatter={(value: unknown, name: unknown) => [
+                          value != null ? `${Number(value).toFixed(1)} requests` : '0',
+                          (name ?? '') === 'trend' ? 'Trend' : 'Requests',
+                        ]}
+                        labelFormatter={(label) => String(label)}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="requestCount"
+                        stroke="#6a1b9a"
+                        strokeWidth={2}
+                        dot={{ r: 3 }}
+                        name="Requests"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="trend"
+                        stroke="#6a1b9a"
+                        strokeWidth={1.5}
+                        strokeDasharray="5 5"
+                        dot={false}
+                        name="Trend"
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        <Card>
+          <CardHeader
+            title="Care outreach usage by user"
+            subheader={
+              isSingleDay
+                ? 'Unscheduled reminders list loads (GET /reminders/unscheduled) per user for the selected day.'
+                : 'Total unscheduled reminders list loads per user in the selected date range.'
+            }
+          />
+          <CardContent>
+            {loading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                <CircularProgress />
+              </Box>
+            ) : (
+              <TableContainer component={Paper} variant="outlined">
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Name</TableCell>
+                      <TableCell align="right">Total loads</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {careOutreachUsersSorted.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={2} align="center">
+                          No usage data in this range.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      careOutreachUsersSorted.map((u) => (
+                        <TableRow
+                          key={u.userEmail}
+                          onClick={() => !isSingleDay && setSelectedCareOutreachUserEmail(u.userEmail)}
                           sx={!isSingleDay ? { cursor: 'pointer' } : undefined}
                         >
                           <TableCell>{displayNameFillDay(u)}</TableCell>

@@ -142,9 +142,9 @@ describe('Routing and Schedule Loader', () => {
       // Login as employee
       cy.loginAs('employee');
 
-      // Navigate to schedule-loader page
-      cy.visit('/schedule-loader');
-      cy.url().should('include', '/schedule-loader');
+      // Navigate to schedule loader (under Scheduling Tools)
+      cy.visit('/scheduling-tools/schedule-loader');
+      cy.url().should('include', '/scheduling-tools/schedule-loader');
 
       // Wait for page to load
       cy.contains('Schedule Loader', { timeout: 10000 }).should('be.visible');

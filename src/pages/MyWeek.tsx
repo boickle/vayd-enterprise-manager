@@ -2535,7 +2535,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                           })()
                         : [];
                       const scheduleLoaderHref = selectedDoctorId && hasAppts
-                        ? `/schedule-loader?targetDate=${dateIso}&doctorId=${encodeURIComponent(selectedDoctorId)}`
+                        ? `/scheduling-tools/schedule-loader?targetDate=${dateIso}&doctorId=${encodeURIComponent(selectedDoctorId)}`
                         : null;
                       return (
                         <>

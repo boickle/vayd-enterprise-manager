@@ -63,12 +63,22 @@ export async function fetchUnscheduledReminders(
  * Persist outreach notes on the reminder. Backend should accept partial updates on PATCH /reminders/:id.
  * Body field: `outreachNotes`. If your API differs, adjust here only.
  */
+function unwrapReminderResponse(raw: unknown): UnscheduledReminder {
+  if (raw && typeof raw === 'object') {
+    const o = raw as Record<string, unknown>;
+    if (o.reminder && typeof o.reminder === 'object') return o.reminder as UnscheduledReminder;
+    if (o.data && typeof o.data === 'object' && !Array.isArray(o.data))
+      return o.data as UnscheduledReminder;
+  }
+  return raw as UnscheduledReminder;
+}
+
 export async function patchReminderOutreachNotes(
   reminderId: number,
   outreachNotes: string
 ): Promise<UnscheduledReminder> {
-  const { data } = await http.patch<UnscheduledReminder>(`/reminders/${reminderId}`, {
+  const { data } = await http.patch<unknown>(`/reminders/${reminderId}`, {
     outreachNotes,
   });
-  return data;
+  return unwrapReminderResponse(data);
 }

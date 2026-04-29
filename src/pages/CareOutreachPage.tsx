@@ -3,6 +3,8 @@ import dayjs from 'dayjs';
 import {
   fetchUnscheduledReminders,
   patchReminderOutreachNotes,
+  type CareOutreachClientRef,
+  type CareOutreachPatientRef,
   type UnscheduledReminder,
 } from '../api/careOutreach';
 import './Settings.css';
@@ -78,7 +80,109 @@ function formatDisplayDate(iso: string | null | undefined): string {
 }
 
 function initialNotes(r: UnscheduledReminder): string {
-  return (r.outreachNotes ?? r.notes ?? '') || '';
+  const any = r as Record<string, unknown>;
+  const snake = typeof any.outreach_notes === 'string' ? any.outreach_notes : null;
+  return (r.outreachNotes ?? snake ?? r.notes ?? '') || '';
+}
+
+function patientHasListableId(p: UnscheduledReminder['patient']): p is NonNullable<
+  UnscheduledReminder['patient']
+> & { id: number } {
+  if (!p || typeof p !== 'object') return false;
+  const id = (p as { id?: unknown }).id;
+  return id != null && id !== '' && Number.isFinite(Number(id));
+}
+
+function employeeIsPresent(
+  e: UnscheduledReminder['employee']
+): e is NonNullable<UnscheduledReminder['employee']> {
+  if (e == null || typeof e !== 'object') return false;
+  return (
+    (e as { id?: unknown }).id != null ||
+    Boolean((e as { firstName?: string }).firstName) ||
+    Boolean((e as { lastName?: string }).lastName)
+  );
+}
+
+function clientPayloadHasIdentity(c: CareOutreachClientRef | null | undefined): boolean {
+  if (!c || typeof c !== 'object') return false;
+  if (c.id != null && Number.isFinite(Number(c.id))) return true;
+  return Boolean(String(c.firstName ?? '').trim() || String(c.lastName ?? '').trim());
+}
+
+/** PIMS PATCH payloads often omit `employee` but include the assigned vet on `patient.primaryProvider`. */
+function employeeFromPatientPrimary(
+  patient: UnscheduledReminder['patient']
+): UnscheduledReminder['employee'] {
+  if (!patient || typeof patient !== 'object') return null;
+  const raw = (patient as Record<string, unknown>).primaryProvider;
+  if (!raw || typeof raw !== 'object') return null;
+  if (!employeeIsPresent(raw as UnscheduledReminder['employee'])) return null;
+  return raw as UnscheduledReminder['employee'];
+}
+
+function reminderAssignedProvider(r: UnscheduledReminder): UnscheduledReminder['employee'] {
+  if (employeeIsPresent(r.employee)) return r.employee;
+  return employeeFromPatientPrimary(r.patient);
+}
+
+/**
+ * PATCH often returns patient `{ id, name }` only. The list needs `clients` / `client` for
+ * grouping, sort key, and phone — otherwise we show "Unknown client" and the card jumps to Z.
+ */
+function mergePatientForReminder(
+  row: UnscheduledReminder,
+  updated: UnscheduledReminder
+): CareOutreachPatientRef | null {
+  const rp = row.patient;
+  const up = updated.patient;
+
+  if (!patientHasListableId(up) && patientHasListableId(rp)) return rp;
+  if (!patientHasListableId(up)) return (up ?? rp ?? null) as CareOutreachPatientRef | null;
+
+  if (!patientHasListableId(rp) || Number(rp.id) !== Number(up.id)) {
+    return up;
+  }
+
+  const mergedClients =
+    Array.isArray(up.clients) && up.clients.length > 0 ? up.clients : rp.clients;
+  const mergedClient = clientPayloadHasIdentity(up.client) ? up.client : (rp.client ?? null);
+
+  return {
+    ...rp,
+    ...up,
+    clients: mergedClients,
+    client: mergedClient,
+  };
+}
+
+/** PATCH responses are often partial; avoid clobbering list/navigation fields with nulls. */
+function mergeReminderAfterPatch(
+  row: UnscheduledReminder,
+  updated: UnscheduledReminder
+): UnscheduledReminder {
+  const merged: UnscheduledReminder = { ...row, ...updated };
+  merged.patient = mergePatientForReminder(row, updated);
+  if (employeeIsPresent(updated.employee)) merged.employee = updated.employee;
+  else if (employeeIsPresent(row.employee)) merged.employee = row.employee;
+  else merged.employee = updated.employee ?? row.employee ?? null;
+  if (!employeeIsPresent(merged.employee)) {
+    merged.employee =
+      employeeFromPatientPrimary(merged.patient) ??
+      employeeFromPatientPrimary(row.patient) ??
+      employeeFromPatientPrimary(updated.patient) ??
+      merged.employee;
+  }
+
+  if (updated.dueDate == null && row.dueDate != null) merged.dueDate = row.dueDate;
+  if (
+    (updated.description == null || String(updated.description).trim() === '') &&
+    row.description
+  ) {
+    merged.description = row.description;
+  }
+  if (updated.practice == null && row.practice != null) merged.practice = row.practice;
+  return merged;
 }
 
 export default function CareOutreachPage() {
@@ -218,11 +322,23 @@ export default function CareOutreachPage() {
     setNoteError((e) => ({ ...e, [reminderId]: null }));
     try {
       const updated = await patchReminderOutreachNotes(reminderId, value);
-      setRows((prev) => prev.map((row) => (row.id === reminderId ? { ...row, ...updated } : row)));
-      setNoteDrafts((d) => ({
-        ...d,
-        [reminderId]: initialNotes(updated),
-      }));
+      let mergedForDraft: UnscheduledReminder | null = null;
+      setRows((prev) => {
+        const row = prev.find(
+          (r) => Number(r.id) === Number(reminderId) || String(r.id) === String(reminderId)
+        );
+        if (!row) return prev;
+        mergedForDraft = mergeReminderAfterPatch(row, updated);
+        return prev.map((r) =>
+          Number(r.id) === Number(reminderId) || String(r.id) === String(reminderId)
+            ? mergedForDraft!
+            : r
+        );
+      });
+      if (mergedForDraft) {
+        const draftSource = mergedForDraft;
+        setNoteDrafts((d) => ({ ...d, [reminderId]: initialNotes(draftSource) }));
+      }
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
