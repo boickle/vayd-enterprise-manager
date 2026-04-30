@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
 import {
   fetchUnscheduledReminders,
@@ -8,12 +8,24 @@ import {
   type UnscheduledReminder,
 } from '../api/careOutreach';
 import './Settings.css';
+import { evetClientLink, evetPatientLink } from '../utils/evet';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
 const NOTES_DEBOUNCE_MS = 750;
 
-type PriorityFilter = 'all' | 'overdue_today' | 'due_22_26';
+type PriorityFilter = 'all' | 'overdue_today' | 'due_21';
+
+const PRIORITY_TABS: { key: PriorityFilter; label: string; title?: string }[] = [
+  { key: 'overdue_today', label: 'Newly overdue today' },
+  {
+    key: 'due_21',
+    label: 'Due in 21 days',
+    title:
+      'Reminders due 21 calendar days from today. If that day is a Friday, Saturday and Sunday are included (21–23 days out).',
+  },
+  { key: 'all', label: 'All in range' },
+];
 
 function formatEmployeeName(emp: UnscheduledReminder['employee']): string {
   if (!emp) return '—';
@@ -32,12 +44,46 @@ function extractClient(r: UnscheduledReminder) {
   const name =
     raw && (`${raw.firstName ?? ''} ${raw.lastName ?? ''}`.trim() || `Client #${raw.id}`);
   const isMember = Boolean(p?.isMember || raw?.isMember);
+  const clientPimsId =
+    raw?.pimsId != null && String(raw.pimsId).trim() !== '' ? String(raw.pimsId).trim() : null;
   return {
     id: raw?.id ?? null,
     displayName: name || 'Unknown client',
     phone: raw?.phone1?.trim() || null,
     isMember,
+    clientPimsId,
   };
+}
+
+const evetLinkStyle: React.CSSProperties = {
+  color: 'inherit',
+  textDecoration: 'none',
+  fontWeight: 'inherit',
+};
+
+function EvetInlineLink({
+  href,
+  children,
+}: {
+  href: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      style={evetLinkStyle}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.textDecoration = 'underline';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.textDecoration = 'none';
+      }}
+    >
+      {children}
+    </a>
+  );
 }
 
 function calendarDayDiffFromToday(dueIso: string | null | undefined): number | null {
@@ -45,6 +91,19 @@ function calendarDayDiffFromToday(dueIso: string | null | undefined): number | n
   const due = dayjs(dueIso).startOf('day');
   if (!due.isValid()) return null;
   return due.diff(dayjs().startOf('day'), 'day');
+}
+
+/**
+ * "Due in 21 days" bucket: calendar day-diff from today to due date.
+ * Anchor = today + 21 days. If that anchor is a Friday, include Sat/Sun too (diff 22 and 23).
+ * dayjs: 0 Sun … 5 Fri, 6 Sat.
+ */
+function dayDiffsForDueIn21DayBucket(todayStart: dayjs.Dayjs): Set<number> {
+  const anchor = todayStart.add(21, 'day');
+  if (anchor.day() === 5) {
+    return new Set([21, 22, 23]);
+  }
+  return new Set([21]);
 }
 
 function dueSortTime(dueIso: string | null | undefined): number {
@@ -126,6 +185,19 @@ function reminderAssignedProvider(r: UnscheduledReminder): UnscheduledReminder['
   return employeeFromPatientPrimary(r.patient);
 }
 
+/** Earliest due first (most overdue first), then provider, then service name. */
+function compareRemindersForDisplay(a: UnscheduledReminder, b: UnscheduledReminder): number {
+  const td = dueSortTime(a.dueDate) - dueSortTime(b.dueDate);
+  if (td !== 0) return td;
+  const pa = formatEmployeeName(reminderAssignedProvider(a));
+  const pb = formatEmployeeName(reminderAssignedProvider(b));
+  const pe = pa.localeCompare(pb, undefined, { sensitivity: 'base' });
+  if (pe !== 0) return pe;
+  return String(a.description ?? '').localeCompare(String(b.description ?? ''), undefined, {
+    sensitivity: 'base',
+  });
+}
+
 /**
  * PATCH often returns patient `{ id, name }` only. The list needs `clients` / `client` for
  * grouping, sort key, and phone — otherwise we show "Unknown client" and the card jumps to Z.
@@ -190,7 +262,7 @@ export default function CareOutreachPage() {
     dayjs().subtract(2, 'month').format('YYYY-MM-DD')
   );
   const [dueDateTo, setDueDateTo] = useState(() => dayjs().add(2, 'month').format('YYYY-MM-DD'));
-  const [priority, setPriority] = useState<PriorityFilter>('all');
+  const [priority, setPriority] = useState<PriorityFilter>('overdue_today');
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<UnscheduledReminder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -233,12 +305,14 @@ export default function CareOutreachPage() {
   }, [load]);
 
   const filteredByPriority = useMemo(() => {
+    const todayStart = dayjs().startOf('day');
+    const due21Allowed = dayDiffsForDueIn21DayBucket(todayStart);
     return rows.filter((r) => {
       if (priority === 'all') return true;
       const diff = calendarDayDiffFromToday(r.dueDate ?? null);
       if (diff === null) return false;
       if (priority === 'overdue_today') return diff === -1;
-      if (priority === 'due_22_26') return diff >= 22 && diff <= 26;
+      if (priority === 'due_21') return due21Allowed.has(diff);
       return true;
     });
   }, [rows, priority]);
@@ -250,28 +324,38 @@ export default function CareOutreachPage() {
       const c = extractClient(r);
       const pet = r.patient?.name ?? '';
       const desc = r.description ?? '';
-      const prov = formatEmployeeName(r.employee).toLowerCase();
+      const prov = formatEmployeeName(reminderAssignedProvider(r)).toLowerCase();
       const notes = (noteDrafts[r.id] ?? '').toLowerCase();
       const hay = [c.displayName, c.phone ?? '', pet, desc, prov, notes].join(' ').toLowerCase();
       return hay.includes(q);
     });
   }, [filteredByPriority, search, noteDrafts]);
 
+  const sortedForDisplay = useMemo(() => {
+    return [...filtered].sort(compareRemindersForDisplay);
+  }, [filtered]);
+
   type ClientBucket = {
     clientKey: string;
     clientId: number | null;
+    clientPimsId: string | null;
     displayName: string;
     phone: string | null;
     isMember: boolean;
     patients: Map<
       number,
-      { patientName: string; isMember: boolean; reminders: UnscheduledReminder[] }
+      {
+        patientName: string;
+        isMember: boolean;
+        patientPimsId: string | null;
+        reminders: UnscheduledReminder[];
+      }
     >;
   };
 
   const grouped = useMemo(() => {
     const clients = new Map<string, ClientBucket>();
-    for (const r of filtered) {
+    for (const r of sortedForDisplay) {
       const c = extractClient(r);
       const clientKey = c.id != null ? `c-${c.id}` : `orphan-p-${r.patient?.id ?? r.id}`;
       let bucket = clients.get(clientKey);
@@ -279,6 +363,7 @@ export default function CareOutreachPage() {
         bucket = {
           clientKey,
           clientId: c.id,
+          clientPimsId: c.clientPimsId,
           displayName: c.displayName,
           phone: c.phone,
           isMember: c.isMember,
@@ -286,16 +371,31 @@ export default function CareOutreachPage() {
         };
         clients.set(clientKey, bucket);
       }
+      if (bucket.clientPimsId == null && c.clientPimsId) {
+        bucket.clientPimsId = c.clientPimsId;
+      }
       const pid = r.patient?.id;
       if (pid == null) continue;
       let pg = bucket.patients.get(pid);
       if (!pg) {
+        const patientPimsId =
+          r.patient?.pimsId != null && String(r.patient.pimsId).trim() !== ''
+            ? String(r.patient.pimsId).trim()
+            : null;
         pg = {
           patientName: r.patient?.name?.trim() || `Patient #${pid}`,
           isMember: Boolean(r.patient?.isMember || bucket.isMember),
+          patientPimsId,
           reminders: [],
         };
         bucket.patients.set(pid, pg);
+      }
+      if (pg.patientPimsId == null) {
+        const nextPims =
+          r.patient?.pimsId != null && String(r.patient.pimsId).trim() !== ''
+            ? String(r.patient.pimsId).trim()
+            : null;
+        if (nextPims) pg.patientPimsId = nextPims;
       }
       pg.reminders.push(r);
     }
@@ -315,7 +415,7 @@ export default function CareOutreachPage() {
       b.patients = new Map(parr);
     }
     return list;
-  }, [filtered]);
+  }, [sortedForDisplay]);
 
   const flushSave = useCallback(async (reminderId: number, value: string) => {
     setNoteSaving((s) => ({ ...s, [reminderId]: true }));
@@ -445,13 +545,7 @@ export default function CareOutreachPage() {
         <span className="settings-muted" style={{ alignSelf: 'center', marginRight: 4 }}>
           Daily priorities
         </span>
-        {(
-          [
-            ['all', 'All in range'],
-            ['overdue_today', 'Newly overdue today'],
-            ['due_22_26', 'Due in 22–26 days'],
-          ] as const
-        ).map(([key, label]) => (
+        {PRIORITY_TABS.map(({ key, label, title }) => (
           <button
             key={key}
             type="button"
@@ -462,6 +556,7 @@ export default function CareOutreachPage() {
               borderRadius: 8,
               padding: '8px 14px',
             }}
+            title={title}
             onClick={() => setPriority(key)}
           >
             {label}
@@ -516,7 +611,15 @@ export default function CareOutreachPage() {
                   alignItems: 'baseline',
                 }}
               >
-                <strong style={{ fontSize: '1.05rem' }}>{client.displayName}</strong>
+                <strong style={{ fontSize: '1.05rem' }}>
+                  {client.clientPimsId ? (
+                    <EvetInlineLink href={evetClientLink(client.clientPimsId)}>
+                      {client.displayName}
+                    </EvetInlineLink>
+                  ) : (
+                    client.displayName
+                  )}
+                </strong>
                 {client.phone ? (
                   <a
                     href={buildPhoneDialHref(client.phone)}
@@ -538,7 +641,13 @@ export default function CareOutreachPage() {
                         color: 'var(--text)',
                       }}
                     >
-                      {pg.patientName}
+                      {pg.patientPimsId ? (
+                        <EvetInlineLink href={evetPatientLink(pg.patientPimsId)}>
+                          {pg.patientName}
+                        </EvetInlineLink>
+                      ) : (
+                        pg.patientName
+                      )}
                       {pg.isMember ? ' ❤️' : ''}
                     </div>
                     <div style={{ overflowX: 'auto' }}>
@@ -581,7 +690,7 @@ export default function CareOutreachPage() {
                                     whiteSpace: 'nowrap',
                                   }}
                                 >
-                                  {formatEmployeeName(r.employee)}
+                                  {formatEmployeeName(reminderAssignedProvider(r))}
                                 </td>
                                 <td
                                   style={{

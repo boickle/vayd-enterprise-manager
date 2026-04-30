@@ -4,6 +4,8 @@ import { http } from './http';
 /** Client row as nested on patient (household) — shape aligns with reminder list payloads. */
 export type CareOutreachClientRef = {
   id: number;
+  /** EVet / PIMS client id for deep links */
+  pimsId?: string | null;
   firstName?: string | null;
   lastName?: string | null;
   phone1?: string | null;
@@ -12,6 +14,8 @@ export type CareOutreachClientRef = {
 
 export type CareOutreachPatientRef = {
   id: number;
+  /** EVet / PIMS patient id for deep links */
+  pimsId?: string | null;
   name?: string | null;
   isMember?: boolean;
   membershipName?: string | null;
