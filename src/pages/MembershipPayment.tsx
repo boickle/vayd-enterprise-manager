@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { loadStripe, type Stripe, type StripeCardElement } from '@stripe/stripe-js';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   createPayment,
@@ -10,6 +11,7 @@ import {
   type MembershipUpgradeRequest,
 } from '../api/payments';
 import { useAuth } from '../auth/useAuth';
+import { getFrontendPaymentProvider, getStripePublishableKey } from '../config/paymentProvider';
 import { trackPurchase } from '../utils/analytics';
 
 declare global {
@@ -45,6 +47,18 @@ const squareScriptUrl =
   squareEnvironment === 'production'
     ? 'https://web.squarecdn.com/v1/square.js'
     : 'https://sandbox.web.squarecdn.com/v1/square.js';
+
+const paymentProvider = getFrontendPaymentProvider();
+
+function extractPaymentIntentClientSecret(providerResponse: Record<string, unknown> | undefined): string | null {
+  if (!providerResponse || typeof providerResponse !== 'object') return null;
+  if (typeof providerResponse.client_secret === 'string') return providerResponse.client_secret;
+  const pi = providerResponse.payment_intent;
+  if (pi && typeof pi === 'object' && typeof (pi as { client_secret?: string }).client_secret === 'string') {
+    return (pi as { client_secret: string }).client_secret;
+  }
+  return null;
+}
 
 function formatMoney(amountCents: number, currency = 'USD') {
   return (amountCents / 100).toLocaleString(undefined, {
@@ -175,6 +189,9 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const [paymentResponse, setPaymentResponse] = useState<PaymentResponse | null>(null);
   const [enrollmentComplete, setEnrollmentComplete] = useState(false);
   const [formResetKey, setFormResetKey] = useState(0);
+  const [stripeCardReady, setStripeCardReady] = useState(false);
+  const stripeRef = useRef<Stripe | null>(null);
+  const stripeCardRef = useRef<StripeCardElement | null>(null);
 
   const locationId = state?.enrollmentPayload?.locationId ?? defaultSquareLocationId;
 
@@ -186,6 +203,10 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
 
   useEffect(() => {
     if (!state) return;
+    if (paymentProvider === 'stripe') {
+      setLoadingScript(false);
+      return;
+    }
 
     if (window.Square) {
       setLoadingScript(false);
@@ -215,10 +236,10 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
       script.onload = null;
       script.onerror = null;
     };
-  }, [state]);
+  }, [state, paymentProvider]);
 
   useEffect(() => {
-    if (!state || loadingScript) return;
+    if (paymentProvider !== 'square' || !state || loadingScript) return;
     if (!squareAppId || !locationId) {
       setError('Square is not fully configured. Please contact support.');
       return;
@@ -259,6 +280,66 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, loadingScript, locationId, formResetKey]);
 
+  useEffect(() => {
+    if (paymentProvider !== 'stripe' || !state) return;
+
+    let canceled = false;
+
+    async function initStripe() {
+      setInitializingPaymentForm(true);
+      setError(null);
+      const pk = getStripePublishableKey();
+      if (!pk) {
+        setError('Stripe is not fully configured. Please contact support.');
+        setInitializingPaymentForm(false);
+        return;
+      }
+      try {
+        const stripe = await loadStripe(pk);
+        if (canceled || !stripe) return;
+        const elements = stripe.elements();
+        const cardEl = elements.create('card', {
+          style: {
+            base: {
+              fontSize: '16px',
+              color: '#111827',
+              '::placeholder': { color: '#9ca3af' },
+            },
+            invalid: { color: '#b91c1c' },
+          },
+        });
+        const mountTarget = document.querySelector('#card-container');
+        if (!(mountTarget instanceof HTMLElement)) {
+          throw new Error('Payment form container not found.');
+        }
+        cardEl.mount(mountTarget);
+        stripeRef.current = stripe;
+        stripeCardRef.current = cardEl;
+        if (!canceled) setStripeCardReady(true);
+      } catch (err: any) {
+        if (!canceled) {
+          setError(err?.message || 'Failed to initialise payment form.');
+        }
+      } finally {
+        if (!canceled) setInitializingPaymentForm(false);
+      }
+    }
+
+    void initStripe();
+
+    return () => {
+      canceled = true;
+      setStripeCardReady(false);
+      try {
+        stripeCardRef.current?.unmount();
+      } catch {
+        /* ignore */
+      }
+      stripeCardRef.current = null;
+      stripeRef.current = null;
+    };
+  }, [state, formResetKey]);
+
   const costSummaryItems = useMemo(() => state?.costSummary?.items ?? [], [state]);
 
   const prefilledCustomerEmail = useMemo(
@@ -288,7 +369,9 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
 
   async function handlePaymentSubmit(event: React.FormEvent) {
     event.preventDefault();
-    if (!state || !card) return;
+    if (!state) return;
+    if (paymentProvider === 'square' && !card) return;
+    if (paymentProvider === 'stripe' && (!stripeCardReady || !stripeRef.current || !stripeCardRef.current)) return;
     if (!cardholderName.trim()) {
       setError('Please enter the cardholder name.');
       return;
@@ -301,11 +384,6 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
     setError(null);
 
     try {
-      const tokenResult = await card.tokenize();
-      if (tokenResult.status !== 'OK') {
-        throw new Error(tokenResult.errors?.[0]?.message || 'Unable to tokenize card.');
-      }
-
       const emailForSquare =
         contactEmail.trim() ||
         prefilledCustomerEmail ||
@@ -318,60 +396,191 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
       ) {
         setProcessing(false);
         setError(
-          'A valid email address is required (Square needs it on your customer profile for subscriptions and upgrades).'
+          paymentProvider === 'stripe'
+            ? 'A valid email address is required for billing and receipts.'
+            : 'A valid email address is required (Square needs it on your customer profile for subscriptions and upgrades).'
         );
         return;
       }
 
-      // Handle upgrade flow
-      if (state.isUpgrade && state.patientId && state.selectedUpgrades) {
-        const upgradeRequest: MembershipUpgradeRequest = {
-          patientId: state.patientId,
-          newPlansSelected: state.selectedUpgrades,
-          sourceId: tokenResult.token,
-          customerEmail: emailForSquare || userEmail || '',
-          // Include prorated calculation if available
-          proratedRefundAmount: state.proratedCalculation?.refundAmount,
-          proratedChargeAmount: state.proratedCalculation?.chargeAmount,
-          upgradeDate: state.proratedCalculation?.upgradeDate,
-          nextBillingDate: state.proratedCalculation?.nextBillingDate,
-          currentMembershipId: state.currentMembership?.id,
-        };
-
-        const upgradeResponse = await upgradeMembership(upgradeRequest);
-        
-        if (!upgradeResponse.success) {
-          throw new Error(upgradeResponse.message || 'Upgrade was not successful.');
+      if (paymentProvider === 'square') {
+        const tokenResult = await card!.tokenize();
+        if (tokenResult.status !== 'OK') {
+          throw new Error(tokenResult.errors?.[0]?.message || 'Unable to tokenize card.');
         }
 
-        // Track purchase completion for upgrade
-        const upgradeTransactionId = `upgrade-${Date.now()}-${state.patientId}`;
-        const upgradeItems = state.selectedUpgrades?.map((upgrade) => ({
-          item_id: upgrade.planId,
-          item_name: upgrade.planName,
-          price: upgrade.price,
-          quantity: 1,
-        })) || [];
+        // Handle upgrade flow
+        if (state.isUpgrade && state.patientId && state.selectedUpgrades) {
+          const upgradeRequest: MembershipUpgradeRequest = {
+            patientId: state.patientId,
+            newPlansSelected: state.selectedUpgrades,
+            sourceId: tokenResult.token,
+            customerEmail: emailForSquare || userEmail || '',
+            proratedRefundAmount: state.proratedCalculation?.refundAmount,
+            proratedChargeAmount: state.proratedCalculation?.chargeAmount,
+            upgradeDate: state.proratedCalculation?.upgradeDate,
+            nextBillingDate: state.proratedCalculation?.nextBillingDate,
+            currentMembershipId: state.currentMembership?.id,
+          };
 
-        trackPurchase(
-          upgradeTransactionId,
-          state.amountCents / 100,
-          state.currency,
-          upgradeItems,
-          {
-            pet_id: state.petId,
-            pet_name: state.petName,
-            is_upgrade: true,
-            upgrade_type: 'membership_upgrade',
+          const upgradeResponse = await upgradeMembership(upgradeRequest);
+
+          if (!upgradeResponse.success) {
+            throw new Error(upgradeResponse.message || 'Upgrade was not successful.');
           }
-        );
+
+          const upgradeTransactionId = `upgrade-${Date.now()}-${state.patientId}`;
+          const upgradeItems =
+            state.selectedUpgrades?.map((upgrade) => ({
+              item_id: upgrade.planId,
+              item_name: upgrade.planName,
+              price: upgrade.price,
+              quantity: 1,
+            })) || [];
+
+          trackPurchase(
+            upgradeTransactionId,
+            state.amountCents / 100,
+            state.currency,
+            upgradeItems,
+            {
+              pet_id: state.petId,
+              pet_name: state.petName,
+              is_upgrade: true,
+              upgrade_type: 'membership_upgrade',
+            }
+          );
+
+          setEnrollmentComplete(true);
+          onEnrollmentSucceeded?.(state.petId);
+          return;
+        }
+
+        const idempotencyKey =
+          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : `membership-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+        if (state.intent === PaymentIntent.SUBSCRIPTION && !state.subscriptionPlanId) {
+          throw new Error('Subscription plan ID is missing for this selection.');
+        }
+
+        const petNameForPayload =
+          (state.petName && String(state.petName).trim()) ||
+          (state.membershipTransaction?.metadata?.petName &&
+            String(state.membershipTransaction.metadata.petName).trim()) ||
+          '';
+
+        const isNewClientMembership = fromModal && !userId;
+        const petIdForPayload =
+          isNewClientMembership && petNameForPayload !== '' ? petNameForPayload : state.petId ?? '';
+
+        const membershipTransactionPayload = state.membershipTransaction
+          ? {
+              ...state.membershipTransaction,
+              requestOrigin:
+                state.membershipTransaction.requestOrigin ??
+                resolveMembershipRequestOriginForPayment(state),
+              metadata: {
+                ...(state.membershipTransaction.metadata ?? {}),
+                ...(petIdForPayload !== '' && { petId: petIdForPayload }),
+                ...(petNameForPayload !== '' && { petName: petNameForPayload }),
+              },
+            }
+          : undefined;
+
+        const payment = await createPayment({
+          provider: 'square',
+          sourceId: tokenResult.token,
+          idempotencyKey,
+          amount: state.amountCents,
+          currency: state.currency,
+          locationId,
+          note: state.note,
+          intent: state.intent,
+          subscriptionPlanId: state.subscriptionPlanId,
+          subscriptionPlanVariationId: state.subscriptionPlanVariationId,
+          subscriptionStartDate: state.subscriptionStartDate,
+          customerEmail: emailForSquare || undefined,
+          customerName: state.customerName ?? undefined,
+          metadata: {
+            ...(state.metadata ?? {}),
+            ...(petIdForPayload !== '' && { petId: petIdForPayload }),
+            ...(petNameForPayload !== '' && { petName: petNameForPayload }),
+            ...(emailForSquare && { customerEmail: emailForSquare }),
+            cardholderName: cardholderName.trim(),
+            billingAddress: {
+              addressLine1: addressLine1.trim(),
+              addressLine2: addressLine2.trim() || undefined,
+              locality: locality.trim(),
+              administrativeDistrictLevel1: administrativeDistrictLevel1.trim(),
+              postalCode: postalCode.trim(),
+              country: 'US',
+            },
+          },
+          membershipTransaction: membershipTransactionPayload,
+        });
+
+        setPaymentResponse(payment);
+
+        if (!payment.success) {
+          throw new Error(payment.status || 'Payment was not successful.');
+        }
+
+        const transactionId =
+          payment.providerPaymentId ||
+          payment.providerResponse?.payment?.id ||
+          payment.providerResponse?.id ||
+          `membership-${Date.now()}`;
+
+        const purchaseItems =
+          state.costSummary?.items.map((item) => {
+            const price =
+              state.billingPreference === 'annual' && item.annual != null ? item.annual : item.monthly ?? 0;
+            return {
+              item_id: item.label.toLowerCase().replace(/\s+/g, '-'),
+              item_name: item.label,
+              price: price,
+              quantity: 1,
+            };
+          }) || [];
+
+        trackPurchase(transactionId, state.amountCents / 100, state.currency, purchaseItems, {
+          pet_id: state.petId,
+          pet_name: state.petName,
+          plan_name: state.planName,
+          billing_preference: state.billingPreference,
+          addons: state.addOns || [],
+          has_addons: (state.addOns?.length || 0) > 0,
+          is_upgrade: state.isUpgrade || false,
+        });
 
         setEnrollmentComplete(true);
         onEnrollmentSucceeded?.(state.petId);
         return;
       }
 
-      // Regular payment flow
+      // Stripe: same intent as navigation state (membership enrollments use SUBSCRIPTION)
+      const { error: pmError, paymentMethod } = await stripeRef.current!.createPaymentMethod({
+        type: 'card',
+        card: stripeCardRef.current!,
+        billing_details: {
+          name: cardholderName.trim(),
+          email: emailForSquare || undefined,
+          address: {
+            line1: addressLine1.trim(),
+            line2: addressLine2.trim() || undefined,
+            city: locality.trim(),
+            state: administrativeDistrictLevel1.trim(),
+            postal_code: postalCode.trim(),
+            country: 'US',
+          },
+        },
+      });
+      if (pmError || !paymentMethod) {
+        throw new Error(pmError?.message || 'Unable to tokenize card.');
+      }
+
       const idempotencyKey =
         typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
           ? crypto.randomUUID()
@@ -381,18 +590,15 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         throw new Error('Subscription plan ID is missing for this selection.');
       }
 
-      // Use pet name from form (state.petName or from membershipTransaction.metadata as set by MembershipSignup)
       const petNameForPayload =
         (state.petName && String(state.petName).trim()) ||
-        (state.membershipTransaction?.metadata?.petName && String(state.membershipTransaction.metadata.petName).trim()) ||
+        (state.membershipTransaction?.metadata?.petName &&
+          String(state.membershipTransaction.metadata.petName).trim()) ||
         '';
 
       const isNewClientMembership = fromModal && !userId;
-      // For new clients, petId field must contain the pet's name (from the appointment form)
       const petIdForPayload =
-        isNewClientMembership && petNameForPayload !== ''
-          ? petNameForPayload
-          : state.petId ?? '';
+        isNewClientMembership && petNameForPayload !== '' ? petNameForPayload : state.petId ?? '';
 
       const membershipTransactionPayload = state.membershipTransaction
         ? {
@@ -408,14 +614,14 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
           }
         : undefined;
 
-      const payment = await createPayment({
-        sourceId: tokenResult.token,
+      let payment = await createPayment({
+        provider: 'stripe',
+        sourceId: paymentMethod.id,
         idempotencyKey,
         amount: state.amountCents,
         currency: state.currency,
-        locationId,
         note: state.note,
-        intent: state.intent,
+        intent: state.intent ?? PaymentIntent.SUBSCRIPTION,
         subscriptionPlanId: state.subscriptionPlanId,
         subscriptionPlanVariationId: state.subscriptionPlanVariationId,
         subscriptionStartDate: state.subscriptionStartDate,
@@ -439,45 +645,60 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         membershipTransaction: membershipTransactionPayload,
       });
 
+      if (!payment.success && payment.status === 'requires_action' && stripeRef.current) {
+        const secret = extractPaymentIntentClientSecret(payment.providerResponse);
+        if (secret) {
+          const { error: confirmErr, paymentIntent } = await stripeRef.current.confirmCardPayment(secret);
+          if (confirmErr) {
+            throw new Error(confirmErr.message || 'Authentication failed.');
+          }
+          payment = {
+            ...payment,
+            success: paymentIntent?.status === 'succeeded',
+            status: paymentIntent?.status,
+            providerPaymentId: paymentIntent?.id ?? payment.providerPaymentId,
+            providerResponse: {
+              ...payment.providerResponse,
+              paymentIntent,
+            },
+          };
+        }
+      }
+
       setPaymentResponse(payment);
 
       if (!payment.success) {
         throw new Error(payment.status || 'Payment was not successful.');
       }
 
-      // Track purchase completion
-      const transactionId = payment.providerPaymentId || 
-                           payment.providerResponse?.payment?.id || 
-                           payment.providerResponse?.id ||
-                           `membership-${Date.now()}`;
-      
-      const purchaseItems = state.costSummary?.items.map((item) => {
-        const price = state.billingPreference === 'annual' && item.annual != null
-          ? item.annual
-          : item.monthly ?? 0;
-        return {
-          item_id: item.label.toLowerCase().replace(/\s+/g, '-'),
-          item_name: item.label,
-          price: price,
-          quantity: 1,
-        };
-      }) || [];
+      const transactionId =
+        payment.providerPaymentId ||
+        payment.providerResponse?.payment?.id ||
+        payment.providerResponse?.paymentIntent?.id ||
+        payment.providerResponse?.id ||
+        `membership-${Date.now()}`;
 
-      trackPurchase(
-        transactionId,
-        state.amountCents / 100,
-        state.currency,
-        purchaseItems,
-        {
-          pet_id: state.petId,
-          pet_name: state.petName,
-          plan_name: state.planName,
-          billing_preference: state.billingPreference,
-          addons: state.addOns || [],
-          has_addons: (state.addOns?.length || 0) > 0,
-          is_upgrade: state.isUpgrade || false,
-        }
-      );
+      const purchaseItems =
+        state.costSummary?.items.map((item) => {
+          const price =
+            state.billingPreference === 'annual' && item.annual != null ? item.annual : item.monthly ?? 0;
+          return {
+            item_id: item.label.toLowerCase().replace(/\s+/g, '-'),
+            item_name: item.label,
+            price: price,
+            quantity: 1,
+          };
+        }) || [];
+
+      trackPurchase(transactionId, state.amountCents / 100, state.currency, purchaseItems, {
+        pet_id: state.petId,
+        pet_name: state.petName,
+        plan_name: state.planName,
+        billing_preference: state.billingPreference,
+        addons: state.addOns || [],
+        has_addons: (state.addOns?.length || 0) > 0,
+        is_upgrade: state.isUpgrade || false,
+      });
 
       setEnrollmentComplete(true);
       onEnrollmentSucceeded?.(state.petId);
@@ -493,26 +714,28 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
 
       const friendlyMessage = isPaymentFailure
         ? "We couldn't process your payment. This can happen if your card was declined, has insufficient funds, or there was a temporary issue. Please try entering your information again."
-        : (serverMessage && typeof serverMessage === 'string' ? serverMessage : err?.message) || 'Unable to process payment. Please try entering your information again.';
+        : (serverMessage && typeof serverMessage === 'string' ? serverMessage : err?.message) ||
+          'Unable to process payment. Please try entering your information again.';
 
       setError(friendlyMessage);
 
-      // Reset the form so the user can try again
       setCardholderName('');
       setAddressLine1('');
       setAddressLine2('');
       setLocality('');
       setAdministrativeDistrictLevel1('');
       setPostalCode('');
-      try {
-        if (card && typeof (card as any).destroy === 'function') {
-          (card as any).destroy();
+      if (paymentProvider === 'square') {
+        try {
+          if (card && typeof (card as any).destroy === 'function') {
+            (card as any).destroy();
+          }
+        } catch (_) {
+          // ignore destroy errors
         }
-      } catch (_) {
-        // ignore destroy errors
+        setCard(null);
+        setPaymentsInstance(null);
       }
-      setCard(null);
-      setPaymentsInstance(null);
       setFormResetKey((k) => k + 1);
     } finally {
       setProcessing(false);
@@ -524,6 +747,41 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
     return null;
   }
 
+  if (state.isUpgrade && paymentProvider === 'stripe') {
+    return (
+      <div className="cp-wrap" style={{ maxWidth: 720, margin: '32px auto', padding: '0 16px' }}>
+        <button
+          type="button"
+          onClick={() => {
+            if (fromModal && props?.onBack) props.onBack();
+            else navigate(-1);
+          }}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: '#4FB128',
+            cursor: 'pointer',
+            fontSize: 14,
+            fontWeight: 600,
+            marginBottom: 16,
+            padding: 0,
+          }}
+        >
+          ← Back
+        </button>
+        <div className="cp-card" style={{ padding: 24, borderLeft: '4px solid #b45309' }}>
+          <h1 className="cp-title" style={{ margin: '0 0 12px' }}>Membership upgrade</h1>
+          <p className="cp-muted" style={{ lineHeight: 1.6, margin: 0 }}>
+            Upgrading a membership still uses Square on the server. To complete an upgrade, set{' '}
+            <code style={{ fontSize: 13 }}>VITE_PAYMENT_PROVIDER</code> to <code style={{ fontSize: 13 }}>square</code>{' '}
+            (or unset it), restart the app, and try again. New enrollments can use Stripe when that variable is set to{' '}
+            <code style={{ fontSize: 13 }}>stripe</code>.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const onSuccess = props?.onSuccess;
   const onBack = props?.onBack;
   const onSignUpAnother = props?.onSignUpAnother;
@@ -532,6 +790,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
     const providerPaymentId =
       paymentResponse?.providerPaymentId ??
       paymentResponse?.providerResponse?.payment?.id ??
+      (paymentResponse?.providerResponse?.paymentIntent as { id?: string } | undefined)?.id ??
       paymentResponse?.providerResponse?.id ??
       null;
     return (
@@ -874,7 +1133,9 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                     required
                   />
                   <p className="cp-muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
-                    Required so we can attach it to your Square customer for billing and receipts.
+                    {paymentProvider === 'stripe'
+                      ? 'Required for billing and receipts.'
+                      : 'Required so we can attach it to your Square customer for billing and receipts.'}
                   </p>
                 </div>
               )}
@@ -941,9 +1202,13 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
               </div>
             </div>
 
-            {!squareAppId || !locationId ? (
+            {paymentProvider === 'square' && (!squareAppId || !locationId) ? (
               <p className="cp-muted" style={{ color: '#b91c1c' }}>
                 Square configuration is missing. Please contact support.
+              </p>
+            ) : paymentProvider === 'stripe' && !getStripePublishableKey() ? (
+              <p className="cp-muted" style={{ color: '#b91c1c' }}>
+                Stripe configuration is missing (publishable key). Please contact support.
               </p>
             ) : (
               <>
@@ -953,13 +1218,27 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                 <button
                   type="submit"
                   className="btn"
-                  disabled={processing || initializingPaymentForm || !card}
+                  disabled={
+                    processing ||
+                    initializingPaymentForm ||
+                    (paymentProvider === 'square' ? !card : !stripeCardReady)
+                  }
                   style={{
                     minWidth: 200,
                     background: '#4FB128',
                     color: '#fff',
-                    opacity: processing || initializingPaymentForm || !card ? 0.6 : 1,
-                    cursor: processing || initializingPaymentForm || !card ? 'not-allowed' : 'pointer',
+                    opacity:
+                      processing ||
+                      initializingPaymentForm ||
+                      (paymentProvider === 'square' ? !card : !stripeCardReady)
+                        ? 0.6
+                        : 1,
+                    cursor:
+                      processing ||
+                      initializingPaymentForm ||
+                      (paymentProvider === 'square' ? !card : !stripeCardReady)
+                        ? 'not-allowed'
+                        : 'pointer',
                   }}
                 >
                   {processing ? 'Processing…' : state.isUpgrade ? 'Complete Upgrade' : 'Pay & Enroll'}

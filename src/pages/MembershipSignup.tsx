@@ -359,7 +359,11 @@ function lookupCatalogEntry(
       target[combo] ?? (combo === 'plusStarter' ? target.plus_starter : undefined);
     if (!entry || typeof entry !== 'object') return undefined;
     const planId = (entry as any).planId ?? (entry as any).plan_id;
-    const planVariationId = (entry as any).planVariationId ?? (entry as any).plan_variation_id;
+    const planVariationId =
+      (entry as any).planVariationId ??
+      (entry as any).plan_variation_id ??
+      (entry as any).priceId ??
+      (entry as any).price_id;
     if (planId && planVariationId) {
       return { planId: String(planId), planVariationId: String(planVariationId) };
     }
@@ -741,7 +745,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     };
   }, []);
 
-  // Fetch formatted subscription plans from Square
+  // Fetch formatted subscription plans (API path follows VITE_PAYMENT_PROVIDER in src/api/payments.ts)
   useEffect(() => {
     let alive = true;
     (async () => {
