@@ -199,6 +199,11 @@ export type FillDayReminder = {
   id: number;
   description: string;
   dueDate?: string;
+  /** Care outreach log from PIMS; same field as care outreach / PATCH /reminders/:id. */
+  outreachNotes?: string | null;
+  notes?: string | null;
+  /** When true, hide from schedule loader unless “show hidden” is on. */
+  isHidden?: boolean;
 };
 
 export type FillDayAddress = {

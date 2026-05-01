@@ -38,6 +38,8 @@ export type UnscheduledReminder = {
   /** Preferred field for CL outreach log (backend may use this or `notes`). */
   outreachNotes?: string | null;
   notes?: string | null;
+  /** When true, reminder may be omitted from fill-day / outreach lists unless explicitly shown. */
+  isHidden?: boolean | null;
   patient?: CareOutreachPatientRef | null;
   employee?: CareOutreachEmployeeRef | null;
   practice?: { id: number; name?: string };
@@ -77,12 +79,22 @@ function unwrapReminderResponse(raw: unknown): UnscheduledReminder {
   return raw as UnscheduledReminder;
 }
 
+export type PatchReminderBody = {
+  outreachNotes?: string;
+  isHidden?: boolean;
+};
+
+export async function patchReminder(
+  reminderId: number,
+  body: PatchReminderBody
+): Promise<UnscheduledReminder> {
+  const { data } = await http.patch<unknown>(`/reminders/${reminderId}`, body);
+  return unwrapReminderResponse(data);
+}
+
 export async function patchReminderOutreachNotes(
   reminderId: number,
   outreachNotes: string
 ): Promise<UnscheduledReminder> {
-  const { data } = await http.patch<unknown>(`/reminders/${reminderId}`, {
-    outreachNotes,
-  });
-  return unwrapReminderResponse(data);
+  return patchReminder(reminderId, { outreachNotes });
 }
