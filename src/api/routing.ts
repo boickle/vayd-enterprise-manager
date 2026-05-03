@@ -1,4 +1,5 @@
 // src/api/routing.ts
+import type { MiniZone } from './appointments';
 import { http } from './http';
 
 export type Depot = { lat: number; lon: number };
@@ -185,6 +186,35 @@ export async function fetchEtas(payload: EtaRequest): Promise<EtaResult> {
   };
 }
 
+/**
+ * Optional flags on POST `/routing`, `/routing/v2`, `/routing/any-doctor` (slot search — not `/routing/eta`).
+ *
+ * **Ticket one-liner (`preferEarliestFeasibleStart`):** If true, empty-day routing emits multiple candidate
+ * start times (including earliest feasible plus other band/heuristic times) so the scorer can rank them.
+ * If false or omitted, behavior matches today (typically one start when the depot is “close,” or the
+ * existing multi-window behavior when there are blocks and the depot is not close).
+ *
+ * **preferEarliestFeasibleStart** (boolean, optional, default false / omit):
+ * Empty-day placement hint only. Does **not** switch routing to “only earliest” or replace the whole
+ * scoring model. **`preferredTimeOfDay`** (and related day-part logic) still affects how rounded band
+ * / heuristic times are chosen before the candidate list is built, same as today.
+ *
+ * When **false or omitted**: behavior matches today (e.g. often a single start when the depot is “close,”
+ * or existing multi-window behavior when there are personal blocks and the depot is not close).
+ *
+ * When **true**: empty-day routing **emits several distinct start times** (deduped, sorted) so the scorer
+ * can compare them—it **adds** earliest feasible (and keeps other band/heuristic options), not a single
+ * swap for “distance spacing”:
+ * - **No personal blocks:** earliest feasible (rounded up), the usual rounded heuristic slot, placement
+ *   time from the same ETA/band math as today, and latest feasible (rounded down)—so proportional /
+ *   depot-distance logic still influences at least one option.
+ * - **With personal blocks:** union of existing per-window heuristic starts and earliest feasible per
+ *   window, then sorted/deduped.
+ */
+export type RoutingSlotSearchOptionalFlags = {
+  preferEarliestFeasibleStart?: boolean;
+};
+
 // ---- Fill Day API ----
 export type FillDayRequest = {
   doctorId: string;
@@ -292,4 +322,72 @@ export type FillDayResponse = {
 export async function fetchFillDayCandidates(payload: FillDayRequest): Promise<FillDayResponse> {
   const { data } = await http.post('/routing/fill-day', payload);
   return data as FillDayResponse;
+}
+
+// --- Slot-search response: root-level zones (routing-v2) ---
+
+type RoutingZoneCarrier = {
+  clientZone?: MiniZone;
+  effectiveZone?: MiniZone;
+};
+
+function routingZoneIsPresent(z?: MiniZone): z is Exclude<MiniZone, null | undefined> {
+  return z != null && typeof z === 'object';
+}
+
+/**
+ * When POST `/routing/v2` (or any-doctor) includes `clientZone` / `effectiveZone` only on the **root**
+ * response, copy them onto each candidate (`winner`, `alternates[]`, `doctors[].top[]`) if that row
+ * omits them — so preview labels read zones from the unified option without special cases.
+ * Rows that already include zones (e.g. persisted summaries per candidate) are left unchanged.
+ */
+export function mergeRoutingRootZonesIntoCandidate<W extends RoutingZoneCarrier>(
+  row: W,
+  root: RoutingZoneCarrier
+): W {
+  if (!routingZoneIsPresent(root.clientZone) && !routingZoneIsPresent(root.effectiveZone)) return row;
+  const next = { ...row };
+  if (!routingZoneIsPresent(next.clientZone) && routingZoneIsPresent(root.clientZone)) {
+    next.clientZone = root.clientZone;
+  }
+  if (!routingZoneIsPresent(next.effectiveZone) && routingZoneIsPresent(root.effectiveZone)) {
+    next.effectiveZone = root.effectiveZone;
+  }
+  return next;
+}
+
+/** JSON shape for POST `/routing/v2`, `/routing/any-doctor`, etc. (slot search, not ETA). */
+export type RoutingV2SlotSearchResult = RoutingZoneCarrier & {
+  winner?: RoutingZoneCarrier & Record<string, unknown>;
+  alternates?: Array<RoutingZoneCarrier & Record<string, unknown>>;
+  doctors?: Array<{
+    pimsId: string;
+    name?: string;
+    top?: Array<RoutingZoneCarrier & Record<string, unknown>>;
+  }>;
+  [key: string]: unknown;
+};
+
+/** Clone of routing search JSON with root zones merged into every candidate row. */
+export function normalizeRoutingV2SlotSearchResponse(data: RoutingV2SlotSearchResult): RoutingV2SlotSearchResult {
+  const root: RoutingZoneCarrier = {
+    clientZone: data.clientZone,
+    effectiveZone: data.effectiveZone,
+  };
+  if (!routingZoneIsPresent(root.clientZone) && !routingZoneIsPresent(root.effectiveZone)) return data;
+
+  const out: RoutingV2SlotSearchResult = { ...data };
+  if (out.winner) {
+    out.winner = mergeRoutingRootZonesIntoCandidate(out.winner, root);
+  }
+  if (Array.isArray(out.alternates) && out.alternates.length) {
+    out.alternates = out.alternates.map((row) => mergeRoutingRootZonesIntoCandidate(row, root));
+  }
+  if (Array.isArray(out.doctors) && out.doctors.length) {
+    out.doctors = out.doctors.map((d) => ({
+      ...d,
+      top: (d.top || []).map((row) => mergeRoutingRootZonesIntoCandidate(row, root)),
+    }));
+  }
+  return out;
 }

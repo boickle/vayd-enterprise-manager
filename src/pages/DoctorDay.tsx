@@ -6,12 +6,14 @@ import { evetClientLink, evetPatientLink } from '../utils/evet';
 import {
   fetchDoctorDay,
   clientDisplayName,
+  previewRoutingAppointmentLabel,
   isBlockEntry,
   blockDisplayLabel,
   isFlexBlockItem,
   type DoctorDayAppt,
   type Depot,
   type DoctorDayResponse,
+  type MiniZone,
 } from '../api/appointments';
 import { useAuth } from '../auth/useAuth';
 import './DoctorDay.css';
@@ -61,6 +63,8 @@ export type DoctorDayProps = {
     };
     /** Routing-v2: wall-clock return to depot (sec since local midnight on `date`). */
     validationReturnSec?: number;
+    clientZone?: MiniZone;
+    effectiveZone?: MiniZone;
   };
 };
 
@@ -438,6 +442,8 @@ export default function DoctorDay({
             city: virtualAppt.city ?? '',
             state: virtualAppt.state ?? '',
             zip: virtualAppt.zip ?? '',
+            clientZone: virtualAppt.clientZone,
+            effectiveZone: virtualAppt.effectiveZone,
             appointmentType: 'Preview',
             confirmStatusName: 'Proposed',
             statusName: 'Proposed',
@@ -1056,7 +1062,11 @@ export default function DoctorDay({
         .map((h) => ({
           lat: h.lat,
           lon: h.lon,
-          label: isBlockEntry(h.primary) ? blockDisplayLabel(h.primary) : clientDisplayName(h.primary),
+          label: isBlockEntry(h.primary)
+            ? blockDisplayLabel(h.primary)
+            : (h as any).isPreview
+              ? previewRoutingAppointmentLabel(h.primary)
+              : clientDisplayName(h.primary),
           address: h.addressDisplay,
         })),
     [displayHouseholds]
@@ -1604,7 +1614,11 @@ export default function DoctorDay({
                             rel="noreferrer"
                           >
                             #{(a as any)?.positionInDay ?? i + 1}{' '}
-                            {isBlockEntry(a) ? blockDisplayLabel(a) : clientDisplayName(a)}
+                            {isBlockEntry(a)
+                              ? blockDisplayLabel(a)
+                              : (a as any).isPreview
+                                ? previewRoutingAppointmentLabel(a)
+                                : clientDisplayName(a)}
                           </a>
                           {a?.clientAlert && (
                             <div style={{ color: '#dc2626' }}>Alert: {a.clientAlert}</div>
@@ -1614,7 +1628,11 @@ export default function DoctorDay({
                         <>
                           <div className="dd-title">
                             #{(a as any)?.positionInDay ?? i + 1}{' '}
-                            {isBlockEntry(a) ? blockDisplayLabel(a) : clientDisplayName(a)}
+                            {isBlockEntry(a)
+                              ? blockDisplayLabel(a)
+                              : (a as any).isPreview
+                                ? previewRoutingAppointmentLabel(a)
+                                : clientDisplayName(a)}
                           </div>
                         </>
                       )}
