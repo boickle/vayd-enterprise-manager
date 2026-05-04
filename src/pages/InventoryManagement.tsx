@@ -1,0 +1,1301 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAuth } from '../auth/useAuth';
+import {
+  searchItems,
+  getItemWithPriceBreaks,
+  type SearchResultItem,
+  type ItemWithPriceBreaks,
+  type ItemType,
+} from '../api/quantityPriceBreaks';
+import {
+  listPracticeBranches,
+  listInventoryBranchLocations,
+  createInventoryBranchLocation,
+  patchInventoryBranchLocation,
+  getInventoryBranchStock,
+  upsertInventoryBranchStock,
+  postInventoryMovement,
+  listInventoryMovements,
+  upsertBranchPriceOverride,
+  postEffectiveBranchPrice,
+  type PracticeBranch,
+  type BranchPriceOverrideEntityType,
+  type MoneyFields,
+  type InventoryBranchStock,
+  type InventoryBranchLocation,
+  type InventoryMovementType,
+  type InventoryStockMovement,
+  type PostInventoryMovementBody,
+} from '../api/branchInventory';
+import './Settings.css';
+
+const BRANCH_STORAGE_PREFIX = 'vayd_inventory_branch:';
+
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const part = token.split('.')[1];
+    if (!part) return null;
+    const base64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    const json = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function resolvePracticeId(token: string | null): number {
+  if (token) {
+    const p = decodeJwtPayload(token);
+    const raw = p?.practiceId ?? p?.practice_id;
+    if (raw != null) {
+      const n = Number(raw);
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+}
+
+function toMoneyNumber(v: unknown): number {
+  if (v == null || v === '') return 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+type ResolvedMoney = { price: number; cost: number; serviceFee: number; minimumPrice: number };
+
+function moneyBaseFromCatalogRow(row: Record<string, unknown>): ResolvedMoney {
+  return {
+    price: toMoneyNumber(row.price),
+    cost: toMoneyNumber(row.cost),
+    serviceFee: toMoneyNumber(row.serviceFee),
+    minimumPrice: toMoneyNumber(row.minimumPrice),
+  };
+}
+
+function effectiveToResolved(m: MoneyFields): ResolvedMoney {
+  return {
+    price: m.price ?? 0,
+    cost: m.cost ?? 0,
+    serviceFee: m.serviceFee ?? 0,
+    minimumPrice: m.minimumPrice ?? 0,
+  };
+}
+
+function itemTypeToEntityType(itemType: ItemType): BranchPriceOverrideEntityType {
+  if (itemType === 'inventory') return 'inventory_item';
+  if (itemType === 'lab') return 'lab';
+  return 'procedure';
+}
+
+function entityIdFromSelection(itemType: ItemType, row: SearchResultItem): number | null {
+  if (itemType === 'inventory') return row.inventoryItem?.id ?? null;
+  if (itemType === 'lab') return row.lab?.id ?? null;
+  return row.procedure?.id ?? null;
+}
+
+const MOVEMENT_TYPES: { value: InventoryMovementType; label: string }[] = [
+  { value: 'receive', label: 'Receive (into location)' },
+  { value: 'transfer', label: 'Transfer (between locations)' },
+  { value: 'sold', label: 'Sold (out)' },
+  { value: 'visit_use', label: 'Visit use (out)' },
+  { value: 'adjustment_increase', label: 'Adjustment increase' },
+  { value: 'adjustment_decrease', label: 'Adjustment decrease' },
+];
+
+function movementNeedsFrom(t: InventoryMovementType): boolean {
+  return ['transfer', 'sold', 'visit_use', 'adjustment_decrease'].includes(t);
+}
+
+function movementNeedsTo(t: InventoryMovementType): boolean {
+  return ['transfer', 'receive', 'adjustment_increase'].includes(t);
+}
+
+function locationLabel(loc: InventoryBranchLocation): string {
+  return `${loc.name} (${loc.code})`;
+}
+
+export default function InventoryManagement() {
+  const { token, doctorId } = useAuth() as { token: string | null; doctorId: string | null };
+  const practiceId = useMemo(() => resolvePracticeId(token), [token]);
+
+  const [branches, setBranches] = useState<PracticeBranch[]>([]);
+  const [branchId, setBranchId] = useState<number | null>(null);
+  const [branchesError, setBranchesError] = useState<string | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
+  const [searching, setSearching] = useState(false);
+  const searchSeq = useRef(0);
+
+  const [selected, setSelected] = useState<{
+    itemType: ItemType;
+    itemId: number;
+    label: string;
+  } | null>(null);
+
+  const [detail, setDetail] = useState<ItemWithPriceBreaks | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  const [stockSnapshot, setStockSnapshot] = useState<InventoryBranchStock | null>(null);
+  const [reorderDraft, setReorderDraft] = useState('');
+  const [stockLoading, setStockLoading] = useState(false);
+  const [stockSaving, setStockSaving] = useState(false);
+  const [stockError, setStockError] = useState<string | null>(null);
+
+  const [branchLocations, setBranchLocations] = useState<InventoryBranchLocation[]>([]);
+  const [locLoading, setLocLoading] = useState(false);
+  const [locError, setLocError] = useState<string | null>(null);
+  const [newLocCode, setNewLocCode] = useState('');
+  const [newLocName, setNewLocName] = useState('');
+  const [newLocSort, setNewLocSort] = useState('');
+  const [newLocSaving, setNewLocSaving] = useState(false);
+
+  const [movementType, setMovementType] = useState<InventoryMovementType>('receive');
+  const [movementQty, setMovementQty] = useState('1');
+  const [movementFromId, setMovementFromId] = useState('');
+  const [movementToId, setMovementToId] = useState('');
+  const [movementNote, setMovementNote] = useState('');
+  const [movementEmployeeId, setMovementEmployeeId] = useState('');
+  const [movementSubmitting, setMovementSubmitting] = useState(false);
+  const [movementError, setMovementError] = useState<string | null>(null);
+
+  const [movements, setMovements] = useState<InventoryStockMovement[]>([]);
+  const [movementTotal, setMovementTotal] = useState(0);
+  const [movementOffset, setMovementOffset] = useState(0);
+  const [movementsLoading, setMovementsLoading] = useState(false);
+
+  const [effective, setEffective] = useState<MoneyFields | null>(null);
+  const [priceModalOpen, setPriceModalOpen] = useState(false);
+  const [priceForm, setPriceForm] = useState<ResolvedMoney>({
+    price: 0,
+    cost: 0,
+    serviceFee: 0,
+    minimumPrice: 0,
+  });
+  const [priceSaving, setPriceSaving] = useState(false);
+  const [priceError, setPriceError] = useState<string | null>(null);
+
+  const [toast, setToast] = useState<string | null>(null);
+
+  const reloadMovements = useCallback(async () => {
+    if (!selected || selected.itemType !== 'inventory' || branchId == null) {
+      setMovements([]);
+      setMovementTotal(0);
+      return;
+    }
+    setMovementsLoading(true);
+    try {
+      const r = await listInventoryMovements(practiceId, branchId, {
+        inventoryItemId: selected.itemId,
+        limit: 50,
+        offset: 0,
+      });
+      setMovements(r.rows);
+      setMovementTotal(r.total);
+    } catch {
+      setMovements([]);
+      setMovementTotal(0);
+    } finally {
+      setMovementsLoading(false);
+    }
+  }, [selected, branchId, practiceId]);
+
+  const persistBranch = useCallback(
+    (id: number) => {
+      try {
+        localStorage.setItem(`${BRANCH_STORAGE_PREFIX}${practiceId}`, String(id));
+      } catch {
+        /* ignore */
+      }
+    },
+    [practiceId]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setBranchesError(null);
+      try {
+        const list = await listPracticeBranches(practiceId);
+        if (cancelled) return;
+        const active = list.filter((b) => b.isActive !== false);
+        setBranches(active);
+        let initial: number | null = null;
+        try {
+          const stored = localStorage.getItem(`${BRANCH_STORAGE_PREFIX}${practiceId}`);
+          if (stored) {
+            const n = Number(stored);
+            if (Number.isFinite(n) && active.some((b) => b.id === n)) initial = n;
+          }
+        } catch {
+          /* ignore */
+        }
+        if (initial == null) {
+          const def = active.find((b) => b.isDefault);
+          initial = def?.id ?? active[0]?.id ?? null;
+        }
+        setBranchId(initial);
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setBranchesError(e instanceof Error ? e.message : 'Failed to load branches');
+          setBranches([]);
+          setBranchId(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [practiceId]);
+
+  useEffect(() => {
+    if (branchId == null) {
+      setBranchLocations([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setLocLoading(true);
+      setLocError(null);
+      try {
+        const list = await listInventoryBranchLocations(practiceId, branchId);
+        if (!cancelled) setBranchLocations(Array.isArray(list) ? list : []);
+      } catch (e: unknown) {
+        if (!cancelled) setLocError(e instanceof Error ? e.message : 'Failed to load locations');
+      } finally {
+        if (!cancelled) setLocLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [practiceId, branchId]);
+
+  useEffect(() => {
+    if (!branchLocations.length) {
+      setMovementFromId('');
+      setMovementToId('');
+      return;
+    }
+    const def = branchLocations.find((l) => l.code === 'main') ?? branchLocations[0];
+    setMovementFromId(String(def.id));
+    setMovementToId(String(def.id));
+  }, [branchId, branchLocations]);
+
+  useEffect(() => {
+    void reloadMovements();
+  }, [reloadMovements]);
+
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q) {
+      setSearchResults([]);
+      return;
+    }
+    const seq = ++searchSeq.current;
+    const t = window.setTimeout(async () => {
+      setSearching(true);
+      try {
+        const rows = await searchItems(q, practiceId, 50);
+        if (searchSeq.current !== seq) return;
+        setSearchResults(rows);
+      } catch {
+        if (searchSeq.current === seq) setSearchResults([]);
+      } finally {
+        if (searchSeq.current === seq) setSearching(false);
+      }
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [searchQuery, practiceId]);
+
+  const refreshDetailBundle = useCallback(
+    async (sel: { itemType: ItemType; itemId: number }) => {
+      if (branchId == null) return;
+      setDetailLoading(true);
+      setDetailError(null);
+      setStockError(null);
+      try {
+        const item = await getItemWithPriceBreaks(sel.itemType, sel.itemId, practiceId);
+        setDetail(item);
+
+        const entityType = itemTypeToEntityType(item.itemType);
+        const base = moneyBaseFromCatalogRow(item.item as Record<string, unknown>);
+        const eff = await postEffectiveBranchPrice(practiceId, branchId, {
+          entityType,
+          entityId: sel.itemId,
+          base,
+        });
+        setEffective(eff.effective);
+
+        if (item.itemType === 'inventory') {
+          setStockLoading(true);
+          try {
+            const s = await getInventoryBranchStock(practiceId, branchId, sel.itemId);
+            setStockSnapshot(s);
+            setReorderDraft(
+              s.reorderPoint == null || Number.isNaN(Number(s.reorderPoint))
+                ? ''
+                : String(s.reorderPoint)
+            );
+          } catch {
+            setStockSnapshot(null);
+            setReorderDraft('');
+          } finally {
+            setStockLoading(false);
+          }
+        } else {
+          setStockSnapshot(null);
+          setReorderDraft('');
+        }
+      } catch (e: unknown) {
+        setDetail(null);
+        setEffective(null);
+        setDetailError(e instanceof Error ? e.message : 'Failed to load item');
+      } finally {
+        setDetailLoading(false);
+      }
+    },
+    [branchId, practiceId]
+  );
+
+  useEffect(() => {
+    if (!selected || branchId == null) {
+      setDetail(null);
+      setEffective(null);
+      return;
+    }
+    void refreshDetailBundle(selected);
+  }, [selected, branchId, refreshDetailBundle]);
+
+  function openPriceModal() {
+    if (effective) {
+      setPriceForm(effectiveToResolved(effective));
+    } else if (detail) {
+      setPriceForm(moneyBaseFromCatalogRow(detail.item as Record<string, unknown>));
+    }
+    setPriceError(null);
+    setPriceModalOpen(true);
+  }
+
+  async function saveBranchPrices() {
+    if (!selected || branchId == null || !detail) return;
+    setPriceSaving(true);
+    setPriceError(null);
+    try {
+      const entityType = itemTypeToEntityType(detail.itemType);
+      await upsertBranchPriceOverride(practiceId, branchId, {
+        entityType,
+        entityId: selected.itemId,
+        price: priceForm.price,
+        cost: priceForm.cost,
+        serviceFee: priceForm.serviceFee,
+        minimumPrice: priceForm.minimumPrice,
+      });
+      setToast('Branch prices saved');
+      window.setTimeout(() => setToast(null), 3500);
+      setPriceModalOpen(false);
+      await refreshDetailBundle(selected);
+    } catch (e: unknown) {
+      setPriceError(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setPriceSaving(false);
+    }
+  }
+
+  async function resetBranchPrices() {
+    if (!selected || branchId == null || !detail) return;
+    setPriceSaving(true);
+    setPriceError(null);
+    try {
+      const entityType = itemTypeToEntityType(detail.itemType);
+      await upsertBranchPriceOverride(practiceId, branchId, {
+        entityType,
+        entityId: selected.itemId,
+        price: null,
+        cost: null,
+        serviceFee: null,
+        minimumPrice: null,
+      });
+      setToast('Branch price overrides cleared');
+      window.setTimeout(() => setToast(null), 3500);
+      setPriceModalOpen(false);
+      await refreshDetailBundle(selected);
+    } catch (e: unknown) {
+      setPriceError(e instanceof Error ? e.message : 'Reset failed');
+    } finally {
+      setPriceSaving(false);
+    }
+  }
+
+  async function saveReorderPoint() {
+    if (!selected || branchId == null || selected.itemType !== 'inventory') return;
+    setStockSaving(true);
+    setStockError(null);
+    try {
+      const reorderPoint =
+        reorderDraft.trim() === '' ? null : Number(reorderDraft.trim());
+      if (reorderDraft.trim() !== '' && !Number.isFinite(reorderPoint as number)) {
+        setStockError('Reorder point must be a number');
+        return;
+      }
+      const updated = await upsertInventoryBranchStock(practiceId, branchId, selected.itemId, {
+        reorderPoint,
+      });
+      setStockSnapshot(updated);
+      setToast('Reorder point saved');
+      window.setTimeout(() => setToast(null), 3500);
+    } catch (e: unknown) {
+      setStockError(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setStockSaving(false);
+    }
+  }
+
+  async function submitMovement() {
+    if (!selected || branchId == null || selected.itemType !== 'inventory') return;
+    setMovementSubmitting(true);
+    setMovementError(null);
+    try {
+      const qty = Number(movementQty);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        setMovementError('Quantity must be a positive number');
+        return;
+      }
+      const fromId = movementFromId ? Number(movementFromId) : NaN;
+      const toId = movementToId ? Number(movementToId) : NaN;
+      if (movementNeedsFrom(movementType) && !Number.isFinite(fromId)) {
+        setMovementError('Choose a source location');
+        return;
+      }
+      if (movementNeedsTo(movementType) && !Number.isFinite(toId)) {
+        setMovementError('Choose a destination location');
+        return;
+      }
+      if (movementType === 'transfer' && fromId === toId) {
+        setMovementError('Transfer requires two different locations');
+        return;
+      }
+      const body: PostInventoryMovementBody = {
+        movementType,
+        inventoryItemId: selected.itemId,
+        quantity: qty,
+      };
+      if (movementNeedsFrom(movementType)) body.fromBranchLocationId = fromId;
+      if (movementNeedsTo(movementType)) body.toBranchLocationId = toId;
+      const n = movementNote.trim();
+      if (n) body.note = n;
+      const emp = movementEmployeeId.trim();
+      if (emp) {
+        const eid = Number(emp);
+        if (!Number.isFinite(eid)) {
+          setMovementError('Employee ID must be a number');
+          return;
+        }
+        body.movedByEmployeeId = eid;
+      }
+      await postInventoryMovement(practiceId, branchId, body);
+      setToast('Movement recorded');
+      window.setTimeout(() => setToast(null), 3500);
+      setMovementNote('');
+      await refreshDetailBundle(selected);
+      await reloadMovements();
+    } catch (e: unknown) {
+      setMovementError(e instanceof Error ? e.message : 'Movement failed');
+    } finally {
+      setMovementSubmitting(false);
+    }
+  }
+
+  async function addBranchLocation() {
+    if (branchId == null) return;
+    const code = newLocCode.trim();
+    const name = newLocName.trim();
+    if (!code || !name) {
+      setLocError('Location code and name are required');
+      return;
+    }
+    setNewLocSaving(true);
+    setLocError(null);
+    try {
+      const sortOrderRaw = newLocSort.trim();
+      const sortOrder = sortOrderRaw === '' ? undefined : Number(sortOrderRaw);
+      await createInventoryBranchLocation(practiceId, branchId, {
+        code,
+        name,
+        ...(Number.isFinite(sortOrder as number) ? { sortOrder: sortOrder as number } : {}),
+      });
+      setNewLocCode('');
+      setNewLocName('');
+      setNewLocSort('');
+      setToast('Location created');
+      window.setTimeout(() => setToast(null), 3500);
+      const list = await listInventoryBranchLocations(practiceId, branchId);
+      setBranchLocations(Array.isArray(list) ? list : []);
+    } catch (e: unknown) {
+      setLocError(e instanceof Error ? e.message : 'Failed to create location');
+    } finally {
+      setNewLocSaving(false);
+    }
+  }
+
+  async function deactivateLocation(loc: InventoryBranchLocation) {
+    if (branchId == null || loc.isDefault) return;
+    if (!window.confirm(`Deactivate location “${loc.name}”?`)) return;
+    setLocError(null);
+    try {
+      await patchInventoryBranchLocation(practiceId, branchId, loc.id, { isActive: false });
+      const list = await listInventoryBranchLocations(practiceId, branchId);
+      setBranchLocations(Array.isArray(list) ? list : []);
+      setToast('Location deactivated');
+      window.setTimeout(() => setToast(null), 3500);
+    } catch (e: unknown) {
+      setLocError(e instanceof Error ? e.message : 'Update failed');
+    }
+  }
+
+  async function loadMoreMovements() {
+    if (!selected || selected.itemType !== 'inventory' || branchId == null) return;
+    if (movements.length >= movementTotal) return;
+    setMovementsLoading(true);
+    try {
+      const r = await listInventoryMovements(practiceId, branchId, {
+        inventoryItemId: selected.itemId,
+        limit: 50,
+        offset: movements.length,
+      });
+      setMovements((prev) => [...prev, ...r.rows]);
+      setMovementTotal(r.total);
+    } catch {
+      /* keep existing */
+    } finally {
+      setMovementsLoading(false);
+    }
+  }
+
+  function resolveLocationName(id: number | null | undefined): string {
+    if (id == null) return '—';
+    const loc = branchLocations.find((l) => l.id === id);
+    return loc ? locationLabel(loc) : `#${id}`;
+  }
+
+  const practiceMoney: ResolvedMoney | null = detail
+    ? moneyBaseFromCatalogRow(detail.item as Record<string, unknown>)
+    : null;
+
+  return (
+    <div className="settings-section">
+      <h2 className="settings-section-title">Inventory and branch catalog</h2>
+      <p className="settings-section-description">
+        Search the catalog, choose a branch, then manage reorder points, location buckets, audited
+        stock movements, and optional branch prices. On-hand totals are the sum of per-location
+        balances; quantity changes use movements, not the stock PUT. Quantity price tiers stay
+        practice-wide — edit them under Settings → Inventory management.
+      </p>
+
+      {toast && (
+        <div className="settings-message settings-success-message" style={{ marginBottom: 16 }}>
+          {toast}
+        </div>
+      )}
+
+      <div className="settings-form-group" style={{ marginBottom: 20 }}>
+        <label className="settings-label">Practice</label>
+        <p className="settings-muted" style={{ marginTop: 0 }}>
+          Using practice ID <strong>{practiceId}</strong>
+          {decodeJwtPayload(token ?? '')?.practiceId != null ? ' (from your session)' : ''}
+          {decodeJwtPayload(token ?? '')?.practiceId == null && import.meta.env.VITE_PRACTICE_ID
+            ? ' (from VITE_PRACTICE_ID)'
+            : ''}
+          {decodeJwtPayload(token ?? '')?.practiceId == null && !import.meta.env.VITE_PRACTICE_ID
+            ? ' (default 1 — set VITE_PRACTICE_ID or JWT practiceId if needed)'
+            : ''}
+        </p>
+      </div>
+
+      <div className="settings-form-group" style={{ marginBottom: 20 }}>
+        <label className="settings-label" htmlFor="inv-branch">
+          Branch
+        </label>
+        {branchesError && (
+          <p className="settings-error-message" style={{ marginTop: 4 }}>
+            {branchesError}
+          </p>
+        )}
+        <select
+          id="inv-branch"
+          className="settings-input"
+          style={{ maxWidth: 420 }}
+          value={branchId ?? ''}
+          disabled={!branches.length}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            if (Number.isFinite(v)) {
+              setBranchId(v);
+              persistBranch(v);
+            }
+          }}
+        >
+          {!branches.length && <option value="">No branches</option>}
+          {branches.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+              {b.isDefault ? ' (default)' : ''}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {branchId != null && (
+        <div className="settings-card" style={{ marginBottom: 24 }}>
+          <h3 className="settings-card-title">Location buckets (this branch)</h3>
+          <p className="settings-muted" style={{ marginBottom: 12 }}>
+            Each branch has a default <code>main</code> bucket. Add more (office, vehicle, etc.) for
+            transfers and reporting.
+          </p>
+          {locError && <p className="settings-error-message">{locError}</p>}
+          {locLoading ? (
+            <p className="settings-muted">Loading locations…</p>
+          ) : (
+            <>
+              <div className="settings-table-container" style={{ marginBottom: 16 }}>
+                <table className="settings-table">
+                  <thead>
+                    <tr>
+                      <th>Code</th>
+                      <th>Name</th>
+                      <th>Default</th>
+                      <th>Active</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {branchLocations.map((loc) => (
+                      <tr key={loc.id}>
+                        <td>
+                          <code>{loc.code}</code>
+                        </td>
+                        <td>{loc.name}</td>
+                        <td>{loc.isDefault ? 'Yes' : '—'}</td>
+                        <td>{loc.isActive === false ? 'No' : 'Yes'}</td>
+                        <td>
+                          {!loc.isDefault && loc.isActive !== false && (
+                            <button
+                              type="button"
+                              className="btn secondary"
+                              style={{ fontSize: 12, padding: '4px 10px' }}
+                              onClick={() => void deactivateLocation(loc)}
+                            >
+                              Deactivate
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 10,
+                  alignItems: 'flex-end',
+                  maxWidth: 720,
+                }}
+              >
+                <label className="settings-label" style={{ flex: '1 1 140px', marginBottom: 0 }}>
+                  New code
+                  <input
+                    className="settings-input"
+                    value={newLocCode}
+                    onChange={(e) => setNewLocCode(e.target.value)}
+                    placeholder="e.g. vehicle_1"
+                  />
+                </label>
+                <label className="settings-label" style={{ flex: '1 1 160px', marginBottom: 0 }}>
+                  New name
+                  <input
+                    className="settings-input"
+                    value={newLocName}
+                    onChange={(e) => setNewLocName(e.target.value)}
+                    placeholder="Display name"
+                  />
+                </label>
+                <label className="settings-label" style={{ flex: '0 1 100px', marginBottom: 0 }}>
+                  Sort
+                  <input
+                    className="settings-input"
+                    value={newLocSort}
+                    onChange={(e) => setNewLocSort(e.target.value)}
+                    placeholder="Optional"
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={newLocSaving}
+                  onClick={() => void addBranchLocation()}
+                >
+                  {newLocSaving ? 'Adding…' : 'Add location'}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      <div className="settings-form-group">
+        <label className="settings-label">Search catalog</label>
+        <div style={{ position: 'relative', maxWidth: 560 }}>
+          <input
+            type="text"
+            className="settings-input"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search inventory, labs, procedures…"
+            style={{ width: '100%', paddingRight: searching ? 40 : 12 }}
+          />
+          {searching && (
+            <div
+              style={{
+                position: 'absolute',
+                right: 12,
+                top: '50%',
+                transform: 'translateY(-50%)',
+              }}
+            >
+              <div className="settings-spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.2fr)',
+          gap: 24,
+          marginTop: 20,
+          alignItems: 'start',
+        }}
+        className="inventory-mgmt-grid"
+      >
+        <div className="settings-card">
+          <h3 className="settings-card-title">Results</h3>
+          {!searchQuery.trim() && <p className="settings-muted">Type to search.</p>}
+          {searchQuery.trim() && !searching && searchResults.length === 0 && (
+            <p className="settings-muted">No matches.</p>
+          )}
+          {searchResults.length > 0 && (
+            <div className="settings-table-container">
+              <table className="settings-table">
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Name</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {searchResults.map((row, i) => {
+                    const itemType = row.itemType;
+                    const itemId = entityIdFromSelection(itemType, row);
+                    const active =
+                      selected && selected.itemType === itemType && selected.itemId === itemId;
+                    return (
+                      <tr key={`${itemType}-${itemId}-${i}`}>
+                        <td style={{ textTransform: 'capitalize' }}>{itemType}</td>
+                        <td>{row.name}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            disabled={itemId == null}
+                            onClick={() => {
+                              if (itemId == null) return;
+                              setSelected({
+                                itemType,
+                                itemId,
+                                label: row.name,
+                              });
+                            }}
+                          >
+                            {active ? 'Selected' : 'Select'}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="settings-card">
+          <h3 className="settings-card-title">Branch details</h3>
+          {!selected && <p className="settings-muted">Select an item from the list.</p>}
+          {selected && branchId == null && (
+            <p className="settings-muted">Choose a branch to load stock and prices.</p>
+          )}
+          {selected && branchId != null && detailLoading && (
+            <div className="settings-loading">
+              <div className="settings-spinner" />
+              <span>Loading…</span>
+            </div>
+          )}
+          {detailError && (
+            <div className="settings-message settings-error-message">{detailError}</div>
+          )}
+          {selected && branchId != null && !detailLoading && detail && (
+            <>
+              <p className="settings-card-subtitle" style={{ marginBottom: 16 }}>
+                <strong>{detail.item.name}</strong> ·{' '}
+                <span style={{ textTransform: 'capitalize' }}>{detail.itemType}</span>
+                {detail.item.code != null && detail.item.code !== '' && (
+                  <> · Code {String(detail.item.code)}</>
+                )}
+              </p>
+
+              {practiceMoney && (
+                <div style={{ marginBottom: 16 }}>
+                  <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>Practice catalog</h4>
+                  <table className="settings-table">
+                    <tbody>
+                      <tr>
+                        <td>Price</td>
+                        <td>${practiceMoney.price.toFixed(2)}</td>
+                      </tr>
+                      <tr>
+                        <td>Cost</td>
+                        <td>${practiceMoney.cost.toFixed(2)}</td>
+                      </tr>
+                      <tr>
+                        <td>Service fee</td>
+                        <td>${practiceMoney.serviceFee.toFixed(2)}</td>
+                      </tr>
+                      <tr>
+                        <td>Minimum price</td>
+                        <td>${practiceMoney.minimumPrice.toFixed(2)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {effective && (
+                <div style={{ marginBottom: 16 }}>
+                  <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
+                    Effective at this branch
+                  </h4>
+                  <table className="settings-table">
+                    <tbody>
+                      <tr>
+                        <td>Price</td>
+                        <td>${effective.price?.toFixed(2) ?? '—'}</td>
+                      </tr>
+                      <tr>
+                        <td>Cost</td>
+                        <td>${effective.cost?.toFixed(2) ?? '—'}</td>
+                      </tr>
+                      <tr>
+                        <td>Service fee</td>
+                        <td>${effective.serviceFee?.toFixed(2) ?? '—'}</td>
+                      </tr>
+                      <tr>
+                        <td>Minimum price</td>
+                        <td>${effective.minimumPrice?.toFixed(2) ?? '—'}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button type="button" className="btn primary" onClick={openPriceModal}>
+                      Edit branch prices
+                    </button>
+                    <button type="button" className="btn secondary" onClick={() => refreshDetailBundle(selected)}>
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {detail.itemType === 'inventory' && (
+                <div style={{ marginBottom: 20 }}>
+                  <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>Stock at this branch</h4>
+                  {stockLoading ? (
+                    <p className="settings-muted">Loading stock…</p>
+                  ) : (
+                    <>
+                      {stockError && (
+                        <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
+                          {stockError}
+                        </div>
+                      )}
+                      <p style={{ margin: '0 0 12px', fontSize: 16 }}>
+                        <strong>Total on hand:</strong>{' '}
+                        {stockSnapshot?.quantityOnHandTotal == null ||
+                        Number.isNaN(Number(stockSnapshot.quantityOnHandTotal))
+                          ? '—'
+                          : String(stockSnapshot.quantityOnHandTotal)}
+                      </p>
+                      {stockSnapshot && stockSnapshot.locations && stockSnapshot.locations.length > 0 && (
+                        <div className="settings-table-container" style={{ marginBottom: 16 }}>
+                          <table className="settings-table">
+                            <thead>
+                              <tr>
+                                <th>Location</th>
+                                <th>Code</th>
+                                <th>Qty</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {stockSnapshot.locations.map((row) => (
+                                <tr key={row.branchLocationId}>
+                                  <td>{row.name}</td>
+                                  <td>
+                                    <code>{row.code}</code>
+                                  </td>
+                                  <td>
+                                    {row.quantityOnHand == null ? '—' : String(row.quantityOnHand)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 360 }}>
+                        <label className="settings-label">
+                          Reorder point (branch + item)
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            className="settings-input"
+                            value={reorderDraft}
+                            onChange={(e) => setReorderDraft(e.target.value)}
+                            placeholder="Not set"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="btn primary"
+                          disabled={stockSaving}
+                          onClick={() => void saveReorderPoint()}
+                        >
+                          {stockSaving ? 'Saving…' : 'Save reorder point'}
+                        </button>
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: 24,
+                          paddingTop: 20,
+                          borderTop: '1px solid rgba(0,0,0,0.08)',
+                        }}
+                      >
+                        <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
+                          Record movement
+                        </h4>
+                        <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+                          Use audited movements for all quantity changes. Attribution uses your
+                          session by default; set employee ID only to override (e.g.{' '}
+                          <code>doctorId</code> from profile is {doctorId ?? 'not set'}).
+                        </p>
+                        {movementError && (
+                          <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
+                            {movementError}
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 440 }}>
+                          <label className="settings-label">
+                            Movement type
+                            <select
+                              className="settings-input"
+                              value={movementType}
+                              onChange={(e) => {
+                                setMovementType(e.target.value as InventoryMovementType);
+                                setMovementError(null);
+                              }}
+                            >
+                              {MOVEMENT_TYPES.map((o) => (
+                                <option key={o.value} value={o.value}>
+                                  {o.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="settings-label">
+                            Quantity
+                            <input
+                              type="number"
+                              min={1}
+                              step={1}
+                              className="settings-input"
+                              value={movementQty}
+                              onChange={(e) => setMovementQty(e.target.value)}
+                            />
+                          </label>
+                          {movementNeedsFrom(movementType) && (
+                            <label className="settings-label">
+                              From location
+                              <select
+                                className="settings-input"
+                                value={movementFromId}
+                                onChange={(e) => setMovementFromId(e.target.value)}
+                              >
+                                {branchLocations.map((loc) => (
+                                  <option key={loc.id} value={loc.id} disabled={loc.isActive === false}>
+                                    {locationLabel(loc)}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          )}
+                          {movementNeedsTo(movementType) && (
+                            <label className="settings-label">
+                              To location
+                              <select
+                                className="settings-input"
+                                value={movementToId}
+                                onChange={(e) => setMovementToId(e.target.value)}
+                              >
+                                {branchLocations.map((loc) => (
+                                  <option key={loc.id} value={loc.id} disabled={loc.isActive === false}>
+                                    {locationLabel(loc)}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          )}
+                          <label className="settings-label">
+                            Note (optional)
+                            <input
+                              className="settings-input"
+                              value={movementNote}
+                              onChange={(e) => setMovementNote(e.target.value)}
+                              placeholder="Invoice #, reason, etc."
+                            />
+                          </label>
+                          <label className="settings-label">
+                            Moved by employee ID (optional override)
+                            <input
+                              className="settings-input"
+                              value={movementEmployeeId}
+                              onChange={(e) => setMovementEmployeeId(e.target.value)}
+                              placeholder="Leave blank for JWT default"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="btn primary"
+                            disabled={movementSubmitting || !branchLocations.length}
+                            onClick={() => void submitMovement()}
+                          >
+                            {movementSubmitting ? 'Recording…' : 'Record movement'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: 24,
+                          paddingTop: 20,
+                          borderTop: '1px solid rgba(0,0,0,0.08)',
+                        }}
+                      >
+                        <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
+                          Movement history
+                        </h4>
+                        {movementsLoading && movements.length === 0 ? (
+                          <p className="settings-muted">Loading history…</p>
+                        ) : movements.length === 0 ? (
+                          <p className="settings-muted">No movements yet for this item.</p>
+                        ) : (
+                          <>
+                            <div className="settings-table-container">
+                              <table className="settings-table">
+                                <thead>
+                                  <tr>
+                                    <th>When</th>
+                                    <th>Type</th>
+                                    <th>Qty</th>
+                                    <th>From</th>
+                                    <th>To</th>
+                                    <th>Note</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {movements.map((m, idx) => (
+                                    <tr key={String(m.id ?? idx)}>
+                                      <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
+                                        {m.created
+                                          ? new Date(String(m.created)).toLocaleString()
+                                          : '—'}
+                                      </td>
+                                      <td style={{ fontSize: 12 }}>{String(m.movementType ?? '—')}</td>
+                                      <td>{m.quantity != null ? String(m.quantity) : '—'}</td>
+                                      <td style={{ fontSize: 12 }}>
+                                        {resolveLocationName(m.fromBranchLocationId as number)}
+                                      </td>
+                                      <td style={{ fontSize: 12 }}>
+                                        {resolveLocationName(m.toBranchLocationId as number)}
+                                      </td>
+                                      <td style={{ fontSize: 12, maxWidth: 160 }} title={String(m.note ?? '')}>
+                                        {m.note ? String(m.note) : '—'}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            {movements.length < movementTotal && (
+                              <button
+                                type="button"
+                                className="btn secondary"
+                                style={{ marginTop: 10 }}
+                                disabled={movementsLoading}
+                                onClick={() => void loadMoreMovements()}
+                              >
+                                {movementsLoading ? 'Loading…' : `Load more (${movements.length} of ${movementTotal})`}
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {detail.itemType !== 'inventory' && (
+                <p className="settings-muted" style={{ marginBottom: 16 }}>
+                  On-hand quantity applies to inventory items only. You can still override prices for
+                  this {detail.itemType} at the selected branch.
+                </p>
+              )}
+
+              <div>
+                <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
+                  Quantity price breaks (practice)
+                </h4>
+                {detail.priceBreaks.length === 0 ? (
+                  <p className="settings-muted">No tiers configured.</p>
+                ) : (
+                  <div className="settings-table-container">
+                    <table className="settings-table">
+                      <thead>
+                        <tr>
+                          <th>Low</th>
+                          <th>High</th>
+                          <th>Price</th>
+                          <th>Active</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...detail.priceBreaks]
+                          .sort((a, b) => a.lowQuantity - b.lowQuantity)
+                          .map((pb) => (
+                            <tr key={pb.id}>
+                              <td>{pb.lowQuantity}</td>
+                              <td>{pb.highQuantity}</td>
+                              <td>${Number(pb.price).toFixed(2)}</td>
+                              <td>{pb.isActive ? 'Yes' : 'No'}</td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {priceModalOpen && detail && selected && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="settings-modal-overlay"
+          onClick={() => !priceSaving && setPriceModalOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            padding: 16,
+          }}
+        >
+          <div
+            className="settings-card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: 'min(440px, 100%)', padding: 24 }}
+          >
+            <h3 className="settings-card-title">Branch price override</h3>
+            <p className="settings-muted" style={{ marginBottom: 16 }}>
+              Values saved here apply only to <strong>{branches.find((b) => b.id === branchId)?.name}</strong>.
+              Use &quot;Clear overrides&quot; to fall back to the practice catalog for all four fields.
+            </p>
+            {priceError && (
+              <div className="settings-message settings-error-message" style={{ marginBottom: 12 }}>
+                {priceError}
+              </div>
+            )}
+            {(['price', 'cost', 'serviceFee', 'minimumPrice'] as const).map((key) => (
+              <label key={key} className="settings-label" style={{ display: 'block', marginBottom: 12 }}>
+                {key === 'serviceFee'
+                  ? 'Service fee'
+                  : key === 'minimumPrice'
+                    ? 'Minimum price'
+                    : key.charAt(0).toUpperCase() + key.slice(1)}
+                <input
+                  type="number"
+                  className="settings-input"
+                  step="0.01"
+                  value={priceForm[key] ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value === '' ? 0 : Number(e.target.value);
+                    setPriceForm((f) => ({ ...f, [key]: Number.isFinite(v) ? v : 0 }));
+                  }}
+                />
+              </label>
+            ))}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 16 }}>
+              <button type="button" className="btn primary" disabled={priceSaving} onClick={() => void saveBranchPrices()}>
+                {priceSaving ? 'Saving…' : 'Save'}
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={priceSaving}
+                onClick={() => void resetBranchPrices()}
+              >
+                Clear overrides
+              </button>
+              <button type="button" className="btn secondary" disabled={priceSaving} onClick={() => setPriceModalOpen(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @media (max-width: 900px) {
+          .inventory-mgmt-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
