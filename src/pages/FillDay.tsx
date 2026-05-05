@@ -44,6 +44,28 @@ function fillDayReminderIsHidden(r: FillDayReminder | Record<string, unknown>): 
   return (r as FillDayReminder).isHidden === true;
 }
 
+/** True if at least one reminder would appear in the schedule-loader SMS (non-hidden), matching formatSmsMessage. */
+function fillDayCandidateHasVisibleReminderForSms(candidate: FillDayCandidate): boolean {
+  if (candidate.patients && candidate.patients.length > 0) {
+    for (const patient of candidate.patients) {
+      for (const r of patient.reminders ?? []) {
+        if (!fillDayReminderIsHidden(r)) return true;
+      }
+    }
+    return false;
+  }
+  const patientNames = candidate.patientNames ?? [];
+  for (const reminder of candidate.reminders ?? []) {
+    if (fillDayReminderIsHidden(reminder)) continue;
+    const reminderIdx = candidate.reminderIds.findIndex((id) => Number(id) === Number(reminder.id));
+    if (reminderIdx >= 0 && reminderIdx < candidate.patientIds.length) {
+      return true;
+    }
+    if (patientNames.length > 0) return true;
+  }
+  return false;
+}
+
 function reminderPatchIsHidden(u: { isHidden?: boolean | null; [key: string]: unknown }): boolean | undefined {
   const any = u as Record<string, unknown>;
   if (typeof any.is_hidden === 'boolean') return any.is_hidden;
@@ -677,6 +699,9 @@ This spot is also being offered to other clients. If you'd like to book it for $
 
   // Handle opening SMS confirmation modal
   function handleOpenSmsModal(candidate: FillDayCandidate, withOverride: boolean = false) {
+    if (!fillDayCandidateHasVisibleReminderForSms(candidate)) {
+      return;
+    }
     try {
       console.log('Opening SMS modal for candidate:', candidate);
       const message = formatSmsMessage(candidate);
@@ -747,6 +772,9 @@ This spot is also being offered to other clients. If you'd like to book it for $
   // Handle approve and send
   function handleApproveAndSend() {
     if (pendingSmsCandidate) {
+      if (!fillDayCandidateHasVisibleReminderForSms(pendingSmsCandidate)) {
+        return;
+      }
       // Use the current message preview (which may have been edited)
       handleSendSms(pendingSmsCandidate, sendWithOverride, smsMessagePreview);
     }
@@ -920,6 +948,10 @@ This spot is also being offered to other clients. If you'd like to book it for $
       console.log('SMS Modal State:', { smsModalOpen, hasCandidate: !!pendingSmsCandidate });
     }
   }, [smsModalOpen, pendingSmsCandidate]);
+
+  const canSendPendingSms =
+    pendingSmsCandidate != null &&
+    fillDayCandidateHasVisibleReminderForSms(pendingSmsCandidate);
 
   // Handle PDF export
   async function handleExportToPDF() {
@@ -1247,7 +1279,9 @@ This spot is also being offered to other clients. If you'd like to book it for $
 
       {candidates.length > 0 && (
         <div style={{ display: 'grid', gap: '24px' }}>
-          {candidates.map((candidate, idx) => (
+          {candidates.map((candidate, idx) => {
+            const canSendScheduleLoaderSms = fillDayCandidateHasVisibleReminderForSms(candidate);
+            return (
             <div
               key={`${candidate.clientId}-${candidate.holeIndex}-${idx}`}
               style={{
@@ -1701,16 +1735,23 @@ This spot is also being offered to other clients. If you'd like to book it for $
                     console.log('Button clicked for candidate:', candidate.clientId);
                     handleOpenSmsModal(candidate, false);
                   }}
-                  disabled={sendingSms[candidate.clientId]}
+                  disabled={sendingSms[candidate.clientId] || !canSendScheduleLoaderSms}
+                  title={
+                    !canSendScheduleLoaderSms
+                      ? 'All reminders for these pets are hidden. Unhide at least one reminder to send a text.'
+                      : undefined
+                  }
                   style={{
                     padding: '10px 20px',
-                    background: sendingSms[candidate.clientId] ? '#ccc' : '#4FB128',
+                    background:
+                      sendingSms[candidate.clientId] || !canSendScheduleLoaderSms ? '#ccc' : '#4FB128',
                     color: '#fff',
                     border: 'none',
                     borderRadius: '8px',
                     fontSize: '14px',
                     fontWeight: 600,
-                    cursor: sendingSms[candidate.clientId] ? 'not-allowed' : 'pointer',
+                    cursor:
+                      sendingSms[candidate.clientId] || !canSendScheduleLoaderSms ? 'not-allowed' : 'pointer',
                   }}
                 >
                   {sendingSms[candidate.clientId] ? 'Sending...' : 'Send Text To Client'}
@@ -1724,16 +1765,23 @@ This spot is also being offered to other clients. If you'd like to book it for $
                       console.log('Button clicked for candidate (override):', candidate.clientId);
                       handleOpenSmsModal(candidate, true);
                     }}
-                    disabled={sendingSms[candidate.clientId]}
+                    disabled={sendingSms[candidate.clientId] || !canSendScheduleLoaderSms}
+                    title={
+                      !canSendScheduleLoaderSms
+                        ? 'All reminders for these pets are hidden. Unhide at least one reminder to send a text.'
+                        : undefined
+                    }
                     style={{
                       padding: '10px 20px',
-                      background: sendingSms[candidate.clientId] ? '#ccc' : '#f59e0b',
+                      background:
+                        sendingSms[candidate.clientId] || !canSendScheduleLoaderSms ? '#ccc' : '#f59e0b',
                       color: '#fff',
                       border: 'none',
                       borderRadius: '8px',
                       fontSize: '14px',
                       fontWeight: 600,
-                      cursor: sendingSms[candidate.clientId] ? 'not-allowed' : 'pointer',
+                      cursor:
+                        sendingSms[candidate.clientId] || !canSendScheduleLoaderSms ? 'not-allowed' : 'pointer',
                     }}
                   >
                     {sendingSms[candidate.clientId] ? 'Sending...' : 'Send to Actual Client'}
@@ -1771,7 +1819,8 @@ This spot is also being offered to other clients. If you'd like to book it for $
                 </button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
       </div>
@@ -1866,16 +1915,20 @@ This spot is also being offered to other clients. If you'd like to book it for $
               </button>
               <button
                 onClick={handleApproveAndSend}
-                disabled={sendingSms[pendingSmsCandidate.clientId]}
+                disabled={sendingSms[pendingSmsCandidate.clientId] || !canSendPendingSms}
                 style={{
                   padding: '10px 20px',
-                  background: sendingSms[pendingSmsCandidate.clientId] ? '#ccc' : '#4FB128',
+                  background:
+                    sendingSms[pendingSmsCandidate.clientId] || !canSendPendingSms ? '#ccc' : '#4FB128',
                   color: '#fff',
                   border: 'none',
                   borderRadius: '8px',
                   fontSize: '14px',
                   fontWeight: 600,
-                  cursor: sendingSms[pendingSmsCandidate.clientId] ? 'not-allowed' : 'pointer',
+                  cursor:
+                    sendingSms[pendingSmsCandidate.clientId] || !canSendPendingSms
+                      ? 'not-allowed'
+                      : 'pointer',
                 }}
               >
                 {sendingSms[pendingSmsCandidate.clientId] ? 'Sending...' : 'Send Message'}

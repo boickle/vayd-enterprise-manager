@@ -6,6 +6,7 @@ import { http } from '../api/http';
 import { fetchClientPets, type Pet, fetchClientInfo, fetchWellnessPlansForPatient } from '../api/clientPortal';
 import { fetchPrimaryProviders, fetchVeterinarians, type Provider } from '../api/employee';
 import { validateAddress } from '../api/geo';
+import { normalizeRoutingV2SlotSearchResponse, type RoutingV2SlotSearchResult } from '../api/routing';
 import { DateTime } from 'luxon';
 import {
   checkEmail,
@@ -922,7 +923,7 @@ export default function AppointmentRequestForm() {
 
         console.log('[AppointmentForm] Calling /routing/v2 with payload:', payload);
         const response = await http.post('/routing/v2', payload);
-        data = response.data;
+        data = normalizeRoutingV2SlotSearchResponse(response.data as RoutingV2SlotSearchResult);
         console.log('[AppointmentForm] Routing v2 response:', data);
       } else {
         // Use public availability API for new clients

@@ -7,6 +7,7 @@ import type { DoctorDayProps } from './DoctorDay';
 import {
   fetchDoctorDay,
   clientDisplayName,
+  previewRoutingAppointmentLabel,
   isBlockEntry,
   blockDisplayLabel,
   isFlexBlockItem,
@@ -449,14 +450,19 @@ function visualHouseholdIsClientFixedTime(h: Household): boolean {
 /**
  * When true, layout and hover Arrive/Leave use doctor-day start/end (My Week `weekHouseholdUsesDoctorDayClockForLayout`).
  * Client Fixed Time uses route ETA when arrival is after booked start; otherwise calendar start.
+ *
+ * `blockMetaForFlex` must match render: {@link blockLabelMetaForDisplay} so noloc / doctor-day rows that only
+ * expose `FLEX BLOCK` on ETA `byIndex` still count as flex (route clock), not fixed personal blocks.
  */
 function visualHouseholdUsesDoctorDayClockForLayout(
   h: Household,
   slot: { eta?: string | null; etd?: string | null } | undefined,
-  showByDriveTime: boolean
+  showByDriveTime: boolean,
+  blockMetaForFlex?: { blockLabel?: string; title?: string } | null
 ): boolean {
   if (!showByDriveTime) return true;
-  const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(h.primary));
+  const flexSource = blockMetaForFlex ?? h.primary;
+  const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(flexSource));
   if (h.isPersonalBlock && !flexBlock) return true;
   if (!visualHouseholdIsClientFixedTime(h)) return false;
   const eta = slot?.eta;
@@ -782,6 +788,8 @@ export default function DoctorDayVisual({
             city: virtualAppt.city ?? '',
             state: virtualAppt.state ?? '',
             zip: virtualAppt.zip ?? '',
+            clientZone: virtualAppt.clientZone,
+            effectiveZone: virtualAppt.effectiveZone,
             appointmentStart: start.toISO(),
             appointmentEnd: end.toISO(),
             isPreview: true as any,
@@ -1592,10 +1600,11 @@ export default function DoctorDayVisual({
     for (let idx = 0; idx < N; idx++) {
       const h = displayHouseholds[idx];
       const slot = displayTimeline[idx];
+      const labelMeta = blockLabelMetaForDisplay(h, etaBlockLabelByKey);
       const etaIso = slot?.eta ?? null;
       const etdIso = slot?.etd ?? null;
       const { startIso: sIso, endIso: eIso } = householdStartEnd(h, idx);
-      const doctorDayClock = visualHouseholdUsesDoctorDayClockForLayout(h, slot, showByDriveTime);
+      const doctorDayClock = visualHouseholdUsesDoctorDayClockForLayout(h, slot, showByDriveTime, labelMeta);
       const useEta = showByDriveTime && !doctorDayClock && (slot?.eta ?? slot?.etd);
       let anchorIso = useEta ? (slot?.eta ?? sIso) : sIso;
       const endIso = useEta && slot?.etd ? slot.etd : eIso;
@@ -1603,7 +1612,13 @@ export default function DoctorDayVisual({
         const prev = displayHouseholds[idx - 1];
         const prevSlot = displayTimeline[idx - 1];
         if (sameAddress(prev, h)) {
-          const prevDoctorDay = visualHouseholdUsesDoctorDayClockForLayout(prev, prevSlot, showByDriveTime);
+          const prevLabelMeta = blockLabelMetaForDisplay(prev, etaBlockLabelByKey);
+          const prevDoctorDay = visualHouseholdUsesDoctorDayClockForLayout(
+            prev,
+            prevSlot,
+            showByDriveTime,
+            prevLabelMeta
+          );
           const prevEtd =
             showByDriveTime && !prevDoctorDay && prevSlot?.etd
               ? prevSlot.etd
@@ -1643,7 +1658,6 @@ export default function DoctorDayVisual({
         const prevEndShiftedPx = baseTops[idx - 1] + driveOffsetsPx[idx - 1] + heights[idx - 1];
         const minsJ = driveBetweenMinForLayout[idx - 1] ?? 0;
         let off = Math.max(0, prevEndShiftedPx + minsJ * PPM - baseTop);
-        const labelMeta = blockLabelMetaForDisplay(h, etaBlockLabelByKey);
         const flexRow =
           h.isPersonalBlock === true &&
           (isFlexBlockItem(labelMeta) ||
@@ -2168,7 +2182,7 @@ export default function DoctorDayVisual({
         .map((h) => ({
           lat: h.lat,
           lon: h.lon,
-          label: h.client,
+          label: h.isPreview ? previewRoutingAppointmentLabel(h.primary) : h.client,
           address: h.address,
         })),
     [displayHouseholds]
@@ -2787,7 +2801,12 @@ export default function DoctorDayVisual({
             const slot = displayTimeline[idx];
             const etaIso = slot?.eta ?? null;
             const etdIso = slot?.etd ?? null;
-            const doctorDayClock = visualHouseholdUsesDoctorDayClockForLayout(h, slot, showByDriveTime);
+            const doctorDayClock = visualHouseholdUsesDoctorDayClockForLayout(
+              h,
+              slot,
+              showByDriveTime,
+              blockLabelMetaEarly ?? undefined
+            );
             const useDriveTime = showByDriveTime && !doctorDayClock && (etaIso ?? etdIso);
             const anchorIso = useDriveTime ? (etaIso ?? resolvedStartIso) : resolvedStartIso;
             const endIsoForHeight = useDriveTime && etdIso ? etdIso : resolvedEndIso;
@@ -2837,7 +2856,13 @@ export default function DoctorDayVisual({
 
             const blockLabelMeta = blockLabelMetaEarly;
             const blockTitleText =
-              h.isPersonalBlock && blockLabelMeta ? blockDisplayLabel(blockLabelMeta) : h.client;
+              h.isPersonalBlock && blockLabelMeta
+                ? blockDisplayLabel(blockLabelMeta)
+                : h.isPersonalBlock
+                  ? h.client
+                  : h.isPreview
+                    ? previewRoutingAppointmentLabel(h.primary)
+                    : h.client;
 
             return (
               <div
@@ -2941,7 +2966,7 @@ export default function DoctorDayVisual({
                 }}
               >
                 <div style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>
-                  {h.isPersonalBlock ? blockTitleText : h.client}
+                  {blockTitleText}
                 </div>
                 <div
                   className="muted"
