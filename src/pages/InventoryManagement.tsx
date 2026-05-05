@@ -7,6 +7,8 @@ import {
   type ItemWithPriceBreaks,
   type ItemType,
   type InventoryItem,
+  type Lab,
+  type Procedure,
 } from '../api/quantityPriceBreaks';
 import {
   getInventoryCostSummary,
@@ -34,7 +36,9 @@ import {
   type InventoryStockMovement,
   type PostInventoryMovementBody,
 } from '../api/branchInventory';
+import { Pencil, Copy, X } from 'lucide-react';
 import './Settings.css';
+import './InventoryManagement.css';
 
 const BRANCH_STORAGE_PREFIX = 'vayd_inventory_branch:';
 
@@ -103,6 +107,57 @@ function entityIdFromSelection(itemType: ItemType, row: SearchResultItem): numbe
   if (itemType === 'inventory') return row.inventoryItem?.id ?? null;
   if (itemType === 'lab') return row.lab?.id ?? null;
   return row.procedure?.id ?? null;
+}
+
+function pickStr(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s || null;
+}
+
+function catalogEntity(row: SearchResultItem): InventoryItem | Lab | Procedure | null {
+  if (row.itemType === 'inventory') return row.inventoryItem ?? null;
+  if (row.itemType === 'lab') return row.lab ?? null;
+  return row.procedure ?? null;
+}
+
+function catalogCost(row: SearchResultItem): number {
+  const e = catalogEntity(row);
+  if (!e) return 0;
+  return toMoneyNumber((e as Record<string, unknown>).cost);
+}
+
+function catalogServiceFee(row: SearchResultItem): number {
+  const e = catalogEntity(row);
+  if (!e) return 0;
+  return toMoneyNumber((e as Record<string, unknown>).serviceFee);
+}
+
+function catalogDescription(row: SearchResultItem): string {
+  return pickStr((catalogEntity(row) as Record<string, unknown> | null)?.description) ?? '—';
+}
+
+function catalogSellUnit(row: SearchResultItem): string {
+  if (row.itemType !== 'inventory' || !row.inventoryItem) return 'each';
+  const u = pickStr(row.inventoryItem.sellUnitType);
+  return u ?? 'each';
+}
+
+function catalogIsActive(row: SearchResultItem): boolean {
+  const e = catalogEntity(row);
+  if (!e) return true;
+  const a = (e as Record<string, unknown>).isActive;
+  return a !== false;
+}
+
+function formatUsd(n: number): string {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+}
+
+function catalogMarkupPct(price: number, cost: number): string {
+  if (!Number.isFinite(cost) || cost <= 0) return '—';
+  const pct = ((price - cost) / cost) * 100;
+  return `${pct.toFixed(1)}%`;
 }
 
 const MOVEMENT_TYPES: { value: InventoryMovementType; label: string }[] = [
@@ -513,6 +568,18 @@ export default function InventoryManagement() {
     void refreshDetailBundle(selected);
   }, [selected, branchId, refreshDetailBundle]);
 
+  useEffect(() => {
+    if (!selected) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (priceModalOpen || bulkModalOpen) return;
+      e.preventDefault();
+      setSelected(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selected, priceModalOpen, bulkModalOpen]);
+
   function openPriceModal() {
     if (effective) {
       setPriceForm(effectiveToResolved(effective));
@@ -913,6 +980,245 @@ export default function InventoryManagement() {
         </div>
       )}
 
+      <div className="settings-form-group" style={{ marginBottom: 24 }}>
+        <label className="settings-label">Search catalog</label>
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 12,
+            alignItems: 'center',
+            marginBottom: 10,
+          }}
+        >
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
+            <input
+              type="checkbox"
+              checked={bulkSelectMode}
+              onChange={(e) => {
+                setBulkSelectMode(e.target.checked);
+                if (!e.target.checked) setBulkSelected({});
+              }}
+            />
+            Select inventory rows for bulk price change
+          </label>
+          {Object.keys(bulkSelected).length > 0 && (
+            <>
+              <span className="settings-muted">{Object.keys(bulkSelected).length} selected</span>
+              <button
+                type="button"
+                className="btn primary"
+                style={{ fontSize: 13, padding: '6px 12px' }}
+                onClick={() => {
+                  setBulkError(null);
+                  setBulkModalOpen(true);
+                }}
+              >
+                Bulk adjust prices…
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                style={{ fontSize: 13, padding: '6px 12px' }}
+                onClick={() => setBulkSelected({})}
+              >
+                Clear selection
+              </button>
+            </>
+          )}
+        </div>
+        <div style={{ position: 'relative', maxWidth: '100%' }}>
+          <input
+            type="text"
+            className="settings-input"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search inventory, labs, procedures…"
+            style={{ width: '100%', maxWidth: 720, paddingRight: searching ? 40 : 12 }}
+          />
+          {searching && (
+            <div
+              style={{
+                position: 'absolute',
+                right: 12,
+                top: '50%',
+                transform: 'translateY(-50%)',
+              }}
+            >
+              <div className="settings-spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="inv-catalog-results">
+        <div className="inv-catalog-results__toolbar">
+          <div className="inv-catalog-results__toolbar-left">
+            <button type="button" className="inv-catalog-results__text-btn">
+              Add inventory item
+            </button>
+            <span className="inv-catalog-results__count">
+              Total count:{' '}
+              {searchQuery.trim() ? (searching ? '…' : searchResults.length) : 0}
+            </span>
+          </div>
+          <div className="inv-catalog-results__toolbar-right" aria-label="Export (coming soon)">
+            <span className="inv-catalog-results__export-pill" title="Excel export">
+              XLS
+            </span>
+            <span className="inv-catalog-results__export-pill" title="PDF export">
+              PDF
+            </span>
+          </div>
+        </div>
+
+        {!searchQuery.trim() && (
+          <p className="settings-muted" style={{ marginTop: 0 }}>
+            Type to search the catalog. Results appear here.
+          </p>
+        )}
+        {searchQuery.trim() && !searching && searchResults.length === 0 && (
+          <p className="settings-muted" style={{ marginTop: 0 }}>
+            No matches.
+          </p>
+        )}
+        {searchResults.length > 0 && (
+          <div className="inv-catalog-results__table-scroll">
+            <table className="inv-catalog-results__table">
+              <thead>
+                <tr>
+                  {bulkSelectMode && <th className="inv-catalog-results__th-narrow" />}
+                  <th className="inv-catalog-results__th-icon">Edit</th>
+                  <th className="inv-catalog-results__th-icon">Copy</th>
+                  <th>Dosages / notes</th>
+                  <th>Code</th>
+                  <th>Name</th>
+                  <th>Location</th>
+                  <th>Vendor</th>
+                  <th className="inv-catalog-results__th-num">Cost</th>
+                  <th className="inv-catalog-results__th-num">Markup</th>
+                  <th className="inv-catalog-results__th-num">Price</th>
+                  <th className="inv-catalog-results__th-num">Service fee</th>
+                  <th>Measurement</th>
+                  <th className="inv-catalog-results__th-num">On hand</th>
+                  <th className="inv-catalog-results__th-center">Status</th>
+                  <th className="inv-catalog-results__th-icon">Delete</th>
+                </tr>
+              </thead>
+              <tbody>
+                {searchResults.map((row, i) => {
+                  const itemType = row.itemType;
+                  const itemId = entityIdFromSelection(itemType, row);
+                  const cost = catalogCost(row);
+                  return (
+                    <tr
+                      key={`${itemType}-${itemId}-${i}`}
+                      onClick={(e) => {
+                        const el = e.target as HTMLElement;
+                        if (el.closest('button, input, label')) return;
+                        if (itemId == null) return;
+                        setSelected({ itemType, itemId, label: row.name });
+                      }}
+                    >
+                      {bulkSelectMode && (
+                        <td>
+                          {itemType === 'inventory' ? (
+                            <input
+                              type="checkbox"
+                              checked={itemId != null && !!bulkSelected[itemId]}
+                              onChange={() => toggleBulkInventoryRow(itemId, row.name)}
+                              aria-label={`Select ${row.name} for bulk pricing`}
+                            />
+                          ) : (
+                            <span className="settings-muted">—</span>
+                          )}
+                        </td>
+                      )}
+                      <td>
+                        <button
+                          type="button"
+                          className="inv-catalog-results__icon-btn"
+                          title="Select for branch details"
+                          aria-label={`Edit / select ${row.name}`}
+                          disabled={itemId == null}
+                          onClick={() => {
+                            if (itemId == null) return;
+                            setSelected({ itemType, itemId, label: row.name });
+                          }}
+                        >
+                          <Pencil size={16} />
+                        </button>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="inv-catalog-results__icon-btn"
+                          title="Copy name"
+                          aria-label={`Copy ${row.name}`}
+                          onClick={() => {
+                            void navigator.clipboard.writeText(row.name).then(() => {
+                              setToast('Copied to clipboard');
+                              window.setTimeout(() => setToast(null), 2000);
+                            });
+                          }}
+                        >
+                          <Copy size={16} />
+                        </button>
+                      </td>
+                      <td className="inv-catalog-results__cell-muted">{catalogDescription(row)}</td>
+                      <td>
+                        <code className="inv-catalog-results__code">{row.code ?? '—'}</code>
+                      </td>
+                      <td>
+                        <span className="inv-catalog-results__type-tag">{itemType}</span> {row.name}
+                      </td>
+                      <td className="inv-catalog-results__cell-muted" title="Per-branch when available from API">
+                        —
+                      </td>
+                      <td className="inv-catalog-results__cell-muted" title="When vendor data is on the item">
+                        —
+                      </td>
+                      <td className="inv-catalog-results__td-num">{formatUsd(cost)}</td>
+                      <td className="inv-catalog-results__td-num">{catalogMarkupPct(row.price, cost)}</td>
+                      <td className="inv-catalog-results__td-num">{formatUsd(row.price)}</td>
+                      <td className="inv-catalog-results__td-num">{formatUsd(catalogServiceFee(row))}</td>
+                      <td>{catalogSellUnit(row)}</td>
+                      <td
+                        className="inv-catalog-results__td-num inv-catalog-results__cell-muted"
+                        title="Select a branch to load branch-level on-hand in details"
+                      >
+                        —
+                      </td>
+                      <td className="inv-catalog-results__td-center">
+                        <span
+                          className={
+                            catalogIsActive(row)
+                              ? 'inv-catalog-results__status inv-catalog-results__status--ok'
+                              : 'inv-catalog-results__status inv-catalog-results__status--off'
+                          }
+                          title={catalogIsActive(row) ? 'Active' : 'Inactive'}
+                        />
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="inv-catalog-results__icon-btn inv-catalog-results__icon-btn--danger"
+                          disabled
+                          title="Delete is not wired here"
+                          aria-label="Delete (unavailable)"
+                        >
+                          <X size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       <div className="settings-form-group" style={{ marginBottom: 20 }}>
         <label className="settings-label">Practice</label>
         <p className="settings-muted" style={{ marginTop: 0 }}>
@@ -1272,157 +1578,57 @@ export default function InventoryManagement() {
         </div>
       )}
 
-      <div className="settings-form-group">
-        <label className="settings-label">Search catalog</label>
+      {selected && (
         <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 12,
-            alignItems: 'center',
-            marginBottom: 10,
-          }}
+          className="inv-item-detail-modal__backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="inv-item-detail-modal-title"
+          onClick={() => setSelected(null)}
         >
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
-            <input
-              type="checkbox"
-              checked={bulkSelectMode}
-              onChange={(e) => {
-                setBulkSelectMode(e.target.checked);
-                if (!e.target.checked) setBulkSelected({});
-              }}
-            />
-            Select inventory rows for bulk price change
-          </label>
-          {Object.keys(bulkSelected).length > 0 && (
-            <>
-              <span className="settings-muted">{Object.keys(bulkSelected).length} selected</span>
-              <button
-                type="button"
-                className="btn primary"
-                style={{ fontSize: 13, padding: '6px 12px' }}
-                onClick={() => {
-                  setBulkError(null);
-                  setBulkModalOpen(true);
-                }}
-              >
-                Bulk adjust prices…
-              </button>
-              <button
-                type="button"
-                className="btn secondary"
-                style={{ fontSize: 13, padding: '6px 12px' }}
-                onClick={() => setBulkSelected({})}
-              >
-                Clear selection
-              </button>
-            </>
-          )}
-        </div>
-        <div style={{ position: 'relative', maxWidth: 560 }}>
-          <input
-            type="text"
-            className="settings-input"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search inventory, labs, procedures…"
-            style={{ width: '100%', paddingRight: searching ? 40 : 12 }}
-          />
-          {searching && (
-            <div
-              style={{
-                position: 'absolute',
-                right: 12,
-                top: '50%',
-                transform: 'translateY(-50%)',
-              }}
-            >
-              <div className="settings-spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+          <div className="inv-item-detail-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="inv-item-detail-modal__header">
+              <div>
+                <h2 id="inv-item-detail-modal-title">Branch details</h2>
+                <p className="inv-item-detail-modal__subtitle">{selected.label}</p>
+              </div>
+              <div className="inv-item-detail-modal__header-actions">
+                <label htmlFor="inv-branch-modal" className="settings-label" style={{ margin: 0, fontSize: 12 }}>
+                  Branch
+                  <select
+                    id="inv-branch-modal"
+                    className="settings-input inv-item-detail-modal__branch"
+                    value={branchId ?? ''}
+                    disabled={!branches.length}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v)) {
+                        setBranchId(v);
+                        persistBranch(v);
+                      }
+                    }}
+                  >
+                    {!branches.length && <option value="">No branches</option>}
+                    {branches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                        {b.isDefault ? ' (default)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="inv-item-detail-modal__close"
+                  aria-label="Close"
+                  onClick={() => setSelected(null)}
+                >
+                  <X size={20} aria-hidden />
+                </button>
+              </div>
             </div>
-          )}
-        </div>
-      </div>
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.2fr)',
-          gap: 24,
-          marginTop: 20,
-          alignItems: 'start',
-        }}
-        className="inventory-mgmt-grid"
-      >
-        <div className="settings-card">
-          <h3 className="settings-card-title">Results</h3>
-          {!searchQuery.trim() && <p className="settings-muted">Type to search.</p>}
-          {searchQuery.trim() && !searching && searchResults.length === 0 && (
-            <p className="settings-muted">No matches.</p>
-          )}
-          {searchResults.length > 0 && (
-            <div className="settings-table-container">
-              <table className="settings-table">
-                <thead>
-                  <tr>
-                    {bulkSelectMode && <th style={{ width: 40 }} />}
-                    <th>Type</th>
-                    <th>Name</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {searchResults.map((row, i) => {
-                    const itemType = row.itemType;
-                    const itemId = entityIdFromSelection(itemType, row);
-                    const active =
-                      selected && selected.itemType === itemType && selected.itemId === itemId;
-                    return (
-                      <tr key={`${itemType}-${itemId}-${i}`}>
-                        {bulkSelectMode && (
-                          <td>
-                            {itemType === 'inventory' ? (
-                              <input
-                                type="checkbox"
-                                checked={itemId != null && !!bulkSelected[itemId]}
-                                onChange={() => toggleBulkInventoryRow(itemId, row.name)}
-                                aria-label={`Select ${row.name} for bulk pricing`}
-                              />
-                            ) : (
-                              <span className="settings-muted">—</span>
-                            )}
-                          </td>
-                        )}
-                        <td style={{ textTransform: 'capitalize' }}>{itemType}</td>
-                        <td>{row.name}</td>
-                        <td>
-                          <button
-                            type="button"
-                            className="btn secondary"
-                            disabled={itemId == null}
-                            onClick={() => {
-                              if (itemId == null) return;
-                              setSelected({
-                                itemType,
-                                itemId,
-                                label: row.name,
-                              });
-                            }}
-                          >
-                            {active ? 'Selected' : 'Select'}
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-        <div className="settings-card">
-          <h3 className="settings-card-title">Branch details</h3>
-          {!selected && <p className="settings-muted">Select an item from the list.</p>}
+            <div className="inv-item-detail-modal__body">
+              <div className="settings-card" style={{ margin: 0 }}>
           {selected && branchId == null && (
             <p className="settings-muted">Choose a branch to load stock and prices.</p>
           )}
@@ -1944,8 +2150,11 @@ export default function InventoryManagement() {
               </div>
             </>
           )}
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
       {priceModalOpen && detail && selected && (
         <div
@@ -1960,7 +2169,7 @@ export default function InventoryManagement() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            zIndex: 10000,
+            zIndex: 10100,
             padding: 16,
           }}
         >
@@ -2031,7 +2240,7 @@ export default function InventoryManagement() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            zIndex: 10000,
+            zIndex: 10100,
             padding: 16,
           }}
         >
@@ -2116,13 +2325,6 @@ export default function InventoryManagement() {
         </div>
       )}
 
-      <style>{`
-        @media (max-width: 900px) {
-          .inventory-mgmt-grid {
-            grid-template-columns: 1fr !important;
-          }
-        }
-      `}</style>
     </div>
   );
 }

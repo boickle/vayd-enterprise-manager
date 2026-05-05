@@ -209,6 +209,10 @@ export type AppointmentType = {
   hasExtraInstructions?: boolean;
   showInApptRequestForm?: boolean;
   newPatientAllowed?: boolean;
+  calendarColor?: string | null;
+  colorHex?: string | null;
+  color?: string | null;
+  textColor?: string | null;
 };
 
 export type Appointment = {
@@ -232,6 +236,9 @@ export type Appointment = {
   practice?: Practice;
   client?: Client;
   patient?: Patient;
+  /** When set on appointment payload (e.g. range API), mirrors patient membership. */
+  isMember?: boolean;
+  membershipName?: string | null;
   primaryProvider?: PrimaryProvider;
   appointmentType?: AppointmentType;
   treatment?: any | null;

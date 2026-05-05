@@ -30,6 +30,9 @@ import { ScoutIndexRedirect } from './pages/Scout';
 import LegacySchedulingToolsRedirect from './components/LegacySchedulingToolsRedirect';
 import InventoryManagement from './pages/InventoryManagement';
 import PimsPlaceholder from './pages/PimsPlaceholder';
+import PimsClientsPage from './pages/PimsClientsPage';
+import PimsPatientsPage from './pages/PimsPatientsPage';
+import Scheduler from './pages/Scheduler';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
 import PublicReferAFriend from './pages/PublicReferAFriend';
 import ErrorPage from './pages/ErrorPage';
@@ -235,7 +238,13 @@ export default function App() {
   const keepAlivePaths = useMemo(() => ['/home', ...pages.map((p: any) => p.path)], [pages]);
 
   const isProd = isProduction();
-  const isPimsShell = !isClient && location.pathname.startsWith('/pims');
+
+  const mainClassName = useMemo(() => {
+    if (isClient && location.pathname.startsWith('/client-portal')) return '';
+    const path = location.pathname;
+    if (path.startsWith('/pims')) return 'pims-main-wrapper';
+    return 'container';
+  }, [isClient, location.pathname]);
 
   return (
     <div>
@@ -313,15 +322,7 @@ export default function App() {
           </header>
         )}
 
-      <main
-        className={
-          isClient && location.pathname.startsWith('/client-portal')
-            ? ''
-            : isPimsShell
-              ? 'pims-main-wrapper'
-              : 'container'
-        }
-      >
+      <main className={mainClassName}>
         <Routes>
           {/* Root redirect: client -> client-portal, else -> scout */}
           <Route
@@ -408,6 +409,7 @@ export default function App() {
               <Route path="/doctor" element={<Navigate to="/scout/my-day" replace />} />
               <Route path="/doctorweek" element={<Navigate to="/scout/my-week" replace />} />
               <Route path="/room-loader" element={<Navigate to="/scout/room-loader" replace />} />
+              <Route path="/scheduler" element={<Navigate to="/pims/scheduler" replace />} />
               <Route path="/scheduling-tools/*" element={<LegacySchedulingToolsRedirect />} />
               <Route
                 path="/schedule-loader"
@@ -451,11 +453,12 @@ export default function App() {
                   </Route>
                 ) : p.path === '/pims' ? (
                   <Route key={p.path} path={p.path} element={p.element}>
-                    <Route index element={<Navigate to="/pims/overview" replace />} />
-                    <Route path="overview" element={<PimsPlaceholder title="Home" />} />
+                    <Route index element={<Navigate to="/pims/scheduler" replace />} />
+                    <Route path="overview" element={<PimsPlaceholder title="Overview" />} />
+                    <Route path="scheduler" element={<Scheduler />} />
                     <Route path="tasks" element={<PimsPlaceholder title="Tasks" />} />
-                    <Route path="clients" element={<PimsPlaceholder title="Clients" />} />
-                    <Route path="patients" element={<PimsPlaceholder title="Patients" />} />
+                    <Route path="clients" element={<PimsClientsPage />} />
+                    <Route path="patients" element={<PimsPatientsPage />} />
                     <Route path="labs" element={<PimsPlaceholder title="Labs" />} />
                     <Route path="inventory" element={<InventoryManagement />} />
                     <Route

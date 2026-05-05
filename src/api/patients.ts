@@ -17,8 +17,55 @@ export async function searchPatients(params?: {
   primaryProviderId?: string | number;
   practiceId?: string | number;
   activeOnly?: boolean;
+  clientId?: string | number;
 }) {
   return http.get('/patients/search', { params });
+}
+
+/** Unwrap common `/patients/search` response shapes. */
+export function extractPatientListFromSearchResponse(data: unknown): unknown[] {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === 'object') {
+    const d = data as Record<string, unknown>;
+    if (Array.isArray(d.items)) return d.items;
+    if (Array.isArray(d.patients)) return d.patients;
+    if (Array.isArray(d.rows)) return d.rows;
+  }
+  return [];
+}
+
+/** One row from patient search (flexible backend fields). */
+export type PatientSearchRow = {
+  id: string | number;
+  firstName?: string;
+  lastName?: string;
+  name?: string;
+  [key: string]: unknown;
+};
+
+/** GET /patients/search — returns normalized rows for PIMS tables. */
+export async function searchPatientsStaff(
+  name: string,
+  opts?: { practiceId?: string | number; activeOnly?: boolean }
+): Promise<PatientSearchRow[]> {
+  const trimmed = name.trim();
+  if (!trimmed) return [];
+  const activeOnly = opts?.activeOnly !== false;
+  const { data } = await http.get('/patients/search', {
+    params: {
+      name: trimmed,
+      ...(opts?.practiceId != null ? { practiceId: opts.practiceId } : {}),
+      activeOnly,
+    },
+  });
+  const raw = extractPatientListFromSearchResponse(data);
+  return raw.filter((r) => r && typeof r === 'object').map((r) => r as PatientSearchRow);
+}
+
+/** GET /patients/:id — full patient for PIMS profile (may include nested client). */
+export async function fetchPatientByIdStaff(patientId: string | number): Promise<unknown> {
+  const { data } = await http.get(`/patients/${encodeURIComponent(String(patientId))}`);
+  return data;
 }
 
 // Get latest modified patient
@@ -39,6 +86,12 @@ export async function getLatestModifiedPatient() {
 // export async function savePatients(patients: PatientDto | PatientDto[]) {
 //   return http.post('/patients', patients);
 // }
+
+/** PATCH /patients/:id — partial update (e.g. weight). */
+export async function patchPatient(id: number | string, body: Record<string, unknown>): Promise<unknown> {
+  const { data } = await http.patch(`/patients/${encodeURIComponent(String(id))}`, body);
+  return data;
+}
 
 // ---------------------------
 // Delete

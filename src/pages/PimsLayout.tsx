@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth/useAuth';
 import type { LucideIcon } from 'lucide-react';
 import {
   Menu,
@@ -14,6 +15,7 @@ import {
   ChevronRight,
   ChevronDown,
 } from 'lucide-react';
+import PimsChromeHeader from '../components/pims/PimsChromeHeader';
 import './PimsLayout.css';
 
 type NavLeaf = { to: string; label: string };
@@ -28,8 +30,7 @@ type NavGroup = {
   children?: NavLeaf[];
 };
 
-const NAV: NavGroup[] = [
-  { id: 'home', label: 'Home', icon: Home, to: '/pims/overview' },
+const NAV_TAIL: NavGroup[] = [
   { id: 'tasks', label: 'Tasks', icon: ClipboardList, to: '/pims/tasks' },
   { id: 'clients', label: 'Clients', icon: Users, to: '/pims/clients' },
   { id: 'patients', label: 'Patients', icon: PawPrint, to: '/pims/patients' },
@@ -60,6 +61,16 @@ const NAV: NavGroup[] = [
   },
 ];
 
+function buildNav(abilities?: string[] | null): NavGroup[] {
+  const canSched =
+    abilities == null || abilities.length === 0 || abilities.includes('canSeeRouting');
+  const homeTo = canSched ? '/pims/scheduler' : '/pims/overview';
+  return [
+    { id: 'home', label: 'Home', icon: Home, to: homeTo },
+    ...NAV_TAIL,
+  ];
+}
+
 function pathMatchesChild(pathname: string, children: NavLeaf[]): boolean {
   return children.some((c) => pathname === c.to || pathname.startsWith(c.to + '/'));
 }
@@ -68,11 +79,15 @@ export default function PimsLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const pathname = location.pathname;
+  const { abilities } = useAuth() as { abilities?: string[] };
+
+  const navItems = useMemo(() => buildNav(abilities), [abilities]);
 
   const [collapsed, setCollapsed] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {};
-    for (const g of NAV) {
+    const nav = buildNav(abilities);
+    for (const g of nav) {
       if (g.children && pathMatchesChild(pathname, g.children)) init[g.id] = true;
     }
     return init;
@@ -81,27 +96,16 @@ export default function PimsLayout() {
   useEffect(() => {
     setOpenGroups((prev) => {
       const next = { ...prev };
-      for (const g of NAV) {
+      for (const g of navItems) {
         if (g.children && pathMatchesChild(pathname, g.children)) next[g.id] = true;
       }
       return next;
     });
-  }, [pathname]);
+  }, [pathname, navItems]);
 
   const toggleGroup = useCallback((id: string) => {
     setOpenGroups((p) => ({ ...p, [id]: !p[id] }));
   }, []);
-
-  const headerTitle = useMemo(() => {
-    for (const g of NAV) {
-      if (g.to && pathname.startsWith(g.to)) return g.label;
-      if (g.children) {
-        const hit = g.children.find((c) => pathname === c.to || pathname.startsWith(c.to + '/'));
-        if (hit) return hit.label;
-      }
-    }
-    return 'PIMS';
-  }, [pathname]);
 
   return (
     <div className="pims-shell">
@@ -117,7 +121,7 @@ export default function PimsLayout() {
         </button>
         <nav className="pims-sidebar__nav" aria-label="PIMS">
           <div className="pims-sidebar__scroll">
-            {NAV.map((g) => {
+            {navItems.map((g) => {
               const Icon = g.icon;
               const hasChildren = !!(g.children && g.children.length);
               const isOpen = openGroups[g.id] ?? false;
@@ -127,7 +131,7 @@ export default function PimsLayout() {
                   <NavLink
                     key={g.id}
                     to={g.to}
-                    end={g.to === '/pims/overview'}
+                    end={g.id === 'home'}
                     title={collapsed ? g.label : undefined}
                     className={({ isActive }) =>
                       `pims-nav-row${isActive ? ' pims-nav-row--active' : ''}`
@@ -191,28 +195,7 @@ export default function PimsLayout() {
       </aside>
       <div className="pims-main">
         <div className="pims-main__inner">
-          {pathname !== '/pims/inventory' && (
-            <div
-              style={{
-                padding: '16px 24px 0',
-                borderBottom: '1px solid #e2e8f0',
-                background: '#fff',
-              }}
-            >
-              <h1
-                style={{
-                  margin: 0,
-                  fontSize: 18,
-                  fontWeight: 600,
-                  color: '#0f172a',
-                  letterSpacing: '-0.02em',
-                }}
-              >
-                {headerTitle}
-              </h1>
-              <p style={{ margin: '6px 0 14px', fontSize: 13, color: '#64748b' }}>Practice information management</p>
-            </div>
-          )}
+          <PimsChromeHeader />
           <Outlet />
         </div>
       </div>
