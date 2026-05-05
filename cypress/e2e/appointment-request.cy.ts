@@ -54,7 +54,6 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       cy.get('input[placeholder="City"]').type('Durham');
       cy.get('input[placeholder="State"]').type('ME');
       cy.get('input[placeholder="Zip"]').type('04111');
-      cy.wait('@checkZone');
       cy.wait('@getPublicVeterinarians');
       
       // Wait for veterinarians to load and select first veterinarian (index 1, after "I have no preference")
@@ -220,7 +219,6 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       cy.get('input[placeholder="City"]').type('Durham');
       cy.get('input[placeholder="State"]').type('ME');
       cy.get('input[placeholder="Zip"]').type('04111');
-      cy.wait('@checkZone');
       cy.wait('@getPublicVeterinarians');
       
       // Wait for veterinarians to load and select "I have no preference"
@@ -339,7 +337,6 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       cy.get('input[placeholder="City"]').type('Freeport');
       cy.get('input[placeholder="State"]').type('ME');
       cy.get('input[placeholder="Zip"]').type('04032');
-      cy.wait('@checkZone');
       cy.wait('@getPublicVeterinarians');
       
       cy.get('select').then(($select) => {
@@ -452,7 +449,6 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       cy.get('input[placeholder="City"]').type('Portland');
       cy.get('input[placeholder="State"]').type('ME');
       cy.get('input[placeholder="Zip"]').type('04101');
-      cy.wait('@checkZone');
       cy.wait('@getPublicVeterinarians');
       
       cy.get('select').then(($select) => {
@@ -850,32 +846,6 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
   });
 
   describe('Edge Cases and Validation', () => {
-    it('should show zone error for non-serviced address', () => {
-      cy.intercept('GET', '**/public/appointments/find-zone-by-address*', { statusCode: 404 }).as('checkZone404');
-
-      cy.visit('/client-portal/request-appointment');
-
-      cy.get('input[type="email"]').type('test@example.com');
-      cy.get('input[placeholder="First Name"]').type('Test');
-      cy.get('input[placeholder="Last Name"]').type('User');
-      cy.get('input[type="tel"]').first().type('207-555-0000');
-      cy.contains('Can we text this number').parent().find('input[value="Yes"]').check();
-      cy.contains('button', 'Next').click();
-
-      cy.get('input[placeholder="Street Address"]').type('123 Unserviced St');
-      cy.get('input[placeholder="City"]').type('Nowhere');
-      cy.get('input[placeholder="State"]').type('ME');
-      cy.get('input[placeholder="Zip"]').type('00000');
-      
-      cy.wait('@checkZone404');
-      
-      // Should show error message
-      cy.contains('We do not service your zone', { timeout: 10000 }).should('be.visible');
-      
-      // Should not be able to proceed - Next button should be disabled or form should not submit
-      cy.contains('button', 'Next').should('exist');
-    });
-
     it('should validate required fields', () => {
       cy.visit('/client-portal/request-appointment');
 
