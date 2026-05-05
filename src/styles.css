@@ -91,6 +91,15 @@ a:hover {
   padding: 24px;
 }
 
+/* Full-width content under global header (PIMS sidebar layout). */
+main.pims-main-wrapper {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  min-height: calc(100vh - 76px);
+}
+
 /* Ensure main element fills screen for client portal */
 main:not(.container) {
   width: 100%;

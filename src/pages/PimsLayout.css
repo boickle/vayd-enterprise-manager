@@ -1,0 +1,165 @@
+/* PIMS shell: left rail + content (inspired by compact PIMS side nav). */
+.pims-shell {
+  display: flex;
+  min-height: calc(100vh - 76px);
+  width: 100%;
+  background: #f1f5f9;
+}
+
+.pims-sidebar {
+  flex-shrink: 0;
+  width: 232px;
+  background: #fff;
+  border-right: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  transition: width 0.2s ease, box-shadow 0.2s ease;
+}
+
+.pims-sidebar--collapsed {
+  width: 64px;
+}
+
+.pims-sidebar__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 48px;
+  border: none;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  border-radius: 0;
+}
+
+.pims-sidebar__toggle:hover {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.pims-sidebar__nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0 16px;
+}
+
+.pims-sidebar__scroll {
+  padding: 0 8px;
+}
+
+.pims-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  margin: 2px 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-nav-row:hover {
+  background: #f1f5f9;
+}
+
+.pims-nav-row--active {
+  background: #eff6ff;
+  color: #1e40af;
+  box-shadow: inset 3px 0 0 #2563eb;
+}
+
+.pims-sidebar--collapsed .pims-nav-row {
+  justify-content: center;
+  padding: 8px;
+}
+
+.pims-sidebar--collapsed .pims-nav-label,
+.pims-sidebar--collapsed .pims-chevron {
+  display: none;
+}
+
+.pims-nav-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: #64748b;
+}
+
+.pims-nav-row--active .pims-nav-icon {
+  color: #2563eb;
+}
+
+.pims-chevron {
+  margin-left: auto;
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+}
+
+.pims-subwrap {
+  margin: 0 0 4px 4px;
+  padding-left: 8px;
+  border-left: 2px solid #e2e8f0;
+}
+
+.pims-sidebar--collapsed .pims-subwrap {
+  margin: 0;
+  padding-left: 0;
+  border-left: none;
+}
+
+.pims-sublink {
+  display: block;
+  padding: 8px 10px 8px 14px;
+  margin: 2px 0;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #475569;
+  text-decoration: none;
+}
+
+.pims-sublink:hover {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.pims-sublink--active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.pims-sidebar--collapsed .pims-sublink {
+  display: none;
+}
+
+.pims-main {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: auto;
+  background: #f8fafc;
+}
+
+.pims-main__inner {
+  min-height: 100%;
+}
+
+/* Breathing room for full-width pages (inventory uses full width). */
+.pims-main__inner > .settings-section {
+  padding-left: 20px;
+  padding-right: 20px;
+}

@@ -69,6 +69,13 @@ export type PostInventoryMovementBody = {
   toBranchLocationId?: number | null;
   note?: string | null;
   movedByEmployeeId?: number | null;
+  /** Unbox / receiving metadata — persist on backend when supported (else echoed in audit only). */
+  vendorName?: string | null;
+  invoiceNumber?: string | null;
+  lotNumber?: string | null;
+  expirationDate?: string | null;
+  unpackedAt?: string | null;
+  unpackedByEmployeeId?: number | null;
 };
 
 export type InventoryStockMovement = {

@@ -50,7 +50,7 @@ export default function MyDayToggle(props: DoctorDayProps) {
     } catch {
       /* ignore */
     }
-    navigate('/doctorweek');
+    navigate('/scout/my-week');
   }
 
   return (

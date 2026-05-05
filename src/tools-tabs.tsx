@@ -1,6 +1,5 @@
 // Sub-routes under /tools (mirrors admin-tabs pattern).
 import ExitSurveyPage from './pages/ExitSurveyPage';
-import InventoryManagement from './pages/InventoryManagement';
 
 export type ToolsTabPage = {
   path: string;
@@ -9,11 +8,6 @@ export type ToolsTabPage = {
 };
 
 export const TOOLS_TAB_PAGES: ToolsTabPage[] = [
-  {
-    path: 'inventory',
-    label: 'Inventory',
-    element: <InventoryManagement />,
-  },
   {
     path: 'exit-survey',
     label: 'Exit Survey',

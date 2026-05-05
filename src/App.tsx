@@ -21,6 +21,15 @@ import MembershipPayment from './pages/MembershipPayment';
 import MembershipUpgrade from './pages/MembershipUpgrade';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
 import PublicRoomLoaderForm from './pages/PublicRoomLoaderForm';
+import Routing from './pages/Routing';
+import MyDayToggle from './pages/MyDayToggle';
+import MyWeek from './pages/MyWeek';
+import SchedulingTools from './pages/SchedulingTools';
+import RoomLoaderPage from './pages/RoomLoader';
+import { ScoutIndexRedirect } from './pages/Scout';
+import LegacySchedulingToolsRedirect from './components/LegacySchedulingToolsRedirect';
+import InventoryManagement from './pages/InventoryManagement';
+import PimsPlaceholder from './pages/PimsPlaceholder';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
 import PublicReferAFriend from './pages/PublicReferAFriend';
 import ErrorPage from './pages/ErrorPage';
@@ -30,7 +39,7 @@ import { isCreateClientEnabled, isProduction } from './utils/env';
 /**
  * RouteGuard - Checks if user has access to a route and redirects appropriately
  * - Not logged in → /login
- * - Logged in but no access → /client-portal (clients) or /routing (employees)
+ * - Logged in but no access → /client-portal (clients) or /scout (employees)
  */
 function RouteGuard() {
   const { token, role, abilities } = useAuth() as any;
@@ -63,14 +72,14 @@ function RouteGuard() {
     '/requestreset',
   ];
   if (publicRoutes.includes(path)) {
-    return <Navigate to={isClient ? '/client-portal' : '/routing'} replace />;
+    return <Navigate to={isClient ? '/client-portal' : '/scout'} replace />;
   }
 
   // Check if this is a client portal route
   if (path.startsWith('/client-portal')) {
     // Clients can access, employees cannot
     if (!isClient) {
-      return <Navigate to="/routing" replace />;
+      return <Navigate to="/scout" replace />;
     }
     // If it's a client portal route and user is a client, but route doesn't exist
     // This shouldn't happen as client portal routes are defined above, but just in case
@@ -84,15 +93,16 @@ function RouteGuard() {
   // For employee routes, check if this route exists in the system
   // Get all possible pages (not filtered by user access) to check if route exists
   const allPages = [
-    '/routing',
-    '/doctor',
+    '/scout',
     '/doctormonth',
     '/admin',
     '/analytics',
-    '/scheduling-tools',
     '/schedule-loader',
     '/survey/responses',
     '/tools',
+    '/pims',
+    '/settings',
+    '/users/create',
     '/home',
   ];
 
@@ -120,8 +130,8 @@ function RouteGuard() {
         );
       }
 
-      // Route exists but user doesn't have access - redirect to routing
-      return <Navigate to="/routing" replace />;
+      // Route exists but user doesn't have access - redirect to scout
+      return <Navigate to="/scout" replace />;
     } else {
       // Route doesn't exist - show not found
       return (
@@ -225,6 +235,7 @@ export default function App() {
   const keepAlivePaths = useMemo(() => ['/home', ...pages.map((p: any) => p.path)], [pages]);
 
   const isProd = isProduction();
+  const isPimsShell = !isClient && location.pathname.startsWith('/pims');
 
   return (
     <div>
@@ -303,10 +314,16 @@ export default function App() {
         )}
 
       <main
-        className={isClient && location.pathname.startsWith('/client-portal') ? '' : 'container'}
+        className={
+          isClient && location.pathname.startsWith('/client-portal')
+            ? ''
+            : isPimsShell
+              ? 'pims-main-wrapper'
+              : 'container'
+        }
       >
         <Routes>
-          {/* Root redirect: client -> client-portal, else -> routing */}
+          {/* Root redirect: client -> client-portal, else -> scout */}
           <Route
             path="/"
             element={
@@ -314,7 +331,7 @@ export default function App() {
                 isClient ? (
                   <Navigate to="/client-portal" replace />
                 ) : (
-                  <Navigate to="/routing" replace />
+                  <Navigate to="/scout" replace />
                 )
               ) : (
                 <Navigate to="/login" replace />
@@ -387,9 +404,14 @@ export default function App() {
               }
             >
               <Route path="/home" element={<Home />} />
+              <Route path="/routing" element={<Navigate to="/scout/routing" replace />} />
+              <Route path="/doctor" element={<Navigate to="/scout/my-day" replace />} />
+              <Route path="/doctorweek" element={<Navigate to="/scout/my-week" replace />} />
+              <Route path="/room-loader" element={<Navigate to="/scout/room-loader" replace />} />
+              <Route path="/scheduling-tools/*" element={<LegacySchedulingToolsRedirect />} />
               <Route
                 path="/schedule-loader"
-                element={<Navigate to="/scheduling-tools/schedule-loader" replace />}
+                element={<Navigate to="/scout/scheduling-tools/schedule-loader" replace />}
               />
               {pages.map((p: any) =>
                 p.path === '/admin' ? (
@@ -410,22 +432,56 @@ export default function App() {
                       <Route key={tab.path} path={tab.path} element={tab.element} />
                     ))}
                   </Route>
-                ) : p.path === '/scheduling-tools' ? (
+                ) : p.path === '/scout' ? (
                   <Route key={p.path} path={p.path} element={p.element}>
+                    <Route index element={<ScoutIndexRedirect />} />
+                    <Route path="routing" element={<Routing />} />
+                    <Route path="my-day" element={<MyDayToggle />} />
+                    <Route path="my-week" element={<MyWeek />} />
+                    <Route path="scheduling-tools" element={<SchedulingTools />}>
+                      <Route
+                        index
+                        element={<Navigate to="/scout/scheduling-tools/schedule-loader" replace />}
+                      />
+                      {getSchedulingToolsTabPages().map((tab) => (
+                        <Route key={tab.path} path={tab.path} element={tab.element} />
+                      ))}
+                    </Route>
+                    <Route path="room-loader" element={<RoomLoaderPage />} />
+                  </Route>
+                ) : p.path === '/pims' ? (
+                  <Route key={p.path} path={p.path} element={p.element}>
+                    <Route index element={<Navigate to="/pims/overview" replace />} />
+                    <Route path="overview" element={<PimsPlaceholder title="Home" />} />
+                    <Route path="tasks" element={<PimsPlaceholder title="Tasks" />} />
+                    <Route path="clients" element={<PimsPlaceholder title="Clients" />} />
+                    <Route path="patients" element={<PimsPlaceholder title="Patients" />} />
+                    <Route path="labs" element={<PimsPlaceholder title="Labs" />} />
+                    <Route path="inventory" element={<InventoryManagement />} />
                     <Route
-                      index
-                      element={<Navigate to="/scheduling-tools/schedule-loader" replace />}
+                      path="reports/summary"
+                      element={<PimsPlaceholder title="Reports — Summary" />}
                     />
-                    {getSchedulingToolsTabPages().map((tab) => (
-                      <Route key={tab.path} path={tab.path} element={tab.element} />
-                    ))}
+                    <Route
+                      path="reports/activity"
+                      element={<PimsPlaceholder title="Reports — Activity" />}
+                    />
+                    <Route
+                      path="settings/practice"
+                      element={<PimsPlaceholder title="Settings — Practice" />}
+                    />
+                    <Route
+                      path="settings/users"
+                      element={<PimsPlaceholder title="Settings — Users" />}
+                    />
                   </Route>
                 ) : p.path === '/tools' ? (
                   <Route key={p.path} path={p.path} element={p.element}>
                     <Route
                       path="care-outreach"
-                      element={<Navigate to="/scheduling-tools/care-outreach" replace />}
+                      element={<Navigate to="/scout/scheduling-tools/care-outreach" replace />}
                     />
+                    <Route path="inventory" element={<Navigate to="/pims/inventory" replace />} />
                     <Route index element={<Navigate to="/tools/exit-survey" replace />} />
                     {getToolsTabPages().map((tab) => (
                       <Route key={tab.path} path={tab.path} element={tab.element} />

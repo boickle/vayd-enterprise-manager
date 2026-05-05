@@ -22,6 +22,15 @@ export type InventoryItem = {
   cost?: string;
   isMedication?: boolean;
   minimumPrice?: string;
+  /** Online store listing (backend may add). */
+  showOnOnlineStore?: boolean;
+  onlineStorePrice?: string | number | null;
+  /** How the item is counted when selling or dispensing: capsule, bottle, ml, etc. */
+  sellUnitType?: string | null;
+  sellUnitTypeDetail?: string | null;
+  unitsPerPackage?: number | string | null;
+  alternateSellUnitType?: string | null;
+  alternateUnitsPerPackage?: number | string | null;
   [key: string]: any; // Allow additional fields
 };
 

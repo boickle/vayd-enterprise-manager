@@ -53,7 +53,7 @@ describe('Login and Authentication Flow', () => {
       cy.loginAs('client');
 
       // Try to access employee-only routes
-      const employeeRoutes = ['/routing', '/doctor', '/users/create', '/analytics/payments'];
+      const employeeRoutes = ['/scout/routing', '/scout/my-day', '/users/create', '/analytics/payments'];
 
       employeeRoutes.forEach((route) => {
         cy.visit(route);

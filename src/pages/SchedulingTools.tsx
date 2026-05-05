@@ -1,9 +1,15 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useOutletContext } from 'react-router-dom';
 import { getSchedulingToolsTabPages } from '../scheduling-tools-tabs';
 import './Settings.css';
 
+type SchedulingToolsOutletContext = {
+  schedulingToolsLinkPrefix?: string;
+};
+
 export default function SchedulingTools() {
   const tabs = getSchedulingToolsTabPages();
+  const ctx = useOutletContext<SchedulingToolsOutletContext | undefined>();
+  const base = (ctx?.schedulingToolsLinkPrefix ?? '/scheduling-tools').replace(/\/$/, '');
 
   return (
     <div className="container">
@@ -16,7 +22,7 @@ export default function SchedulingTools() {
           {tabs.map((tab) => (
             <NavLink
               key={tab.path}
-              to={`/scheduling-tools/${tab.path}`}
+              to={`${base}/${tab.path}`}
               end={false}
               className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
             >

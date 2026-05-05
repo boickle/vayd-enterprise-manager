@@ -6,7 +6,14 @@ import {
   type SearchResultItem,
   type ItemWithPriceBreaks,
   type ItemType,
+  type InventoryItem,
 } from '../api/quantityPriceBreaks';
+import {
+  getInventoryCostSummary,
+  patchPracticeInventoryItem,
+  postBulkInventoryPriceAdjust,
+  type InventoryCostSummary,
+} from '../api/inventoryTools';
 import {
   listPracticeBranches,
   listInventoryBranchLocations,
@@ -104,7 +111,19 @@ const MOVEMENT_TYPES: { value: InventoryMovementType; label: string }[] = [
   { value: 'sold', label: 'Sold (out)' },
   { value: 'visit_use', label: 'Visit use (out)' },
   { value: 'adjustment_increase', label: 'Adjustment increase' },
-  { value: 'adjustment_decrease', label: 'Adjustment decrease' },
+  { value: 'adjustment_decrease', label: 'Adjustment decrease / expired / disposal' },
+];
+
+const SELL_UNIT_OPTIONS: { value: string; label: string }[] = [
+  { value: '', label: '(not set)' },
+  { value: 'capsule', label: 'Capsule' },
+  { value: 'tablet', label: 'Tablet' },
+  { value: 'bottle', label: 'Bottle' },
+  { value: 'package', label: 'Package' },
+  { value: 'ml', label: 'mL' },
+  { value: 'gram', label: 'Gram' },
+  { value: 'each', label: 'Each' },
+  { value: 'other', label: 'Other (describe below)' },
 ];
 
 function movementNeedsFrom(t: InventoryMovementType): boolean {
@@ -182,6 +201,48 @@ export default function InventoryManagement() {
   const [priceError, setPriceError] = useState<string | null>(null);
 
   const [toast, setToast] = useState<string | null>(null);
+
+  const [costSummary, setCostSummary] = useState<InventoryCostSummary | null>(null);
+  const [costSummaryLoading, setCostSummaryLoading] = useState(false);
+  const [costSummaryError, setCostSummaryError] = useState<string | null>(null);
+
+  const [bulkSelectMode, setBulkSelectMode] = useState(false);
+  const [bulkSelected, setBulkSelected] = useState<Record<number, string>>({});
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [bulkPctPractice, setBulkPctPractice] = useState('');
+  const [bulkPctOnline, setBulkPctOnline] = useState('');
+  const [bulkFlatPractice, setBulkFlatPractice] = useState('');
+  const [bulkFlatOnline, setBulkFlatOnline] = useState('');
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+
+  const [catalogSaving, setCatalogSaving] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [catalogDraft, setCatalogDraft] = useState({
+    showOnOnlineStore: false,
+    onlineStorePrice: '',
+    sellUnitType: '',
+    sellUnitTypeDetail: '',
+    unitsPerPackage: '',
+    alternateSellUnitType: '',
+    alternateUnitsPerPackage: '',
+  });
+
+  const [unboxVendor, setUnboxVendor] = useState('');
+  const [unboxInvoice, setUnboxInvoice] = useState('');
+  const [unboxLot, setUnboxLot] = useState('');
+  const [unboxExp, setUnboxExp] = useState('');
+  const [unboxUnpackedAt, setUnboxUnpackedAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [unboxUnpackedBy, setUnboxUnpackedBy] = useState('');
+  const [unboxQty, setUnboxQty] = useState('1');
+  const [unboxItemQuery, setUnboxItemQuery] = useState('');
+  const [unboxItemResults, setUnboxItemResults] = useState<SearchResultItem[]>([]);
+  const [unboxSearching, setUnboxSearching] = useState(false);
+  const [unboxSelectedItem, setUnboxSelectedItem] = useState<{ id: number; name: string } | null>(null);
+  const [unboxToLocId, setUnboxToLocId] = useState('');
+  const [unboxSubmitting, setUnboxSubmitting] = useState(false);
+  const [unboxError, setUnboxError] = useState<string | null>(null);
+  const unboxSearchSeq = useRef(0);
 
   const reloadMovements = useCallback(async () => {
     if (!selected || selected.itemType !== 'inventory' || branchId == null) {
@@ -278,14 +339,93 @@ export default function InventoryManagement() {
   }, [practiceId, branchId]);
 
   useEffect(() => {
+    if (branchId == null) {
+      setCostSummary(null);
+      setCostSummaryError(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setCostSummaryLoading(true);
+      setCostSummaryError(null);
+      try {
+        const s = await getInventoryCostSummary(practiceId, branchId);
+        if (!cancelled) setCostSummary(s);
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setCostSummary(null);
+          setCostSummaryError(
+            e instanceof Error
+              ? e.message
+              : 'Could not load branch cost summary (backend may not expose this endpoint yet).'
+          );
+        }
+      } finally {
+        if (!cancelled) setCostSummaryLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [practiceId, branchId]);
+
+  useEffect(() => {
+    if (!detail || detail.itemType !== 'inventory') return;
+    const item = detail.item as InventoryItem;
+    const raw = item.showOnOnlineStore as unknown;
+    setCatalogDraft({
+      showOnOnlineStore: raw === true || raw === 'true' || raw === 1 || raw === '1',
+      onlineStorePrice:
+        item.onlineStorePrice != null && String(item.onlineStorePrice).trim() !== ''
+          ? String(item.onlineStorePrice)
+          : '',
+      sellUnitType: (item.sellUnitType as string) || '',
+      sellUnitTypeDetail: (item.sellUnitTypeDetail as string) || '',
+      unitsPerPackage:
+        item.unitsPerPackage != null && String(item.unitsPerPackage).trim() !== ''
+          ? String(item.unitsPerPackage)
+          : '',
+      alternateSellUnitType: (item.alternateSellUnitType as string) || '',
+      alternateUnitsPerPackage:
+        item.alternateUnitsPerPackage != null && String(item.alternateUnitsPerPackage).trim() !== ''
+          ? String(item.alternateUnitsPerPackage)
+          : '',
+    });
+  }, [detail]);
+
+  useEffect(() => {
+    const q = unboxItemQuery.trim();
+    if (!q) {
+      setUnboxItemResults([]);
+      return;
+    }
+    const seq = ++unboxSearchSeq.current;
+    const t = window.setTimeout(async () => {
+      setUnboxSearching(true);
+      try {
+        const rows = await searchItems(q, practiceId, 40);
+        if (unboxSearchSeq.current !== seq) return;
+        setUnboxItemResults(rows.filter((r) => r.itemType === 'inventory'));
+      } catch {
+        if (unboxSearchSeq.current === seq) setUnboxItemResults([]);
+      } finally {
+        if (unboxSearchSeq.current === seq) setUnboxSearching(false);
+      }
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [unboxItemQuery, practiceId]);
+
+  useEffect(() => {
     if (!branchLocations.length) {
       setMovementFromId('');
       setMovementToId('');
+      setUnboxToLocId('');
       return;
     }
     const def = branchLocations.find((l) => l.code === 'main') ?? branchLocations[0];
     setMovementFromId(String(def.id));
     setMovementToId(String(def.id));
+    setUnboxToLocId((prev) => (prev && branchLocations.some((l) => String(l.id) === prev) ? prev : String(def.id)));
   }, [branchId, branchLocations]);
 
   useEffect(() => {
@@ -578,6 +718,163 @@ export default function InventoryManagement() {
     }
   }
 
+  async function saveCatalogExtensions() {
+    if (!selected || selected.itemType !== 'inventory' || branchId == null) return;
+    setCatalogSaving(true);
+    setCatalogError(null);
+    try {
+      await patchPracticeInventoryItem(practiceId, selected.itemId, {
+        showOnOnlineStore: catalogDraft.showOnOnlineStore,
+        onlineStorePrice:
+          catalogDraft.onlineStorePrice.trim() === '' ? null : Number(catalogDraft.onlineStorePrice),
+        sellUnitType: catalogDraft.sellUnitType || null,
+        sellUnitTypeDetail: catalogDraft.sellUnitTypeDetail.trim() || null,
+        unitsPerPackage:
+          catalogDraft.unitsPerPackage.trim() === '' ? null : Number(catalogDraft.unitsPerPackage),
+        alternateSellUnitType: catalogDraft.alternateSellUnitType || null,
+        alternateUnitsPerPackage:
+          catalogDraft.alternateUnitsPerPackage.trim() === ''
+            ? null
+            : Number(catalogDraft.alternateUnitsPerPackage),
+      });
+      setToast('Online store & unit fields saved');
+      window.setTimeout(() => setToast(null), 3500);
+      await refreshDetailBundle(selected);
+    } catch (e: unknown) {
+      setCatalogError(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setCatalogSaving(false);
+    }
+  }
+
+  function toggleBulkInventoryRow(itemId: number | null, name: string) {
+    if (itemId == null) return;
+    setBulkSelected((prev) => {
+      const next = { ...prev };
+      if (next[itemId]) delete next[itemId];
+      else next[itemId] = name;
+      return next;
+    });
+  }
+
+  async function submitBulkPriceAdjust() {
+    const ids = Object.keys(bulkSelected).map(Number);
+    if (!ids.length) return;
+    setBulkSaving(true);
+    setBulkError(null);
+    try {
+      const pctP = bulkPctPractice.trim() === '' ? null : Number(bulkPctPractice);
+      const pctO = bulkPctOnline.trim() === '' ? null : Number(bulkPctOnline);
+      const fP = bulkFlatPractice.trim() === '' ? null : Number(bulkFlatPractice);
+      const fO = bulkFlatOnline.trim() === '' ? null : Number(bulkFlatOnline);
+      const hasPctP = pctP != null && Number.isFinite(pctP);
+      const hasPctO = pctO != null && Number.isFinite(pctO);
+      const hasFP = fP != null && Number.isFinite(fP);
+      const hasFO = fO != null && Number.isFinite(fO);
+      if (!hasPctP && !hasPctO && !hasFP && !hasFO) {
+        setBulkError('Enter at least one percent or flat adjustment.');
+        return;
+      }
+      await postBulkInventoryPriceAdjust(practiceId, {
+        inventoryItemIds: ids,
+        percentChangePracticePrice: hasPctP ? pctP : undefined,
+        percentChangeOnlineStorePrice: hasPctO ? pctO : undefined,
+        flatAddPracticePrice: hasFP ? fP : undefined,
+        flatAddOnlineStorePrice: hasFO ? fO : undefined,
+      });
+      setToast('Bulk price adjustment applied');
+      window.setTimeout(() => setToast(null), 3500);
+      setBulkModalOpen(false);
+      setBulkSelected({});
+      setBulkPctPractice('');
+      setBulkPctOnline('');
+      setBulkFlatPractice('');
+      setBulkFlatOnline('');
+      if (selected?.itemType === 'inventory' && branchId != null) {
+        await refreshDetailBundle(selected);
+      }
+    } catch (e: unknown) {
+      setBulkError(e instanceof Error ? e.message : 'Bulk adjust failed');
+    } finally {
+      setBulkSaving(false);
+    }
+  }
+
+  async function submitUnboxReceive() {
+    if (branchId == null || !unboxSelectedItem) {
+      setUnboxError('Choose a branch, inventory item, and receiving location.');
+      return;
+    }
+    const toId = Number(unboxToLocId);
+    if (!Number.isFinite(toId)) {
+      setUnboxError('Choose destination location');
+      return;
+    }
+    const qty = Number(unboxQty);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setUnboxError('Quantity must be a positive number');
+      return;
+    }
+    setUnboxSubmitting(true);
+    setUnboxError(null);
+    const refreshedItemId = unboxSelectedItem.id;
+    try {
+      const metaBits: string[] = [];
+      if (unboxVendor.trim()) metaBits.push(`Vendor: ${unboxVendor.trim()}`);
+      if (unboxInvoice.trim()) metaBits.push(`Invoice: ${unboxInvoice.trim()}`);
+      if (unboxLot.trim()) metaBits.push(`Lot: ${unboxLot.trim()}`);
+      if (unboxExp.trim()) metaBits.push(`Exp: ${unboxExp.trim()}`);
+      if (unboxUnpackedAt.trim()) metaBits.push(`Unpacked date: ${unboxUnpackedAt.trim()}`);
+      const unpackedRaw = unboxUnpackedBy.trim();
+      if (unpackedRaw) {
+        const eid = Number(unpackedRaw);
+        if (Number.isFinite(eid)) metaBits.push(`Unpacked by employee: ${eid}`);
+        else metaBits.push(`Unpacked by: ${unpackedRaw}`);
+      }
+      const note = metaBits.length ? `Unbox — ${metaBits.join('; ')}` : 'Unbox — receive';
+
+      const body: PostInventoryMovementBody = {
+        movementType: 'receive',
+        inventoryItemId: refreshedItemId,
+        quantity: qty,
+        toBranchLocationId: toId,
+        note,
+        vendorName: unboxVendor.trim() || null,
+        invoiceNumber: unboxInvoice.trim() || null,
+        lotNumber: unboxLot.trim() || null,
+        expirationDate: unboxExp.trim() || null,
+        unpackedAt: unboxUnpackedAt.trim()
+          ? `${unboxUnpackedAt.trim().replace(/T.*/, '')}T12:00:00.000Z`
+          : null,
+      };
+      if (unpackedRaw) {
+        const eid = Number(unpackedRaw);
+        if (Number.isFinite(eid)) body.unpackedByEmployeeId = eid;
+      }
+      await postInventoryMovement(practiceId, branchId, body);
+      setToast('Unbox receive recorded');
+      window.setTimeout(() => setToast(null), 3500);
+      setUnboxVendor('');
+      setUnboxInvoice('');
+      setUnboxLot('');
+      setUnboxExp('');
+      setUnboxUnpackedAt(new Date().toISOString().slice(0, 10));
+      setUnboxUnpackedBy('');
+      setUnboxQty('1');
+      setUnboxItemQuery('');
+      setUnboxItemResults([]);
+      setUnboxSelectedItem(null);
+      if (selected?.itemType === 'inventory' && selected.itemId === refreshedItemId) {
+        await refreshDetailBundle(selected);
+        await reloadMovements();
+      }
+    } catch (e: unknown) {
+      setUnboxError(e instanceof Error ? e.message : 'Record failed');
+    } finally {
+      setUnboxSubmitting(false);
+    }
+  }
+
   function resolveLocationName(id: number | null | undefined): string {
     if (id == null) return '—';
     const loc = branchLocations.find((l) => l.id === id);
@@ -588,13 +885,25 @@ export default function InventoryManagement() {
     ? moneyBaseFromCatalogRow(detail.item as Record<string, unknown>)
     : null;
 
+  const unitCostForSelected =
+    effective != null ? toMoneyNumber(effective.cost) : practiceMoney ? practiceMoney.cost : 0;
+  const selectedInventoryExtendedCost =
+    selected?.itemType === 'inventory' &&
+    detail?.itemType === 'inventory' &&
+    stockSnapshot != null &&
+    stockSnapshot.quantityOnHandTotal != null &&
+    !Number.isNaN(Number(stockSnapshot.quantityOnHandTotal))
+      ? unitCostForSelected * Number(stockSnapshot.quantityOnHandTotal)
+      : null;
+
   return (
     <div className="settings-section">
       <h2 className="settings-section-title">Inventory and branch catalog</h2>
       <p className="settings-section-description">
-        Search the catalog, choose a branch, then manage reorder points, location buckets, audited
-        stock movements, and optional branch prices. On-hand totals are the sum of per-location
-        balances; quantity changes use movements, not the stock PUT. Quantity price tiers stay
+        Search the catalog, choose a branch, then manage online-store flags and sell units, unbox
+        receipts, bulk catalog price changes, cost rollups by location, reorder points, location buckets
+        (e.g. Brunswick office, vehicle AM), audited movements (including transfers and expired /
+        disposal decreases), and optional branch price overrides. Quantity price tiers stay
         practice-wide — edit them under Settings → Inventory management.
       </p>
 
@@ -650,6 +959,54 @@ export default function InventoryManagement() {
           ))}
         </select>
       </div>
+
+      {branchId != null && (
+        <div className="settings-card" style={{ marginBottom: 24 }}>
+          <h3 className="settings-card-title">Inventory cost (this branch)</h3>
+          <p className="settings-muted" style={{ marginBottom: 12 }}>
+            Total and per-location extended cost (unit cost × quantity on hand) across the whole branch
+            catalog. Requires the cost-summary API; the line below shows the selected item only as a
+            quick check.
+          </p>
+          {costSummaryLoading && <p className="settings-muted">Loading cost summary…</p>}
+          {costSummaryError && !costSummaryLoading && (
+            <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
+              {costSummaryError}
+            </div>
+          )}
+          {costSummary && !costSummaryLoading && (
+            <>
+              <p style={{ margin: '0 0 12px', fontSize: 18 }}>
+                <strong>Total extended cost:</strong> ${Number(costSummary.totalExtendedCost).toFixed(2)}
+              </p>
+              {costSummary.byLocation && costSummary.byLocation.length > 0 && (
+                <div className="settings-table-container">
+                  <table className="settings-table">
+                    <thead>
+                      <tr>
+                        <th>Location</th>
+                        <th>Code</th>
+                        <th>Extended cost</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {costSummary.byLocation.map((row, i) => (
+                        <tr key={`${row.branchLocationId ?? 'x'}-${row.code}-${i}`}>
+                          <td>{row.name}</td>
+                          <td>
+                            <code>{row.code}</code>
+                          </td>
+                          <td>${Number(row.extendedCost).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {branchId != null && (
         <div className="settings-card" style={{ marginBottom: 24 }}>
@@ -750,8 +1107,218 @@ export default function InventoryManagement() {
         </div>
       )}
 
+      {branchId != null && (
+        <div className="settings-card" style={{ marginBottom: 24 }}>
+          <h3 className="settings-card-title">Unbox / receive shipment</h3>
+          <p className="settings-muted" style={{ marginBottom: 12 }}>
+            Record vendor, invoice, lot, expiry, and who unpacked—then receive quantity into a bucket
+            (e.g. staging, Brunswick office, VAYD vehicle AM). Use <strong>Transfer</strong> in branch
+            details to move stock between buckets; use <strong>Adjustment decrease</strong> for expired
+            or disposed units.
+          </p>
+          {unboxError && (
+            <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
+              {unboxError}
+            </div>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 520 }}>
+            <label className="settings-label">
+              Search inventory to receive
+              <input
+                className="settings-input"
+                value={unboxItemQuery}
+                onChange={(e) => setUnboxItemQuery(e.target.value)}
+                placeholder="e.g. Gabapentin"
+                style={{ paddingRight: unboxSearching ? 36 : 12 }}
+              />
+            </label>
+            {unboxSelectedItem && (
+              <p style={{ margin: 0, fontSize: 14 }}>
+                Selected: <strong>{unboxSelectedItem.name}</strong>{' '}
+                <button
+                  type="button"
+                  className="btn secondary"
+                  style={{ fontSize: 12, padding: '2px 8px' }}
+                  onClick={() => setUnboxSelectedItem(null)}
+                >
+                  Clear
+                </button>
+              </p>
+            )}
+            {!unboxSelectedItem && unboxItemResults.length > 0 && (
+              <div className="settings-table-container" style={{ maxHeight: 200, overflow: 'auto' }}>
+                <table className="settings-table">
+                  <tbody>
+                    {unboxItemResults.map((row, i) => {
+                      const id = row.inventoryItem?.id;
+                      return (
+                        <tr key={`ub-${id}-${i}`}>
+                          <td>{row.name}</td>
+                          <td>
+                            <button
+                              type="button"
+                              className="btn secondary"
+                              style={{ fontSize: 12, padding: '4px 10px' }}
+                              disabled={id == null}
+                              onClick={() => {
+                                if (id == null) return;
+                                setUnboxSelectedItem({ id, name: row.name });
+                              }}
+                            >
+                              Use
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                gap: 10,
+              }}
+            >
+              <label className="settings-label">
+                Vendor / company (invoice from)
+                <input
+                  className="settings-input"
+                  value={unboxVendor}
+                  onChange={(e) => setUnboxVendor(e.target.value)}
+                />
+              </label>
+              <label className="settings-label">
+                Invoice number
+                <input
+                  className="settings-input"
+                  value={unboxInvoice}
+                  onChange={(e) => setUnboxInvoice(e.target.value)}
+                />
+              </label>
+              <label className="settings-label">
+                Lot number
+                <input
+                  className="settings-input"
+                  value={unboxLot}
+                  onChange={(e) => setUnboxLot(e.target.value)}
+                />
+              </label>
+              <label className="settings-label">
+                Expiration date
+                <input
+                  type="date"
+                  className="settings-input"
+                  value={unboxExp}
+                  onChange={(e) => setUnboxExp(e.target.value)}
+                />
+              </label>
+              <label className="settings-label">
+                Date unpacked
+                <input
+                  type="date"
+                  className="settings-input"
+                  value={unboxUnpackedAt}
+                  onChange={(e) => setUnboxUnpackedAt(e.target.value)}
+                />
+              </label>
+              <label className="settings-label">
+                Unpacked by (employee ID or name)
+                <input
+                  className="settings-input"
+                  value={unboxUnpackedBy}
+                  onChange={(e) => setUnboxUnpackedBy(e.target.value)}
+                  placeholder="ID from PIMS or free-text name"
+                />
+              </label>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
+              <label className="settings-label" style={{ flex: '0 1 120px', marginBottom: 0 }}>
+                Quantity
+                <input
+                  type="number"
+                  min={1}
+                  className="settings-input"
+                  value={unboxQty}
+                  onChange={(e) => setUnboxQty(e.target.value)}
+                />
+              </label>
+              <label className="settings-label" style={{ flex: '1 1 220px', marginBottom: 0 }}>
+                Receive into location
+                <select
+                  className="settings-input"
+                  value={unboxToLocId}
+                  onChange={(e) => setUnboxToLocId(e.target.value)}
+                >
+                  {branchLocations.map((loc) => (
+                    <option key={loc.id} value={loc.id} disabled={loc.isActive === false}>
+                      {locationLabel(loc)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={unboxSubmitting || !unboxSelectedItem || !branchLocations.length}
+                onClick={() => void submitUnboxReceive()}
+              >
+                {unboxSubmitting ? 'Recording…' : 'Record unbox (receive)'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="settings-form-group">
         <label className="settings-label">Search catalog</label>
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 12,
+            alignItems: 'center',
+            marginBottom: 10,
+          }}
+        >
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
+            <input
+              type="checkbox"
+              checked={bulkSelectMode}
+              onChange={(e) => {
+                setBulkSelectMode(e.target.checked);
+                if (!e.target.checked) setBulkSelected({});
+              }}
+            />
+            Select inventory rows for bulk price change
+          </label>
+          {Object.keys(bulkSelected).length > 0 && (
+            <>
+              <span className="settings-muted">{Object.keys(bulkSelected).length} selected</span>
+              <button
+                type="button"
+                className="btn primary"
+                style={{ fontSize: 13, padding: '6px 12px' }}
+                onClick={() => {
+                  setBulkError(null);
+                  setBulkModalOpen(true);
+                }}
+              >
+                Bulk adjust prices…
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                style={{ fontSize: 13, padding: '6px 12px' }}
+                onClick={() => setBulkSelected({})}
+              >
+                Clear selection
+              </button>
+            </>
+          )}
+        </div>
         <div style={{ position: 'relative', maxWidth: 560 }}>
           <input
             type="text"
@@ -797,6 +1364,7 @@ export default function InventoryManagement() {
               <table className="settings-table">
                 <thead>
                   <tr>
+                    {bulkSelectMode && <th style={{ width: 40 }} />}
                     <th>Type</th>
                     <th>Name</th>
                     <th />
@@ -810,6 +1378,20 @@ export default function InventoryManagement() {
                       selected && selected.itemType === itemType && selected.itemId === itemId;
                     return (
                       <tr key={`${itemType}-${itemId}-${i}`}>
+                        {bulkSelectMode && (
+                          <td>
+                            {itemType === 'inventory' ? (
+                              <input
+                                type="checkbox"
+                                checked={itemId != null && !!bulkSelected[itemId]}
+                                onChange={() => toggleBulkInventoryRow(itemId, row.name)}
+                                aria-label={`Select ${row.name} for bulk pricing`}
+                              />
+                            ) : (
+                              <span className="settings-muted">—</span>
+                            )}
+                          </td>
+                        )}
                         <td style={{ textTransform: 'capitalize' }}>{itemType}</td>
                         <td>{row.name}</td>
                         <td>
@@ -926,6 +1508,144 @@ export default function InventoryManagement() {
               )}
 
               {detail.itemType === 'inventory' && (
+                <div
+                  style={{
+                    marginBottom: 20,
+                    padding: 16,
+                    border: '1px solid rgba(0,0,0,0.08)',
+                    borderRadius: 8,
+                  }}
+                >
+                  <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
+                    Online store & sell / dispense units
+                  </h4>
+                  <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+                    Show this SKU on the online store and set its web price. Primary and alternate units
+                    describe how you sell or use the item (for example bottle of 100 vs single capsule).
+                  </p>
+                  {catalogError && (
+                    <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
+                      {catalogError}
+                    </div>
+                  )}
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      marginBottom: 12,
+                      cursor: 'pointer',
+                      fontSize: 14,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={catalogDraft.showOnOnlineStore}
+                      onChange={(e) =>
+                        setCatalogDraft((d) => ({ ...d, showOnOnlineStore: e.target.checked }))
+                      }
+                    />
+                    Show on online store
+                  </label>
+                  <label className="settings-label">
+                    Online store price
+                    <input
+                      type="number"
+                      step="0.01"
+                      className="settings-input"
+                      disabled={!catalogDraft.showOnOnlineStore}
+                      value={catalogDraft.onlineStorePrice}
+                      onChange={(e) =>
+                        setCatalogDraft((d) => ({ ...d, onlineStorePrice: e.target.value }))
+                      }
+                      placeholder="0.00"
+                    />
+                  </label>
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                      gap: 10,
+                      marginTop: 10,
+                    }}
+                  >
+                    <label className="settings-label">
+                      Primary unit
+                      <select
+                        className="settings-input"
+                        value={catalogDraft.sellUnitType}
+                        onChange={(e) =>
+                          setCatalogDraft((d) => ({ ...d, sellUnitType: e.target.value }))
+                        }
+                      >
+                        {SELL_UNIT_OPTIONS.map((o) => (
+                          <option key={o.value || 'empty'} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="settings-label">
+                      Units per package (e.g. 100 caps in bottle)
+                      <input
+                        className="settings-input"
+                        value={catalogDraft.unitsPerPackage}
+                        onChange={(e) =>
+                          setCatalogDraft((d) => ({ ...d, unitsPerPackage: e.target.value }))
+                        }
+                      />
+                    </label>
+                    <label className="settings-label" style={{ gridColumn: '1 / -1' }}>
+                      Detail when unit is “other”
+                      <input
+                        className="settings-input"
+                        value={catalogDraft.sellUnitTypeDetail}
+                        onChange={(e) =>
+                          setCatalogDraft((d) => ({ ...d, sellUnitTypeDetail: e.target.value }))
+                        }
+                        placeholder="e.g. vial"
+                      />
+                    </label>
+                    <label className="settings-label">
+                      Alternate sell unit (optional)
+                      <select
+                        className="settings-input"
+                        value={catalogDraft.alternateSellUnitType}
+                        onChange={(e) =>
+                          setCatalogDraft((d) => ({ ...d, alternateSellUnitType: e.target.value }))
+                        }
+                      >
+                        {SELL_UNIT_OPTIONS.map((o) => (
+                          <option key={`alt-${o.value || 'empty'}`} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="settings-label">
+                      Units per alt package (optional)
+                      <input
+                        className="settings-input"
+                        value={catalogDraft.alternateUnitsPerPackage}
+                        onChange={(e) =>
+                          setCatalogDraft((d) => ({ ...d, alternateUnitsPerPackage: e.target.value }))
+                        }
+                      />
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn primary"
+                    style={{ marginTop: 14 }}
+                    disabled={catalogSaving}
+                    onClick={() => void saveCatalogExtensions()}
+                  >
+                    {catalogSaving ? 'Saving…' : 'Save online store & units'}
+                  </button>
+                </div>
+              )}
+
+              {detail.itemType === 'inventory' && (
                 <div style={{ marginBottom: 20 }}>
                   <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>Stock at this branch</h4>
                   {stockLoading ? (
@@ -944,6 +1664,15 @@ export default function InventoryManagement() {
                           ? '—'
                           : String(stockSnapshot.quantityOnHandTotal)}
                       </p>
+                      {selectedInventoryExtendedCost != null && (
+                        <p style={{ margin: '0 0 12px', fontSize: 15 }}>
+                          <strong>Extended cost (this branch, this item):</strong> $
+                          {selectedInventoryExtendedCost.toFixed(2)}
+                          <span className="settings-muted" style={{ marginLeft: 8, fontSize: 13 }}>
+                            (effective unit cost × total on hand)
+                          </span>
+                        </p>
+                      )}
                       {stockSnapshot && stockSnapshot.locations && stockSnapshot.locations.length > 0 && (
                         <div className="settings-table-container" style={{ marginBottom: 16 }}>
                           <table className="settings-table">
@@ -1282,6 +2011,104 @@ export default function InventoryManagement() {
                 Clear overrides
               </button>
               <button type="button" className="btn secondary" disabled={priceSaving} onClick={() => setPriceModalOpen(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bulkModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="settings-modal-overlay"
+          onClick={() => !bulkSaving && setBulkModalOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            padding: 16,
+          }}
+        >
+          <div
+            className="settings-card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: 'min(480px, 100%)', padding: 24 }}
+          >
+            <h3 className="settings-card-title">Bulk price adjustment</h3>
+            <p className="settings-muted" style={{ marginBottom: 12 }}>
+              Applies to {Object.keys(bulkSelected).length} inventory catalog item(s). Use positive
+              percents to raise prices (e.g. <code>5</code> = +5%). Leave a field blank to skip that
+              adjustment.
+            </p>
+            {bulkError && (
+              <div className="settings-message settings-error-message" style={{ marginBottom: 12 }}>
+                {bulkError}
+              </div>
+            )}
+            <label className="settings-label" style={{ display: 'block', marginBottom: 10 }}>
+              % change — practice list / in-clinic price
+              <input
+                type="number"
+                step="0.1"
+                className="settings-input"
+                value={bulkPctPractice}
+                onChange={(e) => setBulkPctPractice(e.target.value)}
+                placeholder="e.g. 5"
+              />
+            </label>
+            <label className="settings-label" style={{ display: 'block', marginBottom: 10 }}>
+              % change — online store price
+              <input
+                type="number"
+                step="0.1"
+                className="settings-input"
+                value={bulkPctOnline}
+                onChange={(e) => setBulkPctOnline(e.target.value)}
+                placeholder="e.g. 3"
+              />
+            </label>
+            <label className="settings-label" style={{ display: 'block', marginBottom: 10 }}>
+              Flat add ($) — practice list price
+              <input
+                type="number"
+                step="0.01"
+                className="settings-input"
+                value={bulkFlatPractice}
+                onChange={(e) => setBulkFlatPractice(e.target.value)}
+                placeholder="e.g. 2.50"
+              />
+            </label>
+            <label className="settings-label" style={{ display: 'block', marginBottom: 10 }}>
+              Flat add ($) — online store price
+              <input
+                type="number"
+                step="0.01"
+                className="settings-input"
+                value={bulkFlatOnline}
+                onChange={(e) => setBulkFlatOnline(e.target.value)}
+              />
+            </label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={bulkSaving}
+                onClick={() => void submitBulkPriceAdjust()}
+              >
+                {bulkSaving ? 'Applying…' : 'Apply to selected'}
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={bulkSaving}
+                onClick={() => setBulkModalOpen(false)}
+              >
                 Cancel
               </button>
             </div>

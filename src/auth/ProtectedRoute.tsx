@@ -13,14 +13,14 @@ type ProtectedRouteProps = {
 /**
  * Determines the appropriate redirect destination based on user role
  * - Clients go to /client-portal
- * - Employees go to /routing
+ * - Employees go to /scout (first Scout tab)
  */
 function getDefaultRedirect(roles: string[]): string {
   const normalizedRoles = roles.map((r) => String(r).toLowerCase().trim());
   if (normalizedRoles.includes('client')) {
     return '/client-portal';
   }
-  return '/routing';
+  return '/scout';
 }
 
 export function ProtectedRoute({
