@@ -318,6 +318,12 @@ export type RoomLoader = {
   sentToClient?: SentToClient | null;
   /** Token for public form/PDF URL (when form has been sent). Used for View PDF link. */
   token?: string | null;
+  /**
+   * Optional server hint: this loader follows another same-day room loader for the same client/visit.
+   * When present and the prior loader is in the list as `completed`, the UI may waive duplicate trip-fee requirements.
+   */
+  linkedPriorRoomLoaderId?: number | null;
+  linkedRoomLoaderId?: number | null;
   created?: string;
   updated?: string;
 };
@@ -328,6 +334,10 @@ export type RoomLoaderSearchParams = {
   activeOnly?: boolean;
   sentStatus?: SentStatus;
   dueStatus?: DueStatus;
+  /** Inclusive lower bound for appointment date filter (`YYYY-MM-DD`). */
+  appointmentFrom?: string;
+  /** Inclusive upper bound for appointment date filter (`YYYY-MM-DD`). */
+  appointmentTo?: string;
 };
 
 export type CreateRoomLoaderRequest = {
@@ -351,6 +361,12 @@ export async function searchRoomLoaders(params?: RoomLoaderSearchParams): Promis
   if (params?.activeOnly !== undefined) queryParams.append('activeOnly', String(params.activeOnly));
   if (params?.sentStatus) queryParams.append('sentStatus', params.sentStatus);
   if (params?.dueStatus) queryParams.append('dueStatus', params.dueStatus);
+  if (params?.appointmentFrom != null && String(params.appointmentFrom).trim() !== '') {
+    queryParams.append('appointmentFrom', String(params.appointmentFrom).trim());
+  }
+  if (params?.appointmentTo != null && String(params.appointmentTo).trim() !== '') {
+    queryParams.append('appointmentTo', String(params.appointmentTo).trim());
+  }
 
   const queryString = queryParams.toString();
   const url = `/room-loader${queryString ? `?${queryString}` : ''}`;

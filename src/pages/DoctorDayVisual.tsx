@@ -7,6 +7,7 @@ import type { DoctorDayProps } from './DoctorDay';
 import {
   fetchDoctorDay,
   clientDisplayName,
+  previewRoutingAppointmentLabel,
   isBlockEntry,
   blockDisplayLabel,
   isFlexBlockItem,
@@ -18,8 +19,11 @@ import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
-import { Heart } from 'lucide-react';
-import { shouldShowEtaWindowWarning } from '../utils/windowWarning';
+import { AlertTriangle, Heart } from 'lucide-react';
+import {
+  fixedTimeRouteEtaMeaningfullyAfterScheduledStart,
+  shouldShowEtaWindowWarning,
+} from '../utils/windowWarning';
 import {
   computeHoverPopoverPosition,
   rectFromElement,
@@ -32,6 +36,13 @@ import {
   colorForHDRatio,
   colorForDrive,
 } from '../utils/statsFormat';
+import {
+  DEFAULT_PRACTICE_TIMEZONE,
+  practiceTimeZoneOrDefault,
+  formatIsoInPracticeZone,
+  dayWallClockStartIso,
+  isoFromSecondsSincePracticeMidnight,
+} from '../utils/practiceTimezone';
 import './DoctorDay.css';
 
 // ===== Vertical scale: match My Week column density =====
@@ -65,21 +76,16 @@ function timeStrToMinutesFromMidnight(s: string): number {
   return h * 60 + (Number.isNaN(m) ? 0 : m);
 }
 
-function dayBaseIso(gridStartMinutesFromMidnight: number, dateIso: string): string {
-  const hh = Math.floor(gridStartMinutesFromMidnight / 60);
-  const mm = gridStartMinutesFromMidnight % 60;
-  return DateTime.fromISO(dateIso)
-    .set({ hour: hh, minute: mm, second: 0, millisecond: 0 })
-    .toISO()!;
-}
-
 function minutesFromDayStart(
   gridStartMinutesFromMidnight: number,
   totalMinutes: number,
   iso: string,
-  dateIso: string
+  dateIso: string,
+  practiceTz: string
 ): number {
-  const base = DateTime.fromISO(dayBaseIso(gridStartMinutesFromMidnight, dateIso));
+  const base = DateTime.fromISO(
+    dayWallClockStartIso(dateIso, gridStartMinutesFromMidnight, practiceTz)
+  );
   const t = DateTime.fromISO(iso);
   const mins = t.diff(base, 'minutes').minutes;
   return Math.max(0, Math.min(totalMinutes, Math.round(mins)));
@@ -90,19 +96,14 @@ function isoFromMinutesFromGridStart(
   gridStartMinutesFromMidnight: number,
   totalMinutes: number,
   minFromGridStart: number,
-  dateIso: string
+  dateIso: string,
+  practiceTz: string
 ): string {
-  const base = DateTime.fromISO(dayBaseIso(gridStartMinutesFromMidnight, dateIso));
+  const base = DateTime.fromISO(
+    dayWallClockStartIso(dateIso, gridStartMinutesFromMidnight, practiceTz)
+  );
   const clamped = Math.max(0, Math.min(totalMinutes, minFromGridStart));
   return base.plus({ minutes: clamped }).toISO()!;
-}
-
-/** Routing-v2 `validationReturnSec`: seconds after local midnight on `dateIso`. */
-function isoFromSecSinceLocalMidnight(dateIso: string, secFromMidnight: number): string | null {
-  if (!Number.isFinite(secFromMidnight) || secFromMidnight < 0) return null;
-  const d = DateTime.fromISO(dateIso);
-  if (!d.isValid) return null;
-  return d.startOf('day').plus({ seconds: Math.round(secFromMidnight) }).toISO()!;
 }
 
 function depotTimeToPx(
@@ -424,6 +425,56 @@ type Household = {
   firstApptIndex?: number;
 };
 
+/** Client appointment (not personal block) with Fixed Time — same rules as My Week `weekHouseholdIsClientFixedTime`. */
+function visualHouseholdIsClientFixedTime(h: Household): boolean {
+  if (h.isPersonalBlock) return false;
+  const at = (h.primary as any)?.appointmentType;
+  const nestedName =
+    at && typeof at === 'object'
+      ? String(
+          (at as { name?: string; prettyName?: string }).name ??
+            (at as { prettyName?: string }).prettyName ??
+            ''
+        )
+          .trim()
+          .toLowerCase()
+      : '';
+  const flat = (str(h.primary, 'appointmentType') ?? str(h.primary, 'appointmentTypeName') ?? '')
+    .trim()
+    .toLowerCase();
+  const typeLower = nestedName || flat;
+  if (typeLower === 'fixed time' || typeLower.includes('fixed time')) return true;
+  return (h.patients[0]?.type || '').toLowerCase() === 'fixed time';
+}
+
+/**
+ * When true, layout and hover Arrive/Leave use doctor-day start/end (My Week `weekHouseholdUsesDoctorDayClockForLayout`).
+ * Client Fixed Time uses route ETA when arrival is after booked start; otherwise calendar start.
+ *
+ * `blockMetaForFlex` must match render: {@link blockLabelMetaForDisplay} so noloc / doctor-day rows that only
+ * expose `FLEX BLOCK` on ETA `byIndex` still count as flex (route clock), not fixed personal blocks.
+ */
+function visualHouseholdUsesDoctorDayClockForLayout(
+  h: Household,
+  slot: { eta?: string | null; etd?: string | null } | undefined,
+  showByDriveTime: boolean,
+  blockMetaForFlex?: { blockLabel?: string; title?: string } | null
+): boolean {
+  if (!showByDriveTime) return true;
+  const flexSource = blockMetaForFlex ?? h.primary;
+  const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(flexSource));
+  if (h.isPersonalBlock && !flexBlock) return true;
+  if (!visualHouseholdIsClientFixedTime(h)) return false;
+  const eta = slot?.eta;
+  const schedStart = h.startIso;
+  if (!eta || !schedStart) return true;
+  const etaDt = DateTime.fromISO(eta);
+  const schedDt = DateTime.fromISO(schedStart);
+  if (!etaDt.isValid || !schedDt.isValid) return true;
+  if (fixedTimeRouteEtaMeaningfullyAfterScheduledStart(schedStart, eta)) return false;
+  return true;
+}
+
 /* ----------------- schedule bounds (for work start) ----------------- */
 function pickScheduleBounds(
   resp: DoctorDayResponse,
@@ -460,17 +511,24 @@ function pickScheduleBounds(
 }
 
 /* ----------------- visual window helpers (8:30–10:30 + day-start clamp) ----------------- */
-function eightThirtyIsoFor(date: string): string {
-  return DateTime.fromISO(date).set({ hour: 8, minute: 30, second: 0, millisecond: 0 }).toISO()!;
+function eightThirtyIsoFor(date: string, practiceTz: string): string {
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  return DateTime.fromISO(date, { zone: tz })
+    .set({ hour: 8, minute: 30, second: 0, millisecond: 0 })
+    .toISO()!;
 }
-function tenThirtyIsoFor(date: string): string {
-  return DateTime.fromISO(date).set({ hour: 10, minute: 30, second: 0, millisecond: 0 }).toISO()!;
+function tenThirtyIsoFor(date: string, practiceTz: string): string {
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  return DateTime.fromISO(date, { zone: tz })
+    .set({ hour: 10, minute: 30, second: 0, millisecond: 0 })
+    .toISO()!;
 }
 /** Return doctor's visual work start for the date (schedStartIso if valid time/ISO; else 08:30) */
-function workStartIsoFor(date: string, schedStartIso?: string | null): string {
+function workStartIsoFor(date: string, schedStartIso: string | null | undefined, practiceTz: string): string {
+  const tz = practiceTimeZoneOrDefault(practiceTz);
   if (schedStartIso && /^\d{2}:\d{2}(:\d{2})?$/.test(schedStartIso)) {
     const [hh, mm] = schedStartIso.split(':');
-    return DateTime.fromISO(date)
+    return DateTime.fromISO(date, { zone: tz })
       .set({
         hour: Math.min(23, Number(hh) || 0),
         minute: Math.min(59, Number(mm) || 0),
@@ -480,18 +538,19 @@ function workStartIsoFor(date: string, schedStartIso?: string | null): string {
       .toISO()!;
   }
   if (schedStartIso && DateTime.fromISO(schedStartIso).isValid) return schedStartIso;
-  return eightThirtyIsoFor(date);
+  return eightThirtyIsoFor(date, practiceTz);
 }
 /** Visual rule: given an appointment start, return [winStartIso, winEndIso] */
 function adjustedWindowForStart(
   date: string,
   startIso: string,
-  schedStartIso?: string | null
+  schedStartIso: string | null | undefined,
+  practiceTz: string
 ): { winStartIso: string; winEndIso: string } {
   const start = DateTime.fromISO(startIso);
-  const workStart = DateTime.fromISO(workStartIsoFor(date, schedStartIso));
-  const eightThirty = DateTime.fromISO(eightThirtyIsoFor(date));
-  const tenThirty = DateTime.fromISO(tenThirtyIsoFor(date));
+  const workStart = DateTime.fromISO(workStartIsoFor(date, schedStartIso, practiceTz));
+  const eightThirty = DateTime.fromISO(eightThirtyIsoFor(date, practiceTz));
+  const tenThirty = DateTime.fromISO(tenThirtyIsoFor(date, practiceTz));
 
   const symmetricEarly = start.minus({ hours: 1 });
   if (symmetricEarly < eightThirty && start <= tenThirty) {
@@ -565,6 +624,7 @@ export default function DoctorDayVisual({
   const [schedEndIso, setSchedEndIso] = useState<string | null>(null);
   const [startDepotTimeStr, setStartDepotTimeStr] = useState<string | null>(null);
   const [endDepotTimeStr, setEndDepotTimeStr] = useState<string | null>(null);
+  const [practiceTimeZone, setPracticeTimeZone] = useState<string>(DEFAULT_PRACTICE_TIMEZONE);
 
   // pretty depot addresses
   const [startDepotAddr, setStartDepotAddr] = useState<string | null>(null);
@@ -597,6 +657,7 @@ export default function DoctorDayVisual({
     /** Same window as native `title` on the block (avoids recomputation drift for Flex Block / blocks). */
     resolvedWinStartIso: string;
     resolvedWinEndIso: string;
+    windowWarning?: boolean;
     anchor?: HoverAnchorRect;
   } | null>(null);
   const hoverCardDismissTimerRef = useRef<number | null>(null);
@@ -727,6 +788,8 @@ export default function DoctorDayVisual({
             city: virtualAppt.city ?? '',
             state: virtualAppt.state ?? '',
             zip: virtualAppt.zip ?? '',
+            clientZone: virtualAppt.clientZone,
+            effectiveZone: virtualAppt.effectiveZone,
             appointmentStart: start.toISO(),
             appointmentEnd: end.toISO(),
             isPreview: true as any,
@@ -746,6 +809,7 @@ export default function DoctorDayVisual({
         setAppts(final);
         setStartDepot(resp.startDepot ?? null);
         setEndDepot(resp.endDepot ?? null);
+        setPracticeTimeZone(resp.timezone);
 
         const sdt = str(resp as any, 'startDepotTime');
         const edt = str(resp as any, 'endDepotTime');
@@ -1090,7 +1154,7 @@ export default function DoctorDayVisual({
             } else {
               const winStartIso =
                 h.primary?.effectiveWindow?.startIso ??
-                adjustedWindowForStart(date, h.startIso, schedStartIso).winStartIso;
+                adjustedWindowForStart(date, h.startIso, schedStartIso, practiceTimeZone).winStartIso;
               tl[viewIdx].eta = winStartIso;
             }
           }
@@ -1265,7 +1329,17 @@ export default function DoctorDayVisual({
     return () => {
       on = false;
     };
-  }, [households, startDepot, endDepot, date, selectedDoctorId, appts, schedStartIso, virtualAppt]);
+  }, [
+    households,
+    startDepot,
+    endDepot,
+    date,
+    selectedDoctorId,
+    appts,
+    schedStartIso,
+    virtualAppt,
+    practiceTimeZone,
+  ]);
 
   /* ---------- Display order: byIndex order when ETA returned it ---------- */
   const displayHouseholds = useMemo(
@@ -1306,6 +1380,7 @@ export default function DoctorDayVisual({
 
   /* ------------ full-day grid (same span logic as My Week: ~6:30–7:30 PM) ------------ */
   const dayVisualGrid = useMemo(() => {
+    const dayTz = practiceTimeZoneOrDefault(practiceTimeZone);
     const candidates: number[] = [];
     if (startDepotTimeStr) {
       candidates.push(timeStrToMinutesFromMidnight(startDepotTimeStr));
@@ -1314,20 +1389,20 @@ export default function DoctorDayVisual({
       if (/^\d{1,2}:\d{2}/.test(schedStartIso.trim())) {
         candidates.push(timeStrToMinutesFromMidnight(schedStartIso));
       } else {
-        const dt = DateTime.fromISO(schedStartIso);
+        const dt = DateTime.fromISO(schedStartIso).setZone(dayTz);
         if (dt.isValid) candidates.push(dt.hour * 60 + dt.minute);
       }
     }
     for (const hh of displayHouseholds) {
       if (hh.startIso) {
-        const dt = DateTime.fromISO(hh.startIso);
+        const dt = DateTime.fromISO(hh.startIso).setZone(dayTz);
         if (dt.isValid) candidates.push(dt.hour * 60 + dt.minute);
       }
     }
     for (const t of displayTimeline) {
       const eta = t?.eta ?? t?.etd;
       if (eta) {
-        const dt = DateTime.fromISO(eta);
+        const dt = DateTime.fromISO(eta).setZone(dayTz);
         if (dt.isValid) candidates.push(dt.hour * 60 + dt.minute);
       }
     }
@@ -1341,9 +1416,10 @@ export default function DoctorDayVisual({
       END_MINUTES_FROM_MIDNIGHT - gridStartMinutesFromMidnight
     );
     return { gridStartMinutesFromMidnight, totalMinutes };
-  }, [displayHouseholds, displayTimeline, schedStartIso, startDepotTimeStr]);
+  }, [displayHouseholds, displayTimeline, schedStartIso, startDepotTimeStr, practiceTimeZone]);
 
   const hourTicksForLabels = useMemo(() => {
+    const labelTz = practiceTimeZoneOrDefault(practiceTimeZone);
     const out: { top: number; label: string }[] = [];
     const startH = Math.floor(dayVisualGrid.gridStartMinutesFromMidnight / 60);
     for (let h = startH; h <= DAY_END_HOUR; h++) {
@@ -1352,12 +1428,12 @@ export default function DoctorDayVisual({
       if (minutesFromGridStart >= 0 && minutesFromGridStart <= dayVisualGrid.totalMinutes) {
         out.push({
           top: minutesFromGridStart * PPM,
-          label: DateTime.fromObject({ hour: h, minute: 0 }).toFormat('h a'),
+          label: DateTime.fromObject({ hour: h, minute: 0 }, { zone: labelTz }).toFormat('h a'),
         });
       }
     }
     return out;
-  }, [dayVisualGrid.gridStartMinutesFromMidnight, dayVisualGrid.totalMinutes]);
+  }, [dayVisualGrid.gridStartMinutesFromMidnight, dayVisualGrid.totalMinutes, practiceTimeZone]);
 
   const timeTicks = useMemo(() => {
     const out: { top: number; isHour: boolean }[] = [];
@@ -1455,8 +1531,8 @@ export default function DoctorDayVisual({
       const nextAnchorIso = nextSlot?.eta ?? nextHi.startIso ?? null;
       if (!prevEndIso || !nextAnchorIso) continue;
 
-      const prevEndMin = minutesFromDayStart(g0, gTot, prevEndIso, date);
-      const nextEtaMin = minutesFromDayStart(g0, gTot, nextAnchorIso, date);
+      const prevEndMin = minutesFromDayStart(g0, gTot, prevEndIso, date, practiceTimeZone);
+      const nextEtaMin = minutesFromDayStart(g0, gTot, nextAnchorIso, date, practiceTimeZone);
       const gapAvailMin = Math.max(0, nextEtaMin - prevEndMin - bufferMinAfter(hop));
 
       let interSec = 0;
@@ -1493,6 +1569,7 @@ export default function DoctorDayVisual({
     dayVisualGrid.totalMinutes,
     date,
     appointmentBufferMinutes,
+    practiceTimeZone,
   ]);
 
   // Resolved start/end for a household: personal blocks use effectiveWindow (scheduled time) when available.
@@ -1523,16 +1600,29 @@ export default function DoctorDayVisual({
     for (let idx = 0; idx < N; idx++) {
       const h = displayHouseholds[idx];
       const slot = displayTimeline[idx];
+      const labelMeta = blockLabelMetaForDisplay(h, etaBlockLabelByKey);
       const etaIso = slot?.eta ?? null;
       const etdIso = slot?.etd ?? null;
       const { startIso: sIso, endIso: eIso } = householdStartEnd(h, idx);
-      let anchorIso = etaIso ?? sIso ?? h.startIso!;
-      const endIso = etdIso ?? eIso ?? h.endIso!;
+      const doctorDayClock = visualHouseholdUsesDoctorDayClockForLayout(h, slot, showByDriveTime, labelMeta);
+      const useEta = showByDriveTime && !doctorDayClock && (slot?.eta ?? slot?.etd);
+      let anchorIso = useEta ? (slot?.eta ?? sIso) : sIso;
+      const endIso = useEta && slot?.etd ? slot.etd : eIso;
       if (idx >= 1) {
         const prev = displayHouseholds[idx - 1];
         const prevSlot = displayTimeline[idx - 1];
         if (sameAddress(prev, h)) {
-          const prevEtd = prevSlot?.etd ?? prev.endIso ?? null;
+          const prevLabelMeta = blockLabelMetaForDisplay(prev, etaBlockLabelByKey);
+          const prevDoctorDay = visualHouseholdUsesDoctorDayClockForLayout(
+            prev,
+            prevSlot,
+            showByDriveTime,
+            prevLabelMeta
+          );
+          const prevEtd =
+            showByDriveTime && !prevDoctorDay && prevSlot?.etd
+              ? prevSlot.etd
+              : householdStartEnd(prev, idx - 1).endIso ?? prev.endIso ?? null;
           if (prevEtd) {
             const minStart = DateTime.fromISO(prevEtd).plus({ minutes: bufferMin });
             const anchorDt = DateTime.fromISO(anchorIso);
@@ -1555,7 +1645,8 @@ export default function DoctorDayVisual({
           dayVisualGrid.gridStartMinutesFromMidnight,
           dayVisualGrid.totalMinutes,
           anchorIso,
-          date
+          date,
+          practiceTimeZone
         ) * PPM;
       const durMin = Math.max(1, Math.round(e.diff(s).as('minutes')));
       const height = Math.max(22, durMin * PPM);
@@ -1567,7 +1658,6 @@ export default function DoctorDayVisual({
         const prevEndShiftedPx = baseTops[idx - 1] + driveOffsetsPx[idx - 1] + heights[idx - 1];
         const minsJ = driveBetweenMinForLayout[idx - 1] ?? 0;
         let off = Math.max(0, prevEndShiftedPx + minsJ * PPM - baseTop);
-        const labelMeta = blockLabelMetaForDisplay(h, etaBlockLabelByKey);
         const flexRow =
           h.isPersonalBlock === true &&
           (isFlexBlockItem(labelMeta) ||
@@ -1585,12 +1675,14 @@ export default function DoctorDayVisual({
   }, [
     displayHouseholds,
     displayTimeline,
+    showByDriveTime,
     dayVisualGrid.gridStartMinutesFromMidnight,
     dayVisualGrid.totalMinutes,
     date,
     appointmentBufferMinutes,
     driveBetweenMinForLayout,
     etaBlockLabelByKey,
+    practiceTimeZone,
   ]);
 
   // Between stops: buffer (see-through) then drive (hatched), same split as My Week.
@@ -1851,7 +1943,7 @@ export default function DoctorDayVisual({
       virtualAppt.date === date &&
       typeof virtualAppt.validationReturnSec === 'number' &&
       Number.isFinite(virtualAppt.validationReturnSec)
-        ? isoFromSecSinceLocalMidnight(date, virtualAppt.validationReturnSec)
+        ? isoFromSecondsSincePracticeMidnight(date, virtualAppt.validationReturnSec, practiceTimeZone)
         : null;
     const returnClockIso =
       backToDepotIso && DateTime.fromISO(backToDepotIso).isValid
@@ -1864,7 +1956,7 @@ export default function DoctorDayVisual({
     if (mins != null && mins > 0) {
       dMin = mins;
     } else if (returnClockIso) {
-      const endMin = minutesFromDayStart(g0, gTot, returnClockIso, date);
+      const endMin = minutesFromDayStart(g0, gTot, returnClockIso, date, practiceTimeZone);
       dMin = Math.max(1, Math.round(Math.max(0, endMin - winStartMin)));
     } else {
       return empty;
@@ -1934,14 +2026,14 @@ export default function DoctorDayVisual({
         const paintedMin = Math.min(dMin, availAfter);
         driveEndMin = driveStartMin + paintedMin;
         if (paintedMin < 1e-6 && returnClockIso) {
-          const endMin = minutesFromDayStart(g0, gTot, returnClockIso, date);
+          const endMin = minutesFromDayStart(g0, gTot, returnClockIso, date, practiceTimeZone);
           const dMinCap = Math.min(dMin, Math.max(0, endMin - winStartMin));
           driveStartMin = Math.max(winStartMin, endMin - dMinCap);
           driveEndMin = endMin;
         }
       }
     } else if (returnClockIso) {
-      const endMin = minutesFromDayStart(g0, gTot, returnClockIso, date);
+      const endMin = minutesFromDayStart(g0, gTot, returnClockIso, date, practiceTimeZone);
       driveStartMin = winStartMin;
       driveEndMin = endMin;
     } else {
@@ -1955,7 +2047,7 @@ export default function DoctorDayVisual({
       const tBot = (blockGeom[kTrail].top + blockGeom[kTrail].height) / PPM;
       if (driveEndMin > tTop + 1e-6 && driveStartMin < tBot - 1e-6) {
         driveStartMin = tBot;
-        const endMin = minutesFromDayStart(g0, gTot, returnClockIso, date);
+        const endMin = minutesFromDayStart(g0, gTot, returnClockIso, date, practiceTimeZone);
         let ceilingMin = gTot;
         if (kTrail + 1 < N && blockGeom[kTrail + 1]) {
           ceilingMin = blockGeom[kTrail + 1].top / PPM;
@@ -1976,12 +2068,15 @@ export default function DoctorDayVisual({
       const gridEndPx = gTot * PPM;
       let driveEndPx = nextTopPx;
       if (validationReturnIso && DateTime.fromISO(validationReturnIso).isValid) {
-        driveEndPx = Math.max(driveEndPx, minutesFromDayStart(g0, gTot, validationReturnIso, date) * PPM);
+        driveEndPx = Math.max(
+          driveEndPx,
+          minutesFromDayStart(g0, gTot, validationReturnIso, date, practiceTimeZone) * PPM
+        );
       }
       if (backToDepotIso && DateTime.fromISO(backToDepotIso).isValid) {
         driveEndPx = Math.max(
           driveEndPx,
-          minutesFromDayStart(g0, gTot, backToDepotIso, date) * PPM
+          minutesFromDayStart(g0, gTot, backToDepotIso, date, practiceTimeZone) * PPM
         );
       }
       driveEndPx = Math.min(gridEndPx, driveEndPx);
@@ -2026,8 +2121,14 @@ export default function DoctorDayVisual({
       const routeDm = Math.max(1, Math.round(dMin));
       arrivalDisplayIso =
         arrivalFromNextBlockEta ??
-        isoFromMinutesFromGridStart(g0, gTot, (driveTopPx + drivePx) / PPM, date);
-      const arrivalLabel = DateTime.fromISO(arrivalDisplayIso).toLocaleString(DateTime.TIME_SIMPLE);
+        isoFromMinutesFromGridStart(
+          g0,
+          gTot,
+          (driveTopPx + drivePx) / PPM,
+          date,
+          practiceTimeZone
+        );
+      const arrivalLabel = formatIsoInPracticeZone(arrivalDisplayIso, practiceTimeZone);
       const driveTitle =
         routeDm !== schedDm
           ? `Drive back to depot: ${schedDm} min scheduled · ${routeDm} min route — Arrival ${arrivalLabel}`
@@ -2060,6 +2161,7 @@ export default function DoctorDayVisual({
     virtualAppt,
     driveSecondsForLayout,
     backToDepotSec,
+    practiceTimeZone,
   ]);
 
   /** Lowest Y on the day column (blocks + drive); "Back to depot" in hovers only for that last strip/card. */
@@ -2080,7 +2182,7 @@ export default function DoctorDayVisual({
         .map((h) => ({
           lat: h.lat,
           lon: h.lon,
-          label: h.client,
+          label: h.isPreview ? previewRoutingAppointmentLabel(h.primary) : h.client,
           address: h.address,
         })),
     [displayHouseholds]
@@ -2137,7 +2239,7 @@ export default function DoctorDayVisual({
       isPreviewDay &&
       typeof virtualAppt?.validationReturnSec === 'number' &&
       Number.isFinite(virtualAppt.validationReturnSec)
-        ? isoFromSecSinceLocalMidnight(date, virtualAppt.validationReturnSec)
+        ? isoFromSecondsSincePracticeMidnight(date, virtualAppt.validationReturnSec, practiceTimeZone)
         : null;
 
     // Fallback booked-service (excludes preview & blocks)
@@ -2358,12 +2460,13 @@ export default function DoctorDayVisual({
     schedEndIso,
     virtualAppt,
     date,
+    practiceTimeZone,
   ]);
 
   /* ---------- UI helpers ---------- */
   function fmtTime(iso?: string | null) {
     if (!iso) return '';
-    return DateTime.fromISO(iso).toLocaleString(DateTime.TIME_SIMPLE);
+    return formatIsoInPracticeZone(iso, practiceTimeZone);
   }
 
   const driveColor = colorForDrive(stats.driveMin);
@@ -2694,10 +2797,17 @@ export default function DoctorDayVisual({
               primaryTypeLower === 'fixed time' ||
               firstPatientType === 'fixed time';
 
-            // ---- Positioning: use ETA/ETD when available so blocks match route times (incl. personal block at 11:00–11:45) ----
-            const etaIso = displayTimeline[idx]?.eta ?? null;
-            const etdIso = displayTimeline[idx]?.etd ?? null;
-            const useDriveTime = showByDriveTime && (etaIso ?? etdIso);
+            // ---- Positioning: ETA/ETD when route clock applies; client Fixed Time pins to schedule until ETA slips past booked start (My Week parity) ----
+            const slot = displayTimeline[idx];
+            const etaIso = slot?.eta ?? null;
+            const etdIso = slot?.etd ?? null;
+            const doctorDayClock = visualHouseholdUsesDoctorDayClockForLayout(
+              h,
+              slot,
+              showByDriveTime,
+              blockLabelMetaEarly ?? undefined
+            );
+            const useDriveTime = showByDriveTime && !doctorDayClock && (etaIso ?? etdIso);
             const anchorIso = useDriveTime ? (etaIso ?? resolvedStartIso) : resolvedStartIso;
             const endIsoForHeight = useDriveTime && etdIso ? etdIso : resolvedEndIso;
             const durMinForHeight = Math.max(
@@ -2712,12 +2822,13 @@ export default function DoctorDayVisual({
                   dayVisualGrid.gridStartMinutesFromMidnight,
                   dayVisualGrid.totalMinutes,
                   anchorIso,
-                  date
+                  date,
+                  practiceTimeZone
                 ) * PPM;
             const height = geom ? geom.height : Math.max(22, durMinForHeight * PPM);
 
             // Window: prefer byIndex row window when both present, else appointment effectiveWindow, else frontend-calculated
-            const slotWindow = displayTimeline[idx];
+            const slotWindow = slot;
             const ew = h.primary?.effectiveWindow;
             const { winStartIso, winEndIso } = isFixedTime
               ? { winStartIso: resolvedStartIso, winEndIso: resolvedEndIso }
@@ -2725,21 +2836,33 @@ export default function DoctorDayVisual({
                 ? { winStartIso: slotWindow.windowStartIso, winEndIso: slotWindow.windowEndIso }
                 : ew?.startIso && ew?.endIso
                   ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
-                  : adjustedWindowForStart(date, h.startIso!, schedStartIso);
+                  : adjustedWindowForStart(date, h.startIso!, schedStartIso, practiceTimeZone);
 
+            // Client Fixed Time: scheduled start should hold; route ETA after start = forced move (Olivia-style).
+            const clientFixedRoutePushedPastSchedule =
+              showByDriveTime &&
+              visualHouseholdIsClientFixedTime(h) &&
+              !doctorDayClock;
             const windowWarning =
               showByDriveTime &&
-              useDriveTime &&
-              !isFixedTime &&
               !h.isPersonalBlock &&
-              shouldShowEtaWindowWarning(etaIso, winEndIso);
+              ((useDriveTime &&
+                !isFixedTime &&
+                shouldShowEtaWindowWarning(etaIso, winEndIso)) ||
+                clientFixedRoutePushedPastSchedule);
 
             const previewPatients = h.patients.slice(0, 3);
             const moreCount = Math.max(0, (h.patients?.length || 0) - 3);
 
             const blockLabelMeta = blockLabelMetaEarly;
             const blockTitleText =
-              h.isPersonalBlock && blockLabelMeta ? blockDisplayLabel(blockLabelMeta) : h.client;
+              h.isPersonalBlock && blockLabelMeta
+                ? blockDisplayLabel(blockLabelMeta)
+                : h.isPersonalBlock
+                  ? h.client
+                  : h.isPreview
+                    ? previewRoutingAppointmentLabel(h.primary)
+                    : h.client;
 
             return (
               <div
@@ -2758,8 +2881,18 @@ export default function DoctorDayVisual({
                     client: blockTitleText,
                     address: h.address,
                     durMin,
-                    etaIso: isFixedTime ? h.startIso! : (etaIso ?? null),
-                    etdIso: isFixedTime ? h.endIso! : (etdIso ?? null),
+                    etaIso:
+                      showByDriveTime && doctorDayClock
+                        ? resolvedStartIso
+                        : showByDriveTime
+                          ? (etaIso ?? null)
+                          : null,
+                    etdIso:
+                      showByDriveTime && doctorDayClock
+                        ? resolvedEndIso
+                        : showByDriveTime
+                          ? (etdIso ?? null)
+                          : null,
                     sIso: h.startIso!,
                     eIso: h.endIso!,
                     patients: h.patients || [],
@@ -2773,6 +2906,7 @@ export default function DoctorDayVisual({
                       : undefined,
                     resolvedWinStartIso: winStartIso,
                     resolvedWinEndIso: winEndIso,
+                    windowWarning,
                   });
                 }}
                 onPointerMove={(ev) => {
@@ -2832,7 +2966,7 @@ export default function DoctorDayVisual({
                 }}
               >
                 <div style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>
-                  {h.isPersonalBlock ? blockTitleText : h.client}
+                  {blockTitleText}
                 </div>
                 <div
                   className="muted"
@@ -3044,8 +3178,6 @@ export default function DoctorDayVisual({
             });
             const { left, top, maxCardH, width: popoverW } = pos;
 
-            const s = DateTime.fromISO(hoverCard.sIso);
-
             const winStartIso = hoverCard.resolvedWinStartIso;
             const winEndIso = hoverCard.resolvedWinEndIso;
             const addrNoZip = stripZipFromAddressLine(hoverCard.address);
@@ -3108,6 +3240,27 @@ export default function DoctorDayVisual({
                   <span style={{ fontWeight: 800, color: '#14532d' }}>{hoverCard.client}</span>
                   <span style={{ color: '#64748b' }}>·</span>
                   <span style={{ color: '#64748b', flex: '1 1 12rem', minWidth: 0 }}>{addrNoZip}</span>
+                  {hoverCard.windowWarning && (
+                    <span
+                      role="status"
+                      aria-label="Window Warning"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        color: '#b45309',
+                        fontWeight: 600,
+                        fontSize: 12,
+                        background: '#fef3c7',
+                        padding: '2px 6px',
+                        borderRadius: 6,
+                        border: '1px solid #f59e0b',
+                      }}
+                    >
+                      <AlertTriangle size={14} strokeWidth={2.25} aria-hidden />
+                      Window Warning
+                    </span>
+                  )}
                 </div>
                 {hoverCard?.clientAlert && (
                   <div style={{ marginBottom: 4, color: '#dc2626', fontSize: 12, lineHeight: 1.35 }}>
@@ -3116,7 +3269,8 @@ export default function DoctorDayVisual({
                 )}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'baseline', marginBottom: 4, fontSize: 13, color: '#334155' }}>
                   <span>
-                    <b>Scheduled:</b> {s.toLocaleString(DateTime.TIME_SIMPLE)}
+                    <b>Scheduled:</b>{' '}
+                    {formatIsoInPracticeZone(hoverCard.sIso, practiceTimeZone)}
                   </span>
                   <span>
                     <b>Duration:</b> {hoverCard.durMin} min
@@ -3133,7 +3287,7 @@ export default function DoctorDayVisual({
                   {showBackToDepotInHover && (
                     <span>
                       <b>Back to depot:</b>{' '}
-                      {DateTime.fromISO(stats.backToDepotIso!).toLocaleString(DateTime.TIME_SIMPLE)}
+                      {formatIsoInPracticeZone(stats.backToDepotIso!, practiceTimeZone)}
                     </span>
                   )}
                 </div>
@@ -3154,11 +3308,11 @@ export default function DoctorDayVisual({
                       <span>
                         <b>Arrive/Leave:</b>{' '}
                         {hoverCard.etaIso
-                          ? DateTime.fromISO(hoverCard.etaIso).toLocaleString(DateTime.TIME_SIMPLE)
+                          ? formatIsoInPracticeZone(hoverCard.etaIso, practiceTimeZone)
                           : '—'}
                         {' – '}
                         {hoverCard.etdIso
-                          ? DateTime.fromISO(hoverCard.etdIso).toLocaleString(DateTime.TIME_SIMPLE)
+                          ? formatIsoInPracticeZone(hoverCard.etdIso, practiceTimeZone)
                           : '—'}
                       </span>
                     )}
@@ -3167,13 +3321,13 @@ export default function DoctorDayVisual({
                         <b>Window of arrival:</b>{' '}
                         {hoverCard.isFixedTime ? (
                           <>
-                            {DateTime.fromISO(hoverCard.sIso).toLocaleString(DateTime.TIME_SIMPLE)} –{' '}
-                            {DateTime.fromISO(hoverCard.eIso).toLocaleString(DateTime.TIME_SIMPLE)}
+                            {formatIsoInPracticeZone(hoverCard.sIso, practiceTimeZone)} –{' '}
+                            {formatIsoInPracticeZone(hoverCard.eIso, practiceTimeZone)}
                           </>
                         ) : (
                           <>
-                            {DateTime.fromISO(winStartIso).toLocaleString(DateTime.TIME_SIMPLE)} –{' '}
-                            {DateTime.fromISO(winEndIso).toLocaleString(DateTime.TIME_SIMPLE)}
+                            {formatIsoInPracticeZone(winStartIso, practiceTimeZone)} –{' '}
+                            {formatIsoInPracticeZone(winEndIso, practiceTimeZone)}
                           </>
                         )}
                       </span>
@@ -3296,7 +3450,7 @@ export default function DoctorDayVisual({
                 {showBackToDepotOnDriveHover && (
                   <div style={{ marginTop: 10, fontSize: 13, color: '#334155' }}>
                     <b>Back to depot:</b>{' '}
-                    {DateTime.fromISO(stats.backToDepotIso!).toLocaleString(DateTime.TIME_SIMPLE)}
+                    {formatIsoInPracticeZone(stats.backToDepotIso!, practiceTimeZone)}
                   </div>
                 )}
               </div>

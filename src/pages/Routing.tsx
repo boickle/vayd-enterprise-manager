@@ -1,6 +1,10 @@
 // src/pages/Routing.tsx
 import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createAppointment, fetchDoctorMonth } from '../api/appointments';
+import {
+  createAppointment,
+  fetchDoctorMonth,
+  type MiniZone,
+} from '../api/appointments';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { http } from '../api/http';
@@ -14,6 +18,11 @@ import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
 import { PreviewMyDayModal } from '../components/PreviewMyDayModal';
 import { validateAddress } from '../api/geo';
+import {
+  normalizeRoutingV2SlotSearchResponse,
+  type RoutingSlotSearchOptionalFlags,
+  type RoutingV2SlotSearchResult,
+} from '../api/routing';
 import './Routing.css';
 // Removed fetchPrimaryProviders import - now using /employees/veterinarians endpoint directly
 
@@ -65,6 +74,10 @@ type Winner = {
   bookedServiceSeconds?: number; // seconds of booked service (no driving)
   _emptyDay?: boolean;
   dayIsEmpty?: boolean;
+  /**
+   * Empty-day candidate placement from routing API. Branch on `'earlier_feasible'` for highlight / copy.
+   */
+  emptyDayStartVariant?: string | null;
   flags?: string[];
   // 👇 Add these lines:
   overrunSeconds?: number;
@@ -82,6 +95,9 @@ type Winner = {
     windowStartIso?: string;
     windowEndIso?: string;
   };
+  /** Geocoded / routing zone for preview labels, e.g. `New Appointment (3E)`. */
+  clientZone?: MiniZone;
+  effectiveZone?: MiniZone;
   /** Scoring breakdown from routing-v2; downstreamWindowEdge > 0 means a downstream appt is pushed near its window end */
   scoringComponents?: {
     downstreamWindowEdge?: number;
@@ -118,6 +134,9 @@ type RoutingLearning = {
 
 type Result = {
   status: string;
+  /** Geocoded zones for the new-appt request; API may also duplicate these on each candidate. */
+  clientZone?: MiniZone;
+  effectiveZone?: MiniZone;
   winner?: Winner;
   estimatedCost?: EstimatedCost;
   alternates?: Winner[];
@@ -493,6 +512,8 @@ export default function Routing() {
   const [preferredTimeOfDay, setPreferredTimeOfDay] = useState<'first' | 'middle' | 'end' | null>(
     null
   ); // send exactly these
+  /** UI: "Force Earliest Time"; API: `preferEarliestFeasibleStart` on empty-day routing. */
+  const [preferEarliestFeasibleStart, setPreferEarliestFeasibleStart] = useState(false);
   const [edgeFirst, setEdgeFirst] = useState(false);
   const [edgeLast, setEdgeLast] = useState(false);
 
@@ -1183,7 +1204,7 @@ export default function Routing() {
           ? preferredWeekday[0] 
           : preferredWeekday;
 
-    const base = {
+    const base: Record<string, unknown> & RoutingSlotSearchOptionalFlags = {
       startDate: form.startDate,
       numDays,
       newAppt: newApptPayload,
@@ -1198,6 +1219,7 @@ export default function Routing() {
             tailOvertimeMinutes: 120 as const,
           }
         : {}),
+      ...(preferEarliestFeasibleStart ? { preferEarliestFeasibleStart: true } : {}),
     };
 
     // Determine if this is a v2 endpoint
@@ -1238,7 +1260,7 @@ export default function Routing() {
     setLoading(true);
     try {
       const { data } = await http.post<Result>(endpoint, payload);
-      setResult(data);
+      setResult(normalizeRoutingV2SlotSearchResponse(data as RoutingV2SlotSearchResult) as Result);
     } catch (err: unknown) {
       setError(extractErrorMessage(err));
     } finally {
@@ -2095,6 +2117,37 @@ export default function Routing() {
               </div>
             </Field>
 
+            <div style={{ marginTop: 10, maxWidth: 560 }}>
+              <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={preferEarliestFeasibleStart}
+                  onChange={(e) => setPreferEarliestFeasibleStart(e.target.checked)}
+                />
+                <span style={{ fontWeight: 600 }}>Force Earliest Time</span>
+              </label>
+              {preferEarliestFeasibleStart && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    backgroundColor: '#fefce8',
+                    border: '1px solid #fde68a',
+                  }}
+                >
+                  <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
+                    Turn on when the appointment must be early (outliers, long drives, front-loading the
+                    day).
+                  </div>
+                  <div className="muted" style={{ fontSize: 13, lineHeight: 1.5, marginTop: 8 }}>
+                    <strong>Only applies on empty days.</strong> You’ll still see optimized times—this adds an
+                    early option (shown in yellow).
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Edge preference (kept hidden for now) */}
             {/* ... */}
           </div>
@@ -2202,12 +2255,23 @@ export default function Routing() {
                 const shiftOverrunSec =
                   typeof opt.overrunSeconds === 'number' ? opt.overrunSeconds : 0;
                 const overtimeBadge = finite(shiftOverrunSec) && shiftOverrunSec >= 60;
+                const isEarlierFeasibleEmptyDay = opt.emptyDayStartVariant === 'earlier_feasible';
 
                 return (
                   <div
                     key={`${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${idx}`}
                     className="card"
-                    style={{ position: 'relative', paddingTop: 48 }}
+                    style={{
+                      position: 'relative',
+                      paddingTop: 48,
+                      ...(isEarlierFeasibleEmptyDay
+                        ? {
+                            backgroundColor: '#fefce8',
+                            border: '1px solid #fde68a',
+                            boxSizing: 'border-box',
+                          }
+                        : {}),
+                    }}
                   >
                     <div
                       style={{

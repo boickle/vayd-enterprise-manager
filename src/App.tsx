@@ -13,6 +13,7 @@ import { getAccessiblePages } from './app-pages';
 import { getAdminTabPages } from './admin-tabs';
 import { getAnalyticsTabPages } from './analytics-tabs';
 import { getToolsTabPages } from './tools-tabs';
+import { getSchedulingToolsTabPages } from './scheduling-tools-tabs';
 import CreateClientUser from './pages/CreateClientUser';
 import ClientPortal from './pages/ClientPortal';
 import MembershipSignup from './pages/MembershipSignup';
@@ -21,6 +22,7 @@ import MembershipUpgrade from './pages/MembershipUpgrade';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
 import PublicRoomLoaderForm from './pages/PublicRoomLoaderForm';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
+import PublicReferAFriend from './pages/PublicReferAFriend';
 import ErrorPage from './pages/ErrorPage';
 import { usePageTracking } from './hooks/usePageTracking';
 import { isCreateClientEnabled, isProduction } from './utils/env';
@@ -88,6 +90,7 @@ function RouteGuard() {
     '/doctormonth',
     '/admin',
     '/analytics',
+    '/scheduling-tools',
     '/schedule-loader',
     '/survey/responses',
     '/tools',
@@ -260,7 +263,8 @@ export default function App() {
         location.pathname !== '/reset-password' &&
         location.pathname !== '/request-reset' &&
         !location.pathname.startsWith('/public/room-loader') &&
-        !location.pathname.startsWith('/survey/') && (
+        !location.pathname.startsWith('/survey/') &&
+        !location.pathname.startsWith('/refer-a-friend') && (
           <header className="navbar">
             <div className="brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <img
@@ -376,6 +380,7 @@ export default function App() {
           {/* Public surveys by slug (no login), e.g. post-appointment, exit-interview; * catches duplicate path in email links */}
           <Route path="/survey/:surveySlug" element={<PostAppointmentSurvey />} />
           <Route path="/survey/:surveySlug/*" element={<PostAppointmentSurvey />} />
+          <Route path="/refer-a-friend" element={<PublicReferAFriend />} />
           {/* Public room loader form (no authentication required) */}
           <Route path="/public/room-loader/form" element={<PublicRoomLoaderForm />} />
 
@@ -390,6 +395,10 @@ export default function App() {
               }
             >
               <Route path="/home" element={<Home />} />
+              <Route
+                path="/schedule-loader"
+                element={<Navigate to="/scheduling-tools/schedule-loader" replace />}
+              />
               {pages.map((p: any) =>
                 p.path === '/admin' ? (
                   <Route key={p.path} path={p.path} element={p.element}>
@@ -409,8 +418,22 @@ export default function App() {
                       <Route key={tab.path} path={tab.path} element={tab.element} />
                     ))}
                   </Route>
+                ) : p.path === '/scheduling-tools' ? (
+                  <Route key={p.path} path={p.path} element={p.element}>
+                    <Route
+                      index
+                      element={<Navigate to="/scheduling-tools/schedule-loader" replace />}
+                    />
+                    {getSchedulingToolsTabPages().map((tab) => (
+                      <Route key={tab.path} path={tab.path} element={tab.element} />
+                    ))}
+                  </Route>
                 ) : p.path === '/tools' ? (
                   <Route key={p.path} path={p.path} element={p.element}>
+                    <Route
+                      path="care-outreach"
+                      element={<Navigate to="/scheduling-tools/care-outreach" replace />}
+                    />
                     <Route index element={<Navigate to="/tools/exit-survey" replace />} />
                     {getToolsTabPages().map((tab) => (
                       <Route key={tab.path} path={tab.path} element={tab.element} />

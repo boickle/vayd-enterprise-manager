@@ -1,5 +1,5 @@
 // src/pages/RoomLoader.tsx
-import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DateTime } from 'luxon';
 import {
@@ -106,6 +106,75 @@ function reminderContains(r: ReminderWithPrice, ...substrings: string[]): boolea
   return substrings.some((s) => text.includes(s.toLowerCase()));
 }
 
+/** Matched inventory/lab line first, else PIMS reminder description (aligns with public room loader reminder rows). */
+function getStaffReminderLineNameCode(rwp: ReminderWithPrice): { name: string; code: string } {
+  const mi = rwp.matchedItem;
+  if (mi?.name || mi?.code) {
+    return { name: (mi.name ?? '').trim(), code: (mi.code ?? '').trim() };
+  }
+  return { name: (rwp.reminder?.description ?? '').trim(), code: '' };
+}
+
+function staffReminderLooksLikeLymeDiagnostics(name?: string | null, code?: string | null): boolean {
+  const n = (name ?? '').toLowerCase();
+  const c = (code ?? '').trim().toUpperCase();
+  if (c === 'F4DX') return true;
+  if (/\b4dx\b|4-dx|heartworm\s*\/\s*tick|tick\s*\/\s*heartworm|snap\s*4/.test(n)) return true;
+  if ((n.includes('lyme') || c.includes('LYME')) && /\b(test|tests|screen|panel|titer|c6|antibody|diagnostic|profile)\b/.test(n))
+    return true;
+  return false;
+}
+
+/** Lyme/crLyme vaccine reminder (includes Lyme/Lepto combo text; excludes tick panels and Lyme tests). */
+function staffReminderIsLymeVaccineLine(name?: string | null, code?: string | null): boolean {
+  const n = (name ?? '').toLowerCase();
+  const c = (code ?? '').toLowerCase();
+  if (!n.includes('lyme') && !c.includes('lyme')) return false;
+  return !staffReminderLooksLikeLymeDiagnostics(name, code);
+}
+
+function staffReminderLooksLikeLeptoDiagnostics(name?: string | null, code?: string | null): boolean {
+  const n = (name ?? '').toLowerCase();
+  const c = (code ?? '').toLowerCase();
+  if (!n.includes('lepto') && !n.includes('leptospirosis') && !c.includes('lepto')) return false;
+  if (/\b(pcr|culture|titer|urine|serolog|test|tests|screen|panel|profile|diagnostic|antibody)\b/.test(n)) return true;
+  return false;
+}
+
+function staffReminderIsLeptoVaccineLine(name?: string | null, code?: string | null): boolean {
+  const n = (name ?? '').toLowerCase();
+  const c = (code ?? '').toLowerCase();
+  if (!n.includes('lepto') && !n.includes('leptospirosis') && !c.includes('lepto')) return false;
+  return !staffReminderLooksLikeLeptoDiagnostics(name, code);
+}
+
+/** Due date is on or before rolling now − 3 months (same bar as public room loader crLyme booster suppression). */
+function staffReminderDueAtLeastThreeMonthsPastDue(rwp: ReminderWithPrice): boolean {
+  const dueStr = rwp.reminder?.dueDate;
+  if (dueStr == null || dueStr === '') return false;
+  const due = DateTime.fromISO(String(dueStr));
+  if (!due.isValid) return false;
+  return due <= DateTime.now().minus({ months: 3 });
+}
+
+/** PIMS description plus matched/corrected line for Lyme/Lepto protocol flags (staff alerts). */
+function getStaffReminderProtocolFlagNameCode(
+  rwp: ReminderWithPrice,
+  correction: { selectedItem: SearchableItem | null } | undefined,
+  feedbackStatus: string | null | undefined
+): { name: string; code: string } {
+  if (feedbackStatus === 'incorrect' && correction?.selectedItem) {
+    const si = correction.selectedItem;
+    return { name: (si.name ?? '').trim(), code: (si.code ?? '').trim() };
+  }
+  const desc = (rwp.reminder?.description ?? '').trim();
+  const { name: miName, code: miCode } = getStaffReminderLineNameCode(rwp);
+  if (miName || miCode) {
+    return { name: [desc, miName].filter(Boolean).join(' '), code: miCode };
+  }
+  return { name: desc, code: miCode };
+}
+
 /**
  * Parse arrival window display string into ISO start/end using the appointment date.
  * Accepts "9:00 AM - 10:00 AM" (range) or "9:30 AM" (single time = same start and end).
@@ -191,6 +260,110 @@ function hasEffectivePhone(phone: string | null | undefined): boolean {
   return typeof phone === 'string' && phone.trim().length > 0;
 }
 
+type SameDayClientRoomLoaderLink = {
+  siblingRoomLoaderIds: number[];
+  /** This loader is still in progress and another same-day loader for the client is already client-completed. */
+  tripFeeRequirementWaived: boolean;
+  completedSiblingIds: number[];
+};
+
+function getRoomLoaderPrimaryClientId(rl: RoomLoader | null | undefined): number | null {
+  if (!rl) return null;
+  const fromAppt = rl.appointments?.[0]?.client;
+  if (fromAppt?.id != null) {
+    const n = Number(fromAppt.id);
+    return Number.isFinite(n) ? n : null;
+  }
+  const c0 = rl.patients?.[0]?.clients?.[0];
+  if (c0?.id != null) {
+    const n = Number(c0.id);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function getRoomLoaderEarliestAppointmentYmd(rl: RoomLoader | null | undefined): string | null {
+  if (!rl?.appointments?.length) return null;
+  let earliest: DateTime | null = null;
+  for (const apt of rl.appointments) {
+    const raw = apt.appointmentStart;
+    if (!raw || typeof raw !== 'string') continue;
+    const dt = DateTime.fromISO(raw);
+    if (!dt.isValid) continue;
+    if (earliest == null || dt < earliest) earliest = dt;
+  }
+  return earliest?.toISODate() ?? null;
+}
+
+/**
+ * Same practice, same client, same appointment calendar day, excluding self.
+ * Trip fee requirement is waived for the follow-up loader when another sibling is already client-completed.
+ */
+function computeSameDayClientCompletedSiblingLink(
+  target: RoomLoader | null | undefined,
+  allRoomLoaders: RoomLoader[]
+): SameDayClientRoomLoaderLink | null {
+  if (!target || !Array.isArray(allRoomLoaders) || allRoomLoaders.length < 2) return null;
+
+  const priorRaw = target.linkedPriorRoomLoaderId ?? target.linkedRoomLoaderId;
+  if (priorRaw != null && Number.isFinite(Number(priorRaw))) {
+    const linkedId = Number(priorRaw);
+    const other = allRoomLoaders.find((r) => r.id === linkedId);
+    if (other && other.id !== target.id) {
+      const completedSiblingIds = other.sentStatus === 'completed' ? [other.id] : [];
+      const tripFeeRequirementWaived = target.sentStatus !== 'completed' && completedSiblingIds.length > 0;
+      return {
+        siblingRoomLoaderIds: [other.id],
+        tripFeeRequirementWaived,
+        completedSiblingIds,
+      };
+    }
+  }
+
+  const clientId = getRoomLoaderPrimaryClientId(target);
+  const ymd = getRoomLoaderEarliestAppointmentYmd(target);
+  // Room loaders on this page are for one practice; API may omit `practice` on each row.
+  if (clientId == null || ymd == null) return null;
+
+  const siblings = allRoomLoaders.filter(
+    (rl) =>
+      rl.id !== target.id &&
+      getRoomLoaderPrimaryClientId(rl) === clientId &&
+      getRoomLoaderEarliestAppointmentYmd(rl) === ymd
+  );
+  if (siblings.length === 0) return null;
+
+  const completedSiblings = siblings.filter((s) => s.sentStatus === 'completed');
+  const tripFeeRequirementWaived = target.sentStatus !== 'completed' && completedSiblings.length > 0;
+
+  return {
+    siblingRoomLoaderIds: siblings.map((s) => s.id),
+    tripFeeRequirementWaived,
+    completedSiblingIds: completedSiblings.map((s) => s.id),
+  };
+}
+
+function sameDayLinkedTableNote(link: SameDayClientRoomLoaderLink | null): string | null {
+  if (!link || link.siblingRoomLoaderIds.length === 0) return null;
+  if (link.tripFeeRequirementWaived) {
+    return 'Linked (earlier submission today) — trip fee not required; avoid a second trip fee.';
+  }
+  return 'Same-day linked — see related room loader for this client.';
+}
+
+/** Suggested “from” when turning on optional appointment date filter (not sent with the default list request). */
+const ROOM_LOADER_LIST_LOOKBACK_DEFAULT_DAYS = 30;
+/** Suggested “to” when turning on optional filter (matches common backend window: today + 14 days). */
+const ROOM_LOADER_LIST_FUTURE_DAYS = 14;
+
+function roomLoaderListAppointmentToIso(): string {
+  return DateTime.now().plus({ days: ROOM_LOADER_LIST_FUTURE_DAYS }).toISODate() ?? '';
+}
+
+function roomLoaderListDefaultLookbackIso(): string {
+  return DateTime.now().minus({ days: ROOM_LOADER_LIST_LOOKBACK_DEFAULT_DAYS }).toISODate() ?? '';
+}
+
 export default function RoomLoaderPage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -200,9 +373,11 @@ export default function RoomLoaderPage() {
   const [selectedRoomLoader, setSelectedRoomLoader] = useState<RoomLoader | null>(null);
   const [selectedRoomLoaderId, setSelectedRoomLoaderId] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [filters, setFilters] = useState<RoomLoaderSearchParams>({
-    activeOnly: true,
-  });
+  const [filters, setFilters] = useState<RoomLoaderSearchParams>({});
+  /** When true, pass appointmentFrom / appointmentTo to the list API; when false, request matches pre-filter API (no date params). */
+  const [useAppointmentDateFilter, setUseAppointmentDateFilter] = useState(false);
+  const [filterAppointmentFrom, setFilterAppointmentFrom] = useState(() => roomLoaderListDefaultLookbackIso());
+  const [filterAppointmentTo, setFilterAppointmentTo] = useState(() => roomLoaderListAppointmentToIso());
   // Search filter for table (doctor or client name)
   const [tableSearch, setTableSearch] = useState<string>('');
   // Store answers to questions for each pet
@@ -250,6 +425,32 @@ export default function RoomLoaderPage() {
     [selectedRoomLoader]
   );
 
+  const loadRoomLoaders = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params: RoomLoaderSearchParams = { ...filters };
+      delete params.dueStatus;
+      delete params.activeOnly;
+      if (useAppointmentDateFilter) {
+        let from = DateTime.fromISO(filterAppointmentFrom).startOf('day');
+        let toDt = DateTime.fromISO(filterAppointmentTo).startOf('day');
+        if (!from.isValid) from = DateTime.fromISO(roomLoaderListDefaultLookbackIso()).startOf('day');
+        if (!toDt.isValid) toDt = DateTime.fromISO(roomLoaderListAppointmentToIso()).startOf('day');
+        if (from > toDt) from = toDt;
+        params.appointmentFrom = from.toISODate() ?? roomLoaderListDefaultLookbackIso();
+        params.appointmentTo = toDt.toISODate() ?? roomLoaderListAppointmentToIso();
+      }
+      const data = await searchRoomLoaders(params);
+      setRoomLoaders(data);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load room loaders');
+      console.error('Error loading room loaders:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [filters, useAppointmentDateFilter, filterAppointmentFrom, filterAppointmentTo]);
+
   // Open a specific room loader when navigated from Scheduler (Send Form)
   useEffect(() => {
     const id = (location.state as { openRoomLoaderId?: number } | null)?.openRoomLoaderId;
@@ -260,8 +461,8 @@ export default function RoomLoaderPage() {
 
   // Load room loaders
   useEffect(() => {
-    loadRoomLoaders();
-  }, [filters]);
+    void loadRoomLoaders();
+  }, [loadRoomLoaders]);
 
   // Load selected room loader details
   useEffect(() => {
@@ -343,20 +544,6 @@ export default function RoomLoaderPage() {
     };
   }, [searchQuery, selectedRoomLoader]);
 
-
-  async function loadRoomLoaders() {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await searchRoomLoaders(filters);
-      setRoomLoaders(data);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load room loaders');
-      console.error('Error loading room loaders:', err);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function loadRoomLoaderDetails(id: number) {
     try {
@@ -793,6 +980,7 @@ export default function RoomLoaderPage() {
       clientHasNoEmail: boolean;
       /** Token for public PDF URL when completed */
       token?: string | null;
+      sameDayLinkedNote: string | null;
     }> = [];
 
     roomLoaders.forEach((rl) => {
@@ -837,16 +1025,18 @@ export default function RoomLoaderPage() {
         }
       });
 
-      // Get appointment date (use earliest appointment date if multiple)
+      // Get appointment date (earliest start among appointments — chronological, not string sort)
       let apptDate: string | null = null;
       if (rl.appointments.length > 0) {
-        const dates = rl.appointments
-          .map((apt) => apt.appointmentStart)
-          .filter((d): d is string => !!d)
-          .sort();
-        if (dates.length > 0) {
-          apptDate = DateTime.fromISO(dates[0]).toFormat('yyyy-MM-dd');
+        let earliest: DateTime | null = null;
+        for (const apt of rl.appointments) {
+          const raw = apt.appointmentStart;
+          if (!raw || typeof raw !== 'string') continue;
+          const dt = DateTime.fromISO(raw);
+          if (!dt.isValid) continue;
+          if (earliest == null || dt < earliest) earliest = dt;
         }
+        if (earliest != null) apptDate = earliest.toFormat('yyyy-MM-dd');
       }
 
       // Get booked date from appointment externalCreated (use earliest if multiple)
@@ -924,6 +1114,9 @@ export default function RoomLoaderPage() {
         });
       });
 
+      const sameDayLink = computeSameDayClientCompletedSiblingLink(rl, roomLoaders);
+      const sameDayLinkedNote = sameDayLinkedTableNote(sameDayLink);
+
       rows.push({
         roomLoaderId: rl.id,
         apptDate,
@@ -938,16 +1131,19 @@ export default function RoomLoaderPage() {
         roomLoader: rl,
         clientHasNoEmail,
         token: rl.token ?? null,
+        sameDayLinkedNote,
       });
     });
 
-    // Sort by appointment date (soonest first), then by room loader ID
+    // Earliest appointment at top (e.g. 4/27 before 5/11) for day-to-day oversight; undated rows last
+    const apptDayMillis = (ymd: string | null): number => {
+      if (!ymd) return Number.POSITIVE_INFINITY;
+      const dt = DateTime.fromISO(ymd, { zone: 'local' });
+      return dt.isValid ? dt.startOf('day').toMillis() : Number.POSITIVE_INFINITY;
+    };
     return rows.sort((a, b) => {
-      if (a.apptDate && b.apptDate) {
-        return a.apptDate.localeCompare(b.apptDate);
-      }
-      if (a.apptDate) return -1;
-      if (b.apptDate) return 1;
+      const cmp = apptDayMillis(a.apptDate) - apptDayMillis(b.apptDate);
+      if (cmp !== 0) return cmp;
       return a.roomLoaderId - b.roomLoaderId;
     });
   }, [roomLoaders]);
@@ -1945,7 +2141,9 @@ export default function RoomLoaderPage() {
       );
       return fromReminders || fromAddedItems;
     });
-    if (!hasTripFeeInAnyPet) {
+    const sameDayLink = computeSameDayClientCompletedSiblingLink(selectedRoomLoader, roomLoaders);
+    const waiveTripFeeRequirement = sameDayLink?.tripFeeRequirementWaived === true;
+    if (!hasTripFeeInAnyPet && !waiveTripFeeRequirement) {
       setTripFeeRequiredError(true);
       return false;
     }
@@ -1989,6 +2187,27 @@ export default function RoomLoaderPage() {
     return true;
   }
 
+  /** When this loader is a same-day follow-up after another pet’s form was completed, flag a Trip Fee line as likely duplicate billing. */
+  function buildLinkedFollowUpTripFeeWarning(): string | null {
+    if (!selectedRoomLoader) return null;
+    const link = computeSameDayClientCompletedSiblingLink(selectedRoomLoader, roomLoaders);
+    if (!link?.tripFeeRequirementWaived) return null;
+    const hasTripFeeLine = petsWithAppointments.some((item) => {
+      const activeReminders = (item.reminders || []).filter(
+        (r) => r.reminder?.id && !removedReminders.has(r.reminder.id)
+      );
+      const fromReminders = activeReminders.some((r) => reminderContains(r, 'Trip Fee'));
+      const fromAdded = getAddedItemsForPatient(item.patient.id).some((added) => itemContains(added, 'Trip Fee'));
+      return fromReminders || fromAdded;
+    });
+    if (!hasTripFeeLine) return null;
+    const ids =
+      link.completedSiblingIds.length > 0
+        ? link.completedSiblingIds.join(', ')
+        : link.siblingRoomLoaderIds.join(', ');
+    return `Same-day linked follow-up (related loader ID${link.siblingRoomLoaderIds.length !== 1 ? 's' : ''}: ${ids}): a Trip Fee is on this loader. The client usually already has one trip fee for this visit—remove it here unless you mean to charge twice.`;
+  }
+
   function buildSendWarnings(): string[] {
     const warnings: string[] = [];
     petsWithAppointments.forEach((item) => {
@@ -2013,6 +2232,8 @@ export default function RoomLoaderPage() {
         warnings.push(`${petName}: It doesn't look like a visit type line item was selected (e.g. annual wellness visit, medical visit, additional wellness visit, etc.). Please be sure that you put one in before submitting.`);
       }
     });
+    const linkedTrip = buildLinkedFollowUpTripFeeWarning();
+    if (linkedTrip) warnings.push(linkedTrip);
     return warnings;
   }
 
@@ -2116,7 +2337,9 @@ export default function RoomLoaderPage() {
       const fromAddedItems = getAddedItemsForPatient(item.patient.id).some((added) => itemContains(added, 'Trip Fee'));
       return fromReminders || fromAddedItems;
     });
-    if (!hasTripFeeInAnyPet) {
+    const sameDayLinkUpdate = computeSameDayClientCompletedSiblingLink(selectedRoomLoader, roomLoaders);
+    const waiveTripFeeRequirementUpdate = sameDayLinkUpdate?.tripFeeRequirementWaived === true;
+    if (!hasTripFeeInAnyPet && !waiveTripFeeRequirementUpdate) {
       setTripFeeRequiredError(true);
       return;
     }
@@ -2157,6 +2380,7 @@ export default function RoomLoaderPage() {
       return;
     }
     setDuplicateItemsError(null);
+    setSendWarningReasons(buildSendWarnings());
     setConfirmAction('update');
   }
 
@@ -2203,6 +2427,8 @@ export default function RoomLoaderPage() {
 
   function handleSaveForLater() {
     if (!selectedRoomLoader) return;
+    const tripLinked = buildLinkedFollowUpTripFeeWarning();
+    setSendWarningReasons(tripLinked ? [tripLinked] : []);
     setConfirmAction('save');
   }
 
@@ -2210,6 +2436,7 @@ export default function RoomLoaderPage() {
     if (!selectedRoomLoader) return;
     setSavingForm(true);
     setConfirmAction(null);
+    setSendWarningReasons([]);
     try {
       const remindersToSave: ReminderWithPrice[] = [];
       if (selectedRoomLoader.reminders) {
@@ -2495,6 +2722,23 @@ export default function RoomLoaderPage() {
     return !canSendFollowUpEmail;
   }, [selectedRoomLoader, canSendFollowUpEmail, canSendFollowUpSms]);
 
+  const selectedSameDayClientLink = useMemo(
+    () => computeSameDayClientCompletedSiblingLink(selectedRoomLoader, roomLoaders),
+    [selectedRoomLoader, roomLoaders]
+  );
+
+  const selectedLinkedLoaderHasTripFeeLine = useMemo(() => {
+    if (!selectedSameDayClientLink?.tripFeeRequirementWaived || !petsWithAppointments.length) return false;
+    return petsWithAppointments.some((item) => {
+      const activeReminders = (item.reminders || []).filter(
+        (r) => r.reminder?.id && !removedReminders.has(r.reminder.id)
+      );
+      const fromReminders = activeReminders.some((r) => reminderContains(r, 'Trip Fee'));
+      const fromAdded = getAddedItemsForPatient(item.patient.id).some((added) => itemContains(added, 'Trip Fee'));
+      return fromReminders || fromAdded;
+    });
+  }, [selectedSameDayClientLink, petsWithAppointments, removedReminders, addedItems]);
+
   return (
     <div className="room-loader-page">
       <style>{`
@@ -2523,14 +2767,57 @@ export default function RoomLoaderPage() {
             }}
           />
         </div>
-        <label>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
           <input
             type="checkbox"
-            checked={filters.activeOnly ?? true}
-            onChange={(e) => setFilters({ ...filters, activeOnly: e.target.checked })}
+            checked={useAppointmentDateFilter}
+            onChange={(e) => {
+              const on = e.target.checked;
+              setUseAppointmentDateFilter(on);
+              if (on) {
+                setFilterAppointmentFrom((prev) => (prev?.trim() ? prev : roomLoaderListDefaultLookbackIso()));
+                setFilterAppointmentTo((prev) => (prev?.trim() ? prev : roomLoaderListAppointmentToIso()));
+              }
+            }}
           />
-          {' '}Active Only
+          <span style={{ fontSize: '14px', color: '#333' }}>Filter list by appointment dates</span>
         </label>
+        {useAppointmentDateFilter && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '14px', color: '#333' }}>
+              From
+              <input
+                type="date"
+                value={filterAppointmentFrom}
+                onChange={(e) => setFilterAppointmentFrom(e.target.value)}
+                style={{
+                  padding: '6px 10px',
+                  fontSize: '14px',
+                  border: '1px solid #ced4da',
+                  borderRadius: '4px',
+                }}
+              />
+            </label>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '14px', color: '#333' }}>
+              Through
+              <input
+                type="date"
+                value={filterAppointmentTo}
+                onChange={(e) => setFilterAppointmentTo(e.target.value)}
+                style={{
+                  padding: '6px 10px',
+                  fontSize: '14px',
+                  border: '1px solid #ced4da',
+                  borderRadius: '4px',
+                }}
+              />
+            </label>
+            <span id="room-loader-date-range-hint" style={{ fontSize: '13px', color: '#555', maxWidth: '360px' }}>
+              Defaults when enabled: {ROOM_LOADER_LIST_LOOKBACK_DEFAULT_DAYS} days ago → today + {ROOM_LOADER_LIST_FUTURE_DAYS}{' '}
+              days. Leave unchecked to load the full default list (same as before date filters existed).
+            </span>
+          </div>
+        )}
         <label>
           Sent Status:
           <select
@@ -2548,27 +2835,6 @@ export default function RoomLoaderPage() {
             <option value="sent_1">Sent 1</option>
             <option value="sent_2">Sent 2</option>
             <option value="completed">Completed</option>
-          </select>
-        </label>
-        <label>
-          Due Status:
-          <select
-            value={filters.dueStatus || ''}
-            onChange={(e) =>
-              setFilters({
-                ...filters,
-                dueStatus: e.target.value ? (e.target.value as DueStatus) : undefined,
-              })
-            }
-            style={{ marginLeft: '5px' }}
-          >
-            <option value="">All</option>
-            <option value="due">Due</option>
-            <option value="past_due">Past Due</option>
-            <option value="upcoming">Upcoming</option>
-            <option value="10_days_before">10 Days Before</option>
-            <option value="6_days_before">6 Days Before</option>
-            <option value="10_days_past_due">10 Days Past Due</option>
           </select>
         </label>
         <button onClick={loadRoomLoaders} disabled={loading}>
@@ -2723,6 +2989,11 @@ export default function RoomLoaderPage() {
                             {downloadingPdfRoomLoaderId === row.roomLoaderId ? 'Downloading…' : 'Download PDF'}
                           </button>
                         )}
+                        {row.sameDayLinkedNote ? (
+                          <span style={{ fontSize: '11px', color: '#664d03', lineHeight: 1.35, maxWidth: '220px' }}>
+                            {row.sameDayLinkedNote}
+                          </span>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -2802,6 +3073,23 @@ export default function RoomLoaderPage() {
                     ))}
                   </span>
                 </div>
+                {row.sameDayLinkedNote ? (
+                  <div
+                    style={{
+                      marginTop: '8px',
+                      padding: '8px 10px',
+                      fontSize: '12px',
+                      lineHeight: 1.35,
+                      color: '#664d03',
+                      backgroundColor: '#fff8e1',
+                      borderRadius: '6px',
+                      border: '1px solid #ffe082',
+                      textAlign: 'left',
+                    }}
+                  >
+                    {row.sameDayLinkedNote}
+                  </div>
+                ) : null}
                 <div className="room-loader-mobile-card-badges">
                   <span className="room-loader-status-badge" style={{ backgroundColor: sentBg }}>
                     {row.sentStatus.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
@@ -2901,6 +3189,59 @@ export default function RoomLoaderPage() {
               {hasClientWithReceptionEmail
                 ? 'Client has the default reception email on file. Please add a valid client email in the practice system before sending to client.'
                 : 'No email address on file for the client. Please add an email in the practice system before sending to client.'}
+            </div>
+          )}
+          {selectedSameDayClientLink && selectedSameDayClientLink.siblingRoomLoaderIds.length > 0 && (
+            <div
+              style={{
+                marginBottom: '20px',
+                padding: '14px 18px',
+                backgroundColor: '#fff3cd',
+                border: '1px solid #ffc107',
+                borderRadius: '6px',
+                color: '#664d03',
+                fontSize: '14px',
+                lineHeight: 1.45,
+              }}
+              role="status"
+            >
+              <strong>Same-day linked room loaders.</strong>{' '}
+              {selectedSameDayClientLink.tripFeeRequirementWaived ? (
+                <>
+                  This loader is linked because the client already completed a room loader for another pet on this
+                  appointment day (same visit). Related loader ID
+                  {selectedSameDayClientLink.completedSiblingIds.length !== 1 ? 's' : ''}:{' '}
+                  {selectedSameDayClientLink.completedSiblingIds.join(', ')}.{' '}
+                  <strong>Trip fee is not required</strong> on this follow-up loader—use a single trip fee for the
+                  combined stop.
+                </>
+              ) : (
+                <>
+                  Another room loader exists for this client on this appointment day (related ID
+                  {selectedSameDayClientLink.siblingRoomLoaderIds.length !== 1 ? 's' : ''}:{' '}
+                  {selectedSameDayClientLink.siblingRoomLoaderIds.join(', ')}). Trip fee rules still apply until another
+                  loader for this visit is client-completed, unless your team handles the fee elsewhere.
+                </>
+              )}
+            </div>
+          )}
+          {selectedSameDayClientLink?.tripFeeRequirementWaived && selectedLinkedLoaderHasTripFeeLine && (
+            <div
+              style={{
+                marginBottom: '20px',
+                padding: '12px 16px',
+                backgroundColor: '#fff8e1',
+                border: '1px solid #ffb300',
+                borderRadius: '6px',
+                color: '#5d4037',
+                fontSize: '14px',
+                lineHeight: 1.45,
+              }}
+              role="status"
+            >
+              <strong>Trip fee on this loader:</strong> This visit is linked to an earlier completed room loader for
+              another pet today. Clients should typically see only one trip fee for the combined stop—remove this trip
+              fee line if it was already included on the first pet’s room loader.
             </div>
           )}
           {/* Pet-by-Pet Information */}
@@ -3347,6 +3688,49 @@ export default function RoomLoaderPage() {
                                       <span style={isPastDue ? { color: '#dc3545', fontWeight: 700 } : undefined}>
                                         {formatDate(reminderWithPrice.reminder.dueDate)}
                                       </span>
+                                    </div>
+                                  );
+                                })()}
+                                {(() => {
+                                  const overdue3mo = staffReminderDueAtLeastThreeMonthsPastDue(reminderWithPrice);
+                                  if (!overdue3mo) return null;
+                                  const { name: flagName, code: flagCode } = getStaffReminderProtocolFlagNameCode(
+                                    reminderWithPrice,
+                                    correction,
+                                    feedbackStatus
+                                  );
+                                  const lines: string[] = [];
+                                  if (staffReminderIsLymeVaccineLine(flagName, flagCode)) {
+                                    lines.push('Greater than 3 months overdue - put crLyme initial');
+                                  }
+                                  if (staffReminderIsLeptoVaccineLine(flagName, flagCode)) {
+                                    lines.push('Greater than 3 months overdue - put Lepto initial');
+                                  }
+                                  if (lines.length === 0) return null;
+                                  return (
+                                    <div
+                                      style={{
+                                        marginTop: '4px',
+                                        marginBottom: '10px',
+                                        padding: '8px 10px',
+                                        backgroundColor: '#fff7ed',
+                                        border: '1px solid #fdba74',
+                                        borderRadius: '4px',
+                                      }}
+                                    >
+                                      {lines.map((text) => (
+                                        <div
+                                          key={text}
+                                          style={{
+                                            fontSize: '13px',
+                                            fontWeight: 600,
+                                            color: '#9a3412',
+                                            lineHeight: 1.35,
+                                          }}
+                                        >
+                                          {text}
+                                        </div>
+                                      ))}
                                     </div>
                                   );
                                 })()}
@@ -4711,7 +5095,7 @@ export default function RoomLoaderPage() {
             <h2 style={{ marginTop: 0, marginBottom: '15px', color: '#333', fontSize: '20px' }}>
               {confirmAction === 'send' ? 'Send to Client?' : confirmAction === 'update' ? 'Update form data?' : 'Save for Later?'}
             </h2>
-            {confirmAction === 'send' && sendWarningReasons.length > 0 && (
+            {sendWarningReasons.length > 0 && (
               <div
                 style={{
                   marginBottom: '20px',
@@ -4732,7 +5116,11 @@ export default function RoomLoaderPage() {
                   ))}
                 </ul>
                 <div style={{ marginTop: '8px', fontWeight: 500 }}>
-                  You can still send, but please confirm to send anyway.
+                  {confirmAction === 'send'
+                    ? 'You can still send, but please confirm to send anyway.'
+                    : confirmAction === 'update'
+                      ? 'You can still update, but please confirm you intend to keep this as-is.'
+                      : 'You can still save, but please confirm you intend to keep this as-is.'}
                 </div>
               </div>
             )}
@@ -4788,7 +5176,10 @@ export default function RoomLoaderPage() {
             )}
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
               <button
-                onClick={() => setConfirmAction(null)}
+                onClick={() => {
+                  setConfirmAction(null);
+                  setSendWarningReasons([]);
+                }}
                 style={{
                   padding: '10px 20px',
                   fontSize: '14px',

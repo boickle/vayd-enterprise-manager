@@ -39,11 +39,16 @@ import {
 } from 'recharts';
 import { fetchRoutingUsage, type RoutingUsageUser } from '../api/routingUsage';
 import { fetchFillDayUsage, type FillDayUsageUser } from '../api/fillDayUsage';
+import { fetchUnscheduledRemindersUsage } from '../api/unscheduledRemindersUsage';
 import {
   fetchAppointmentBookingsAnalytics,
   type AppointmentBookingDetail,
   type AppointmentBookingsAnalyticsUser,
 } from '../api/appointmentBookingsAnalytics';
+import {
+  fetchAllAppointmentRequestSubmissions,
+  type AppointmentRequestSubmissionItem,
+} from '../api/appointmentRequestSubmissions';
 
 function toLocalDateStr(d: Dayjs) {
   return d.format('YYYY-MM-DD');
@@ -111,6 +116,43 @@ function addTotalBookedTrend<T extends { totalBooked: number }>(
 
 const ALL_USERS = '';
 
+const APPOINTMENT_REQUEST_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+
+/** Classify persisted public form payload: euthanasia / end-of-life vs other appointment requests. */
+function isEuthanasiaRequestSubmission(requestData: Record<string, unknown>): boolean {
+  const chunks: string[] = [];
+  const top = requestData.appointmentType;
+  if (typeof top === 'string') chunks.push(top);
+  const psd = requestData.petSpecificData;
+  if (psd && typeof psd === 'object') {
+    for (const v of Object.values(psd as Record<string, unknown>)) {
+      if (!v || typeof v !== 'object') continue;
+      const o = v as Record<string, unknown>;
+      for (const key of ['needsToday', 'appointmentTypeName'] as const) {
+        const s = o[key];
+        if (typeof s === 'string') chunks.push(s);
+      }
+    }
+  }
+  const hay = chunks.join(' ').toLowerCase();
+  return (
+    hay.includes('euthanasia') ||
+    hay.includes('end-of-life') ||
+    hay.includes('end of life')
+  );
+}
+
+function classifySubmission(item: AppointmentRequestSubmissionItem): {
+  isEuth: boolean;
+  localDay: string;
+} {
+  const rd = item.requestData ?? {};
+  return {
+    isEuth: isEuthanasiaRequestSubmission(rd),
+    localDay: dayjs(item.submittedAt).format('YYYY-MM-DD'),
+  };
+}
+
 type OverviewLineKey =
   | 'totalBooked'
   | 'existingPatientBooked'
@@ -157,6 +199,19 @@ function displayName(u: { employeeName?: string; userEmail: string }): string {
 function displayNameFillDay(u: FillDayUsageUser): string {
   const name = u.employeeName?.trim();
   return name ? name : u.userEmail;
+}
+
+/** Entire-practice total vs period goal: green when booked ≥ goal, orange when within 10% under goal (≥90%), red otherwise. */
+function totalBookedGoalMuiColor(
+  booked: number,
+  goal: number
+): 'success' | 'warning' | 'error' | undefined {
+  const b = Number(booked);
+  const g = Number(goal);
+  if (!(g > 0) || Number.isNaN(b) || Number.isNaN(g)) return undefined;
+  if (b >= g) return 'success';
+  if (b >= g * 0.9) return 'warning';
+  return 'error';
 }
 
 function aggregateBookingsByDay(
@@ -309,15 +364,26 @@ export default function RoutingAnalyticsPage() {
     useState<Record<OverviewLineKey, boolean>>(OVERVIEW_LINE_DEFAULTS);
   const [selectedUserEmail, setSelectedUserEmail] = useState<string>(ALL_USERS);
   const [selectedFillDayUserEmail, setSelectedFillDayUserEmail] = useState<string>(ALL_USERS);
+  const [selectedCareOutreachUserEmail, setSelectedCareOutreachUserEmail] = useState<string>(ALL_USERS);
   const [data, setData] = useState<{ users: RoutingUsageUser[] } | null>(null);
-  const [bookingsData, setBookingsData] = useState<{ users: AppointmentBookingsAnalyticsUser[] } | null>(
+  const [bookingsData, setBookingsData] = useState<{
+    users: AppointmentBookingsAnalyticsUser[];
+    appointmentBookingsGoal?: number;
+  } | null>(null);
+  const [fillDayData, setFillDayData] = useState<{ users: FillDayUsageUser[] } | null>(null);
+  const [careOutreachUsageData, setCareOutreachUsageData] = useState<{ users: FillDayUsageUser[] } | null>(
     null
   );
-  const [fillDayData, setFillDayData] = useState<{ users: FillDayUsageUser[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [bookingsError, setBookingsError] = useState<string | null>(null);
   const [fillDayError, setFillDayError] = useState<string | null>(null);
+  const [careOutreachUsageError, setCareOutreachUsageError] = useState<string | null>(null);
+  const [requestSubmissions, setRequestSubmissions] = useState<AppointmentRequestSubmissionItem[] | null>(
+    null
+  );
+  const [requestSubmissionsLoading, setRequestSubmissionsLoading] = useState(false);
+  const [requestSubmissionsError, setRequestSubmissionsError] = useState<string | null>(null);
 
   const start = range.from.startOf('day');
   const end = range.to.startOf('day');
@@ -340,11 +406,12 @@ export default function RoutingAnalyticsPage() {
     setError(null);
     setBookingsError(null);
     setFillDayError(null);
+    setCareOutreachUsageError(null);
     let alive = true;
     let done = 0;
     const checkDone = () => {
       done += 1;
-      if (done === 3 && alive) setLoading(false);
+      if (done === 4 && alive) setLoading(false);
     };
 
     fetchRoutingUsage({ startDate: startStr, endDate: endStr })
@@ -363,7 +430,10 @@ export default function RoutingAnalyticsPage() {
     fetchAppointmentBookingsAnalytics({ startDate: startStr, endDate: endStr })
       .then((res) => {
         if (!alive) return;
-        setBookingsData({ users: res?.users ?? [] });
+        setBookingsData({
+          users: res?.users ?? [],
+          appointmentBookingsGoal: res?.appointmentBookingsGoal,
+        });
       })
       .catch((e) => {
         if (!alive) return;
@@ -386,10 +456,78 @@ export default function RoutingAnalyticsPage() {
       })
       .finally(checkDone);
 
+    fetchUnscheduledRemindersUsage({ startDate: startStr, endDate: endStr })
+      .then((res) => {
+        if (!alive) return;
+        setCareOutreachUsageData({ users: res?.users ?? [] });
+      })
+      .catch((e) => {
+        if (!alive) return;
+        console.error('Care outreach (unscheduled reminders) usage fetch failed:', e);
+        setCareOutreachUsageError('Failed to load care outreach usage');
+        setCareOutreachUsageData(null);
+      })
+      .finally(checkDone);
+
     return () => {
       alive = false;
     };
   }, [startStr, endStr]);
+
+  useEffect(() => {
+    let alive = true;
+    setRequestSubmissionsLoading(true);
+    setRequestSubmissionsError(null);
+    const fromIso = dayjs(startStr, 'YYYY-MM-DD', true).startOf('day').toISOString();
+    const toIso = dayjs(endStr, 'YYYY-MM-DD', true).endOf('day').toISOString();
+    fetchAllAppointmentRequestSubmissions({
+      practiceId: APPOINTMENT_REQUEST_PRACTICE_ID,
+      from: fromIso,
+      to: toIso,
+    })
+      .then((items) => {
+        if (!alive) return;
+        setRequestSubmissions(items);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        console.error('Appointment request submissions fetch failed:', e);
+        setRequestSubmissionsError('Failed to load public appointment request submissions');
+        setRequestSubmissions(null);
+      })
+      .finally(() => {
+        if (alive) setRequestSubmissionsLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [startStr, endStr]);
+
+  const requestSubmissionStats = useMemo(() => {
+    const items = requestSubmissions ?? [];
+    const dateSet = new Set(dates);
+    const byDay = new Map<string, { total: number; euth: number; nonEuth: number }>();
+    for (const d of dates) byDay.set(d, { total: 0, euth: 0, nonEuth: 0 });
+    let total = 0;
+    let euth = 0;
+    for (const item of items) {
+      const { isEuth, localDay } = classifySubmission(item);
+      total += 1;
+      if (isEuth) euth += 1;
+      const row = byDay.get(localDay);
+      if (row) {
+        row.total += 1;
+        if (isEuth) row.euth += 1;
+        else row.nonEuth += 1;
+      }
+    }
+    const nonEuth = total - euth;
+    const chartRows = dates.map((date) => {
+      const r = byDay.get(date) ?? { total: 0, euth: 0, nonEuth: 0 };
+      return { date, totalBookedRequests: r.total, euthRequests: r.euth, nonEuthRequests: r.nonEuth };
+    });
+    return { total, euth, nonEuth, chartRows };
+  }, [requestSubmissions, dates]);
 
   const overviewChartData = useMemo(() => {
     const bookingRows = aggregateBookingsByDay(bookingsData?.users, dates, selectedOverviewUserEmail);
@@ -545,6 +683,22 @@ export default function RoutingAnalyticsPage() {
     [employeeBookingTableRows]
   );
 
+  /** Goal vs booked (colored) is shown only for a single selected day; multi-day ranges show a plain total. */
+  const practiceBookingGoalDisplay = useMemo(() => {
+    if (!isSingleDay) return null;
+    const rawGoal = bookingsData?.appointmentBookingsGoal;
+    const goal =
+      typeof rawGoal === 'number' && Number.isFinite(rawGoal) && rawGoal > 0 ? rawGoal : undefined;
+    if (goal === undefined) return null;
+    const booked = employeeBookingTableColumnTotals.totalBooked;
+    const color = totalBookedGoalMuiColor(booked, goal);
+    return { booked, goal, color };
+  }, [
+    isSingleDay,
+    bookingsData?.appointmentBookingsGoal,
+    employeeBookingTableColumnTotals.totalBooked,
+  ]);
+
   const overviewBookingDetails = useMemo(
     () => collectBookingDetails(bookingsData?.users, dates, selectedOverviewUserEmail),
     [bookingsData, dates, selectedOverviewUserEmail]
@@ -645,6 +799,30 @@ export default function RoutingAnalyticsPage() {
     return dates.map((date) => ({ date, requestCount: byDate.get(date) ?? 0 }));
   }, [fillDayData, selectedFillDayUserEmail, dates]);
 
+  const careOutreachChartData = useMemo(() => {
+    if (!careOutreachUsageData?.users?.length) return [];
+    if (selectedCareOutreachUserEmail === ALL_USERS) {
+      const byDate = new Map<string, number>();
+      for (const date of dates) byDate.set(date, 0);
+      for (const u of careOutreachUsageData.users) {
+        for (const d of u.requestsByDay ?? []) {
+          const date = d?.date?.slice(0, 10);
+          if (date && byDate.has(date)) byDate.set(date, (byDate.get(date) ?? 0) + (d.requestCount ?? 0));
+        }
+      }
+      return dates.map((date) => ({ date, requestCount: byDate.get(date) ?? 0 }));
+    }
+    const user = careOutreachUsageData.users.find((u) => u.userEmail === selectedCareOutreachUserEmail);
+    if (!user) return [];
+    const byDate = new Map<string, number>();
+    for (const date of dates) byDate.set(date, 0);
+    for (const d of user.requestsByDay ?? []) {
+      const date = d?.date?.slice(0, 10);
+      if (date && byDate.has(date)) byDate.set(date, d.requestCount ?? 0);
+    }
+    return dates.map((date) => ({ date, requestCount: byDate.get(date) ?? 0 }));
+  }, [careOutreachUsageData, selectedCareOutreachUserEmail, dates]);
+
   const userOptions = useMemo(() => {
     const list: { value: string; label: string }[] = [{ value: ALL_USERS, label: 'All users' }];
     for (const u of data?.users ?? []) {
@@ -669,6 +847,18 @@ export default function RoutingAnalyticsPage() {
     return [list[0], ...(self ? [self] : [])];
   }, [fillDayData, restrictEmployeeAnalytics, userEmail]);
 
+  const careOutreachUserOptions = useMemo(() => {
+    const list: { value: string; label: string }[] = [{ value: ALL_USERS, label: 'All users' }];
+    for (const u of careOutreachUsageData?.users ?? []) {
+      if (u.userEmail) list.push({ value: u.userEmail, label: displayNameFillDay(u) });
+    }
+    if (!restrictEmployeeAnalytics) return list;
+    const selfEmail = userEmail ? String(userEmail).trim().toLowerCase() : '';
+    if (!selfEmail) return [list[0]];
+    const self = list.find((o) => String(o.value).trim().toLowerCase() === selfEmail);
+    return [list[0], ...(self ? [self] : [])];
+  }, [careOutreachUsageData, restrictEmployeeAnalytics, userEmail]);
+
   useEffect(() => {
     if (!restrictEmployeeAnalytics) return;
     const allowed = new Set(userOptions.map((o) => o.value));
@@ -681,8 +871,18 @@ export default function RoutingAnalyticsPage() {
     if (!allowed.has(selectedFillDayUserEmail)) setSelectedFillDayUserEmail(ALL_USERS);
   }, [restrictEmployeeAnalytics, fillDayUserOptions, selectedFillDayUserEmail]);
 
+  useEffect(() => {
+    if (!restrictEmployeeAnalytics) return;
+    const allowed = new Set(careOutreachUserOptions.map((o) => o.value));
+    if (!allowed.has(selectedCareOutreachUserEmail)) setSelectedCareOutreachUserEmail(ALL_USERS);
+  }, [restrictEmployeeAnalytics, careOutreachUserOptions, selectedCareOutreachUserEmail]);
+
   const chartDataWithTrend = useMemo(() => addLinearTrend(chartData), [chartData]);
   const fillDayChartDataWithTrend = useMemo(() => addLinearTrend(fillDayChartData), [fillDayChartData]);
+  const careOutreachChartDataWithTrend = useMemo(
+    () => addLinearTrend(careOutreachChartData),
+    [careOutreachChartData]
+  );
 
   const usersSorted = useMemo(() => {
     const users = data?.users ?? [];
@@ -693,6 +893,11 @@ export default function RoutingAnalyticsPage() {
     const users = fillDayData?.users ?? [];
     return [...users].sort((a, b) => (b.totalRequests ?? 0) - (a.totalRequests ?? 0));
   }, [fillDayData]);
+
+  const careOutreachUsersSorted = useMemo(() => {
+    const users = careOutreachUsageData?.users ?? [];
+    return [...users].sort((a, b) => (b.totalRequests ?? 0) - (a.totalRequests ?? 0));
+  }, [careOutreachUsageData]);
 
   return (
     <Box sx={{ pb: 3 }}>
@@ -909,7 +1114,25 @@ export default function RoutingAnalyticsPage() {
                             {employeeBookingTableColumnTotals.existingPatientBooked}
                           </TableCell>
                           <TableCell align="right" sx={{ fontWeight: 600 }}>
-                            {employeeBookingTableColumnTotals.totalBooked}
+                            {selectedOverviewUserEmail === ALL_USERS && practiceBookingGoalDisplay ? (
+                              <Typography
+                                component="span"
+                                variant="body2"
+                                sx={{
+                                  fontWeight: 600,
+                                  color:
+                                    practiceBookingGoalDisplay.color === 'success'
+                                      ? 'success.main'
+                                      : practiceBookingGoalDisplay.color === 'warning'
+                                        ? 'warning.main'
+                                        : 'error.main',
+                                }}
+                              >
+                                {practiceBookingGoalDisplay.booked}/{practiceBookingGoalDisplay.goal} booked
+                              </Typography>
+                            ) : (
+                              employeeBookingTableColumnTotals.totalBooked
+                            )}
                           </TableCell>
                         </TableRow>
                       </TableFooter>
@@ -1419,6 +1642,269 @@ export default function RoutingAnalyticsPage() {
             )}
           </CardContent>
         </Card>
+
+        <Typography variant="h6" sx={{ mt: 4, mb: 2 }}>
+          Care outreach usage
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          GET /reminders/unscheduled (Care outreach list loads), from audit — same date rules and
+          employee filter as schedule loader usage.
+        </Typography>
+
+        {careOutreachUsageError && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {careOutreachUsageError}
+          </Alert>
+        )}
+
+        {!isSingleDay && (
+          <Card sx={{ mb: 3 }}>
+            <CardHeader
+              title="Care outreach requests by day"
+              subheader="Overall or filter by user to see one user."
+            />
+            <CardContent>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2, mb: 2 }}>
+                <FormControl size="small" sx={{ minWidth: 280 }}>
+                  <InputLabel id="care-outreach-user-label">User</InputLabel>
+                  <Select
+                    labelId="care-outreach-user-label"
+                    value={selectedCareOutreachUserEmail}
+                    label="User"
+                    onChange={(e) => setSelectedCareOutreachUserEmail(e.target.value)}
+                  >
+                    {careOutreachUserOptions.map((opt) => (
+                      <MenuItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Box>
+              {loading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                  <CircularProgress />
+                </Box>
+              ) : (
+                <Box sx={{ width: '100%', height: 360 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                      data={careOutreachChartDataWithTrend}
+                      margin={{ top: 8, right: 24, left: 8, bottom: 8 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                      <YAxis
+                        label={{ value: 'Requests', angle: -90, position: 'insideLeft' }}
+                        tick={{ fontSize: 11 }}
+                        allowDecimals={false}
+                      />
+                      <Tooltip
+                        formatter={(value: unknown, name: unknown) => [
+                          value != null ? `${Number(value).toFixed(1)} requests` : '0',
+                          (name ?? '') === 'trend' ? 'Trend' : 'Requests',
+                        ]}
+                        labelFormatter={(label) => String(label)}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="requestCount"
+                        stroke="#6a1b9a"
+                        strokeWidth={2}
+                        dot={{ r: 3 }}
+                        name="Requests"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="trend"
+                        stroke="#6a1b9a"
+                        strokeWidth={1.5}
+                        strokeDasharray="5 5"
+                        dot={false}
+                        name="Trend"
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        <Card>
+          <CardHeader
+            title="Care outreach usage by user"
+            subheader={
+              isSingleDay
+                ? 'Unscheduled reminders list loads (GET /reminders/unscheduled) per user for the selected day.'
+                : 'Total unscheduled reminders list loads per user in the selected date range.'
+            }
+          />
+          <CardContent>
+            {loading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                <CircularProgress />
+              </Box>
+            ) : (
+              <TableContainer component={Paper} variant="outlined">
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Name</TableCell>
+                      <TableCell align="right">Total loads</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {careOutreachUsersSorted.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={2} align="center">
+                          No usage data in this range.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      careOutreachUsersSorted.map((u) => (
+                        <TableRow
+                          key={u.userEmail}
+                          onClick={() => !isSingleDay && setSelectedCareOutreachUserEmail(u.userEmail)}
+                          sx={!isSingleDay ? { cursor: 'pointer' } : undefined}
+                        >
+                          <TableCell>{displayNameFillDay(u)}</TableCell>
+                          <TableCell align="right">{u.totalRequests ?? 0}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </CardContent>
+        </Card>
+
+        <Typography variant="h6" sx={{ mt: 4, mb: 2 }}>
+          Public appointment requests
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          GET /appointments/request-submissions (practiceId={APPOINTMENT_REQUEST_PRACTICE_ID}, from / to in
+          ISO UTC derived from the selected local dates). Each row is one persisted public booking request;
+          euthanasia-related vs other is inferred from <code>appointmentType</code> and{' '}
+          <code>petSpecificData</code> text fields.
+        </Typography>
+
+        {requestSubmissionsError && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {requestSubmissionsError}
+          </Alert>
+        )}
+
+        {requestSubmissionsLoading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+            <CircularProgress size={28} />
+          </Box>
+        ) : (
+          <>
+            {isSingleDay && (
+              <Typography variant="body1" sx={{ mb: 2 }}>
+                Submissions for this day:{' '}
+                <strong>{requestSubmissionStats.total}</strong> total booked requests —{' '}
+                <strong>{requestSubmissionStats.nonEuth}</strong> non-euthanasia,{' '}
+                <strong>{requestSubmissionStats.euth}</strong> euthanasia-related.
+              </Typography>
+            )}
+
+            {!isSingleDay && (
+              <>
+                <Card sx={{ mb: 3 }}>
+                  <CardHeader
+                    title="Public appointment requests by day"
+                    subheader="Total submissions vs euthanasia-related vs other (local calendar day of submittedAt)."
+                  />
+                  <CardContent>
+                    <Box sx={{ width: '100%', height: 360 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart
+                          data={requestSubmissionStats.chartRows}
+                          margin={{ top: 8, right: 24, left: 8, bottom: 8 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                          <YAxis
+                            label={{ value: 'Submissions', angle: -90, position: 'insideLeft' }}
+                            tick={{ fontSize: 11 }}
+                            allowDecimals={false}
+                          />
+                          <Tooltip
+                            formatter={(value: unknown) =>
+                              value != null ? `${Number(value)}` : '0'
+                            }
+                            labelFormatter={(label) => String(label)}
+                          />
+                          <Legend />
+                          <Line
+                            type="monotone"
+                            dataKey="totalBookedRequests"
+                            name="Total"
+                            stroke="#1565c0"
+                            strokeWidth={2}
+                            dot={{ r: 3 }}
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="nonEuthRequests"
+                            name="Non-euthanasia"
+                            stroke="#2e7d32"
+                            strokeWidth={2}
+                            dot={{ r: 3 }}
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="euthRequests"
+                            name="Euthanasia-related"
+                            stroke="#c62828"
+                            strokeWidth={2}
+                            dot={{ r: 3 }}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </Box>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader
+                    title="Submissions for selected range"
+                    subheader="Totals across all pages returned for the selected date range."
+                  />
+                  <CardContent>
+                    <TableContainer component={Paper} variant="outlined">
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Category</TableCell>
+                            <TableCell align="right">Count</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          <TableRow>
+                            <TableCell>Total submissions</TableCell>
+                            <TableCell align="right">{requestSubmissionStats.total}</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell>Non-euthanasia-related</TableCell>
+                            <TableCell align="right">{requestSubmissionStats.nonEuth}</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell>Euthanasia-related</TableCell>
+                            <TableCell align="right">{requestSubmissionStats.euth}</TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+              </>
+            )}
+          </>
+        )}
     </Box>
   );
 }

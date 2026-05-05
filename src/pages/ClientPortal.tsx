@@ -1,6 +1,6 @@
 // src/pages/ClientPortal.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import {
   fetchClientAppointments,
@@ -15,6 +15,8 @@ import {
   type Vaccination,
   fetchClientInfo,
   submitReferral,
+  getClientRoomLoaderPdfHref,
+  getClientRoomLoaderFormPath,
 } from '../api/clientPortal';
 import { listMembershipTransactions } from '../api/membershipTransactions';
 import { http } from '../api/http';
@@ -1054,6 +1056,53 @@ export default function ClientPortal() {
           gap: 10px;
           align-items: center;
           padding: 10px 12px;
+        }
+        .cp-appt-room-loader {
+          border-top: 1px solid rgba(0,0,0,0.08);
+          padding: 14px 12px 14px;
+          background: linear-gradient(180deg, rgba(15, 118, 110, 0.08) 0%, rgba(15, 118, 110, 0.04) 100%);
+        }
+        .cp-appt-room-loader-label {
+          margin: 0 0 12px;
+          font-size: 13px;
+          line-height: 1.45;
+          color: rgba(0,0,0,0.68);
+          max-width: 52ch;
+        }
+        .cp-appt-room-loader-actions {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          align-items: center;
+        }
+        a.cp-appt-room-loader-btn {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 44px;
+          padding: 0 22px;
+          border-radius: 10px;
+          font-size: 15px;
+          font-weight: 600;
+          text-decoration: none !important;
+          cursor: pointer;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+          transition: transform 0.06s ease, box-shadow 0.15s ease, filter 0.15s ease;
+        }
+        a.cp-appt-room-loader-btn:hover {
+          filter: brightness(1.05);
+          box-shadow: 0 4px 12px rgba(0,0,0,0.14);
+        }
+        a.cp-appt-room-loader-btn:active {
+          transform: scale(0.98);
+        }
+        a.cp-appt-room-loader-btn--form {
+          background: var(--brand, #0f766e);
+          color: #fff !important;
+        }
+        a.cp-appt-room-loader-btn--pdf {
+          background: #1e293b;
+          color: #fff !important;
         }
         .cp-hide-xs { display: none; }
         .cp-section { margin-top: 28px; }
@@ -2586,6 +2635,50 @@ export default function ClientPortal() {
                               {a.statusName ?? '—'}
                             </div>
                           </div>
+                          {(() => {
+                            const token = (a.roomLoaderPublicToken ?? '').trim();
+                            if (!token) return null;
+                            const completed =
+                              (a.roomLoaderSentStatus ?? '').toLowerCase() === 'completed';
+                            return (
+                              <div className="cp-appt-room-loader">
+                                {completed ? (
+                                  <>
+                                    <p className="cp-appt-room-loader-label">
+                                      Pre-visit check-in is complete. You can download a copy for your records.
+                                    </p>
+                                    <div className="cp-appt-room-loader-actions">
+                                      <a
+                                        className="cp-appt-room-loader-btn cp-appt-room-loader-btn--pdf"
+                                        href={getClientRoomLoaderPdfHref(token)}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                      >
+                                        Download PDF
+                                      </a>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <>
+                                    <p className="cp-appt-room-loader-label">
+                                      Your care team shared a pre-visit check-in for this appointment. Please complete
+                                      it before your visit.
+                                    </p>
+                                    <div className="cp-appt-room-loader-actions">
+                                      <Link
+                                        className="cp-appt-room-loader-btn cp-appt-room-loader-btn--form"
+                                        to={getClientRoomLoaderFormPath(token)}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                      >
+                                        Open check-in form
+                                      </Link>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       ))}
                     </div>

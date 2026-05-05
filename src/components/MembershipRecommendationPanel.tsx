@@ -1,5 +1,9 @@
 import type { CSSProperties } from 'react';
 import type { RoomLoaderSimulateBillPublicResponse } from '../api/roomLoader';
+import {
+  computeFoundationsSeniorScreenFalseCoverageVisitDelta,
+  seniorScreenLineNameFalseFoundationsFullCoverage,
+} from '../utils/membershipFoundationsSimulate';
 
 export type RoomLoaderPlanForDisplay = { planId: string; planName: string; tagLine: string };
 export type RoomLoaderPlansForPetForDisplay = {
@@ -146,6 +150,13 @@ export default function MembershipRecommendationPanel({
         const usedAdj = new Set<number>();
 
         const comparisonLines = [...filteredLines, ...declinedForPet];
+        const foundationsSeniorFalseVisitDelta = computeFoundationsSeniorScreenFalseCoverageVisitDelta(
+          planBase,
+          petPlans.patientId,
+          filteredLines,
+          adjustments,
+          normItemName
+        );
         const coverageRows = comparisonLines.map((line) => {
           const declinedForVisit = line.membershipComparisonDeclinedOnly === true;
           const matchIdx = adjustments.findIndex(
@@ -166,6 +177,14 @@ export default function MembershipRecommendationPanel({
               right = `✔ Member pricing (${formatPrice(a.adjustedPrice)})`;
               covered = true;
             } else {
+              right = 'Not included in membership';
+              covered = false;
+            }
+            if (
+              planBase === 'foundations' &&
+              a.adjustedPrice === 0 &&
+              seniorScreenLineNameFalseFoundationsFullCoverage(line.name)
+            ) {
               right = 'Not included in membership';
               covered = false;
             }
@@ -226,7 +245,13 @@ export default function MembershipRecommendationPanel({
               : monthly?.originalTotal ?? null;
         const coveredEst =
           monthly != null
-            ? Math.max(0, monthly.originalVisitSubtotal - monthly.withMembershipVisitSubtotal + multiPetCreditUsd)
+            ? Math.max(
+                0,
+                monthly.originalVisitSubtotal -
+                  monthly.withMembershipVisitSubtotal +
+                  multiPetCreditUsd -
+                  foundationsSeniorFalseVisitDelta
+              )
             : null;
         /** Store / add-on subtotal + sales tax (not part of `originalVisitSubtotal` per simulate API). */
         const storeAndTaxPortion =
@@ -236,10 +261,11 @@ export default function MembershipRecommendationPanel({
         /**
          * Membership-priced visit plus store add-ons & tax, then minus multi-pet credit (shown as a separate −$75 line).
          * Avoid `withMembershipTotal` — it can include bundled annual membership amounts.
+         * `foundationsSeniorFalseVisitDelta`: simulate may wrongly zero senior screen on Foundations — add back so due matches row-level “not included”.
          */
         const dueBeforeMultiPetCredit =
           monthly != null
-            ? Number(monthly.withMembershipVisitSubtotal) + storeAndTaxPortion
+            ? Number(monthly.withMembershipVisitSubtotal) + storeAndTaxPortion + foundationsSeniorFalseVisitDelta
             : null;
         const dueAtVisit =
           monthly != null ? (dueBeforeMultiPetCredit ?? 0) - multiPetCreditUsd : null;

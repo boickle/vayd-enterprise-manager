@@ -8,8 +8,8 @@ import Admin from './pages/Admin';
 import Analytics from './pages/Analytics';
 import MyWeek from './pages/MyWeek';
 import MyDayToggle from './pages/MyDayToggle';
-import FillDayPage from './pages/FillDay';
 import Settings from './pages/Settings';
+import SchedulingTools from './pages/SchedulingTools';
 import RoomLoaderPage from './pages/RoomLoader';
 import SurveyResponsesPage from './pages/SurveyResponses';
 import SurveyResults from './pages/SurveyResults';
@@ -87,9 +87,9 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       showInMainTabs: true,
     },
     {
-      path: '/schedule-loader',
-      label: 'Schedule Loader',
-      element: <FillDayPage />,
+      path: '/scheduling-tools',
+      label: 'Scheduling Tools',
+      element: <SchedulingTools />,
       role: ['employee', 'admin', 'superadmin'],
     },
     {

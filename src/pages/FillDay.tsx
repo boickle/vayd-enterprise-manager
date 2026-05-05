@@ -1,10 +1,18 @@
 // src/pages/FillDay.tsx
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { http } from '../api/http';
-import { fetchFillDayCandidates, type FillDayCandidate, type FillDayRequest, type FillDayResponse, type FillDayStats } from '../api/routing';
+import {
+  fetchFillDayCandidates,
+  type FillDayCandidate,
+  type FillDayReminder,
+  type FillDayRequest,
+  type FillDayResponse,
+  type FillDayStats,
+} from '../api/routing';
+import { patchReminder } from '../api/careOutreach';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { useAuth } from '../auth/useAuth';
 import { PreviewMyDayModal, type PreviewMyDayOption } from '../components/PreviewMyDayModal';
@@ -12,6 +20,96 @@ import { evetClientLink, evetPatientLink } from '../utils/evet';
 import { fetchClientMessages, type ClientMessagesResponse } from '../api/clientPortal';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+
+const FILL_DAY_OUTREACH_NOTES_DEBOUNCE_MS = 750;
+
+/** JSON often sends reminder ids as strings; normalize for state keys and PATCH. */
+function fillDayReminderNumericId(r: FillDayReminder | Record<string, unknown>): number | null {
+  const o = r as Record<string, unknown>;
+  const raw = o.id ?? o.reminderId;
+  if (raw == null || raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function initialFillDayReminderOutreachNotes(r: FillDayReminder): string {
+  const any = r as Record<string, unknown>;
+  const snake = typeof any.outreach_notes === 'string' ? any.outreach_notes : null;
+  return String(r.outreachNotes ?? snake ?? r.notes ?? '') || '';
+}
+
+function fillDayReminderIsHidden(r: FillDayReminder | Record<string, unknown>): boolean {
+  const o = r as Record<string, unknown>;
+  if (typeof o.is_hidden === 'boolean') return o.is_hidden;
+  return (r as FillDayReminder).isHidden === true;
+}
+
+/** True if at least one reminder would appear in the schedule-loader SMS (non-hidden), matching formatSmsMessage. */
+function fillDayCandidateHasVisibleReminderForSms(candidate: FillDayCandidate): boolean {
+  if (candidate.patients && candidate.patients.length > 0) {
+    for (const patient of candidate.patients) {
+      for (const r of patient.reminders ?? []) {
+        if (!fillDayReminderIsHidden(r)) return true;
+      }
+    }
+    return false;
+  }
+  const patientNames = candidate.patientNames ?? [];
+  for (const reminder of candidate.reminders ?? []) {
+    if (fillDayReminderIsHidden(reminder)) continue;
+    const reminderIdx = candidate.reminderIds.findIndex((id) => Number(id) === Number(reminder.id));
+    if (reminderIdx >= 0 && reminderIdx < candidate.patientIds.length) {
+      return true;
+    }
+    if (patientNames.length > 0) return true;
+  }
+  return false;
+}
+
+function reminderPatchIsHidden(u: { isHidden?: boolean | null; [key: string]: unknown }): boolean | undefined {
+  const any = u as Record<string, unknown>;
+  if (typeof any.is_hidden === 'boolean') return any.is_hidden;
+  if (typeof u.isHidden === 'boolean') return u.isHidden;
+  return undefined;
+}
+
+function mergeReminderFieldsIntoCandidates(
+  list: FillDayCandidate[],
+  reminderId: number,
+  fields: Partial<{ outreachNotes: string; isHidden: boolean }>
+): FillDayCandidate[] {
+  return list.map((c) => ({
+    ...c,
+    reminders: (c.reminders ?? []).map((r) => {
+      if (fillDayReminderNumericId(r) !== reminderId) return r;
+      return { ...r, ...fields };
+    }),
+    patients: c.patients?.map((p) => ({
+      ...p,
+      reminders: (p.reminders ?? []).map((r) => {
+        if (fillDayReminderNumericId(r) !== reminderId) return r;
+        return { ...r, ...fields };
+      }),
+    })),
+  }));
+}
+
+function findFillDayReminderInCandidates(
+  list: FillDayCandidate[],
+  reminderId: number
+): FillDayReminder | undefined {
+  for (const c of list) {
+    for (const r of c.reminders ?? []) {
+      if (fillDayReminderNumericId(r) === reminderId) return r;
+    }
+    for (const p of c.patients ?? []) {
+      for (const r of p.reminders ?? []) {
+        if (fillDayReminderNumericId(r) === reminderId) return r;
+      }
+    }
+  }
+  return undefined;
+}
 
 export default function FillDayPage() {
   const { userEmail, doctorId: userDoctorId } = useAuth() as { userEmail?: string; doctorId?: string | null };
@@ -35,6 +133,8 @@ export default function FillDayPage() {
 
   // Options
   const [ignoreEmergencyBlocks, setIgnoreEmergencyBlocks] = useState(true);
+  /** When false (default), reminders with isHidden are omitted from cards and SMS text. */
+  const [showHiddenReminders, setShowHiddenReminders] = useState(false);
 
   // Results
   const [loading, setLoading] = useState(false);
@@ -42,6 +142,14 @@ export default function FillDayPage() {
   const [candidates, setCandidates] = useState<FillDayCandidate[]>([]);
   const [stats, setStats] = useState<FillDayStats | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  const [outreachNoteDrafts, setOutreachNoteDrafts] = useState<Record<number, string>>({});
+  const [outreachNoteSaving, setOutreachNoteSaving] = useState<Record<number, boolean>>({});
+  const [outreachNoteError, setOutreachNoteError] = useState<Record<number, string | null>>({});
+  const outreachNoteDebounceTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+
+  const [reminderHiddenSaving, setReminderHiddenSaving] = useState<Record<number, boolean>>({});
+  const [reminderHiddenError, setReminderHiddenError] = useState<Record<number, string | null>>({});
 
   // SMS sending state
   const [sendingSms, setSendingSms] = useState<Record<number, boolean>>({});
@@ -130,6 +238,123 @@ export default function FillDayPage() {
       alive = false;
     };
   }, [userEmail]);
+
+  const flushOutreachNotesSave = useCallback(async (reminderId: number, value: string) => {
+    setOutreachNoteSaving((s) => ({ ...s, [reminderId]: true }));
+    setOutreachNoteError((e) => ({ ...e, [reminderId]: null }));
+    try {
+      const updated = await patchReminder(reminderId, { outreachNotes: value });
+      const persisted =
+        String(updated.outreachNotes ?? updated.notes ?? value ?? '') || '';
+      setOutreachNoteDrafts((d) => ({ ...d, [reminderId]: persisted }));
+      const hidden = reminderPatchIsHidden(updated);
+      setCandidates((prev) =>
+        mergeReminderFieldsIntoCandidates(prev, reminderId, {
+          outreachNotes: persisted,
+          ...(typeof hidden === 'boolean' ? { isHidden: hidden } : {}),
+        })
+      );
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        (e as Error)?.message ??
+        'Could not save notes';
+      setOutreachNoteError((er) => ({ ...er, [reminderId]: String(msg) }));
+    } finally {
+      setOutreachNoteSaving((s) => ({ ...s, [reminderId]: false }));
+    }
+  }, []);
+
+  const setReminderIsHidden = useCallback(async (reminderId: number, isHidden: boolean) => {
+    setReminderHiddenSaving((s) => ({ ...s, [reminderId]: true }));
+    setReminderHiddenError((e) => ({ ...e, [reminderId]: null }));
+    try {
+      const updated = await patchReminder(reminderId, { isHidden });
+      const nextHidden = reminderPatchIsHidden(updated) ?? isHidden;
+      const persistedNotes = updated.outreachNotes ?? updated.notes;
+      setCandidates((prev) =>
+        mergeReminderFieldsIntoCandidates(prev, reminderId, {
+          isHidden: nextHidden,
+          ...(persistedNotes !== undefined && persistedNotes !== null
+            ? { outreachNotes: String(persistedNotes) }
+            : {}),
+        })
+      );
+      if (persistedNotes !== undefined && persistedNotes !== null) {
+        setOutreachNoteDrafts((d) => ({ ...d, [reminderId]: String(persistedNotes) }));
+      }
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        (e as Error)?.message ??
+        'Could not update reminder';
+      setReminderHiddenError((er) => ({ ...er, [reminderId]: String(msg) }));
+    } finally {
+      setReminderHiddenSaving((s) => ({ ...s, [reminderId]: false }));
+    }
+  }, []);
+
+  const scheduleOutreachNotesSave = useCallback(
+    (reminderId: number, value: string) => {
+      const prevTimer = outreachNoteDebounceTimers.current.get(reminderId);
+      if (prevTimer) clearTimeout(prevTimer);
+      const t = setTimeout(() => {
+        outreachNoteDebounceTimers.current.delete(reminderId);
+        void flushOutreachNotesSave(reminderId, value);
+      }, FILL_DAY_OUTREACH_NOTES_DEBOUNCE_MS);
+      outreachNoteDebounceTimers.current.set(reminderId, t);
+    },
+    [flushOutreachNotesSave]
+  );
+
+  function onOutreachNotesChange(reminderId: number, value: string) {
+    setOutreachNoteDrafts((d) => ({ ...d, [reminderId]: value }));
+    scheduleOutreachNotesSave(reminderId, value);
+  }
+
+  async function onOutreachNotesBlur(reminderId: number, valueFromDom: string) {
+    const t = outreachNoteDebounceTimers.current.get(reminderId);
+    if (t) {
+      clearTimeout(t);
+      outreachNoteDebounceTimers.current.delete(reminderId);
+    }
+    const value = valueFromDom;
+    setOutreachNoteDrafts((d) => ({ ...d, [reminderId]: value }));
+    const row = findFillDayReminderInCandidates(candidates, reminderId);
+    const serverVal = row ? initialFillDayReminderOutreachNotes(row) : '';
+    if (value !== serverVal) {
+      await flushOutreachNotesSave(reminderId, value);
+    }
+  }
+
+  useEffect(() => {
+    const drafts: Record<number, string> = {};
+    for (const c of candidates) {
+      for (const r of c.reminders ?? []) {
+        const id = fillDayReminderNumericId(r);
+        if (id != null) drafts[id] = initialFillDayReminderOutreachNotes(r);
+      }
+      for (const p of c.patients ?? []) {
+        for (const r of p.reminders ?? []) {
+          const id = fillDayReminderNumericId(r);
+          if (id != null) drafts[id] = initialFillDayReminderOutreachNotes(r);
+        }
+      }
+    }
+    setOutreachNoteDrafts(drafts);
+    setOutreachNoteSaving({});
+    setOutreachNoteError({});
+    setReminderHiddenSaving({});
+    setReminderHiddenError({});
+  }, [candidates]);
+
+  useEffect(() => {
+    const m = outreachNoteDebounceTimers.current;
+    return () => {
+      for (const timer of m.values()) clearTimeout(timer);
+      m.clear();
+    };
+  }, []);
 
   // Handle URL parameters: doctorId and targetDate, and auto-fetch
   useEffect(() => {
@@ -409,8 +634,13 @@ export default function FillDayPage() {
       candidate.patients.forEach((patient) => {
         const petName = patient.name;
         if (patient.reminders && patient.reminders.length > 0) {
-          const reminderDescriptions = patient.reminders.map(r => r.description);
-          remindersByPet.set(petName, reminderDescriptions);
+          const visible = patient.reminders.filter((r) => !fillDayReminderIsHidden(r));
+          if (visible.length > 0) {
+            remindersByPet.set(
+              petName,
+              visible.map((r) => r.description)
+            );
+          }
         }
       });
     } else {
@@ -423,7 +653,10 @@ export default function FillDayPage() {
       
       // Match reminders to pets using old logic
       candidate.reminders.forEach((reminder) => {
-        const reminderIdx = candidate.reminderIds.findIndex(id => id === reminder.id);
+        if (fillDayReminderIsHidden(reminder)) return;
+        const reminderIdx = candidate.reminderIds.findIndex(
+          (id) => Number(id) === Number(reminder.id)
+        );
         
         if (reminderIdx >= 0 && reminderIdx < candidate.patientIds.length) {
           const petName = candidate.patientNames[reminderIdx] || candidate.patientName;
@@ -466,6 +699,9 @@ This spot is also being offered to other clients. If you'd like to book it for $
 
   // Handle opening SMS confirmation modal
   function handleOpenSmsModal(candidate: FillDayCandidate, withOverride: boolean = false) {
+    if (!fillDayCandidateHasVisibleReminderForSms(candidate)) {
+      return;
+    }
     try {
       console.log('Opening SMS modal for candidate:', candidate);
       const message = formatSmsMessage(candidate);
@@ -536,6 +772,9 @@ This spot is also being offered to other clients. If you'd like to book it for $
   // Handle approve and send
   function handleApproveAndSend() {
     if (pendingSmsCandidate) {
+      if (!fillDayCandidateHasVisibleReminderForSms(pendingSmsCandidate)) {
+        return;
+      }
       // Use the current message preview (which may have been edited)
       handleSendSms(pendingSmsCandidate, sendWithOverride, smsMessagePreview);
     }
@@ -709,6 +948,10 @@ This spot is also being offered to other clients. If you'd like to book it for $
       console.log('SMS Modal State:', { smsModalOpen, hasCandidate: !!pendingSmsCandidate });
     }
   }, [smsModalOpen, pendingSmsCandidate]);
+
+  const canSendPendingSms =
+    pendingSmsCandidate != null &&
+    fillDayCandidateHasVisibleReminderForSms(pendingSmsCandidate);
 
   // Handle PDF export
   async function handleExportToPDF() {
@@ -926,6 +1169,14 @@ This spot is also being offered to other clients. If you'd like to book it for $
               />
               <span>Ignore Reserve Blocks</span>
             </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <input
+                type="checkbox"
+                checked={showHiddenReminders}
+                onChange={(e) => setShowHiddenReminders(e.target.checked)}
+              />
+              <span>Show hidden reminders</span>
+            </label>
           </div>
 
           {/* Fetch Button */}
@@ -1028,7 +1279,9 @@ This spot is also being offered to other clients. If you'd like to book it for $
 
       {candidates.length > 0 && (
         <div style={{ display: 'grid', gap: '24px' }}>
-          {candidates.map((candidate, idx) => (
+          {candidates.map((candidate, idx) => {
+            const canSendScheduleLoaderSms = fillDayCandidateHasVisibleReminderForSms(candidate);
+            return (
             <div
               key={`${candidate.clientId}-${candidate.holeIndex}-${idx}`}
               style={{
@@ -1143,16 +1396,21 @@ This spot is also being offered to other clients. If you'd like to book it for $
                     
                     // Get reminders directly from patient object (new structure)
                     // Fallback to candidate.reminders if patient.reminders not available
-                    const reminderToShow = patient?.reminders && patient.reminders.length > 0
-                      ? patient.reminders
-                      : candidate.reminders.filter((reminder) => {
-                          // Fallback: try to match by reminderIds if patient.reminders not available
-                          const reminderIdx = candidate.reminderIds.findIndex(id => id === reminder.id);
-                          if (candidate.patientIds.length === 1) {
-                            return petIdx === 0;
-                          }
-                          return reminderIdx === petIdx || (reminderIdx < 0 && petIdx === 0);
-                        });
+                    const rawReminders =
+                      patient?.reminders && patient.reminders.length > 0
+                        ? patient.reminders
+                        : candidate.reminders.filter((reminder) => {
+                            const reminderIdx = candidate.reminderIds.findIndex(
+                              (id) => Number(id) === Number(reminder.id)
+                            );
+                            if (candidate.patientIds.length === 1) {
+                              return petIdx === 0;
+                            }
+                            return reminderIdx === petIdx || (reminderIdx < 0 && petIdx === 0);
+                          });
+                    const reminderToShow = rawReminders.filter(
+                      (r) => showHiddenReminders || !fillDayReminderIsHidden(r)
+                    );
                     
                     return (
                       <div
@@ -1230,13 +1488,21 @@ This spot is also being offered to other clients. If you'd like to book it for $
                         </div>
                         
                         {/* Reminders */}
-                        {reminderToShow.length > 0 && (
+                        {rawReminders.length > 0 && (
                           <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #fecaca' }}>
                             <div style={{ fontSize: '12px', fontWeight: 600, color: '#6b7280', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                               Overdue Reminders:
                             </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                              {reminderToShow.map((reminder) => {
+                            {reminderToShow.length === 0 ? (
+                              <div style={{ fontSize: '13px', color: '#6b7280', paddingLeft: '8px' }}>
+                                All reminders for this pet are hidden. Turn on{' '}
+                                <strong>Show hidden reminders</strong> above to view or unhide them.
+                              </div>
+                            ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                              {reminderToShow.map((reminder, reminderIdx) => {
+                                const rid = fillDayReminderNumericId(reminder);
+                                const isHidden = fillDayReminderIsHidden(reminder);
                                 const dueDateFormatted = reminder.dueDate
                                   ? (() => {
                                       const dt = DateTime.fromISO(reminder.dueDate);
@@ -1244,17 +1510,154 @@ This spot is also being offered to other clients. If you'd like to book it for $
                                     })()
                                   : null;
                                 return (
-                                  <div key={reminder.id} style={{ fontSize: '14px', color: '#111827', paddingLeft: '8px' }}>
-                                    • {reminder.description}
-                                    {dueDateFormatted && (
-                                      <span style={{ color: '#6b7280', marginLeft: '8px' }}>
-                                        (Due: {dueDateFormatted})
-                                      </span>
+                                  <div
+                                    key={rid != null ? rid : `norid-${petIdx}-${reminderIdx}`}
+                                    style={{
+                                      fontSize: '14px',
+                                      color: '#111827',
+                                      paddingLeft: '8px',
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        display: 'flex',
+                                        flexWrap: 'wrap',
+                                        alignItems: 'flex-start',
+                                        justifyContent: 'space-between',
+                                        gap: '8px',
+                                      }}
+                                    >
+                                      <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+                                        <span>• {reminder.description}</span>
+                                        {dueDateFormatted && (
+                                          <span style={{ color: '#6b7280', marginLeft: '8px' }}>
+                                            (Due: {dueDateFormatted})
+                                          </span>
+                                        )}
+                                        {isHidden && showHiddenReminders && (
+                                          <span
+                                            style={{
+                                              marginLeft: '8px',
+                                              fontSize: '11px',
+                                              fontWeight: 700,
+                                              textTransform: 'uppercase',
+                                              color: '#92400e',
+                                              background: '#fef3c7',
+                                              border: '1px solid #fbbf24',
+                                              borderRadius: '4px',
+                                              padding: '2px 6px',
+                                              verticalAlign: 'middle',
+                                            }}
+                                          >
+                                            Hidden
+                                          </span>
+                                        )}
+                                      </div>
+                                      {rid != null && (
+                                        <button
+                                          type="button"
+                                          disabled={Boolean(reminderHiddenSaving[rid])}
+                                          onClick={() => void setReminderIsHidden(rid, !isHidden)}
+                                          style={{
+                                            flexShrink: 0,
+                                            padding: '6px 12px',
+                                            fontSize: '13px',
+                                            fontWeight: 600,
+                                            borderRadius: '6px',
+                                            border: '1px solid #cbd5e1',
+                                            background: isHidden ? '#ecfdf5' : '#f9fafb',
+                                            color: '#111827',
+                                            cursor: reminderHiddenSaving[rid] ? 'not-allowed' : 'pointer',
+                                          }}
+                                        >
+                                          {reminderHiddenSaving[rid]
+                                            ? 'Saving…'
+                                            : isHidden
+                                              ? 'Unhide reminder'
+                                              : 'Hide reminder'}
+                                        </button>
+                                      )}
+                                    </div>
+                                    {rid != null && reminderHiddenError[rid] && (
+                                      <div style={{ color: '#b91c1c', fontSize: '12px', marginTop: '4px' }}>
+                                        {reminderHiddenError[rid]}
+                                      </div>
+                                    )}
+                                    {rid != null ? (
+                                      <div
+                                        style={{
+                                          marginTop: '10px',
+                                          padding: '10px',
+                                          background: '#fff',
+                                          border: '1px solid #e5e7eb',
+                                          borderRadius: '8px',
+                                        }}
+                                      >
+                                        <label
+                                          style={{
+                                            fontSize: '12px',
+                                            fontWeight: 600,
+                                            color: '#374151',
+                                            display: 'block',
+                                            marginBottom: '6px',
+                                          }}
+                                          htmlFor={`fill-day-outreach-${rid}`}
+                                        >
+                                          Outreach notes
+                                        </label>
+                                        <textarea
+                                          id={`fill-day-outreach-${rid}`}
+                                          rows={3}
+                                          value={
+                                            outreachNoteDrafts[rid] ??
+                                            initialFillDayReminderOutreachNotes(reminder)
+                                          }
+                                          onChange={(e) => onOutreachNotesChange(rid, e.target.value)}
+                                          onBlur={(e) => void onOutreachNotesBlur(rid, e.currentTarget.value)}
+                                          placeholder="e.g. 11/14/2026 DF – LMOM"
+                                          aria-label={`Outreach notes for ${reminder.description}`}
+                                          style={{
+                                            display: 'block',
+                                            width: '100%',
+                                            minHeight: '4.5rem',
+                                            resize: 'vertical',
+                                            fontFamily: 'inherit',
+                                            fontSize: '14px',
+                                            lineHeight: 1.4,
+                                            padding: '10px 12px',
+                                            borderRadius: '6px',
+                                            border: '1px solid #cbd5e1',
+                                            background: '#f9fafb',
+                                            boxSizing: 'border-box',
+                                          }}
+                                        />
+                                        {outreachNoteSaving[rid] && (
+                                          <span style={{ fontSize: '12px', color: '#6b7280', marginTop: '6px', display: 'inline-block' }}>
+                                            Saving…
+                                          </span>
+                                        )}
+                                        {outreachNoteError[rid] && (
+                                          <div style={{ color: '#b91c1c', fontSize: '12px', marginTop: '6px' }}>
+                                            {outreachNoteError[rid]}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div
+                                        style={{
+                                          marginTop: '8px',
+                                          fontSize: '12px',
+                                          color: '#92400e',
+                                        }}
+                                      >
+                                        Outreach notes are unavailable (reminder has no id in the API payload).
+                                      </div>
                                     )}
                                   </div>
                                 );
                               })}
                             </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1332,16 +1735,23 @@ This spot is also being offered to other clients. If you'd like to book it for $
                     console.log('Button clicked for candidate:', candidate.clientId);
                     handleOpenSmsModal(candidate, false);
                   }}
-                  disabled={sendingSms[candidate.clientId]}
+                  disabled={sendingSms[candidate.clientId] || !canSendScheduleLoaderSms}
+                  title={
+                    !canSendScheduleLoaderSms
+                      ? 'All reminders for these pets are hidden. Unhide at least one reminder to send a text.'
+                      : undefined
+                  }
                   style={{
                     padding: '10px 20px',
-                    background: sendingSms[candidate.clientId] ? '#ccc' : '#4FB128',
+                    background:
+                      sendingSms[candidate.clientId] || !canSendScheduleLoaderSms ? '#ccc' : '#4FB128',
                     color: '#fff',
                     border: 'none',
                     borderRadius: '8px',
                     fontSize: '14px',
                     fontWeight: 600,
-                    cursor: sendingSms[candidate.clientId] ? 'not-allowed' : 'pointer',
+                    cursor:
+                      sendingSms[candidate.clientId] || !canSendScheduleLoaderSms ? 'not-allowed' : 'pointer',
                   }}
                 >
                   {sendingSms[candidate.clientId] ? 'Sending...' : 'Send Text To Client'}
@@ -1355,16 +1765,23 @@ This spot is also being offered to other clients. If you'd like to book it for $
                       console.log('Button clicked for candidate (override):', candidate.clientId);
                       handleOpenSmsModal(candidate, true);
                     }}
-                    disabled={sendingSms[candidate.clientId]}
+                    disabled={sendingSms[candidate.clientId] || !canSendScheduleLoaderSms}
+                    title={
+                      !canSendScheduleLoaderSms
+                        ? 'All reminders for these pets are hidden. Unhide at least one reminder to send a text.'
+                        : undefined
+                    }
                     style={{
                       padding: '10px 20px',
-                      background: sendingSms[candidate.clientId] ? '#ccc' : '#f59e0b',
+                      background:
+                        sendingSms[candidate.clientId] || !canSendScheduleLoaderSms ? '#ccc' : '#f59e0b',
                       color: '#fff',
                       border: 'none',
                       borderRadius: '8px',
                       fontSize: '14px',
                       fontWeight: 600,
-                      cursor: sendingSms[candidate.clientId] ? 'not-allowed' : 'pointer',
+                      cursor:
+                        sendingSms[candidate.clientId] || !canSendScheduleLoaderSms ? 'not-allowed' : 'pointer',
                     }}
                   >
                     {sendingSms[candidate.clientId] ? 'Sending...' : 'Send to Actual Client'}
@@ -1402,7 +1819,8 @@ This spot is also being offered to other clients. If you'd like to book it for $
                 </button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
       </div>
@@ -1497,16 +1915,20 @@ This spot is also being offered to other clients. If you'd like to book it for $
               </button>
               <button
                 onClick={handleApproveAndSend}
-                disabled={sendingSms[pendingSmsCandidate.clientId]}
+                disabled={sendingSms[pendingSmsCandidate.clientId] || !canSendPendingSms}
                 style={{
                   padding: '10px 20px',
-                  background: sendingSms[pendingSmsCandidate.clientId] ? '#ccc' : '#4FB128',
+                  background:
+                    sendingSms[pendingSmsCandidate.clientId] || !canSendPendingSms ? '#ccc' : '#4FB128',
                   color: '#fff',
                   border: 'none',
                   borderRadius: '8px',
                   fontSize: '14px',
                   fontWeight: 600,
-                  cursor: sendingSms[pendingSmsCandidate.clientId] ? 'not-allowed' : 'pointer',
+                  cursor:
+                    sendingSms[pendingSmsCandidate.clientId] || !canSendPendingSms
+                      ? 'not-allowed'
+                      : 'pointer',
                 }}
               >
                 {sendingSms[pendingSmsCandidate.clientId] ? 'Sending...' : 'Send Message'}

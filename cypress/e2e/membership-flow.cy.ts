@@ -322,7 +322,7 @@ describe('Membership Purchase Flow', () => {
       
       cy.contains('button', 'No').click();
       
-      // Oldie is a senior dog (9+ years), so Golden plan should be available
+      // Oldie is a senior dog (8+ years), so Golden plan should be available
       cy.contains('h3', 'Golden', { timeout: 5000 }).should('be.visible');
       selectPlan('Golden');
       selectBillingPreference('monthly');

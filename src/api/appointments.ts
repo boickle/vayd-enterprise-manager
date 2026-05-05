@@ -1,6 +1,7 @@
 // src/api/appointments.ts
 import { http } from './http';
 import type { Appointment } from './roomLoader';
+import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 
 export type RangeAppointment = Appointment;
 
@@ -170,6 +171,8 @@ export function blockDisplayLabel(item: { blockLabel?: string; title?: string } 
 
 export type DoctorDayResponse = {
   date?: string;
+  /** IANA timezone for schedule wall times (e.g. America/New_York). */
+  timezone: string;
   startDepot?: Depot | null;
   endDepot?: Depot | null;
   startDepotTime: any;
@@ -215,6 +218,26 @@ export function clientDisplayName(a: {
   const city = (a?.city ?? (a as any)?.city)?.trim();
   const suffix = zoneLabel || city;
   return suffix ? `${name} (${suffix})` : name;
+}
+
+/**
+ * Purple routing preview on My Day / My Week: shows **New Appointment** (or `clientName`) with the same
+ * parenthetical **zone or city** rules as {@link clientDisplayName}.
+ *
+ * **Data:** You only get **(3E)**-style suffixes when the candidate payload includes `clientZone` and/or
+ * `effectiveZone` (or `city` for city fallback). If the routing API does not send zones yet, the label
+ * stays **New Appointment** with no parentheses.
+ */
+export function previewRoutingAppointmentLabel(
+  a: { clientName?: string | null; clientZone?: MiniZone; effectiveZone?: MiniZone; city?: string | null } | null
+): string {
+  const base = (a?.clientName ?? 'New Appointment').trim() || 'New Appointment';
+  return clientDisplayName({
+    clientName: base,
+    clientZone: a?.clientZone,
+    effectiveZone: a?.effectiveZone,
+    city: a?.city ?? null,
+  });
 }
 
 export async function fetchDoctorDay(
@@ -315,6 +338,9 @@ export async function fetchDoctorDay(
 
   return {
     date: data?.date,
+    timezone: practiceTimeZoneOrDefault(
+      typeof (data as any)?.timezone === 'string' ? (data as any).timezone : undefined
+    ),
     startDepot: data?.startDepot ?? null,
     endDepot: data?.endDepot ?? null,
     startDepotTime: data?.startDepotTime,

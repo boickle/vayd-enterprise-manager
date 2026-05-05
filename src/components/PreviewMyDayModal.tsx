@@ -1,6 +1,7 @@
 // src/components/PreviewMyDayModal.tsx
 import { useEffect, useState } from 'react';
 import { DateTime } from 'luxon';
+import type { MiniZone } from '../api/appointments';
 import DoctorDay from '../pages/DoctorDay';
 import DoctorDayVisual from '../pages/DoctorDayVisual';
 import MyWeek, { type MyWeekVirtualAppt, weekStartSunday } from '../pages/MyWeek';
@@ -27,6 +28,9 @@ export type PreviewMyDayOption = {
   };
   /** Routing-v2: depot return as seconds since local midnight (overrun-aware). */
   validationReturnSec?: number;
+  /** Zone for preview label, e.g. `New Appointment (3E)` via `clientDisplayName`. */
+  clientZone?: MiniZone;
+  effectiveZone?: MiniZone;
 };
 
 type Props = {
@@ -108,6 +112,8 @@ export function PreviewMyDayModal({
     whitespaceAfterBookingSeconds: (option as any).whitespaceAfterBookingSeconds,
     arrivalWindow: option.arrivalWindow,
     validationReturnSec: option.validationReturnSec,
+    clientZone: option.clientZone,
+    effectiveZone: option.effectiveZone,
   };
 
   const weekVirtualAppt: MyWeekVirtualAppt = {
@@ -125,6 +131,8 @@ export function PreviewMyDayModal({
     zip: parts.zip ?? newApptMeta?.zip,
     arrivalWindow: option.arrivalWindow,
     validationReturnSec: option.validationReturnSec,
+    clientZone: option.clientZone,
+    effectiveZone: option.effectiveZone,
   };
 
   const commonProps = {
