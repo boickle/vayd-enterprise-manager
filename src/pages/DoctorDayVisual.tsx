@@ -2842,22 +2842,20 @@ export default function DoctorDayVisual({
                   Google Maps
                 </a>
               )}
-              <button
-                type="button"
-                className="btn"
-                style={{ fontSize: 13, padding: '7px 16px', whiteSpace: 'nowrap' }}
-                disabled={loading || pdfExporting || !selectedDoctorId?.trim()}
-                title={
-                  selectedDoctorId?.trim()
-                    ? 'Download a PDF of this day with full appointment details'
-                    : 'Select a provider to create a PDF'
-                }
-                onClick={() => {
-                  void handleExportMyDayVisualPdf();
-                }}
-              >
-                {pdfExporting ? 'Creating PDF…' : 'Create PDF'}
-              </button>
+              {selectedDoctorId?.trim() ? (
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ fontSize: 13, padding: '7px 16px', whiteSpace: 'nowrap' }}
+                  disabled={loading || pdfExporting}
+                  title="Download a PDF of this day with full appointment details"
+                  onClick={() => {
+                    void handleExportMyDayVisualPdf();
+                  }}
+                >
+                  {pdfExporting ? 'Creating PDF…' : 'Create PDF'}
+                </button>
+              ) : null}
             </div>
           </div>
           <div
