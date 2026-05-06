@@ -1463,40 +1463,17 @@ export default function AppointmentRequestForm() {
 
           setLoadingVeterinarians(true);
           try {
-            // Check zone before fetching veterinarians
-            try {
-              await http.get(`/public/appointments/find-zone-by-address?address=${encodeURIComponent(currentAddress)}`);
-              // Zone exists, clear any previous error
-              if (alive) {
-                setErrors(prev => {
-                  const next = { ...prev };
-                  delete next.zoneNotServiced;
-                  return next;
-                });
-                lastCheckedAddressRef.current = currentAddress; // Update last checked address
-              }
-            } catch (zoneError: any) {
-              if (zoneError?.response?.status === 404) {
-                // Zone not serviced - set error and don't fetch veterinarians
-                if (alive) {
-                  setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry—we don't currently serve your area. Please check back periodically at www.vetatyourdoor.com/service-area to see if our coverage has expanded. You can also call or text us at (207) 536-8387, and we'll take a look to see if your location may still be within reach." }));
-                  setPublicProviders([]);
-                  setProviders([]);
-                  setRawPublicVeterinarians([]);
-                  setLoadingVeterinarians(false);
-                  lastCheckedAddressRef.current = currentAddress; // Update last checked address even on error
-                }
-                return;
-              }
-              // For other errors, log but continue with veterinarian fetch
-              console.warn('[AppointmentForm] Zone check failed:', zoneError);
-              if (alive) {
-                lastCheckedAddressRef.current = currentAddress; // Update last checked address even on error
-              }
+            if (alive) {
+              setErrors(prev => {
+                const next = { ...prev };
+                delete next.zoneNotServiced;
+                return next;
+              });
+              lastCheckedAddressRef.current = currentAddress;
             }
-            
+
             if (!alive) return;
-            
+
             // Fetch raw veterinarian data directly from API to get appointmentTypes
             const params: any = { practiceId };
             if (currentAddress) {
