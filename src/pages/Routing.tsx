@@ -29,6 +29,15 @@ import {
 import './Routing.css';
 // Removed fetchPrimaryProviders import - now using /employees/veterinarians endpoint directly
 
+/** Yellow wrap when an optional routing preference is on—makes checked state obvious at a glance. */
+const ROUTING_PREF_CHECKED_LABEL: CSSProperties = {
+  backgroundColor: '#fef9c3',
+  border: '1px solid #ca8a04',
+  borderRadius: 8,
+  padding: '6px 10px',
+  boxSizing: 'border-box',
+};
+
 // =========================
 // Types
 // =========================
@@ -43,6 +52,8 @@ type RouteRequest = {
     lon?: number;
     address?: string;
     clientId?: string;
+    /** Set from routing response zone names for Address verified line. */
+    addressZoneShort?: string;
   };
 };
 
@@ -411,6 +422,31 @@ const SCOUT_BADGE_CHIP: CSSProperties = {
   border: '1px solid #c7d2fe',
 };
 
+/** Purple “Zone-aware” pill (Results header + consistency). */
+const SCOUT_ZONE_AWARE_BADGE_STYLE: CSSProperties = {
+  display: 'inline-block',
+  fontSize: 12,
+  fontWeight: 700,
+  letterSpacing: 0.02,
+  padding: '5px 14px',
+  borderRadius: 8,
+  background: 'linear-gradient(180deg, #faf5ff 0%, #f3e8ff 100%)',
+  color: '#581c87',
+  border: '1px solid #c084fc',
+  boxShadow: '0 1px 2px rgba(88, 28, 135, 0.08)',
+};
+
+const SCOUT_RESULTS_ZONE_NAME_CHIP: CSSProperties = {
+  display: 'inline-block',
+  fontSize: 12,
+  fontWeight: 600,
+  padding: '4px 12px',
+  borderRadius: 8,
+  background: '#f1f5f9',
+  color: '#0f172a',
+  border: '1px solid #cbd5e1',
+};
+
 function scoutZoneClassRaw(raw: unknown): string | null {
   if (raw == null || typeof raw !== 'string') return null;
   const t = raw.trim();
@@ -423,6 +459,101 @@ function scoutFormatZoneClassLabel(z: string): string {
     return z.charAt(0).toUpperCase() + z.slice(1).toLowerCase();
   }
   return z;
+}
+
+/** Banner phrase next to Zone-aware (e.g. “Anchor zone”). */
+function scoutZoneClassBannerPhrase(z: string): string {
+  const lo = z.trim().toLowerCase();
+  if (lo === 'anchor') return 'Anchor zone';
+  if (lo === 'local') return 'Local zone';
+  if (lo === 'corridor') return 'Corridor zone';
+  return `${scoutFormatZoneClassLabel(z)} zone`;
+}
+
+/** Title case for combined Results chip, e.g. `Anchor Zone`, `Local Zone`. */
+function scoutZoneClassBannerTitleCase(z: string): string {
+  return scoutZoneClassBannerPhrase(z)
+    .split(/\s+/)
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : ''))
+    .join(' ');
+}
+
+/** One line for the geocoded polygon zone, e.g. `Zone 3W (Lewiston)`. */
+function routingPolygonZoneDisplayLine(carrier: {
+  effectiveZone?: MiniZone;
+  clientZone?: MiniZone;
+}): string | null {
+  const a = carrier.effectiveZone?.name != null ? String(carrier.effectiveZone.name).trim() : '';
+  const b = carrier.clientZone?.name != null ? String(carrier.clientZone.name).trim() : '';
+  const raw = a || b;
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  if (lower.startsWith('zone ')) return raw;
+  return `Zone ${raw}`;
+}
+
+/** Compact label for “Address verified (…)”, e.g. `3W-Lewiston` from zone names. */
+function routingAddressZoneParenInner(carrier: {
+  effectiveZone?: MiniZone;
+  clientZone?: MiniZone;
+}): string | null {
+  const raw =
+    (carrier.effectiveZone?.name != null && String(carrier.effectiveZone.name).trim()) ||
+    (carrier.clientZone?.name != null && String(carrier.clientZone.name).trim()) ||
+    '';
+  if (!raw) return null;
+  let s = raw.replace(/^zone\s+/i, '').trim();
+  s = s.replace(/\s*\(\s*/g, '-').replace(/\s*\)\s*/g, '').replace(/\s+/g, '-');
+  return s || null;
+}
+
+function routingAddressZoneShortFromResult(r: Result): string | null {
+  let z =
+    routingAddressZoneParenInner({
+      effectiveZone: r.effectiveZone,
+      clientZone: r.clientZone,
+    }) ?? null;
+  if (!z && r.winner) {
+    z = routingAddressZoneParenInner({
+      effectiveZone: r.winner.effectiveZone,
+      clientZone: r.winner.clientZone,
+    });
+  }
+  if (!z && Array.isArray(r.alternates)) {
+    for (const alt of r.alternates) {
+      z = routingAddressZoneParenInner({
+        effectiveZone: alt.effectiveZone,
+        clientZone: alt.clientZone,
+      });
+      if (z) break;
+    }
+  }
+  if (!z && Array.isArray(r.doctors)) {
+    for (const d of r.doctors) {
+      for (const row of d.top || []) {
+        z = routingAddressZoneParenInner({
+          effectiveZone: row.effectiveZone,
+          clientZone: row.clientZone,
+        });
+        if (z) break;
+      }
+      if (z) break;
+    }
+  }
+  return z;
+}
+
+function scoutN9CrossesAnchorZones(n: number): boolean {
+  return typeof n === 'number' && Number.isFinite(n) && n > 0;
+}
+
+/** Slim pass: N9 / zone-aware anchor stacking—plain label + numeric in tooltip (penalty > 0 only). */
+function scoutAnchorRoutingCrossingCopy(n9: number): { label: string; tooltip: string } {
+  const val = Number.isInteger(n9) ? String(n9) : n9.toFixed(2);
+  return {
+    label: 'Adds Another Anchor Zone',
+    tooltip: `This option adds another anchor reach on a day that already has two or more long (anchor) drives from depot before this visit. Routing adjustment (N9): ${val}. Lower total score is still better.`,
+  };
 }
 
 function scoutZoneAwareDiagHasContent(row: ScoutZoneAwareDiagFields): boolean {
@@ -439,15 +570,25 @@ function scoutZoneAwareDiagHasContent(row: ScoutZoneAwareDiagFields): boolean {
     typeof row.scoutZoneHourPackN8 === 'number' &&
     Number.isFinite(row.scoutZoneHourPackN8) &&
     row.scoutZoneHourPackN8 > 0;
-  const n9 =
+  const n9Crossing =
     typeof row.scoutMultiAnchorDayN9 === 'number' &&
     Number.isFinite(row.scoutMultiAnchorDayN9) &&
-    row.scoutMultiAnchorDayN9 >= 0;
-  return n6 || n7 || n8 || n9;
+    scoutN9CrossesAnchorZones(row.scoutMultiAnchorDayN9);
+  return n6 || n7 || n8 || n9Crossing;
 }
 
-function ScoutZoneAwareDiagnosticsRow({ row }: { row: ScoutZoneAwareDiagFields }) {
-  const zc = scoutZoneClassRaw(row.scoutZoneClass);
+function ScoutZoneAwareDiagnosticsRow({
+  row,
+  hideZoneClass,
+  variant = 'block',
+}: {
+  row: ScoutZoneAwareDiagFields;
+  /** When true, omit depot→candidate zone class (shown once in Results header for this search). */
+  hideZoneClass?: boolean;
+  /** `inline`: no outer margin—use inside a parent flex row with day stat badges. */
+  variant?: 'block' | 'inline';
+}) {
+  const zc = hideZoneClass ? null : scoutZoneClassRaw(row.scoutZoneClass);
   const n6Show =
     typeof row.scoutWeekPanelBalanceN6 === 'number' &&
     Number.isFinite(row.scoutWeekPanelBalanceN6) &&
@@ -460,23 +601,13 @@ function ScoutZoneAwareDiagnosticsRow({ row }: { row: ScoutZoneAwareDiagFields }
     typeof row.scoutZoneHourPackN8 === 'number' &&
     Number.isFinite(row.scoutZoneHourPackN8) &&
     row.scoutZoneHourPackN8 > 0;
-  const n9Show =
-    typeof row.scoutMultiAnchorDayN9 === 'number' &&
-    Number.isFinite(row.scoutMultiAnchorDayN9) &&
-    row.scoutMultiAnchorDayN9 >= 0;
-  if (!zc && !n6Show && !n7Show && !n8Show && !n9Show) return null;
-  return (
-    <div
-      className="muted"
-      style={{
-        fontSize: 11,
-        marginBottom: 6,
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: '4px 14px',
-        alignItems: 'center',
-      }}
-    >
+  const n9Val = row.scoutMultiAnchorDayN9;
+  const n9Crossing =
+    typeof n9Val === 'number' && Number.isFinite(n9Val) && scoutN9CrossesAnchorZones(n9Val);
+  const n9Copy = n9Crossing ? scoutAnchorRoutingCrossingCopy(n9Val) : null;
+  if (!zc && !n6Show && !n7Show && !n8Show && !n9Crossing) return null;
+  const inner = (
+    <>
       {zc ? (
         <span
           style={SCOUT_BADGE_CHIP}
@@ -502,13 +633,42 @@ function ScoutZoneAwareDiagnosticsRow({ row }: { row: ScoutZoneAwareDiagFields }
           Zone-hour pack (N8): {row.scoutZoneHourPackN8}
         </span>
       ) : null}
-      {n9Show ? (
-        <span
-          title="Penalty when this day already has two or more long (anchor) runs from depot before adding this visit. Non-local slots on days with two+ anchor legs (same thresholds as zone class). 0 for local or when the pattern does not apply. Slim pass ranking nudge."
-        >
-          Multi-anchor day (N9): {row.scoutMultiAnchorDayN9}
+      {n9Copy ? (
+        <span style={SCOUT_BADGE_CHIP} title={n9Copy.tooltip}>
+          {n9Copy.label}
         </span>
       ) : null}
+    </>
+  );
+  if (variant === 'inline') {
+    return (
+      <span
+        className="muted"
+        style={{
+          display: 'inline-flex',
+          flexWrap: 'wrap',
+          gap: '4px 10px',
+          alignItems: 'center',
+          fontSize: 11,
+        }}
+      >
+        {inner}
+      </span>
+    );
+  }
+  return (
+    <div
+      className="muted"
+      style={{
+        fontSize: 11,
+        marginBottom: 6,
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '4px 14px',
+        alignItems: 'center',
+      }}
+    >
+      {inner}
     </div>
   );
 }
@@ -666,7 +826,14 @@ function scoutHouseholdsAndPatientsFromRow(row: ScoutRoutingGapRow): {
   return { households, patients };
 }
 
-function ScoutDayStatBadges({ row }: { row: ScoutRoutingGapRow }) {
+function ScoutDayStatBadges({
+  row,
+  embedded,
+}: {
+  row: ScoutRoutingGapRow;
+  /** When true, return chip nodes only (no wrapper) so they sit in a parent flex row. */
+  embedded?: boolean;
+}) {
   const chips: JSX.Element[] = [];
   if (row.dayIsEmpty === true) {
     chips.push(
@@ -703,6 +870,7 @@ function ScoutDayStatBadges({ row }: { row: ScoutRoutingGapRow }) {
     );
   }
   if (!chips.length) return null;
+  if (embedded) return <>{chips}</>;
   return <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>{chips}</div>;
 }
 
@@ -1349,6 +1517,7 @@ export default function Routing() {
             address: (value as string) ?? '',
             lat: undefined,
             lon: undefined,
+            addressZoneShort: undefined,
           },
         };
       }
@@ -1369,6 +1538,7 @@ export default function Routing() {
         address: addr,
         lat: Number.isFinite(latNum as number) ? (latNum as number) : undefined,
         lon: Number.isFinite(lonNum as number) ? (lonNum as number) : undefined,
+        addressZoneShort: undefined,
       },
     }));
     setAddressError(null);
@@ -1402,6 +1572,10 @@ export default function Routing() {
   async function submitRoutingRequest(endpoint: string, doctorIdsArray?: string[]) {
     setError(null);
     setResult(null);
+    setForm((f) => ({
+      ...f,
+      newAppt: { ...f.newAppt, addressZoneShort: undefined },
+    }));
     setAddressError(null);
     setFeedbackSubmittingKey(null);
     setFeedbackSuccessKey(null);
@@ -1438,6 +1612,7 @@ export default function Routing() {
           lat: chk.result.lat,
           lon: chk.result.lon,
           address: chk.result.formattedAddress || addr,
+          addressZoneShort: undefined,
         };
         // Persist so preview/modal have coordinates.
         setForm((f) => ({ ...f, newAppt: newApptPayload }));
@@ -1526,7 +1701,18 @@ export default function Routing() {
     setLoading(true);
     try {
       const { data } = await http.post<Result>(endpoint, payload);
-      setResult(normalizeRoutingV2SlotSearchResponse(data as RoutingV2SlotSearchResult) as Result);
+      const normalized = normalizeRoutingV2SlotSearchResponse(
+        data as RoutingV2SlotSearchResult
+      ) as Result;
+      setResult(normalized);
+      const zoneShort = routingAddressZoneShortFromResult(normalized);
+      setForm((f) => ({
+        ...f,
+        newAppt: {
+          ...f.newAppt,
+          ...(zoneShort ? { addressZoneShort: zoneShort } : { addressZoneShort: undefined }),
+        },
+      }));
     } catch (err: unknown) {
       setError(extractErrorMessage(err));
     } finally {
@@ -1806,6 +1992,33 @@ export default function Routing() {
       };
     });
   }, [multiDoctor, result, doctorNames, form.doctorId, latestRoutingRequestId]);
+
+  /** Zone class + polygon name are the same for all cards in a search—show once in Results header. */
+  const routingZoneAwareResultsBanner = useMemo(() => {
+    if (!result || !scoutPolicyZoneAware(result.scoutEmptyDayPolicy)) return null;
+    let zoneClassRaw: string | null = scoutZoneClassRaw(result.winner?.scoutZoneClass);
+    let polyLine: string | null = routingPolygonZoneDisplayLine({
+      effectiveZone: result.winner?.effectiveZone,
+      clientZone: result.winner?.clientZone,
+    });
+    if (!polyLine) {
+      polyLine = routingPolygonZoneDisplayLine({
+        effectiveZone: result.effectiveZone,
+        clientZone: result.clientZone,
+      });
+    }
+    for (const o of displayOptions) {
+      if (!zoneClassRaw) zoneClassRaw = scoutZoneClassRaw(o.scoutZoneClass);
+      if (!polyLine) {
+        polyLine = routingPolygonZoneDisplayLine({
+          effectiveZone: o.effectiveZone,
+          clientZone: o.clientZone,
+        });
+      }
+      if (zoneClassRaw && polyLine) break;
+    }
+    return { zoneClassRaw, polyLine };
+  }, [result, displayOptions]);
 
   // =========================
   // Render
@@ -2223,6 +2436,9 @@ export default function Routing() {
                 (form.newAppt.address ?? '').trim() && (
                   <div className="muted" style={{ marginTop: 6 }}>
                     ✓ Address verified
+                    {form.newAppt.addressZoneShort
+                      ? ` (${form.newAppt.addressZoneShort})`
+                      : ''}
                   </div>
                 )
               )}
@@ -2310,7 +2526,15 @@ export default function Routing() {
               </Field>
 
               <Field label="Multi-doctor">
-                <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <label
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'center',
+                    cursor: 'pointer',
+                    ...(multiDoctor ? ROUTING_PREF_CHECKED_LABEL : {}),
+                  }}
+                >
                   <input
                     type="checkbox"
                     checked={multiDoctor}
@@ -2325,7 +2549,16 @@ export default function Routing() {
             <Field label="Preferred Day of Week">
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 {weekdayLabels.map(({ n, label }) => (
-                  <label key={n} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  <label
+                    key={n}
+                    style={{
+                      display: 'inline-flex',
+                      gap: 6,
+                      alignItems: 'center',
+                      cursor: 'pointer',
+                      ...(preferredWeekday.includes(n) ? ROUTING_PREF_CHECKED_LABEL : {}),
+                    }}
+                  >
                     <input
                       type="checkbox"
                       checked={preferredWeekday.includes(n)}
@@ -2356,7 +2589,18 @@ export default function Routing() {
                   // { key: 'middle', label: 'Middle of day' },
                   { key: 'end', label: 'End of day' },
                 ].map(({ key, label }) => (
-                  <label key={key} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  <label
+                    key={key}
+                    style={{
+                      display: 'inline-flex',
+                      gap: 6,
+                      alignItems: 'center',
+                      cursor: 'pointer',
+                      ...(preferredTimeOfDay === (key as 'first' | 'middle' | 'end')
+                        ? ROUTING_PREF_CHECKED_LABEL
+                        : {}),
+                    }}
+                  >
                     <input
                       type="checkbox"
                       checked={preferredTimeOfDay === (key as 'first' | 'middle' | 'end')}
@@ -2384,7 +2628,15 @@ export default function Routing() {
             </Field>
 
             <div style={{ marginTop: 10, maxWidth: 560 }}>
-              <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}>
+              <label
+                style={{
+                  display: 'inline-flex',
+                  gap: 8,
+                  alignItems: 'center',
+                  cursor: 'pointer',
+                  ...(preferEarliestFeasibleStart ? ROUTING_PREF_CHECKED_LABEL : {}),
+                }}
+              >
                 <input
                   type="checkbox"
                   checked={preferEarliestFeasibleStart}
@@ -2440,23 +2692,41 @@ export default function Routing() {
         >
           <h3 style={{ marginTop: 0, marginBottom: 0 }}>Results</h3>
           {result && scoutPolicyZoneAware(result.scoutEmptyDayPolicy) ? (
-            <span
-              style={{
-                display: 'inline-block',
-                fontSize: 12,
-                fontWeight: 700,
-                letterSpacing: 0.02,
-                padding: '5px 14px',
-                borderRadius: 8,
-                background: 'linear-gradient(180deg, #faf5ff 0%, #f3e8ff 100%)',
-                color: '#581c87',
-                border: '1px solid #c084fc',
-                boxShadow: '0 1px 2px rgba(88, 28, 135, 0.08)',
-              }}
-              title="Scout empty-day policy is zone_aware. Liaison copy and day badges appear on each result and per gap."
-            >
-              Zone-aware
-            </span>
+            <Fragment>
+              <span
+                style={SCOUT_ZONE_AWARE_BADGE_STYLE}
+                title="Scout empty-day policy is zone_aware. Liaison copy and day badges appear on each result and per gap."
+              >
+                Zone-aware
+              </span>
+              {(() => {
+                const b = routingZoneAwareResultsBanner;
+                if (!b) return null;
+                const poly = b.polyLine;
+                const zc = b.zoneClassRaw;
+                const combined =
+                  poly && zc
+                    ? `${poly}: ${scoutZoneClassBannerTitleCase(zc)}`
+                    : poly
+                      ? poly
+                      : zc
+                        ? scoutZoneClassBannerTitleCase(zc)
+                        : null;
+                if (!combined) return null;
+                const title =
+                  poly && zc
+                    ? `Geocoded routing zone (${poly}). Depot→candidate drive class: ${scoutZoneClassBannerTitleCase(zc)} (≤15 min local, ≥25 min anchor, between corridor).`
+                    : poly
+                      ? 'Geocoded routing zone for this search (effective zone when present, otherwise client zone).'
+                      : 'From depot→candidate drive: ≤15 min = local, ≥25 min = anchor, between = corridor.';
+                const chipStyle = poly ? SCOUT_RESULTS_ZONE_NAME_CHIP : SCOUT_BADGE_CHIP;
+                return (
+                  <span style={chipStyle} title={title}>
+                    {combined}
+                  </span>
+                );
+              })()}
+            </Fragment>
           ) : null}
         </div>
 
@@ -2674,8 +2944,22 @@ export default function Routing() {
 
                     {showScoutUi && (
                       <div style={{ marginBottom: 10 }}>
-                        <ScoutDayStatBadges row={metricsRow} />
-                        <ScoutZoneAwareDiagnosticsRow row={opt} />
+                        <div
+                          style={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: 6,
+                            alignItems: 'center',
+                            marginBottom: 8,
+                          }}
+                        >
+                          <ScoutDayStatBadges row={metricsRow} embedded />
+                          <ScoutZoneAwareDiagnosticsRow
+                            row={opt}
+                            hideZoneClass
+                            variant="inline"
+                          />
+                        </div>
                         {(rootScoutAware || candScoutAware) && candidateScoutCopy ? (
                           <ScoutLiaisonCopyBlock row={candidateScoutRow} />
                         ) : null}
@@ -2697,21 +2981,24 @@ export default function Routing() {
                           if (!gapCopy && !gapStats && !gapDiag) return null;
                           return (
                             <div key={`scout-gap-${gi}`} style={{ marginTop: 8 }}>
-                              <ScoutDayStatBadges row={gap} />
-                              <ScoutZoneAwareDiagnosticsRow row={gap} />
-                              {typeof gap.scoutZoneAwareScoreDelta === 'number' &&
-                              Number.isFinite(gap.scoutZoneAwareScoreDelta) ? (
-                                <div
-                                  className="muted"
-                                  style={{ fontSize: 11, marginTop: 2, marginBottom: 4 }}
-                                  title="Zone-aware slim pass: treat as equal to N9 (N1–N8 are not applied on this pass)."
-                                >
-                                  <strong>Scout zone-aware Δ (N9):</strong>{' '}
-                                  {Number.isInteger(gap.scoutZoneAwareScoreDelta)
-                                    ? String(gap.scoutZoneAwareScoreDelta)
-                                    : gap.scoutZoneAwareScoreDelta.toFixed(2)}
-                                </div>
-                              ) : null}
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  flexWrap: 'wrap',
+                                  gap: 6,
+                                  alignItems: 'center',
+                                  marginBottom: 8,
+                                }}
+                              >
+                                <ScoutDayStatBadges row={gap} embedded />
+                                <ScoutZoneAwareDiagnosticsRow
+                                  row={gap}
+                                  hideZoneClass={Boolean(
+                                    routingZoneAwareResultsBanner?.zoneClassRaw
+                                  )}
+                                  variant="inline"
+                                />
+                              </div>
                               {gapCopy ? <ScoutLiaisonCopyBlock row={gap} /> : null}
                             </div>
                           );
@@ -2755,19 +3042,6 @@ export default function Routing() {
                         color="inherit"
                       />
                     </div>
-
-                    {showScoutUi && typeof opt.scoutZoneAwareScoreDelta === 'number' && Number.isFinite(opt.scoutZoneAwareScoreDelta) ? (
-                      <div
-                        className="muted"
-                        style={{ fontSize: 12, marginTop: 2, marginBottom: 4 }}
-                        title="Zone-aware slim pass: treat as equal to N9 (N1–N8 are not applied on this pass). Lower total score is still better; this field is for explanation / debug only."
-                      >
-                        <strong>Scout zone-aware Δ (N9):</strong>{' '}
-                        {Number.isInteger(opt.scoutZoneAwareScoreDelta)
-                          ? String(opt.scoutZoneAwareScoreDelta)
-                          : opt.scoutZoneAwareScoreDelta.toFixed(2)}
-                      </div>
-                    ) : null}
 
                     <div
                       style={{
@@ -2888,9 +3162,16 @@ export default function Routing() {
                         alignItems: 'center',
                         padding: '12px 8px',
                         cursor: 'pointer',
-                        borderRadius: 4,
+                        borderRadius: 8,
                         marginBottom: 4,
-                        backgroundColor: isSelected ? '#f0f9ff' : 'transparent',
+                        border: '1px solid transparent',
+                        boxSizing: 'border-box',
+                        ...(isSelected
+                          ? {
+                              backgroundColor: '#fef9c3',
+                              borderColor: '#ca8a04',
+                            }
+                          : { backgroundColor: 'transparent' }),
                       }}
                       onMouseEnter={(e) => {
                         if (!isSelected) {
@@ -2900,6 +3181,8 @@ export default function Routing() {
                       onMouseLeave={(e) => {
                         if (!isSelected) {
                           e.currentTarget.style.backgroundColor = 'transparent';
+                        } else {
+                          e.currentTarget.style.backgroundColor = '#fef9c3';
                         }
                       }}
                     >
