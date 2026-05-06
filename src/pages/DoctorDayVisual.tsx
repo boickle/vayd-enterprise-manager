@@ -1,7 +1,10 @@
 // src/pages/DoctorDayVisual.tsx
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
+import { createRoot } from 'react-dom/client';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
 import { DateTime } from 'luxon';
 import type { DoctorDayProps } from './DoctorDay';
 import {
@@ -44,6 +47,11 @@ import {
   isoFromSecondsSincePracticeMidnight,
 } from '../utils/practiceTimezone';
 import './DoctorDay.css';
+import {
+  DoctorDayVisualPdfDocument,
+  type DoctorDayVisualPdfAppointmentPayload,
+  type DoctorDayVisualPdfRow,
+} from './DoctorDayVisualPdf';
 
 // ===== Vertical scale: match My Week column density =====
 const PPM = 1.1;
@@ -668,6 +676,7 @@ export default function DoctorDayVisual({
     y: number;
     title: string;
   } | null>(null);
+  const [pdfExporting, setPdfExporting] = useState(false);
 
   /** blockLabel from last ETA byIndex (keys include lat/lon variants) */
   const [etaBlockLabelByKey, setEtaBlockLabelByKey] = useState<Record<string, string>>({});
@@ -2463,6 +2472,253 @@ export default function DoctorDayVisual({
     practiceTimeZone,
   ]);
 
+  const buildAppointmentPdfPayload = useCallback(
+    (idx: number): DoctorDayVisualPdfAppointmentPayload | null => {
+      const h = displayHouseholds[idx];
+      if (!h) return null;
+      const { startIso: resolvedStartIso, endIso: resolvedEndIso } = householdStartEnd(h, idx);
+      const schedStart = resolvedStartIso ? DateTime.fromISO(resolvedStartIso) : null;
+      const schedEnd = resolvedEndIso ? DateTime.fromISO(resolvedEndIso) : null;
+      if (!schedStart || !schedEnd) return null;
+
+      const durMin = Math.max(1, Math.round(schedEnd.diff(schedStart).as('minutes')));
+
+      const getApptTypeString = (appt: DoctorDayAppt): string => {
+        const type1 = str(appt, 'appointmentType');
+        const type2 = str(appt, 'appointmentTypeName');
+        const type3 = str(appt, 'serviceName');
+        const type4 = (appt as any)?.appointmentType;
+        const type5 = (appt as any)?.appointmentTypeName;
+        const type6 = typeof type4 === 'object' && type4?.name ? String(type4.name) : null;
+
+        return (
+          type1 ||
+          type2 ||
+          type3 ||
+          (typeof type4 === 'string' ? type4 : null) ||
+          (typeof type5 === 'string' ? type5 : null) ||
+          type6 ||
+          ''
+        );
+      };
+
+      const primaryTypeLower = getApptTypeString(h.primary).toLowerCase();
+      const firstPatientType = (h.patients[0]?.type || '').toLowerCase();
+
+      const blockLabelMetaEarly = h.isPersonalBlock
+        ? blockLabelMetaForDisplay(h, etaBlockLabelByKey)
+        : null;
+      const flexBlock = Boolean(
+        h.isPersonalBlock && isFlexBlockItem(blockLabelMetaEarly ?? h.primary)
+      );
+
+      const isFixedTime =
+        (h.isPersonalBlock && !flexBlock) ||
+        primaryTypeLower === 'fixed time' ||
+        firstPatientType === 'fixed time';
+
+      const slot = displayTimeline[idx];
+      const etaIso = slot?.eta ?? null;
+      const etdIso = slot?.etd ?? null;
+      const doctorDayClock = visualHouseholdUsesDoctorDayClockForLayout(
+        h,
+        slot,
+        showByDriveTime,
+        blockLabelMetaEarly ?? undefined
+      );
+      const useDriveTime = showByDriveTime && !doctorDayClock && (etaIso ?? etdIso);
+      const ew = h.primary?.effectiveWindow;
+      const { winStartIso, winEndIso } = isFixedTime
+        ? { winStartIso: resolvedStartIso, winEndIso: resolvedEndIso }
+        : slot?.windowStartIso && slot?.windowEndIso
+          ? { winStartIso: slot.windowStartIso, winEndIso: slot.windowEndIso }
+          : ew?.startIso && ew?.endIso
+            ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
+            : adjustedWindowForStart(date, h.startIso!, schedStartIso, practiceTimeZone);
+
+      const clientFixedRoutePushedPastSchedule =
+        showByDriveTime && visualHouseholdIsClientFixedTime(h) && !doctorDayClock;
+      const windowWarning =
+        showByDriveTime &&
+        !h.isPersonalBlock &&
+        ((useDriveTime && !isFixedTime && shouldShowEtaWindowWarning(etaIso, winEndIso)) ||
+          clientFixedRoutePushedPastSchedule);
+
+      const blockLabelMeta = blockLabelMetaEarly;
+      const blockTitleText =
+        h.isPersonalBlock && blockLabelMeta
+          ? blockDisplayLabel(blockLabelMeta)
+          : h.isPersonalBlock
+            ? h.client
+            : h.isPreview
+              ? previewRoutingAppointmentLabel(h.primary)
+              : h.client;
+
+      const g = blockGeom[idx];
+      const hoveredBlockBottomPx = g ? g.top + g.height : 0;
+      const showBackToDepotInBlock =
+        !!stats.backToDepotIso && hoveredBlockBottomPx >= maxDayVisualBottomPx - 2;
+
+      return {
+        key: h.key,
+        client: blockTitleText,
+        address: h.address,
+        durMin,
+        etaIso:
+          showByDriveTime && doctorDayClock
+            ? resolvedStartIso
+            : showByDriveTime
+              ? (etaIso ?? null)
+              : null,
+        etdIso:
+          showByDriveTime && doctorDayClock
+            ? resolvedEndIso
+            : showByDriveTime
+              ? (etdIso ?? null)
+              : null,
+        sIso: h.startIso!,
+        eIso: h.endIso!,
+        patients: h.patients || [],
+        clientAlert: h?.clientAlert,
+        isFixedTime,
+        isPersonalBlock: h.isPersonalBlock,
+        isNoLocation: h.isNoLocation,
+        isPreview: h.isPreview,
+        flexBlock,
+        effectiveWindow: h.primary?.effectiveWindow,
+        windowFromByIndex:
+          slot?.windowStartIso && slot?.windowEndIso
+            ? { winStartIso: slot.windowStartIso, winEndIso: slot.windowEndIso }
+            : undefined,
+        resolvedWinStartIso: winStartIso,
+        resolvedWinEndIso: winEndIso,
+        windowWarning,
+        showBackToDepotInBlock,
+        backToDepotIso: stats.backToDepotIso,
+      };
+    },
+    [
+      displayHouseholds,
+      displayTimeline,
+      showByDriveTime,
+      date,
+      schedStartIso,
+      practiceTimeZone,
+      etaBlockLabelByKey,
+      blockGeom,
+      stats.backToDepotIso,
+      maxDayVisualBottomPx,
+    ]
+  );
+
+  async function handleExportMyDayVisualPdf() {
+    if (loading || pdfExporting) return;
+    if (!selectedDoctorId?.trim()) return;
+    setPdfExporting(true);
+    const host = document.createElement('div');
+    host.setAttribute('data-myday-visual-pdf', '1');
+    // html2canvas does not reliably paint near-zero opacity or unlaid-out hosts; keep off-screen but fully opaque.
+    host.style.cssText =
+      'position:fixed;left:-12000px;top:0;width:820px;opacity:1;pointer-events:none;z-index:-1;background:#fff;';
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+      const doctorName =
+        providers.find((p) => String(p.id) === selectedDoctorId)?.name ?? 'Provider';
+      const dateLabel = DateTime.fromISO(date).toLocaleString(DateTime.DATE_MED);
+
+      const pdfRows: DoctorDayVisualPdfRow[] = [];
+      if (fromDepotSegment) {
+        pdfRows.push({
+          rowType: 'segment',
+          segment: {
+            kind: 'fromDepot',
+            title: `Drive from depot: ${fromDepotSegment.mins} min`,
+            mins: fromDepotSegment.mins,
+          },
+        });
+      }
+      for (let idx = 0; idx < displayHouseholds.length; idx++) {
+        const payload = buildAppointmentPdfPayload(idx);
+        if (payload) pdfRows.push({ rowType: 'appointment', payload });
+        for (const c of vConnectors) {
+          if (c.segKey.startsWith(`vdd-between-${idx}-`)) {
+            pdfRows.push({
+              rowType: 'segment',
+              segment: { kind: c.kind, title: c.title, mins: c.mins },
+            });
+          }
+        }
+      }
+      if (backToDepotSegments) {
+        for (const c of backToDepotSegments) {
+          pdfRows.push({
+            rowType: 'segment',
+            segment: { kind: c.kind, title: c.title, mins: c.mins },
+          });
+        }
+      }
+
+      root.render(
+        <DoctorDayVisualPdfDocument
+          doctorName={doctorName}
+          dateLabel={dateLabel}
+          showByDriveTime={showByDriveTime}
+          practiceTimeZone={practiceTimeZone}
+          stats={stats}
+          rows={pdfRows}
+        />
+      );
+
+      await document.fonts?.ready?.catch(() => undefined);
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      });
+      await new Promise<void>((r) => setTimeout(r, 80));
+
+      const captureEl = (host.firstElementChild as HTMLElement | null) ?? host;
+      const canvas = await html2canvas(captureEl, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+      });
+
+      if (!canvas.width || !canvas.height) {
+        console.error('My Day PDF: capture canvas has zero size');
+        return;
+      }
+
+      const png = canvas.toDataURL('image/png');
+      const pageW = 8.5;
+      const pageH = 11;
+      const margin = 0.35;
+      const maxW = pageW - 2 * margin;
+      const maxH = pageH - 2 * margin;
+      const imgAspect = canvas.width / canvas.height;
+      let dispW = maxW;
+      let dispH = dispW / imgAspect;
+      if (dispH > maxH) {
+        dispH = maxH;
+        dispW = dispH * imgAspect;
+      }
+      const x = margin + (maxW - dispW) / 2;
+      const y = margin + (maxH - dispH) / 2;
+
+      const pdf = new jsPDF('portrait', 'in', 'letter');
+      pdf.addImage(png, 'PNG', x, y, dispW, dispH);
+
+      const safeName = doctorName.replace(/\s+/g, '_').replace(/[^\w.-]+/g, '');
+      pdf.save(`MyDay_Visual_${safeName}_${date}.pdf`);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      root.unmount();
+      document.body.removeChild(host);
+      setPdfExporting(false);
+    }
+  }
+
   /* ---------- UI helpers ---------- */
   function fmtTime(iso?: string | null) {
     if (!iso) return '';
@@ -2569,22 +2825,40 @@ export default function DoctorDayVisual({
             }}
           >
             <h3 style={{ margin: 0 }}>Day Metrics</h3>
-            {links.length > 0 && (
-              <a
-                href={links[0]}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+              {links.length > 0 && (
+                <a
+                  href={links[0]}
+                  className="btn"
+                  style={{ fontSize: 13, padding: '7px 16px', whiteSpace: 'nowrap' }}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={
+                    links.length > 1
+                      ? `Open segment 1 of ${links.length} in Google Maps (full day is split for the 25-stop limit)`
+                      : 'Open this day in Google Maps'
+                  }
+                >
+                  Google Maps
+                </a>
+              )}
+              <button
+                type="button"
                 className="btn"
                 style={{ fontSize: 13, padding: '7px 16px', whiteSpace: 'nowrap' }}
-                target="_blank"
-                rel="noreferrer"
+                disabled={loading || pdfExporting || !selectedDoctorId?.trim()}
                 title={
-                  links.length > 1
-                    ? `Open segment 1 of ${links.length} in Google Maps (full day is split for the 25-stop limit)`
-                    : 'Open this day in Google Maps'
+                  selectedDoctorId?.trim()
+                    ? 'Download a PDF of this day with full appointment details'
+                    : 'Select a provider to create a PDF'
                 }
+                onClick={() => {
+                  void handleExportMyDayVisualPdf();
+                }}
               >
-                Google Maps
-              </a>
-            )}
+                {pdfExporting ? 'Creating PDF…' : 'Create PDF'}
+              </button>
+            </div>
           </div>
           <div
             className="dd-meta muted"
@@ -2873,40 +3147,20 @@ export default function DoctorDayVisual({
                     hoverCardDismissTimerRef.current = null;
                   }
                   const anchor = rectFromElement(ev.currentTarget);
+                  const pdfPayload = buildAppointmentPdfPayload(idx);
+                  if (!pdfPayload) return;
+                  const {
+                    showBackToDepotInBlock: _sb,
+                    backToDepotIso: _bd,
+                    flexBlock: _fb,
+                    isPreview: _ip,
+                    ...hoverFields
+                  } = pdfPayload;
                   setHoverCard({
-                    key: h.key,
+                    ...hoverFields,
                     x: ev.clientX,
                     y: ev.clientY,
                     ...(anchor ? { anchor } : {}),
-                    client: blockTitleText,
-                    address: h.address,
-                    durMin,
-                    etaIso:
-                      showByDriveTime && doctorDayClock
-                        ? resolvedStartIso
-                        : showByDriveTime
-                          ? (etaIso ?? null)
-                          : null,
-                    etdIso:
-                      showByDriveTime && doctorDayClock
-                        ? resolvedEndIso
-                        : showByDriveTime
-                          ? (etdIso ?? null)
-                          : null,
-                    sIso: h.startIso!,
-                    eIso: h.endIso!,
-                    patients: h.patients || [],
-                    clientAlert: h?.clientAlert,
-                    isFixedTime,
-                    isPersonalBlock: h.isPersonalBlock,
-                    isNoLocation: h.isNoLocation,
-                    effectiveWindow: h.primary?.effectiveWindow,
-                    windowFromByIndex: slotWindow?.windowStartIso && slotWindow?.windowEndIso
-                      ? { winStartIso: slotWindow.windowStartIso, winEndIso: slotWindow.windowEndIso }
-                      : undefined,
-                    resolvedWinStartIso: winStartIso,
-                    resolvedWinEndIso: winEndIso,
-                    windowWarning,
                   });
                 }}
                 onPointerMove={(ev) => {
