@@ -85,9 +85,9 @@ function statusPillStyle(text: string): CSSProperties {
   const s = text.toLowerCase();
   return {
     display: 'inline-block',
-    fontSize: 12,
+    fontSize: 16,
     fontWeight: 700,
-    padding: '2px 8px',
+    padding: '4px 12px',
     borderRadius: 999,
     background: s.includes('pre-appt email')
       ? '#fee2e2'
@@ -137,29 +137,36 @@ function AppointmentPdfBlock({
           ? '#ede9fe'
           : '#e0f2fe';
 
+  const hasPatients = !!payload.patients?.length;
+
   return (
     <div
       style={{
-        marginBottom: 10,
+        marginBottom: 6,
         border: `1px solid ${borderColor}`,
-        borderRadius: 10,
+        borderRadius: 8,
         background: bg,
         overflow: 'hidden',
-        boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
         color: payload.isPersonalBlock ? '#111827' : undefined,
       }}
     >
-      <div style={{ padding: '10px 12px', background: '#fff', borderBottom: '1px solid #e5e7eb' }}>
+      <div
+        style={{
+          padding: '6px 12px',
+          background: '#fff',
+          borderBottom: '1px solid #e5e7eb',
+          fontSize: 19,
+        }}
+      >
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: 8,
+            gap: 10,
             flexWrap: 'wrap',
-            marginBottom: 4,
           }}
         >
-          <span style={{ fontWeight: 800, color: '#14532d' }}>{payload.client}</span>
+          <span style={{ fontWeight: 800, color: '#14532d', fontSize: 22 }}>{payload.client}</span>
           <span style={{ color: '#64748b' }}>·</span>
           <span style={{ color: '#64748b', flex: '1 1 12rem', minWidth: 0 }}>{addrNoZip}</span>
           {payload.windowWarning && (
@@ -170,166 +177,165 @@ function AppointmentPdfBlock({
                 gap: 4,
                 color: '#b45309',
                 fontWeight: 600,
-                fontSize: 12,
+                fontSize: 15,
                 background: '#fef3c7',
-                padding: '2px 6px',
+                padding: '2px 8px',
                 borderRadius: 6,
                 border: '1px solid #f59e0b',
               }}
             >
-              <AlertTriangle size={14} strokeWidth={2.25} aria-hidden />
+              <AlertTriangle size={16} strokeWidth={2.25} aria-hidden />
               Window Warning
             </span>
           )}
         </div>
         {payload?.clientAlert && (
-          <div style={{ marginBottom: 4, color: '#dc2626', fontSize: 12, lineHeight: 1.35 }}>
+          <div style={{ marginTop: 2, color: '#dc2626', fontSize: 16, lineHeight: 1.3 }}>
             Alert: {payload.clientAlert}
           </div>
         )}
       </div>
       <div
-        style={{ padding: '10px 12px 12px', fontSize: 13, lineHeight: 1.35, background: '#fff' }}
+        style={{
+          display: 'flex',
+          gap: 14,
+          padding: '8px 12px 10px',
+          fontSize: 18,
+          lineHeight: 1.3,
+          background: '#fff',
+        }}
       >
         <div
           style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 10,
-            alignItems: 'baseline',
-            marginBottom: 4,
+            flex: hasPatients ? '0 0 30%' : '1 1 100%',
             color: '#334155',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
           }}
         >
-          <span>
+          <div>
             <b>Scheduled:</b> {formatIsoInPracticeZone(payload.sIso, practiceTimeZone)}
-          </span>
-          <span>
-            <b>Duration:</b> {payload.durMin} min
-          </span>
-          {payload.isFixedTime && !payload.isPersonalBlock && (
-            <span style={{ color: '#dc2626', fontWeight: 600 }}>FIXED TIME</span>
+            {' · '}
+            <b>Dur:</b> {payload.durMin} min
+          </div>
+          {showArrive && (
+            <div>
+              <b>Arrive/Leave:</b>{' '}
+              {payload.etaIso ? formatIsoInPracticeZone(payload.etaIso, practiceTimeZone) : '—'}
+              {' – '}
+              {payload.etdIso ? formatIsoInPracticeZone(payload.etdIso, practiceTimeZone) : '—'}
+            </div>
           )}
-          {payload.isPersonalBlock && (
-            <span style={{ color: '#6b7280', fontWeight: 600 }}>{payload.client || 'Block'}</span>
+          {showWindow && (
+            <div>
+              <b>Window:</b>{' '}
+              {payload.isFixedTime ? (
+                <>
+                  {formatIsoInPracticeZone(payload.sIso, practiceTimeZone)} –{' '}
+                  {formatIsoInPracticeZone(payload.eIso, practiceTimeZone)}
+                </>
+              ) : (
+                <>
+                  {formatIsoInPracticeZone(winStartIso, practiceTimeZone)} –{' '}
+                  {formatIsoInPracticeZone(winEndIso, practiceTimeZone)}
+                </>
+              )}
+            </div>
           )}
-          {payload.isNoLocation && (
-            <span style={{ color: '#dc2626', fontWeight: 600 }}>No location</span>
-          )}
-          {payload.showBackToDepotInBlock && payload.backToDepotIso && (
-            <span>
-              <b>Back to depot:</b>{' '}
-              {formatIsoInPracticeZone(payload.backToDepotIso, practiceTimeZone)}
-            </span>
-          )}
+          {(payload.isFixedTime && !payload.isPersonalBlock) ||
+          payload.isPersonalBlock ||
+          payload.isNoLocation ||
+          (payload.showBackToDepotInBlock && payload.backToDepotIso) ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'baseline' }}>
+              {payload.isFixedTime && !payload.isPersonalBlock && (
+                <span style={{ color: '#dc2626', fontWeight: 600 }}>FIXED TIME</span>
+              )}
+              {payload.isPersonalBlock && (
+                <span style={{ color: '#6b7280', fontWeight: 600 }}>
+                  {payload.client || 'Block'}
+                </span>
+              )}
+              {payload.isNoLocation && (
+                <span style={{ color: '#dc2626', fontWeight: 600 }}>No location</span>
+              )}
+              {payload.showBackToDepotInBlock && payload.backToDepotIso && (
+                <span>
+                  <b>Back to depot:</b>{' '}
+                  {formatIsoInPracticeZone(payload.backToDepotIso, practiceTimeZone)}
+                </span>
+              )}
+            </div>
+          ) : null}
+          {!showSecondRow ? null : null}
         </div>
 
-        {showSecondRow && (
+        {hasPatients && (
           <div
             style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: 10,
-              alignItems: 'baseline',
-              marginBottom: 4,
-              fontSize: 13,
-              color: '#334155',
+              flex: '1 1 70%',
+              borderLeft: '1px solid #e5e7eb',
+              paddingLeft: 14,
+              minWidth: 0,
             }}
           >
-            {showArrive && (
-              <span>
-                <b>Arrive/Leave:</b>{' '}
-                {payload.etaIso ? formatIsoInPracticeZone(payload.etaIso, practiceTimeZone) : '—'}
-                {' – '}
-                {payload.etdIso ? formatIsoInPracticeZone(payload.etdIso, practiceTimeZone) : '—'}
-              </span>
-            )}
-            {showWindow && (
-              <span>
-                <b>Window of arrival:</b>{' '}
-                {payload.isFixedTime ? (
-                  <>
-                    {formatIsoInPracticeZone(payload.sIso, practiceTimeZone)} –{' '}
-                    {formatIsoInPracticeZone(payload.eIso, practiceTimeZone)}
-                  </>
-                ) : (
-                  <>
-                    {formatIsoInPracticeZone(winStartIso, practiceTimeZone)} –{' '}
-                    {formatIsoInPracticeZone(winEndIso, practiceTimeZone)}
-                  </>
-                )}
-              </span>
-            )}
-          </div>
-        )}
-
-        {!!payload.patients?.length && (
-          <div style={{ marginTop: 4 }}>
-            <div style={{ fontWeight: 700, marginBottom: 4, color: '#14532d' }}>Patients</div>
-            <ul style={{ margin: 0, paddingLeft: 16 }}>
+            <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
               {payload.patients.map((p, i) => (
-                <li key={i} style={{ marginBottom: 6 }}>
-                  <div
+                <li
+                  key={i}
+                  style={{
+                    marginBottom: i === payload.patients.length - 1 ? 0 : 4,
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'baseline',
+                    gap: 6,
+                    fontSize: 18,
+                    color: '#334155',
+                  }}
+                >
+                  <span
                     style={{
-                      fontWeight: 600,
-                      display: 'flex',
+                      display: 'inline-flex',
                       alignItems: 'center',
-                      flexWrap: 'wrap',
-                      gap: 6,
+                      gap: 4,
+                      fontWeight: 700,
                     }}
                   >
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      {p.isMember && (
-                        <Heart
-                          size={14}
-                          fill="#dc2626"
-                          color="#dc2626"
-                          strokeWidth={1.5}
-                          aria-hidden
-                        />
-                      )}
-                      <span>{p.name}</span>
+                    {p.isMember && (
+                      <Heart
+                        size={16}
+                        fill="#dc2626"
+                        color="#dc2626"
+                        strokeWidth={1.5}
+                        aria-hidden
+                      />
+                    )}
+                    <span>{p.name}</span>
+                  </span>
+                  {p.isMember && p.membershipName?.trim() ? (
+                    <span style={{ color: '#991b1b', fontWeight: 600 }}>
+                      {p.membershipName.trim()}
                     </span>
-                    {p.isMember && p.membershipName?.trim() ? (
-                      <span style={{ color: '#991b1b', fontWeight: 600, fontSize: 13 }}>
-                        {p.membershipName.trim()}
-                      </span>
-                    ) : null}
-                    {p?.alerts ? (
-                      <>
-                        {' '}
-                        — <strong>Alert</strong>:{' '}
-                        <span style={{ color: '#dc2626' }}>{p.alerts}</span>
-                      </>
-                    ) : null}
-                  </div>
-
-                  <div style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>
+                  ) : null}
+                  <span style={{ color: '#475569' }}>
                     {p.type ? (
                       <>
-                        <b>{p.type}</b>
+                        — <b>{p.type}</b>
                         {p.desc ? ` — ${p.desc}` : ''}
                       </>
-                    ) : (
-                      p.desc || '—'
-                    )}
-                  </div>
-                  {(p.status || p.recordStatus) && (
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        alignItems: 'center',
-                        gap: 6,
-                        marginTop: 4,
-                      }}
-                    >
-                      {p.status ? <span style={statusPillStyle(p.status)}>{p.status}</span> : null}
-                      {p.recordStatus ? (
-                        <span style={statusPillStyle(p.recordStatus)}>{p.recordStatus}</span>
-                      ) : null}
-                    </div>
-                  )}
+                    ) : p.desc ? (
+                      <>— {p.desc}</>
+                    ) : null}
+                  </span>
+                  {p?.alerts ? (
+                    <span style={{ color: '#dc2626' }}>
+                      — <strong>Alert</strong>: {p.alerts}
+                    </span>
+                  ) : null}
+                  {p.status ? <span style={statusPillStyle(p.status)}>{p.status}</span> : null}
+                  {p.recordStatus ? (
+                    <span style={statusPillStyle(p.recordStatus)}>{p.recordStatus}</span>
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -360,19 +366,21 @@ export function DoctorDayVisualPdfDocument({
   return (
     <div
       style={{
-        width: 780,
-        padding: 20,
+        width: 1240,
+        padding: 22,
         fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
         background: '#fff',
         color: '#111827',
         boxSizing: 'border-box',
+        fontSize: 22,
+        lineHeight: 1.3,
       }}
     >
-      <h1 style={{ margin: '0 0 6px', fontSize: 22, fontWeight: 800 }}>My Day — Visual</h1>
-      <p style={{ margin: '0 0 6px', fontSize: 14, color: '#64748b' }}>
+      <h1 style={{ margin: '0 0 4px', fontSize: 32, fontWeight: 800 }}>My Day — Visual</h1>
+      <p style={{ margin: '0 0 4px', fontSize: 20, color: '#64748b' }}>
         {doctorName} · {dateLabel}
       </p>
-      <p style={{ margin: '0 0 14px', fontSize: 13, color: '#64748b' }}>
+      <p style={{ margin: '0 0 10px', fontSize: 18, color: '#64748b' }}>
         {showByDriveTime
           ? 'Blocks are positioned by projected ETA/ETD (drive time).'
           : 'Blocks are positioned by appointment start/end time.'}
@@ -381,14 +389,18 @@ export function DoctorDayVisualPdfDocument({
       <div
         style={{
           border: '1px solid #e5e7eb',
-          borderRadius: 10,
-          padding: '12px 14px',
-          marginBottom: 16,
+          borderRadius: 8,
+          padding: '6px 12px',
+          marginBottom: 8,
           background: '#fafafa',
+          display: 'flex',
+          alignItems: 'baseline',
+          flexWrap: 'wrap',
+          gap: 14,
         }}
       >
-        <h2 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 700 }}>Day Metrics</h2>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 13, color: '#475569' }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Day Metrics</h2>
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 18, color: '#475569' }}>
           <span>
             <strong>Points:</strong> {stats.points}
           </span>
@@ -415,27 +427,24 @@ export function DoctorDayVisualPdfDocument({
         </div>
       </div>
 
-      <h2 style={{ margin: '0 0 10px', fontSize: 15, fontWeight: 700 }}>Schedule</h2>
       <div
-        style={{ border: '1px solid #e5e7eb', borderRadius: 12, padding: 14, background: '#fff' }}
+        style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 10, background: '#fff' }}
       >
         {rows.map((row, i) => {
           if (row.rowType === 'segment') {
             const { segment } = row;
-            const h = Math.max(22, Math.min(56, 14 + segment.mins * 1.2));
             const isDrive = segment.kind !== 'buffer';
             return (
               <div
                 key={`seg-${i}-${segment.title.slice(0, 24)}`}
                 style={{
-                  marginBottom: 8,
-                  borderRadius: 8,
-                  minHeight: h,
+                  marginBottom: 4,
+                  borderRadius: 6,
                   background: isDrive ? DRIVE_FILL : BUFFER_FILL,
                   border: isDrive ? undefined : BUFFER_BORDER,
                   boxSizing: 'border-box',
-                  padding: '8px 10px',
-                  fontSize: 12,
+                  padding: '4px 10px',
+                  fontSize: 16,
                   color: '#475569',
                   fontWeight: 600,
                 }}
