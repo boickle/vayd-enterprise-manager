@@ -2619,7 +2619,7 @@ export default function DoctorDayVisual({
     host.setAttribute('data-myday-visual-pdf', '1');
     // html2canvas does not reliably paint near-zero opacity or unlaid-out hosts; keep off-screen but fully opaque.
     host.style.cssText =
-      'position:fixed;left:-12000px;top:0;width:820px;opacity:1;pointer-events:none;z-index:-1;background:#fff;';
+      'position:fixed;left:-16000px;top:0;width:1240px;opacity:1;pointer-events:none;z-index:-1;background:#fff;';
     document.body.appendChild(host);
     const root = createRoot(host);
     try {
@@ -2678,7 +2678,7 @@ export default function DoctorDayVisual({
 
       const captureEl = (host.firstElementChild as HTMLElement | null) ?? host;
       const canvas = await html2canvas(captureEl, {
-        scale: 2,
+        scale: 2.5,
         useCORS: true,
         logging: false,
         backgroundColor: '#ffffff',
@@ -2692,21 +2692,18 @@ export default function DoctorDayVisual({
       const png = canvas.toDataURL('image/png');
       const pageW = 8.5;
       const pageH = 11;
-      const margin = 0.35;
+      const margin = 0.15;
       const maxW = pageW - 2 * margin;
       const maxH = pageH - 2 * margin;
       const imgAspect = canvas.width / canvas.height;
-      let dispW = maxW;
-      let dispH = dispW / imgAspect;
-      if (dispH > maxH) {
-        dispH = maxH;
-        dispW = dispH * imgAspect;
-      }
-      const x = margin + (maxW - dispW) / 2;
-      const y = margin + (maxH - dispH) / 2;
+      const dispW = maxW;
+      const dispH = dispW / imgAspect;
 
       const pdf = new jsPDF('portrait', 'in', 'letter');
-      pdf.addImage(png, 'PNG', x, y, dispW, dispH);
+      for (let yOffset = 0; yOffset < dispH; yOffset += maxH) {
+        if (yOffset > 0) pdf.addPage();
+        pdf.addImage(png, 'PNG', margin, margin - yOffset, dispW, dispH);
+      }
 
       const safeName = doctorName.replace(/\s+/g, '_').replace(/[^\w.-]+/g, '');
       pdf.save(`MyDay_Visual_${safeName}_${date}.pdf`);
