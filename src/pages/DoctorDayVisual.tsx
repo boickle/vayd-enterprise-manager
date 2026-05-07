@@ -2677,32 +2677,59 @@ export default function DoctorDayVisual({
       await new Promise<void>((r) => setTimeout(r, 80));
 
       const captureEl = (host.firstElementChild as HTMLElement | null) ?? host;
-      const canvas = await html2canvas(captureEl, {
-        scale: 2.5,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-      });
+      const headerEl = captureEl.querySelector<HTMLElement>('[data-myday-pdf-header]');
+      const rowEls = Array.from(
+        captureEl.querySelectorAll<HTMLElement>('[data-myday-pdf-row]')
+      );
 
-      if (!canvas.width || !canvas.height) {
-        console.error('My Day PDF: capture canvas has zero size');
+      const captureScale = 2.5;
+      const renderToCanvas = (el: HTMLElement) =>
+        html2canvas(el, {
+          scale: captureScale,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#ffffff',
+        });
+
+      const sections: Array<{ canvas: HTMLCanvasElement; gapAfter: number }> = [];
+      if (headerEl) {
+        sections.push({ canvas: await renderToCanvas(headerEl), gapAfter: 0.06 });
+      }
+      for (const el of rowEls) {
+        sections.push({ canvas: await renderToCanvas(el), gapAfter: 0.04 });
+      }
+
+      if (sections.length === 0) {
+        console.error('My Day PDF: nothing to render');
         return;
       }
 
-      const png = canvas.toDataURL('image/png');
       const pageW = 8.5;
       const pageH = 11;
-      const margin = 0.15;
+      const margin = 0.25;
       const maxW = pageW - 2 * margin;
       const maxH = pageH - 2 * margin;
-      const imgAspect = canvas.width / canvas.height;
-      const dispW = maxW;
-      const dispH = dispW / imgAspect;
+      // Use the widest section to anchor inches-per-pixel; all sections share the same DOM width.
+      const refWidthPx = sections[0].canvas.width;
+      const inchesPerPx = maxW / refWidthPx;
 
       const pdf = new jsPDF('portrait', 'in', 'letter');
-      for (let yOffset = 0; yOffset < dispH; yOffset += maxH) {
-        if (yOffset > 0) pdf.addPage();
-        pdf.addImage(png, 'PNG', margin, margin - yOffset, dispW, dispH);
+      let y = margin;
+      let firstOnPage = true;
+      for (let i = 0; i < sections.length; i++) {
+        const { canvas: c, gapAfter } = sections[i];
+        const dispW = c.width * inchesPerPx;
+        const dispH = c.height * inchesPerPx;
+        const fits = y + dispH <= margin + maxH + 1e-6;
+        if (!firstOnPage && !fits) {
+          pdf.addPage();
+          y = margin;
+          firstOnPage = true;
+        }
+        const png = c.toDataURL('image/png');
+        pdf.addImage(png, 'PNG', margin, y, dispW, dispH);
+        y += dispH + gapAfter;
+        firstOnPage = false;
       }
 
       const safeName = doctorName.replace(/\s+/g, '_').replace(/[^\w.-]+/g, '');

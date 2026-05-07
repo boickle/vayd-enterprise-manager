@@ -141,6 +141,7 @@ function AppointmentPdfBlock({
 
   return (
     <div
+      data-myday-pdf-row="1"
       style={{
         marginBottom: 6,
         border: `1px solid ${borderColor}`,
@@ -376,60 +377,62 @@ export function DoctorDayVisualPdfDocument({
         lineHeight: 1.3,
       }}
     >
-      <h1 style={{ margin: '0 0 4px', fontSize: 32, fontWeight: 800 }}>My Day — Visual</h1>
-      <p style={{ margin: '0 0 4px', fontSize: 20, color: '#64748b' }}>
-        {doctorName} · {dateLabel}
-      </p>
-      <p style={{ margin: '0 0 10px', fontSize: 18, color: '#64748b' }}>
-        {showByDriveTime
-          ? 'Blocks are positioned by projected ETA/ETD (drive time).'
-          : 'Blocks are positioned by appointment start/end time.'}
-      </p>
+      <div data-myday-pdf-header="1">
+        <h1 style={{ margin: '0 0 4px', fontSize: 32, fontWeight: 800 }}>My Day — Visual</h1>
+        <p style={{ margin: '0 0 4px', fontSize: 20, color: '#64748b' }}>
+          {doctorName} · {dateLabel}
+        </p>
+        <p style={{ margin: '0 0 10px', fontSize: 18, color: '#64748b' }}>
+          {showByDriveTime
+            ? 'Blocks are positioned by projected ETA/ETD (drive time).'
+            : 'Blocks are positioned by appointment start/end time.'}
+        </p>
 
-      <div
-        style={{
-          border: '1px solid #e5e7eb',
-          borderRadius: 8,
-          padding: '6px 12px',
-          marginBottom: 8,
-          background: '#fafafa',
-          display: 'flex',
-          alignItems: 'baseline',
-          flexWrap: 'wrap',
-          gap: 14,
-        }}
-      >
-        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Day Metrics</h2>
-        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 18, color: '#475569' }}>
-          <span>
-            <strong>Points:</strong> {stats.points}
-          </span>
-          <span style={{ color: driveColor }}>
-            <strong>Drive:</strong> {formatHM(stats.driveMin)}
-          </span>
-          <span>
-            <strong>Households:</strong> {formatHM(stats.householdMin)}
-          </span>
-          <span style={{ color: hdColor }}>
-            <strong>H:D ratio:</strong> {stats.ratioText}
-          </span>
-          <span style={{ color: whiteColor }}>
-            <strong>Whitespace:</strong> {formatHM(stats.whiteMin)}
-            {stats.shiftMin > 0 && <> ({stats.whitePctText})</>}
-          </span>
-          <span style={{ color: '#64748b' }}>Shift: {formatHM(stats.shiftMin)}</span>
-          <span>
-            <strong>Back to depot:</strong>{' '}
-            {stats.backToDepotIso
-              ? formatIsoInPracticeZone(stats.backToDepotIso, practiceTimeZone)
-              : '—'}
-          </span>
+        <div
+          style={{
+            border: '1px solid #e5e7eb',
+            borderRadius: 8,
+            padding: '6px 12px',
+            marginBottom: 8,
+            background: '#fafafa',
+            display: 'flex',
+            alignItems: 'baseline',
+            flexWrap: 'wrap',
+            gap: 14,
+          }}
+        >
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Day Metrics</h2>
+          <div
+            style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 18, color: '#475569' }}
+          >
+            <span>
+              <strong>Points:</strong> {stats.points}
+            </span>
+            <span style={{ color: driveColor }}>
+              <strong>Drive:</strong> {formatHM(stats.driveMin)}
+            </span>
+            <span>
+              <strong>Households:</strong> {formatHM(stats.householdMin)}
+            </span>
+            <span style={{ color: hdColor }}>
+              <strong>H:D ratio:</strong> {stats.ratioText}
+            </span>
+            <span style={{ color: whiteColor }}>
+              <strong>Whitespace:</strong> {formatHM(stats.whiteMin)}
+              {stats.shiftMin > 0 && <> ({stats.whitePctText})</>}
+            </span>
+            <span style={{ color: '#64748b' }}>Shift: {formatHM(stats.shiftMin)}</span>
+            <span>
+              <strong>Back to depot:</strong>{' '}
+              {stats.backToDepotIso
+                ? formatIsoInPracticeZone(stats.backToDepotIso, practiceTimeZone)
+                : '—'}
+            </span>
+          </div>
         </div>
       </div>
 
-      <div
-        style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 10, background: '#fff' }}
-      >
+      <div data-myday-pdf-schedule="1">
         {rows.map((row, i) => {
           if (row.rowType === 'segment') {
             const { segment } = row;
@@ -437,6 +440,7 @@ export function DoctorDayVisualPdfDocument({
             return (
               <div
                 key={`seg-${i}-${segment.title.slice(0, 24)}`}
+                data-myday-pdf-row="1"
                 style={{
                   marginBottom: 4,
                   borderRadius: 6,
