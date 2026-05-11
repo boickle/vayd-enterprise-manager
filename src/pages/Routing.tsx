@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from 'react';
 import { fetchDoctorMonth, type MiniZone } from '../api/appointments';
 import { http } from '../api/http';
@@ -52,8 +53,6 @@ type RouteRequest = {
     lon?: number;
     address?: string;
     clientId?: string;
-    /** Set from routing response zone names for Address verified line. */
-    addressZoneShort?: string;
   };
 };
 
@@ -90,17 +89,23 @@ type ScoutRoutingGapRow = {
   /** Slim pass: usually **0** (shape-stable). */
   scoutPackDayReserveN7?: number | null;
   /**
-   * Slim pass: treat as **equal to N9** only (`scoutMultiAnchorDayN9`). N1–N8 are not applied on this scorer pass.
+   * Zone-aware horizon add-on total from the server: **`scoutMultiAnchorDayN9` + `scoutPreservedEmptyDayPenalty`**
+   * (plus any future horizon terms the API adds). **N6–N8** stay shape-stable / usually 0. Use total score for ranking;
+   * this field is transparency only—do not re-sum client-side for preserve logic.
    */
   scoutZoneAwareScoreDelta?: number | null;
   /** Slim pass: usually **0** (shape-stable). Heavier scorer used N8. */
   scoutZoneHourPackN8?: number | null;
   /**
-   * **Slim pass ranking nudge:** penalizes **non-local** slots on days that already have **two+** existing legs
-   * classified **anchor** (same minute thresholds as `scoutZoneClass`). **0** for local or when the pattern
-   * does not apply. Full penalty when two+ anchor legs exist even in one zone.
+   * **N9 only:** cross–anchor-zone penalty for **non-local** slots on days with **two+** anchor legs (same thresholds
+   * as `scoutZoneClass`). **0** when not applied.
    */
   scoutMultiAnchorDayN9?: number | null;
+  /**
+   * Additive hit when this option **consumes a preserved empty anchor-seed day** (server-only; ISO week + panel %,
+   * depot, centroids, OSRM). **0** when not applied—**do not recompute in the UI.**
+   */
+  scoutPreservedEmptyDayPenalty?: number | null;
 };
 
 type ScoutZoneAwareDiagFields = Pick<
@@ -110,6 +115,7 @@ type ScoutZoneAwareDiagFields = Pick<
   | 'scoutPackDayReserveN7'
   | 'scoutZoneHourPackN8'
   | 'scoutMultiAnchorDayN9'
+  | 'scoutPreservedEmptyDayPenalty'
 >;
 
 type Winner = {
@@ -191,12 +197,14 @@ type Winner = {
   scoutWeekPanelBalanceN6?: number | null;
   /** Slim pass: usually 0; see handoff. */
   scoutPackDayReserveN7?: number | null;
-  /** Slim pass: equals N9 contribution only; see handoff. */
+  /** Zone-aware horizon total: N9 + `scoutPreservedEmptyDayPenalty` (+ any future API terms). See handoff. */
   scoutZoneAwareScoreDelta?: number | null;
   /** Slim pass: usually 0; see handoff. */
   scoutZoneHourPackN8?: number | null;
-  /** Slim pass: primary ranking nudge vs N6–N8; see handoff. */
+  /** N9 cross–anchor-zone penalty only; see handoff. */
   scoutMultiAnchorDayN9?: number | null;
+  /** Preserved empty anchor-seed day consumption penalty; 0 when not applied. Server-only—do not recompute. */
+  scoutPreservedEmptyDayPenalty?: number | null;
 };
 
 type UnifiedOption = Winner & {
@@ -222,6 +230,20 @@ type RoutingLearningStat = {
 type RoutingLearning = {
   provider?: string;
   stats?: RoutingLearningStat[];
+};
+
+/** One doctor × ISO week from fleet routing v2 `scoutPreservedEmptyDayWeeks` (preserve pass scope). */
+type ScoutPreservedEmptyDayWeek = {
+  doctorId?: string | null;
+  isoWeekMonday?: string | null;
+  timeZone?: string | null;
+  workingDaysInWeek?: number | null;
+  targetPreservedEmpties?: number | null;
+  seedAnchorZoneCount?: number | null;
+  emptyWorkingIsoDates?: string[] | null;
+  seedAnchorZones?: Array<{ zoneId?: string | number | null; zoneName?: string | null }> | null;
+  seedAnchorZonesVisitedThisWeek?: Array<{ zoneId?: string | number | null; zoneName?: string | null }> | null;
+  anchorZonesStillNeedingPreservation?: Array<{ zoneId?: string | number | null; zoneName?: string | null }> | null;
 };
 
 type Result = {
@@ -256,6 +278,11 @@ type Result = {
   }>;
   routingRequestId?: string;
   learning?: RoutingLearning;
+  /**
+   * Per doctor × ISO week for preserved empty-day scoring (`SCOUT_EMPTY_DAY_POLICY=zone_aware`, with candidates).
+   * Omitted for legacy, no candidates, or when zone-aware preserve did not run.
+   */
+  scoutPreservedEmptyDayWeeks?: ScoutPreservedEmptyDayWeek[] | null;
 };
 
 type Client = {
@@ -422,6 +449,19 @@ const SCOUT_BADGE_CHIP: CSSProperties = {
   border: '1px solid #c7d2fe',
 };
 
+/** Preserved empty-day penalty chip (distinct from N9 indigo). */
+const SCOUT_PRESERVED_DAY_CHIP: CSSProperties = {
+  display: 'inline-block',
+  fontSize: 11,
+  fontWeight: 700,
+  letterSpacing: 0.2,
+  padding: '3px 8px',
+  borderRadius: 999,
+  background: '#fef3c7',
+  color: '#713f12',
+  border: '1px solid #fcd34d',
+};
+
 /** Purple “Zone-aware” pill (Results header + consistency). */
 const SCOUT_ZONE_AWARE_BADGE_STYLE: CSSProperties = {
   display: 'inline-block',
@@ -492,55 +532,64 @@ function routingPolygonZoneDisplayLine(carrier: {
   return `Zone ${raw}`;
 }
 
-/** Compact label for “Address verified (…)”, e.g. `3W-Lewiston` from zone names. */
-function routingAddressZoneParenInner(carrier: {
-  effectiveZone?: MiniZone;
-  clientZone?: MiniZone;
-}): string | null {
-  const raw =
-    (carrier.effectiveZone?.name != null && String(carrier.effectiveZone.name).trim()) ||
-    (carrier.clientZone?.name != null && String(carrier.clientZone.name).trim()) ||
-    '';
-  if (!raw) return null;
-  let s = raw.replace(/^zone\s+/i, '').trim();
-  s = s.replace(/\s*\(\s*/g, '-').replace(/\s*\)\s*/g, '').replace(/\s+/g, '-');
-  return s || null;
+/** Calendar Monday (YYYY-MM-DD) of the ISO week containing `dateIso` (date part only). */
+function calendarIsoWeekMondayYmd(dateIso: string): string {
+  const d = DateTime.fromISO(dateIso.slice(0, 10));
+  if (!d.isValid) return '';
+  const mon = d.minus({ days: d.weekday - 1 });
+  return mon.toISODate() ?? '';
 }
 
-function routingAddressZoneShortFromResult(r: Result): string | null {
-  let z =
-    routingAddressZoneParenInner({
-      effectiveZone: r.effectiveZone,
-      clientZone: r.clientZone,
-    }) ?? null;
-  if (!z && r.winner) {
-    z = routingAddressZoneParenInner({
-      effectiveZone: r.winner.effectiveZone,
-      clientZone: r.winner.clientZone,
-    });
+function scoutPreservedWeekEntryForCandidate(
+  weeks: ScoutPreservedEmptyDayWeek[] | null | undefined,
+  doctorPimsId: string,
+  candidateDateYmd: string
+): ScoutPreservedEmptyDayWeek | null {
+  if (!Array.isArray(weeks) || weeks.length === 0) return null;
+  const weekMon = calendarIsoWeekMondayYmd(candidateDateYmd);
+  const doc = String(doctorPimsId ?? '').trim();
+  for (const w of weeks) {
+    const wMon = String(w.isoWeekMonday ?? '').slice(0, 10);
+    const wDoc = String(w.doctorId ?? '').trim();
+    if (wDoc === doc && wMon === weekMon) return w;
   }
-  if (!z && Array.isArray(r.alternates)) {
-    for (const alt of r.alternates) {
-      z = routingAddressZoneParenInner({
-        effectiveZone: alt.effectiveZone,
-        clientZone: alt.clientZone,
-      });
-      if (z) break;
-    }
+  return null;
+}
+
+/** Muted note listing `anchorZonesStillNeedingPreservation` when the preserved-day chip applies. */
+function scoutPreservedAnchorZonesStillNote(
+  weeks: ScoutPreservedEmptyDayWeek[] | null | undefined,
+  row: {
+    scoutPreservedEmptyDayPenalty?: number | null;
+    doctorPimsId?: string;
+    date?: string;
   }
-  if (!z && Array.isArray(r.doctors)) {
-    for (const d of r.doctors) {
-      for (const row of d.top || []) {
-        z = routingAddressZoneParenInner({
-          effectiveZone: row.effectiveZone,
-          clientZone: row.clientZone,
-        });
-        if (z) break;
-      }
-      if (z) break;
-    }
-  }
-  return z;
+): ReactNode {
+  const p = row.scoutPreservedEmptyDayPenalty;
+  if (typeof p !== 'number' || !Number.isFinite(p) || p <= 0) return null;
+  const entry = scoutPreservedWeekEntryForCandidate(
+    weeks,
+    row.doctorPimsId ?? '',
+    row.date ?? ''
+  );
+  const names =
+    entry?.anchorZonesStillNeedingPreservation
+      ?.map((z) => String(z.zoneName ?? '').trim())
+      .filter(Boolean) ?? [];
+  if (!names.length) return null;
+  return (
+    <div
+      className="muted"
+      style={{ fontSize: 11, marginTop: -4, marginBottom: 8, lineHeight: 1.35 }}
+    >
+      <strong>
+        This uses one of the remaining flexible days Scout is trying to preserve for other far-away
+        zones this week.
+      </strong>{' '}
+      <strong>Zone(s) not yet represented this week:</strong>{' '}
+      {names.join(', ')}
+    </div>
+  );
 }
 
 function scoutN9CrossesAnchorZones(n: number): boolean {
@@ -554,6 +603,31 @@ function scoutAnchorRoutingCrossingCopy(n9: number): { label: string; tooltip: s
     label: 'Adds Another Anchor Zone',
     tooltip: `This option adds another anchor reach on a day that already has two or more long (anchor) drives from depot before this visit. Routing adjustment (N9): ${val}. Lower total score is still better.`,
   };
+}
+
+function scoutFmtScoreDelta(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
+
+/** Muted line + tooltip for `scoutZoneAwareScoreDelta` (total); breakdown when N9 / preserved fields are present. */
+function scoutZoneAwareDeltaUi(row: {
+  scoutZoneAwareScoreDelta?: number | null;
+  scoutMultiAnchorDayN9?: number | null;
+  scoutPreservedEmptyDayPenalty?: number | null;
+}): { value: string; title: string } | null {
+  const d = row.scoutZoneAwareScoreDelta;
+  if (typeof d !== 'number' || !Number.isFinite(d)) return null;
+  const n9 = row.scoutMultiAnchorDayN9;
+  const pr = row.scoutPreservedEmptyDayPenalty;
+  const n9Ok = typeof n9 === 'number' && Number.isFinite(n9);
+  const prOk = typeof pr === 'number' && Number.isFinite(pr) && pr > 0;
+  const parts: string[] = [
+    `Total zone-aware score delta (from server): ${scoutFmtScoreDelta(d)}. Lower total score is still better.`,
+  ];
+  if (n9Ok) parts.push(`Includes N9 (multi-anchor): ${scoutFmtScoreDelta(n9)}.`);
+  if (prOk) parts.push(`Includes preserved empty-day penalty: ${scoutFmtScoreDelta(pr)}.`);
+  parts.push('Do not recompute preserve logic in the UI; panel context is GET /patients/provider/:id/zone-percentages.');
+  return { value: scoutFmtScoreDelta(d), title: parts.join(' ') };
 }
 
 function scoutZoneAwareDiagHasContent(row: ScoutZoneAwareDiagFields): boolean {
@@ -574,7 +648,11 @@ function scoutZoneAwareDiagHasContent(row: ScoutZoneAwareDiagFields): boolean {
     typeof row.scoutMultiAnchorDayN9 === 'number' &&
     Number.isFinite(row.scoutMultiAnchorDayN9) &&
     scoutN9CrossesAnchorZones(row.scoutMultiAnchorDayN9);
-  return n6 || n7 || n8 || n9Crossing;
+  const preserved =
+    typeof row.scoutPreservedEmptyDayPenalty === 'number' &&
+    Number.isFinite(row.scoutPreservedEmptyDayPenalty) &&
+    row.scoutPreservedEmptyDayPenalty > 0;
+  return n6 || n7 || n8 || n9Crossing || preserved;
 }
 
 function ScoutZoneAwareDiagnosticsRow({
@@ -605,7 +683,11 @@ function ScoutZoneAwareDiagnosticsRow({
   const n9Crossing =
     typeof n9Val === 'number' && Number.isFinite(n9Val) && scoutN9CrossesAnchorZones(n9Val);
   const n9Copy = n9Crossing ? scoutAnchorRoutingCrossingCopy(n9Val) : null;
-  if (!zc && !n6Show && !n7Show && !n8Show && !n9Crossing) return null;
+  const preservedShow =
+    typeof row.scoutPreservedEmptyDayPenalty === 'number' &&
+    Number.isFinite(row.scoutPreservedEmptyDayPenalty) &&
+    row.scoutPreservedEmptyDayPenalty > 0;
+  if (!zc && !n6Show && !n7Show && !n8Show && !n9Crossing && !preservedShow) return null;
   const inner = (
     <>
       {zc ? (
@@ -636,6 +718,14 @@ function ScoutZoneAwareDiagnosticsRow({
       {n9Copy ? (
         <span style={SCOUT_BADGE_CHIP} title={n9Copy.tooltip}>
           {n9Copy.label}
+        </span>
+      ) : null}
+      {preservedShow ? (
+        <span
+          style={SCOUT_PRESERVED_DAY_CHIP}
+          title="Additive score from consuming a preserved empty anchor-seed day (server). Panel mix: GET /patients/provider/:id/zone-percentages. Do not recompute in the client."
+        >
+          Uses preserved empty day
         </span>
       ) : null}
     </>
@@ -684,6 +774,9 @@ const SCOUT_LIAISON_LABEL_ID_COPY: Record<string, string> = {
   fits_zone_pack_day: 'Fits a day already concentrated in this zone (panel time budget)',
   outside_zones_drive_fit: 'Address not in a zone polygon',
   earliest_available: 'Earliest available (fallback)',
+  consumes_preserved_anchor_seed_day: 'Consumes a preserved empty anchor-seed day',
+  breaks_empty_day_integrity: 'Breaks empty-day integrity (preserve rule)',
+  low_cluster_value_preserved_day: 'Low cluster value on a preserved day',
 };
 
 /** Extra tooltip lines for liaison ids (product meaning). */
@@ -692,7 +785,30 @@ const SCOUT_LIAISON_LABEL_LONG_TOOLTIP: Record<string, string> = {
     'The day already tends to have longer depot→stop legs after adding this visit, so we pack the farther run onto that day instead of burning a “lighter” day—useful when a slot wins over another with similar drive.',
   fits_zone_pack_day:
     'N8: avoid diluting a day that is already mostly one zone’s booked hours when the week’s hours × panel say that zone deserves that time—soft rule; whitespace on the slot can reduce the penalty.',
+  consumes_preserved_anchor_seed_day:
+    'This placement uses a day the router treats as a preserved empty “anchor seed” for the week; the server adds a penalty so panel / cluster goals stay honest.',
+  breaks_empty_day_integrity:
+    'Related preserve rule: scheduling here would break the intended empty-day pattern the server is protecting.',
+  low_cluster_value_preserved_day:
+    'Related preserve rule: this day had low cluster value under the preserved-empty-day policy.',
 };
+
+/** When true, omit Client Liaison Note — preserve is already shown as the amber chip (+ tooltips on Δ / chip). */
+const SCOUT_PRESERVE_LIAISON_ID_SET = new Set<string>([
+  'consumes_preserved_anchor_seed_day',
+  'breaks_empty_day_integrity',
+  'low_cluster_value_preserved_day',
+]);
+
+function scoutRoutingHideLiaisonCopyForPreserve(row: {
+  scoutPreservedEmptyDayPenalty?: number | null;
+  scoutLiaisonLabelIds?: string[] | null;
+}): boolean {
+  const p = row.scoutPreservedEmptyDayPenalty;
+  if (typeof p === 'number' && Number.isFinite(p) && p > 0) return true;
+  const ids = row.scoutLiaisonLabelIds ?? [];
+  return ids.some((id) => SCOUT_PRESERVE_LIAISON_ID_SET.has(String(id).trim().toLowerCase()));
+}
 
 function scoutLiaisonIdHint(id: string): string | null {
   const k = id.trim().toLowerCase();
@@ -715,7 +831,7 @@ function scoutLiaisonIdsTooltip(ids: string[]): string {
     if (hint) parts.push(`${id.trim()} → ${hint}${long ? ` — ${long}` : ''}`);
     else
       parts.push(
-        `${id.trim()} (reserved / legacy id on slim pass—use scoutLiaisonPrimaryLabel / scoutLiaisonLabels from API)`
+        `${id.trim()} (no local hint—use scoutLiaisonPrimaryLabel / scoutLiaisonLabels from API)`
       );
   }
   return parts.join(' · ');
@@ -1517,7 +1633,6 @@ export default function Routing() {
             address: (value as string) ?? '',
             lat: undefined,
             lon: undefined,
-            addressZoneShort: undefined,
           },
         };
       }
@@ -1538,7 +1653,6 @@ export default function Routing() {
         address: addr,
         lat: Number.isFinite(latNum as number) ? (latNum as number) : undefined,
         lon: Number.isFinite(lonNum as number) ? (lonNum as number) : undefined,
-        addressZoneShort: undefined,
       },
     }));
     setAddressError(null);
@@ -1572,10 +1686,6 @@ export default function Routing() {
   async function submitRoutingRequest(endpoint: string, doctorIdsArray?: string[]) {
     setError(null);
     setResult(null);
-    setForm((f) => ({
-      ...f,
-      newAppt: { ...f.newAppt, addressZoneShort: undefined },
-    }));
     setAddressError(null);
     setFeedbackSubmittingKey(null);
     setFeedbackSuccessKey(null);
@@ -1612,7 +1722,6 @@ export default function Routing() {
           lat: chk.result.lat,
           lon: chk.result.lon,
           address: chk.result.formattedAddress || addr,
-          addressZoneShort: undefined,
         };
         // Persist so preview/modal have coordinates.
         setForm((f) => ({ ...f, newAppt: newApptPayload }));
@@ -1705,14 +1814,6 @@ export default function Routing() {
         data as RoutingV2SlotSearchResult
       ) as Result;
       setResult(normalized);
-      const zoneShort = routingAddressZoneShortFromResult(normalized);
-      setForm((f) => ({
-        ...f,
-        newAppt: {
-          ...f.newAppt,
-          ...(zoneShort ? { addressZoneShort: zoneShort } : { addressZoneShort: undefined }),
-        },
-      }));
     } catch (err: unknown) {
       setError(extractErrorMessage(err));
     } finally {
@@ -2436,9 +2537,6 @@ export default function Routing() {
                 (form.newAppt.address ?? '').trim() && (
                   <div className="muted" style={{ marginTop: 6 }}>
                     ✓ Address verified
-                    {form.newAppt.addressZoneShort
-                      ? ` (${form.newAppt.addressZoneShort})`
-                      : ''}
                   </div>
                 )
               )}
@@ -2827,6 +2925,7 @@ export default function Routing() {
                     (candidateScoutRow.scoutLiaisonLabels ?? []).some(Boolean) ||
                     (candidateScoutRow.scoutLiaisonLabelIds ?? []).some(Boolean));
                 const metricsRow = scoutDayMetricsForCandidate(opt);
+                const zoneAwareDeltaLine = showScoutUi ? scoutZoneAwareDeltaUi(opt) : null;
 
                 return (
                   <div
@@ -2960,7 +3059,10 @@ export default function Routing() {
                             variant="inline"
                           />
                         </div>
-                        {(rootScoutAware || candScoutAware) && candidateScoutCopy ? (
+                        {scoutPreservedAnchorZonesStillNote(result?.scoutPreservedEmptyDayWeeks, opt)}
+                        {(rootScoutAware || candScoutAware) &&
+                        candidateScoutCopy &&
+                        !scoutRoutingHideLiaisonCopyForPreserve(opt) ? (
                           <ScoutLiaisonCopyBlock row={candidateScoutRow} />
                         ) : null}
                         {scoutGaps.map((gap, gi) => {
@@ -2979,6 +3081,7 @@ export default function Routing() {
                             typeof gap.dayPatientCount === 'number';
                           const gapDiag = scoutZoneAwareDiagHasContent(gap);
                           if (!gapCopy && !gapStats && !gapDiag) return null;
+                          const gapDeltaLine = scoutZoneAwareDeltaUi(gap);
                           return (
                             <div key={`scout-gap-${gi}`} style={{ marginTop: 8 }}>
                               <div
@@ -2999,7 +3102,23 @@ export default function Routing() {
                                   variant="inline"
                                 />
                               </div>
-                              {gapCopy ? <ScoutLiaisonCopyBlock row={gap} /> : null}
+                              {scoutPreservedAnchorZonesStillNote(result?.scoutPreservedEmptyDayWeeks, {
+                                scoutPreservedEmptyDayPenalty: gap.scoutPreservedEmptyDayPenalty,
+                                doctorPimsId: opt.doctorPimsId,
+                                date: opt.date,
+                              })}
+                              {gapDeltaLine ? (
+                                <div
+                                  className="muted"
+                                  style={{ fontSize: 11, marginTop: 4, marginBottom: 4 }}
+                                  title={gapDeltaLine.title}
+                                >
+                                  <strong>Zone-aware Δ:</strong> {gapDeltaLine.value}
+                                </div>
+                              ) : null}
+                              {gapCopy && !scoutRoutingHideLiaisonCopyForPreserve(gap) ? (
+                                <ScoutLiaisonCopyBlock row={gap} />
+                              ) : null}
                             </div>
                           );
                         })}
@@ -3042,6 +3161,16 @@ export default function Routing() {
                         color="inherit"
                       />
                     </div>
+
+                    {zoneAwareDeltaLine ? (
+                      <div
+                        className="muted"
+                        style={{ fontSize: 12, marginTop: 4, marginBottom: 4 }}
+                        title={zoneAwareDeltaLine.title}
+                      >
+                        <strong>Zone-aware Δ:</strong> {zoneAwareDeltaLine.value}
+                      </div>
+                    ) : null}
 
                     <div
                       style={{
