@@ -65,6 +65,210 @@
   font-weight: 500;
 }
 
+.scheduler-routing-preview-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid #c084fc;
+  background: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%);
+  color: #581c87;
+}
+
+.scheduler-routing-preview-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.scheduler-routing-preview-banner-meta {
+  font-size: 13px;
+  font-weight: 500;
+  color: #6b21a8;
+}
+
+.scheduler-routing-preview-client {
+  font-weight: 600;
+}
+
+.scheduler-routing-preview-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/** Centered confirm before saving a routing preview appointment (above drive-time overlay). */
+.scheduler-routing-book-backdrop {
+  z-index: 9600;
+}
+
+.scheduler-routing-book-confirm {
+  position: relative;
+  width: 100%;
+  max-width: 460px;
+  margin: auto;
+  background: #fff;
+  border-radius: 14px;
+  padding: 0;
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.28),
+    0 0 0 1px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+}
+
+.scheduler-routing-book-confirm-accent {
+  height: 4px;
+  background: linear-gradient(90deg, #6d28d9 0%, #c084fc 45%, #7c3aed 100%);
+}
+
+.scheduler-routing-book-confirm-title {
+  margin: 0;
+  padding: 22px 24px 10px;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.scheduler-routing-book-confirm-lead {
+  margin: 0 24px 16px;
+  font-size: 15px;
+  line-height: 1.55;
+  color: #475569;
+}
+
+.scheduler-routing-book-confirm-details {
+  margin: 0 24px 16px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.scheduler-routing-book-confirm-details > div {
+  margin: 0;
+}
+
+.scheduler-routing-book-confirm-details dt {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+}
+
+.scheduler-routing-book-confirm-details dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e293b;
+  line-height: 1.35;
+}
+
+.scheduler-routing-book-confirm-footnote {
+  margin: 0 24px 20px;
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.scheduler-routing-book-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 24px 22px;
+  background: linear-gradient(180deg, #fafbfc 0%, #f1f5f9 100%);
+  border-top: 1px solid #e2e8f0;
+}
+
+/** Routing proposal: same chip chrome as `.scheduler-event`; fill/text come from appointment type row (inline). */
+.scheduler-routing-preview-slot {
+  z-index: 22;
+  cursor: default;
+  pointer-events: auto;
+  outline: 2px solid rgba(167, 139, 250, 0.95);
+  outline-offset: 2px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.45),
+    0 4px 20px rgba(124, 58, 237, 0.45);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  box-sizing: border-box;
+}
+
+.scheduler-page--routing-preview-focus .scheduler-routing-preview-slot {
+  outline-width: 3px;
+  outline-color: rgba(196, 181, 253, 0.98);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.65),
+    0 0 24px 6px rgba(167, 139, 250, 0.65),
+    0 10px 32px rgba(91, 33, 182, 0.38);
+}
+
+.scheduler-routing-preview-slot-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-height: 0;
+  flex: 1;
+}
+
+.scheduler-routing-preview-slot-book {
+  align-self: flex-end;
+  margin-top: auto;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 10px;
+  line-height: 1.2;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.scheduler-page--routing-preview-focus .scheduler-day-header {
+  opacity: 0.78;
+}
+
+.scheduler-all-day-unified-outer--routing-preview-focus .scheduler-all-day-span-bar {
+  opacity: 0.58;
+  filter: grayscale(0.32);
+}
+
+.scheduler-day-body--routing-preview-focus .scheduler-event:not(.scheduler-routing-preview-slot) {
+  opacity: 0.72;
+  filter: grayscale(0.28);
+}
+
+/**
+ * Subtle tint behind grid lines / drive stripes only — z-index 0 so timed appointments
+ * (z-index 1+) and the proposed slot render clearly on top.
+ */
+.scheduler-routing-focus-dim {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: rgba(241, 245, 249, 0.42);
+  border-radius: 6px;
+}
+
+.scheduler-page--routing-preview-focus .scheduler-current-time-line {
+  z-index: 24;
+}
+
 .scheduler-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -262,25 +466,6 @@ label.scheduler-drive-toggle:has(input:disabled) {
   border-right: none;
 }
 
-.scheduler-day-header {
-  height: 36px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  border-bottom: 1px solid #e2e8f0;
-  background: #f8fafc;
-  font-size: 12px;
-  font-weight: 600;
-  color: #334155;
-}
-
-.scheduler-day-header span {
-  font-weight: 500;
-  color: #64748b;
-  font-size: 11px;
-}
-
 .scheduler-all-day-unified-outer {
   flex-shrink: 0;
   box-sizing: border-box;
@@ -363,8 +548,23 @@ label.scheduler-drive-toggle:has(input:disabled) {
   border-top: 1px solid #e2e8f0;
 }
 
+/** Today column: current practice-local time (PIMS home / scheduler grid). */
+.scheduler-current-time-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  margin-top: -1px;
+  background: #dc2626;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85);
+  z-index: 4;
+  pointer-events: none;
+}
+
 .scheduler-event {
   position: absolute;
+  z-index: 1;
   border-radius: 4px;
   padding: 2px 4px;
   font-size: 10px;
@@ -375,6 +575,95 @@ label.scheduler-drive-toggle:has(input:disabled) {
   border: 1px solid rgba(0, 0, 0, 0.12);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   color: #0f172a;
+}
+
+.scheduler-day-drive-segment {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.scheduler-day-header {
+  min-height: 96px;
+  height: auto;
+  padding: 6px 4px 8px;
+  box-sizing: border-box;
+  gap: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.scheduler-day-header-date {
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.scheduler-day-header-metrics {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-height: 48px;
+}
+
+.scheduler-day-header-metrics-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 8px;
+  font-size: 10px;
+  color: #475569;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.scheduler-day-header-metrics-placeholder {
+  min-height: 40px;
+}
+
+.scheduler-day-header-actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+}
+
+.scheduler-day-header-btn {
+  font-size: 10px;
+  padding: 4px 8px;
+  white-space: nowrap;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.scheduler-day-header-btn:hover {
+  background: #f8fafc;
+}
+
+.scheduler-tooltip-drive-block {
+  border-top: 1px solid #e2e8f0;
+  margin-top: 6px;
+  padding-top: 6px;
 }
 
 .scheduler-event-time {

@@ -35,8 +35,8 @@ describe('Routing and Schedule Loader', () => {
       cy.loginAs('employee');
 
       // Navigate to routing page
-      cy.visit('/scout/routing');
-      cy.url().should('include', '/scout/routing');
+      cy.visit('/schedule/routing');
+      cy.url().should('include', '/schedule/routing');
 
       // Wait for page to load
       cy.contains('Get Best Route', { timeout: 10000 }).should('be.visible');
@@ -143,8 +143,8 @@ describe('Routing and Schedule Loader', () => {
       cy.loginAs('employee');
 
       // Navigate to schedule loader (under Scheduling Tools)
-      cy.visit('/scout/scheduling-tools/schedule-loader');
-      cy.url().should('include', '/scout/scheduling-tools/schedule-loader');
+      cy.visit('/schedule/scheduling-tools/schedule-loader');
+      cy.url().should('include', '/schedule/scheduling-tools/schedule-loader');
 
       // Wait for page to load
       cy.contains('Schedule Loader', { timeout: 10000 }).should('be.visible');

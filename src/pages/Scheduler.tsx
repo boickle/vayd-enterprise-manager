@@ -2,48 +2,76 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   type MouseEvent,
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { DateTime } from 'luxon';
 import { Heart } from 'lucide-react';
 import {
   deleteAppointment,
   fetchAppointmentsRange,
+  isFlexBlockItem,
   patchAppointment,
 } from '../api/appointments';
-import { createRoomLoaders } from '../api/roomLoader';
+import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { patchPatient } from '../api/patients';
+import { http } from '../api/http';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { fetchAllAppointmentTypes, type AppointmentType } from '../api/appointmentSettings';
-import type { Appointment, Client, Patient } from '../api/roomLoader';
+import { createRoomLoaders, type Appointment, type Client, type Patient } from '../api/roomLoader';
 import {
   computeHoverPopoverPosition,
   rectFromElement,
 } from '../utils/hoverPopoverPosition';
 import { useAuth } from '../auth/useAuth';
 import {
-  fetchSchedulerDriveIsoByAppointmentId,
+  fetchSchedulerDriveContext,
   type DriveIsoPair,
 } from '../utils/schedulerDriveEta';
+import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
+import { colorForDrive } from '../utils/statsFormat';
+import { formatIsoTimeShortInPracticeZone } from '../utils/practiceTimezone';
+import {
+  buildMyWeekDriveSegmentsFromLayout,
+  computeMyWeekDayColumnLayout,
+  dayPoints,
+  dayTotalDriveSeconds,
+  type DayData,
+  type WeekGridMetrics,
+} from './MyWeek';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
-import { SchedulerBookModal, type SchedulerBookSlot } from './SchedulerBookModal';
+import {
+  SchedulerBookModal,
+  extractPatientsFromClientPayload,
+  type SchedulerBookPrefill,
+  type SchedulerBookSlot,
+} from './SchedulerBookModal';
 import {
   SchedulerAppointmentContextMenu,
   type SchedulerContextMenuAction,
 } from './SchedulerContextMenu';
 import { SchedulerEditVisitModal } from './SchedulerEditVisitModal';
+import {
+  clearRoutingCalendarPreview,
+  readRoutingCalendarPreview,
+  type RoutingCalendarPreviewPayloadV1,
+} from '../utils/routingCalendarPreviewStorage';
+import { clearRoutingPersistenceAfterSchedulerBook } from '../utils/routingUiSnapshot';
 import './Scheduler.css';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 const PRACTICE_TZ =
   (import.meta.env.VITE_PRACTICE_TIMEZONE as string | undefined)?.trim() || 'America/New_York';
 
-const PPM = 1.15;
+/** Match My Week column layout / drive segment math (`MyWeek.tsx` PPM). */
+const PPM = 1.1;
+/** Spacer under nav + height of `.scheduler-day-header` (must stay in sync with CSS). */
+const SCHEDULER_DAY_HEADER_STACK_PX = 96;
 const SLOT_MINUTES = 15;
 const DEFAULT_GRID_START = 7 * 60;
 const DEFAULT_GRID_END = 17 * 60;
@@ -182,6 +210,25 @@ function colorsForAppointment(
   }
 
   const textRaw = pickStr(fromList?.textColor) ?? pickStr((a.appointmentType as { textColor?: string })?.textColor);
+  const text = resolveForegroundCss(textRaw) ?? readableTextOnBackground(fill);
+  return { fill, text };
+}
+
+/** Same color rules as booked events, for routing preview (type id from POST payload). */
+function colorsForAppointmentTypeId(
+  appointmentTypeId: number,
+  typeList: AppointmentType[],
+  typeFillMap: Map<number, string>
+): { fill: string; text: string } {
+  const fromList = typeList.find((x) => x.id === appointmentTypeId);
+  let fill =
+    typeBackgroundFromRow(fromList) ??
+    (typeFillMap.has(appointmentTypeId) ? typeFillMap.get(appointmentTypeId)! : null);
+  if (!fill) {
+    const name = fromList?.prettyName || fromList?.name || 'type';
+    fill = hashColorKey(`${appointmentTypeId}:${name}`);
+  }
+  const textRaw = pickStr(fromList?.textColor);
   const text = resolveForegroundCss(textRaw) ?? readableTextOnBackground(fill);
   return { fill, text };
 }
@@ -339,6 +386,38 @@ function patientsForAppointment(a: Appointment): Patient[] {
   return a.patient ? [a.patient] : [];
 }
 
+/** Patient ids already on the schedule for this client in an overlapping interval (UTC compare). */
+function patientIdsBookedForClientAtOverlap(
+  clientId: string,
+  rangeStartIso: string,
+  rangeEndIso: string,
+  appointments: Appointment[]
+): string[] {
+  const start = DateTime.fromISO(rangeStartIso, { zone: 'utc' });
+  const end = DateTime.fromISO(rangeEndIso, { zone: 'utc' });
+  if (!start.isValid || !end.isValid) return [];
+  const out = new Set<string>();
+  for (const a of appointments) {
+    if (!isAppointmentVisible(a)) continue;
+    if (a.allDay) continue;
+    if (a.client?.id == null || String(a.client.id) !== clientId) continue;
+    const as = DateTime.fromISO(a.appointmentStart, { zone: 'utc' });
+    const ae = DateTime.fromISO(a.appointmentEnd, { zone: 'utc' });
+    if (!as.isValid || !ae.isValid) continue;
+    if (as < end && ae > start) {
+      for (const p of patientsForAppointment(a)) {
+        if (p.id != null) out.add(String(p.id));
+      }
+    }
+  }
+  return [...out];
+}
+
+function appointmentSupportsEmployeeCoVisitPet(appt: Appointment): boolean {
+  if (appt.allDay) return false;
+  return appt.client?.id != null;
+}
+
 function patientSpeciesBreed(p: Patient): string | null {
   const species = pickStr(p.speciesEntity?.name) ?? pickStr(p.species);
   const breed = pickStr(p.breedEntity?.name) ?? pickStr(p.breed);
@@ -374,6 +453,54 @@ function SchedulerModalKv({
   );
 }
 
+const DRIVE_STRIPE_BG =
+  'repeating-linear-gradient(135deg, #e2e8f0 0px, #e2e8f0 6px, #cbd5e1 6px, #cbd5e1 12px)';
+const BUFFER_STRIPE_BG = 'rgba(255, 255, 255, 0.35)';
+const BUFFER_STRIPE_BORDER = '1px dashed #d1d5db';
+
+function schedulerHouseholdFixedTimeApprox(h: {
+  isPersonalBlock?: boolean;
+  primary?: unknown;
+  patients?: { type?: string | null }[];
+}): boolean {
+  if (h.isPersonalBlock && !isFlexBlockItem(h.primary as { blockLabel?: string; title?: string })) return true;
+  const primary = h.primary as Record<string, unknown> | undefined;
+  const at = primary?.appointmentType as { name?: string; prettyName?: string } | undefined;
+  const nested = at && typeof at === 'object' ? String(at.name ?? at.prettyName ?? '').toLowerCase() : '';
+  const flat = String(primary?.appointmentTypeName ?? primary?.appointmentType ?? '').toLowerCase();
+  const typeLower = nested || flat;
+  if (typeLower === 'fixed time' || typeLower.includes('fixed time')) return true;
+  return (h.patients?.[0]?.type || '').toLowerCase() === 'fixed time';
+}
+
+function driveHouseholdAndSlotForAppointment(
+  dayData: DayData,
+  apptId: string | number
+): { h: DayData['households'][number]; slot: DayData['timeline'][number] } | null {
+  const apptKey = String(apptId);
+  const households = dayData.households;
+  for (let j = 0; j < households.length; j++) {
+    const hx = households[j] as { sourceAppointmentIds?: (string | number)[] };
+    const ids = hx.sourceAppointmentIds;
+    if (!ids?.some((id) => String(id) === apptKey)) continue;
+    const slot = dayData.timeline[j] ?? {};
+    return { h: households[j], slot };
+  }
+  return null;
+}
+
+type SchedulerHoverDriveHint = {
+  practiceTz: string;
+  etaIso: string | null;
+  etdIso: string | null;
+  windowStartIso: string | null;
+  windowEndIso: string | null;
+  schedStartIso: string | null;
+  schedEndIso: string | null;
+  isPersonalBlock: boolean;
+  isFixedTime: boolean;
+};
+
 function treatmentDetailRows(treatment: unknown): { label: string; value: string }[] {
   if (treatment == null) return [];
   if (typeof treatment === 'string') return [{ label: 'Details', value: treatment }];
@@ -395,7 +522,13 @@ function treatmentDetailRows(treatment: unknown): { label: string; value: string
   return rows;
 }
 
-function SchedulerHoverContent({ appt }: { appt: Appointment }) {
+function SchedulerHoverContent({
+  appt,
+  driveHint,
+}: {
+  appt: Appointment;
+  driveHint?: SchedulerHoverDriveHint | null;
+}) {
   const c = appt.client;
   const patients = patientsForAppointment(appt);
   const start = DateTime.fromISO(appt.appointmentStart, { zone: 'utc' }).setZone(PRACTICE_TZ);
@@ -416,6 +549,55 @@ function SchedulerHoverContent({ appt }: { appt: Appointment }) {
             ? `${start.toFormat('M/d/yyyy h:mm a')} – ${end.toFormat('h:mm a')}`
             : null}
         </VisitHighlightsRow>
+        {driveHint ? (
+          (() => {
+            const showArrive = !!(driveHint.etaIso || driveHint.etdIso);
+            const showWindow =
+              !!(driveHint.windowStartIso || driveHint.windowEndIso) &&
+              !(driveHint.isPersonalBlock && driveHint.isFixedTime);
+            if (!showArrive && !showWindow) return null;
+            return (
+              <div className="scheduler-tooltip-drive-block">
+                {showArrive ? (
+                  <VisitHighlightsRow label="Arrive / leave (routed)">
+                    {driveHint.etaIso
+                      ? formatIsoTimeShortInPracticeZone(driveHint.etaIso, driveHint.practiceTz)
+                      : '—'}
+                    {' – '}
+                    {driveHint.etdIso
+                      ? formatIsoTimeShortInPracticeZone(driveHint.etdIso, driveHint.practiceTz)
+                      : '—'}
+                  </VisitHighlightsRow>
+                ) : null}
+                {showWindow ? (
+                  <VisitHighlightsRow label="Window of arrival">
+                    {driveHint.isFixedTime && !driveHint.isPersonalBlock ? (
+                      <>
+                        {driveHint.schedStartIso
+                          ? formatIsoTimeShortInPracticeZone(driveHint.schedStartIso, driveHint.practiceTz)
+                          : '—'}
+                        {' – '}
+                        {driveHint.schedEndIso
+                          ? formatIsoTimeShortInPracticeZone(driveHint.schedEndIso, driveHint.practiceTz)
+                          : '—'}
+                      </>
+                    ) : (
+                      <>
+                        {driveHint.windowStartIso
+                          ? formatIsoTimeShortInPracticeZone(driveHint.windowStartIso, driveHint.practiceTz)
+                          : '—'}
+                        {' – '}
+                        {driveHint.windowEndIso
+                          ? formatIsoTimeShortInPracticeZone(driveHint.windowEndIso, driveHint.practiceTz)
+                          : '—'}
+                      </>
+                    )}
+                  </VisitHighlightsRow>
+                ) : null}
+              </div>
+            );
+          })()
+        ) : null}
         <VisitHighlightsRow label="Type">{typeName}</VisitHighlightsRow>
         <VisitHighlightsRow label="Description">{desc}</VisitHighlightsRow>
         <VisitHighlightsRow label="Instructions">{instr}</VisitHighlightsRow>
@@ -751,6 +933,34 @@ function dayKeyFromIso(iso: string): string | null {
   return dt.isValid ? dt.toISODate() : null;
 }
 
+/** Practice-local week column key for routing preview (`option.date` may omit TZ). */
+function routingPreviewPracticeDateKey(
+  opt: { date?: unknown; suggestedStartIso?: unknown } | null | undefined
+): string | null {
+  if (!opt) return null;
+  const dateRaw =
+    typeof opt.date === 'string'
+      ? opt.date.trim()
+      : opt.date != null
+        ? String(opt.date).trim()
+        : '';
+  if (dateRaw) {
+    const d = DateTime.fromISO(dateRaw.includes('T') ? dateRaw : `${dateRaw}T12:00:00`, {
+      zone: PRACTICE_TZ,
+    });
+    if (d.isValid) return d.toISODate();
+  }
+  const startRaw =
+    typeof opt.suggestedStartIso === 'string'
+      ? opt.suggestedStartIso.trim()
+      : opt.suggestedStartIso != null
+        ? String(opt.suggestedStartIso).trim()
+        : '';
+  if (!startRaw) return null;
+  const d = DateTime.fromISO(startRaw, { zone: 'utc' }).setZone(PRACTICE_TZ);
+  return d.isValid ? d.toISODate() : null;
+}
+
 /**
  * All-day span in practice TZ: half-open [start, end) by local start-of-day — `appointmentEnd` at
  * local midnight is the first day NOT included (e.g. Apr 20 … Apr 28 end → Apr 20–27).
@@ -900,6 +1110,7 @@ function isAppointmentVisible(a: Appointment): boolean {
 
 export default function Scheduler() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [view, setView] = useState<ViewMode>('week');
   const [anchorDate, setAnchorDate] = useState(() =>
     DateTime.now().setZone(PRACTICE_TZ).toISODate()
@@ -909,6 +1120,7 @@ export default function Scheduler() {
   const [typeFilter, setTypeFilter] = useState<string>('');
 
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [providersLoadState, setProvidersLoadState] = useState<'pending' | 'resolved'>('pending');
   const [typeList, setTypeList] = useState<AppointmentType[]>([]);
   const [rawAppointments, setRawAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -919,12 +1131,20 @@ export default function Scheduler() {
   const [contextMenu, setContextMenu] = useState<{ appt: Appointment; x: number; y: number } | null>(
     null
   );
+  /** null = not applicable or loading; true = at least one pet can be added; false = none left */
+  const [addAnotherPetMenuReady, setAddAnotherPetMenuReady] = useState<boolean | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   /** When true and a single provider is selected, timed events use ETA/ETD from /appointments/doctor + /routing/eta (same as My Week). */
-  const [showByDriveTime, setShowByDriveTime] = useState(false);
+  const [showByDriveTime, setShowByDriveTime] = useState(true);
   const [driveIsoByApptId, setDriveIsoByApptId] = useState<Map<string, DriveIsoPair> | null>(null);
+  const [driveDayByDate, setDriveDayByDate] = useState<Map<string, DayData> | null>(null);
   const [driveEtaLoading, setDriveEtaLoading] = useState(false);
+  /** Bump after mutations that change route order so drive/ETA refetches (avoids tying drive load to every `rawAppointments` refresh). */
+  const [driveRefreshNonce, setDriveRefreshNonce] = useState(0);
   const [bookSlot, setBookSlot] = useState<SchedulerBookSlot | null>(null);
+  const [bookPrefill, setBookPrefill] = useState<SchedulerBookPrefill | null>(null);
+  /** Routing → My Week: proposed slot until booked or dismissed. */
+  const [routingPreview, setRoutingPreview] = useState<RoutingCalendarPreviewPayloadV1 | null>(null);
   const [hover, setHover] = useState<{
     appt: Appointment;
     x: number;
@@ -932,7 +1152,195 @@ export default function Scheduler() {
     el: HTMLElement | null;
   } | null>(null);
 
-  const { doctorId: authDoctorId } = useAuth() as { doctorId: string | null };
+  /** Practice-local "now" for the current-time indicator on the grid (updates on an interval). */
+  const [practiceClock, setPracticeClock] = useState(() => DateTime.now().setZone(PRACTICE_TZ));
+
+  const { doctorId: authDoctorId, role } = useAuth() as { doctorId: string | null; role?: string | string[] };
+
+  const rolesLower = useMemo(() => {
+    const arr = Array.isArray(role) ? role : role != null ? [role] : [];
+    return arr.map((r) => String(r).toLowerCase().trim()).filter(Boolean);
+  }, [role]);
+  const canManualBookOnCalendar = useMemo(
+    () => rolesLower.includes('admin') || rolesLower.includes('superadmin'),
+    [rolesLower]
+  );
+  const showEmployeeAddCoVisitPet = useMemo(
+    () =>
+      rolesLower.includes('employee') &&
+      !rolesLower.includes('admin') &&
+      !rolesLower.includes('superadmin'),
+    [rolesLower]
+  );
+
+  useEffect(() => {
+    if (!contextMenu) {
+      setAddAnotherPetMenuReady(null);
+      return;
+    }
+    const appt = contextMenu.appt;
+    if (!showEmployeeAddCoVisitPet || !appointmentSupportsEmployeeCoVisitPet(appt)) {
+      setAddAnotherPetMenuReady(null);
+      return;
+    }
+    const clientId = appt.client!.id;
+    let cancelled = false;
+    setAddAnotherPetMenuReady(null);
+    (async () => {
+      try {
+        const payload = await fetchClientByIdStaff(String(clientId));
+        if (cancelled) return;
+        const pets = extractPatientsFromClientPayload(payload);
+        const exclude = new Set(
+          patientIdsBookedForClientAtOverlap(
+            String(clientId),
+            appt.appointmentStart,
+            appt.appointmentEnd,
+            rawAppointments
+          )
+        );
+        const hasAvailable = pets.some((p) => !exclude.has(String(p.id)));
+        setAddAnotherPetMenuReady(hasAvailable);
+      } catch {
+        if (!cancelled) setAddAnotherPetMenuReady(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [contextMenu, showEmployeeAddCoVisitPet, rawAppointments]);
+
+  useEffect(() => {
+    if (searchParams.get('routingPreview') !== '1') return;
+    const p = readRoutingCalendarPreview();
+    if (!p?.option?.suggestedStartIso || !p.option.doctorPimsId || !p.option.date) {
+      clearRoutingCalendarPreview();
+      setSearchParams({}, { replace: true });
+      return;
+    }
+    setRoutingPreview(p);
+    setProviderFilter(String(p.option.doctorPimsId));
+    setAnchorDate(String(p.option.date));
+    setView('week');
+    setShowByDriveTime(true);
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  /** My Day → Practice calendar: `?fromMyDay=1&date=YYYY-MM-DD&provider=<id>` (provider optional). */
+  useEffect(() => {
+    if (searchParams.get('fromMyDay') !== '1') return;
+    const dateQ = searchParams.get('date');
+    const providerQ = (searchParams.get('provider') ?? '').trim();
+    const d =
+      dateQ && DateTime.fromISO(dateQ, { zone: PRACTICE_TZ }).isValid
+        ? DateTime.fromISO(dateQ, { zone: PRACTICE_TZ }).toISODate()!
+        : null;
+    if (d) setAnchorDate(d);
+    if (providersLoadState !== 'resolved') return;
+
+    const next = new URLSearchParams(searchParams);
+    next.delete('fromMyDay');
+    next.delete('date');
+    next.delete('provider');
+    setSearchParams(next, { replace: true });
+
+    if (providerQ && providers.some((p) => String(p.id) === providerQ)) {
+      setProviderFilter(providerQ);
+    }
+  }, [searchParams, providers, providersLoadState, setSearchParams]);
+
+  /** Calendar always scopes to one primary provider — never "(Show all)". */
+  useLayoutEffect(() => {
+    if (providers.length === 0) return;
+    setProviderFilter((current) => {
+      const t = current.trim();
+      if (t && providers.some((p) => String(p.id) === t)) return current;
+      if (routingPreview && t) return current;
+      const raw = authDoctorId?.trim();
+      if (raw && providers.some((p) => String(p.id) === String(raw))) return String(raw);
+      return String(providers[0].id);
+    });
+  }, [providers, authDoctorId, routingPreview]);
+
+  /** Stable provider id for range + drive APIs so we do not double-fetch when `providerFilter` syncs from "" to the same doctor. */
+  const resolvedPrimaryProviderId = useMemo(() => {
+    if (providers.length === 0) return '';
+    const t = providerFilter.trim();
+    if (t && providers.some((p) => String(p.id) === t)) return t;
+    if (routingPreview && t) return t;
+    const raw = authDoctorId?.trim();
+    if (raw && providers.some((p) => String(p.id) === String(raw))) return String(raw);
+    return String(providers[0].id);
+  }, [providers, providerFilter, authDoctorId, routingPreview]);
+
+  /** Match routing preview doctor to provider list (internal id or PIMS); fall back to employee APIs. */
+  useEffect(() => {
+    if (!routingPreview?.option) return;
+    const raw = String(routingPreview.option.doctorPimsId ?? '').trim();
+    if (!raw || providers.length === 0) return;
+
+    if (providers.some((p) => String(p.id) === raw)) {
+      setProviderFilter((f) => (f === raw ? f : raw));
+      return;
+    }
+    const byPims = providers.find((p) => p.pimsId != null && String(p.pimsId) === raw);
+    if (byPims) {
+      const resolved = String(byPims.id);
+      setProviderFilter((f) => (f === resolved ? f : resolved));
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        let emp: unknown;
+        try {
+          const { data } = await http.get(`/employees/pims/${encodeURIComponent(raw)}`);
+          emp = Array.isArray(data) ? data[0] : data;
+        } catch {
+          const { data } = await http.get(`/employees/${encodeURIComponent(raw)}`);
+          emp = Array.isArray(data) ? data[0] : data;
+        }
+        if (cancelled || !emp || typeof emp !== 'object') return;
+        const e = emp as Record<string, unknown>;
+        const internal =
+          (e.id != null ? String(e.id) : undefined) ??
+          (e.employee && typeof e.employee === 'object' && (e.employee as { id?: unknown }).id != null
+            ? String((e.employee as { id?: unknown }).id)
+            : undefined);
+        const empRec = e.employee && typeof e.employee === 'object' ? (e.employee as Record<string, unknown>) : null;
+        const pimsStr =
+          e.pimsId != null
+            ? String(e.pimsId)
+            : empRec?.pimsId != null
+              ? String(empRec.pimsId)
+              : undefined;
+        if (cancelled) return;
+        const match =
+          internal && providers.some((p) => String(p.id) === internal)
+            ? providers.find((p) => String(p.id) === internal)
+            : pimsStr
+              ? providers.find((p) => p.pimsId != null && String(p.pimsId) === pimsStr)
+              : undefined;
+        if (match) {
+          const resolved = String(match.id);
+          setProviderFilter((f) => (f === resolved ? f : resolved));
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [routingPreview, providers]);
+
+  useEffect(() => {
+    const tick = () => setPracticeClock(DateTime.now().setZone(PRACTICE_TZ));
+    tick();
+    const id = window.setInterval(tick, 30_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const typeFillMap = useMemo(() => buildTypeFillMap(typeList), [typeList]);
 
@@ -975,6 +1383,16 @@ export default function Scheduler() {
     [dayColumnDates]
   );
 
+  const routingPreviewColumnKey = useMemo(
+    () => routingPreviewPracticeDateKey(routingPreview?.option ?? null),
+    [routingPreview]
+  );
+
+  const routingPreviewFocusDim = useMemo(
+    () => Boolean(routingPreview && routingPreviewColumnKey),
+    [routingPreview, routingPreviewColumnKey]
+  );
+
   const rangeTitle = useMemo(() => {
     if (view === 'day') {
       const d = DateTime.fromISO(anchorDate!, { zone: PRACTICE_TZ });
@@ -991,86 +1409,89 @@ export default function Scheduler() {
 
   useEffect(() => {
     let on = true;
-    fetchPrimaryProviders()
-      .then((rows) => {
-        if (on) setProviders(rows);
+    Promise.all([fetchPrimaryProviders(), fetchAllAppointmentTypes(PRACTICE_ID)])
+      .then(([providerRows, typeRows]) => {
+        if (!on) return;
+        setProviders(Array.isArray(providerRows) ? providerRows : []);
+        const types = Array.isArray(typeRows)
+          ? typeRows.filter((t) => t.isActive !== false && !t.isDeleted)
+          : [];
+        setTypeList(types);
       })
       .catch(() => {
-        if (on) setProviders([]);
+        if (!on) return;
+        setProviders([]);
+        setTypeList([]);
+      })
+      .finally(() => {
+        if (on) setProvidersLoadState('resolved');
       });
     return () => {
       on = false;
     };
   }, []);
 
-  useEffect(() => {
-    let on = true;
-    fetchAllAppointmentTypes(PRACTICE_ID)
-      .then((rows) => {
-        if (on) setTypeList(rows.filter((t) => t.isActive !== false && !t.isDeleted));
-      })
-      .catch(() => {
-        if (on) setTypeList([]);
-      });
-    return () => {
-      on = false;
-    };
-  }, []);
-
-  const loadRange = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const rows = await fetchAppointmentsRange({
-        practiceId: PRACTICE_ID,
-        start: rangeUtc.startUtc,
-        end: rangeUtc.endUtc,
-        primaryProviderId: providerFilter || undefined,
-      });
-      if (!Array.isArray(rows)) {
+  const loadRange = useCallback(
+    async (opts?: { refreshDrive?: boolean }) => {
+      if (providers.length === 0) {
         setRawAppointments([]);
+        if (providersLoadState === 'resolved') setLoading(false);
         return;
       }
-      setRawAppointments(rows);
-    } catch (e: unknown) {
-      const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : 'Failed to load';
-      setError(msg);
-      setRawAppointments([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [rangeUtc.startUtc, rangeUtc.endUtc, providerFilter]);
+      const primaryId = resolvedPrimaryProviderId.trim() || String(providers[0].id);
+      setLoading(true);
+      setError(null);
+      try {
+        const rows = await fetchAppointmentsRange({
+          practiceId: PRACTICE_ID,
+          start: rangeUtc.startUtc,
+          end: rangeUtc.endUtc,
+          primaryProviderId: primaryId,
+        });
+        if (!Array.isArray(rows)) {
+          setRawAppointments([]);
+          return;
+        }
+        setRawAppointments(rows);
+        if (opts?.refreshDrive) setDriveRefreshNonce((n) => n + 1);
+      } catch (e: unknown) {
+        const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : 'Failed to load';
+        setError(msg);
+        setRawAppointments([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [rangeUtc.startUtc, rangeUtc.endUtc, resolvedPrimaryProviderId, providers, providersLoadState]
+  );
 
   useEffect(() => {
     loadRange();
   }, [loadRange]);
 
   useEffect(() => {
-    if (!providerFilter.trim()) setShowByDriveTime(false);
-  }, [providerFilter]);
-
-  useEffect(() => {
-    if (view === 'month') setShowByDriveTime(false);
-  }, [view]);
-
-  useEffect(() => {
     const canDrive =
-      Boolean(providerFilter.trim()) && showByDriveTime && (view === 'week' || view === 'day');
+      Boolean(resolvedPrimaryProviderId.trim()) && showByDriveTime && (view === 'week' || view === 'day');
     if (!canDrive) {
       setDriveIsoByApptId(null);
+      setDriveDayByDate(null);
       setDriveEtaLoading(false);
       return;
     }
     let on = true;
     setDriveEtaLoading(true);
     const dates = driveFetchKey.split(',').filter(Boolean);
-    fetchSchedulerDriveIsoByAppointmentId(dates, providerFilter.trim())
-      .then((m) => {
-        if (on) setDriveIsoByApptId(m);
+    fetchSchedulerDriveContext(dates, resolvedPrimaryProviderId.trim())
+      .then(({ isoByApptId, dayByDate }) => {
+        if (on) {
+          setDriveIsoByApptId(isoByApptId);
+          setDriveDayByDate(dayByDate);
+        }
       })
       .catch(() => {
         if (on) {
           setDriveIsoByApptId(null);
+          setDriveDayByDate(null);
           setToast('Could not load drive times; showing scheduled times.');
         }
       })
@@ -1080,7 +1501,7 @@ export default function Scheduler() {
     return () => {
       on = false;
     };
-  }, [driveFetchKey, providerFilter, showByDriveTime, view]);
+  }, [driveFetchKey, resolvedPrimaryProviderId, showByDriveTime, view, driveRefreshNonce]);
 
   const filteredAppointments = useMemo(() => {
     return rawAppointments.filter((a) => {
@@ -1109,13 +1530,13 @@ export default function Scheduler() {
 
   const displayRangeForAppt = useMemo(() => {
     return (a: Appointment) => {
-      if (showByDriveTime && providerFilter.trim() && driveIsoByApptId?.has(String(a.id))) {
+      if (showByDriveTime && resolvedPrimaryProviderId.trim() && driveIsoByApptId?.has(String(a.id))) {
         const p = driveIsoByApptId.get(String(a.id))!;
         return { startIso: p.startIso, endIso: p.endIso };
       }
       return { startIso: a.appointmentStart, endIso: a.appointmentEnd };
     };
-  }, [showByDriveTime, providerFilter, driveIsoByApptId]);
+  }, [showByDriveTime, resolvedPrimaryProviderId, driveIsoByApptId]);
 
   const gridBounds = useMemo(() => {
     let start = DEFAULT_GRID_START;
@@ -1135,6 +1556,14 @@ export default function Scheduler() {
   }, [filteredAppointments, displayRangeForAppt]);
 
   const gridHeightPx = gridBounds.totalMin * PPM;
+
+  const weekGridMetrics: WeekGridMetrics = useMemo(
+    () => ({
+      gridStartMinutesFromMidnight: gridBounds.gridStartMin,
+      totalMinutes: gridBounds.totalMin,
+    }),
+    [gridBounds.gridStartMin, gridBounds.totalMin]
+  );
 
   const timeLabels = useMemo(() => {
     const out: { min: number; label: string; major: boolean }[] = [];
@@ -1268,6 +1697,42 @@ export default function Scheduler() {
     setAnchorDate(iso);
   };
 
+  const hoverDriveHint = useMemo((): SchedulerHoverDriveHint | null => {
+    if (!hover || !showByDriveTime || !resolvedPrimaryProviderId.trim()) return null;
+    const dk = dayKeyFromIso(hover.appt.appointmentStart);
+    if (!dk) return null;
+    const dayData = driveDayByDate?.get(dk);
+    if (!dayData) return null;
+    const row = driveHouseholdAndSlotForAppointment(dayData, hover.appt.id);
+    if (!row) return null;
+    const { h, slot } = row;
+    const practiceTz = dayData.timezone || PRACTICE_TZ;
+    const isFixedTime = schedulerHouseholdFixedTimeApprox(h);
+    const etaIso = slot?.eta ?? null;
+    const etdIso = slot?.etd ?? null;
+    const windowStartIso =
+      (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
+      (h as { windowStartIso?: string | null }).windowStartIso ??
+      (h as { effectiveWindow?: { startIso?: string } }).effectiveWindow?.startIso ??
+      null;
+    const windowEndIso =
+      (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
+      (h as { windowEndIso?: string | null }).windowEndIso ??
+      (h as { effectiveWindow?: { endIso?: string } }).effectiveWindow?.endIso ??
+      null;
+    return {
+      practiceTz,
+      etaIso,
+      etdIso,
+      windowStartIso,
+      windowEndIso,
+      schedStartIso: h.startIso,
+      schedEndIso: h.endIso,
+      isPersonalBlock: Boolean(h.isPersonalBlock),
+      isFixedTime,
+    };
+  }, [hover, showByDriveTime, resolvedPrimaryProviderId, driveDayByDate]);
+
   const tooltipPos = useMemo(() => {
     if (!hover) return { left: 0, top: 0, width: 300 };
     const vwW = typeof window !== 'undefined' ? window.innerWidth : 1200;
@@ -1287,8 +1752,13 @@ export default function Scheduler() {
 
   const showTimeGrid = view === 'week' || view === 'day';
 
+  const practiceTodayIso = practiceClock.toISODate()!;
+  const nowWallMinutes =
+    practiceClock.hour * 60 + practiceClock.minute + practiceClock.second / 60;
+
   const handleDayBodyDoubleClick = useCallback(
     (e: MouseEvent<HTMLDivElement>, dayDt: DateTime) => {
+      if (!canManualBookOnCalendar) return;
       const el = e.currentTarget;
       const rect = el.getBoundingClientRect();
       const y = e.clientY - rect.top;
@@ -1301,10 +1771,67 @@ export default function Scheduler() {
       const dayStart = dayDt.setZone(PRACTICE_TZ).startOf('day');
       const start = dayStart.plus({ minutes: clamped });
       const end = start.plus({ minutes: 30 });
+      setBookPrefill(null);
       setBookSlot({ start, end });
     },
-    [gridBounds.gridStartMin, gridBounds.gridEndMin]
+    [gridBounds.gridStartMin, gridBounds.gridEndMin, canManualBookOnCalendar]
   );
+
+  const dismissRoutingPreview = useCallback(() => {
+    clearRoutingCalendarPreview();
+    setRoutingPreview(null);
+    setBookSlot(null);
+    setBookPrefill(null);
+    navigate('/schedule/routing');
+  }, [navigate]);
+
+  const openRoutingBookForm = useCallback(() => {
+    if (!routingPreview) return;
+    const clientIdRaw = routingPreview.newApptMeta?.clientId?.trim();
+    if (!clientIdRaw) {
+      setToast('Missing client for this routing preview.');
+      return;
+    }
+    if (!Number.isFinite(Number(clientIdRaw))) {
+      setToast('Invalid client on routing preview.');
+      return;
+    }
+    const opt = routingPreview.option;
+    const startUtc = DateTime.fromISO(String(opt.suggestedStartIso), { zone: 'utc' });
+    if (!startUtc.isValid) {
+      setToast('Invalid suggested start time.');
+      return;
+    }
+    const mins = Math.max(1, Math.floor(routingPreview.serviceMinutes) || 30);
+    const start = startUtc.setZone(PRACTICE_TZ);
+    const end = start.plus({ minutes: mins });
+    const isAdminOrSuper = rolesLower.includes('admin') || rolesLower.includes('superadmin');
+    setBookPrefill({
+      clientId: clientIdRaw,
+      clientLabel: routingPreview.clientDisplayLabel,
+      appointmentTypeId: routingPreview.appointmentTypeId,
+      lockClient: !isAdminOrSuper,
+      disableClientSearch: true,
+      preserveDurationFromSlot: true,
+      defaultDescription: `Routing — ${String(opt.doctorName ?? 'Doctor')} ${String(opt.date)}`,
+    });
+    setBookSlot({ start, end });
+  }, [routingPreview, rolesLower]);
+
+  const closeBookModal = useCallback(() => {
+    setBookSlot(null);
+    setBookPrefill(null);
+  }, []);
+
+  const handleSchedulerBooked = useCallback(() => {
+    void loadRange({ refreshDrive: true });
+    if (routingPreview) {
+      clearRoutingPersistenceAfterSchedulerBook();
+      clearRoutingCalendarPreview();
+      setRoutingPreview(null);
+    }
+    setToast('Appointment saved to the schedule.');
+  }, [loadRange, routingPreview]);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -1340,15 +1867,63 @@ export default function Scheduler() {
           case 'edit':
             setEditAppt(appt);
             return;
+          case 'addAnotherPet': {
+            if (addAnotherPetMenuReady !== true) {
+              fail('No additional pets available for this time.');
+              return;
+            }
+            if (!appointmentSupportsEmployeeCoVisitPet(appt)) {
+              fail('This appointment cannot add another pet here.');
+              return;
+            }
+            const c = appt.client!;
+            const start = DateTime.fromISO(appt.appointmentStart, { zone: 'utc' }).setZone(PRACTICE_TZ);
+            const end = DateTime.fromISO(appt.appointmentEnd, { zone: 'utc' }).setZone(PRACTICE_TZ);
+            if (!start.isValid || !end.isValid) {
+              fail('Invalid appointment time.');
+              return;
+            }
+            const exclude = patientIdsBookedForClientAtOverlap(
+              String(c.id),
+              appt.appointmentStart,
+              appt.appointmentEnd,
+              rawAppointments
+            );
+            const provId = appt.primaryProvider?.id != null ? String(appt.primaryProvider.id) : '';
+            const rawTypeId = appt.appointmentType?.id;
+            const typeNum =
+              rawTypeId != null && (typeof rawTypeId === 'number' || typeof rawTypeId === 'string')
+                ? Number(rawTypeId)
+                : NaN;
+            const fn = pickStr(c.firstName) ?? '';
+            const ln = pickStr(c.lastName) ?? '';
+            const clientLabel = [fn, ln].filter(Boolean).join(' ').trim() || undefined;
+            setBookPrefill({
+              clientId: String(c.id),
+              clientLabel,
+              appointmentTypeId: Number.isFinite(typeNum) ? typeNum : undefined,
+              lockClient: true,
+              lockProvider: true,
+              lockSlotTimes: true,
+              preserveDurationFromSlot: true,
+              coVisitAddPet: true,
+              providerId: provId || undefined,
+              excludePatientIds: exclude,
+              modalTitle: 'Add another pet to this visit',
+              defaultDescription: '',
+            });
+            setBookSlot({ start, end });
+            return;
+          }
           case 'complete':
             await patchAppointment(appt.id, { isComplete: true });
-            await loadRange();
+            await loadRange({ refreshDrive: true });
             return;
           case 'remove':
             if (!window.confirm('Remove this appointment?')) return;
             setContextMenu(null);
             await deleteAppointment(appt.id);
-            await loadRange();
+            await loadRange({ refreshDrive: true });
             return;
           case 'setStatus':
             await patchAppointment(appt.id, { statusName: action.value });
@@ -1483,14 +2058,77 @@ export default function Scheduler() {
         else fail('Something went wrong.');
       }
     },
-    [loadRange, navigate, showToast]
+    [loadRange, navigate, showToast, rawAppointments, addAnotherPetMenuReady]
   );
 
+  const addAnotherPetMenuOpts = useMemo(() => {
+    if (
+      !contextMenu ||
+      !showEmployeeAddCoVisitPet ||
+      !appointmentSupportsEmployeeCoVisitPet(contextMenu.appt)
+    ) {
+      return { show: false, disabled: true as boolean, title: undefined as string | undefined };
+    }
+    const disabled = addAnotherPetMenuReady !== true;
+    const title =
+      addAnotherPetMenuReady === false
+        ? 'Every pet for this client already has an appointment overlapping this time.'
+        : addAnotherPetMenuReady === null
+          ? 'Checking which pets can be added…'
+          : undefined;
+    return { show: true, disabled, title };
+  }, [contextMenu, showEmployeeAddCoVisitPet, addAnotherPetMenuReady]);
+
   return (
-    <div className="scheduler-page">
+    <div
+      className={[
+        'scheduler-page',
+        routingPreview ? 'scheduler-page--routing-preview' : '',
+        routingPreviewFocusDim ? 'scheduler-page--routing-preview-focus' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
       {toast ? (
         <div className="scheduler-toast" role="status">
           {toast}
+        </div>
+      ) : null}
+
+      {routingPreview ? (
+        <div className="scheduler-routing-preview-banner" role="region" aria-label="Routing calendar preview">
+          <div className="scheduler-routing-preview-banner-text">
+            <strong>Routing preview</strong>
+            <span className="scheduler-routing-preview-banner-meta">
+              {String(routingPreview.option.doctorName ?? 'Provider')} ·{' '}
+              {DateTime.fromISO(String(routingPreview.option.date), { zone: PRACTICE_TZ }).toFormat(
+                'cccc LLL d, yyyy'
+              )}{' '}
+              @ {DateTime.fromISO(String(routingPreview.option.suggestedStartIso)).toFormat('t')} (
+              {Math.max(1, Math.floor(routingPreview.serviceMinutes) || 30)} min)
+              {routingPreview.clientDisplayLabel ? (
+                <span className="scheduler-routing-preview-client"> · {routingPreview.clientDisplayLabel}</span>
+              ) : null}
+            </span>
+          </div>
+          <div className="scheduler-routing-preview-banner-actions">
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={dismissRoutingPreview}
+              disabled={bookSlot != null}
+            >
+              Back to routing results
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => openRoutingBookForm()}
+              disabled={bookSlot != null}
+            >
+              Book now
+            </button>
+          </div>
         </div>
       ) : null}
       <div className="scheduler-toolbar">
@@ -1539,27 +2177,38 @@ export default function Scheduler() {
               <select
                 value={providerFilter}
                 onChange={(e) => setProviderFilter(e.target.value)}
+                disabled={Boolean(routingPreview) || providers.length === 0}
+                title={
+                  routingPreview
+                    ? 'Provider is fixed for this routing preview. Use Back to routing results to change.'
+                    : providers.length === 0
+                      ? 'Loading providers…'
+                      : 'Show this doctor’s appointments only.'
+                }
               >
-                <option value="">(Show all)</option>
-                {providers.map((p) => (
-                  <option key={String(p.id)} value={String(p.id)}>
-                    {p.name}
-                  </option>
-                ))}
+                {providers.length === 0 ? (
+                  <option value="">Loading providers…</option>
+                ) : (
+                  providers.map((p) => (
+                    <option key={String(p.id)} value={String(p.id)}>
+                      {p.name}
+                    </option>
+                  ))
+                )}
               </select>
             </label>
             <label
               className="scheduler-drive-toggle"
               title={
-                providerFilter.trim()
-                  ? 'Place visits by routed arrive/leave times (same as My Week).'
-                  : 'Select a single primary provider to load drive times.'
+                view === 'month'
+                  ? 'Switch to week or day view for drive times.'
+                  : 'Place visits by routed arrive/leave times (same as My Week).'
               }
             >
               <input
                 type="checkbox"
                 checked={showByDriveTime}
-                disabled={!providerFilter.trim() || view === 'month'}
+                disabled={view === 'month' || providers.length === 0}
                 onChange={(e) => setShowByDriveTime(e.target.checked)}
               />
               <span>Show actual drive time (arrive/leave)</span>
@@ -1593,6 +2242,12 @@ export default function Scheduler() {
               key={v}
               type="button"
               data-active={view === v}
+              disabled={Boolean(routingPreview) && v !== 'week'}
+              title={
+                routingPreview && v !== 'week'
+                  ? 'Switch to week view to finish booking this routing preview.'
+                  : undefined
+              }
               onClick={() => setView(v)}
             >
               {v}
@@ -1642,7 +2297,11 @@ export default function Scheduler() {
         <div className="scheduler-scroll">
           <div className="scheduler-grid-wrap">
             <div className="scheduler-time-col" style={{ paddingTop: 0 }}>
-              <div style={{ height: 36, flexShrink: 0 }} aria-hidden />
+              <div
+                className="scheduler-time-col-header-spacer"
+                style={{ height: SCHEDULER_DAY_HEADER_STACK_PX, flexShrink: 0 }}
+                aria-hidden
+              />
               <div
                 className="scheduler-time-col-allday"
                 style={{ height: allDaySpanLayout.visibleHeightPx, flexShrink: 0 }}
@@ -1672,15 +2331,105 @@ export default function Scheduler() {
               <div className="scheduler-day-headers-row">
                 {dayColumnDates.map((dayDt) => {
                   const key = dayDt.toISODate()!;
+                  const dayData = driveDayByDate?.get(key);
+                  const hasStops = (dayData?.households?.length ?? 0) > 0;
+                  const pts = dayData ? dayPoints(dayData.households) : 0;
+                  const driveSec = dayData ? dayTotalDriveSeconds(dayData) : 0;
+                  const driveMin = Math.round(driveSec / 60);
+                  const driveColor = colorForDrive(driveMin);
+                  const stops: Stop[] =
+                    hasStops && dayData
+                      ? dayData.households
+                          .filter(
+                            (h) =>
+                              !h.isNoLocation &&
+                              Number.isFinite(h.lat) &&
+                              Number.isFinite(h.lon) &&
+                              Math.abs(h.lat) > 1e-6 &&
+                              Math.abs(h.lon) > 1e-6
+                          )
+                          .map((h) => ({
+                            lat: h.lat,
+                            lon: h.lon,
+                            label: h.client,
+                            address: h.address,
+                          }))
+                      : [];
+                  const mapsLinks = stops.length ? buildGoogleMapsLinksForDay(stops, {
+                    start: dayData?.startDepot
+                      ? { lat: dayData.startDepot.lat, lon: dayData.startDepot.lon }
+                      : undefined,
+                    end: dayData?.endDepot
+                      ? { lat: dayData.endDepot.lat, lon: dayData.endDepot.lon }
+                      : undefined,
+                  }) : [];
+                  const scheduleLoaderHref =
+                    resolvedPrimaryProviderId.trim() && hasStops
+                      ? `/schedule/scheduling-tools/schedule-loader?targetDate=${key}&doctorId=${encodeURIComponent(resolvedPrimaryProviderId.trim())}`
+                      : null;
                   return (
                     <div key={key} className="scheduler-day-header">
-                      {dayDt.toFormat('ccc')}, {dayDt.month}/{dayDt.day}
+                      <div className="scheduler-day-header-date">
+                        {dayDt.toFormat('ccc')}, {dayDt.month}/{dayDt.day}
+                      </div>
+                      <div className="scheduler-day-header-metrics">
+                        {dayData ? (
+                          <>
+                            <div className="scheduler-day-header-metrics-row">
+                              {pts > 0 ? (
+                                <span>
+                                  <strong>Points:</strong> {pts}
+                                </span>
+                              ) : null}
+                              {showByDriveTime && resolvedPrimaryProviderId.trim() && driveMin > 0 ? (
+                                <span style={driveColor ? { color: driveColor } : undefined}>
+                                  <strong>Drive:</strong> {driveMin} min
+                                </span>
+                              ) : null}
+                            </div>
+                            {hasStops && (scheduleLoaderHref || mapsLinks.length > 0) ? (
+                              <div className="scheduler-day-header-actions">
+                                {scheduleLoaderHref ? (
+                                  <a
+                                    href={scheduleLoaderHref}
+                                    className="scheduler-day-header-btn"
+                                    title={`Open Schedule Loader for ${key}`}
+                                  >
+                                    Schedule Loader
+                                  </a>
+                                ) : null}
+                                {mapsLinks.length > 0 ? (
+                                  <a
+                                    href={mapsLinks[0]}
+                                    className="scheduler-day-header-btn"
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    title={
+                                      mapsLinks.length > 1
+                                        ? `Open segment 1 of ${mapsLinks.length} in Google Maps`
+                                        : 'Open this day in Google Maps'
+                                    }
+                                  >
+                                    Maps
+                                  </a>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </>
+                        ) : (
+                          <div className="scheduler-day-header-metrics-placeholder" aria-hidden />
+                        )}
+                      </div>
                     </div>
                   );
                 })}
               </div>
               <div
-                className="scheduler-all-day-unified-outer"
+                className={
+                  routingPreviewFocusDim
+                    ? 'scheduler-all-day-unified-outer scheduler-all-day-unified-outer--routing-preview-focus'
+                    : 'scheduler-all-day-unified-outer'
+                }
                 style={{ height: allDaySpanLayout.visibleHeightPx }}
               >
                 <div
@@ -1698,9 +2447,7 @@ export default function Scheduler() {
                       appt.appointmentType?.prettyName ||
                       appt.appointmentType?.name ||
                       'Appointment';
-                    const prov = providerLabel(appt.primaryProvider);
-                    const showProv = !providerFilter.trim() && prov && prov !== '—';
-                    const title = showProv ? `${baseTitle} · ${prov}` : baseTitle;
+                    const title = baseTitle;
                     const topPad = SCHEDULER_ALL_DAY_PAD_Y / 2;
                     const member = appointmentPatientMember(appt);
                     return (
@@ -1753,17 +2500,34 @@ export default function Scheduler() {
               <div className="scheduler-day-bodies-row">
                 {dayColumnDates.map((dayDt) => {
                   const key = dayDt.toISODate()!;
+                  const dayDataCol = driveDayByDate?.get(key);
                   const dayAppts = appointmentsByDay.get(key) ?? [];
                   const timed = dayAppts.filter((a) => !a.allDay);
                   const placed = assignColumnsForDay(timed, displayRangeForAppt);
+                  const currentTimeLineTop =
+                    key === practiceTodayIso
+                      ? (nowWallMinutes - gridBounds.gridStartMin) * PPM
+                      : null;
+                  const showCurrentTimeLine =
+                    currentTimeLineTop != null &&
+                    currentTimeLineTop >= 0 &&
+                    currentTimeLineTop <= gridHeightPx;
 
                   return (
                     <div key={key} className="scheduler-day-col">
                       <div
-                        className="scheduler-day-body"
+                        className={
+                          routingPreviewFocusDim
+                            ? 'scheduler-day-body scheduler-day-body--routing-preview-focus'
+                            : 'scheduler-day-body'
+                        }
                         style={{ height: gridHeightPx, position: 'relative' }}
                         onDoubleClick={(e) => handleDayBodyDoubleClick(e, dayDt)}
-                        title="Double-click to book"
+                        title={
+                          canManualBookOnCalendar
+                            ? 'Double-click to book (admin)'
+                            : 'Use Routing → My Week to book new appointments'
+                        }
                       >
                         {timeLabels.map(({ min, major }) => (
                           <div
@@ -1778,6 +2542,41 @@ export default function Scheduler() {
                             }}
                           />
                         ))}
+                        {routingPreviewFocusDim ? (
+                          <div className="scheduler-routing-focus-dim" aria-hidden />
+                        ) : null}
+                        {showByDriveTime &&
+                        resolvedPrimaryProviderId.trim() &&
+                        dayDataCol &&
+                        (() => {
+                          const layout = computeMyWeekDayColumnLayout(
+                            dayDataCol,
+                            weekGridMetrics,
+                            key,
+                            showByDriveTime,
+                            dayDataCol.appointmentBufferMinutes ?? 5
+                          );
+                          if (!layout) return null;
+                          const segs = buildMyWeekDriveSegmentsFromLayout(
+                            layout,
+                            dayDataCol,
+                            weekGridMetrics,
+                            key
+                          );
+                          return segs.map((seg, i) => (
+                            <div
+                              key={`sched-drive-${key}-${i}`}
+                              className="scheduler-day-drive-segment"
+                              title={seg.title}
+                              style={{
+                                top: seg.top,
+                                height: seg.height,
+                                background: seg.kind === 'buffer' ? BUFFER_STRIPE_BG : DRIVE_STRIPE_BG,
+                                border: seg.kind === 'buffer' ? BUFFER_STRIPE_BORDER : undefined,
+                              }}
+                            />
+                          ));
+                        })()}
                         {placed.map(({ appt, col, colCount }) => {
                           const { startIso, endIso } = displayRangeForAppt(appt);
                           const sm = wallMinutes(startIso);
@@ -1856,6 +2655,77 @@ export default function Scheduler() {
                             </div>
                           );
                         })}
+                        {routingPreview &&
+                          routingPreviewColumnKey &&
+                          routingPreviewColumnKey === key &&
+                          (() => {
+                            const o = routingPreview.option;
+                            const startIso = String(o.suggestedStartIso);
+                            const mins = Math.max(1, Math.floor(routingPreview.serviceMinutes) || 30);
+                            const endIso = DateTime.fromISO(startIso).plus({ minutes: mins }).toISO()!;
+                            const sm = wallMinutes(startIso);
+                            const em = wallMinutes(endIso);
+                            const rawTop = (sm - gridBounds.gridStartMin) * PPM;
+                            const rawH = (em - sm) * PPM;
+                            const top = Math.max(0, rawTop);
+                            const bottom = Math.min(gridHeightPx, rawTop + Math.max(rawH, 16));
+                            const h = Math.max(52, bottom - top);
+                            const label =
+                              routingPreview.clientDisplayLabel ||
+                              (typeof (o as { clientName?: string }).clientName === 'string'
+                                ? (o as { clientName?: string }).clientName
+                                : null) ||
+                              'Proposed visit';
+                            const previewTypeColors = colorsForAppointmentTypeId(
+                              routingPreview.appointmentTypeId,
+                              typeList,
+                              typeFillMap
+                            );
+                            return (
+                              <div
+                                key="routing-preview-slot"
+                                className="scheduler-event scheduler-routing-preview-slot"
+                                style={{
+                                  top,
+                                  height: h,
+                                  left: 0,
+                                  width: '100%',
+                                  background: previewTypeColors.fill,
+                                  color: previewTypeColors.text,
+                                }}
+                                title={label}
+                                onDoubleClick={(e) => e.stopPropagation()}
+                              >
+                                <div className="scheduler-routing-preview-slot-body">
+                                  <div className="scheduler-event-time">
+                                    {DateTime.fromISO(startIso, { zone: 'utc' })
+                                      .setZone(PRACTICE_TZ)
+                                      .toFormat('h:mm a')}
+                                  </div>
+                                  <div className="scheduler-event-title">{label}</div>
+                                  <button
+                                    type="button"
+                                    className="btn scheduler-routing-preview-slot-book"
+                                    disabled={bookSlot != null}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openRoutingBookForm();
+                                    }}
+                                  >
+                                    Book
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        {showCurrentTimeLine && (
+                          <div
+                            className="scheduler-current-time-line"
+                            style={{ top: currentTimeLineTop! }}
+                            title={practiceClock.toFormat('h:mm:ss a')}
+                            aria-label={`Current time ${practiceClock.toFormat('h:mm a')}`}
+                          />
+                        )}
                       </div>
                     </div>
                   );
@@ -1897,7 +2767,7 @@ export default function Scheduler() {
               maxWidth: tooltipPos.width,
             }}
           >
-            <SchedulerHoverContent appt={hover.appt} />
+            <SchedulerHoverContent appt={hover.appt} driveHint={hoverDriveHint} />
           </div>,
           document.body
         )}
@@ -1919,9 +2789,16 @@ export default function Scheduler() {
         practiceTz={PRACTICE_TZ}
         appointmentTypes={typeList}
         providers={providers}
-        defaultProviderId={providerFilter.trim() || authDoctorId}
-        onClose={() => setBookSlot(null)}
-        onBooked={() => loadRange()}
+        defaultProviderId={(() => {
+          const id = resolvedPrimaryProviderId.trim();
+          if (id) return id;
+          if (providers[0]) return String(providers[0].id);
+          const auth = authDoctorId?.trim();
+          return auth || null;
+        })()}
+        prefill={bookPrefill}
+        onClose={closeBookModal}
+        onBooked={handleSchedulerBooked}
       />
 
       {contextMenu ? (
@@ -1933,6 +2810,9 @@ export default function Scheduler() {
           onAction={(a) => {
             void handleAppointmentMenuAction(a, contextMenu.appt);
           }}
+          showAddAnotherPet={addAnotherPetMenuOpts.show}
+          addAnotherPetDisabled={addAnotherPetMenuOpts.disabled}
+          addAnotherPetTitle={addAnotherPetMenuOpts.title}
         />
       ) : null}
 
@@ -1945,7 +2825,7 @@ export default function Scheduler() {
             providers={providers}
             accentColor={colorsForAppointment(editAppt, typeList, typeFillMap).fill}
             onClose={() => setEditAppt(null)}
-            onSaved={() => loadRange()}
+            onSaved={() => void loadRange({ refreshDrive: true })}
           />,
           document.body
         )}

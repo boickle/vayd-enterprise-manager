@@ -4,7 +4,7 @@ import CreateUser from './pages/CreateUser';
 import Admin from './pages/Admin';
 import Analytics from './pages/Analytics';
 import Settings from './pages/Settings';
-import Scout from './pages/Scout';
+import ScheduleLayout from './pages/ScheduleLayout';
 import SurveyResponsesPage from './pages/SurveyResponses';
 import SurveyResults from './pages/SurveyResults';
 import Tools from './pages/Tools';
@@ -32,18 +32,18 @@ function matchesRole(required: AppPage['role'], userRoles?: string[]) {
 export function getAccessiblePages(abilities?: string[], roles?: string[]): AppPage[] {
   const all: AppPage[] = [
     {
-      path: '/scout',
-      label: 'Scout',
-      element: <Scout />,
+      path: '/schedule',
+      label: 'Schedule',
+      element: <ScheduleLayout />,
       role: ['employee', 'admin', 'superadmin'],
-      showInMainTabs: true,
+      showInMainTabs: false,
     },
     {
       path: '/admin',
       label: 'Admin',
       element: <Admin />,
       role: ['admin', 'superadmin'],
-      showInMainTabs: true,
+      showInMainTabs: false,
     },
     {
       path: '/users/create',
@@ -58,14 +58,14 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       label: 'Analytics',
       element: <Analytics />,
       role: ['employee', 'admin', 'superadmin'],
-      showInMainTabs: true,
+      showInMainTabs: false,
     },
     {
       path: '/pims',
       label: 'PIMS',
       element: <PimsLayout />,
       role: ['employee', 'admin', 'superadmin'],
-      showInMainTabs: true,
+      showInMainTabs: false,
     },
     {
       path: '/tools',

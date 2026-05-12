@@ -9,13 +9,9 @@ import {
   useState,
   type CSSProperties,
 } from 'react';
-import {
-  createAppointment,
-  fetchDoctorMonth,
-  type MiniZone,
-} from '../api/appointments';
+import { useAuth } from '../auth/AuthProvider';
+import { fetchDoctorMonth, type MiniZone } from '../api/appointments';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
-import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { http } from '../api/http';
 import {
   monthsCoveringRange,
@@ -33,7 +29,18 @@ import {
   type RoutingV2SlotSearchResult,
 } from '../api/routing';
 import './Routing.css';
-// Removed fetchPrimaryProviders import - now using /employees/veterinarians endpoint directly
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  writeRoutingCalendarPreview,
+  type RoutingCalendarPreviewPayloadV1,
+} from '../utils/routingCalendarPreviewStorage';
+import {
+  clearRoutingUiSnapshot,
+  readRoutingUiBootstrap,
+  ROUTING_REQUEST_ID_SESSION_KEY,
+  writeAuthDoctorCache,
+  writeRoutingUiSnapshot,
+} from '../utils/routingUiSnapshot';
 
 /** Yellow wrap when an optional routing preference is on—makes checked state obvious at a glance. */
 const ROUTING_PREF_CHECKED_LABEL: CSSProperties = {
@@ -937,30 +944,6 @@ function pickStr(v: unknown): string | null {
   return s || null;
 }
 
-/** First pet/patient from GET /clients/:id (same shapes as SchedulerBookModal). */
-function extractFirstPatientFromClientPayload(payload: unknown): { id: number; name: string } | null {
-  if (!payload || typeof payload !== 'object') return null;
-  const p = payload as Record<string, unknown>;
-  const raw =
-    p.patients ??
-    p.patientList ??
-    p.pets ??
-    (Array.isArray(p.patient) ? p.patient : null);
-  if (!Array.isArray(raw)) return null;
-  for (const row of raw) {
-    if (!row || typeof row !== 'object') continue;
-    const o = row as Record<string, unknown>;
-    const idRaw = o.id ?? o.patientId;
-    if (idRaw == null || (typeof idRaw !== 'string' && typeof idRaw !== 'number')) continue;
-    const n = Number(idRaw);
-    if (!Number.isFinite(n)) continue;
-    const joined = [pickStr(o.firstName), pickStr(o.lastName)].filter(Boolean).join(' ').trim();
-    const name = pickStr(o.name) ?? (joined || 'Patient');
-    return { id: n, name };
-  }
-  return null;
-}
-
 const ROUTING_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
 function SlotChip({ slot }: { slot?: Slot | null }) {
@@ -1083,8 +1066,6 @@ function endOfDayOverrunSeconds(
   return delta < 0 ? -delta : 0;
 }
 
-const ROUTING_REQUEST_STORAGE_KEY = 'routing:last-request-id';
-const SELECTED_DOCTORS_STORAGE_KEY = 'routing:selected-doctors';
 const NONE_SELECTION_KEY = '__routing-none__';
 
 function deriveRoutingRequestId(res: Result | null | undefined): string | undefined {
@@ -1113,39 +1094,41 @@ function deriveRoutingRequestId(res: Result | null | undefined): string | undefi
 // =========================
 
 export default function Routing() {
+  const { token: authToken, userId: authUserId, doctorId: authDoctorInternalId } = useAuth();
+  const bootstrap = useMemo(() => readRoutingUiBootstrap(), []);
+
   // -------- Form state --------
-  const [form, setForm] = useState<RouteRequest>({
-    doctorId: '',
-    startDate: new Date().toISOString().slice(0, 10),
-    endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-    newAppt: { serviceMinutes: 45, address: '' },
-  });
+  const [form, setForm] = useState<RouteRequest>(() => ({ ...bootstrap.form }));
 
   // Preferences
-  const [preferredWeekday, setPreferredWeekday] = useState<number[]>([]); // 1..7, supports multiple days
+  const [preferredWeekday, setPreferredWeekday] = useState<number[]>(() => [...bootstrap.preferredWeekday]);
   const [preferredTimeOfDay, setPreferredTimeOfDay] = useState<'first' | 'middle' | 'end' | null>(
-    null
-  ); // send exactly these
+    () => bootstrap.preferredTimeOfDay
+  );
   /** UI: "Force Earliest Time"; API: `preferEarliestFeasibleStart` on empty-day routing. */
-  const [preferEarliestFeasibleStart, setPreferEarliestFeasibleStart] = useState(false);
-  const [edgeFirst, setEdgeFirst] = useState(false);
-  const [edgeLast, setEdgeLast] = useState(false);
+  const [preferEarliestFeasibleStart, setPreferEarliestFeasibleStart] = useState(
+    () => bootstrap.preferEarliestFeasibleStart
+  );
+  const [edgeFirst, setEdgeFirst] = useState(() => bootstrap.edgeFirst);
+  const [edgeLast, setEdgeLast] = useState(() => bootstrap.edgeLast);
 
   // Toggles
-  const [multiDoctor, setMultiDoctor] = useState(false);
-  const [useTraffic, setUseTraffic] = useState(false);
+  const [multiDoctor, setMultiDoctor] = useState(() => bootstrap.multiDoctor);
+  const [useTraffic, setUseTraffic] = useState(() => bootstrap.useTraffic);
   const [maxAddedDriveMinutes] = useState(20);
   // Reserve/Overflow option: 'reserve-only' | 'reserve-overflow' | null
-  const [reserveOption, setReserveOption] = useState<'reserve-only' | 'reserve-overflow' | null>(null);
+  const [reserveOption, setReserveOption] = useState<'reserve-only' | 'reserve-overflow' | null>(
+    () => bootstrap.reserveOption
+  );
 
   // -------- UX state --------
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<Result | null>(null);
+  const [result, setResult] = useState<Result | null>(() => (bootstrap.result as Result | null) ?? null);
   const [addressError, setAddressError] = useState<string | null>(null);
 
   // -------- Client search --------
-  const [clientQuery, setClientQuery] = useState('');
+  const [clientQuery, setClientQuery] = useState(() => bootstrap.clientQuery);
   const [clientResults, setClientResults] = useState<Client[]>([]);
   const [clientSearching, setClientSearching] = useState(false);
   const [showClientDropdown, setShowClientDropdown] = useState(false);
@@ -1153,7 +1136,7 @@ export default function Routing() {
   const latestClientQueryRef = useRef('');
 
   // -------- Doctor search --------
-  const [doctorQuery, setDoctorQuery] = useState('');
+  const [doctorQuery, setDoctorQuery] = useState(() => bootstrap.doctorQuery);
   const [doctorResults, setDoctorResults] = useState<Doctor[]>([]);
   const [doctorSearching, setDoctorSearching] = useState(false);
   const [showDoctorDropdown, setShowDoctorDropdown] = useState(false);
@@ -1168,18 +1151,20 @@ export default function Routing() {
   const [clientActiveIdx, setClientActiveIdx] = useState<number>(-1);
 
   // -------- Winner doctor name cache --------
-  const [doctorNames, setDoctorNames] = useState<Record<string, string>>({});
+  const [doctorNames, setDoctorNames] = useState<Record<string, string>>(() => ({ ...bootstrap.doctorNames }));
   const doctorNameReqs = useRef<Record<string, Promise<string>>>({});
 
   const [schedulePreview, setSchedulePreview] = useState<null | { opt: UnifiedOption; scope: 'day' | 'week' }>(
     null
   );
   const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({});
-  const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(null); // 👈 NEW
+  const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(
+    () => bootstrap.selectedClientAlerts
+  );
   const [latestRoutingRequestId, setLatestRoutingRequestId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     try {
-      return sessionStorage.getItem(ROUTING_REQUEST_STORAGE_KEY);
+      return sessionStorage.getItem(ROUTING_REQUEST_ID_SESSION_KEY);
     } catch {
       return null;
     }
@@ -1190,7 +1175,7 @@ export default function Routing() {
     setLatestRoutingRequestId(id);
     if (typeof window !== 'undefined') {
       try {
-        sessionStorage.setItem(ROUTING_REQUEST_STORAGE_KEY, id);
+        sessionStorage.setItem(ROUTING_REQUEST_ID_SESSION_KEY, id);
       } catch {
         /* ignore persistence errors */
       }
@@ -1200,22 +1185,108 @@ export default function Routing() {
   const [feedbackSubmittingKey, setFeedbackSubmittingKey] = useState<string | null>(null);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
-  const [feedbackSuccessKey, setFeedbackSuccessKey] = useState<string | null>(null);
-  const [scheduleBookTypeId, setScheduleBookTypeId] = useState<number | null>(null);
-  const [scheduleBookSubmittingKey, setScheduleBookSubmittingKey] = useState<string | null>(null);
-  /** Option keys for which POST /appointments succeeded from this page. */
-  const [scheduleBookedKeys, setScheduleBookedKeys] = useState<Record<string, true>>({});
-  const [bookConfirmModal, setBookConfirmModal] = useState<
-    | null
-    | { opt: UnifiedOption; patient: { id: number; name: string }; loading: boolean }
-  >(null);
+  const [feedbackSuccessKey, setFeedbackSuccessKey] = useState<string | null>(
+    () => bootstrap.feedbackSuccessKey
+  );
+  const [scheduleBookTypeId, setScheduleBookTypeId] = useState<number | null>(
+    () => bootstrap.scheduleBookTypeId
+  );
+  /** Option keys for which POST /appointments succeeded (calendar book flow). */
+  const [scheduleBookedKeys, setScheduleBookedKeys] = useState<Record<string, true>>(
+    () => ({ ...bootstrap.scheduleBookedKeys })
+  );
 
-  // -------- Doctor selection modal (for multi-doctor mode) --------
-  const [showDoctorSelectionModal, setShowDoctorSelectionModal] = useState(false);
-  const [allProviders, setAllProviders] = useState<Array<{ id: string | number; name: string; email: string; pimsId: string }>>([]);
-  const [selectedDoctorIds, setSelectedDoctorIds] = useState<string[]>([]);
-  const [providersLoading, setProvidersLoading] = useState(false);
-  const [pendingEndpoint, setPendingEndpoint] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  useEffect(() => {
+    if (!authToken) clearRoutingUiSnapshot();
+  }, [authToken]);
+
+  useEffect(() => {
+    if (!authToken || !authDoctorInternalId?.trim()) return;
+    const internal = authDoctorInternalId.trim();
+    const cacheUserId = authUserId?.trim() || null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await http.get(`/employees/${encodeURIComponent(internal)}`);
+        const emp = Array.isArray(data) ? data[0] : data;
+        const pimsRaw =
+          emp?.pimsId != null
+            ? String(emp.pimsId)
+            : emp?.employee?.pimsId != null
+              ? String(emp.employee.pimsId)
+              : '';
+        const pimsId = pimsRaw.trim();
+        if (cancelled || !pimsId) return;
+        const displayName = buildDoctorName(emp, `Doctor ${pimsId}`);
+        if (cacheUserId) writeAuthDoctorCache(cacheUserId, pimsId, displayName);
+        setForm((f) => (f.doctorId.trim() ? f : { ...f, doctorId: pimsId }));
+        setDoctorQuery((q) => (q.trim() ? q : displayName));
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken, authUserId, authDoctorInternalId]);
+
+  useEffect(() => {
+    if (loading || !authToken) return;
+    const uid = authUserId?.trim() || null;
+    writeRoutingUiSnapshot({
+      v: 1,
+      userId: uid,
+      form,
+      result,
+      multiDoctor,
+      useTraffic,
+      preferredWeekday,
+      preferredTimeOfDay,
+      preferEarliestFeasibleStart,
+      edgeFirst,
+      edgeLast,
+      reserveOption,
+      clientQuery,
+      doctorQuery,
+      doctorNames,
+      scheduleBookedKeys,
+      feedbackSuccessKey,
+      selectedClientAlerts,
+      scheduleBookTypeId,
+    });
+  }, [
+    loading,
+    authToken,
+    authUserId,
+    form,
+    result,
+    multiDoctor,
+    useTraffic,
+    preferredWeekday,
+    preferredTimeOfDay,
+    preferEarliestFeasibleStart,
+    edgeFirst,
+    edgeLast,
+    reserveOption,
+    clientQuery,
+    doctorQuery,
+    doctorNames,
+    scheduleBookedKeys,
+    feedbackSuccessKey,
+    selectedClientAlerts,
+    scheduleBookTypeId,
+  ]);
+
+  useEffect(() => {
+    const b = searchParams.get('booked');
+    if (!b) return;
+    setScheduleBookedKeys((m) => ({ ...m, [b]: true }));
+    setFeedbackToast('Appointment added to the schedule.');
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   async function openMyDay(opt: UnifiedOption) {
     // 👇 allow undefined here
@@ -1267,145 +1338,44 @@ export default function Routing() {
       }
     }
     if (!internalId) return;
-    setSchedulePreview({ opt: { ...opt, doctorPimsId: internalId }, scope: 'week' });
+
+    const clientIdRaw = form.newAppt.clientId?.trim();
+    if (!clientIdRaw) {
+      setFeedbackError('Select a client before opening the calendar preview.');
+      return;
+    }
+    if (scheduleBookTypeId == null) {
+      setFeedbackError('Appointment types are still loading. Try again in a moment.');
+      return;
+    }
+    if (!opt.suggestedStartIso) {
+      setFeedbackError('This option has no suggested start time.');
+      return;
+    }
+
+    setFeedbackError(null);
+    const merged = { ...opt, doctorPimsId: internalId } as UnifiedOption;
+    const payload: RoutingCalendarPreviewPayloadV1 = {
+      version: 1,
+      option: { ...(merged as unknown as Record<string, unknown>), doctorPimsId: internalId } as RoutingCalendarPreviewPayloadV1['option'],
+      serviceMinutes: Math.max(1, Number(form.newAppt.serviceMinutes) || 30),
+      newApptMeta: {
+        clientId: form.newAppt.clientId,
+        address: form.newAppt.address,
+        lat: form.newAppt.lat,
+        lon: form.newAppt.lon,
+      },
+      appointmentTypeId: scheduleBookTypeId,
+      clientDisplayLabel: clientQuery.trim() || undefined,
+    };
+    writeRoutingCalendarPreview(payload);
+    navigate('/schedule/scheduler?routingPreview=1');
   }
 
   const hasFinalSelection = feedbackSuccessKey != null;
 
   function routingOptionKey(opt: UnifiedOption): string {
     return `${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${opt.candidateIndex ?? ''}`;
-  }
-
-  async function openBookAppointmentConfirm(opt: UnifiedOption) {
-    const clientIdRaw = form.newAppt.clientId?.trim();
-    if (!clientIdRaw) {
-      setFeedbackError('Select a client before booking an appointment.');
-      return;
-    }
-    if (scheduleBookTypeId == null) {
-      setFeedbackError('Appointment types are still loading. Try again in a moment.');
-      return;
-    }
-    if (!opt.suggestedStartIso) {
-      setFeedbackError('This option has no suggested start time.');
-      return;
-    }
-
-    const clientIdNum = Number(clientIdRaw);
-    if (!Number.isFinite(clientIdNum)) {
-      setFeedbackError('Invalid client selection.');
-      return;
-    }
-
-    setFeedbackError(null);
-    setFeedbackToast(null);
-    setBookConfirmModal({ opt, patient: { id: 0, name: '…' }, loading: true });
-
-    try {
-      const clientPayload = await fetchClientByIdStaff(clientIdNum);
-      const patient = extractFirstPatientFromClientPayload(clientPayload);
-      if (!patient) {
-        setBookConfirmModal(null);
-        setFeedbackError('This client has no patient on file to book.');
-        return;
-      }
-      setBookConfirmModal({ opt, patient, loading: false });
-    } catch (err) {
-      setBookConfirmModal(null);
-      setFeedbackError(extractErrorMessage(err));
-    }
-  }
-
-  async function bookAppointmentFromRoutingOption(
-    opt: UnifiedOption,
-    opts?: { patientId?: number }
-  ) {
-    const optionKey = routingOptionKey(opt);
-    const clientIdRaw = form.newAppt.clientId?.trim();
-    if (!clientIdRaw) {
-      setFeedbackError('Select a client before booking an appointment.');
-      return;
-    }
-    if (scheduleBookTypeId == null) {
-      setFeedbackError('Appointment types are still loading. Try again in a moment.');
-      return;
-    }
-    if (!opt.suggestedStartIso) {
-      setFeedbackError('This option has no suggested start time.');
-      return;
-    }
-
-    const clientIdNum = Number(clientIdRaw);
-    if (!Number.isFinite(clientIdNum)) {
-      setFeedbackError('Invalid client selection.');
-      return;
-    }
-
-    setScheduleBookSubmittingKey(optionKey);
-    setFeedbackError(null);
-    setFeedbackToast(null);
-
-    try {
-      let internal: string | undefined = doctorIdByPims[opt.doctorPimsId];
-      if (!internal) {
-        const fromList = allProviders.find((p) => String(p.pimsId) === String(opt.doctorPimsId));
-        if (fromList?.id != null) internal = String(fromList.id);
-      }
-      if (!internal) {
-        const { data } = await http.get(`/employees/pims/${encodeURIComponent(opt.doctorPimsId)}`);
-        const emp = Array.isArray(data) ? data[0] : data;
-        const resolved =
-          (emp?.id != null ? String(emp.id) : undefined) ??
-          (emp?.employee?.id != null ? String(emp.employee.id) : undefined);
-        if (resolved) {
-          internal = resolved;
-          setDoctorIdByPims((m) => ({ ...m, [opt.doctorPimsId]: resolved }));
-        }
-      }
-      const primaryProviderId = internal != null ? Number(internal) : NaN;
-      if (!Number.isFinite(primaryProviderId)) {
-        setFeedbackError('Could not resolve provider for this option.');
-        return;
-      }
-
-      let patientId = opts?.patientId;
-      if (patientId == null || !Number.isFinite(patientId)) {
-        const clientPayload = await fetchClientByIdStaff(clientIdNum);
-        const pet = extractFirstPatientFromClientPayload(clientPayload);
-        patientId = pet?.id;
-      }
-      if (patientId == null || !Number.isFinite(patientId)) {
-        setFeedbackError('This client has no patient on file to book.');
-        return;
-      }
-
-      const startUtc = DateTime.fromISO(opt.suggestedStartIso).toUTC();
-      if (!startUtc.isValid) {
-        setFeedbackError('Invalid suggested start time from routing.');
-        return;
-      }
-      const mins = Math.max(1, Number(form.newAppt.serviceMinutes) || 30);
-      const endUtc = startUtc.plus({ minutes: mins });
-
-      await createAppointment({
-        practiceId: ROUTING_PRACTICE_ID,
-        primaryProviderId,
-        clientId: clientIdNum,
-        patientId,
-        appointmentTypeId: scheduleBookTypeId,
-        appointmentStart: startUtc.toISO()!,
-        appointmentEnd: endUtc.toISO()!,
-        description: `Routing — ${opt.doctorName} ${opt.date}`,
-      });
-
-      setScheduleBookedKeys((m) => ({ ...m, [optionKey]: true }));
-      setBookConfirmModal(null);
-      setFeedbackToast('Appointment added to the schedule.');
-    } catch (err) {
-      setFeedbackError(extractErrorMessage(err));
-    } finally {
-      setScheduleBookSubmittingKey(null);
-    }
   }
 
   async function submitFeedbackForNone() {
@@ -1515,7 +1485,9 @@ export default function Routing() {
           active.find((t) =>
             /wellness|standard|check-up|checkup|office/i.test(String(t.prettyName || t.name || ''))
           ) ?? active[0];
-        if (prefer?.id != null) setScheduleBookTypeId(Number(prefer.id));
+        if (prefer?.id != null) {
+          setScheduleBookTypeId((cur) => (cur != null ? cur : Number(prefer.id)));
+        }
       })
       .catch(() => {});
     return () => {
@@ -1760,7 +1732,6 @@ export default function Routing() {
     setFeedbackToast(null);
     setFeedbackError(null);
     setScheduleBookedKeys({});
-    setBookConfirmModal(null);
 
     if (new Date(form.endDate) < new Date(form.startDate)) {
       setError('End date must be on or after the start date.');
@@ -1850,17 +1821,15 @@ export default function Routing() {
     if (isV2) {
       // v2 endpoint supports new multi-doctor format
       if (multiDoctor && doctorIdsArray && doctorIdsArray.length > 0) {
-        // Use doctorIds array when provided (from modal selection)
         payload = {
           doctorIds: doctorIdsArray,
           ...base,
           maxAddedDriveMinutes,
         };
       } else if (multiDoctor) {
-        // Fallback to allowOtherDoctors if no doctorIds provided
+        const ids = form.doctorId.trim() ? [form.doctorId.trim()] : [];
         payload = {
-          doctorId: form.doctorId, // Primary doctor (preferred in tie-breakers)
-          allowOtherDoctors: true, // Search all available doctors
+          doctorIds: ids,
           ...base,
           maxAddedDriveMinutes,
         };
@@ -1945,128 +1914,17 @@ export default function Routing() {
     }
 
     const endpoint = '/routing/v2';
-    
-    // If multi-doctor is selected, show modal first
+
     if (multiDoctor) {
-      setPendingEndpoint(endpoint);
-      setShowDoctorSelectionModal(true);
+      const primary = form.doctorId.trim();
+      if (!primary) {
+        setError('Please select a doctor.');
+        return;
+      }
+      await submitRoutingRequest(endpoint, [primary]);
     } else {
       await submitRoutingRequest(endpoint);
     }
-  }
-
-  // Fetch providers when modal opens
-  useEffect(() => {
-    if (!showDoctorSelectionModal) return;
-
-    let alive = true;
-    (async () => {
-      setProvidersLoading(true);
-      try {
-        // Fetch veterinarians from the new endpoint
-        const { data } = await http.get('/employees/veterinarians');
-        const veterinarians: any[] = Array.isArray(data) ? data : [];
-        
-        if (!alive) return;
-        
-        // Map veterinarians to provider format
-        // The endpoint already returns veterinarians (D.V.M/V.M.D), so no need to filter
-        const providersWithPims = veterinarians
-          .filter((v) => v.isActive !== false) // Only include active veterinarians
-          .map((v) => {
-            const pimsId = v.pimsId ? String(v.pimsId) : null;
-            const id = v.id ?? v.pimsId;
-            const name = buildDoctorName(v, `Veterinarian ${id ?? ''}`).trim();
-            
-            return {
-              id: id,
-              name,
-              email: v?.email || '',
-              pimsId: pimsId || String(id), // Use pimsId if available, otherwise use id
-            };
-          });
-        
-        setAllProviders(providersWithPims);
-        
-        // Load previously selected doctor IDs from localStorage, or select all by default
-        let defaultSelectedIds: string[] = [];
-        try {
-          const stored = localStorage.getItem(SELECTED_DOCTORS_STORAGE_KEY);
-          if (stored) {
-            const parsed = JSON.parse(stored);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              // Only use stored IDs that are still valid (exist in current providers)
-              const validPimsIds = providersWithPims.map((p) => p.pimsId || String(p.id)).filter(Boolean);
-              defaultSelectedIds = parsed.filter((id: string) => validPimsIds.includes(id));
-            }
-          }
-        } catch {
-          // If parsing fails, fall back to selecting all
-        }
-        
-        // If no stored selections or stored selections are invalid, select all providers by default
-        if (defaultSelectedIds.length === 0) {
-          defaultSelectedIds = providersWithPims.map((p) => p.pimsId || String(p.id)).filter(Boolean);
-        }
-        
-        setSelectedDoctorIds(defaultSelectedIds);
-      } catch (err) {
-        console.error('Failed to fetch providers:', err);
-        if (!alive) return;
-        setError('Failed to load doctors. Please try again.');
-      } finally {
-        if (alive) setProvidersLoading(false);
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [showDoctorSelectionModal]);
-
-  // Handle doctor selection checkbox toggle
-  function toggleDoctorSelection(doctorId: string) {
-    setSelectedDoctorIds((prev) => {
-      if (prev.includes(doctorId)) {
-        return prev.filter((id) => id !== doctorId);
-      } else {
-        return [...prev, doctorId];
-      }
-    });
-  }
-
-  // Handle modal confirm
-  async function handleConfirmDoctorSelection() {
-    if (selectedDoctorIds.length === 0) {
-      setError('Please select at least one doctor.');
-      return;
-    }
-
-    // Save selected doctor IDs to localStorage
-    try {
-      localStorage.setItem(SELECTED_DOCTORS_STORAGE_KEY, JSON.stringify(selectedDoctorIds));
-    } catch {
-      // If localStorage fails, continue anyway
-    }
-
-    setShowDoctorSelectionModal(false);
-    const endpoint = pendingEndpoint || (multiDoctor ? '/routing/any-doctor' : '/routing');
-    setPendingEndpoint(null);
-    
-    // For v2 endpoint, use doctorIds array
-    if (endpoint.includes('/v2')) {
-      await submitRoutingRequest(endpoint, selectedDoctorIds);
-    } else {
-      // For v1 endpoint, still use the old format
-      await submitRoutingRequest(endpoint);
-    }
-  }
-
-  // Handle modal cancel
-  function handleCancelDoctorSelection() {
-    setShowDoctorSelectionModal(false);
-    setPendingEndpoint(null);
-    setSelectedDoctorIds([]);
   }
 
   // =========================
@@ -2960,7 +2818,6 @@ export default function Routing() {
               {displayOptions.map((opt, idx) => {
                 const headerColor = colorForDoctor(opt.doctorPimsId);
                 const optionKey = routingOptionKey(opt);
-                const bookingSchedule = scheduleBookSubmittingKey === optionKey;
                 const scheduleBooked = Boolean(scheduleBookedKeys[optionKey]);
                 const whitespaceAfterBookingSec =
                   (opt as any).whitespaceAfterBookingSeconds ??
@@ -3265,34 +3122,17 @@ export default function Routing() {
                         type="button"
                         className="btn secondary"
                         onClick={() => openMyWeek(opt)}
+                        disabled={!form.newAppt.clientId?.trim() || scheduleBookTypeId == null}
+                        title={
+                          !form.newAppt.clientId?.trim()
+                            ? 'Select a client first'
+                            : scheduleBookTypeId == null
+                              ? 'Loading appointment types…'
+                              : 'Open the practice calendar to book this slot'
+                        }
                       >
-                        My Week
+                        Book Appointment
                       </button>
-                      {!scheduleBooked && (
-                        <button
-                          type="button"
-                          className="btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openBookAppointmentConfirm(opt);
-                          }}
-                          disabled={
-                            bookingSchedule ||
-                            bookConfirmModal != null ||
-                            !form.newAppt.clientId?.trim() ||
-                            scheduleBookTypeId == null
-                          }
-                          title={
-                            !form.newAppt.clientId?.trim()
-                              ? 'Select a client first'
-                              : scheduleBookTypeId == null
-                                ? 'Loading appointment types…'
-                                : undefined
-                          }
-                        >
-                          {bookingSchedule ? 'Adding…' : 'Book appointment'}
-                        </button>
-                      )}
                     </div>
                   </div>
                 );
@@ -3321,223 +3161,6 @@ export default function Routing() {
         />
       )}
 
-      {bookConfirmModal && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10001,
-          }}
-          onClick={() => {
-            if (scheduleBookSubmittingKey) return;
-            setBookConfirmModal(null);
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: 'white',
-              borderRadius: 8,
-              padding: 24,
-              maxWidth: 520,
-              width: '90%',
-              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 style={{ marginTop: 0, marginBottom: 12 }}>Book appointment?</h2>
-            {bookConfirmModal.loading ? (
-              <p style={{ margin: '16px 0', color: '#444' }}>Loading patient…</p>
-            ) : (
-              <p style={{ margin: '0 0 16px 0', lineHeight: 1.5, color: '#333' }}>
-                Are you sure you want to book{' '}
-                <strong>
-                  with {bookConfirmModal.opt.doctorName} on{' '}
-                  {DateTime.fromISO(bookConfirmModal.opt.date).toFormat('cccc, LLL d, yyyy')} at{' '}
-                  {isoToTime(bookConfirmModal.opt.suggestedStartIso)} (
-                  {Math.max(1, Number(form.newAppt.serviceMinutes) || 30)} min)
-                </strong>{' '}
-                for patient <strong>{bookConfirmModal.patient.name}</strong>
-                {clientQuery.trim() ? (
-                  <>
-                    {' '}
-                    (client {clientQuery.trim()})
-                  </>
-                ) : null}
-                ?
-              </p>
-            )}
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                className="btn secondary"
-                disabled={Boolean(scheduleBookSubmittingKey)}
-                onClick={() => setBookConfirmModal(null)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn"
-                disabled={
-                  bookConfirmModal.loading ||
-                  scheduleBookSubmittingKey === routingOptionKey(bookConfirmModal.opt)
-                }
-                onClick={() =>
-                  bookAppointmentFromRoutingOption(bookConfirmModal.opt, {
-                    patientId: bookConfirmModal.patient.id,
-                  })
-                }
-              >
-                {scheduleBookSubmittingKey === routingOptionKey(bookConfirmModal.opt)
-                  ? 'Booking…'
-                  : 'Book appointment'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Doctor Selection Modal for Multi-Doctor Mode */}
-      {showDoctorSelectionModal && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10000,
-          }}
-          onClick={handleCancelDoctorSelection}
-        >
-          <div
-            style={{
-              backgroundColor: 'white',
-              borderRadius: 8,
-              padding: 24,
-              maxWidth: 600,
-              width: '90%',
-              maxHeight: '80vh',
-              overflow: 'auto',
-              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 style={{ marginTop: 0, marginBottom: 16 }}>Select Doctors</h2>
-            <p style={{ marginTop: 0, marginBottom: 20, color: '#666' }}>
-              Select the doctors to include in the routing search. All doctors are selected by default.
-            </p>
-
-            {providersLoading ? (
-              <div style={{ textAlign: 'center', padding: 40 }}>
-                <p>Loading doctors...</p>
-              </div>
-            ) : allProviders.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 40 }}>
-                <p>No doctors found.</p>
-              </div>
-            ) : (
-              <div style={{ marginBottom: 24 }}>
-                {allProviders.map((provider) => {
-                  const doctorId = provider.pimsId || String(provider.id);
-                  const isSelected = selectedDoctorIds.includes(doctorId);
-                  return (
-                    <label
-                      key={doctorId}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        padding: '12px 8px',
-                        cursor: 'pointer',
-                        borderRadius: 8,
-                        marginBottom: 4,
-                        border: '1px solid transparent',
-                        boxSizing: 'border-box',
-                        ...(isSelected
-                          ? {
-                              backgroundColor: '#fef9c3',
-                              borderColor: '#ca8a04',
-                            }
-                          : { backgroundColor: 'transparent' }),
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!isSelected) {
-                          e.currentTarget.style.backgroundColor = '#f9fafb';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!isSelected) {
-                          e.currentTarget.style.backgroundColor = 'transparent';
-                        } else {
-                          e.currentTarget.style.backgroundColor = '#fef9c3';
-                        }
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleDoctorSelection(doctorId)}
-                        style={{
-                          marginRight: 12,
-                          width: 18,
-                          height: 18,
-                          cursor: 'pointer',
-                        }}
-                      />
-                      <span style={{ fontSize: 16 }}>{provider.name}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                onClick={handleCancelDoctorSelection}
-                style={{
-                  padding: '10px 20px',
-                  borderRadius: 6,
-                  border: '1px solid #ccc',
-                  backgroundColor: 'white',
-                  cursor: 'pointer',
-                  fontSize: 14,
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDoctorSelection}
-                disabled={selectedDoctorIds.length === 0 || providersLoading}
-                style={{
-                  padding: '10px 20px',
-                  borderRadius: 6,
-                  border: 'none',
-                  backgroundColor: selectedDoctorIds.length === 0 || providersLoading ? '#ccc' : '#4FB128',
-                  color: 'white',
-                  cursor: selectedDoctorIds.length === 0 || providersLoading ? 'not-allowed' : 'pointer',
-                  fontSize: 14,
-                  fontWeight: 600,
-                }}
-              >
-                Confirm ({selectedDoctorIds.length} selected)
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

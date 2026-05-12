@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { ChevronRight, FileText } from 'lucide-react';
 import { searchClientsStaff, type ClientSearchRow } from '../api/clientsStaff';
 import PimsClientDetailView from '../components/pims/PimsClientDetailView';
@@ -91,6 +91,11 @@ function classificationLine(row: ClientSearchRow): string {
 }
 
 export default function PimsClientsPage() {
+  const location = useLocation();
+  const clientsBasePath = location.pathname.startsWith('/schedule/clients')
+    ? '/schedule/clients'
+    : '/pims/clients';
+
   const [searchParams, setSearchParams] = useSearchParams();
   const qParam = searchParams.get('q') ?? '';
   const clientIdParam = searchParams.get('clientId') ?? '';
@@ -286,7 +291,10 @@ export default function PimsClientsPage() {
                     <span className="pims-clients__lastname">{lastNameDisplay(row)}</span>
                   </td>
                   <td>
-                    <Link className="pims-clients__link" to={`/pims/clients?clientId=${encodeURIComponent(String(row.id))}`}>
+                    <Link
+                      className="pims-clients__link"
+                      to={`${clientsBasePath}?clientId=${encodeURIComponent(String(row.id))}`}
+                    >
                       {pickStr(row.firstName) || '—'}
                     </Link>
                   </td>
@@ -322,7 +330,7 @@ export default function PimsClientsPage() {
                   <td>
                     <Link
                       className="pims-clients__action-link"
-                      to={`/pims/clients?clientId=${encodeURIComponent(String(row.id))}`}
+                      to={`${clientsBasePath}?clientId=${encodeURIComponent(String(row.id))}`}
                       aria-label="Open client"
                       title="Open"
                     >

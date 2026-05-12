@@ -64,7 +64,7 @@ const NAV_TAIL: NavGroup[] = [
 function buildNav(abilities?: string[] | null): NavGroup[] {
   const canSched =
     abilities == null || abilities.length === 0 || abilities.includes('canSeeRouting');
-  const homeTo = canSched ? '/pims/scheduler' : '/pims/overview';
+  const homeTo = canSched ? '/schedule/home' : '/pims/overview';
   return [
     { id: 'home', label: 'Home', icon: Home, to: homeTo },
     ...NAV_TAIL,

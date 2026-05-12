@@ -7,9 +7,10 @@ import ResetPass from './pages/ResetPass';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { useAuth } from './auth/useAuth';
 import Home from './pages/Home';
-import AppTabs from './components/AppTabs';
 import UserMenu from './components/UserMenu';
+import NavbarGlobalSearch from './components/NavbarGlobalSearch';
 import { getAccessiblePages } from './app-pages';
+import Admin from './pages/Admin';
 import { getAdminTabPages } from './admin-tabs';
 import { getAnalyticsTabPages } from './analytics-tabs';
 import { getToolsTabPages } from './tools-tabs';
@@ -26,12 +27,14 @@ import MyDayToggle from './pages/MyDayToggle';
 import MyWeek from './pages/MyWeek';
 import SchedulingTools from './pages/SchedulingTools';
 import RoomLoaderPage from './pages/RoomLoader';
-import { ScoutIndexRedirect } from './pages/Scout';
+import { ScheduleIndexRedirect } from './pages/ScheduleLayout';
+import ScheduleHomePage from './pages/ScheduleHomePage';
 import LegacySchedulingToolsRedirect from './components/LegacySchedulingToolsRedirect';
 import InventoryManagement from './pages/InventoryManagement';
 import PimsPlaceholder from './pages/PimsPlaceholder';
 import PimsClientsPage from './pages/PimsClientsPage';
 import PimsPatientsPage from './pages/PimsPatientsPage';
+import PimsTasksPage from './pages/PimsTasksPage';
 import Scheduler from './pages/Scheduler';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
 import PublicReferAFriend from './pages/PublicReferAFriend';
@@ -39,10 +42,16 @@ import ErrorPage from './pages/ErrorPage';
 import { usePageTracking } from './hooks/usePageTracking';
 import { isCreateClientEnabled, isProduction } from './utils/env';
 
+/** Old `/scout/*` URLs → `/schedule/*` */
+function ScoutLegacyRedirect() {
+  const { pathname, search, hash } = useLocation();
+  return <Navigate to={`${pathname.replace(/^\/scout/, '/schedule')}${search}${hash}`} replace />;
+}
+
 /**
  * RouteGuard - Checks if user has access to a route and redirects appropriately
  * - Not logged in → /login
- * - Logged in but no access → /client-portal (clients) or /scout (employees)
+ * - Logged in but no access → /client-portal (clients) or /schedule (employees)
  */
 function RouteGuard() {
   const { token, role, abilities } = useAuth() as any;
@@ -75,14 +84,14 @@ function RouteGuard() {
     '/requestreset',
   ];
   if (publicRoutes.includes(path)) {
-    return <Navigate to={isClient ? '/client-portal' : '/scout'} replace />;
+    return <Navigate to={isClient ? '/client-portal' : '/schedule'} replace />;
   }
 
   // Check if this is a client portal route
   if (path.startsWith('/client-portal')) {
     // Clients can access, employees cannot
     if (!isClient) {
-      return <Navigate to="/scout" replace />;
+      return <Navigate to="/schedule" replace />;
     }
     // If it's a client portal route and user is a client, but route doesn't exist
     // This shouldn't happen as client portal routes are defined above, but just in case
@@ -96,6 +105,7 @@ function RouteGuard() {
   // For employee routes, check if this route exists in the system
   // Get all possible pages (not filtered by user access) to check if route exists
   const allPages = [
+    '/schedule',
     '/scout',
     '/doctormonth',
     '/admin',
@@ -133,8 +143,8 @@ function RouteGuard() {
         );
       }
 
-      // Route exists but user doesn't have access - redirect to scout
-      return <Navigate to="/scout" replace />;
+      // Route exists but user doesn't have access - redirect to schedule hub
+      return <Navigate to="/schedule" replace />;
     } else {
       // Route doesn't exist - show not found
       return (
@@ -220,11 +230,15 @@ export default function App() {
     () => (isClient ? [] : getAccessiblePages(abilities, roles)),
     [abilities, roles, isClient]
   );
-  // Main tab bar: only pages with showInMainTabs !== false
-  const mainTabPages = useMemo(
-    () => pages.filter((p: { showInMainTabs?: boolean }) => p.showInMainTabs !== false),
-    [pages]
-  );
+  const menuExtras = useMemo(() => {
+    if (isClient) return [];
+    const paths = new Set(pages.map((p: { path: string }) => p.path));
+    const out: { label: string; to: string }[] = [];
+    if (paths.has('/analytics')) out.push({ label: 'Analytics', to: '/analytics' });
+    if (paths.has('/tools')) out.push({ label: 'Tools', to: '/tools' });
+    if (paths.has('/pims')) out.push({ label: 'Appointments', to: '/schedule/routing' });
+    return out;
+  }, [isClient, pages]);
 
   // If a client lands on "/" or "/home", redirect to client portal
   useEffect(() => {
@@ -243,6 +257,7 @@ export default function App() {
     if (isClient && location.pathname.startsWith('/client-portal')) return '';
     const path = location.pathname;
     if (path.startsWith('/pims')) return 'pims-main-wrapper';
+    if (path.startsWith('/schedule')) return 'schedule-main-wrapper';
     return 'container';
   }, [isClient, location.pathname]);
 
@@ -279,7 +294,7 @@ export default function App() {
             <div className="brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <img
                 src="/final_thick_lines_cropped.jpeg"
-                alt="VAYD Scout Logo"
+                alt="VAYD"
                 style={{
                   height: '60px',
                   width: 'auto',
@@ -298,7 +313,7 @@ export default function App() {
                   alignItems: 'center',
                 }}
               >
-                Scout
+                VAYD
                 <sup
                   style={{
                     fontSize: '9px',
@@ -314,17 +329,16 @@ export default function App() {
               </span>
             </div>
 
-            {/* Tabs only for employees - hidden on mobile, shown in UserMenu */}
-            {token && !isClient && <AppTabs pages={mainTabPages} />}
+            {token && !isClient && <NavbarGlobalSearch />}
 
             <div className="spacer" />
-            {token && <UserMenu pages={isClient ? [] : mainTabPages} />}
+            {token && <UserMenu menuExtras={isClient ? [] : menuExtras} />}
           </header>
         )}
 
       <main className={mainClassName}>
         <Routes>
-          {/* Root redirect: client -> client-portal, else -> scout */}
+          {/* Root redirect: client -> client-portal, else -> schedule hub */}
           <Route
             path="/"
             element={
@@ -332,7 +346,7 @@ export default function App() {
                 isClient ? (
                   <Navigate to="/client-portal" replace />
                 ) : (
-                  <Navigate to="/scout" replace />
+                  <Navigate to="/schedule" replace />
                 )
               ) : (
                 <Navigate to="/login" replace />
@@ -405,15 +419,16 @@ export default function App() {
               }
             >
               <Route path="/home" element={<Home />} />
-              <Route path="/routing" element={<Navigate to="/scout/routing" replace />} />
-              <Route path="/doctor" element={<Navigate to="/scout/my-day" replace />} />
-              <Route path="/doctorweek" element={<Navigate to="/scout/my-week" replace />} />
-              <Route path="/room-loader" element={<Navigate to="/scout/room-loader" replace />} />
-              <Route path="/scheduler" element={<Navigate to="/pims/scheduler" replace />} />
+              <Route path="/scout/*" element={<ScoutLegacyRedirect />} />
+              <Route path="/routing" element={<Navigate to="/schedule/routing" replace />} />
+              <Route path="/doctor" element={<Navigate to="/schedule/my-day" replace />} />
+              <Route path="/doctorweek" element={<Navigate to="/schedule/scheduler" replace />} />
+              <Route path="/room-loader" element={<Navigate to="/schedule/room-loader" replace />} />
+              <Route path="/scheduler" element={<Navigate to="/schedule/scheduler" replace />} />
               <Route path="/scheduling-tools/*" element={<LegacySchedulingToolsRedirect />} />
               <Route
                 path="/schedule-loader"
-                element={<Navigate to="/scout/scheduling-tools/schedule-loader" replace />}
+                element={<Navigate to="/schedule/scheduling-tools/schedule-loader" replace />}
               />
               {pages.map((p: any) =>
                 p.path === '/admin' ? (
@@ -434,29 +449,41 @@ export default function App() {
                       <Route key={tab.path} path={tab.path} element={tab.element} />
                     ))}
                   </Route>
-                ) : p.path === '/scout' ? (
+                ) : p.path === '/schedule' ? (
                   <Route key={p.path} path={p.path} element={p.element}>
-                    <Route index element={<ScoutIndexRedirect />} />
+                    <Route index element={<ScheduleIndexRedirect />} />
+                    <Route path="home" element={<ScheduleHomePage />} />
                     <Route path="routing" element={<Routing />} />
                     <Route path="my-day" element={<MyDayToggle />} />
                     <Route path="my-week" element={<MyWeek />} />
                     <Route path="scheduling-tools" element={<SchedulingTools />}>
                       <Route
                         index
-                        element={<Navigate to="/scout/scheduling-tools/schedule-loader" replace />}
+                        element={<Navigate to="/schedule/scheduling-tools/schedule-loader" replace />}
                       />
                       {getSchedulingToolsTabPages().map((tab) => (
                         <Route key={tab.path} path={tab.path} element={tab.element} />
                       ))}
                     </Route>
                     <Route path="room-loader" element={<RoomLoaderPage />} />
+                    <Route path="scheduler" element={<Scheduler />} />
+                    <Route path="inventory" element={<InventoryManagement />} />
+                    <Route path="tasks" element={<PimsTasksPage />} />
+                    <Route path="clients" element={<PimsClientsPage />} />
+                    <Route path="patients" element={<PimsPatientsPage />} />
+                    <Route path="admin" element={<Admin basePath="/schedule/admin" />}>
+                      <Route index element={<Navigate to="survey/results" replace />} />
+                      {getAdminTabPages().map((tab) => (
+                        <Route key={`schedule-admin-${tab.path}`} path={tab.path} element={tab.element} />
+                      ))}
+                    </Route>
                   </Route>
                 ) : p.path === '/pims' ? (
                   <Route key={p.path} path={p.path} element={p.element}>
                     <Route index element={<Navigate to="/pims/scheduler" replace />} />
                     <Route path="overview" element={<PimsPlaceholder title="Overview" />} />
                     <Route path="scheduler" element={<Scheduler />} />
-                    <Route path="tasks" element={<PimsPlaceholder title="Tasks" />} />
+                    <Route path="tasks" element={<PimsTasksPage />} />
                     <Route path="clients" element={<PimsClientsPage />} />
                     <Route path="patients" element={<PimsPatientsPage />} />
                     <Route path="labs" element={<PimsPlaceholder title="Labs" />} />
@@ -482,7 +509,7 @@ export default function App() {
                   <Route key={p.path} path={p.path} element={p.element}>
                     <Route
                       path="care-outreach"
-                      element={<Navigate to="/scout/scheduling-tools/care-outreach" replace />}
+                      element={<Navigate to="/schedule/scheduling-tools/care-outreach" replace />}
                     />
                     <Route path="inventory" element={<Navigate to="/pims/inventory" replace />} />
                     <Route index element={<Navigate to="/tools/exit-survey" replace />} />

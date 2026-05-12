@@ -15,6 +15,32 @@ export type SchedulerBookSlot = {
   end: DateTime;
 };
 
+/** Optional prefill when opening from routing / calendar preview (same form as empty-slot book). */
+export type SchedulerBookPrefill = {
+  clientId: string;
+  clientLabel?: string;
+  appointmentTypeId?: number;
+  /** When true, hide client search — only admins should get false from routing. */
+  lockClient?: boolean;
+  defaultDescription?: string;
+  /** When set, use this provider (internal or PIMS id string) instead of `defaultProviderId` from props. */
+  providerId?: string;
+  /** Patient ids to omit from the picker (e.g. already booked this client at this time). */
+  excludePatientIds?: string[];
+  /** Do not replace slot length with the selected appointment type’s default duration. */
+  preserveDurationFromSlot?: boolean;
+  /** When true, provider dropdown is read-only (same-doctor co-visit). */
+  lockProvider?: boolean;
+  /** Replaces the default “Book appointment” dialog title. */
+  modalTitle?: string;
+  /** When true with `lockClient` false, show read-only client (routing: admin cannot search-change client here). */
+  disableClientSearch?: boolean;
+  /** Employee “add another pet” same-slot flow — copy only. */
+  coVisitAddPet?: boolean;
+  /** When true, date / start time / duration cannot be changed (same-slot co-visit). */
+  lockSlotTimes?: boolean;
+};
+
 type Props = {
   open: boolean;
   slot: SchedulerBookSlot | null;
@@ -23,6 +49,7 @@ type Props = {
   appointmentTypes: AppointmentType[];
   providers: Provider[];
   defaultProviderId: string | null;
+  prefill?: SchedulerBookPrefill | null;
   onClose: () => void;
   onBooked: () => void;
 };
@@ -37,7 +64,7 @@ function pickStr(v: unknown): string | null {
   return s || null;
 }
 
-function extractPatientsFromClientPayload(payload: unknown): PetRow[] {
+export function extractPatientsFromClientPayload(payload: unknown): PetRow[] {
   if (!payload || typeof payload !== 'object') return [];
   const p = payload as Record<string, unknown>;
   const raw =
@@ -123,6 +150,7 @@ export function SchedulerBookModal({
   appointmentTypes,
   providers,
   defaultProviderId,
+  prefill,
   onClose,
   onBooked,
 }: Props) {
@@ -179,8 +207,50 @@ export function SchedulerBookModal({
     return [...new Set(o)].sort((a, b) => a - b);
   }, [durationMin]);
 
+  const petChoices = useMemo(() => {
+    const ex = new Set((prefill?.excludePatientIds ?? []).map((id) => String(id)));
+    return clientPets.filter((p) => !ex.has(String(p.id)));
+  }, [clientPets, prefill?.excludePatientIds]);
+
+  const bookSessionKey = useMemo(() => {
+    if (!open || !slot) return '';
+    return [
+      slot.start.toISO() ?? '',
+      slot.end.toISO() ?? '',
+      practiceTz,
+      defaultProviderId ?? '',
+      prefill?.clientId ?? '',
+      String(prefill?.lockClient ?? false),
+      prefill?.defaultDescription ?? '',
+      prefill?.providerId ?? '',
+      prefill?.excludePatientIds?.join(',') ?? '',
+      String(prefill?.preserveDurationFromSlot ?? false),
+      String(prefill?.lockProvider ?? false),
+      prefill?.modalTitle ?? '',
+      String(prefill?.disableClientSearch ?? false),
+      String(prefill?.coVisitAddPet ?? false),
+      String(prefill?.lockSlotTimes ?? false),
+    ].join('\t');
+  }, [
+    open,
+    slot,
+    practiceTz,
+    defaultProviderId,
+    prefill?.clientId,
+    prefill?.lockClient,
+    prefill?.defaultDescription,
+    prefill?.providerId,
+    prefill?.excludePatientIds,
+    prefill?.preserveDurationFromSlot,
+    prefill?.lockProvider,
+    prefill?.modalTitle,
+    prefill?.disableClientSearch,
+    prefill?.coVisitAddPet,
+    prefill?.lockSlotTimes,
+  ]);
+
   useEffect(() => {
-    if (!open || !slot) return;
+    if (!bookSessionKey) return;
     setSearchMode('client');
     setClientQuery('');
     setClientResults([]);
@@ -191,40 +261,107 @@ export function SchedulerBookModal({
     setClientPets([]);
     setSelectedPatientId(null);
     setSelectedPatientLabel('');
-    setDescription('');
+    setDescription(prefill?.defaultDescription?.trim() ?? '');
     setInstructions('');
     setFormError(null);
     setShowClientDd(false);
     setShowPatientDd(false);
 
-    const s = slot.start.setZone(practiceTz);
-    const e = slot.end.setZone(practiceTz);
+    const s = slot!.start.setZone(practiceTz);
+    const e = slot!.end.setZone(practiceTz);
     setStartLocal(s);
-    const diff = Math.max(15, Math.round(e.diff(s, 'minutes').minutes / 15) * 15 || 30);
-    setDurationMin(DURATION_OPTIONS.includes(diff) ? diff : 30);
+    const rawMins = Math.max(1, Math.round(e.diff(s, 'minutes').minutes));
+    setDurationMin(rawMins);
 
-    const firstType = appointmentTypes[0];
-    setTypeId(firstType ? String(firstType.id) : '');
-    if (firstType?.defaultDuration && firstType.defaultDuration > 0) {
-      const d = Math.round(firstType.defaultDuration);
-      if (d >= 5) setDurationMin(DURATION_OPTIONS.includes(d) ? d : Math.min(120, Math.max(15, d)));
-    }
-
-    const match = providers.find(
-      (p) =>
-        (defaultProviderId && String(p.id) === defaultProviderId) ||
-        (defaultProviderId && String(p.pimsId ?? '') === defaultProviderId)
-    );
+    const prefProv = prefill?.providerId?.trim();
+    const match =
+      prefProv && providers.some((p) => String(p.id) === prefProv || (p.pimsId != null && String(p.pimsId) === prefProv))
+        ? providers.find((p) => String(p.id) === prefProv || (p.pimsId != null && String(p.pimsId) === prefProv))
+        : providers.find(
+            (p) =>
+              (defaultProviderId && String(p.id) === defaultProviderId) ||
+              (defaultProviderId && String(p.pimsId ?? '') === defaultProviderId)
+          );
     setProviderId(
       match ? String(match.id) : providers[0] ? String(providers[0].id) : ''
     );
-  }, [open, slot, practiceTz, appointmentTypes, providers, defaultProviderId]);
+
+    if (appointmentTypes.length > 0) {
+      const preT = prefill?.appointmentTypeId;
+      if (preT != null && appointmentTypes.some((t) => String(t.id) === String(preT))) {
+        const t = appointmentTypes.find((x) => String(x.id) === String(preT))!;
+        setTypeId(String(t.id));
+        if (!prefill?.preserveDurationFromSlot && t.defaultDuration && t.defaultDuration > 0) {
+          const d = Math.round(t.defaultDuration);
+          if (d >= 5) setDurationMin(DURATION_OPTIONS.includes(d) ? d : Math.min(120, Math.max(15, d)));
+        }
+      } else {
+        const firstType = appointmentTypes[0];
+        setTypeId(firstType ? String(firstType.id) : '');
+        if (!prefill?.preserveDurationFromSlot && firstType?.defaultDuration && firstType.defaultDuration > 0) {
+          const d = Math.round(firstType.defaultDuration);
+          if (d >= 5) setDurationMin(DURATION_OPTIONS.includes(d) ? d : Math.min(120, Math.max(15, d)));
+        }
+      }
+    } else {
+      setTypeId('');
+    }
+
+    if (prefill?.preserveDurationFromSlot) {
+      setDurationMin(rawMins);
+    }
+  }, [bookSessionKey, providers, appointmentTypes, prefill?.appointmentTypeId, prefill?.defaultDescription, prefill?.preserveDurationFromSlot, prefill?.providerId, practiceTz]);
+
+  /** When appointment types load after open, set type without wiping the rest of the form. */
+  useEffect(() => {
+    if (!open || !slot || !appointmentTypes.length) return;
+    setTypeId((prev) => {
+      const validPrev = prev && appointmentTypes.some((t) => String(t.id) === prev);
+      if (validPrev) return prev;
+      const preT = prefill?.appointmentTypeId;
+      if (preT != null) {
+        const tid = String(preT);
+        if (appointmentTypes.some((t) => String(t.id) === tid)) return tid;
+      }
+      return appointmentTypes[0] ? String(appointmentTypes[0].id) : '';
+    });
+  }, [open, slot, appointmentTypes, prefill?.appointmentTypeId]);
 
   useEffect(() => {
+    if (!bookSessionKey || !open || !slot || !prefill?.clientId) return;
+    let cancelled = false;
+    setLoadingClientPets(true);
+    (async () => {
+      try {
+        const payload = await fetchClientByIdStaff(prefill.clientId);
+        if (cancelled) return;
+        setSelectedClientId(String(prefill.clientId));
+        setSelectedClientLabel(prefill.clientLabel?.trim() || `Client #${prefill.clientId}`);
+        setClientPets(extractPatientsFromClientPayload(payload));
+        setSelectedPatientId(null);
+        setSelectedPatientLabel('');
+      } catch {
+        if (cancelled) return;
+        setSelectedClientId(String(prefill.clientId));
+        setSelectedClientLabel(prefill.clientLabel?.trim() || `Client #${prefill.clientId}`);
+        setClientPets([]);
+        setSelectedPatientId(null);
+        setSelectedPatientLabel('');
+      } finally {
+        if (!cancelled) setLoadingClientPets(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bookSessionKey, open, slot, prefill?.clientId, prefill?.clientLabel]);
+
+  useEffect(() => {
+    if (prefill?.preserveDurationFromSlot) return;
     if (!selectedType?.defaultDuration || selectedType.defaultDuration <= 0) return;
     const d = Math.round(selectedType.defaultDuration);
     if (d >= 5) setDurationMin(DURATION_OPTIONS.includes(d) ? d : Math.min(120, Math.max(15, d)));
-  }, [selectedType?.id, selectedType?.defaultDuration]);
+  }, [selectedType?.id, selectedType?.defaultDuration, prefill?.preserveDurationFromSlot]);
 
   useEffect(() => {
     const q = clientQuery.trim();
@@ -406,7 +543,7 @@ export function SchedulerBookModal({
       >
         <div className="scheduler-book-modal-header">
           <div>
-            <h2 id="scheduler-book-title">Book appointment</h2>
+            <h2 id="scheduler-book-title">{prefill?.modalTitle?.trim() || 'Book appointment'}</h2>
             <p className="scheduler-book-slot-summary">
               {startLocal.setZone(practiceTz).toFormat('EEEE, MMM d, yyyy')} · {startLocal.toFormat('h:mm a')} –{' '}
               {endLocal?.toFormat('h:mm a')}
@@ -418,117 +555,144 @@ export function SchedulerBookModal({
         </div>
 
         <form className="scheduler-book-form" onSubmit={handleSubmit}>
-          <div className="scheduler-book-mode-toggle" role="group" aria-label="Search mode">
-            <button
-              type="button"
-              className={searchMode === 'client' ? 'active' : ''}
-              onClick={() => setSearchMode('client')}
-            >
-              Find by client
-            </button>
-            <button
-              type="button"
-              className={searchMode === 'patient' ? 'active' : ''}
-              onClick={() => setSearchMode('patient')}
-            >
-              Find by patient
-            </button>
-          </div>
-
-          {searchMode === 'client' ? (
-            <Field label="Search client">
-              <div ref={clientDdRef} style={{ position: 'relative' }}>
-                <input
-                  className="scheduler-book-input"
-                  value={clientQuery}
-                  onChange={(e) => setClientQuery(e.target.value)}
-                  onFocus={() => clientResults.length > 0 && setShowClientDd(true)}
-                  placeholder="Name, phone, or address…"
-                  autoComplete="off"
-                />
-                {clientSearching && <div className="scheduler-book-hint">Searching…</div>}
-                {showClientDd && clientResults.length > 0 && (
-                  <ul className="scheduler-book-dropdown">
-                    {clientResults.map((c) => (
-                      <li key={String(c.id)}>
-                        <button
-                          type="button"
-                          className="scheduler-book-dd-item"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            pickClient(c);
-                          }}
-                        >
-                          <span className="scheduler-book-dd-primary">{clientDisplayName(c)}</span>
-                          <span className="scheduler-book-dd-secondary">{clientAddressLine(c) ?? '—'}</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </Field>
-          ) : (
-            <Field label="Search patient">
-              <div ref={patientDdRef} style={{ position: 'relative' }}>
-                <input
-                  className="scheduler-book-input"
-                  value={patientQuery}
-                  onChange={(e) => setPatientQuery(e.target.value)}
-                  onFocus={() => patientResults.length > 0 && setShowPatientDd(true)}
-                  placeholder="Pet name…"
-                  autoComplete="off"
-                />
-                {patientSearching && <div className="scheduler-book-hint">Searching…</div>}
-                {showPatientDd && patientResults.length > 0 && (
-                  <ul className="scheduler-book-dropdown">
-                    {patientResults.map((p) => (
-                      <li key={String(p.id)}>
-                        <button
-                          type="button"
-                          className="scheduler-book-dd-item"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            pickPatientFromSearch(p);
-                          }}
-                        >
-                          <span className="scheduler-book-dd-primary">{p.name}</span>
-                          <span className="scheduler-book-dd-secondary">
-                            {p.clientLabel ?? (p.clientId != null ? `Client #${p.clientId}` : '—')}
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </Field>
-          )}
-
-          {selectedClientId ? (
-            <div className="scheduler-book-selected">
+          {prefill?.lockClient || prefill?.disableClientSearch ? (
+            <div className="scheduler-book-selected" style={{ marginBottom: 12 }}>
               <span className="scheduler-book-selected-label">Client</span>
-              <span className="scheduler-book-selected-value">{selectedClientLabel}</span>
+              <span className="scheduler-book-selected-value">
+                {selectedClientLabel ||
+                  prefill?.clientLabel?.trim() ||
+                  (prefill?.clientId ? `Client #${prefill.clientId}` : '…')}
+              </span>
+              {prefill?.coVisitAddPet ? (
+                <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
+                  This adds another appointment at the same time for a different pet. Pets already on the schedule
+                  for this client at this time are not listed below.
+                </p>
+              ) : prefill?.lockClient ? (
+                <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
+                  Select which patient is being booked for this visit.
+                </p>
+              ) : prefill?.disableClientSearch ? (
+                <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
+                  Client is set from routing. Go back to routing results to choose a different client.
+                </p>
+              ) : null}
             </div>
-          ) : null}
+          ) : (
+            <>
+              <div className="scheduler-book-mode-toggle" role="group" aria-label="Search mode">
+                <button
+                  type="button"
+                  className={searchMode === 'client' ? 'active' : ''}
+                  onClick={() => setSearchMode('client')}
+                >
+                  Find by client
+                </button>
+                <button
+                  type="button"
+                  className={searchMode === 'patient' ? 'active' : ''}
+                  onClick={() => setSearchMode('patient')}
+                >
+                  Find by patient
+                </button>
+              </div>
+
+              {searchMode === 'client' ? (
+                <Field label="Search client">
+                  <div ref={clientDdRef} style={{ position: 'relative' }}>
+                    <input
+                      className="scheduler-book-input"
+                      value={clientQuery}
+                      onChange={(e) => setClientQuery(e.target.value)}
+                      onFocus={() => clientResults.length > 0 && setShowClientDd(true)}
+                      placeholder="Name, phone, or address…"
+                      autoComplete="off"
+                    />
+                    {clientSearching && <div className="scheduler-book-hint">Searching…</div>}
+                    {showClientDd && clientResults.length > 0 && (
+                      <ul className="scheduler-book-dropdown">
+                        {clientResults.map((c) => (
+                          <li key={String(c.id)}>
+                            <button
+                              type="button"
+                              className="scheduler-book-dd-item"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                pickClient(c);
+                              }}
+                            >
+                              <span className="scheduler-book-dd-primary">{clientDisplayName(c)}</span>
+                              <span className="scheduler-book-dd-secondary">{clientAddressLine(c) ?? '—'}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </Field>
+              ) : (
+                <Field label="Search patient">
+                  <div ref={patientDdRef} style={{ position: 'relative' }}>
+                    <input
+                      className="scheduler-book-input"
+                      value={patientQuery}
+                      onChange={(e) => setPatientQuery(e.target.value)}
+                      onFocus={() => patientResults.length > 0 && setShowPatientDd(true)}
+                      placeholder="Pet name…"
+                      autoComplete="off"
+                    />
+                    {patientSearching && <div className="scheduler-book-hint">Searching…</div>}
+                    {showPatientDd && patientResults.length > 0 && (
+                      <ul className="scheduler-book-dropdown">
+                        {patientResults.map((p) => (
+                          <li key={String(p.id)}>
+                            <button
+                              type="button"
+                              className="scheduler-book-dd-item"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                pickPatientFromSearch(p);
+                              }}
+                            >
+                              <span className="scheduler-book-dd-primary">{p.name}</span>
+                              <span className="scheduler-book-dd-secondary">
+                                {p.clientLabel ?? (p.clientId != null ? `Client #${p.clientId}` : '—')}
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </Field>
+              )}
+
+              {selectedClientId ? (
+                <div className="scheduler-book-selected">
+                  <span className="scheduler-book-selected-label">Client</span>
+                  <span className="scheduler-book-selected-value">{selectedClientLabel}</span>
+                </div>
+              ) : null}
+            </>
+          )}
 
           <Field label="Patient">
             {loadingClientPets ? (
               <div className="scheduler-book-hint">Loading patients…</div>
-            ) : clientPets.length > 0 ? (
+            ) : petChoices.length > 0 ? (
               <select
                 className="scheduler-book-input"
                 value={selectedPatientId ?? ''}
                 onChange={(e) => {
                   const v = e.target.value;
                   setSelectedPatientId(v || null);
-                  const pet = clientPets.find((x) => String(x.id) === v);
+                  const pet = petChoices.find((x) => String(x.id) === v);
                   setSelectedPatientLabel(pet?.name ?? '');
                 }}
                 required
               >
                 <option value="">Select patient…</option>
-                {clientPets.map((p) => (
+                {petChoices.map((p) => (
                   <option key={String(p.id)} value={String(p.id)}>
                     {p.name}
                   </option>
@@ -537,6 +701,10 @@ export function SchedulerBookModal({
             ) : selectedPatientId ? (
               <div className="scheduler-book-selected">
                 <span className="scheduler-book-selected-value">{selectedPatientLabel}</span>
+              </div>
+            ) : selectedClientId && clientPets.length > 0 ? (
+              <div className="scheduler-book-hint muted">
+                Every pet on file for this client already has an appointment overlapping this time.
               </div>
             ) : (
               <div className="scheduler-book-hint muted">
@@ -553,6 +721,7 @@ export function SchedulerBookModal({
                 className="scheduler-book-input"
                 value={providerId}
                 onChange={(e) => setProviderId(e.target.value)}
+                disabled={Boolean(prefill?.lockProvider)}
                 required
               >
                 <option value="">Select…</option>
@@ -600,6 +769,7 @@ export function SchedulerBookModal({
                     return next.isValid ? next : prev;
                   });
                 }}
+                disabled={Boolean(prefill?.lockSlotTimes)}
               />
             </Field>
             <Field label="Start time">
@@ -617,6 +787,7 @@ export function SchedulerBookModal({
                     startLocal.set({ hour: hh, minute: mm, second: 0, millisecond: 0 })
                   );
                 }}
+                disabled={Boolean(prefill?.lockSlotTimes)}
               />
             </Field>
             <Field label="Duration">
@@ -624,6 +795,7 @@ export function SchedulerBookModal({
                 className="scheduler-book-input"
                 value={durationMin}
                 onChange={(e) => setDurationMin(Number(e.target.value))}
+                disabled={Boolean(prefill?.lockSlotTimes)}
               >
                 {durationOpts.map((m) => (
                   <option key={m} value={m}>

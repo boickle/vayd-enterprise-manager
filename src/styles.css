@@ -100,6 +100,42 @@ main.pims-main-wrapper {
   min-height: calc(100vh - 76px);
 }
 
+main.schedule-main-wrapper {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  min-height: calc(100vh - 76px);
+  max-height: calc(100dvh - 76px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.navbar-global-search {
+  flex: 1;
+  max-width: 420px;
+  min-width: 120px;
+  position: relative;
+}
+
+.navbar-global-search input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px 8px 36px;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E")
+    10px center no-repeat;
+  font-size: 14px;
+}
+
+@media (max-width: 900px) {
+  .navbar-global-search {
+    display: none;
+  }
+}
+
 /* Scheduler tab only: nearly full viewport width */
 .container.container--scheduler {
   max-width: calc(100vw - 24px);

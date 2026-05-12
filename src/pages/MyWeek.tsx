@@ -397,7 +397,7 @@ function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
   return list;
 }
 
-type DayData = {
+export type DayData = {
   date: string;
   /** IANA practice timezone for wall times on this day (from doctor-day API). */
   timezone: string;
@@ -490,7 +490,7 @@ function zoneKeyFrom(z: MiniZone | null): string {
 }
 
 /** Points for one day (exclude personal blocks and "Note To Staff"). Per patient: 1 standard, 0.5 tech, 2 euthanasia. */
-function dayPoints(households: WeekHousehold[]): number {
+export function dayPoints(households: WeekHousehold[]): number {
   return households.reduce((total, h) => {
     if (h.isPersonalBlock) return total;
     const type = (str(h.primary, 'appointmentType') || '').toLowerCase();
@@ -503,7 +503,7 @@ function dayPoints(households: WeekHousehold[]): number {
 }
 
 /** Total driving time in seconds for the day (driveSeconds + backToDepot when separate). */
-function dayTotalDriveSeconds(day: DayData): number {
+export function dayTotalDriveSeconds(day: DayData): number {
   const ds = day.driveSeconds ?? [];
   const sum = ds.reduce((a, b) => a + (typeof b === 'number' ? b : 0), 0);
   const back = day.backToDepotSec ?? 0;
@@ -563,7 +563,7 @@ function depotTimeToPx(
   return clamped * PPM;
 }
 
-type WeekGridMetrics = { gridStartMinutesFromMidnight: number; totalMinutes: number };
+export type WeekGridMetrics = { gridStartMinutesFromMidnight: number; totalMinutes: number };
 
 /** Block tops/durations and Y-offsets so visits stack with drive gaps (matches appointment div layout). */
 type MyWeekDayColumnLayout = {
@@ -576,7 +576,7 @@ type MyWeekDayColumnLayout = {
   N: number;
 };
 
-function computeMyWeekDayColumnLayout(
+export function computeMyWeekDayColumnLayout(
   dayData: DayData,
   weekGrid: WeekGridMetrics,
   dateIso: string,
@@ -725,7 +725,7 @@ function computeMyWeekDayColumnLayout(
  * Paint drive bands in the same minute-space as appointment blocks (driveOffsets).
  * The old path used raw clock minutes + cumOffsetMin, which left white gaps and stretched return past backToDepotIso.
  */
-function buildMyWeekDriveSegmentsFromLayout(
+export function buildMyWeekDriveSegmentsFromLayout(
   layout: MyWeekDayColumnLayout,
   dayData: DayData,
   weekGrid: WeekGridMetrics,
@@ -2550,7 +2550,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                           })()
                         : [];
                       const scheduleLoaderHref = selectedDoctorId && hasAppts
-                        ? `/scout/scheduling-tools/schedule-loader?targetDate=${dateIso}&doctorId=${encodeURIComponent(selectedDoctorId)}`
+                        ? `/schedule/scheduling-tools/schedule-loader?targetDate=${dateIso}&doctorId=${encodeURIComponent(selectedDoctorId)}`
                         : null;
                       return (
                         <>

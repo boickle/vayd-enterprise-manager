@@ -94,12 +94,28 @@ export type TreatmentWithItems = {
  * Used by internal/employee room loader.
  */
 export async function getPatientTreatmentHistory(
-  patientId: number
+  patientId: number | string
 ): Promise<TreatmentWithItems[]> {
   const { data } = await http.get<TreatmentWithItems[]>(
-    `/treatments/patient/${patientId}/history`
+    `/treatments/patient/${encodeURIComponent(String(patientId))}/history`
   );
   return data;
+}
+
+/** Prescription / medication treatment lines for chart prescription tab (not chart PatientMedication). */
+export async function getPatientTreatmentMedications(
+  patientId: number | string
+): Promise<unknown[]> {
+  const { data } = await http.get<unknown>(
+    `/treatments/patient/medications/${encodeURIComponent(String(patientId))}`
+  );
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === 'object') {
+    const d = data as Record<string, unknown>;
+    if (Array.isArray(d.items)) return d.items;
+    if (Array.isArray(d.medications)) return d.medications;
+  }
+  return [];
 }
 
 /**

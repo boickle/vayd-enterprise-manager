@@ -12,6 +12,8 @@ import {
   type DoctorDayResponse,
 } from '../api/appointments';
 import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
+import type { DayData } from '../pages/MyWeek';
+import { mergeEtaFetchIntoDayData, type DayBundleIn } from './schedulerEtaMerge';
 
 const str = (o: unknown, k: string) =>
   typeof (o as Record<string, unknown>)?.[k] === 'string' ? ((o as Record<string, unknown>)[k] as string) : undefined;
@@ -241,16 +243,19 @@ function buildHouseholdsWithSourceIds(appts: DoctorDayAppt[]): SchedulerDriveHou
 
 export type DriveIsoPair = { startIso: string; endIso: string };
 
-type DayBundle = {
-  date: string;
-  households: SchedulerDriveHousehold[];
-  timeline: { eta?: string | null; etd?: string | null }[];
-  startDepot: { lat: number; lon: number } | null;
-  endDepot: { lat: number; lon: number } | null;
-};
-
-async function fetchEtaForOneDay(day: DayBundle, doctorId: string): Promise<DayBundle> {
-  if (day.households.length === 0) return day;
+async function fetchEtaForOneDay(day: DayBundleIn, doctorId: string): Promise<DayData> {
+  if (day.households.length === 0) {
+    return {
+      date: day.date,
+      timezone: day.timezone,
+      households: day.households as unknown as DayData['households'],
+      timeline: [],
+      startDepot: day.startDepot,
+      endDepot: day.endDepot,
+      startDepotTime: day.startDepotTime,
+      endDepotTime: day.endDepotTime,
+    };
+  }
 
   const payload = {
     doctorId,
@@ -277,111 +282,96 @@ async function fetchEtaForOneDay(day: DayBundle, doctorId: string): Promise<DayB
   };
 
   const result: any = await fetchEtas(payload as any);
-  const valid = (s?: string | null) => !!(s && DateTime.fromISO(s).isValid);
+  return mergeEtaFetchIntoDayData(day, result);
+}
 
-  const keyToSlot: Record<
-    string,
-    { eta: string | null; etd: string | null; bufferAfterMinutes?: number }
-  > = {};
-  if (Array.isArray(result?.byIndex)) {
-    for (const row of result.byIndex as {
-      key?: string;
-      etaIso?: string;
-      etdIso?: string;
-      bufferAfterMinutes?: number;
-    }[]) {
-      const k = row?.key;
-      if (k == null) continue;
-      const eta = valid(row?.etaIso) ? row.etaIso! : null;
-      const etd = valid(row?.etdIso) ? row.etdIso! : null;
-      const bufferAfterMinutes =
-        typeof row.bufferAfterMinutes === 'number' && Number.isFinite(row.bufferAfterMinutes)
-          ? row.bufferAfterMinutes
-          : undefined;
-      keyToSlot[k] = {
-        eta,
-        etd,
-        ...(bufferAfterMinutes !== undefined ? { bufferAfterMinutes } : {}),
-      };
+function isoMapFromDayData(dayData: DayData): Map<string, DriveIsoPair> {
+  const out = new Map<string, DriveIsoPair>();
+  dayData.households.forEach((h: any, i: number) => {
+    const slot = dayData.timeline[i];
+    let startIso = slot?.eta ?? slot?.etd ?? h.startIso;
+    let endIso = slot?.etd ?? null;
+    if (startIso && !endIso && h.startIso && h.endIso) {
+      const dur = DateTime.fromISO(h.endIso).diff(DateTime.fromISO(h.startIso), 'minutes').minutes;
+      endIso = DateTime.fromISO(startIso).plus({ minutes: Math.max(1, Math.round(dur)) }).toISO()!;
     }
-  }
-
-  let tl = day.households.map((h) => {
-    const slot = h.key ? keyToSlot[h.key] : undefined;
-    let eta = slot?.eta ?? null;
-    let etd = slot?.etd ?? null;
-    if (!eta && h?.startIso) eta = h.startIso;
-    if (!etd && eta && h?.endIso) {
-      const dur = h.startIso && h.endIso
-        ? DateTime.fromISO(h.endIso).diff(DateTime.fromISO(h.startIso)).as('minutes')
-        : 60;
-      etd = DateTime.fromISO(eta).plus({ minutes: dur }).toISO()!;
+    if (!startIso || !endIso) return;
+    const ids: (string | number)[] = h.sourceAppointmentIds ?? [];
+    for (const id of ids) {
+      out.set(String(id), { startIso, endIso });
     }
-    return { eta: eta ?? undefined, etd: etd ?? undefined };
   });
+  return out;
+}
 
-  const N = day.households.length;
-  let routingOrderIndices: number[];
-  if (Array.isArray(result?.byIndex) && result.byIndex.length === N) {
-    const keyToPositionInDay: Record<string, number> = {};
-    result.byIndex.forEach((row: { key?: string; positionInDay?: number }, i: number) => {
-      const pos = typeof row.positionInDay === 'number' ? row.positionInDay : i + 1;
-      if (row.key != null) {
-        for (const variant of keyVariantsForKeyString(row.key)) {
-          keyToPositionInDay[variant] = pos;
+function scheduleOnlyDayData(dayIn: DayBundleIn): DayData {
+  return {
+    date: dayIn.date,
+    timezone: dayIn.timezone,
+    households: dayIn.households as unknown as DayData['households'],
+    timeline: dayIn.households.map((h: any) => ({
+      eta: h.startIso ?? undefined,
+      etd: h.endIso ?? undefined,
+    })),
+    startDepot: dayIn.startDepot,
+    endDepot: dayIn.endDepot,
+    startDepotTime: dayIn.startDepotTime,
+    endDepotTime: dayIn.endDepotTime,
+  };
+}
+
+/**
+ * Doctor-day + full ETA merge (drive seconds, windows, routing order) plus per-appointment arrive/leave map.
+ */
+export async function fetchSchedulerDriveContext(
+  dates: string[],
+  doctorId: string
+): Promise<{ isoByApptId: Map<string, DriveIsoPair>; dayByDate: Map<string, DayData> }> {
+  const isoByApptId = new Map<string, DriveIsoPair>();
+  const dayByDate = new Map<string, DayData>();
+
+  await Promise.all(
+    dates.map(async (date) => {
+      try {
+        const resp: DoctorDayResponse = await fetchDoctorDay(date, doctorId);
+        const appts: DoctorDayAppt[] = resp?.appointments ?? [];
+        const households = buildHouseholdsWithSourceIds(appts);
+        if (households.length === 0) return;
+
+        const tz =
+          typeof (resp as any)?.timezone === 'string' && (resp as any).timezone.trim()
+            ? String((resp as any).timezone).trim()
+            : 'America/New_York';
+
+        const dayIn: DayBundleIn = {
+          date,
+          timezone: tz,
+          households,
+          timeline: households.map(() => ({ eta: null, etd: null })),
+          startDepot: resp?.startDepot ?? null,
+          endDepot: resp?.endDepot ?? null,
+          startDepotTime: str(resp as any, 'startDepotTime') ?? null,
+          endDepotTime: str(resp as any, 'endDepotTime') ?? null,
+        };
+
+        let dayData: DayData;
+        try {
+          dayData = await fetchEtaForOneDay(dayIn, doctorId);
+        } catch {
+          dayData = scheduleOnlyDayData(dayIn);
         }
-      }
-    });
-    const getPositionInDay = (householdIndex: number): number => {
-      const h = day.households[householdIndex];
-      const pos = keyToPositionInDay[h.key];
-      if (pos != null) return pos;
-      if (Number.isFinite(h.lat) && Number.isFinite(h.lon)) {
-        const k5 = keyFor(h.lat as number, h.lon as number, 5);
-        if (keyToPositionInDay[k5] != null) return keyToPositionInDay[k5];
-      }
-      return 999;
-    };
-    routingOrderIndices = Array.from({ length: N }, (_, i) => i).sort(
-      (a, b) => getPositionInDay(a) - getPositionInDay(b)
-    );
-  } else {
-    routingOrderIndices = Array.from({ length: N }, (_, i) => i).sort((a, b) => {
-      const anchorA = tl[a]?.eta ?? tl[a]?.etd ?? day.households[a]?.startIso ?? '';
-      const anchorB = tl[b]?.eta ?? tl[b]?.etd ?? day.households[b]?.startIso ?? '';
-      return anchorA.localeCompare(anchorB);
-    });
-  }
 
-  for (let p = 1; p < routingOrderIndices.length; p++) {
-    const currIdx = routingOrderIndices[p];
-    const prevIdx = routingOrderIndices[p - 1];
-    const h = day.households[currIdx];
-    if (!h?.isPersonalBlock) continue;
-    const curSlot = tl[currIdx];
-    const prevSlot = tl[prevIdx];
-    if (!curSlot?.eta || !prevSlot?.etd) continue;
-    const etaDt = DateTime.fromISO(curSlot.eta);
-    const prevEtdDt = DateTime.fromISO(prevSlot.etd);
-    if (!etaDt.isValid || !prevEtdDt.isValid || etaDt >= prevEtdDt) continue;
-    const durMin = Math.max(
-      1,
-      curSlot.etd
-        ? Math.round(DateTime.fromISO(curSlot.etd).diff(etaDt, 'minutes').minutes)
-        : h.startIso && h.endIso
-          ? Math.round(DateTime.fromISO(h.endIso).diff(DateTime.fromISO(h.startIso), 'minutes').minutes)
-          : 60
-    );
-    const newEta = prevEtdDt;
-    const newEtd = newEta.plus({ minutes: durMin });
-    tl[currIdx] = {
-      ...curSlot,
-      eta: newEta.toISO()!,
-      etd: newEtd.toISO()!,
-    };
-  }
+        dayByDate.set(date, dayData);
+        for (const [k, v] of isoMapFromDayData(dayData)) {
+          isoByApptId.set(k, v);
+        }
+      } catch {
+        /* skip day */
+      }
+    })
+  );
 
-  return { ...day, timeline: tl };
+  return { isoByApptId, dayByDate };
 }
 
 /**
@@ -392,51 +382,6 @@ export async function fetchSchedulerDriveIsoByAppointmentId(
   dates: string[],
   doctorId: string
 ): Promise<Map<string, DriveIsoPair>> {
-  const out = new Map<string, DriveIsoPair>();
-
-  await Promise.all(
-    dates.map(async (date) => {
-      try {
-        const resp: DoctorDayResponse = await fetchDoctorDay(date, doctorId);
-        const appts: DoctorDayAppt[] = resp?.appointments ?? [];
-        const households = buildHouseholdsWithSourceIds(appts);
-        if (households.length === 0) return;
-
-        let day: DayBundle = {
-          date,
-          households,
-          timeline: households.map(() => ({ eta: null, etd: null })),
-          startDepot: resp?.startDepot ?? null,
-          endDepot: resp?.endDepot ?? null,
-        };
-
-        const needsEta = households.length > 0 && day.timeline.every((t) => !t.eta && !t.etd);
-        if (needsEta) {
-          try {
-            day = await fetchEtaForOneDay(day, doctorId);
-          } catch {
-            /* fall through: use scheduled window */
-          }
-        }
-
-        day.households.forEach((h, i) => {
-          const slot = day.timeline[i];
-          let startIso = slot?.eta ?? slot?.etd ?? h.startIso;
-          let endIso = slot?.etd ?? null;
-          if (startIso && !endIso && h.startIso && h.endIso) {
-            const dur = DateTime.fromISO(h.endIso).diff(DateTime.fromISO(h.startIso), 'minutes').minutes;
-            endIso = DateTime.fromISO(startIso).plus({ minutes: Math.max(1, Math.round(dur)) }).toISO()!;
-          }
-          if (!startIso || !endIso) return;
-          for (const id of h.sourceAppointmentIds) {
-            out.set(String(id), { startIso, endIso });
-          }
-        });
-      } catch {
-        /* skip day */
-      }
-    })
-  );
-
-  return out;
+  const { isoByApptId } = await fetchSchedulerDriveContext(dates, doctorId);
+  return isoByApptId;
 }

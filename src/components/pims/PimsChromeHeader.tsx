@@ -182,6 +182,11 @@ export default function PimsChromeHeader() {
           </div>
         )}
       </div>
+      <div className="pims-app-bar__actions">
+        <button type="button" className="pims-app-bar__task-btn" onClick={() => navigate('/pims/tasks?new=1')}>
+          + Task
+        </button>
+      </div>
     </header>
   );
 }

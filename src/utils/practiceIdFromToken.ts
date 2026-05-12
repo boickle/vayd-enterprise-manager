@@ -27,3 +27,13 @@ export function resolvePracticeIdFromToken(token: string | null): number {
   }
   return Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 }
+
+/** Staff JWT may carry `employeeId` / `employee_id` for task ownership and permissions. */
+export function resolveEmployeeIdFromToken(token: string | null): number | null {
+  if (!token) return null;
+  const p = decodeJwtPayload(token);
+  const raw = p?.employeeId ?? p?.employee_id;
+  if (raw == null) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}

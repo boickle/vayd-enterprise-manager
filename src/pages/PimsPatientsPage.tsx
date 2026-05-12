@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { FileText } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import { searchPatientsStaff, type PatientSearchRow } from '../api/patients';
@@ -92,6 +92,14 @@ function patientListStatus(row: PatientSearchRow): { active: boolean; text: stri
 }
 
 export default function PimsPatientsPage() {
+  const location = useLocation();
+  const patientsBasePath = location.pathname.startsWith('/schedule/patients')
+    ? '/schedule/patients'
+    : '/pims/patients';
+  const clientsBasePath = location.pathname.startsWith('/schedule/patients')
+    ? '/schedule/clients'
+    : '/pims/clients';
+
   const { token } = useAuth() as { token: string | null };
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
 
@@ -174,7 +182,11 @@ export default function PimsPatientsPage() {
   if (patientIdParam.trim()) {
     return (
       <div className="pims-clients pims-clients--detail">
-        <PimsPatientDetailView patientId={patientIdParam.trim()} onBack={backFromDetail} />
+        <PimsPatientDetailView
+          patientId={patientIdParam.trim()}
+          onBack={backFromDetail}
+          patientsListPath={patientsBasePath}
+        />
       </div>
     );
   }
@@ -266,7 +278,7 @@ export default function PimsPatientsPage() {
                   <td>
                     <Link
                       className="pims-clients__petname"
-                      to={`/pims/patients?patientId=${encodeURIComponent(String(row.id))}`}
+                      to={`${patientsBasePath}?patientId=${encodeURIComponent(String(row.id))}`}
                     >
                       {patientDisplayName(row)}
                     </Link>
@@ -275,7 +287,10 @@ export default function PimsPatientsPage() {
                     {clients.length ? (
                       clients.map((c) => (
                         <div key={String(c.id)}>
-                          <Link className="pims-clients__link" to={`/pims/clients?clientId=${encodeURIComponent(String(c.id))}`}>
+                          <Link
+                            className="pims-clients__link"
+                            to={`${clientsBasePath}?clientId=${encodeURIComponent(String(c.id))}`}
+                          >
                             {c.name}
                           </Link>
                         </div>
@@ -302,7 +317,7 @@ export default function PimsPatientsPage() {
                   <td>
                     <Link
                       className="pims-clients__action-link"
-                      to={`/pims/patients?patientId=${encodeURIComponent(String(row.id))}`}
+                      to={`${patientsBasePath}?patientId=${encodeURIComponent(String(row.id))}`}
                       aria-label="Open patient"
                       title="Open"
                     >

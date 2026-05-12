@@ -1,5 +1,7 @@
 // src/api/patients.ts
+import axios from 'axios';
 import { http } from './http';
+import type { MedicalRecordBundle } from '../utils/patientChartFromMedicalRecord';
 // import type { PatientDto } from '../';
 
 // ---------------------------
@@ -66,6 +68,24 @@ export async function searchPatientsStaff(
 export async function fetchPatientByIdStaff(patientId: string | number): Promise<unknown> {
   const { data } = await http.get(`/patients/${encodeURIComponent(String(patientId))}`);
   return data;
+}
+
+/**
+ * GET /patients/:id/medical-record — chart bundle (labs, exams, complaints, …).
+ * Returns null when the backend responds 404 (no medical record row for this patient).
+ */
+export async function fetchPatientMedicalRecordStaff(
+  patientId: string | number
+): Promise<MedicalRecordBundle | null> {
+  try {
+    const { data } = await http.get<MedicalRecordBundle>(
+      `/patients/${encodeURIComponent(String(patientId))}/medical-record`
+    );
+    return data ?? null;
+  } catch (e: unknown) {
+    if (axios.isAxiosError(e) && e.response?.status === 404) return null;
+    throw e;
+  }
 }
 
 // Get latest modified patient

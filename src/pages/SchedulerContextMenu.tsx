@@ -41,7 +41,8 @@ export type SchedulerContextMenuAction =
   | { kind: 'goClient' }
   | { kind: 'quickInvoice' }
   | { kind: 'checkout' }
-  | { kind: 'contact'; channel: 'phone1' | 'phone2' | 'email1' | 'email2' };
+  | { kind: 'contact'; channel: 'phone1' | 'phone2' | 'email1' | 'email2' }
+  | { kind: 'addAnotherPet' };
 
 type Props = {
   appt: Appointment;
@@ -49,9 +50,23 @@ type Props = {
   anchorPoint: { x: number; y: number };
   onClose: () => void;
   onAction: (action: SchedulerContextMenuAction) => void;
+  /** Employee-only: book a same-time visit for another pet on this client. */
+  showAddAnotherPet?: boolean;
+  /** Grey out when no pets left or while checking. */
+  addAnotherPetDisabled?: boolean;
+  addAnotherPetTitle?: string;
 };
 
-export function SchedulerAppointmentContextMenu({ appt, client, anchorPoint, onClose, onAction }: Props) {
+export function SchedulerAppointmentContextMenu({
+  appt,
+  client,
+  anchorPoint,
+  onClose,
+  onAction,
+  showAddAnotherPet,
+  addAnotherPetDisabled,
+  addAnotherPetTitle,
+}: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [placed, setPlaced] = useState<{ left: number; top: number } | null>(null);
   const [openSub, setOpenSub] = useState<'status' | 'confirm' | 'contact' | null>(null);
@@ -101,6 +116,14 @@ export function SchedulerAppointmentContextMenu({ appt, client, anchorPoint, onC
     >
       <CtxRow label="View" onPick={() => onAction({ kind: 'view' })} />
       <CtxRow label="Edit" onPick={() => onAction({ kind: 'edit' })} />
+      {showAddAnotherPet ? (
+        <CtxRow
+          label="Add another pet…"
+          disabled={addAnotherPetDisabled}
+          title={addAnotherPetTitle}
+          onPick={() => onAction({ kind: 'addAnotherPet' })}
+        />
+      ) : null}
       <CtxRow label="Complete" onPick={() => onAction({ kind: 'complete' })} />
       <CtxRow label="Remove" onPick={() => onAction({ kind: 'remove' })} />
       <CtxParentRow
@@ -179,9 +202,26 @@ export function SchedulerAppointmentContextMenu({ appt, client, anchorPoint, onC
   return createPortal(menu, document.body);
 }
 
-function CtxRow({ label, onPick }: { label: string; onPick: () => void }) {
+function CtxRow({
+  label,
+  onPick,
+  disabled,
+  title,
+}: {
+  label: string;
+  onPick: () => void;
+  disabled?: boolean;
+  title?: string;
+}) {
   return (
-    <button type="button" className="scheduler-ctx-item" role="menuitem" onClick={onPick}>
+    <button
+      type="button"
+      className="scheduler-ctx-item"
+      role="menuitem"
+      disabled={disabled}
+      title={title}
+      onClick={onPick}
+    >
       {label}
     </button>
   );

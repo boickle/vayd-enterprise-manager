@@ -45,7 +45,7 @@ export default function Analytics() {
 
   useEffect(() => {
     if (!canAccessAnalytics) {
-      navigate('/scout/routing', { replace: true });
+      navigate('/schedule/routing', { replace: true });
       return;
     }
     if (location.pathname === '/analytics/payments' && !canSeePayments) {
