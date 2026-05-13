@@ -8,77 +8,78 @@
 
 | Mode | Client behavior |
 |------|-----------------|
-| **`scoutEmptyDayPolicy === 'zone_aware'`** (root and/or slot) | Show zone-aware callout, liaison line, day badges, **N6–N9** diagnostics, optional **Scout zone-aware Δ**. |
-| **`legacy`** (e.g. `scoutEmptyDayPolicy: 'legacy'` on slots) | Same **getFleetRoutingV2 / routing v2** shape as before; **no** zone-aware-only fields required. Treat absent fields as unused. |
+| **`scoutEmptyDayPolicy === 'zone_aware'`** (root and/or slot) | Show zone-aware callout, liaison line, day badges, **N6–N8** (usually 0), **N9** + **preserved-day** chips when applicable, **Zone-aware Δ** when `scoutZoneAwareScoreDelta` is present. |
+| **`legacy`** | Same routing v2 shape as before; **no** zone-aware-only fields required. Treat absent fields as unused. |
 
 No new **client** environment variables; the server uses **`SCOUT_EMPTY_DAY_POLICY=zone_aware`** when enabled.
 
 ---
 
-## Zone-aware **slim pass** (current default scorer path)
+## Zone-aware scorer (routing v2)
 
-**API shape unchanged:** same env flag, same `scoutEmptyDayPolicy`, same field names on root / winner / alternates / `gaps[]` when policy is `zone_aware`.
+**Do not recompute preserve logic in the UI** — it depends on full ISO week hydration, panel %, modal depot, centroids, and OSRM. **Use server fields only.**
 
-| Topic | Behavior |
-|-------|----------|
-| **`scoutZoneClass`** | `local` / `corridor` / `anchor` from **depot→candidate** drive: **≤15 min** local, **≥25 min** anchor, **between** corridor. Same minute thresholds as **anchor** legs counted for N9. |
-| **Ranking nudge** | Effectively **N9 only:** `scoutMultiAnchorDayN9` penalizes **non-local** slots on days that already have **two+** existing legs classified **anchor** (same thresholds as zone class). Full penalty when two+ anchor legs exist even in one zone. |
-| **`scoutZoneAwareScoreDelta`** | Treat as **equal to N9** on this pass (**N1–N8 not applied** here). Lower **total** score is still better after the server adjusts score. |
-| **N6 / N7 / N8** | Still on the wire for stable shape; **usually `0`**. Show in UI only when **non-zero** (or omit row noise). |
-| **`scoutAnchorPanelShare`** | **Not set** by Scout on this path—do **not** rely on it from routing; use **My Week / zone-percentages** if you need panel share. |
-| **Ordering** | May differ vs the older heavier zone-aware scorer; **no contract break** on field names. |
-
----
-
-## Zone-aware: numeric fields on each slot (diagnostics / transparency)
-
-Not the main sort key—**total score** already includes everything. These are for tooltips / power users / copy.
+**Panel / “≥7.5%” conceptual source:** still **`GET /patients/provider/:providerId/zone-percentages`** (same as My Week). Routing does **not** return raw panel rows on each candidate.
 
 | Field | Meaning |
 |-------|---------|
-| **`scoutWeekPanelBalanceN6`** | **Slim pass:** usually **`0`** (shape-stable). Heavier scorer: week vs **panel** (N6). Non-negative; larger = worse. |
-| **`scoutPackDayReserveN7`** | **Slim pass:** usually **`0`**. Heavier scorer: **N7** pack-day reserve (additive). Larger = worse. |
-| **`scoutZoneHourPackN8`** | **Slim pass:** usually **`0`**. Heavier scorer: **N8** zone-hour pack—extra penalty when this option puts the **new client’s zone** on a day **already mostly another zone** by **booked service hours**, with panel budget for that dominant zone. **0** = not penalized. **Lower is better**; whitespace on the slot could reduce penalty in the heavier model. |
-| **`scoutMultiAnchorDayN9`** | **N9** multi-anchor day (primary slim-pass nudge). Penalty when the doctor’s day **already has two or more** depot→stop legs classified as **anchor** **before** adding this visit, for **non-local** candidates. **`0`** for **local** or when the pattern does not apply. Full penalty when two+ anchor legs exist even in one zone. |
-| **`scoutZoneAwareScoreDelta`** | **Slim pass:** **N9-only** (align with `scoutMultiAnchorDayN9`). Heavier scorer: could include N1–N9+; use total score as authority. |
+| **`scoutZoneClass`** | `local` / `corridor` / `anchor` from depot→candidate minutes (≤15 / between / ≥25). Same thresholds as anchor legs for N9. |
+| **`scoutMultiAnchorDayN9`** | **N9 only:** cross–anchor-zone penalty for **non-local** slots on days with **two+** anchor legs before this visit. **0** when not applied. |
+| **`scoutPreservedEmptyDayPenalty`** | Additive hit when this option **consumes a preserved empty anchor-seed day**. **0** when not applied. |
+| **`scoutZoneAwareScoreDelta`** | Server **total** of zone-aware **horizon** add-ons: **`scoutMultiAnchorDayN9` + `scoutPreservedEmptyDayPenalty`** (plus any future horizon terms the API adds). **Not** N9-only anymore. Use **total ranking score** as authority; this field is transparency—optionally show **N9** and **preserved** separately when both are present. |
+| **`scoutWeekPanelBalanceN6`**, **`scoutPackDayReserveN7`**, **`scoutZoneHourPackN8`** | Usually **0** (shape-stable). Show only when **> 0** unless debugging. |
+| **`scoutAnchorPanelShare`** | Often **not set** on slim paths—do **not** rely on it from routing; use **zone-percentages** / My Week if you need panel share. |
+| **`scoutLiaisonPrimaryLabel`**, **`scoutLiaisonLabels`**, **`scoutLiaisonLabelIds`** | Unchanged; preserve may **append** liaison entries when it fires. |
+
+### Root: `scoutPreservedEmptyDayWeeks` (optional)
+
+When **`SCOUT_EMPTY_DAY_POLICY=zone_aware`** and there is **at least one candidate**, the fleet routing v2 JSON may include **`scoutPreservedEmptyDayWeeks`**: an array of **one object per doctor × ISO week** used in the preserve pass.
+
+Each entry includes (among others): **`doctorId`**, **`isoWeekMonday`**, **`timeZone`**, **`workingDaysInWeek`**, **`targetPreservedEmpties`**, **`seedAnchorZoneCount`**, **`emptyWorkingIsoDates`**, **`seedAnchorZones`**, **`seedAnchorZonesVisitedThisWeek`**, **`anchorZonesStillNeedingPreservation`** (`{ zoneId, zoneName }[]` — main list for UI copy next to the preserved chip).
+
+Omitted when policy is **legacy**, there are **no candidates**, or zone-aware preserve **did not run**. **Do not recompute** this structure client-side.
 
 ---
 
-## Liaison
+## Liaison (when preserve fires)
 
-- **`scoutLiaisonLabelIds`** — stable ids for **i18n** and **analytics** (order matches `scoutLiaisonLabels` when both are sent).
-- **`scoutLiaisonPrimaryLabel`** — main human line when present.
-- **`scoutLiaisonLabels`** — English strings in id order; API remains source for wording.
+Stable **`scoutLiaisonLabelIds`** may include (in addition to existing ids):
 
-### Stable id → typical English (reference)
+| `scoutLiaisonLabelIds` | Typical meaning |
+|------------------------|-----------------|
+| `consumes_preserved_anchor_seed_day` | Consumes a preserved empty anchor-seed day. |
+| `breaks_empty_day_integrity` | Breaks empty-day integrity under preserve rules. |
+| `low_cluster_value_preserved_day` | Low cluster value on a preserved day. |
 
-| `scoutLiaisonLabelIds` | Typical `scoutLiaisonLabels` / meaning |
-|------------------------|----------------------------------------|
-| `balances_week` | Busy-day spread (**N4** only—not panel mix). |
-| `keeps_week_panel_mix` | Panel-mix / week vs panel (**N6**). Distinct from `balances_week`. |
-| `fits_far_run_day` | “Fits a day that already runs farther from home” — explain similar-drive wins. |
-| `fits_zone_pack_day` | “Fits a day already concentrated in this zone (panel time budget).” — **N8** story (heavier scorer). |
+Matching strings are in **`scoutLiaisonLabels`**; **`scoutLiaisonPrimaryLabel`** may be the first label in the merged list (same as other multi-label cases).
+
+### Other id → English (reference)
+
+| id | Typical copy |
+|----|----------------|
+| `balances_week` | Busy-day spread (N4 only). |
+| `keeps_week_panel_mix` | Week vs panel (N6). |
+| `fits_far_run_day` | Fits a day that already runs farther from home. |
+| `fits_zone_pack_day` | Fits a day concentrated in this zone (N8 story, heavier scorer). |
 | `outside_zones_drive_fit` | Address not in a zone polygon. |
 | `earliest_available` | Earliest available (fallback). |
 
-Other ids in the liaison table may be **reserved / legacy** on the slim pass—prefer **`scoutLiaisonPrimaryLabel`** / **`scoutLiaisonLabels`** from the API for copy.
+Prefer **`scoutLiaisonPrimaryLabel`** / **`scoutLiaisonLabels`** from the API when in doubt.
 
 ---
 
-## Product one-liners (talk track)
+## Product one-liners
 
-- **Slim pass:** Prefer **`scoutZoneClass`** + **`scoutMultiAnchorDayN9`** (and **`scoutZoneAwareScoreDelta`** as N9) for explanations; ignore **`scoutAnchorPanelShare`** from routing unless panel is wired separately.
-- **N9:** **“Penalty when this day already has two or more long (anchor) runs from depot before adding this visit.”** Non-local slots only; full penalty when two+ anchor legs exist even in one zone.
+- **N9:** Non-local visit on a day that already has **two+ long (anchor) drives** from depot before this visit → **“Adds Another Anchor Zone”** in UI when N9 > 0.
+- **Preserve:** When **`scoutPreservedEmptyDayPenalty` > 0**, explain with server liaison + **“Uses preserved empty day”** chip; never re-derive the penalty client-side.
 
 ---
 
 ## Frontend (`src/pages/Routing.tsx`)
 
-- Purple **Zone-aware** callout when root policy is `zone_aware`.
-- **Client Liaison Note** (deduped primary + labels); id tooltips + `data-scout-liaison-label-ids`.
-- Badges: households/patients, strategic light, empty day.
-- Diagnostics row: **Zone class** chip; **N6–N8** only when **> 0**; **N9** when present (**≥ 0**). Same row on **`gaps[]`** when applicable.
-- **Scout zone-aware Δ (N9)** when `scoutZoneAwareScoreDelta` is present (slim pass: N9-only delta).
-- **`gaps[]` / `routingGaps`** when root or gap policy is `zone_aware`.
-
-Local map: `SCOUT_LIAISON_LABEL_ID_COPY` + long tooltips for selected ids (e.g. `fits_far_run_day`, `fits_zone_pack_day`).
+- Purple **Zone-aware** callout when root policy is `zone_aware`; combined **polygon + drive class** chip in Results header when data allows.
+- **Client Liaison Note** + id tooltips (`SCOUT_LIAISON_LABEL_ID_COPY` / long tooltips).
+- One flex row: **day stat badges** + **N9** (indigo, when > 0) + **preserved** (amber chip, when penalty > 0).
+- When preserved chip shows and **`scoutPreservedEmptyDayWeeks`** matches this **doctor + ISO week**, a note lists **`anchorZonesStillNeedingPreservation`** zone names under the label **This uses one of the remaining flexible days Scout is trying to preserve for other far-away zones this week.**
+- **Zone-aware Δ:** single total with tooltip listing **N9** and **preserved** parts when the API sends them.
+- **`gaps[]` / `routingGaps`:** same diagnostics + optional Δ line per gap.
