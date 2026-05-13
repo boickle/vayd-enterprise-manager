@@ -42,6 +42,24 @@ import ErrorPage from './pages/ErrorPage';
 import { usePageTracking } from './hooks/usePageTracking';
 import { isCreateClientEnabled, isProduction } from './utils/env';
 
+/** + Appointment in global navbar when viewing /schedule/* */
+function NavbarScheduleAddAppointment() {
+  const { abilities } = useAuth() as { abilities?: string[] };
+  const location = useLocation();
+  const navigate = useNavigate();
+  if (!location.pathname.startsWith('/schedule')) return null;
+  const toRouting = !abilities || abilities.includes('canSeeRouting');
+  return (
+    <button
+      type="button"
+      className="navbar-appointment-btn"
+      onClick={() => navigate(toRouting ? '/schedule/routing' : '/schedule/home')}
+    >
+      + Appointment
+    </button>
+  );
+}
+
 /** Old `/scout/*` URLs → `/schedule/*` */
 function ScoutLegacyRedirect() {
   const { pathname, search, hash } = useLocation();
@@ -330,8 +348,7 @@ export default function App() {
             </div>
 
             {token && !isClient && <NavbarGlobalSearch />}
-
-            <div className="spacer" />
+            {token && !isClient && <NavbarScheduleAddAppointment />}
             {token && <UserMenu menuExtras={isClient ? [] : menuExtras} />}
           </header>
         )}

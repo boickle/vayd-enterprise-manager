@@ -16,9 +16,11 @@ function isUrgent(t: TaskListItem, now: number): boolean {
 type Props = {
   /** Bump to refetch after task changes elsewhere. */
   refreshKey?: number;
+  /** Optional class on the root (e.g. drawer variant). */
+  className?: string;
 };
 
-export default function ScheduleTasksPanel({ refreshKey = 0 }: Props) {
+export default function ScheduleTasksPanel({ refreshKey = 0, className }: Props) {
   const [items, setItems] = useState<TaskListItem[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,7 +51,7 @@ export default function ScheduleTasksPanel({ refreshKey = 0 }: Props) {
   }, [items]);
 
   return (
-    <div className="schedule-tasks-panel">
+    <div className={['schedule-tasks-panel', className].filter(Boolean).join(' ')}>
       <div className="schedule-tasks-panel__head">
         <h2 className="schedule-tasks-panel__title">Tasks</h2>
         <Link to="/schedule/tasks" className="schedule-tasks-panel__all">

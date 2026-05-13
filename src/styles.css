@@ -136,6 +136,25 @@ main.schedule-main-wrapper {
   }
 }
 
+.navbar-appointment-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+  border: 1px solid #15803d;
+  background: #16a34a;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 8px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.navbar-appointment-btn:hover {
+  background: #15803d;
+  border-color: #166534;
+}
+
 /* Scheduler tab only: nearly full viewport width */
 .container.container--scheduler {
   max-width: calc(100vw - 24px);

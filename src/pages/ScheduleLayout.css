@@ -8,15 +8,15 @@
 }
 
 .schedule-app__rail {
-  flex: 0 0 220px;
-  width: 220px;
-  padding: 20px 16px 24px;
+  flex: 0 0 clamp(200px, 18vw, 280px);
+  width: clamp(200px, 18vw, 280px);
+  padding: 18px 14px 22px;
   background: #fff;
   border-right: 1px solid #e2e8f0;
   display: flex;
   flex-direction: column;
   gap: 0;
-  align-self: flex-start;
+  align-self: stretch;
   position: sticky;
   top: 0;
   max-height: calc(100vh - 76px);
@@ -34,13 +34,23 @@
 }
 
 .schedule-app__rail-title--second {
-  margin-top: 22px;
+  margin-top: 18px;
+}
+
+.schedule-app__rail-divider {
+  height: 1px;
+  background: #e2e8f0;
+  margin: 18px 0 14px;
 }
 
 .schedule-app__quick {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.schedule-app__quick--sub {
+  gap: 2px;
 }
 
 .schedule-app__quick-link {
@@ -54,31 +64,72 @@
   border: 1px solid transparent;
 }
 
+.schedule-app__quick-link--primary {
+  color: #0f172a;
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  border-color: #cbd5e1;
+}
+
+.schedule-app__quick-link--primary:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1e3a8a;
+}
+
+.schedule-app__quick-link--sub {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  padding: 7px 10px;
+}
+
 .schedule-app__quick-link:hover {
   background: #eff6ff;
   border-color: #bfdbfe;
 }
 
-.schedule-app__attention {
+.schedule-app__queues {
+  list-style: none;
   margin: 0;
-  padding-left: 16px;
+  padding: 0;
   font-size: 13px;
-  color: #475569;
-  line-height: 1.5;
 }
 
-.schedule-app__attention a {
-  color: #2563eb;
+.schedule-app__queues li {
+  margin: 0 0 6px;
+}
+
+.schedule-app__queue-link {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  color: #1e40af;
   font-weight: 600;
   text-decoration: none;
 }
 
-.schedule-app__attention a:hover {
-  text-decoration: underline;
+.schedule-app__queue-link:hover {
+  background: #eff6ff;
 }
 
-.schedule-app__attention-muted {
+.schedule-app__queue-muted {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
   color: #94a3b8;
+  font-weight: 600;
+  cursor: default;
+}
+
+.schedule-app__queue-count {
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 
 .schedule-app__main {
@@ -93,11 +144,43 @@
 .schedule-app__tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 14px 20px 12px;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px 10px;
   background: #fff;
   border-bottom: 1px solid #e2e8f0;
   flex-shrink: 0;
+}
+
+.schedule-app__tabs-start {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+}
+
+.schedule-app__tabs-end {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.schedule-app__tasks-chip {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+  cursor: pointer;
+  font: inherit;
+}
+
+.schedule-app__tasks-chip:hover {
+  background: #e2e8f0;
+  border-color: #94a3b8;
 }
 
 .schedule-app__tab {
@@ -121,61 +204,6 @@
   border-color: #bfdbfe;
 }
 
-button.schedule-app__tab {
-  font: inherit;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.schedule-app__scheduling-wrap {
-  position: relative;
-}
-
-.schedule-app__tab--scheduling-trigger .schedule-app__scheduling-chevron {
-  flex-shrink: 0;
-  opacity: 0.75;
-  transition: transform 0.15s ease;
-}
-
-.schedule-app__tab--scheduling-open .schedule-app__scheduling-chevron {
-  transform: rotate(180deg);
-}
-
-.schedule-app__scheduling-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  min-width: 220px;
-  padding: 6px;
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
-  z-index: 20;
-}
-
-.schedule-app__scheduling-item {
-  display: block;
-  padding: 10px 12px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #334155;
-  text-decoration: none;
-}
-
-.schedule-app__scheduling-item:hover {
-  background: #f8fafc;
-  color: #0f172a;
-}
-
-.schedule-app__scheduling-item--active {
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
 .schedule-app__outlet {
   flex: 1;
   min-height: 0;
@@ -183,6 +211,95 @@ button.schedule-app__tab {
   min-width: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+.schedule-app__outlet--flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* Slide-out tasks */
+.schedule-tasks-drawer-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+.schedule-tasks-drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: rgba(15, 23, 42, 0.35);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.schedule-tasks-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: min(420px, calc(100vw - 16px));
+  height: 100%;
+  max-height: 100dvh;
+  background: #fff;
+  box-shadow: -12px 0 40px rgba(15, 23, 42, 0.14);
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  animation: schedule-tasks-drawer-in 0.22s ease;
+}
+
+@keyframes schedule-tasks-drawer-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.schedule-tasks-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+
+.schedule-tasks-drawer-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.schedule-tasks-drawer-close {
+  border: none;
+  background: transparent;
+  font-size: 26px;
+  line-height: 1;
+  color: #64748b;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+.schedule-tasks-drawer-close:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.schedule-tasks-drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 14px 20px;
 }
 
 @media (max-width: 900px) {
@@ -193,6 +310,9 @@ button.schedule-app__tab {
   .schedule-app__rail {
     flex: none;
     width: 100%;
+    max-width: none;
+    max-height: none;
+    position: relative;
     border-right: none;
     border-bottom: 1px solid #e2e8f0;
   }
@@ -200,5 +320,10 @@ button.schedule-app__tab {
   .schedule-app__quick {
     flex-direction: row;
     flex-wrap: wrap;
+  }
+
+  .schedule-app__quick--sub {
+    flex-direction: column;
+    flex-wrap: nowrap;
   }
 }

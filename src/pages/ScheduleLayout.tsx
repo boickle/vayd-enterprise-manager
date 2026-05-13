@@ -1,6 +1,5 @@
 import { NavLink, Outlet, useNavigate, useLocation, Navigate } from 'react-router-dom';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../auth/useAuth';
 import {
   getVisibleScoutTabs,
@@ -8,18 +7,10 @@ import {
   SCHEDULE_OUTLET_EXTRA_SEGMENTS,
   SHOW_MY_WEEK_SCOUT_TAB,
   scoutTabPermissionOk,
-  type ScoutTabConfig,
 } from '../scout-tabs';
+import { listTasks } from '../api/tasks';
+import ScheduleTasksPanel from '../components/schedule/ScheduleTasksPanel';
 import './ScheduleLayout.css';
-
-function pathUnderScheduleTab(pathname: string, tabPath: string): boolean {
-  const base = `/schedule/${tabPath}`;
-  return pathname === base || pathname.startsWith(`${base}/`);
-}
-
-function isUnderSchedulingTabs(pathname: string, tabs: ScoutTabConfig[]): boolean {
-  return tabs.some((t) => pathUnderScheduleTab(pathname, t.path));
-}
 
 /** Default child under `/schedule`. */
 export function ScheduleIndexRedirect() {
@@ -33,14 +24,15 @@ export function ScheduleIndexRedirect() {
   return <Navigate to={`/schedule/${seg}`} replace />;
 }
 
-const QUICK_ACTIONS: { label: string; to: string }[] = [
-  { label: 'Appointments', to: '/schedule/routing' },
-  { label: 'Send room loader', to: '/schedule/room-loader' },
-  { label: 'New client', to: '/schedule/clients' },
-  { label: 'Search inventory', to: '/schedule/inventory' },
-  { label: 'Restock location', to: '/schedule/inventory' },
-  { label: 'Receive shipment', to: '/schedule/inventory' },
-  { label: 'New task', to: '/schedule/tasks' },
+type QueueRow = { label: string; count: number; to?: string; title?: string };
+
+const WORK_QUEUE_ROWS: QueueRow[] = [
+  { label: 'Refill Requests', count: 4, title: 'Coming soon' },
+  { label: 'Pending SOAPs', count: 3, title: 'Coming soon' },
+  { label: 'Pending Checkout', count: 2, title: 'Coming soon' },
+  { label: 'Lab Reviews', count: 1, title: 'Coming soon' },
+  { label: 'Pending Count Reviews', count: 2, title: 'Coming soon' },
+  { label: 'Expiring Inventory', count: 4, to: '/schedule/inventory' },
 ];
 
 export default function ScheduleLayout() {
@@ -58,60 +50,44 @@ export default function ScheduleLayout() {
   const homeTab = useMemo(() => tabs.find((t) => t.path === 'home'), [tabs]);
   const schedulingTabs = useMemo(() => tabs.filter((t) => t.path !== 'home'), [tabs]);
 
-  /** Scheduling dropdown rows; when the legacy My Week tab is hidden, insert "My week" → practice calendar after My Day. */
-  const schedulingMenuRows = useMemo(() => {
-    const rows: { key: string; label: string; to: string }[] = [];
-    const showMyWeekCalendarLink =
-      !SHOW_MY_WEEK_SCOUT_TAB && scoutTabPermissionOk('canSeeDoctorDay', abilities);
-    for (const tab of schedulingTabs) {
-      rows.push({ key: tab.path, label: tab.label, to: `/schedule/${tab.path}` });
-      if (tab.path === 'my-day' && showMyWeekCalendarLink) {
-        rows.push({ key: 'my-week-practice-calendar', label: 'My week', to: '/schedule/scheduler' });
-      }
-    }
-    return rows;
-  }, [schedulingTabs, abilities]);
-
-  const [schedulingOpen, setSchedulingOpen] = useState(false);
-  const schedulingWrapRef = useRef<HTMLDivElement>(null);
-
-  const schedulingSectionActive = useMemo(
-    () =>
-      isUnderSchedulingTabs(location.pathname, schedulingTabs) ||
-      location.pathname === '/schedule/scheduler' ||
-      location.pathname.startsWith('/schedule/scheduler/'),
-    [location.pathname, schedulingTabs]
-  );
-
   const showAdminTab = useMemo(
     () => roles.includes('admin') || roles.includes('superadmin'),
     [roles]
   );
 
-  useEffect(() => {
-    setSchedulingOpen(false);
-  }, [location.pathname]);
+  const [tasksDrawerOpen, setTasksDrawerOpen] = useState(false);
+  const [taskTotal, setTaskTotal] = useState<number | null>(null);
+  const [taskRefresh, setTaskRefresh] = useState(0);
 
-  useEffect(() => {
-    if (!schedulingOpen) return;
-    const close = (e: MouseEvent) => {
-      const el = schedulingWrapRef.current;
-      if (el && e.target instanceof Node && !el.contains(e.target)) setSchedulingOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSchedulingOpen(false);
-    };
-    document.addEventListener('mousedown', close);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', close);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [schedulingOpen]);
-
-  const toggleScheduling = useCallback(() => {
-    setSchedulingOpen((o) => !o);
+  const refreshTaskCount = useCallback(() => {
+    void listTasks({ includeDone: false, limit: 1, offset: 0 })
+      .then((res) => setTaskTotal(res.total))
+      .catch(() => setTaskTotal(null));
   }, []);
+
+  useEffect(() => {
+    refreshTaskCount();
+  }, [refreshTaskCount, location.pathname]);
+
+  useEffect(() => {
+    if (!tasksDrawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setTasksDrawerOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [tasksDrawerOpen]);
+
+  const openTasksDrawer = useCallback(() => {
+    setTaskRefresh((k) => k + 1);
+    refreshTaskCount();
+    setTasksDrawerOpen(true);
+  }, [refreshTaskCount]);
+
+  const appointmentHref = useMemo(
+    () => (scoutTabPermissionOk('canSeeRouting', abilities) ? '/schedule/routing' : '/schedule/home'),
+    [abilities]
+  );
 
   useEffect(() => {
     if (tabs.length === 0) return;
@@ -125,124 +101,165 @@ export default function ScheduleLayout() {
     }
   }, [tabs, location.pathname, navigate, abilities, roles]);
 
+  const outletFlush = useMemo(
+    () =>
+      location.pathname === '/schedule/home' ||
+      location.pathname === '/schedule/scheduler' ||
+      location.pathname.startsWith('/schedule/scheduler/'),
+    [location.pathname]
+  );
+
   if (tabs.length === 0) {
     return <Navigate to="/tools" replace />;
   }
 
   return (
     <div className="schedule-app">
-      <aside className="schedule-app__rail" aria-label="Quick actions">
+      <aside className="schedule-app__rail" aria-label="Quick actions and work queues">
         <h2 className="schedule-app__rail-title">Quick actions</h2>
-        <nav className="schedule-app__quick">
-          {QUICK_ACTIONS.map((a) => (
-            <NavLink key={a.to + a.label} to={a.to} className="schedule-app__quick-link">
-              {a.label}
-            </NavLink>
-          ))}
+        <nav className="schedule-app__quick" aria-label="Quick actions">
+          <NavLink to={appointmentHref} className="schedule-app__quick-link schedule-app__quick-link--primary">
+            + Appointment
+          </NavLink>
+          <NavLink to="/schedule/clients" className="schedule-app__quick-link">
+            New Client
+          </NavLink>
+          <NavLink to="/schedule/room-loader" className="schedule-app__quick-link">
+            Send Room Loader
+          </NavLink>
+          <NavLink to="/schedule/inventory" className="schedule-app__quick-link">
+            Restock Location
+          </NavLink>
+          <NavLink to="/schedule/tasks" className="schedule-app__quick-link">
+            New Task
+          </NavLink>
         </nav>
-        <h2 className="schedule-app__rail-title schedule-app__rail-title--second">Needs attention</h2>
-        <ul className="schedule-app__attention">
-          <li>
-            <NavLink to="/schedule/inventory">Inventory / stock</NavLink>
-          </li>
-          <li>
-            <span className="schedule-app__attention-muted">Low stock / expiring counts — coming soon</span>
-          </li>
-          <li>
-            <span className="schedule-app__attention-muted">Pending count reconciliations — coming soon</span>
-          </li>
+
+        {schedulingTabs.length > 0 ? (
+          <>
+            <h2 className="schedule-app__rail-title schedule-app__rail-title--second">Scheduling</h2>
+            <nav className="schedule-app__quick schedule-app__quick--sub" aria-label="Scheduling tools">
+              {schedulingTabs.map((tab) => (
+                <NavLink key={tab.path} to={`/schedule/${tab.path}`} className="schedule-app__quick-link schedule-app__quick-link--sub">
+                  {tab.label}
+                </NavLink>
+              ))}
+              {!SHOW_MY_WEEK_SCOUT_TAB && scoutTabPermissionOk('canSeeDoctorDay', abilities) ? (
+                <NavLink to="/schedule/scheduler" className="schedule-app__quick-link schedule-app__quick-link--sub">
+                  Practice calendar
+                </NavLink>
+              ) : null}
+            </nav>
+          </>
+        ) : null}
+
+        <div className="schedule-app__rail-divider" role="presentation" />
+
+        <h2 className="schedule-app__rail-title">Work queues</h2>
+        <ul className="schedule-app__queues">
+          {WORK_QUEUE_ROWS.map((row) => (
+            <li key={row.label}>
+              {row.to ? (
+                <NavLink to={row.to} className="schedule-app__queue-link">
+                  <span>{row.label}</span>
+                  <span className="schedule-app__queue-count">({row.count})</span>
+                </NavLink>
+              ) : (
+                <span className="schedule-app__queue-muted" title={row.title}>
+                  <span>{row.label}</span>
+                  <span className="schedule-app__queue-count">({row.count})</span>
+                </span>
+              )}
+            </li>
+          ))}
         </ul>
       </aside>
 
       <div className="schedule-app__main">
         <nav className="schedule-app__tabs" aria-label="Schedule sections">
-          {homeTab && (
+          <div className="schedule-app__tabs-start">
+            {homeTab ? (
+              <NavLink
+                to={`/schedule/${homeTab.path}`}
+                end
+                className={({ isActive }) => {
+                  const active =
+                    isActive ||
+                    location.pathname === '/schedule/scheduler' ||
+                    location.pathname.startsWith('/schedule/scheduler/');
+                  return `schedule-app__tab${active ? ' schedule-app__tab--active' : ''}`;
+                }}
+              >
+                Home
+              </NavLink>
+            ) : null}
             <NavLink
-              key={homeTab.path}
-              to={`/schedule/${homeTab.path}`}
-              end
+              to="/schedule/clients"
               className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
             >
-              {homeTab.label}
+              Clients
             </NavLink>
-          )}
-          {schedulingTabs.length > 0 && (
-            <div className="schedule-app__scheduling-wrap" ref={schedulingWrapRef}>
-              <button
-                type="button"
-                className={`schedule-app__tab schedule-app__tab--scheduling-trigger${schedulingSectionActive ? ' schedule-app__tab--active' : ''}${schedulingOpen ? ' schedule-app__tab--scheduling-open' : ''}`}
-                aria-expanded={schedulingOpen}
-                aria-haspopup="menu"
-                aria-controls="schedule-scheduling-menu"
-                id="schedule-scheduling-trigger"
-                onClick={toggleScheduling}
-              >
-                Scheduling
-                <ChevronDown size={16} strokeWidth={2} className="schedule-app__scheduling-chevron" aria-hidden />
-              </button>
-              {schedulingOpen && (
-                <div
-                  id="schedule-scheduling-menu"
-                  className="schedule-app__scheduling-menu"
-                  role="menu"
-                  aria-labelledby="schedule-scheduling-trigger"
-                >
-                  {schedulingMenuRows.map((row) => (
-                    <NavLink
-                      key={row.key}
-                      role="menuitem"
-                      to={row.to}
-                      className={({ isActive }) =>
-                        `schedule-app__scheduling-item${isActive ? ' schedule-app__scheduling-item--active' : ''}`
-                      }
-                      onClick={() => setSchedulingOpen(false)}
-                    >
-                      {row.label}
-                    </NavLink>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          <NavLink
-            to="/schedule/clients"
-            className={({ isActive }) =>
-              `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`
-            }
-          >
-            Clients
-          </NavLink>
-          <NavLink
-            to="/schedule/patients"
-            className={({ isActive }) =>
-              `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`
-            }
-          >
-            Patients
-          </NavLink>
-          <NavLink
-            to="/schedule/inventory"
-            className={({ isActive }) =>
-              `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`
-            }
-          >
-            Inventory
-          </NavLink>
-          {showAdminTab && (
             <NavLink
-              to="/schedule/admin"
-              className={({ isActive }) =>
-                `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`
-              }
+              to="/schedule/patients"
+              className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
             >
-              Admin
+              Patients
             </NavLink>
-          )}
+            <NavLink
+              to="/schedule/inventory"
+              className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
+            >
+              Inventory
+            </NavLink>
+            <NavLink
+              to="/schedule/tasks"
+              className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
+            >
+              Tasks
+            </NavLink>
+            {showAdminTab ? (
+              <NavLink
+                to="/schedule/admin"
+                className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
+              >
+                Admin
+              </NavLink>
+            ) : null}
+          </div>
+          <div className="schedule-app__tabs-end">
+            <button type="button" className="schedule-app__tasks-chip" onClick={openTasksDrawer}>
+              Tasks{taskTotal != null ? ` (${taskTotal})` : ''}
+            </button>
+          </div>
         </nav>
-        <div className="schedule-app__outlet">
+        <div className={`schedule-app__outlet${outletFlush ? ' schedule-app__outlet--flush' : ''}`}>
           <Outlet context={{ schedulingToolsLinkPrefix: '/schedule/scheduling-tools' }} />
         </div>
       </div>
+
+      {tasksDrawerOpen ? (
+        <div className="schedule-tasks-drawer-root" role="presentation">
+          <button
+            type="button"
+            className="schedule-tasks-drawer-backdrop"
+            aria-label="Close tasks panel"
+            onClick={() => setTasksDrawerOpen(false)}
+          />
+          <aside className="schedule-tasks-drawer" role="dialog" aria-modal="true" aria-labelledby="schedule-tasks-drawer-title">
+            <div className="schedule-tasks-drawer-head">
+              <h2 id="schedule-tasks-drawer-title" className="schedule-tasks-drawer-title">
+                Tasks
+              </h2>
+              <button type="button" className="schedule-tasks-drawer-close" onClick={() => setTasksDrawerOpen(false)} aria-label="Close">
+                ×
+              </button>
+            </div>
+            <div className="schedule-tasks-drawer-body">
+              <ScheduleTasksPanel refreshKey={taskRefresh} className="schedule-tasks-panel--drawer" />
+            </div>
+          </aside>
+        </div>
+      ) : null}
     </div>
   );
 }
