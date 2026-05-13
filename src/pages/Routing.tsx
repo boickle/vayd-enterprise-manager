@@ -56,6 +56,28 @@ type RouteRequest = {
   };
 };
 
+/**
+ * Routing “Service minutes” from the same Appt lengths stats as the popover:
+ * 1 pet → regular average; 2+ pets → multipet average × pet count when multipet data exists,
+ * otherwise scales the regular average by pet count.
+ */
+function estimatedServiceMinutesFromStatsRow(row: AvgMinutesByTypeRow, pets: number): number | null {
+  const n = Math.floor(Number(pets));
+  const petCount = Number.isFinite(n) && n >= 1 ? n : 1;
+  const hasSingle = row.count > 0 && row.avgMinutes > 0;
+  const mp = row.multipetAvgMinutes;
+  const hasMp = mp != null && mp > 0;
+
+  if (petCount === 1) {
+    if (hasSingle) return Math.round(row.avgMinutes);
+    if (hasMp) return Math.round(mp);
+    return null;
+  }
+  if (hasMp) return Math.round(mp * petCount);
+  if (hasSingle) return Math.round(row.avgMinutes * petCount);
+  return null;
+}
+
 type Slot = 'early' | 'mid' | 'late';
 
 /** Scout empty-day row: `SCOUT_EMPTY_DAY_POLICY=zone_aware` (routing v2). May appear on root, each candidate, or `gaps[]`. */
@@ -1218,6 +1240,9 @@ export default function Routing() {
   const [apptLengthsLoading, setApptLengthsLoading] = useState(false);
   const [apptLengthsRows, setApptLengthsRows] = useState<AvgMinutesByTypeRow[]>([]);
   const [apptLengthsError, setApptLengthsError] = useState<string | null>(null);
+  /** Selected row from Appt lengths stats (same list as the popover); empty = do not auto-fill minutes. */
+  const [routingApptStatsTypeKey, setRoutingApptStatsTypeKey] = useState('');
+  const [routingPetCount, setRoutingPetCount] = useState(1);
   const latestDoctorQueryRef = useRef('');
   const [doctorActiveIdx, setDoctorActiveIdx] = useState<number>(-1);
   const [clientActiveIdx, setClientActiveIdx] = useState<number>(-1);
@@ -1536,6 +1561,11 @@ export default function Routing() {
 
   useEffect(() => {
     setApptLengthsOpen(false);
+    setRoutingApptStatsTypeKey('');
+    setRoutingPetCount(1);
+    if (!form.doctorId.trim()) {
+      setApptLengthsRows([]);
+    }
   }, [form.doctorId]);
 
   const loadApptLengthStats = useCallback(async () => {
@@ -1562,6 +1592,23 @@ export default function Routing() {
       setApptLengthsLoading(false);
     }
   }, [form.doctorId]);
+
+  useEffect(() => {
+    if (!form.doctorId.trim()) return;
+    void loadApptLengthStats();
+  }, [form.doctorId, loadApptLengthStats]);
+
+  useEffect(() => {
+    if (!routingApptStatsTypeKey) return;
+    const row = apptLengthsRows.find((r) => r.typeName === routingApptStatsTypeKey);
+    if (!row) return;
+    const mins = estimatedServiceMinutesFromStatsRow(row, routingPetCount);
+    if (mins == null || mins < 1) return;
+    setForm((f) => ({
+      ...f,
+      newAppt: { ...f.newAppt, serviceMinutes: mins },
+    }));
+  }, [routingApptStatsTypeKey, routingPetCount, apptLengthsRows]);
 
   useEffect(() => {
     if (!apptLengthsOpen) return;
@@ -2393,13 +2440,76 @@ export default function Routing() {
           {/* Appointment & client */}
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Field label="Service minutes">
-              <input
-                className="input"
-                type="number"
-                min={1}
-                value={form.newAppt.serviceMinutes}
-                onChange={(e) => onNewApptChange('serviceMinutes', Number(e.target.value))}
-              />
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 8,
+                  alignItems: 'center',
+                }}
+              >
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  style={{ width: 88 }}
+                  value={form.newAppt.serviceMinutes}
+                  onChange={(e) => onNewApptChange('serviceMinutes', Number(e.target.value))}
+                />
+                <select
+                  className="input"
+                  aria-label="Appointment type from averages"
+                  style={{ minWidth: 160, flex: '1 1 140px' }}
+                  disabled={!form.doctorId.trim() || apptLengthsLoading}
+                  value={routingApptStatsTypeKey}
+                  onChange={(e) => setRoutingApptStatsTypeKey(e.target.value)}
+                >
+                  <option value="">Type (optional)</option>
+                  {apptLengthsRows.map((row) => (
+                    <option key={row.typeName} value={row.typeName}>
+                      {row.typeName}
+                    </option>
+                  ))}
+                </select>
+                <label
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  <span className="muted" style={{ fontSize: 13 }}>
+                    Pets
+                  </span>
+                  <input
+                    className="input"
+                    type="number"
+                    min={1}
+                    style={{ width: 64 }}
+                    value={routingPetCount}
+                    onChange={(e) => {
+                      const v = Math.floor(Number(e.target.value));
+                      setRoutingPetCount(Number.isFinite(v) && v >= 1 ? v : 1);
+                    }}
+                  />
+                </label>
+              </div>
+              {!form.doctorId.trim() ? (
+                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                  Select a doctor to load appointment types (same data as Appt lengths).
+                </div>
+              ) : apptLengthsLoading && apptLengthsRows.length === 0 ? (
+                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                  Loading appointment types…
+                </div>
+              ) : apptLengthsRows.length === 0 && !apptLengthsError ? (
+                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                  No appointment types in the last 30 days for this doctor.
+                </div>
+              ) : apptLengthsError ? (
+                <div style={{ color: '#b91c1c', fontSize: 12, marginTop: 6 }}>{apptLengthsError}</div>
+              ) : null}
             </Field>
 
             <Field label="Search Client (last name)">
