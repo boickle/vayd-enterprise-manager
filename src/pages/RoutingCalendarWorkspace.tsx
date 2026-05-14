@@ -15,7 +15,9 @@ export default function RoutingCalendarWorkspace() {
         </div>
       </div>
       <div className="schedule-routing-workspace__calendar">
-        <Scheduler embedInRoutingWorkspace />
+        <div className="schedule-routing-workspace__calendar-scroll">
+          <Scheduler embedInRoutingWorkspace />
+        </div>
       </div>
     </div>
   );

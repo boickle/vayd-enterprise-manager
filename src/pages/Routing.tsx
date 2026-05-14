@@ -29,7 +29,6 @@ import {
   type RoutingSlotSearchOptionalFlags,
   type RoutingV2SlotSearchResult,
 } from '../api/routing';
-import './Routing.css';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
@@ -1285,8 +1284,6 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const [doctorSearching, setDoctorSearching] = useState(false);
   const [showDoctorDropdown, setShowDoctorDropdown] = useState(false);
   const doctorBoxRef = useRef<HTMLDivElement | null>(null);
-  const apptLengthsWrapRef = useRef<HTMLDivElement | null>(null);
-  const [apptLengthsOpen, setApptLengthsOpen] = useState(false);
   const [apptLengthsLoading, setApptLengthsLoading] = useState(false);
   const [apptLengthsRows, setApptLengthsRows] = useState<AvgMinutesByTypeRow[]>([]);
   const [apptLengthsError, setApptLengthsError] = useState<string | null>(null);
@@ -1711,16 +1708,12 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       if (doctorBoxRef.current && !doctorBoxRef.current.contains(e.target as Node)) {
         setShowDoctorDropdown(false);
       }
-      if (apptLengthsWrapRef.current && !apptLengthsWrapRef.current.contains(e.target as Node)) {
-        setApptLengthsOpen(false);
-      }
     }
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
   useEffect(() => {
-    setApptLengthsOpen(false);
     setRoutingApptStatsTypeKey('');
     setRoutingPetCount(1);
     if (!form.doctorId.trim()) {
@@ -1769,31 +1762,6 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       newAppt: { ...f.newAppt, serviceMinutes: mins },
     }));
   }, [routingApptStatsTypeKey, routingPetCount, apptLengthsRows]);
-
-  useEffect(() => {
-    if (!apptLengthsOpen) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setApptLengthsOpen(false);
-    }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [apptLengthsOpen]);
-
-  useEffect(() => {
-    if (!apptLengthsOpen) return;
-    const mq = window.matchMedia('(max-width: 640px)');
-    if (!mq.matches) return undefined;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const onMq = () => {
-      document.body.style.overflow = mq.matches ? 'hidden' : prev;
-    };
-    mq.addEventListener('change', onMq);
-    return () => {
-      mq.removeEventListener('change', onMq);
-      document.body.style.overflow = prev;
-    };
-  }, [apptLengthsOpen]);
 
   // Fetch doctor name if missing
   useEffect(() => {
@@ -2239,28 +2207,15 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           {/* Doctor picker */}
           <div className="grid" style={{ gridTemplateColumns: 'minmax(16rem, 1fr) 1fr', gap: 12 }}>
             <Field label="Doctor">
-              <div ref={apptLengthsWrapRef} style={{ position: 'relative', width: '100%' }}>
-                {apptLengthsOpen && (
-                  <div
-                    className="routing-appt-lengths-backdrop"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      setApptLengthsOpen(false);
-                    }}
-                    aria-hidden
-                  />
-                )}
-                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                  <div
-                    ref={doctorBoxRef}
-                    style={{
-                      position: 'relative',
-                      flexGrow: 1,
-                      flexShrink: 0,
-                      flexBasis: 'auto',
-                      minWidth: '16rem',
-                    }}
-                  >
+              <div style={{ position: 'relative', width: '100%' }}>
+                <div
+                  ref={doctorBoxRef}
+                  style={{
+                    position: 'relative',
+                    width: '100%',
+                    minWidth: '16rem',
+                  }}
+                >
                   <input
                     className="input"
                     style={{ width: '100%', boxSizing: 'border-box' }}
@@ -2369,95 +2324,6 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                     })}
                   </ul>
                 )}
-                  </div>
-
-                  <div style={{ position: 'relative', flexShrink: 0, paddingTop: 2 }}>
-                    <button
-                      type="button"
-                      className="btn secondary"
-                      disabled={!form.doctorId.trim()}
-                      title={
-                        form.doctorId.trim()
-                          ? 'Average booked minutes by appointment type (last 30 days)'
-                          : 'Select a doctor first'
-                      }
-                      style={{
-                        fontSize: 12,
-                        padding: '8px 10px',
-                        whiteSpace: 'nowrap',
-                        lineHeight: 1.2,
-                      }}
-                      onClick={() => {
-                        if (!form.doctorId.trim()) return;
-                        if (apptLengthsOpen) {
-                          setApptLengthsOpen(false);
-                          return;
-                        }
-                        setApptLengthsOpen(true);
-                        void loadApptLengthStats();
-                      }}
-                    >
-                      Appt lengths
-                    </button>
-
-                    {apptLengthsOpen && (
-                      <div
-                        className="routing-appt-lengths-popover"
-                        role="dialog"
-                        aria-labelledby="routing-appt-lengths-heading"
-                      >
-                        <div className="routing-appt-lengths-popover-header">
-                          <span id="routing-appt-lengths-heading" className="routing-appt-lengths-popover-title">
-                            Appt lengths
-                          </span>
-                          <button
-                            type="button"
-                            className="routing-appt-lengths-close"
-                            aria-label="Close"
-                            onClick={() => setApptLengthsOpen(false)}
-                          >
-                            ×
-                          </button>
-                        </div>
-                        <div className="routing-appt-lengths-scroll">
-                          <div className="routing-appt-lengths-help">
-                            Average booked minutes per appointment by type over the last 30 days (same rules as
-                            Analytics → Time Spent; blocks excluded). Regular vs multi-pet slots are split into
-                            separate averages.
-                          </div>
-                          {apptLengthsLoading && <div className="muted">Loading…</div>}
-                          {apptLengthsError && (
-                            <div style={{ color: '#b91c1c', fontSize: 13 }}>{apptLengthsError}</div>
-                          )}
-                          {!apptLengthsLoading && !apptLengthsError && apptLengthsRows.length === 0 && (
-                            <div className="muted" style={{ fontSize: 13 }}>
-                              No appointments in this window.
-                            </div>
-                          )}
-                          {!apptLengthsLoading && !apptLengthsError && apptLengthsRows.length > 0 && (
-                            <table>
-                              <thead>
-                                <tr>
-                                  <th>Type</th>
-                                  <th>Avg min</th>
-                                  <th>Multipet avg</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {apptLengthsRows.map((row) => (
-                                  <tr key={row.typeName}>
-                                    <td>{row.typeName}</td>
-                                    <td>{row.count > 0 ? row.avgMinutes : '—'}</td>
-                                    <td>{row.multipetAvgMinutes != null ? row.multipetAvgMinutes : '—'}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
                 </div>
               </div>
             </Field>
@@ -2545,7 +2411,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
               </div>
               {!form.doctorId.trim() ? (
                 <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                  Select a doctor to load appointment types (same data as Appt lengths).
+                  Select a doctor to load appointment type averages (last 30 days).
                 </div>
               ) : apptLengthsLoading && apptLengthsRows.length === 0 ? (
                 <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>

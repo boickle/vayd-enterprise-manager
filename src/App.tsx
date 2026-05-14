@@ -210,16 +210,24 @@ function KeepAliveOutlet({ keepPaths }: { keepPaths: string[] }) {
 
   return (
     <>
-      {[...cacheRef.current.entries()].map(([basePath, element]) => (
-        <div
-          key={basePath}
-          style={{
-            display: path === basePath || path.startsWith(basePath + '/') ? 'block' : 'none',
-          }}
-        >
-          {element}
-        </div>
-      ))}
+      {[...cacheRef.current.entries()].map(([basePath, element]) => {
+        const visible = path === basePath || path.startsWith(basePath + '/');
+        return (
+          <div
+            key={basePath}
+            style={{
+              display: visible ? 'flex' : 'none',
+              flexDirection: 'column',
+              flex: 1,
+              minHeight: 0,
+              minWidth: 0,
+              width: '100%',
+            }}
+          >
+            {element}
+          </div>
+        );
+      })}
       {/* If current path isn't in keep list, render it normally (not cached) */}
       {!shouldKeep && outlet}
     </>
