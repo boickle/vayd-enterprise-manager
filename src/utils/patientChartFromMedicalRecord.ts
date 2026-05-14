@@ -1,5 +1,11 @@
 /** Build unified chart rows from GET /patients/:id/medical-record payload. */
 
+import {
+  htmlToPlainText,
+  looksLikeHtmlFragment,
+  sanitizeCommunicationHtml,
+} from './sanitizeCommunicationHtml';
+
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v).trim();
@@ -34,6 +40,8 @@ export type ChartRow = {
   serviceDateIso: string | null;
   sortTime: number;
   detailText: string;
+  /** Sanitized HTML body for communication rows when the source payload is HTML email. */
+  detailHtml?: string;
   hasResult?: boolean;
 };
 
@@ -69,17 +77,33 @@ export type MedicalRecordBundle = {
   weightHistory?: unknown[];
 };
 
+function communicationMessageObject(o: Record<string, unknown>): Record<string, unknown> | null {
+  return asObj(o.communicationMessageLog) ?? asObj(o.messageLog);
+}
+
+function communicationRawBody(o: Record<string, unknown>): string | null {
+  const msg = communicationMessageObject(o);
+  return pickStr(msg?.body) ?? pickStr(msg?.message) ?? pickStr(o.description);
+}
+
 function communicationLogSummary(o: Record<string, unknown>): string {
-  const msg = asObj(o.communicationMessageLog) ?? asObj(o.messageLog);
+  const msg = communicationMessageObject(o);
+  const subject = pickStr(o.subject) ?? pickStr(msg?.subject);
+  const rawBody = communicationRawBody(o);
+  if (subject && !looksLikeHtmlFragment(subject)) return subject;
+  const messageType = pickStr(o.messageType);
+  if (messageType) return messageType;
+  if (rawBody) {
+    if (looksLikeHtmlFragment(rawBody)) {
+      const plain = htmlToPlainText(rawBody);
+      const t = plain.replace(/\s+/g, ' ').trim();
+      if (!t) return 'Client communication';
+      return t.length > 140 ? `${t.slice(0, 140)}…` : t;
+    }
+    return rawBody.length > 140 ? `${rawBody.slice(0, 140)}…` : rawBody;
+  }
   return (
-    pickStr(o.subject) ??
-    pickStr(o.description) ??
-    pickStr(o.summary) ??
-    pickStr(msg?.message) ??
-    pickStr(msg?.body) ??
-    pickStr(msg?.subject) ??
-    pickStr(o.messageType) ??
-    'Client communication'
+    pickStr(o.summary) ?? pickStr(msg?.subject) ?? pickStr(o.messageType) ?? 'Client communication'
   );
 }
 
@@ -114,6 +138,14 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
       pickStr(o.recipient) && `Recipient: ${pickStr(o.recipient)}`,
       pickStr(o.status) && `Status: ${pickStr(o.status)}`,
     ].filter(Boolean);
+    const rawBody = communicationRawBody(o);
+    let detailText = detailBits.join('\n');
+    let detailHtml: string | undefined;
+    if (rawBody && looksLikeHtmlFragment(rawBody)) {
+      detailHtml = sanitizeCommunicationHtml(rawBody);
+    } else if (rawBody) {
+      detailText = [detailText, rawBody].filter(Boolean).join('\n\n');
+    }
     out.push({
       id: `communication:${id}`,
       source: 'communication',
@@ -122,7 +154,8 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
       provider: employeeName(o.employee ?? o.senderEmployee),
       serviceDateIso,
       sortTime: parseSortTime(serviceDateIso),
-      detailText: detailBits.join('\n'),
+      detailText,
+      detailHtml,
       hasResult: status.includes('deliver') || status.includes('sent') || status === 'complete',
     });
   }

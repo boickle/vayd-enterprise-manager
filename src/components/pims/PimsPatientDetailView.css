@@ -480,6 +480,43 @@
   word-break: break-word;
 }
 
+.pims-patient-detail__detail-cell--rich {
+  max-width: min(560px, 92vw);
+}
+
+.pims-patient-detail__detail-meta {
+  white-space: pre-wrap;
+  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 10px;
+  line-height: 1.45;
+}
+
+.pims-patient-detail__html-body {
+  font-size: 14px;
+  line-height: 1.55;
+  color: #0f172a;
+}
+
+.pims-patient-detail__html-body :first-child {
+  margin-top: 0;
+}
+
+.pims-patient-detail__html-body :last-child {
+  margin-bottom: 0;
+}
+
+.pims-patient-detail__html-body a {
+  color: #2563eb;
+  word-break: break-word;
+}
+
+.pims-patient-detail__html-body img {
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+}
+
 .pims-patient-detail__groups {
   display: flex;
   flex-direction: column;

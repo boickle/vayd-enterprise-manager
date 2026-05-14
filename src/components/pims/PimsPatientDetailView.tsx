@@ -29,6 +29,7 @@ import {
   type ChartRow,
   type MedicalRecordBundle,
 } from '../../utils/patientChartFromMedicalRecord';
+import { htmlToPlainText, looksLikeHtmlFragment } from '../../utils/sanitizeCommunicationHtml';
 import { PimsExamDetailModal } from './PimsExamDetailModal';
 import './PimsPatientDetailView.css';
 
@@ -892,9 +893,38 @@ export default function PimsPatientDetailView({
                             </td>
                             <td>{r.typeLabel}</td>
                             <td>{r.description}</td>
-                            <td className="pims-patient-detail__detail-cell">
-                              {open ? r.detailText || '—' : (r.detailText || '—').slice(0, 120)}
-                              {!open && (r.detailText || '').length > 120 ? '…' : null}
+                            <td
+                              className={[
+                                'pims-patient-detail__detail-cell',
+                                open && r.detailHtml ? 'pims-patient-detail__detail-cell--rich' : '',
+                              ]
+                                .filter(Boolean)
+                                .join(' ')}
+                            >
+                              {open ? (
+                                r.detailHtml ? (
+                                  <>
+                                    {r.detailText?.trim() ? (
+                                      <div className="pims-patient-detail__detail-meta">{r.detailText}</div>
+                                    ) : null}
+                                    <div
+                                      className="pims-patient-detail__html-body"
+                                      dangerouslySetInnerHTML={{ __html: r.detailHtml }}
+                                    />
+                                  </>
+                                ) : (
+                                  r.detailText || '—'
+                                )
+                              ) : (() => {
+                                if (r.detailHtml) {
+                                  const meta = (r.detailText || '').trim();
+                                  const plain = htmlToPlainText(r.detailHtml).replace(/\s+/g, ' ').trim();
+                                  const joined = [meta, plain].filter(Boolean).join(' — ');
+                                  return joined.length > 120 ? `${joined.slice(0, 120)}…` : joined || '—';
+                                }
+                                const t = r.detailText || '—';
+                                return t.length > 120 ? `${t.slice(0, 120)}…` : t;
+                              })()}
                             </td>
                             <td>{r.provider}</td>
                             <td>{formatChartDateTime(r.serviceDateIso)}</td>
@@ -1001,9 +1031,14 @@ export default function PimsPatientDetailView({
                             pickStr(nested?.message) ??
                             pickStr(nested?.body) ??
                             'Communication';
+                          const displayLine = looksLikeHtmlFragment(text)
+                            ? htmlToPlainText(text).replace(/\s+/g, ' ').trim()
+                            : String(text).trim();
+                          const truncated =
+                            displayLine.length > 160 ? `${displayLine.slice(0, 160)}…` : displayLine;
                           return (
                             <div key={String(o.id)} className="pims-patient-detail__group-line">
-                              {text} —{' '}
+                              {truncated} —{' '}
                               {formatChartDateTime(
                                 pickStr(o.serviceDate) ?? pickStr(o.sentAt) ?? pickStr(o.createdAt)
                               )}
