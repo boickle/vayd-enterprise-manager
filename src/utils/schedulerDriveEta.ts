@@ -320,6 +320,58 @@ function scheduleOnlyDayData(dayIn: DayBundleIn): DayData {
   };
 }
 
+export type SchedulerDriveDayResult = {
+  date: string;
+  dayData: DayData;
+  isoPairs: [string, DriveIsoPair][];
+};
+
+/**
+ * Load doctor-day + ETAs for a single calendar date (one column). Used for progressive scheduler updates.
+ */
+export async function fetchSchedulerDriveContextForDate(
+  date: string,
+  doctorId: string
+): Promise<SchedulerDriveDayResult | null> {
+  try {
+    const resp: DoctorDayResponse = await fetchDoctorDay(date, doctorId);
+    const appts: DoctorDayAppt[] = resp?.appointments ?? [];
+    const households = buildHouseholdsWithSourceIds(appts);
+    if (households.length === 0) return null;
+
+    const tz =
+      typeof (resp as any)?.timezone === 'string' && (resp as any).timezone.trim()
+        ? String((resp as any).timezone).trim()
+        : 'America/New_York';
+
+    const dayIn: DayBundleIn = {
+      date,
+      timezone: tz,
+      households,
+      timeline: households.map(() => ({ eta: null, etd: null })),
+      startDepot: resp?.startDepot ?? null,
+      endDepot: resp?.endDepot ?? null,
+      startDepotTime: str(resp as any, 'startDepotTime') ?? null,
+      endDepotTime: str(resp as any, 'endDepotTime') ?? null,
+    };
+
+    let dayData: DayData;
+    try {
+      dayData = await fetchEtaForOneDay(dayIn, doctorId);
+    } catch {
+      dayData = scheduleOnlyDayData(dayIn);
+    }
+
+    const isoPairs: [string, DriveIsoPair][] = [];
+    for (const [k, v] of isoMapFromDayData(dayData)) {
+      isoPairs.push([k, v]);
+    }
+    return { date, dayData, isoPairs };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Doctor-day + full ETA merge (drive seconds, windows, routing order) plus per-appointment arrive/leave map.
  */
@@ -332,41 +384,11 @@ export async function fetchSchedulerDriveContext(
 
   await Promise.all(
     dates.map(async (date) => {
-      try {
-        const resp: DoctorDayResponse = await fetchDoctorDay(date, doctorId);
-        const appts: DoctorDayAppt[] = resp?.appointments ?? [];
-        const households = buildHouseholdsWithSourceIds(appts);
-        if (households.length === 0) return;
-
-        const tz =
-          typeof (resp as any)?.timezone === 'string' && (resp as any).timezone.trim()
-            ? String((resp as any).timezone).trim()
-            : 'America/New_York';
-
-        const dayIn: DayBundleIn = {
-          date,
-          timezone: tz,
-          households,
-          timeline: households.map(() => ({ eta: null, etd: null })),
-          startDepot: resp?.startDepot ?? null,
-          endDepot: resp?.endDepot ?? null,
-          startDepotTime: str(resp as any, 'startDepotTime') ?? null,
-          endDepotTime: str(resp as any, 'endDepotTime') ?? null,
-        };
-
-        let dayData: DayData;
-        try {
-          dayData = await fetchEtaForOneDay(dayIn, doctorId);
-        } catch {
-          dayData = scheduleOnlyDayData(dayIn);
-        }
-
-        dayByDate.set(date, dayData);
-        for (const [k, v] of isoMapFromDayData(dayData)) {
-          isoByApptId.set(k, v);
-        }
-      } catch {
-        /* skip day */
+      const r = await fetchSchedulerDriveContextForDate(date, doctorId);
+      if (!r) return;
+      dayByDate.set(r.date, r.dayData);
+      for (const [k, v] of r.isoPairs) {
+        isoByApptId.set(k, v);
       }
     })
   );

@@ -31,7 +31,7 @@ import {
 } from '../utils/hoverPopoverPosition';
 import { useAuth } from '../auth/useAuth';
 import {
-  fetchSchedulerDriveContext,
+  fetchSchedulerDriveContextForDate,
   type DriveIsoPair,
 } from '../utils/schedulerDriveEta';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
@@ -1567,28 +1567,64 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       setDriveEtaLoading(false);
       return;
     }
-    let on = true;
-    setDriveEtaLoading(true);
     const dates = driveFetchKey.split(',').filter(Boolean);
-    fetchSchedulerDriveContext(dates, resolvedPrimaryProviderId.trim())
-      .then(({ isoByApptId, dayByDate }) => {
-        if (on) {
-          setDriveIsoByApptId(isoByApptId);
-          setDriveDayByDate(dayByDate);
+    if (dates.length === 0) {
+      setDriveIsoByApptId(null);
+      setDriveDayByDate(null);
+      setDriveEtaLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    let pending = dates.length;
+    let firstDataLanded = false;
+    const docId = resolvedPrimaryProviderId.trim();
+
+    setDriveIsoByApptId(new Map());
+    setDriveDayByDate(new Map());
+    setDriveEtaLoading(true);
+
+    const markFirstData = () => {
+      if (cancelled || firstDataLanded) return;
+      firstDataLanded = true;
+      setDriveEtaLoading(false);
+    };
+
+    const bumpDone = () => {
+      if (cancelled) return;
+      pending -= 1;
+      if (pending <= 0 && !firstDataLanded) {
+        setDriveEtaLoading(false);
+      }
+    };
+
+    for (const date of dates) {
+      void (async () => {
+        try {
+          const r = await fetchSchedulerDriveContextForDate(date, docId);
+          if (cancelled) return;
+          if (r) {
+            setDriveDayByDate((prev) => new Map(prev).set(r.date, r.dayData));
+            setDriveIsoByApptId((prev) => {
+              const m = new Map(prev);
+              for (const [k, v] of r.isoPairs) {
+                m.set(k, v);
+              }
+              return m;
+            });
+            markFirstData();
+          }
+        } catch {
+          /* skip day — other dates may still succeed */
+        } finally {
+          bumpDone();
         }
-      })
-      .catch(() => {
-        if (on) {
-          setDriveIsoByApptId(null);
-          setDriveDayByDate(null);
-          setToast('Could not load drive times; showing scheduled times.');
-        }
-      })
-      .finally(() => {
-        if (on) setDriveEtaLoading(false);
-      });
+      })();
+    }
+
     return () => {
-      on = false;
+      cancelled = true;
+      setDriveEtaLoading(false);
     };
   }, [driveFetchKey, resolvedPrimaryProviderId, showByDriveTime, view, driveRefreshNonce]);
 
