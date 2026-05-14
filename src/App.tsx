@@ -22,7 +22,7 @@ import MembershipPayment from './pages/MembershipPayment';
 import MembershipUpgrade from './pages/MembershipUpgrade';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
 import PublicRoomLoaderForm from './pages/PublicRoomLoaderForm';
-import Routing from './pages/Routing';
+import RoutingCalendarWorkspace from './pages/RoutingCalendarWorkspace';
 import MyDayToggle from './pages/MyDayToggle';
 import MyWeek from './pages/MyWeek';
 import SchedulingTools from './pages/SchedulingTools';
@@ -470,7 +470,7 @@ export default function App() {
                   <Route key={p.path} path={p.path} element={p.element}>
                     <Route index element={<ScheduleIndexRedirect />} />
                     <Route path="home" element={<ScheduleHomePage />} />
-                    <Route path="routing" element={<Routing />} />
+                    <Route path="routing" element={<RoutingCalendarWorkspace />} />
                     <Route path="my-day" element={<MyDayToggle />} />
                     <Route path="my-week" element={<MyWeek />} />
                     <Route path="scheduling-tools" element={<SchedulingTools />}>

@@ -3452,7 +3452,7 @@ export default function DoctorDayVisual({
               padding: PADDING,
               offset: OFFSET,
             });
-            const { left, top, maxCardH, width: popoverW } = pos;
+            const { left, top, bottom, maxCardH, width: popoverW } = pos;
 
             const winStartIso = hoverCard.resolvedWinStartIso;
             const winEndIso = hoverCard.resolvedWinEndIso;
@@ -3485,7 +3485,7 @@ export default function DoctorDayVisual({
                 style={{
                   position: 'fixed',
                   left,
-                  top,
+                  ...(bottom != null ? { top: 'auto', bottom } : { top }),
                   zIndex: 9999,
                   width: popoverW,
                   maxWidth: CARD_MAX_W,

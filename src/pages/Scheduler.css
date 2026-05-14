@@ -5,6 +5,23 @@
   position: relative;
 }
 
+.scheduler-page--embedded {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px 12px;
+  overflow: hidden;
+  position: relative;
+  z-index: 0;
+}
+
+.scheduler-page--embedded .scheduler-scroll {
+  max-height: none;
+  flex: 1;
+  min-height: 0;
+}
+
 /* Full-view overlay while ETA / drive times load (Show actual drive time) */
 .scheduler-drive-overlay {
   position: fixed;
@@ -15,6 +32,13 @@
   justify-content: center;
   background: rgba(248, 250, 252, 0.88);
   backdrop-filter: blur(4px);
+}
+
+/** Split routing workspace: keep overlay inside the calendar column so routing stays usable */
+.scheduler-drive-overlay--embedded {
+  position: absolute;
+  inset: 0;
+  z-index: 3000;
 }
 
 .scheduler-drive-overlay-card {
@@ -333,6 +357,12 @@ label.scheduler-drive-toggle:has(input:disabled) {
   border-radius: 6px;
   background: #fff;
   min-width: 160px;
+}
+
+.scheduler-filters select {
+  max-width: 200px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .scheduler-subbar {

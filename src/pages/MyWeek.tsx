@@ -2962,7 +2962,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
               offset: OFFSET,
               preferSide: 'left',
             });
-            const { left, top, maxCardH, width: popoverW } = pos;
+            const { left, top, bottom, maxCardH, width: popoverW } = pos;
             const practiceTzHover = practiceTimeZoneOrDefault(hoverCard.practiceTimeZone);
             const addrNoZip = stripZipFromAddressLine(hoverCard.address);
             return (
@@ -2981,7 +2981,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                 style={{
                   position: 'fixed',
                   left,
-                  top,
+                  ...(bottom != null ? { top: 'auto', bottom } : { top }),
                   zIndex: 9999,
                   width: popoverW,
                   maxWidth: CARD_MAX_W,

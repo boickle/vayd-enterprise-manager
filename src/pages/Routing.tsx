@@ -32,6 +32,7 @@ import {
 import './Routing.css';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
+  ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
   writeRoutingCalendarPreview,
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
@@ -1231,7 +1232,12 @@ function deriveRoutingRequestId(res: Result | null | undefined): string | undefi
 /* Component */
 // =========================
 
-export default function Routing() {
+type RoutingProps = {
+  /** When true, "Book appointment" updates the embedded calendar via event instead of navigating to `/schedule/scheduler`. */
+  calendarWorkspaceMode?: boolean;
+};
+
+export default function Routing({ calendarWorkspaceMode = false }: RoutingProps) {
   const { token: authToken, userId: authUserId, doctorId: authDoctorInternalId } = useAuth();
   const bootstrap = useMemo(() => readRoutingUiBootstrap(), []);
 
@@ -1510,7 +1516,11 @@ export default function Routing() {
       clientDisplayLabel: clientQuery.trim() || undefined,
     };
     writeRoutingCalendarPreview(payload);
-    navigate('/schedule/scheduler?routingPreview=1');
+    if (calendarWorkspaceMode) {
+      window.dispatchEvent(new Event(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT));
+    } else {
+      navigate('/schedule/scheduler?routingPreview=1');
+    }
   }
 
   const hasFinalSelection = feedbackSuccessKey != null;

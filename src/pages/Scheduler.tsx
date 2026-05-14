@@ -4,6 +4,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type MouseEvent,
   type ReactNode,
@@ -59,6 +60,7 @@ import { SchedulerEditVisitModal } from './SchedulerEditVisitModal';
 import {
   clearRoutingCalendarPreview,
   readRoutingCalendarPreview,
+  ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
 import { clearRoutingPersistenceAfterSchedulerBook } from '../utils/routingUiSnapshot';
@@ -68,6 +70,13 @@ const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 const PRACTICE_TZ =
   (import.meta.env.VITE_PRACTICE_TIMEZONE as string | undefined)?.trim() || 'America/New_York';
 
+type SchedulerProps = {
+  /** Calendar pane beside Routing; preview sync does not navigate away from `/schedule/routing`. */
+  embedInRoutingWorkspace?: boolean;
+};
+
+/** Delay before the visit hover card appears (avoids popover noise on quick passes). */
+const SCHEDULER_HOVER_POPOVER_DELAY_MS = 750;
 /** Match My Week column layout / drive segment math (`MyWeek.tsx` PPM). */
 const PPM = 1.1;
 /** Spacer under nav + height of `.scheduler-day-header` (must stay in sync with CSS). */
@@ -1108,7 +1117,7 @@ function isAppointmentVisible(a: Appointment): boolean {
   return true;
 }
 
-export default function Scheduler() {
+export default function Scheduler({ embedInRoutingWorkspace = false }: SchedulerProps) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [view, setView] = useState<ViewMode>('week');
@@ -1151,6 +1160,73 @@ export default function Scheduler() {
     y: number;
     el: HTMLElement | null;
   } | null>(null);
+
+  const hoverRevealTimerRef = useRef<number | null>(null);
+  const hoverRevealPendingRef = useRef<{
+    appt: Appointment;
+    el: HTMLElement;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const cancelScheduledHoverPopover = useCallback(() => {
+    if (hoverRevealTimerRef.current != null) {
+      clearTimeout(hoverRevealTimerRef.current);
+      hoverRevealTimerRef.current = null;
+    }
+    hoverRevealPendingRef.current = null;
+  }, []);
+
+  const armHoverPopover = useCallback(
+    (appt: Appointment, ev: MouseEvent<HTMLElement>) => {
+      cancelScheduledHoverPopover();
+      const el = ev.currentTarget;
+      hoverRevealPendingRef.current = {
+        appt,
+        el,
+        x: ev.clientX,
+        y: ev.clientY,
+      };
+      hoverRevealTimerRef.current = window.setTimeout(() => {
+        hoverRevealTimerRef.current = null;
+        const pending = hoverRevealPendingRef.current;
+        hoverRevealPendingRef.current = null;
+        if (!pending) return;
+        setHover({
+          appt: pending.appt,
+          x: pending.x,
+          y: pending.y,
+          el: pending.el,
+        });
+      }, SCHEDULER_HOVER_POPOVER_DELAY_MS);
+    },
+    [cancelScheduledHoverPopover]
+  );
+
+  const trackHoverPopoverMove = useCallback((appt: Appointment, ev: MouseEvent<HTMLElement>) => {
+    const p = hoverRevealPendingRef.current;
+    if (p && p.appt.id === appt.id) {
+      p.x = ev.clientX;
+      p.y = ev.clientY;
+      p.el = ev.currentTarget;
+      return;
+    }
+    setHover((prev) =>
+      prev && prev.appt.id === appt.id
+        ? { ...prev, x: ev.clientX, y: ev.clientY, el: ev.currentTarget }
+        : prev
+    );
+  }, []);
+
+  const endHoverPopoverForAppt = useCallback(
+    (apptId: string | number) => {
+      cancelScheduledHoverPopover();
+      setHover((prev) => (prev?.appt.id === apptId ? null : prev));
+    },
+    [cancelScheduledHoverPopover]
+  );
+
+  useEffect(() => () => cancelScheduledHoverPopover(), [cancelScheduledHoverPopover]);
 
   /** Practice-local "now" for the current-time indicator on the grid (updates on an interval). */
   const [practiceClock, setPracticeClock] = useState(() => DateTime.now().setZone(PRACTICE_TZ));
@@ -1210,12 +1286,11 @@ export default function Scheduler() {
     };
   }, [contextMenu, showEmployeeAddCoVisitPet, rawAppointments]);
 
-  useEffect(() => {
-    if (searchParams.get('routingPreview') !== '1') return;
+  const applyRoutingCalendarPreviewFromStorage = useCallback(() => {
     const p = readRoutingCalendarPreview();
     if (!p?.option?.suggestedStartIso || !p.option.doctorPimsId || !p.option.date) {
       clearRoutingCalendarPreview();
-      setSearchParams({}, { replace: true });
+      setRoutingPreview(null);
       return;
     }
     setRoutingPreview(p);
@@ -1223,8 +1298,22 @@ export default function Scheduler() {
     setAnchorDate(String(p.option.date));
     setView('week');
     setShowByDriveTime(true);
+  }, []);
+
+  useEffect(() => {
+    if (searchParams.get('routingPreview') !== '1') return;
+    applyRoutingCalendarPreviewFromStorage();
     setSearchParams({}, { replace: true });
-  }, [searchParams, setSearchParams]);
+  }, [searchParams, setSearchParams, applyRoutingCalendarPreviewFromStorage]);
+
+  useEffect(() => {
+    if (!embedInRoutingWorkspace) return;
+    const onPreview = () => {
+      applyRoutingCalendarPreviewFromStorage();
+    };
+    window.addEventListener(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT, onPreview);
+    return () => window.removeEventListener(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT, onPreview);
+  }, [embedInRoutingWorkspace, applyRoutingCalendarPreviewFromStorage]);
 
   /** My Day → Practice calendar: `?fromMyDay=1&date=YYYY-MM-DD&provider=<id>` (provider optional). */
   useEffect(() => {
@@ -1599,6 +1688,55 @@ export default function Scheduler() {
     return map;
   }, [filteredAppointments, dayColumnDates]);
 
+  /**
+   * Week view: days with no appointments (and no routing preview on that day) use half the
+   * horizontal flex weight of days that have appointments, so empty columns stay narrower.
+   * All-day bar positions use the same weights so spanning bars align with headers/bodies.
+   */
+  const dayTimeColumnLayout = useMemo(() => {
+    const n = dayColumnDates.length;
+    const keys = dayColumnDates.map((d) => d.toISODate()!);
+    if (n === 0) {
+      return {
+        flexStyleForIndex: (_i: number) => ({ flex: '1 1 0' as const, minWidth: 90 }),
+        barLeftPct: (_s: number) => 0,
+        barWidthPct: (_s: number, _e: number) => 0,
+      };
+    }
+    if (view !== 'week') {
+      return {
+        flexStyleForIndex: (_i: number) => ({
+          flex: '1 1 0' as const,
+          minWidth: n === 1 ? 200 : 90,
+        }),
+        barLeftPct: (s: number) => (s / n) * 100,
+        barWidthPct: (s: number, e: number) => ((e - s + 1) / n) * 100,
+      };
+    }
+    const flexGrow = keys.map((k) => {
+      const has = (appointmentsByDay.get(k) ?? []).length > 0;
+      const hasPreview = Boolean(routingPreview && routingPreviewColumnKey === k);
+      return has || hasPreview ? 2 : 1;
+    });
+    const total = flexGrow.reduce((a, b) => a + b, 0);
+    const colWidthFrac = flexGrow.map((w) => w / total);
+    const cumLeftFrac: number[] = [];
+    let acc = 0;
+    for (const frac of colWidthFrac) {
+      cumLeftFrac.push(acc);
+      acc += frac;
+    }
+    return {
+      flexStyleForIndex: (i: number) => ({
+        flex: `${flexGrow[i]} 1 0` as const,
+        minWidth: flexGrow[i] >= 2 ? 90 : 48,
+      }),
+      barLeftPct: (s: number) => cumLeftFrac[s] * 100,
+      barWidthPct: (s: number, e: number) =>
+        colWidthFrac.slice(s, e + 1).reduce((a, b) => a + b, 0) * 100,
+    };
+  }, [dayColumnDates, view, appointmentsByDay, routingPreview, routingPreviewColumnKey]);
+
   /** Spanning all-day bars + lane stacking; visible strip height capped at 8 rows with internal scroll. */
   const allDaySpanLayout = useMemo(() => {
     const visibleDayIsos = dayColumnDates.map((d) => d.toISODate()!);
@@ -1734,7 +1872,7 @@ export default function Scheduler() {
   }, [hover, showByDriveTime, resolvedPrimaryProviderId, driveDayByDate]);
 
   const tooltipPos = useMemo(() => {
-    if (!hover) return { left: 0, top: 0, width: 300 };
+    if (!hover) return { left: 0, top: 0, width: 300, maxCardH: 0 };
     const vwW = typeof window !== 'undefined' ? window.innerWidth : 1200;
     const vwH = typeof window !== 'undefined' ? window.innerHeight : 800;
     return computeHoverPopoverPosition({
@@ -1782,8 +1920,10 @@ export default function Scheduler() {
     setRoutingPreview(null);
     setBookSlot(null);
     setBookPrefill(null);
-    navigate('/schedule/routing');
-  }, [navigate]);
+    if (!embedInRoutingWorkspace) {
+      navigate('/schedule/routing');
+    }
+  }, [navigate, embedInRoutingWorkspace]);
 
   const openRoutingBookForm = useCallback(() => {
     if (!routingPreview) return;
@@ -1846,9 +1986,10 @@ export default function Scheduler() {
   const handleAppointmentContextMenu = useCallback((e: MouseEvent<HTMLDivElement>, appt: Appointment) => {
     e.preventDefault();
     e.stopPropagation();
+    cancelScheduledHoverPopover();
     setHover(null);
     setContextMenu({ appt, x: e.clientX, y: e.clientY });
-  }, []);
+  }, [cancelScheduledHoverPopover]);
 
   const handleAppointmentMenuAction = useCallback(
     async (action: SchedulerContextMenuAction, appt: Appointment) => {
@@ -2079,10 +2220,15 @@ export default function Scheduler() {
     return { show: true, disabled, title };
   }, [contextMenu, showEmployeeAddCoVisitPet, addAnotherPetMenuReady]);
 
+  const showEmbeddedCalendarOverlay = embedInRoutingWorkspace && (driveEtaLoading || loading);
+  const showFullBleedDriveOverlay = driveEtaLoading && !embedInRoutingWorkspace;
+  const showDriveLoadingOverlay = showEmbeddedCalendarOverlay || showFullBleedDriveOverlay;
+
   return (
     <div
       className={[
         'scheduler-page',
+        embedInRoutingWorkspace ? 'scheduler-page--embedded' : '',
         routingPreview ? 'scheduler-page--routing-preview' : '',
         routingPreviewFocusDim ? 'scheduler-page--routing-preview-focus' : '',
       ]
@@ -2118,7 +2264,7 @@ export default function Scheduler() {
               onClick={dismissRoutingPreview}
               disabled={bookSlot != null}
             >
-              Back to routing results
+              {embedInRoutingWorkspace ? 'Dismiss preview' : 'Back to routing results'}
             </button>
             <button
               type="button"
@@ -2256,7 +2402,7 @@ export default function Scheduler() {
         </div>
       </div>
 
-      {loading && <p className="scheduler-status">Loading appointments…</p>}
+      {loading && !embedInRoutingWorkspace && <p className="scheduler-status">Loading appointments…</p>}
       {error && <p className="scheduler-status error">{error}</p>}
 
       {!loading && view === 'month' && (
@@ -2329,7 +2475,7 @@ export default function Scheduler() {
             </div>
             <div className="scheduler-days-stack">
               <div className="scheduler-day-headers-row">
-                {dayColumnDates.map((dayDt) => {
+                {dayColumnDates.map((dayDt, dayIdx) => {
                   const key = dayDt.toISODate()!;
                   const dayData = driveDayByDate?.get(key);
                   const hasStops = (dayData?.households?.length ?? 0) > 0;
@@ -2368,7 +2514,7 @@ export default function Scheduler() {
                       ? `/schedule/scheduling-tools/schedule-loader?targetDate=${key}&doctorId=${encodeURIComponent(resolvedPrimaryProviderId.trim())}`
                       : null;
                   return (
-                    <div key={key} className="scheduler-day-header">
+                    <div key={key} className="scheduler-day-header" style={dayTimeColumnLayout.flexStyleForIndex(dayIdx)}>
                       <div className="scheduler-day-header-date">
                         {dayDt.toFormat('ccc')}, {dayDt.month}/{dayDt.day}
                       </div>
@@ -2438,8 +2584,8 @@ export default function Scheduler() {
                 >
                   {allDaySpanLayout.bars.map(({ appt, s, e, lane }) => {
                     const n = dayColumnDates.length;
-                    const leftPct = (s / n) * 100;
-                    const widthPct = ((e - s + 1) / n) * 100;
+                    const leftPct = dayTimeColumnLayout.barLeftPct(s);
+                    const widthPct = dayTimeColumnLayout.barWidthPct(s, e);
                     const apptColors = colorsForAppointment(appt, typeList, typeFillMap);
                     const baseTitle =
                       pickStr(appt.description) ||
@@ -2466,13 +2612,9 @@ export default function Scheduler() {
                         }}
                         onClick={() => setModalAppt(appt)}
                         onKeyDown={(ke) => ke.key === 'Enter' && setModalAppt(appt)}
-                        onMouseEnter={(ev) =>
-                          setHover({ appt, x: ev.clientX, y: ev.clientY, el: ev.currentTarget })
-                        }
-                        onMouseMove={(ev) =>
-                          setHover((h) => (h ? { ...h, x: ev.clientX, y: ev.clientY } : h))
-                        }
-                        onMouseLeave={() => setHover(null)}
+                        onMouseEnter={(ev) => armHoverPopover(appt, ev)}
+                        onMouseMove={(ev) => trackHoverPopoverMove(appt, ev)}
+                        onMouseLeave={() => endHoverPopoverForAppt(appt.id)}
                         onDoubleClick={(ev) => ev.stopPropagation()}
                         onContextMenu={(ev) => handleAppointmentContextMenu(ev, appt)}
                         title={title}
@@ -2498,7 +2640,7 @@ export default function Scheduler() {
                 </div>
               </div>
               <div className="scheduler-day-bodies-row">
-                {dayColumnDates.map((dayDt) => {
+                {dayColumnDates.map((dayDt, dayIdx) => {
                   const key = dayDt.toISODate()!;
                   const dayDataCol = driveDayByDate?.get(key);
                   const dayAppts = appointmentsByDay.get(key) ?? [];
@@ -2514,7 +2656,7 @@ export default function Scheduler() {
                     currentTimeLineTop <= gridHeightPx;
 
                   return (
-                    <div key={key} className="scheduler-day-col">
+                    <div key={key} className="scheduler-day-col" style={dayTimeColumnLayout.flexStyleForIndex(dayIdx)}>
                       <div
                         className={
                           routingPreviewFocusDim
@@ -2611,24 +2753,9 @@ export default function Scheduler() {
                               tabIndex={0}
                               onClick={() => setModalAppt(appt)}
                               onKeyDown={(e) => e.key === 'Enter' && setModalAppt(appt)}
-                              onMouseEnter={(e) =>
-                                setHover({
-                                  appt,
-                                  x: e.clientX,
-                                  y: e.clientY,
-                                  el: e.currentTarget,
-                                })
-                              }
-                              onMouseMove={(e) =>
-                                setHover((prev) =>
-                                  prev && prev.appt.id === appt.id
-                                    ? { ...prev, x: e.clientX, y: e.clientY }
-                                    : prev
-                                )
-                              }
-                              onMouseLeave={() =>
-                                setHover((prev) => (prev?.appt.id === appt.id ? null : prev))
-                              }
+                              onMouseEnter={(e) => armHoverPopover(appt, e)}
+                              onMouseMove={(e) => trackHoverPopoverMove(appt, e)}
+                              onMouseLeave={() => endHoverPopoverForAppt(appt.id)}
                               onDoubleClick={(e) => e.stopPropagation()}
                               onContextMenu={(e) => handleAppointmentContextMenu(e, appt)}
                             >
@@ -2763,8 +2890,11 @@ export default function Scheduler() {
             className="scheduler-tooltip scheduler-tooltip--visit-highlights"
             style={{
               left: tooltipPos.left,
-              top: tooltipPos.top,
+              ...(tooltipPos.bottom != null
+                ? { top: 'auto', bottom: tooltipPos.bottom }
+                : { top: tooltipPos.top }),
               maxWidth: tooltipPos.width,
+              maxHeight: tooltipPos.maxCardH,
             }}
           >
             <SchedulerHoverContent appt={hover.appt} driveHint={hoverDriveHint} />
@@ -2830,17 +2960,19 @@ export default function Scheduler() {
           document.body
         )}
 
-      {driveEtaLoading ? (
+      {showDriveLoadingOverlay ? (
         <div
-          className="scheduler-drive-overlay"
+          className={`scheduler-drive-overlay${embedInRoutingWorkspace ? ' scheduler-drive-overlay--embedded' : ''}`}
           role="alert"
           aria-busy="true"
           aria-live="polite"
-          aria-label="Loading drive times"
+          aria-label={driveEtaLoading ? 'Loading drive times' : 'Loading appointments'}
         >
           <div className="scheduler-drive-overlay-card">
             <div className="scheduler-drive-spinner" aria-hidden />
-            <p className="scheduler-drive-overlay-text">Loading drive times…</p>
+            <p className="scheduler-drive-overlay-text">
+              {driveEtaLoading ? 'Loading drive times…' : 'Loading appointments…'}
+            </p>
           </div>
         </div>
       ) : null}

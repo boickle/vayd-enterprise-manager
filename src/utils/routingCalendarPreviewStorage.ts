@@ -4,6 +4,9 @@
  */
 export const ROUTING_CALENDAR_PREVIEW_STORAGE_KEY = 'vayd:routing-calendar-preview';
 
+/** Fired on `window` after `writeRoutingCalendarPreview` when the practice calendar is embedded beside Routing. */
+export const ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT = 'vayd:routing-calendar-preview-updated';
+
 export type RoutingCalendarPreviewPayloadV1 = {
   version: 1;
   /** Routing candidate (UnifiedOption) with internal doctor id in `doctorPimsId`. */

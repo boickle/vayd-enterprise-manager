@@ -1,5 +1,25 @@
 import { NavLink, Outlet, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { LucideIcon } from 'lucide-react';
+import {
+  CalendarDays,
+  CalendarPlus,
+  ClipboardPlus,
+  DoorOpen,
+  FlaskConical,
+  ListChecks,
+  MapPinned,
+  Package,
+  PackageSearch,
+  PanelLeft,
+  PanelLeftClose,
+  Pill,
+  Send,
+  ShoppingCart,
+  Calculator,
+  UserPlus,
+  Wrench,
+} from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import {
   getVisibleScoutTabs,
@@ -11,6 +31,25 @@ import {
 import { listTasks } from '../api/tasks';
 import ScheduleTasksPanel from '../components/schedule/ScheduleTasksPanel';
 import './ScheduleLayout.css';
+
+const SCHEDULE_RAIL_COLLAPSED_KEY = 'vayd-schedule-rail-collapsed';
+
+function scoutTabIcon(tabPath: string): LucideIcon {
+  switch (tabPath) {
+    case 'routing':
+      return MapPinned;
+    case 'my-day':
+      return CalendarDays;
+    case 'my-week':
+      return CalendarDays;
+    case 'scheduling-tools':
+      return Wrench;
+    case 'room-loader':
+      return DoorOpen;
+    default:
+      return CalendarDays;
+  }
+}
 
 /** Default child under `/schedule`. */
 export function ScheduleIndexRedirect() {
@@ -24,15 +63,21 @@ export function ScheduleIndexRedirect() {
   return <Navigate to={`/schedule/${seg}`} replace />;
 }
 
-type QueueRow = { label: string; count: number; to?: string; title?: string };
+type QueueRow = {
+  label: string;
+  count: number;
+  to?: string;
+  title?: string;
+  icon: LucideIcon;
+};
 
 const WORK_QUEUE_ROWS: QueueRow[] = [
-  { label: 'Refill Requests', count: 4, title: 'Coming soon' },
-  { label: 'Pending SOAPs', count: 3, title: 'Coming soon' },
-  { label: 'Pending Checkout', count: 2, title: 'Coming soon' },
-  { label: 'Lab Reviews', count: 1, title: 'Coming soon' },
-  { label: 'Pending Count Reviews', count: 2, title: 'Coming soon' },
-  { label: 'Expiring Inventory', count: 4, to: '/schedule/inventory' },
+  { label: 'Refill Requests', count: 4, title: 'Coming soon', icon: Pill },
+  { label: 'Pending SOAPs', count: 3, title: 'Coming soon', icon: ListChecks },
+  { label: 'Pending Checkout', count: 2, title: 'Coming soon', icon: ShoppingCart },
+  { label: 'Lab Reviews', count: 1, title: 'Coming soon', icon: FlaskConical },
+  { label: 'Pending Count Reviews', count: 2, title: 'Coming soon', icon: Calculator },
+  { label: 'Expiring Inventory', count: 4, to: '/schedule/inventory', icon: PackageSearch },
 ];
 
 export default function ScheduleLayout() {
@@ -58,6 +103,35 @@ export default function ScheduleLayout() {
   const [tasksDrawerOpen, setTasksDrawerOpen] = useState(false);
   const [taskTotal, setTaskTotal] = useState<number | null>(null);
   const [taskRefresh, setTaskRefresh] = useState(0);
+
+  const [railWideEnough, setRailWideEnough] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(min-width: 901px)').matches : true
+  );
+  const [railCollapsed, setRailCollapsed] = useState(() => {
+    try {
+      return typeof window !== 'undefined' && localStorage.getItem(SCHEDULE_RAIL_COLLAPSED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 901px)');
+    const onChange = () => setRailWideEnough(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SCHEDULE_RAIL_COLLAPSED_KEY, railCollapsed ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, [railCollapsed]);
+
+  const railCollapsedEffective = railCollapsed && railWideEnough;
 
   const refreshTaskCount = useCallback(() => {
     void listTasks({ includeDone: false, limit: 1, offset: 0 })
@@ -105,9 +179,16 @@ export default function ScheduleLayout() {
     () =>
       location.pathname === '/schedule/home' ||
       location.pathname === '/schedule/scheduler' ||
-      location.pathname.startsWith('/schedule/scheduler/'),
+      location.pathname.startsWith('/schedule/scheduler/') ||
+      location.pathname === '/schedule/routing',
     [location.pathname]
   );
+
+  useEffect(() => {
+    if (location.pathname === '/schedule/routing' && railWideEnough) {
+      setRailCollapsed(true);
+    }
+  }, [location.pathname, railWideEnough]);
 
   if (tabs.length === 0) {
     return <Navigate to="/tools" replace />;
@@ -115,64 +196,153 @@ export default function ScheduleLayout() {
 
   return (
     <div className="schedule-app">
-      <aside className="schedule-app__rail" aria-label="Quick actions and work queues">
-        <h2 className="schedule-app__rail-title">Quick actions</h2>
-        <nav className="schedule-app__quick" aria-label="Quick actions">
-          <NavLink to={appointmentHref} className="schedule-app__quick-link schedule-app__quick-link--primary">
-            + Appointment
-          </NavLink>
-          <NavLink to="/schedule/clients" className="schedule-app__quick-link">
-            New Client
-          </NavLink>
-          <NavLink to="/schedule/room-loader" className="schedule-app__quick-link">
-            Send Room Loader
-          </NavLink>
-          <NavLink to="/schedule/inventory" className="schedule-app__quick-link">
-            Restock Location
-          </NavLink>
-          <NavLink to="/schedule/tasks" className="schedule-app__quick-link">
-            New Task
-          </NavLink>
-        </nav>
-
-        {schedulingTabs.length > 0 ? (
-          <>
-            <h2 className="schedule-app__rail-title schedule-app__rail-title--second">Scheduling</h2>
-            <nav className="schedule-app__quick schedule-app__quick--sub" aria-label="Scheduling tools">
-              {schedulingTabs.map((tab) => (
-                <NavLink key={tab.path} to={`/schedule/${tab.path}`} className="schedule-app__quick-link schedule-app__quick-link--sub">
-                  {tab.label}
-                </NavLink>
-              ))}
-              {!SHOW_MY_WEEK_SCOUT_TAB && scoutTabPermissionOk('canSeeDoctorDay', abilities) ? (
-                <NavLink to="/schedule/scheduler" className="schedule-app__quick-link schedule-app__quick-link--sub">
-                  Practice calendar
-                </NavLink>
-              ) : null}
-            </nav>
-          </>
+      <aside
+        className={`schedule-app__rail${railCollapsedEffective ? ' schedule-app__rail--collapsed' : ''}`}
+        aria-label="Quick actions and work queues"
+      >
+        {railWideEnough ? (
+          <button
+            type="button"
+            className="schedule-app__rail-toggle"
+            onClick={() => setRailCollapsed((c) => !c)}
+            aria-expanded={!railCollapsedEffective}
+            aria-controls="schedule-app-rail-nav"
+            aria-label={railCollapsedEffective ? 'Expand quick actions sidebar' : 'Collapse quick actions sidebar'}
+          >
+            {railCollapsedEffective ? (
+              <PanelLeft size={20} strokeWidth={1.75} aria-hidden />
+            ) : (
+              <PanelLeftClose size={20} strokeWidth={1.75} aria-hidden />
+            )}
+          </button>
         ) : null}
 
-        <div className="schedule-app__rail-divider" role="presentation" />
+        <div id="schedule-app-rail-nav" className="schedule-app__rail-scroll">
+          <h2 className="schedule-app__rail-title">Quick actions</h2>
+          <nav className="schedule-app__quick" aria-label="Quick actions">
+            <NavLink
+              to={appointmentHref}
+              className="schedule-app__quick-link schedule-app__quick-link--primary"
+              title={railCollapsedEffective ? 'New appointment' : undefined}
+            >
+              <span className="schedule-app__quick-link-icon" aria-hidden>
+                <CalendarPlus size={18} strokeWidth={1.75} />
+              </span>
+              <span className="schedule-app__quick-link-label">+ Appointment</span>
+            </NavLink>
+            <NavLink
+              to="/schedule/clients"
+              className="schedule-app__quick-link"
+              title={railCollapsedEffective ? 'New Client' : undefined}
+            >
+              <span className="schedule-app__quick-link-icon" aria-hidden>
+                <UserPlus size={18} strokeWidth={1.75} />
+              </span>
+              <span className="schedule-app__quick-link-label">New Client</span>
+            </NavLink>
+            <NavLink
+              to="/schedule/room-loader"
+              className="schedule-app__quick-link"
+              title={railCollapsedEffective ? 'Send Room Loader' : undefined}
+            >
+              <span className="schedule-app__quick-link-icon" aria-hidden>
+                <Send size={18} strokeWidth={1.75} />
+              </span>
+              <span className="schedule-app__quick-link-label">Send Room Loader</span>
+            </NavLink>
+            <NavLink
+              to="/schedule/inventory"
+              className="schedule-app__quick-link"
+              title={railCollapsedEffective ? 'Restock Location' : undefined}
+            >
+              <span className="schedule-app__quick-link-icon" aria-hidden>
+                <Package size={18} strokeWidth={1.75} />
+              </span>
+              <span className="schedule-app__quick-link-label">Restock Location</span>
+            </NavLink>
+            <NavLink
+              to="/schedule/tasks"
+              className="schedule-app__quick-link"
+              title={railCollapsedEffective ? 'New Task' : undefined}
+            >
+              <span className="schedule-app__quick-link-icon" aria-hidden>
+                <ClipboardPlus size={18} strokeWidth={1.75} />
+              </span>
+              <span className="schedule-app__quick-link-label">New Task</span>
+            </NavLink>
+          </nav>
 
-        <h2 className="schedule-app__rail-title">Work queues</h2>
-        <ul className="schedule-app__queues">
-          {WORK_QUEUE_ROWS.map((row) => (
-            <li key={row.label}>
-              {row.to ? (
-                <NavLink to={row.to} className="schedule-app__queue-link">
-                  <span>{row.label}</span>
-                  <span className="schedule-app__queue-count">({row.count})</span>
-                </NavLink>
-              ) : (
-                <span className="schedule-app__queue-muted" title={row.title}>
-                  <span>{row.label}</span>
-                  <span className="schedule-app__queue-count">({row.count})</span>
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
+          {schedulingTabs.length > 0 ? (
+            <>
+              <h2 className="schedule-app__rail-title schedule-app__rail-title--second">Scheduling</h2>
+              <nav className="schedule-app__quick schedule-app__quick--sub" aria-label="Scheduling tools">
+                {schedulingTabs.map((tab) => {
+                  const TabIcon = scoutTabIcon(tab.path);
+                  return (
+                    <NavLink
+                      key={tab.path}
+                      to={`/schedule/${tab.path}`}
+                      className="schedule-app__quick-link schedule-app__quick-link--sub"
+                      title={railCollapsedEffective ? tab.label : undefined}
+                    >
+                      <span className="schedule-app__quick-link-icon" aria-hidden>
+                        <TabIcon size={17} strokeWidth={1.75} />
+                      </span>
+                      <span className="schedule-app__quick-link-label">{tab.label}</span>
+                    </NavLink>
+                  );
+                })}
+                {!SHOW_MY_WEEK_SCOUT_TAB && scoutTabPermissionOk('canSeeDoctorDay', abilities) ? (
+                  <NavLink
+                    to="/schedule/scheduler"
+                    className="schedule-app__quick-link schedule-app__quick-link--sub"
+                    title={railCollapsedEffective ? 'Practice calendar' : undefined}
+                  >
+                    <span className="schedule-app__quick-link-icon" aria-hidden>
+                      <CalendarDays size={17} strokeWidth={1.75} />
+                    </span>
+                    <span className="schedule-app__quick-link-label">Practice calendar</span>
+                  </NavLink>
+                ) : null}
+              </nav>
+            </>
+          ) : null}
+
+          <div className="schedule-app__rail-divider" role="presentation" />
+
+          <h2 className="schedule-app__rail-title">Work queues</h2>
+          <ul className="schedule-app__queues">
+            {WORK_QUEUE_ROWS.map((row) => {
+              const QIcon = row.icon;
+              const countTitle = `${row.label} (${row.count})`;
+              return (
+                <li key={row.label}>
+                  {row.to ? (
+                    <NavLink
+                      to={row.to}
+                      className="schedule-app__queue-link"
+                      title={railCollapsedEffective ? countTitle : undefined}
+                    >
+                      <span className="schedule-app__queue-icon" aria-hidden>
+                        <QIcon size={17} strokeWidth={1.75} />
+                      </span>
+                      <span className="schedule-app__queue-text">{row.label}</span>
+                      <span className="schedule-app__queue-count">({row.count})</span>
+                    </NavLink>
+                  ) : (
+                    <span className="schedule-app__queue-muted" title={row.title ?? (railCollapsedEffective ? countTitle : undefined)}>
+                      <span className="schedule-app__queue-icon" aria-hidden>
+                        <QIcon size={17} strokeWidth={1.75} />
+                      </span>
+                      <span className="schedule-app__queue-text">{row.label}</span>
+                      <span className="schedule-app__queue-count">({row.count})</span>
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       </aside>
 
       <div className="schedule-app__main">
@@ -232,7 +402,11 @@ export default function ScheduleLayout() {
             </button>
           </div>
         </nav>
-        <div className={`schedule-app__outlet${outletFlush ? ' schedule-app__outlet--flush' : ''}`}>
+        <div
+          className={`schedule-app__outlet${outletFlush ? ' schedule-app__outlet--flush' : ''}${
+            location.pathname === '/schedule/routing' ? ' schedule-app__outlet--routing-split' : ''
+          }`}
+        >
           <Outlet context={{ schedulingToolsLinkPrefix: '/schedule/scheduling-tools' }} />
         </div>
       </div>
