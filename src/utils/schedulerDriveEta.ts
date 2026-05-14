@@ -304,6 +304,12 @@ function isoMapFromDayData(dayData: DayData): Map<string, DriveIsoPair> {
   return out;
 }
 
+export type SchedulerDriveDayResult = {
+  date: string;
+  dayData: DayData;
+  isoPairs: [string, DriveIsoPair][];
+};
+
 function scheduleOnlyDayData(dayIn: DayBundleIn): DayData {
   return {
     date: dayIn.date,
@@ -320,19 +326,18 @@ function scheduleOnlyDayData(dayIn: DayBundleIn): DayData {
   };
 }
 
-export type SchedulerDriveDayResult = {
-  date: string;
-  dayData: DayData;
-  isoPairs: [string, DriveIsoPair][];
-};
+/** Schedule times only (no routing ETA) — same as the fallback path when `/routing/eta` fails. */
+export function schedulerDriveScheduleOnlyFromBundle(dayIn: DayBundleIn): SchedulerDriveDayResult {
+  const dayData = scheduleOnlyDayData(dayIn);
+  const isoPairs: [string, DriveIsoPair][] = [];
+  for (const [k, v] of isoMapFromDayData(dayData)) {
+    isoPairs.push([k, v]);
+  }
+  return { date: dayIn.date, dayData, isoPairs };
+}
 
-/**
- * Load doctor-day + ETAs for a single calendar date (one column). Used for progressive scheduler updates.
- */
-export async function fetchSchedulerDriveContextForDate(
-  date: string,
-  doctorId: string
-): Promise<SchedulerDriveDayResult | null> {
+/** GET doctor-day + households only (no `/routing/eta`). */
+export async function fetchSchedulerDoctorDayBundle(date: string, doctorId: string): Promise<DayBundleIn | null> {
   try {
     const resp: DoctorDayResponse = await fetchDoctorDay(date, doctorId);
     const appts: DoctorDayAppt[] = resp?.appointments ?? [];
@@ -344,7 +349,7 @@ export async function fetchSchedulerDriveContextForDate(
         ? String((resp as any).timezone).trim()
         : 'America/New_York';
 
-    const dayIn: DayBundleIn = {
+    return {
       date,
       timezone: tz,
       households,
@@ -354,22 +359,39 @@ export async function fetchSchedulerDriveContextForDate(
       startDepotTime: str(resp as any, 'startDepotTime') ?? null,
       endDepotTime: str(resp as any, 'endDepotTime') ?? null,
     };
-
-    let dayData: DayData;
-    try {
-      dayData = await fetchEtaForOneDay(dayIn, doctorId);
-    } catch {
-      dayData = scheduleOnlyDayData(dayIn);
-    }
-
-    const isoPairs: [string, DriveIsoPair][] = [];
-    for (const [k, v] of isoMapFromDayData(dayData)) {
-      isoPairs.push([k, v]);
-    }
-    return { date, dayData, isoPairs };
   } catch {
     return null;
   }
+}
+
+/** Merge `/routing/eta` into a doctor-day bundle (drive + arrive/leave). */
+export async function fetchSchedulerDriveEtasForDayBundle(
+  dayIn: DayBundleIn,
+  doctorId: string
+): Promise<SchedulerDriveDayResult> {
+  let dayData: DayData;
+  try {
+    dayData = await fetchEtaForOneDay(dayIn, doctorId);
+  } catch {
+    dayData = scheduleOnlyDayData(dayIn);
+  }
+  const isoPairs: [string, DriveIsoPair][] = [];
+  for (const [k, v] of isoMapFromDayData(dayData)) {
+    isoPairs.push([k, v]);
+  }
+  return { date: dayIn.date, dayData, isoPairs };
+}
+
+/**
+ * Load doctor-day + ETAs for a single calendar date (one column). Used when both requests run back-to-back.
+ */
+export async function fetchSchedulerDriveContextForDate(
+  date: string,
+  doctorId: string
+): Promise<SchedulerDriveDayResult | null> {
+  const dayIn = await fetchSchedulerDoctorDayBundle(date, doctorId);
+  if (!dayIn) return null;
+  return fetchSchedulerDriveEtasForDayBundle(dayIn, doctorId);
 }
 
 /**

@@ -31,7 +31,9 @@ import {
 } from '../utils/hoverPopoverPosition';
 import { useAuth } from '../auth/useAuth';
 import {
-  fetchSchedulerDriveContextForDate,
+  fetchSchedulerDoctorDayBundle,
+  fetchSchedulerDriveEtasForDayBundle,
+  schedulerDriveScheduleOnlyFromBundle,
   type DriveIsoPair,
 } from '../utils/schedulerDriveEta';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
@@ -1601,19 +1603,34 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     for (const date of dates) {
       void (async () => {
         try {
-          const r = await fetchSchedulerDriveContextForDate(date, docId);
+          const dayIn = await fetchSchedulerDoctorDayBundle(date, docId);
           if (cancelled) return;
-          if (r) {
-            setDriveDayByDate((prev) => new Map(prev).set(r.date, r.dayData));
-            setDriveIsoByApptId((prev) => {
-              const m = new Map(prev);
-              for (const [k, v] of r.isoPairs) {
-                m.set(k, v);
-              }
-              return m;
-            });
-            markFirstData();
+          if (!dayIn) {
+            bumpDone();
+            return;
           }
+
+          const interim = schedulerDriveScheduleOnlyFromBundle(dayIn);
+          setDriveDayByDate((prev) => new Map(prev).set(interim.date, interim.dayData));
+          setDriveIsoByApptId((prev) => {
+            const m = new Map(prev);
+            for (const [k, v] of interim.isoPairs) {
+              m.set(k, v);
+            }
+            return m;
+          });
+          markFirstData();
+
+          const r = await fetchSchedulerDriveEtasForDayBundle(dayIn, docId);
+          if (cancelled) return;
+          setDriveDayByDate((prev) => new Map(prev).set(r.date, r.dayData));
+          setDriveIsoByApptId((prev) => {
+            const m = new Map(prev);
+            for (const [k, v] of r.isoPairs) {
+              m.set(k, v);
+            }
+            return m;
+          });
         } catch {
           /* skip day — other dates may still succeed */
         } finally {
