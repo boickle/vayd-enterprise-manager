@@ -176,6 +176,18 @@
   border-color: #bfdbfe;
 }
 
+.schedule-app__quick-link--active,
+.schedule-app__quick-link[aria-current='page'] {
+  background: #dbeafe;
+  border-color: #93c5fd;
+  color: #1e3a8a;
+}
+
+.schedule-app__quick-link--active .schedule-app__quick-link-icon,
+.schedule-app__quick-link[aria-current='page'] .schedule-app__quick-link-icon {
+  color: #1d4ed8;
+}
+
 .schedule-app__queues {
   list-style: none;
   margin: 0;

@@ -37,6 +37,9 @@ export type Employee = {
   title?: string;
   designation?: string;
   isProvider?: boolean;
+  pimsId?: string | number | null;
+  isActive?: boolean;
+  isDeleted?: boolean;
   imageUrl?: string | null;
   /** OpenPhone user id for call attribution / CSR coaching when synced. */
   openPhoneUserId?: string | null;

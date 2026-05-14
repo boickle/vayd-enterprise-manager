@@ -37,6 +37,7 @@ import PimsPatientsPage from './pages/PimsPatientsPage';
 import PimsTasksPage from './pages/PimsTasksPage';
 import Settings from './pages/Settings';
 import Scheduler from './pages/Scheduler';
+import Analytics from './pages/Analytics';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
 import PublicReferAFriend from './pages/PublicReferAFriend';
 import ErrorPage from './pages/ErrorPage';
@@ -498,6 +499,20 @@ export default function App() {
                     <Route path="settings" element={<Settings />} />
                     <Route path="clients" element={<PimsClientsPage />} />
                     <Route path="patients" element={<PimsPatientsPage />} />
+                    <Route path="analytics" element={<Analytics basePath="/schedule/analytics" />}>
+                      <Route index element={<Navigate to="/schedule/analytics/payments" replace />} />
+                      <Route
+                        path="routing"
+                        element={<Navigate to="/schedule/analytics/appointments" replace />}
+                      />
+                      {getAnalyticsTabPages().map((tab) => (
+                        <Route
+                          key={`schedule-analytics-${tab.path}`}
+                          path={tab.path}
+                          element={tab.element}
+                        />
+                      ))}
+                    </Route>
                     <Route path="admin" element={<Admin basePath="/schedule/admin" />}>
                       <Route index element={<Navigate to="survey/results" replace />} />
                       {getAdminTabPages().map((tab) => (

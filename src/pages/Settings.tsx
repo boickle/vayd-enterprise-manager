@@ -51,6 +51,7 @@ import {
   type DailyGoalOverride,
 } from '../api/employeeGoals';
 import './Settings.css';
+import SettingsEmployeeDirectory from '../components/settings/SettingsEmployeeDirectory';
 
 const SETTINGS_TAB_IDS = [
   'appointment-types',
@@ -60,6 +61,7 @@ const SETTINGS_TAB_IDS = [
   'inventory',
   'employee-images',
   'employee-goals',
+  'employee-directory',
   'reminders',
 ] as const;
 type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number];
@@ -1125,6 +1127,12 @@ export default function Settings() {
             onClick={() => goToTab('employee-goals')}
           >
             Employee Goals
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'employee-directory' ? 'active' : ''}`}
+            onClick={() => goToTab('employee-directory')}
+          >
+            Employees
           </button>
           <button
             className={`settings-tab ${activeTab === 'reminders' ? 'active' : ''}`}
@@ -2835,6 +2843,29 @@ export default function Settings() {
               </div>
             </div>
           )}
+          </div>
+        )}
+
+        {/* Employees directory (CRUD via POST /employees, upsert, DELETE) */}
+        {activeTab === 'employee-directory' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Employees</h2>
+            <p className="settings-section-description">
+              Add, edit, deactivate, or remove employees for your practice. Changes use the same save and upsert paths as
+              EVet import.
+            </p>
+            <SettingsEmployeeDirectory
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
           </div>
         )}
 

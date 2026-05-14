@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import {
   PawPrint,
@@ -16,7 +16,13 @@ import {
   Check,
   X,
 } from 'lucide-react';
-import { fetchPatientByIdStaff, fetchPatientMedicalRecordStaff } from '../../api/patients';
+import { fetchPatientByIdStaff, fetchPatientMedicalRecordStaff, patchPatient } from '../../api/patients';
+import {
+  fetchBreedsForSpeciesPublic,
+  fetchSpeciesListPublic,
+  type SpeciesBreedsBreed,
+  type SpeciesBreedsSpecies,
+} from '../../api/speciesBreedsPublic';
 import {
   getPatientTreatmentHistory,
   getPatientTreatmentMedications,
@@ -31,7 +37,10 @@ import {
 } from '../../utils/patientChartFromMedicalRecord';
 import { htmlToPlainText, looksLikeHtmlFragment } from '../../utils/sanitizeCommunicationHtml';
 import { PimsExamDetailModal } from './PimsExamDetailModal';
+import PimsAppointmentsSection from './PimsAppointmentsSection';
 import './PimsPatientDetailView.css';
+
+const PIMS_DETAIL_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -275,6 +284,110 @@ const QUICK_ACTIONS = [
   'Send Form',
 ];
 
+function resolveSpeciesIdFromName(speciesName: string, list: SpeciesBreedsSpecies[]): number | null {
+  const n = speciesName.trim().toLowerCase();
+  if (!n || !list.length) return null;
+  for (const s of list) {
+    if (s.name.toLowerCase() === n) return s.id;
+    if (s.prettyName && s.prettyName.toLowerCase() === n) return s.id;
+  }
+  for (const s of list) {
+    const nameL = s.name.toLowerCase();
+    if (nameL.includes(n) || n.includes(nameL)) return s.id;
+    if (s.prettyName) {
+      const pn = s.prettyName.toLowerCase();
+      if (pn.includes(n) || n.includes(pn)) return s.id;
+    }
+  }
+  return null;
+}
+
+type PatientEditDraft = {
+  name: string;
+  firstName: string;
+  lastName: string;
+  dob: string;
+  species: string;
+  speciesId: string;
+  breed: string;
+  breedId: string;
+  color: string;
+  sex: string;
+  weight: string;
+  neuterStatus: string;
+  alerts: string;
+};
+
+function payloadToPatientEditDraft(p: Record<string, unknown>): PatientEditDraft {
+  const g = (k: string) => pickStr(p[k]) ?? '';
+  const rawDob = pickStr(p.dob) ?? pickStr(p.dateOfBirth) ?? '';
+  let dobForInput = '';
+  if (rawDob) {
+    const d = new Date(rawDob);
+    if (!Number.isNaN(d.getTime())) dobForInput = d.toISOString().slice(0, 10);
+    else if (rawDob.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(rawDob)) dobForInput = rawDob.slice(0, 10);
+  }
+  return {
+    name: g('name') || patientNameFrom(p),
+    firstName: g('firstName'),
+    lastName: g('lastName'),
+    dob: dobForInput,
+    species: g('species') || g('speciesName'),
+    speciesId: (() => {
+      const raw = pickStr(p.speciesId);
+      if (raw && /^\d+$/.test(raw.trim())) return raw.trim();
+      const n = typeof p.speciesId === 'number' && Number.isFinite(p.speciesId) ? String(p.speciesId) : '';
+      return n;
+    })(),
+    breed: g('breed') || g('breedDescription'),
+    breedId: g('breedId'),
+    color: g('color'),
+    sex: g('sex') || g('gender'),
+    weight: g('weight') || g('weightLbs'),
+    neuterStatus: g('neuterStatus') || g('spayNeuterStatus') || g('alteredStatus'),
+    alerts: g('alerts'),
+  };
+}
+
+function extractPatientSaveErr(err: unknown): string {
+  const e = err as { response?: { data?: { message?: string } }; message?: string };
+  return e?.response?.data?.message ?? e?.message ?? 'Could not save patient.';
+}
+
+function buildPatientPatchBody(d: PatientEditDraft, isActive: boolean): Record<string, unknown> {
+  const rawDob = d.dob.trim();
+  let dobIso: string | null = null;
+  if (rawDob) {
+    dobIso = /^\d{4}-\d{2}-\d{2}$/.test(rawDob) ? `${rawDob}T12:00:00.000Z` : rawDob;
+  }
+  const body: Record<string, unknown> = {
+    name: d.name.trim() || null,
+    firstName: d.firstName.trim() || null,
+    lastName: d.lastName.trim() || null,
+    species: d.species.trim() || null,
+    breed: d.breed.trim() || null,
+    color: d.color.trim() || null,
+    sex: d.sex.trim() || null,
+    weight: d.weight.trim() || null,
+    alerts: d.alerts.trim() || null,
+    isActive,
+  };
+  const nn = d.neuterStatus.trim();
+  body.neuterStatus = nn || null;
+  body.spayNeuterStatus = nn || null;
+  body.alteredStatus = nn || null;
+  if (dobIso) {
+    body.dob = dobIso;
+    body.dateOfBirth = dobIso;
+  }
+  const bidRaw = d.breedId.trim();
+  if (/^\d+$/.test(bidRaw)) {
+    const bid = parseInt(bidRaw, 10);
+    if (Number.isFinite(bid)) body.breedId = bid;
+  }
+  return body;
+}
+
 type MrTab =
   | 'highlights'
   | 'groups'
@@ -321,6 +434,29 @@ export default function PimsPatientDetailView({
   const [expandedChartRowIds, setExpandedChartRowIds] = useState<Set<string>>(() => new Set());
   const [groupOpen, setGroupOpen] = useState<Record<string, boolean>>({});
   const [selectedExam, setSelectedExam] = useState<Record<string, unknown> | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState<PatientEditDraft | null>(null);
+  const [isActiveDraft, setIsActiveDraft] = useState(true);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [speciesOptions, setSpeciesOptions] = useState<SpeciesBreedsSpecies[]>([]);
+  const [breedOptions, setBreedOptions] = useState<SpeciesBreedsBreed[]>([]);
+  const [breedsLoading, setBreedsLoading] = useState(false);
+  const [breedDropdownOpen, setBreedDropdownOpen] = useState(false);
+  const prevResolvedSpeciesIdRef = useRef<number | null>(null);
+
+  const practiceId = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+
+  const resolvedSpeciesId = useMemo(() => {
+    if (!editDraft) return null;
+    const sid = editDraft.speciesId.trim();
+    if (/^\d+$/.test(sid)) {
+      const n = parseInt(sid, 10);
+      return Number.isFinite(n) ? n : null;
+    }
+    if (!speciesOptions.length) return null;
+    return resolveSpeciesIdFromName(editDraft.species, speciesOptions);
+  }, [editDraft, speciesOptions]);
 
   const reloadChartData = useCallback(async (isStale?: () => boolean) => {
     const id = patientId;
@@ -375,6 +511,13 @@ export default function PimsPatientDetailView({
   }, [patientId]);
 
   useEffect(() => {
+    setIsEditing(false);
+    setEditDraft(null);
+    setSaveError(null);
+    setSaving(false);
+  }, [patientId]);
+
+  useEffect(() => {
     if (mrTab !== 'groups' || treatments != null || treatmentsLoading) return;
     let on = true;
     setTreatmentsLoading(true);
@@ -392,6 +535,64 @@ export default function PimsPatientDetailView({
       on = false;
     };
   }, [mrTab, patientId, treatments, treatmentsLoading]);
+
+  useEffect(() => {
+    if (!isEditing) {
+      setSpeciesOptions([]);
+      setBreedOptions([]);
+      setBreedsLoading(false);
+      setBreedDropdownOpen(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await fetchSpeciesListPublic(practiceId);
+        if (!cancelled) setSpeciesOptions(list);
+      } catch {
+        if (!cancelled) setSpeciesOptions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditing, practiceId]);
+
+  useEffect(() => {
+    if (!isEditing) {
+      prevResolvedSpeciesIdRef.current = null;
+      return;
+    }
+    const prev = prevResolvedSpeciesIdRef.current;
+    if (prev != null && resolvedSpeciesId !== prev) {
+      setEditDraft((d) => (d ? { ...d, breed: '', breedId: '' } : null));
+    }
+    prevResolvedSpeciesIdRef.current = resolvedSpeciesId;
+  }, [isEditing, resolvedSpeciesId]);
+
+  useEffect(() => {
+    if (!isEditing || resolvedSpeciesId == null) {
+      setBreedOptions([]);
+      setBreedsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setBreedOptions([]);
+    setBreedsLoading(true);
+    fetchBreedsForSpeciesPublic(practiceId, resolvedSpeciesId)
+      .then((rows) => {
+        if (!cancelled) setBreedOptions(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setBreedOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setBreedsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditing, resolvedSpeciesId, practiceId]);
 
   const client = payload ? clientBlockFromPatient(payload) : null;
   const pname = payload ? patientNameFrom(payload) : '';
@@ -528,6 +729,57 @@ export default function PimsPatientDetailView({
     );
   }
 
+  const record = payload as Record<string, unknown>;
+
+  function beginEdit() {
+    setSaveError(null);
+    setEditDraft(payloadToPatientEditDraft(record));
+    setIsActiveDraft(record.isActive === true || record.active === true);
+    setIsEditing(true);
+  }
+
+  function cancelEdit() {
+    setIsEditing(false);
+    setEditDraft(null);
+    setSaveError(null);
+  }
+
+  async function handleSave(e: FormEvent) {
+    e.preventDefault();
+    if (!editDraft) return;
+    if (!editDraft.name.trim()) {
+      setSaveError('Pet name is required.');
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const body = buildPatientPatchBody(editDraft, isActiveDraft);
+      const updated = await patchPatient(patientId, body);
+      let next: Record<string, unknown> | null = null;
+      if (updated && typeof updated === 'object' && !Array.isArray(updated)) {
+        next = updated as Record<string, unknown>;
+      } else {
+        const data = await fetchPatientByIdStaff(patientId);
+        next = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+      }
+      if (next) setPayload(next);
+      setIsEditing(false);
+      setEditDraft(null);
+    } catch (err) {
+      setSaveError(extractPatientSaveErr(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const displayTitle =
+    isEditing && editDraft
+      ? editDraft.name.trim() ||
+        [editDraft.firstName, editDraft.lastName].filter(Boolean).join(' ').trim() ||
+        pname
+      : pname;
+
   const dob = pickStr(payload.dateOfBirth) ?? pickStr(payload.dob);
   const ageStr = ageFromDob(dob);
   const weightLb = pickStr(payload.weight) ?? pickStr(payload.weightLbs);
@@ -557,15 +809,15 @@ export default function PimsPatientDetailView({
       <nav className="pims-patient-detail__crumb" aria-label="Breadcrumb">
         <Link to={patientsListPath}>Patients</Link>
         <span aria-hidden> / </span>
-        <span>{pname}</span>
+        <span>{displayTitle}</span>
       </nav>
 
-      <h1 className="pims-patient-detail__title">{pname}</h1>
+      <h1 className="pims-patient-detail__title">{displayTitle}</h1>
       <div className="pims-patient-detail__subhead">
         <span>
           <strong>{cname}</strong>
           <span aria-hidden> | </span>
-          <strong>{pname}</strong>
+          <strong>{displayTitle}</strong>
         </span>
       </div>
 
@@ -582,29 +834,238 @@ export default function PimsPatientDetailView({
             <PawPrint size={32} strokeWidth={1.5} />
           </div>
           <div className="pims-patient-detail__card-body">
-            <div className="pims-patient-detail__card-title">
-              {pname}
-              <span className="pims-patient-detail__meta-line" style={{ fontWeight: 500, margin: 0 }}>
-                {' '}
-                | {String(payload.id ?? patientId)}
-              </span>
-              <span className={`pims-patient-detail__badge pims-patient-detail__badge--${badge.variant}`}>
-                {badge.label}
-              </span>
-              <div className="pims-patient-detail__card-tools">
-                <button type="button" className="pims-patient-detail__icon-btn" title="Highlight">
-                  <Gem size={18} />
-                </button>
-                <button type="button" className="pims-patient-detail__icon-btn" title="More">
-                  <MoreVertical size={18} />
-                </button>
-              </div>
-            </div>
-            <p className="pims-patient-detail__meta-line">{speciesLine(payload)}</p>
-            <p className="pims-patient-detail__meta-line">{sexLine(payload)}</p>
-            <p className="pims-patient-detail__meta-line">
-              {[ageStr, weightLine].filter(Boolean).join(' · ') || '—'}
-            </p>
+            {isEditing && editDraft ? (
+              <form className="pims-patient-detail__edit-form" onSubmit={handleSave}>
+                <div className="pims-patient-detail__edit-toolbar">
+                  <button
+                    type="button"
+                    className="pims-patient-detail__btn-secondary"
+                    onClick={cancelEdit}
+                    disabled={saving}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="pims-patient-detail__btn-save" disabled={saving}>
+                    {saving ? 'Saving…' : 'Save changes'}
+                  </button>
+                </div>
+                {saveError ? (
+                  <div className="pims-patient-detail__save-error" role="alert">
+                    {saveError}
+                  </div>
+                ) : null}
+                <p className="pims-patient-detail__edit-readonly">
+                  Patient ID {String(payload.id ?? patientId)}
+                  {pickStr(payload.pimsId) ? (
+                    <>
+                      {' '}
+                      · PIMS {pickStr(payload.pimsId)}
+                    </>
+                  ) : null}
+                  {pickStr(payload.pimsType) ? (
+                    <>
+                      {' '}
+                      · {pickStr(payload.pimsType)}
+                    </>
+                  ) : null}
+                </p>
+                <label className="pims-patient-detail__edit-check">
+                  <input
+                    type="checkbox"
+                    checked={isActiveDraft}
+                    onChange={(e) => setIsActiveDraft(e.target.checked)}
+                  />
+                  Active
+                </label>
+                <div className="pims-patient-detail__edit-grid">
+                  <label className="pims-patient-detail__edit-field">
+                    <span>Display name *</span>
+                    <input
+                      className="input"
+                      value={editDraft.name}
+                      onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
+                      required
+                    />
+                  </label>
+                  <label className="pims-patient-detail__edit-field">
+                    <span>First name</span>
+                    <input
+                      className="input"
+                      value={editDraft.firstName}
+                      onChange={(e) => setEditDraft({ ...editDraft, firstName: e.target.value })}
+                    />
+                  </label>
+                  <label className="pims-patient-detail__edit-field">
+                    <span>Last name</span>
+                    <input
+                      className="input"
+                      value={editDraft.lastName}
+                      onChange={(e) => setEditDraft({ ...editDraft, lastName: e.target.value })}
+                    />
+                  </label>
+                  <label className="pims-patient-detail__edit-field">
+                    <span>Date of birth</span>
+                    <input
+                      className="input"
+                      type="date"
+                      value={editDraft.dob}
+                      onChange={(e) => setEditDraft({ ...editDraft, dob: e.target.value })}
+                    />
+                  </label>
+                  <label className="pims-patient-detail__edit-field">
+                    <span>Species</span>
+                    <input
+                      className="input"
+                      value={editDraft.species}
+                      onChange={(e) =>
+                        setEditDraft({ ...editDraft, species: e.target.value, speciesId: '' })
+                      }
+                    />
+                  </label>
+                  <label className="pims-patient-detail__edit-field">
+                    <span>Breed</span>
+                    {resolvedSpeciesId != null && (breedsLoading || breedOptions.length > 0) ? (
+                      <div className="pims-patient-detail__breed-wrap">
+                        <input
+                          className="input"
+                          type="text"
+                          autoComplete="off"
+                          value={editDraft.breed}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setEditDraft({ ...editDraft, breed: v, breedId: '' });
+                            setBreedDropdownOpen(true);
+                          }}
+                          onFocus={() => {
+                            if (resolvedSpeciesId != null) setBreedDropdownOpen(true);
+                          }}
+                          onBlur={() => {
+                            window.setTimeout(() => setBreedDropdownOpen(false), 200);
+                          }}
+                          placeholder={breedsLoading ? 'Loading breeds…' : 'Type to search breeds…'}
+                          disabled={breedsLoading}
+                          aria-autocomplete="list"
+                          aria-expanded={breedDropdownOpen}
+                        />
+                        {breedDropdownOpen &&
+                        breedOptions.some((b) =>
+                          b.name.toLowerCase().includes((editDraft.breed || '').toLowerCase())
+                        ) ? (
+                          <div className="pims-patient-detail__breed-dropdown" role="listbox">
+                            {breedOptions
+                              .filter((b) => b.name.toLowerCase().includes((editDraft.breed || '').toLowerCase()))
+                              .slice(0, 50)
+                              .map((b) => (
+                                <button
+                                  key={b.id}
+                                  type="button"
+                                  role="option"
+                                  className="pims-patient-detail__breed-option"
+                                  onMouseDown={(ev) => {
+                                    ev.preventDefault();
+                                    setEditDraft({ ...editDraft, breed: b.name, breedId: String(b.id) });
+                                    setBreedDropdownOpen(false);
+                                  }}
+                                >
+                                  {b.name}
+                                </button>
+                              ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <input
+                        className="input"
+                        value={editDraft.breed}
+                        onChange={(e) =>
+                          setEditDraft({ ...editDraft, breed: e.target.value, breedId: '' })
+                        }
+                        placeholder={
+                          resolvedSpeciesId == null
+                            ? speciesOptions.length > 0
+                              ? 'Match species to a list name to search breeds'
+                              : 'Type breed…'
+                            : breedsLoading
+                              ? 'Loading breeds…'
+                              : 'No breeds for this species — type breed'
+                        }
+                        disabled={resolvedSpeciesId != null && breedsLoading}
+                      />
+                    )}
+                  </label>
+                  <label className="pims-patient-detail__edit-field">
+                    <span>Color</span>
+                    <input
+                      className="input"
+                      value={editDraft.color}
+                      onChange={(e) => setEditDraft({ ...editDraft, color: e.target.value })}
+                    />
+                  </label>
+                  <label className="pims-patient-detail__edit-field">
+                    <span>Sex</span>
+                    <input
+                      className="input"
+                      value={editDraft.sex}
+                      onChange={(e) => setEditDraft({ ...editDraft, sex: e.target.value })}
+                    />
+                  </label>
+                  <label className="pims-patient-detail__edit-field">
+                    <span>Weight</span>
+                    <input
+                      className="input"
+                      value={editDraft.weight}
+                      onChange={(e) => setEditDraft({ ...editDraft, weight: e.target.value })}
+                    />
+                  </label>
+                  <label className="pims-patient-detail__edit-field pims-patient-detail__edit-field--full">
+                    <span>Altered / neuter status</span>
+                    <input
+                      className="input"
+                      value={editDraft.neuterStatus}
+                      onChange={(e) => setEditDraft({ ...editDraft, neuterStatus: e.target.value })}
+                    />
+                  </label>
+                  <label className="pims-patient-detail__edit-field pims-patient-detail__edit-field--full">
+                    <span>Patient alerts</span>
+                    <textarea
+                      className="input pims-patient-detail__edit-textarea"
+                      rows={4}
+                      value={editDraft.alerts}
+                      onChange={(e) => setEditDraft({ ...editDraft, alerts: e.target.value })}
+                    />
+                  </label>
+                </div>
+              </form>
+            ) : (
+              <>
+                <div className="pims-patient-detail__card-title">
+                  {pname}
+                  <span className="pims-patient-detail__meta-line" style={{ fontWeight: 500, margin: 0 }}>
+                    {' '}
+                    | {String(payload.id ?? patientId)}
+                  </span>
+                  <span className={`pims-patient-detail__badge pims-patient-detail__badge--${badge.variant}`}>
+                    {badge.label}
+                  </span>
+                  <div className="pims-patient-detail__card-tools">
+                    <button type="button" className="pims-patient-detail__icon-btn" onClick={beginEdit} title="Edit pet">
+                      <Pencil size={18} />
+                    </button>
+                    <button type="button" className="pims-patient-detail__icon-btn" title="Highlight">
+                      <Gem size={18} />
+                    </button>
+                    <button type="button" className="pims-patient-detail__icon-btn" title="More">
+                      <MoreVertical size={18} />
+                    </button>
+                  </div>
+                </div>
+                <p className="pims-patient-detail__meta-line">{speciesLine(payload)}</p>
+                <p className="pims-patient-detail__meta-line">{sexLine(payload)}</p>
+                <p className="pims-patient-detail__meta-line">
+                  {[ageStr, weightLine].filter(Boolean).join(' · ') || '—'}
+                </p>
+              </>
+            )}
           </div>
         </div>
 
@@ -671,6 +1132,13 @@ export default function PimsPatientDetailView({
           </button>
         ))}
       </div>
+
+      <PimsAppointmentsSection
+        variant="patient"
+        practiceId={PIMS_DETAIL_PRACTICE_ID}
+        patientId={patientId}
+        patientRecord={record}
+      />
 
       <section className="pims-patient-detail__mr" aria-labelledby="pims-mr-heading">
         <div className="pims-patient-detail__mr-head">

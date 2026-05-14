@@ -187,6 +187,144 @@
   color: #0f172a;
 }
 
+.pims-patient-detail__edit-form {
+  width: 100%;
+}
+
+.pims-patient-detail__edit-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.pims-patient-detail__btn-secondary {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #334155;
+  background: #fff;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-patient-detail__btn-secondary:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.pims-patient-detail__btn-secondary:disabled,
+.pims-patient-detail__btn-save:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.pims-patient-detail__btn-save {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: #2563eb;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-patient-detail__btn-save:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.pims-patient-detail__save-error {
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-size: 14px;
+}
+
+.pims-patient-detail__edit-readonly {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.pims-patient-detail__edit-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+}
+
+.pims-patient-detail__edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px 14px;
+}
+
+.pims-patient-detail__edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.pims-patient-detail__edit-field--full {
+  grid-column: 1 / -1;
+}
+
+.pims-patient-detail__edit-textarea {
+  min-height: 88px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.pims-patient-detail__breed-wrap {
+  position: relative;
+}
+
+.pims-patient-detail__breed-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  margin-top: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+}
+
+.pims-patient-detail__breed-option {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: 14px;
+  color: #0f172a;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-patient-detail__breed-option:hover {
+  background: #f1f5f9;
+}
+
 .pims-patient-detail__quick {
   display: flex;
   flex-wrap: wrap;

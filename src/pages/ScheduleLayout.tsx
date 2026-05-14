@@ -7,6 +7,7 @@ import {
   ClipboardPlus,
   DoorOpen,
   FlaskConical,
+  LineChart,
   ListChecks,
   MapPinned,
   Package,
@@ -28,6 +29,7 @@ import {
   SHOW_MY_WEEK_SCOUT_TAB,
   scoutTabPermissionOk,
 } from '../scout-tabs';
+import { isAnalyticsAdmin, isEmployeeAnalyticsRestricted } from '../utils/analyticsAccess';
 import { listTasks } from '../api/tasks';
 import ScheduleTasksPanel from '../components/schedule/ScheduleTasksPanel';
 import './ScheduleLayout.css';
@@ -94,6 +96,11 @@ export default function ScheduleLayout() {
   const tabs = useMemo(() => getVisibleScoutTabs(abilities, roles), [abilities, roles]);
   const homeTab = useMemo(() => tabs.find((t) => t.path === 'home'), [tabs]);
   const schedulingTabs = useMemo(() => tabs.filter((t) => t.path !== 'home'), [tabs]);
+
+  const canAccessScheduleAnalytics = useMemo(
+    () => isAnalyticsAdmin(roles) || isEmployeeAnalyticsRestricted(roles),
+    [roles],
+  );
 
   const showAdminTab = useMemo(
     () => roles.includes('admin') || roles.includes('superadmin'),
@@ -281,6 +288,20 @@ export default function ScheduleLayout() {
               </span>
               <span className="schedule-app__quick-link-label">New Task</span>
             </NavLink>
+            {canAccessScheduleAnalytics ? (
+              <NavLink
+                to="/schedule/analytics"
+                className={({ isActive }) =>
+                  `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
+                }
+                title={railCollapsedEffective ? 'Analytics' : undefined}
+              >
+                <span className="schedule-app__quick-link-icon" aria-hidden>
+                  <LineChart size={18} strokeWidth={1.75} />
+                </span>
+                <span className="schedule-app__quick-link-label">Analytics</span>
+              </NavLink>
+            ) : null}
           </nav>
 
           {schedulingTabs.length > 0 ? (
@@ -424,6 +445,18 @@ export default function ScheduleLayout() {
                       onClick={closeSettingsMenu}
                     >
                       All settings
+                    </Link>
+                    <Link
+                      to={{ pathname: '/schedule/settings', search: '?tab=employee-directory' }}
+                      className={`schedule-app__settings-link${
+                        settingsTabFromLocation === 'employee-directory'
+                          ? ' schedule-app__settings-link--active'
+                          : ''
+                      }`}
+                      role="menuitem"
+                      onClick={closeSettingsMenu}
+                    >
+                      Employees
                     </Link>
                     <Link
                       to={{ pathname: '/schedule/settings', search: '?tab=reminders' }}

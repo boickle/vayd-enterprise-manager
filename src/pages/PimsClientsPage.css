@@ -256,3 +256,111 @@ a.pims-clients__petname:hover {
   color: #64748b;
   font-size: 14px;
 }
+
+/* Add client modal */
+.pims-add-client-modal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+}
+
+.pims-add-client-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: rgba(15, 23, 42, 0.45);
+  cursor: pointer;
+}
+
+.pims-add-client-modal {
+  position: relative;
+  margin: 8vh auto 0;
+  max-width: 520px;
+  width: calc(100% - 32px);
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
+  border: 1px solid #e2e8f0;
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+
+.pims-add-client-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.pims-add-client-modal__head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.pims-add-client-modal__close {
+  border: none;
+  background: transparent;
+  font-size: 24px;
+  line-height: 1;
+  color: #64748b;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.pims-add-client-modal__form {
+  padding: 16px;
+}
+
+.pims-add-client-modal__error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.pims-add-client-modal__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.pims-add-client-modal__full {
+  grid-column: 1 / -1;
+}
+
+.pims-add-client-modal__label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.pims-add-client-modal__grid .input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.pims-add-client-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+@media (max-width: 480px) {
+  .pims-add-client-modal__grid {
+    grid-template-columns: 1fr;
+  }
+  .pims-add-client-modal__full {
+    grid-column: auto;
+  }
+}

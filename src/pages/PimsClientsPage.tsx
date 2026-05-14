@@ -3,6 +3,7 @@ import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { ChevronRight, FileText } from 'lucide-react';
 import { searchClientsStaff, type ClientSearchRow } from '../api/clientsStaff';
 import PimsClientDetailView from '../components/pims/PimsClientDetailView';
+import AddClientModal from '../components/pims/AddClientModal';
 import {
   initialClientsSearchFromUrlAndSession,
   writePimsClientsSession,
@@ -106,6 +107,7 @@ export default function PimsClientsPage() {
   const [rows, setRows] = useState<ClientSearchRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [addClientOpen, setAddClientOpen] = useState(false);
   const seq = useRef(0);
 
   useEffect(() => {
@@ -202,7 +204,7 @@ export default function PimsClientsPage() {
     <div className="pims-clients">
       <div className="pims-clients__head">
         <h1 className="pims-clients__title">Clients</h1>
-        <button type="button" className="pims-clients__add">
+        <button type="button" className="pims-clients__add" onClick={() => setAddClientOpen(true)}>
           + Add Client
         </button>
       </div>
@@ -346,6 +348,24 @@ export default function PimsClientsPage() {
           <p className="pims-clients__hint">Enter a search to load clients from your practice directory.</p>
         )}
       </div>
+
+      <AddClientModal
+        open={addClientOpen}
+        onClose={() => setAddClientOpen(false)}
+        onCreated={(id) => {
+          const next = new URLSearchParams(searchParams);
+          next.set('clientId', id);
+          setSearchParams(next, { replace: false });
+        }}
+        onUpserted={(lastName) => {
+          setQuery(lastName);
+          const next = new URLSearchParams(searchParams);
+          if (lastName.trim()) next.set('q', lastName.trim());
+          else next.delete('q');
+          setSearchParams(next, { replace: true });
+          void runSearch(lastName);
+        }}
+      />
     </div>
   );
 }
