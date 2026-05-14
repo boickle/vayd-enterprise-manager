@@ -1245,9 +1245,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   );
   const showEmployeeAddCoVisitPet = useMemo(
     () =>
-      rolesLower.includes('employee') &&
-      !rolesLower.includes('admin') &&
-      !rolesLower.includes('superadmin'),
+      rolesLower.includes('employee') ||
+      rolesLower.includes('admin') ||
+      rolesLower.includes('superadmin'),
     [rolesLower]
   );
 

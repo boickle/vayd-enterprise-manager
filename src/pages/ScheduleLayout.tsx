@@ -1,5 +1,5 @@
-import { NavLink, Outlet, useNavigate, useLocation, Navigate } from 'react-router-dom';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { NavLink, Outlet, useNavigate, useLocation, Navigate, Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   CalendarDays,
@@ -99,6 +99,17 @@ export default function ScheduleLayout() {
     () => roles.includes('admin') || roles.includes('superadmin'),
     [roles]
   );
+
+  const settingsMenuRef = useRef<HTMLDetailsElement>(null);
+  const closeSettingsMenu = useCallback(() => {
+    const el = settingsMenuRef.current;
+    if (el) el.open = false;
+  }, []);
+
+  const settingsTabFromLocation = useMemo(() => {
+    if (!location.pathname.startsWith('/schedule/settings')) return null;
+    return new URLSearchParams(location.search).get('tab');
+  }, [location.pathname, location.search]);
 
   const [tasksDrawerOpen, setTasksDrawerOpen] = useState(false);
   const [taskTotal, setTaskTotal] = useState<number | null>(null);
@@ -388,12 +399,87 @@ export default function ScheduleLayout() {
               Tasks
             </NavLink>
             {showAdminTab ? (
-              <NavLink
-                to="/schedule/admin"
-                className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
-              >
-                Admin
-              </NavLink>
+              <>
+                <details ref={settingsMenuRef} className="schedule-app__settings-menu">
+                  <summary
+                    className={`schedule-app__tab schedule-app__settings-summary${
+                      location.pathname.startsWith('/schedule/settings')
+                        ? ' schedule-app__tab--active'
+                        : ''
+                    }`}
+                    aria-haspopup="menu"
+                  >
+                    Settings
+                  </summary>
+                  <div className="schedule-app__settings-dropdown" role="menu" aria-label="Practice settings">
+                    <Link
+                      to="/schedule/settings"
+                      className={`schedule-app__settings-link${
+                        location.pathname.startsWith('/schedule/settings') &&
+                        (!settingsTabFromLocation || settingsTabFromLocation === 'appointment-types')
+                          ? ' schedule-app__settings-link--active'
+                          : ''
+                      }`}
+                      role="menuitem"
+                      onClick={closeSettingsMenu}
+                    >
+                      All settings
+                    </Link>
+                    <Link
+                      to={{ pathname: '/schedule/settings', search: '?tab=reminders' }}
+                      className={`schedule-app__settings-link${
+                        settingsTabFromLocation === 'reminders' ? ' schedule-app__settings-link--active' : ''
+                      }`}
+                      role="menuitem"
+                      onClick={closeSettingsMenu}
+                    >
+                      Reminders
+                    </Link>
+                    <Link
+                      to={{ pathname: '/schedule/settings', search: '?tab=employee-schedule' }}
+                      className={`schedule-app__settings-link${
+                        settingsTabFromLocation === 'employee-schedule'
+                          ? ' schedule-app__settings-link--active'
+                          : ''
+                      }`}
+                      role="menuitem"
+                      onClick={closeSettingsMenu}
+                    >
+                      Employee schedule
+                    </Link>
+                    <Link
+                      to={{ pathname: '/schedule/settings', search: '?tab=employee-zones' }}
+                      className={`schedule-app__settings-link${
+                        settingsTabFromLocation === 'employee-zones'
+                          ? ' schedule-app__settings-link--active'
+                          : ''
+                      }`}
+                      role="menuitem"
+                      onClick={closeSettingsMenu}
+                    >
+                      Employee zones
+                    </Link>
+                    <Link
+                      to={{ pathname: '/schedule/settings', search: '?tab=employee-types' }}
+                      className={`schedule-app__settings-link${
+                        settingsTabFromLocation === 'employee-types'
+                          ? ' schedule-app__settings-link--active'
+                          : ''
+                      }`}
+                      role="menuitem"
+                      onClick={closeSettingsMenu}
+                    >
+                      Employee appointment types
+                    </Link>
+                  </div>
+                </details>
+                <NavLink
+                  to="/schedule/admin"
+                  className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
+                >
+                  Admin
+                </NavLink>
+              </>
             ) : null}
           </div>
           <div className="schedule-app__tabs-end">

@@ -18,6 +18,7 @@ export const SCHEDULE_OUTLET_EXTRA_SEGMENTS: string[] = [
   'tasks',
   'clients',
   'patients',
+  'settings',
   'admin',
 ];
 

@@ -35,6 +35,7 @@ import PimsPlaceholder from './pages/PimsPlaceholder';
 import PimsClientsPage from './pages/PimsClientsPage';
 import PimsPatientsPage from './pages/PimsPatientsPage';
 import PimsTasksPage from './pages/PimsTasksPage';
+import Settings from './pages/Settings';
 import Scheduler from './pages/Scheduler';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
 import PublicReferAFriend from './pages/PublicReferAFriend';
@@ -494,6 +495,7 @@ export default function App() {
                     <Route path="scheduler" element={<Scheduler />} />
                     <Route path="inventory" element={<InventoryManagement />} />
                     <Route path="tasks" element={<PimsTasksPage />} />
+                    <Route path="settings" element={<Settings />} />
                     <Route path="clients" element={<PimsClientsPage />} />
                     <Route path="patients" element={<PimsPatientsPage />} />
                     <Route path="admin" element={<Admin basePath="/schedule/admin" />}>

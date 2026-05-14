@@ -42,6 +42,7 @@ import {
   writeAuthDoctorCache,
   writeRoutingUiSnapshot,
 } from '../utils/routingUiSnapshot';
+import './Routing.css';
 
 /** Yellow wrap when an optional routing preference is on—makes checked state obvious at a glance. */
 const ROUTING_PREF_CHECKED_LABEL: CSSProperties = {
@@ -2199,21 +2200,20 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   ];
 
   return (
-    <div className="grid" style={{ alignItems: 'start' }}>
+    <div className="routing-page-root">
       {/* ------- Form ------- */}
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Get Best Route</h2>
-        <form onSubmit={onSubmit} className="grid" style={{ gap: 12 }}>
+        <form onSubmit={onSubmit} className="routing-form-stack">
           {/* Doctor picker */}
-          <div className="grid" style={{ gridTemplateColumns: 'minmax(16rem, 1fr) 1fr', gap: 12 }}>
+          <div className="routing-doctor-row">
             <Field label="Doctor">
               <div style={{ position: 'relative', width: '100%' }}>
                 <div
                   ref={doctorBoxRef}
+                  className="routing-doctor-input-wrap"
                   style={{
                     position: 'relative',
-                    width: '100%',
-                    minWidth: '16rem',
                   }}
                 >
                   <input
@@ -2330,7 +2330,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           </div>
 
           {/* Dates */}
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className="routing-grid-2 routing-row-dates">
             <Field label="Start Date">
               <input
                 className="date"
@@ -2352,16 +2352,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           </div>
 
           {/* Appointment & client */}
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className="routing-grid-2 routing-row-appt">
             <Field label="Service minutes">
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: 8,
-                  alignItems: 'center',
-                }}
-              >
+              <div className="routing-service-row">
                 <input
                   className="input"
                   type="number"
@@ -2373,7 +2366,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                 <select
                   className="input"
                   aria-label="Appointment type from averages"
-                  style={{ minWidth: 160, flex: '1 1 140px' }}
+                  style={{ minWidth: 0 }}
                   disabled={!form.doctorId.trim() || apptLengthsLoading}
                   value={routingApptStatsTypeKey}
                   onChange={(e) => setRoutingApptStatsTypeKey(e.target.value)}
@@ -2544,31 +2537,34 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
               </div>
             </Field>
 
-            <Field label="Address (optional)">
-              <input
-                className="input"
-                value={form.newAppt.address ?? ''}
-                onChange={(e) => onNewApptChange('address', e.target.value)}
-                placeholder="123 Main St, Portland ME"
-              />
-              {addressError ? (
-                <div className="danger" style={{ marginTop: 6 }}>
-                  {addressError}
-                </div>
-              ) : (
-                form.newAppt.lat != null &&
-                form.newAppt.lon != null &&
-                (form.newAppt.address ?? '').trim() && (
-                  <div className="muted" style={{ marginTop: 6 }}>
-                    ✓ Address verified
+            <div className="routing-span-full">
+              <Field label="Address (optional)">
+                <input
+                  className="input"
+                  value={form.newAppt.address ?? ''}
+                  onChange={(e) => onNewApptChange('address', e.target.value)}
+                  placeholder="123 Main St, Portland ME"
+                />
+                {addressError ? (
+                  <div className="danger" style={{ marginTop: 6 }}>
+                    {addressError}
                   </div>
-                )
-              )}
-            </Field>
+                ) : (
+                  form.newAppt.lat != null &&
+                  form.newAppt.lon != null &&
+                  (form.newAppt.address ?? '').trim() && (
+                    <div className="muted" style={{ marginTop: 6 }}>
+                      ✓ Address verified
+                    </div>
+                  )
+                )}
+              </Field>
+            </div>
             {!clientSearching && selectedClientAlerts && selectedClientAlerts.trim() && (
               <div
+                className="routing-span-full"
                 style={{
-                  marginTop: 6,
+                  marginTop: 0,
                   padding: '8px 10px',
                   background: '#fff7ed', // soft amber
                   border: '1px solid #fdba74', // amber border
@@ -2585,23 +2581,16 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           </div>
 
           {/* Preferences */}
-          <div className="card" style={{ padding: 12, background: '#f8fafc' }}>
+          <div className="card routing-prefs-card" style={{ padding: 12, background: '#f8fafc' }}>
             <h4 style={{ margin: '4px 0 10px 0' }}>Preferences (optional)</h4>
 
             {/* Toggles */}
-            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="routing-prefs-grid-2">
               <Field label="Reserve/Overflow">
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <label
-                    style={{
-                      display: 'flex',
-                      gap: 8,
-                      alignItems: 'center',
-                      padding: '4px 8px',
-                      borderRadius: 6,
-                      cursor: 'pointer',
-                    }}
-                    className={reserveOption === 'reserve-only' ? 'field-red' : ''}
+                    className={`routing-prefs-check${reserveOption === 'reserve-only' ? ' field-red' : ''}`}
+                    style={reserveOption === 'reserve-only' ? ROUTING_PREF_CHECKED_LABEL : undefined}
                   >
                     <input
                       type="checkbox"
@@ -2619,15 +2608,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                     <span>Use Reserve Time (no overflow)</span>
                   </label>
                   <label
-                    style={{
-                      display: 'flex',
-                      gap: 8,
-                      alignItems: 'center',
-                      padding: '4px 8px',
-                      borderRadius: 6,
-                      cursor: 'pointer',
-                    }}
-                    className={reserveOption === 'reserve-overflow' ? 'field-red' : ''}
+                    className={`routing-prefs-check${reserveOption === 'reserve-overflow' ? ' field-red' : ''}`}
+                    style={reserveOption === 'reserve-overflow' ? ROUTING_PREF_CHECKED_LABEL : undefined}
                   >
                     <input
                       type="checkbox"
@@ -2649,13 +2631,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
               <Field label="Multi-doctor">
                 <label
-                  style={{
-                    display: 'flex',
-                    gap: 8,
-                    alignItems: 'center',
-                    cursor: 'pointer',
-                    ...(multiDoctor ? ROUTING_PREF_CHECKED_LABEL : {}),
-                  }}
+                  className="routing-prefs-check"
+                  style={multiDoctor ? ROUTING_PREF_CHECKED_LABEL : { cursor: 'pointer' }}
                 >
                   <input
                     type="checkbox"
@@ -2898,7 +2875,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                 {feedbackSubmittingKey === NONE_SELECTION_KEY ? 'Saving…' : 'None chosen'}
               </button>
             </div>
-            <div className="grid" style={{ gap: 14 }}>
+            <div className="routing-results-options">
               {displayOptions.map((opt, idx) => {
                 const headerColor = colorForDoctor(opt.doctorPimsId);
                 const optionKey = routingOptionKey(opt);

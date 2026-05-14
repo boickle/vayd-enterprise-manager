@@ -1,5 +1,6 @@
 // src/pages/Settings.tsx
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import {
   fetchAllAppointmentTypes,
@@ -51,6 +52,25 @@ import {
 } from '../api/employeeGoals';
 import './Settings.css';
 
+const SETTINGS_TAB_IDS = [
+  'appointment-types',
+  'employee-types',
+  'employee-zones',
+  'employee-schedule',
+  'inventory',
+  'employee-images',
+  'employee-goals',
+  'reminders',
+] as const;
+type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number];
+
+function parseSettingsTabParam(tab: string | null): SettingsTabId {
+  if (tab && (SETTINGS_TAB_IDS as readonly string[]).includes(tab)) {
+    return tab as SettingsTabId;
+  }
+  return 'appointment-types';
+}
+
 /** Practice ID for reminder settings (default 1; override via env if needed) */
 const REMINDERS_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
@@ -76,16 +96,25 @@ function formatEmployeeName(emp: Employee): string {
 
 export default function Settings() {
   const { role } = useAuth() as any;
-  const [activeTab, setActiveTab] = useState<
-    | 'appointment-types'
-    | 'employee-types'
-    | 'employee-zones'
-    | 'employee-schedule'
-    | 'inventory'
-    | 'employee-images'
-    | 'employee-goals'
-    | 'reminders'
-  >('appointment-types');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = useMemo(
+    () => parseSettingsTabParam(searchParams.get('tab')),
+    [searchParams]
+  );
+  const goToTab = useCallback(
+    (tab: SettingsTabId) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (tab === 'appointment-types') next.delete('tab');
+          else next.set('tab', tab);
+          return next;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1057,49 +1086,49 @@ export default function Settings() {
         <div className="settings-tabs">
           <button
             className={`settings-tab ${activeTab === 'appointment-types' ? 'active' : ''}`}
-            onClick={() => setActiveTab('appointment-types')}
+            onClick={() => goToTab('appointment-types')}
           >
             Appointment Types
           </button>
           <button
             className={`settings-tab ${activeTab === 'employee-types' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-types')}
+            onClick={() => goToTab('employee-types')}
           >
             Employee Appointment Types
           </button>
           <button
             className={`settings-tab ${activeTab === 'employee-zones' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-zones')}
+            onClick={() => goToTab('employee-zones')}
           >
             Employee Zones
           </button>
           <button
             className={`settings-tab ${activeTab === 'employee-schedule' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-schedule')}
+            onClick={() => goToTab('employee-schedule')}
           >
             Employee Schedule
           </button>
           <button
             className={`settings-tab ${activeTab === 'inventory' ? 'active' : ''}`}
-            onClick={() => setActiveTab('inventory')}
+            onClick={() => goToTab('inventory')}
           >
             Inventory
           </button>
           <button
             className={`settings-tab ${activeTab === 'employee-images' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-images')}
+            onClick={() => goToTab('employee-images')}
           >
             Employee Images
           </button>
           <button
             className={`settings-tab ${activeTab === 'employee-goals' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-goals')}
+            onClick={() => goToTab('employee-goals')}
           >
             Employee Goals
           </button>
           <button
             className={`settings-tab ${activeTab === 'reminders' ? 'active' : ''}`}
-            onClick={() => setActiveTab('reminders')}
+            onClick={() => goToTab('reminders')}
           >
             Reminders
           </button>

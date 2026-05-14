@@ -1,0 +1,151 @@
+/* Routing request + results layout (scoped; avoids global .grid minmax(260px) squeezing narrow panes) */
+
+.routing-page-root {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Form left, results right from tablet/desktop up; stack only on narrow viewports */
+@media (min-width: 768px) {
+  .routing-page-root {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 20px;
+  }
+}
+
+.routing-form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.routing-doctor-row {
+  min-width: 0;
+  width: 100%;
+}
+
+.routing-doctor-row .routing-doctor-input-wrap {
+  min-width: 0;
+  width: 100%;
+}
+
+.routing-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .routing-grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.routing-span-full {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .routing-span-full {
+    grid-column: auto;
+  }
+}
+
+.routing-row-dates .date {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.routing-row-appt .input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.routing-prefs-card {
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.routing-prefs-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .routing-prefs-grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.routing-prefs-check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.routing-prefs-check input[type='checkbox'] {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.routing-prefs-check > span {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+  font-size: 14px;
+}
+
+.routing-prefs-check--inline {
+  align-items: center;
+}
+
+.routing-prefs-check--inline input[type='checkbox'] {
+  margin-top: 0;
+}
+
+.routing-service-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.routing-service-row select.input {
+  flex: 1 1 160px;
+  max-width: 100%;
+}
+
+.routing-results-options {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+@media (min-width: 900px) {
+  .routing-results-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+    gap: 14px;
+  }
+}
