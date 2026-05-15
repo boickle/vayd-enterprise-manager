@@ -38,6 +38,7 @@ import {
 import { htmlToPlainText, looksLikeHtmlFragment } from '../../utils/sanitizeCommunicationHtml';
 import { PimsExamDetailModal } from './PimsExamDetailModal';
 import PimsAppointmentsSection from './PimsAppointmentsSection';
+import { PIMS_ENTITY_EDIT_ENABLED } from '../../utils/pimsEntityEditing';
 import './PimsPatientDetailView.css';
 
 const PIMS_DETAIL_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -518,6 +519,15 @@ export default function PimsPatientDetailView({
   }, [patientId]);
 
   useEffect(() => {
+    if (!PIMS_ENTITY_EDIT_ENABLED) {
+      setIsEditing(false);
+      setEditDraft(null);
+      setSaveError(null);
+      setSaving(false);
+    }
+  }, []);
+
+  useEffect(() => {
     if (mrTab !== 'groups' || treatments != null || treatmentsLoading) return;
     let on = true;
     setTreatmentsLoading(true);
@@ -732,6 +742,7 @@ export default function PimsPatientDetailView({
   const record = payload as Record<string, unknown>;
 
   function beginEdit() {
+    if (!PIMS_ENTITY_EDIT_ENABLED) return;
     setSaveError(null);
     setEditDraft(payloadToPatientEditDraft(record));
     setIsActiveDraft(record.isActive === true || record.active === true);
@@ -746,6 +757,7 @@ export default function PimsPatientDetailView({
 
   async function handleSave(e: FormEvent) {
     e.preventDefault();
+    if (!PIMS_ENTITY_EDIT_ENABLED) return;
     if (!editDraft) return;
     if (!editDraft.name.trim()) {
       setSaveError('Pet name is required.');
@@ -834,7 +846,7 @@ export default function PimsPatientDetailView({
             <PawPrint size={32} strokeWidth={1.5} />
           </div>
           <div className="pims-patient-detail__card-body">
-            {isEditing && editDraft ? (
+            {PIMS_ENTITY_EDIT_ENABLED && isEditing && editDraft ? (
               <form className="pims-patient-detail__edit-form" onSubmit={handleSave}>
                 <div className="pims-patient-detail__edit-toolbar">
                   <button
@@ -1048,9 +1060,11 @@ export default function PimsPatientDetailView({
                     {badge.label}
                   </span>
                   <div className="pims-patient-detail__card-tools">
-                    <button type="button" className="pims-patient-detail__icon-btn" onClick={beginEdit} title="Edit pet">
-                      <Pencil size={18} />
-                    </button>
+                    {PIMS_ENTITY_EDIT_ENABLED ? (
+                      <button type="button" className="pims-patient-detail__icon-btn" onClick={beginEdit} title="Edit pet">
+                        <Pencil size={18} />
+                      </button>
+                    ) : null}
                     <button type="button" className="pims-patient-detail__icon-btn" title="Highlight">
                       <Gem size={18} />
                     </button>

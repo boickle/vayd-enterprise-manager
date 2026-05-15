@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
-import { createAppointment } from '../api/appointments';
+import { createAppointment, patchAppointment } from '../api/appointments';
 import { searchClientsStaff, fetchClientByIdStaff, type ClientSearchRow } from '../api/clientsStaff';
 import { searchPatients } from '../api/patients';
 import type { Provider } from '../api/employee';
@@ -39,6 +39,11 @@ export type SchedulerBookPrefill = {
   coVisitAddPet?: boolean;
   /** When true, date / start time / duration cannot be changed (same-slot co-visit). */
   lockSlotTimes?: boolean;
+  /** When set with routing preview — PATCH existing visit instead of POST create. */
+  rescheduleAppointmentId?: number;
+  /** Prefer this patient in the picker (e.g. reschedule). */
+  preferredPatientId?: string;
+  defaultInstructions?: string;
 };
 
 type Props = {
@@ -230,6 +235,9 @@ export function SchedulerBookModal({
       String(prefill?.disableClientSearch ?? false),
       String(prefill?.coVisitAddPet ?? false),
       String(prefill?.lockSlotTimes ?? false),
+      String(prefill?.rescheduleAppointmentId ?? ''),
+      prefill?.preferredPatientId ?? '',
+      prefill?.defaultInstructions ?? '',
     ].join('\t');
   }, [
     open,
@@ -247,6 +255,9 @@ export function SchedulerBookModal({
     prefill?.disableClientSearch,
     prefill?.coVisitAddPet,
     prefill?.lockSlotTimes,
+    prefill?.rescheduleAppointmentId,
+    prefill?.preferredPatientId,
+    prefill?.defaultInstructions,
   ]);
 
   useEffect(() => {
@@ -262,7 +273,7 @@ export function SchedulerBookModal({
     setSelectedPatientId(null);
     setSelectedPatientLabel('');
     setDescription(prefill?.defaultDescription?.trim() ?? '');
-    setInstructions('');
+    setInstructions(prefill?.defaultInstructions?.trim() ?? '');
     setFormError(null);
     setShowClientDd(false);
     setShowPatientDd(false);
@@ -310,7 +321,7 @@ export function SchedulerBookModal({
     if (prefill?.preserveDurationFromSlot) {
       setDurationMin(rawMins);
     }
-  }, [bookSessionKey, providers, appointmentTypes, prefill?.appointmentTypeId, prefill?.defaultDescription, prefill?.preserveDurationFromSlot, prefill?.providerId, practiceTz]);
+  }, [bookSessionKey, providers, appointmentTypes, prefill?.appointmentTypeId, prefill?.defaultDescription, prefill?.defaultInstructions, prefill?.preserveDurationFromSlot, prefill?.providerId, practiceTz]);
 
   /** When appointment types load after open, set type without wiping the rest of the form. */
   useEffect(() => {
@@ -355,6 +366,15 @@ export function SchedulerBookModal({
       cancelled = true;
     };
   }, [bookSessionKey, open, slot, prefill?.clientId, prefill?.clientLabel]);
+
+  useEffect(() => {
+    if (!prefill?.preferredPatientId?.trim()) return;
+    const want = prefill.preferredPatientId.trim();
+    const hit = petChoices.find((p) => String(p.id) === want);
+    if (!hit) return;
+    setSelectedPatientId(want);
+    setSelectedPatientLabel(hit.name);
+  }, [prefill?.preferredPatientId, petChoices]);
 
   useEffect(() => {
     if (prefill?.preserveDurationFromSlot) return;
@@ -507,17 +527,33 @@ export function SchedulerBookModal({
 
     setSubmitting(true);
     try {
-      await createAppointment({
-        practiceId,
-        primaryProviderId: Number(providerId),
-        clientId: Number(selectedClientId),
-        patientId: Number(selectedPatientId),
-        appointmentTypeId: Number(typeId),
-        appointmentStart: startLocal.setZone(practiceTz).toUTC().toISO()!,
-        appointmentEnd: endLocal.setZone(practiceTz).toUTC().toISO()!,
-        description: description.trim() || undefined,
-        instructions: instructions.trim() || undefined,
-      });
+      const startIso = startLocal.setZone(practiceTz).toUTC().toISO()!;
+      const endIso = endLocal.setZone(practiceTz).toUTC().toISO()!;
+      const rescheduleId = prefill?.rescheduleAppointmentId;
+      if (rescheduleId != null && Number.isFinite(Number(rescheduleId))) {
+        await patchAppointment(rescheduleId, {
+          appointmentStart: startIso,
+          appointmentEnd: endIso,
+          appointmentTypeId: Number(typeId),
+          primaryProviderId: Number(providerId),
+          patientId: Number(selectedPatientId),
+          clientId: Number(selectedClientId),
+          description: description.trim() || null,
+          instructions: instructions.trim() || null,
+        });
+      } else {
+        await createAppointment({
+          practiceId,
+          primaryProviderId: Number(providerId),
+          clientId: Number(selectedClientId),
+          patientId: Number(selectedPatientId),
+          appointmentTypeId: Number(typeId),
+          appointmentStart: startIso,
+          appointmentEnd: endIso,
+          description: description.trim() || undefined,
+          instructions: instructions.trim() || undefined,
+        });
+      }
       onBooked();
       onClose();
     } catch (err) {
@@ -528,6 +564,8 @@ export function SchedulerBookModal({
   }
 
   if (!open || !slot || !startLocal) return null;
+
+  const isRescheduleBook = prefill?.rescheduleAppointmentId != null;
 
   const timeInputValue = startLocal.toFormat('HH:mm');
   const dateInputValue = startLocal.toISODate() ?? '';
@@ -543,7 +581,10 @@ export function SchedulerBookModal({
       >
         <div className="scheduler-book-modal-header">
           <div>
-            <h2 id="scheduler-book-title">{prefill?.modalTitle?.trim() || 'Book appointment'}</h2>
+            <h2 id="scheduler-book-title">
+              {prefill?.modalTitle?.trim() ||
+                (isRescheduleBook ? 'Reschedule appointment' : 'Book appointment')}
+            </h2>
             <p className="scheduler-book-slot-summary">
               {startLocal.setZone(practiceTz).toFormat('EEEE, MMM d, yyyy')} · {startLocal.toFormat('h:mm a')} –{' '}
               {endLocal?.toFormat('h:mm a')}
@@ -832,7 +873,13 @@ export function SchedulerBookModal({
               Cancel
             </button>
             <button type="submit" className="scheduler-book-btn primary" disabled={submitting}>
-              {submitting ? 'Booking…' : 'Book appointment'}
+              {submitting
+                ? isRescheduleBook
+                  ? 'Saving…'
+                  : 'Booking…'
+                : isRescheduleBook
+                  ? 'Reschedule appointment'
+                  : 'Book appointment'}
             </button>
           </div>
         </form>

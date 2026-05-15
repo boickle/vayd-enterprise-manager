@@ -65,7 +65,16 @@ import {
   ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
-import { clearRoutingPersistenceAfterSchedulerBook } from '../utils/routingUiSnapshot';
+import {
+  buildRoutingRescheduleIntentFromAppointment,
+  clearRoutingRescheduleIntent,
+  readRoutingRescheduleIntent,
+  writeRoutingRescheduleIntent,
+} from '../utils/routingRescheduleIntent';
+import {
+  clearRoutingPersistenceAfterSchedulerBook,
+  ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT,
+} from '../utils/routingUiSnapshot';
 import './Scheduler.css';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -1484,6 +1493,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [routingPreview, routingPreviewColumnKey]
   );
 
+  const routingPreviewIsReschedule = useMemo(
+    () =>
+      routingPreview?.rescheduleAppointmentId != null &&
+      Number.isFinite(Number(routingPreview.rescheduleAppointmentId)),
+    [routingPreview?.rescheduleAppointmentId]
+  );
+
   const rangeTitle = useMemo(() => {
     if (view === 'day') {
       const d = DateTime.fromISO(anchorDate!, { zone: PRACTICE_TZ });
@@ -1999,6 +2015,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const start = startUtc.setZone(PRACTICE_TZ);
     const end = start.plus({ minutes: mins });
     const isAdminOrSuper = rolesLower.includes('admin') || rolesLower.includes('superadmin');
+    const ri = readRoutingRescheduleIntent();
+    const rescheduleId = routingPreview.rescheduleAppointmentId;
+    const isReschedule = rescheduleId != null && Number.isFinite(Number(rescheduleId));
+    const routingDescLine = `Routing — ${String(opt.doctorName ?? 'Doctor')} ${String(opt.date)}`;
+
     setBookPrefill({
       clientId: clientIdRaw,
       clientLabel: routingPreview.clientDisplayLabel,
@@ -2006,7 +2027,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       lockClient: !isAdminOrSuper,
       disableClientSearch: true,
       preserveDurationFromSlot: true,
-      defaultDescription: `Routing — ${String(opt.doctorName ?? 'Doctor')} ${String(opt.date)}`,
+      defaultDescription: isReschedule
+        ? (ri?.description?.trim() || routingDescLine)
+        : routingDescLine,
+      defaultInstructions: ri?.instructions?.trim() || undefined,
+      rescheduleAppointmentId: isReschedule ? Number(rescheduleId) : undefined,
+      preferredPatientId: routingPreview.reschedulePatientId?.trim() || ri?.patientId,
+      providerId: ri?.primaryProviderInternalId?.trim(),
+      modalTitle: isReschedule ? 'Reschedule appointment' : undefined,
     });
     setBookSlot({ start, end });
   }, [routingPreview, rolesLower]);
@@ -2017,14 +2045,19 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, []);
 
   const handleSchedulerBooked = useCallback(() => {
+    const wasReschedule = bookPrefill?.rescheduleAppointmentId != null;
     void loadRange({ refreshDrive: true });
-    if (routingPreview) {
+    if (embedInRoutingWorkspace) {
       clearRoutingPersistenceAfterSchedulerBook();
-      clearRoutingCalendarPreview();
+      setRoutingPreview(null);
+      window.dispatchEvent(new Event(ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT));
+    } else if (routingPreview) {
+      clearRoutingPersistenceAfterSchedulerBook();
       setRoutingPreview(null);
     }
-    setToast('Appointment saved to the schedule.');
-  }, [loadRange, routingPreview]);
+    clearRoutingRescheduleIntent();
+    setToast(wasReschedule ? 'Appointment rescheduled.' : 'Appointment saved to the schedule.');
+  }, [loadRange, routingPreview, bookPrefill?.rescheduleAppointmentId, embedInRoutingWorkspace]);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -2061,6 +2094,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           case 'edit':
             setEditAppt(appt);
             return;
+          case 'reschedule': {
+            const intent = buildRoutingRescheduleIntentFromAppointment(appt);
+            if (!intent) {
+              fail('This visit cannot be rescheduled here (needs client and patient, not a block).');
+              return;
+            }
+            writeRoutingRescheduleIntent(intent);
+            if (embedInRoutingWorkspace) {
+              showToast('Reschedule: client loaded in routing. Run routing, open My Week, then confirm.');
+            } else {
+              navigate('/schedule/routing');
+            }
+            return;
+          }
           case 'addAnotherPet': {
             if (addAnotherPetMenuReady !== true) {
               fail('No additional pets available for this time.');
@@ -2252,8 +2299,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         else fail('Something went wrong.');
       }
     },
-    [loadRange, navigate, showToast, rawAppointments, addAnotherPetMenuReady]
+    [loadRange, navigate, showToast, rawAppointments, addAnotherPetMenuReady, embedInRoutingWorkspace]
   );
+
+  const contextMenuRescheduleIntent = useMemo(() => {
+    if (!contextMenu) return null;
+    return buildRoutingRescheduleIntentFromAppointment(contextMenu.appt);
+  }, [contextMenu]);
 
   const addAnotherPetMenuOpts = useMemo(() => {
     if (
@@ -2325,7 +2377,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               onClick={() => openRoutingBookForm()}
               disabled={bookSlot != null}
             >
-              Book now
+              {routingPreviewIsReschedule ? 'Reschedule now' : 'Book now'}
             </button>
           </div>
         </div>
@@ -2892,7 +2944,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                       openRoutingBookForm();
                                     }}
                                   >
-                                    Book
+                                    {routingPreviewIsReschedule ? 'Reschedule' : 'Book'}
                                   </button>
                                 </div>
                               </div>
@@ -2996,6 +3048,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           showAddAnotherPet={addAnotherPetMenuOpts.show}
           addAnotherPetDisabled={addAnotherPetMenuOpts.disabled}
           addAnotherPetTitle={addAnotherPetMenuOpts.title}
+          rescheduleDisabled={!contextMenuRescheduleIntent}
+          rescheduleDisabledTitle={
+            contextMenuRescheduleIntent
+              ? undefined
+              : 'Needs a linked client and patient. Blocks cannot be rescheduled here.'
+          }
         />
       ) : null}
 

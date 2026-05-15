@@ -2851,8 +2851,8 @@ export default function Settings() {
           <div className="settings-section">
             <h2 className="settings-section-title">Employees</h2>
             <p className="settings-section-description">
-              Add, edit, deactivate, or remove employees for your practice. Changes use the same save and upsert paths as
-              EVet import.
+              View staff for your practice. When editing is enabled (<code>VITE_ENABLE_PIMS_ENTITY_EDIT=true</code>), you
+              can add, edit, deactivate, or remove employees via the same save and upsert paths as EVet import.
             </p>
             <SettingsEmployeeDirectory
               onMessage={(msg, kind) => {

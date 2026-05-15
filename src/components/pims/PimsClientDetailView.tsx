@@ -18,6 +18,7 @@ import { fetchClientByIdStaff } from '../../api/clientsStaff';
 import { patchClientStaff, saveClients, type ClientDto } from '../../api/clientsMutations';
 import { apiBaseUrl } from '../../api/http';
 import PimsAppointmentsSection from './PimsAppointmentsSection';
+import { PIMS_ENTITY_EDIT_ENABLED } from '../../utils/pimsEntityEditing';
 import './PimsClientDetailView.css';
 
 const PIMS_CLIENT_DETAIL_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -732,6 +733,15 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
     setSaving(false);
   }, [clientId]);
 
+  useEffect(() => {
+    if (!PIMS_ENTITY_EDIT_ENABLED) {
+      setIsEditing(false);
+      setEditDraft(null);
+      setSaveError(null);
+      setSaving(false);
+    }
+  }, []);
+
   const balance = payload ? accountBalance(payload) : null;
   const phone = payload ? primaryPhone(payload) : null;
   const name = payload ? displayName(payload) : '';
@@ -792,6 +802,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
   };
 
   function beginEdit() {
+    if (!PIMS_ENTITY_EDIT_ENABLED) return;
     setSaveError(null);
     setEditDraft(payloadToEditDraft(record));
     setIsActiveDraft(record.isActive === true);
@@ -807,6 +818,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
 
   async function handleSave(e: FormEvent) {
     e.preventDefault();
+    if (!PIMS_ENTITY_EDIT_ENABLED) return;
     if (!editDraft) return;
     if (!editDraft.firstName.trim() || !editDraft.lastName.trim()) {
       setSaveError('First and last name are required.');
@@ -881,7 +893,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
             <FileText size={20} aria-hidden />
             Client record
           </h2>
-          {!isEditing ? (
+          {PIMS_ENTITY_EDIT_ENABLED && !isEditing ? (
             <button type="button" className="pims-client-detail__btn-edit" onClick={beginEdit}>
               <Pencil size={16} aria-hidden />
               Edit
@@ -893,7 +905,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
             {saveError}
           </div>
         ) : null}
-        {!isEditing ? (
+        {!PIMS_ENTITY_EDIT_ENABLED || !isEditing ? (
           <>
         <h3 className="pims-client-detail__subhead">Identity and PIMS</h3>
         <MetaDl
