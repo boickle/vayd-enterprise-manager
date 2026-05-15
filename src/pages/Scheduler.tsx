@@ -12,10 +12,12 @@ import {
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { DateTime } from 'luxon';
-import { Heart } from 'lucide-react';
+import { FilePen, Heart } from 'lucide-react';
 import {
   deleteAppointment,
+  fetchAppointmentById,
   fetchAppointmentsRange,
+  isBlockEntry,
   isFlexBlockItem,
   patchAppointment,
 } from '../api/appointments';
@@ -71,6 +73,10 @@ import {
   readRoutingRescheduleIntent,
   writeRoutingRescheduleIntent,
 } from '../utils/routingRescheduleIntent';
+import {
+  subscribePracticeCalendar,
+  type AppointmentCalendarPayload,
+} from '../utils/calendarRealtime';
 import {
   clearRoutingPersistenceAfterSchedulerBook,
   ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT,
@@ -259,20 +265,39 @@ function clientLabel(c: Appointment['client']): string {
   return parts.join(' ').trim() || '—';
 }
 
-/** Same membership source as My Week: appointment root or nested patient. */
+/**
+ * Membership for calendar cards: appointment + optional `patients[]` + client (matches room loader /
+ * range payloads; truthy flags; plan name without booleans).
+ */
 function appointmentPatientMember(appt: Appointment): {
   isMember: boolean;
   membershipName: string | null;
 } {
-  const pat = appt.patient;
-  const isMember = Boolean(appt.isMember ?? pat?.isMember);
-  const raw = appt.membershipName ?? pat?.membershipName;
-  const membershipName =
-    typeof raw === 'string' && raw.trim()
-      ? raw.trim()
-      : raw != null && String(raw).trim()
-        ? String(raw).trim()
-        : null;
+  const clin = appt.client as { isMember?: unknown; membershipName?: string | null } | undefined;
+
+  let membershipName: string | null = null;
+  let isMember = false;
+
+  const consider = (flag: unknown, raw: unknown) => {
+    if (truthyApiFlag(flag)) isMember = true;
+    const name =
+      typeof raw === 'string' && raw.trim()
+        ? raw.trim()
+        : raw != null && String(raw).trim()
+          ? String(raw).trim()
+          : null;
+    if (name) {
+      isMember = true;
+      if (!membershipName) membershipName = name;
+    }
+  };
+
+  consider(appt.isMember, appt.membershipName);
+  consider(clin?.isMember, clin?.membershipName);
+  for (const p of patientsForAppointment(appt)) {
+    consider(p.isMember, p.membershipName);
+  }
+
   return { isMember, membershipName };
 }
 
@@ -1128,6 +1153,129 @@ function isAppointmentVisible(a: Appointment): boolean {
   return true;
 }
 
+/** Calendar range vs appointment interval (both ISO UTC). */
+function appointmentOverlapsUtcRange(
+  startIso: string,
+  endIso: string,
+  rangeStartUtc: string,
+  rangeEndUtc: string
+): boolean {
+  const s = DateTime.fromISO(startIso, { zone: 'utc' }).toMillis();
+  const e = DateTime.fromISO(endIso, { zone: 'utc' }).toMillis();
+  const rs = DateTime.fromISO(rangeStartUtc, { zone: 'utc' }).toMillis();
+  const re = DateTime.fromISO(rangeEndUtc, { zone: 'utc' }).toMillis();
+  if (!Number.isFinite(s) || !Number.isFinite(e) || !Number.isFinite(rs) || !Number.isFinite(re)) return false;
+  return s < re && e > rs;
+}
+
+/** Match `confirmStatusName` (room loader / pre-appt workflow). */
+const PRE_APPT_SENT_SNIPPET = 'Pre-Appt Email Sent';
+const PRE_APPT_COMPLETE_SNIPPET = 'Client Submitted Pre-Appt form';
+
+type RoomLoaderPreApptUiStatus = 'none' | 'sent' | 'complete';
+
+function roomLoaderPreApptStatus(confirmStatusName: string | null | undefined): RoomLoaderPreApptUiStatus {
+  const s = (confirmStatusName ?? '').trim();
+  if (!s) return 'none';
+  if (s.includes(PRE_APPT_COMPLETE_SNIPPET)) return 'complete';
+  if (s.includes(PRE_APPT_SENT_SNIPPET)) return 'sent';
+  return 'none';
+}
+
+/** API may send 1 / "true" instead of boolean for block flags. */
+function truthyApiFlag(v: unknown): boolean {
+  if (v === true || v === 1) return true;
+  if (typeof v === 'string') {
+    const t = v.trim().toLowerCase();
+    return t === 'true' || t === '1' || t === 'yes';
+  }
+  return false;
+}
+
+/**
+ * Block rows from `/appointments/range` — shape varies (strict booleans vs 1, type on appointmentType vs root).
+ */
+function isCalendarBlockAppointment(a: Appointment): boolean {
+  const o = a as unknown as Record<string, unknown>;
+  const typeRoot = typeof o.type === 'string' ? o.type : undefined;
+  const key = typeof o.key === 'string' ? o.key : undefined;
+  const isB = truthyApiFlag(o.isBlock);
+  const isPB = truthyApiFlag(o.isPersonalBlock);
+  if (
+    isBlockEntry({
+      type: typeRoot,
+      isBlock: isB ? true : undefined,
+      isPersonalBlock: isPB ? true : undefined,
+      key,
+    })
+  ) {
+    return true;
+  }
+
+  if (isFlexBlockItem(a as { blockLabel?: string; title?: string })) {
+    return true;
+  }
+
+  const at = a.appointmentType;
+  const typeBlob = `${at?.prettyName ?? ''} ${at?.name ?? ''}`.trim().toLowerCase();
+  if (
+    typeBlob === 'block' ||
+    typeBlob.includes('personal block') ||
+    typeBlob.includes('flex block') ||
+    /^block[\s/]/i.test(typeBlob) ||
+    /\bblock\s*\(/.test(typeBlob)
+  ) {
+    return true;
+  }
+
+  const apptPims = (a as { pimsType?: string | null }).pimsType?.trim().toUpperCase();
+  if (apptPims === 'BLOCK' || apptPims === 'PERSONAL_BLOCK' || apptPims === 'PERSONALBLOCK') {
+    return true;
+  }
+
+  const atPims = (at as { pimsType?: string | null } | undefined)?.pimsType?.trim().toUpperCase();
+  if (atPims === 'BLOCK' || atPims === 'PERSONAL_BLOCK') {
+    return true;
+  }
+
+  return false;
+}
+
+/** Room-loader / pre-appt icon: skip blocks, "Note To Staff" type, and all-day rows. */
+function showPreApptRoomLoaderIcon(a: Appointment): boolean {
+  if (a.allDay) return false;
+  if (isCalendarBlockAppointment(a)) return false;
+  const typeLabel = [a.appointmentType?.prettyName, a.appointmentType?.name].filter(Boolean).join(' ');
+  if (typeLabel.toLowerCase().includes('note to staff')) return false;
+  return true;
+}
+
+const PRE_APPT_STATUS_COLOR: Record<RoomLoaderPreApptUiStatus, string> = {
+  none: '#dc2626',
+  sent: '#ca8a04',
+  complete: '#16a34a',
+};
+
+function SchedulerPreApptRlIcon({ confirmStatusName }: { confirmStatusName?: string | null }) {
+  const st = roomLoaderPreApptStatus(confirmStatusName);
+  const title =
+    st === 'complete'
+      ? 'Room loader / pre-appt: client submitted form (completed)'
+      : st === 'sent'
+        ? 'Room loader / pre-appt: email sent'
+        : 'Room loader / pre-appt: not sent';
+  return (
+    <span className="scheduler-preappt-rl-icon" title={title} aria-hidden>
+      <FilePen
+        size={11}
+        color={PRE_APPT_STATUS_COLOR[st]}
+        strokeWidth={2.25}
+        absoluteStrokeWidth
+      />
+    </span>
+  );
+}
+
 export default function Scheduler({ embedInRoutingWorkspace = false }: SchedulerProps) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1161,6 +1309,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [driveEtaLoading, setDriveEtaLoading] = useState(false);
   /** Bump after mutations that change route order so drive/ETA refetches (avoids tying drive load to every `rawAppointments` refresh). */
   const [driveRefreshNonce, setDriveRefreshNonce] = useState(0);
+  /** When set before a drive refresh, maps are not cleared and the drive overlay is skipped (realtime soft update). */
+  const driveSoftRefreshRef = useRef(false);
   const [bookSlot, setBookSlot] = useState<SchedulerBookSlot | null>(null);
   const [bookPrefill, setBookPrefill] = useState<SchedulerBookPrefill | null>(null);
   /** Routing → My Week: proposed slot until booked or dismissed. */
@@ -1242,7 +1392,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   /** Practice-local "now" for the current-time indicator on the grid (updates on an interval). */
   const [practiceClock, setPracticeClock] = useState(() => DateTime.now().setZone(PRACTICE_TZ));
 
-  const { doctorId: authDoctorId, role } = useAuth() as { doctorId: string | null; role?: string | string[] };
+  const { token: authToken, doctorId: authDoctorId, role } = useAuth() as {
+    token: string | null;
+    doctorId: string | null;
+    role?: string | string[];
+  };
 
   const rolesLower = useMemo(() => {
     const arr = Array.isArray(role) ? role : role != null ? [role] : [];
@@ -1539,14 +1693,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, []);
 
   const loadRange = useCallback(
-    async (opts?: { refreshDrive?: boolean }) => {
+    async (opts?: { refreshDrive?: boolean; silent?: boolean; refreshDriveSoft?: boolean }) => {
       if (providers.length === 0) {
         setRawAppointments([]);
         if (providersLoadState === 'resolved') setLoading(false);
         return;
       }
       const primaryId = resolvedPrimaryProviderId.trim() || String(providers[0].id);
-      setLoading(true);
+      if (!opts?.silent) {
+        setLoading(true);
+      }
       setError(null);
       try {
         const rows = await fetchAppointmentsRange({
@@ -1560,21 +1716,118 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           return;
         }
         setRawAppointments(rows);
-        if (opts?.refreshDrive) setDriveRefreshNonce((n) => n + 1);
+        if (opts?.refreshDriveSoft) {
+          driveSoftRefreshRef.current = true;
+          setDriveRefreshNonce((n) => n + 1);
+        } else if (opts?.refreshDrive) {
+          driveSoftRefreshRef.current = false;
+          setDriveRefreshNonce((n) => n + 1);
+        }
       } catch (e: unknown) {
         const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : 'Failed to load';
         setError(msg);
         setRawAppointments([]);
       } finally {
-        setLoading(false);
+        if (!opts?.silent) {
+          setLoading(false);
+        }
       }
     },
     [rangeUtc.startUtc, rangeUtc.endUtc, resolvedPrimaryProviderId, providers, providersLoadState]
   );
 
+  const applyRealtimeCalendarBatch = useCallback(
+    async (batch: AppointmentCalendarPayload[]) => {
+      if (providers.length === 0) return;
+
+      const primaryId = resolvedPrimaryProviderId.trim();
+      const bumpsDrive =
+        Boolean(primaryId) && showByDriveTime && (view === 'week' || view === 'day');
+
+      const bumpDriveSoft = () => {
+        if (bumpsDrive) {
+          driveSoftRefreshRef.current = true;
+          setDriveRefreshNonce((n) => n + 1);
+        }
+      };
+
+      const dels = batch.filter((p) => p.action === 'deleted');
+      const nonDels = batch.filter((p) => p.action !== 'deleted');
+
+      if (dels.length > 0) {
+        const delSet = new Set(dels.map((d) => d.appointmentId));
+        setRawAppointments((prev) => prev.filter((a) => !delSet.has(a.id)));
+      }
+
+      if (nonDels.length === 0) {
+        if (dels.length > 0) bumpDriveSoft();
+        return;
+      }
+
+      const rows = await Promise.all(
+        nonDels.map((p) => fetchAppointmentById(p.appointmentId, { practiceId: PRACTICE_ID }))
+      );
+
+      if (rows.some((r) => r == null)) {
+        await loadRange({ silent: true, refreshDriveSoft: true });
+        return;
+      }
+
+      setRawAppointments((prev) => {
+        let next = [...prev];
+        for (let i = 0; i < nonDels.length; i++) {
+          const row = rows[i]!;
+          const prov = row.primaryProvider?.id != null ? String(row.primaryProvider.id) : '';
+          if (primaryId && prov && prov !== primaryId) {
+            next = next.filter((a) => a.id !== row.id);
+            continue;
+          }
+          if (
+            !appointmentOverlapsUtcRange(
+              row.appointmentStart,
+              row.appointmentEnd,
+              rangeUtc.startUtc,
+              rangeUtc.endUtc
+            )
+          ) {
+            next = next.filter((a) => a.id !== row.id);
+            continue;
+          }
+          const idx = next.findIndex((a) => a.id === row.id);
+          if (idx === -1) next.push(row);
+          else next[idx] = row;
+        }
+        return next;
+      });
+
+      if (dels.length > 0 || nonDels.length > 0) bumpDriveSoft();
+    },
+    [
+      providers.length,
+      resolvedPrimaryProviderId,
+      showByDriveTime,
+      view,
+      rangeUtc.startUtc,
+      rangeUtc.endUtc,
+      loadRange,
+    ]
+  );
+
   useEffect(() => {
     loadRange();
   }, [loadRange]);
+
+  /** Socket.IO — merge rows locally; soft-refresh drive (no loading flash). Fallback: silent full range if GET by id fails. */
+  useEffect(() => {
+    if (!authToken?.trim()) return;
+    return subscribePracticeCalendar({
+      practiceId: PRACTICE_ID,
+      visibleProviderId: resolvedPrimaryProviderId,
+      onBatch: (payloads) => {
+        void applyRealtimeCalendarBatch(payloads);
+      },
+    });
+  }, [authToken, resolvedPrimaryProviderId, applyRealtimeCalendarBatch]);
 
   useEffect(() => {
     const canDrive =
@@ -1598,9 +1851,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     let firstDataLanded = false;
     const docId = resolvedPrimaryProviderId.trim();
 
-    setDriveIsoByApptId(new Map());
-    setDriveDayByDate(new Map());
-    setDriveEtaLoading(true);
+    const softDriveUpdate = driveSoftRefreshRef.current;
+    driveSoftRefreshRef.current = false;
+
+    if (!softDriveUpdate) {
+      setDriveIsoByApptId(new Map());
+      setDriveDayByDate(new Map());
+      setDriveEtaLoading(true);
+    }
 
     const markFirstData = () => {
       if (cancelled || firstDataLanded) return;
@@ -2724,19 +2982,22 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                         onContextMenu={(ev) => handleAppointmentContextMenu(ev, appt)}
                         title={title}
                       >
-                        {member.isMember && (
-                          <span
-                            className="scheduler-appt-member-heart"
-                            title={member.membershipName?.trim() || 'Member'}
-                            aria-hidden
-                          >
-                            <Heart size={10} fill="#dc2626" color="#dc2626" strokeWidth={1.5} />
-                          </span>
+                        {(member.isMember || showPreApptRoomLoaderIcon(appt)) && (
+                          <div className="scheduler-appt-card-icons-tr" aria-hidden>
+                            {member.isMember && (
+                              <span
+                                className="scheduler-appt-card-icon-hit"
+                                title={member.membershipName?.trim() || 'Member'}
+                              >
+                                <Heart size={10} fill="#dc2626" color="#dc2626" strokeWidth={1.5} />
+                              </span>
+                            )}
+                            {showPreApptRoomLoaderIcon(appt) && (
+                              <SchedulerPreApptRlIcon confirmStatusName={appt.confirmStatusName} />
+                            )}
+                          </div>
                         )}
-                        <span
-                          className="scheduler-all-day-span-bar-text"
-                          style={{ paddingRight: member.isMember ? 12 : undefined }}
-                        >
+                        <span className="scheduler-all-day-span-bar-text">
                           {title}
                         </span>
                       </div>
@@ -2864,14 +3125,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                               onDoubleClick={(e) => e.stopPropagation()}
                               onContextMenu={(e) => handleAppointmentContextMenu(e, appt)}
                             >
-                              {member.isMember && (
-                                <span
-                                  className="scheduler-appt-member-heart"
-                                  title={member.membershipName?.trim() || 'Member'}
-                                  aria-hidden
-                                >
-                                  <Heart size={10} fill="#dc2626" color="#dc2626" strokeWidth={1.5} />
-                                </span>
+                              {(member.isMember || showPreApptRoomLoaderIcon(appt)) && (
+                                <div className="scheduler-appt-card-icons-tr" aria-hidden>
+                                  {member.isMember && (
+                                    <span
+                                      className="scheduler-appt-card-icon-hit"
+                                      title={member.membershipName?.trim() || 'Member'}
+                                    >
+                                      <Heart size={10} fill="#dc2626" color="#dc2626" strokeWidth={1.5} />
+                                    </span>
+                                  )}
+                                  {showPreApptRoomLoaderIcon(appt) && (
+                                    <SchedulerPreApptRlIcon confirmStatusName={appt.confirmStatusName} />
+                                  )}
+                                </div>
                               )}
                               <div className="scheduler-event-time">
                                 {DateTime.fromISO(startIso, { zone: 'utc' })
@@ -2880,7 +3147,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                               </div>
                               <div
                                 className="scheduler-event-title"
-                                style={member.isMember ? { paddingRight: 12 } : undefined}
                               >
                                 {title}
                               </div>

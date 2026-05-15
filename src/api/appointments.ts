@@ -27,6 +27,26 @@ export async function fetchAppointmentsRange(params: {
   return Array.isArray(data) ? data : (data?.items ?? []);
 }
 
+/**
+ * GET /appointments/:id — full appointment row (for realtime incremental calendar updates).
+ * Optional practiceId if the API requires scoping.
+ */
+export async function fetchAppointmentById(
+  id: number | string,
+  opts?: { practiceId?: number | string }
+): Promise<Appointment | null> {
+  try {
+    const params =
+      opts?.practiceId != null ? { practiceId: String(opts.practiceId) } : undefined;
+    const { data } = await http.get<Appointment>(`/appointments/${encodeURIComponent(String(id))}`, {
+      params,
+    });
+    return data ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** POST /appointments — Vayd-native appointment (pimsType VAYD on server) */
 export type CreateAppointmentPayload = {
   practiceId: number;

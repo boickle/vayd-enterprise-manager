@@ -535,13 +535,32 @@ label.scheduler-drive-toggle:has(input:disabled) {
   white-space: nowrap;
 }
 
-.scheduler-appt-member-heart {
+/** Top-right: membership + room loader / pre-appt (pen) */
+.scheduler-appt-card-icons-tr {
   position: absolute;
   top: 1px;
-  right: 3px;
-  line-height: 0;
-  z-index: 1;
+  right: 2px;
   display: inline-flex;
+  align-items: flex-start;
+  gap: 3px;
+  z-index: 2;
+  line-height: 0;
+}
+
+.scheduler-appt-card-icon-hit {
+  display: inline-flex;
+  line-height: 0;
+}
+
+.scheduler-preappt-rl-icon {
+  display: inline-flex;
+  line-height: 0;
+  filter: drop-shadow(0 0 0.5px rgba(255, 255, 255, 0.95)) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.22));
+}
+
+.scheduler-event:has(.scheduler-appt-card-icons-tr),
+.scheduler-all-day-span-bar:has(.scheduler-appt-card-icons-tr) {
+  padding-right: 20px;
 }
 
 .scheduler-day-bodies-row {
