@@ -812,6 +812,15 @@ function SchedulerAppointmentModal({
                 fullWidth
                 value={appt.instructions?.trim() || null}
               />
+              <SchedulerModalKv
+                label="Alternate address (routing)"
+                fullWidth
+                value={
+                  appt.alternateAddress?.addressText?.trim() ? (
+                    <span className="scheduler-modal-multiline">{appt.alternateAddress.addressText}</span>
+                  ) : null
+                }
+              />
               <SchedulerModalKv label="Equipment" value={appt.equipment?.trim() || null} />
               <SchedulerModalKv label="Medications" value={appt.medications?.trim() || null} />
               <SchedulerModalKv
@@ -3326,6 +3335,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       {editAppt &&
         createPortal(
           <SchedulerEditVisitModal
+            key={editAppt.id}
             appt={editAppt}
             practiceTz={PRACTICE_TZ}
             appointmentTypes={typeList}

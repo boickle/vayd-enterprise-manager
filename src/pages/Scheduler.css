@@ -1576,6 +1576,18 @@ label.scheduler-drive-toggle:has(input:disabled) {
   color: #64748b;
 }
 
+.scheduler-edit-client-home {
+  white-space: pre-line;
+}
+
+.scheduler-edit-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748b;
+  line-height: 1.45;
+}
+
 .scheduler-edit-error {
   margin: 0 0 12px;
   padding: 10px 12px;

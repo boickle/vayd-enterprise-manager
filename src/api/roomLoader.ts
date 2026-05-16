@@ -255,6 +255,8 @@ export type Appointment = {
     windowStartLocal?: string | null;
     windowEndLocal?: string | null;
   } | null;
+  /** When set, routing uses this address instead of the client’s home (PUT /appointments/:id/alternate-address). */
+  alternateAddress?: { addressText: string } | null;
 };
 
 export type DeclinedInventoryItem = {

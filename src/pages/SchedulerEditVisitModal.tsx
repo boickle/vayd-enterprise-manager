@@ -1,7 +1,7 @@
 // Edit visit from scheduler — PATCH /appointments/:id
 import { useMemo, useState } from 'react';
 import { DateTime } from 'luxon';
-import { patchAppointment } from '../api/appointments';
+import { patchAppointment, putAppointmentAlternateAddress } from '../api/appointments';
 import type { Appointment, Patient } from '../api/roomLoader';
 import type { AppointmentType } from '../api/appointmentSettings';
 import type { Provider } from '../api/employee';
@@ -64,6 +64,9 @@ export function SchedulerEditVisitModal({
   const [isComplete, setIsComplete] = useState(appt.isComplete);
   const [startLocal, setStartLocal] = useState(() => toDatetimeLocalValue(appt.appointmentStart, practiceTz));
   const [endLocal, setEndLocal] = useState(() => toDatetimeLocalValue(appt.appointmentEnd, practiceTz));
+  const [alternateAddressText, setAlternateAddressText] = useState(
+    () => appt.alternateAddress?.addressText ?? ''
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,6 +74,18 @@ export function SchedulerEditVisitModal({
     if (patients.length === 0) return '—';
     return patients.map((p) => p.name).join(', ');
   }, [patients]);
+
+  const clientHomeSummary = useMemo(() => {
+    const c = appt.client;
+    if (!c) return null;
+    const parts = [
+      pickStr(c.address1),
+      pickStr(c.address2),
+      [pickStr(c.city), pickStr(c.state)].filter(Boolean).join(', ') || null,
+      pickStr(c.zipcode),
+    ].filter(Boolean);
+    return parts.length ? parts.join('\n') : null;
+  }, [appt.client]);
 
   async function handleSave() {
     setError(null);
@@ -90,6 +105,14 @@ export function SchedulerEditVisitModal({
       setError('Start and end date/time are required.');
       return;
     }
+    const trimmedAlt = alternateAddressText.trim();
+    if (trimmedAlt.length > 4000) {
+      setError('Alternate address must be 4000 characters or fewer.');
+      return;
+    }
+    const initialAlt = (appt.alternateAddress?.addressText ?? '').trim();
+    const alternateDirty = initialAlt !== trimmedAlt;
+
     setSaving(true);
     try {
       await patchAppointment(appt.id, {
@@ -102,6 +125,22 @@ export function SchedulerEditVisitModal({
         appointmentStart: startUtc,
         appointmentEnd: endUtc,
       });
+      if (alternateDirty) {
+        try {
+          await putAppointmentAlternateAddress(appt.id, {
+            addressText: trimmedAlt === '' ? null : trimmedAlt,
+          });
+        } catch (putErr: unknown) {
+          onSaved();
+          const ax = putErr as { response?: { data?: { message?: string | string[] } }; message?: string };
+          const m = ax?.response?.data?.message;
+          if (Array.isArray(m)) setError(`Visit saved, but alternate address failed: ${m.join(', ')}`);
+          else if (typeof m === 'string' && m.trim()) setError(`Visit saved, but alternate address failed: ${m}`);
+          else if (ax?.message) setError(`Visit saved, but alternate address failed: ${ax.message}`);
+          else setError('Visit saved, but the alternate address could not be updated. Try again.');
+          return;
+        }
+      }
       onSaved();
       onClose();
     } catch (e: unknown) {
@@ -240,6 +279,29 @@ export function SchedulerEditVisitModal({
                   value={endLocal}
                   onChange={(e) => setEndLocal(e.target.value)}
                 />
+              </label>
+
+              {clientHomeSummary ? (
+                <div className="scheduler-edit-field scheduler-edit-field--full scheduler-edit-readonly">
+                  <span>Client home address</span>
+                  <div className="scheduler-edit-client-home">{clientHomeSummary}</div>
+                </div>
+              ) : null}
+
+              <label className="scheduler-edit-field scheduler-edit-field--full">
+                <span>Alternate address (routing)</span>
+                <textarea
+                  rows={4}
+                  maxLength={4000}
+                  value={alternateAddressText}
+                  onChange={(e) => setAlternateAddressText(e.target.value)}
+                  placeholder="Leave blank to use the client's home address for routing."
+                  aria-describedby="scheduler-edit-alt-hint"
+                />
+                <p id="scheduler-edit-alt-hint" className="scheduler-edit-hint">
+                  Optional. When set, drive time and routing use this address instead of the household
+                  address. Clear the field and save to remove it ({alternateAddressText.length}/4000).
+                </p>
               </label>
             </div>
           </section>

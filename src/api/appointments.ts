@@ -78,6 +78,19 @@ export async function patchAppointment(
   return data;
 }
 
+/** PUT /appointments/:id/alternate-address — upsert or clear stored alternate (max 4000 chars). */
+export type SetAppointmentAlternateAddressDto = {
+  /** Non-empty trimmed text upserts; omit, `null`, or `""` removes the row. */
+  addressText?: string | null;
+};
+
+export async function putAppointmentAlternateAddress(
+  id: number | string,
+  body: SetAppointmentAlternateAddressDto
+): Promise<void> {
+  await http.put(`/appointments/${encodeURIComponent(String(id))}/alternate-address`, body);
+}
+
 /** DELETE /appointments/:id */
 export async function deleteAppointment(id: number | string): Promise<void> {
   await http.delete(`/appointments/${encodeURIComponent(String(id))}`);
