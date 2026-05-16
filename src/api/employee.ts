@@ -5,6 +5,11 @@ export type Provider = {
   name: string;
   email: string;
   pimsId?: string | number; // PIMS ID for API calls
+  /** When present (from `/employees/providers`), used with lastName for formal display. */
+  firstName?: string | null;
+  lastName?: string | null;
+  designation?: string | null;
+  title?: string | null;
   dailyRevenueGoal?: number | null;
   bonusRevenueGoal?: number | null;
   dailyPointGoal?: number | null;
@@ -31,16 +36,28 @@ export async function fetchPrimaryProviders(): Promise<Provider[]> {
   const { data } = await http.get('/employees/providers');
   const rows: any[] = Array.isArray(data) ? data : (data?.items ?? []);
 
-  return rows.map((r) => ({
-    id: r.id ?? r.pimsId ?? r.employeeId,
-    pimsId: r.pimsId ?? r.employee?.pimsId ?? r.id ?? r.employeeId, // Preserve pimsId for API calls
-    email: r?.email,
-    name: buildProviderName(r),
-    dailyRevenueGoal: r?.dailyRevenueGoal ?? null,
-    bonusRevenueGoal: r?.bonusRevenueGoal ?? null,
-    dailyPointGoal: r?.dailyPointGoal ?? null,
-    weeklyPointGoal: r?.weeklyPointGoal ?? null,
-  }));
+  return rows.map((r) => {
+    const emp = r.employee && typeof r.employee === 'object' ? r.employee : {};
+    const firstName = r.firstName ?? emp.firstName ?? null;
+    const lastName = r.lastName ?? emp.lastName ?? null;
+    const designation =
+      r.designation ?? r.credentials ?? emp.designation ?? emp.credentials ?? null;
+    const title = r.title ?? emp.title ?? null;
+    return {
+      id: r.id ?? r.pimsId ?? r.employeeId,
+      pimsId: r.pimsId ?? r.employee?.pimsId ?? r.id ?? r.employeeId, // Preserve pimsId for API calls
+      email: r?.email,
+      name: buildProviderName(r),
+      firstName,
+      lastName,
+      designation,
+      title,
+      dailyRevenueGoal: r?.dailyRevenueGoal ?? null,
+      bonusRevenueGoal: r?.bonusRevenueGoal ?? null,
+      dailyPointGoal: r?.dailyPointGoal ?? null,
+      weeklyPointGoal: r?.weeklyPointGoal ?? null,
+    };
+  });
 }
 
 /**

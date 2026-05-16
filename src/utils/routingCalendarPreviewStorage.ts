@@ -2,6 +2,9 @@
  * Session payload when Routing → "My Week" opens the practice calendar with a proposed slot.
  * Read by Scheduler; written by Routing.
  */
+/** Same id on practice `Appointment` rows and doctor-day synthetic visits so drive ETA maps line up. */
+export const SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID = -0x7eedf00d;
+
 export const ROUTING_CALENDAR_PREVIEW_STORAGE_KEY = 'vayd:routing-calendar-preview';
 
 /** Fired on `window` after `writeRoutingCalendarPreview` when the practice calendar is embedded beside Routing. */

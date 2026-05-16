@@ -319,17 +319,12 @@ export default function DoctorDay({
   const [startDepotAddr, setStartDepotAddr] = useState<string | null>(null);
   const [endDepotAddr, setEndDepotAddr] = useState<string | null>(null);
 
-  /* ---------- Depot reverse geocode ---------- */
+  /* ---------- End depot reverse geocode (start office town comes from doctor-day startDepotTown) ---------- */
   useEffect(() => {
     let on = true;
     (async () => {
-      setStartDepotAddr(null);
       setEndDepotAddr(null);
       try {
-        if (startDepot) {
-          const addr = await reverseGeocode(startDepot.lat, startDepot.lon);
-          if (on) setStartDepotAddr(addr);
-        }
         if (endDepot) {
           const addr = await reverseGeocode(endDepot.lat, endDepot.lon);
           if (on) setEndDepotAddr(addr);
@@ -341,7 +336,7 @@ export default function DoctorDay({
     return () => {
       on = false;
     };
-  }, [startDepot, endDepot]);
+  }, [endDepot]);
 
   /* ---------- Load providers ---------- */
   useEffect(() => {
@@ -477,6 +472,7 @@ export default function DoctorDay({
         setAppts(finalAppts);
         setStartDepot(resp.startDepot ?? null);
         setEndDepot(resp.endDepot ?? null);
+        setStartDepotAddr(str(resp, 'startDepotTown')?.trim() || null);
         setPracticeTimeZone(resp.timezone);
 
         const schedStart =

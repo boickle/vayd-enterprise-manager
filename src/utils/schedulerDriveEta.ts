@@ -8,12 +8,19 @@ import {
   clientDisplayName,
   isBlockEntry,
   blockDisplayLabel,
+  miniZoneFromPayload,
   type DoctorDayAppt,
+  type DoctorDayPatientPrimaryProvider,
   type DoctorDayResponse,
+  type MiniZone,
 } from '../api/appointments';
 import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import type { DayData } from '../pages/MyWeek';
 import { mergeEtaFetchIntoDayData, type DayBundleIn } from './schedulerEtaMerge';
+import {
+  SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID,
+  type RoutingCalendarPreviewPayloadV1,
+} from './routingCalendarPreviewStorage';
 
 const str = (o: unknown, k: string) =>
   typeof (o as Record<string, unknown>)?.[k] === 'string' ? ((o as Record<string, unknown>)[k] as string) : undefined;
@@ -44,6 +51,88 @@ function keyVariantsForKeyString(s: string): string[] {
   const k6 = keyFor(lat, lon, 6) + suffix;
   const k5 = keyFor(lat, lon, 5) + suffix;
   return [s, k6, k5].filter((x, i, arr) => arr.indexOf(x) === i);
+}
+
+function splitAddressForRoutingDoctorDay(addr?: string) {
+  if (!addr) return {};
+  const [line, rest = ''] = addr.split(',').map((s) => s.trim());
+  const m = rest.match(/^([^,]+)\s+([A-Z]{2})(?:\s+(\d{5}(?:-\d{4})?))?$/i);
+  return m
+    ? { address1: line, city: m[1], state: m[2].toUpperCase(), zip: m[3] }
+    : { address1: addr };
+}
+
+/** Doctor-day row for routing preview — aligned with `MyWeek` virtual injection + `/routing/eta` candidateSlot. */
+function buildDoctorDaySyntheticFromRoutingPreview(
+  preview: RoutingCalendarPreviewPayloadV1
+): DoctorDayAppt | null {
+  const opt = preview.option;
+  const startRaw = String(opt.suggestedStartIso ?? '').trim();
+  if (!startRaw) return null;
+  const start = DateTime.fromISO(startRaw, { zone: 'utc' });
+  if (!start.isValid) return null;
+  const mins = Math.max(1, Math.floor(preview.serviceMinutes) || 30);
+  const end = start.plus({ minutes: mins });
+  const meta = preview.newApptMeta ?? {};
+  const parts = splitAddressForRoutingDoctorDay(typeof meta.address === 'string' ? meta.address : undefined);
+  const clientName =
+    preview.clientDisplayLabel?.trim() ||
+    (typeof opt.clientName === 'string' ? opt.clientName : null) ||
+    'New Appointment';
+
+  const synthetic: DoctorDayAppt = {
+    id: SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID,
+    clientName,
+    lat: Number.isFinite(meta.lat as number) ? meta.lat : undefined,
+    lon: Number.isFinite(meta.lon as number) ? meta.lon : undefined,
+    address1: (parts.address1 ?? (typeof meta.address === 'string' ? meta.address : '')) || '',
+    city: parts.city ?? meta.city,
+    state: parts.state ?? meta.state,
+    zip: parts.zip ?? meta.zip,
+    startIso: start.toISO()!,
+    endIso: end.toISO()!,
+  };
+  const cz = miniZoneFromPayload((opt as { clientZone?: unknown }).clientZone);
+  const ez = miniZoneFromPayload((opt as { effectiveZone?: unknown }).effectiveZone);
+  if (cz) synthetic.clientZone = cz;
+  if (ez) synthetic.effectiveZone = ez;
+  const aw = (opt as { arrivalWindow?: { windowStartIso?: string; windowEndIso?: string } }).arrivalWindow;
+  if (aw?.windowStartIso && aw?.windowEndIso) {
+    synthetic.effectiveWindow = { startIso: aw.windowStartIso, endIso: aw.windowEndIso };
+  }
+  (synthetic as { isPreview?: boolean }).isPreview = true;
+  const rawIns = opt.insertionIndex;
+  const ins =
+    typeof rawIns === 'number' && Number.isFinite(rawIns)
+      ? Math.floor(rawIns)
+      : rawIns != null
+        ? Math.floor(Number(rawIns)) || 0
+        : 0;
+  const pd = (opt as { positionInDay?: unknown }).positionInDay;
+  (synthetic as { positionInDay?: number }).positionInDay =
+    typeof pd === 'number' && Number.isFinite(pd)
+      ? Math.floor(pd)
+      : pd != null
+        ? Math.floor(Number(pd)) || ins + 1
+        : ins + 1;
+  return synthetic;
+}
+
+function injectDoctorDayAppointmentsRoutingPreview(
+  appts: DoctorDayAppt[],
+  preview: RoutingCalendarPreviewPayloadV1
+): DoctorDayAppt[] {
+  const syn = buildDoctorDaySyntheticFromRoutingPreview(preview);
+  if (!syn) return appts;
+  const rawIns = preview.option.insertionIndex;
+  const ins =
+    typeof rawIns === 'number' && Number.isFinite(rawIns)
+      ? Math.floor(rawIns)
+      : rawIns != null
+        ? Math.floor(Number(rawIns)) || 0
+        : 0;
+  const insertionIndex = Math.max(0, Math.min(appts.length, ins));
+  return [...appts.slice(0, insertionIndex), syn, ...appts.slice(insertionIndex)];
 }
 
 function normalizeAddressString(s?: string): string | null {
@@ -243,7 +332,18 @@ function buildHouseholdsWithSourceIds(appts: DoctorDayAppt[]): SchedulerDriveHou
 
 export type DriveIsoPair = { startIso: string; endIso: string };
 
-async function fetchEtaForOneDay(day: DayBundleIn, doctorId: string): Promise<DayData> {
+/** Optional routing calendar preview — doctor-day + `/routing/eta` match `MyWeek` virtual day. */
+export type SchedulerDriveRoutingPreviewOptions = {
+  routingPreview?: RoutingCalendarPreviewPayloadV1 | null;
+  /** Practice-local YYYY-MM-DD for the preview column (must match `day.date` to apply). */
+  previewPracticeDateKey?: string | null;
+};
+
+async function fetchEtaForOneDay(
+  day: DayBundleIn,
+  doctorId: string,
+  routingOpts?: SchedulerDriveRoutingPreviewOptions | null
+): Promise<DayData> {
   if (day.households.length === 0) {
     return {
       date: day.date,
@@ -252,15 +352,90 @@ async function fetchEtaForOneDay(day: DayBundleIn, doctorId: string): Promise<Da
       timeline: [],
       startDepot: day.startDepot,
       endDepot: day.endDepot,
+      startDepotTown: day.startDepotTown?.trim() || null,
       startDepotTime: day.startDepotTime,
       endDepotTime: day.endDepotTime,
     };
   }
 
+  const hasVirtual =
+    routingOpts?.routingPreview &&
+    routingOpts.previewPracticeDateKey === day.date &&
+    day.households.some((h: { isPreview?: boolean }) => h.isPreview);
+
+  let householdsForPayload = day.households;
+  let candidateExtras: Record<string, unknown> = {};
+
+  if (hasVirtual && routingOpts?.routingPreview) {
+    const rp = routingOpts.routingPreview;
+    const opt = rp.option as Record<string, unknown>;
+    const rawIns = opt.insertionIndex;
+    const insertionIndex = Math.max(
+      0,
+      Math.min(
+        day.households.length - 1,
+        typeof rawIns === 'number' && Number.isFinite(rawIns)
+          ? Math.floor(rawIns)
+          : rawIns != null
+            ? Math.floor(Number(rawIns)) || day.households.length - 1
+            : day.households.length - 1
+      )
+    );
+    const existing = day.households.filter((h: { isPreview?: boolean }) => !h.isPreview);
+    const virtualH = day.households.find((h: { isPreview?: boolean }) => h.isPreview);
+    const sortedExisting = [...existing].sort(
+      (a: { firstApptIndex?: number }, b: { firstApptIndex?: number }) =>
+        (a.firstApptIndex ?? 999) - (b.firstApptIndex ?? 999)
+    );
+    householdsForPayload =
+      virtualH != null
+        ? [...sortedExisting.slice(0, insertionIndex), virtualH, ...sortedExisting.slice(insertionIndex)]
+        : sortedExisting;
+
+    const lat = rp.newApptMeta?.lat;
+    const lon = rp.newApptMeta?.lon;
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      const pd = opt.positionInDay;
+      const positionInDay =
+        typeof pd === 'number' && Number.isFinite(pd)
+          ? Math.floor(pd)
+          : pd != null
+            ? Math.floor(Number(pd)) || insertionIndex + 1
+            : insertionIndex + 1;
+      const aw = opt.arrivalWindow as { windowStartIso?: string; windowEndIso?: string } | undefined;
+      const vr = opt.validationReturnSec;
+      const overrunSeconds =
+        typeof vr === 'number' && Number.isFinite(vr)
+          ? vr
+          : vr != null && Number.isFinite(Number(vr))
+            ? Number(vr)
+            : undefined;
+      candidateExtras = {
+        candidateSlot: {
+          insertionIndex,
+          positionInDay,
+          suggestedStartIso: String(opt.suggestedStartIso ?? ''),
+          lat,
+          lon,
+          serviceMinutes: Math.max(1, Math.floor(rp.serviceMinutes) || 30),
+          ...(overrunSeconds !== undefined ? { overrunSeconds } : {}),
+          ...(aw?.windowStartIso && aw?.windowEndIso
+            ? {
+                arrivalWindow: {
+                  windowStartIso: aw.windowStartIso,
+                  windowEndIso: aw.windowEndIso,
+                },
+              }
+            : {}),
+        },
+      };
+    }
+  }
+
   const payload = {
     doctorId,
     date: day.date,
-    households: day.households.map((h) => ({
+    households: householdsForPayload.map((h) => ({
       key: h.key,
       lat: h.lat,
       lon: h.lon,
@@ -279,6 +454,7 @@ async function fetchEtaForOneDay(day: DayBundleIn, doctorId: string): Promise<Da
     startDepot: day.startDepot ? { lat: day.startDepot.lat, lon: day.startDepot.lon } : undefined,
     endDepot: day.endDepot ? { lat: day.endDepot.lat, lon: day.endDepot.lon } : undefined,
     useTraffic: false,
+    ...candidateExtras,
   };
 
   const result: any = await fetchEtas(payload as any);
@@ -321,6 +497,7 @@ function scheduleOnlyDayData(dayIn: DayBundleIn): DayData {
     })),
     startDepot: dayIn.startDepot,
     endDepot: dayIn.endDepot,
+    startDepotTown: dayIn.startDepotTown?.trim() || null,
     startDepotTime: dayIn.startDepotTime,
     endDepotTime: dayIn.endDepotTime,
   };
@@ -336,42 +513,134 @@ export function schedulerDriveScheduleOnlyFromBundle(dayIn: DayBundleIn): Schedu
   return { date: dayIn.date, dayData, isoPairs };
 }
 
-/** GET doctor-day + households only (no `/routing/eta`). */
-export async function fetchSchedulerDoctorDayBundle(date: string, doctorId: string): Promise<DayBundleIn | null> {
+/** Per-appointment membership from GET /appointments/doctor (not always present on /appointments/range). */
+export type SchedulerDoctorDayMembership = {
+  isMember: boolean;
+  membershipName: string | null;
+};
+
+export type SchedulerDoctorDayAppointmentZones = {
+  clientZone: MiniZone;
+  effectiveZone: MiniZone;
+};
+
+function zonesMapFromDoctorDayAppointments(
+  appts: DoctorDayAppt[]
+): Map<string, SchedulerDoctorDayAppointmentZones> {
+  const out = new Map<string, SchedulerDoctorDayAppointmentZones>();
+  for (const a of appts) {
+    if (isBlockEntry(a)) continue;
+    const id = a.id != null ? String(a.id) : '';
+    if (!id) continue;
+    const clientZone = miniZoneFromPayload((a as { clientZone?: unknown }).clientZone);
+    const effectiveZone = miniZoneFromPayload((a as { effectiveZone?: unknown }).effectiveZone);
+    if (!clientZone && !effectiveZone) continue;
+    out.set(String(id), { clientZone, effectiveZone });
+  }
+  return out;
+}
+
+export type SchedulerDoctorDayBundleFetch = {
+  bundle: DayBundleIn | null;
+  membershipByApptId: Map<string, SchedulerDoctorDayMembership>;
+  zonesByApptId: Map<string, SchedulerDoctorDayAppointmentZones>;
+  /** Chart PCP from GET /appointments/doctor (null = explicitly none). */
+  patientPrimaryProviderByApptId: Map<string, DoctorDayPatientPrimaryProvider | null>;
+};
+
+function patientPrimaryProviderMapFromDoctorDayAppointments(
+  appts: DoctorDayAppt[]
+): Map<string, DoctorDayPatientPrimaryProvider | null> {
+  const out = new Map<string, DoctorDayPatientPrimaryProvider | null>();
+  for (const a of appts) {
+    if (isBlockEntry(a)) continue;
+    const sid = a.id != null ? String(a.id) : '';
+    if (!sid) continue;
+    out.set(sid, a.patientPrimaryProvider ?? null);
+  }
+  return out;
+}
+
+function membershipMapFromDoctorDayAppointments(
+  appts: DoctorDayAppt[]
+): Map<string, SchedulerDoctorDayMembership> {
+  const out = new Map<string, SchedulerDoctorDayMembership>();
+  for (const a of appts) {
+    if (isBlockEntry(a)) continue;
+    const id = a.id != null ? String(a.id) : '';
+    if (!id) continue;
+    const rawMn = a.membershipName;
+    const membershipName =
+      typeof rawMn === 'string' && rawMn.trim()
+        ? rawMn.trim()
+        : rawMn != null && String(rawMn).trim()
+          ? String(rawMn).trim()
+          : null;
+    out.set(id, { isMember: Boolean(a.isMember), membershipName });
+  }
+  return out;
+}
+
+/** GET doctor-day + households (no `/routing/eta`) plus membership keyed by appointment id. */
+export async function fetchSchedulerDoctorDayBundle(
+  date: string,
+  doctorId: string,
+  routingPreviewOpts?: SchedulerDriveRoutingPreviewOptions | null
+): Promise<SchedulerDoctorDayBundleFetch> {
+  const empty = (): Map<string, SchedulerDoctorDayMembership> => new Map();
+  const emptyZones = (): Map<string, SchedulerDoctorDayAppointmentZones> => new Map();
+  const emptyPcp = (): Map<string, DoctorDayPatientPrimaryProvider | null> => new Map();
   try {
     const resp: DoctorDayResponse = await fetchDoctorDay(date, doctorId);
-    const appts: DoctorDayAppt[] = resp?.appointments ?? [];
+    let appts: DoctorDayAppt[] = resp?.appointments ?? [];
+    const membershipByApptId = membershipMapFromDoctorDayAppointments(appts);
+    const zonesByApptId = zonesMapFromDoctorDayAppointments(appts);
+    const patientPrimaryProviderByApptId = patientPrimaryProviderMapFromDoctorDayAppointments(appts);
+
+    if (
+      routingPreviewOpts?.routingPreview &&
+      routingPreviewOpts.previewPracticeDateKey &&
+      routingPreviewOpts.previewPracticeDateKey === date
+    ) {
+      appts = injectDoctorDayAppointmentsRoutingPreview(appts, routingPreviewOpts.routingPreview);
+    }
+
     const households = buildHouseholdsWithSourceIds(appts);
-    if (households.length === 0) return null;
+    if (households.length === 0) {
+      return { bundle: null, membershipByApptId, zonesByApptId, patientPrimaryProviderByApptId };
+    }
 
     const tz =
       typeof (resp as any)?.timezone === 'string' && (resp as any).timezone.trim()
         ? String((resp as any).timezone).trim()
         : 'America/New_York';
 
-    return {
+    const bundle: DayBundleIn = {
       date,
       timezone: tz,
       households,
       timeline: households.map(() => ({ eta: null, etd: null })),
       startDepot: resp?.startDepot ?? null,
       endDepot: resp?.endDepot ?? null,
+      startDepotTown: str(resp, 'startDepotTown')?.trim() || null,
       startDepotTime: str(resp as any, 'startDepotTime') ?? null,
       endDepotTime: str(resp as any, 'endDepotTime') ?? null,
     };
+    return { bundle, membershipByApptId, zonesByApptId, patientPrimaryProviderByApptId };
   } catch {
-    return null;
+    return { bundle: null, membershipByApptId: empty(), zonesByApptId: emptyZones(), patientPrimaryProviderByApptId: emptyPcp() };
   }
 }
 
 /** Merge `/routing/eta` into a doctor-day bundle (drive + arrive/leave). */
 export async function fetchSchedulerDriveEtasForDayBundle(
   dayIn: DayBundleIn,
-  doctorId: string
+  doctorId: string,
+  routingPreviewOpts?: SchedulerDriveRoutingPreviewOptions | null
 ): Promise<SchedulerDriveDayResult> {
   let dayData: DayData;
   try {
-    dayData = await fetchEtaForOneDay(dayIn, doctorId);
+    dayData = await fetchEtaForOneDay(dayIn, doctorId, routingPreviewOpts);
   } catch {
     dayData = scheduleOnlyDayData(dayIn);
   }
@@ -387,11 +656,12 @@ export async function fetchSchedulerDriveEtasForDayBundle(
  */
 export async function fetchSchedulerDriveContextForDate(
   date: string,
-  doctorId: string
+  doctorId: string,
+  routingPreviewOpts?: SchedulerDriveRoutingPreviewOptions | null
 ): Promise<SchedulerDriveDayResult | null> {
-  const dayIn = await fetchSchedulerDoctorDayBundle(date, doctorId);
-  if (!dayIn) return null;
-  return fetchSchedulerDriveEtasForDayBundle(dayIn, doctorId);
+  const { bundle } = await fetchSchedulerDoctorDayBundle(date, doctorId, routingPreviewOpts);
+  if (!bundle) return null;
+  return fetchSchedulerDriveEtasForDayBundle(bundle, doctorId, routingPreviewOpts);
 }
 
 /**

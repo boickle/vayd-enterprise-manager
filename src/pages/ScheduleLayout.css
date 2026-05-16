@@ -261,46 +261,12 @@
   overflow: hidden;
 }
 
-.schedule-app__tabs {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 18px 10px;
-  background: #fff;
-  border-bottom: 1px solid #e2e8f0;
-  flex-shrink: 0;
-}
-
-.schedule-app__tabs-start {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  flex: 1;
-  min-width: 0;
-  align-items: center;
-}
-
-.schedule-app__tabs-end {
-  flex-shrink: 0;
-  margin-left: auto;
-}
-
-.schedule-app__tasks-chip {
-  border: 1px solid #cbd5e1;
-  background: #f8fafc;
-  border-radius: 999px;
-  padding: 7px 14px;
-  font-size: 13px;
-  font-weight: 700;
-  color: #334155;
-  cursor: pointer;
-  font: inherit;
-}
-
-.schedule-app__tasks-chip:hover {
-  background: #e2e8f0;
-  border-color: #94a3b8;
+/**
+ * Practice calendar week/day uses `position: sticky` on chrome inside the outlet.
+ * `overflow: hidden` on this column would clip the sticky scroll chain so headers never pin.
+ */
+.schedule-app__main--scheduler-sticky-outlet {
+  overflow: visible;
 }
 
 .schedule-app__tab {
@@ -386,6 +352,18 @@
   overflow: hidden;
 }
 
+/** Home + practice scheduler: allow vertical scroll so filters / “Go to date” scroll off while the grid uses natural height. */
+.schedule-app__outlet--flush.schedule-app__outlet--flush-scroll-y {
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/** Practice calendar: keep sticky chrome relative to this scrollport while allowing a wide week grid to pan horizontally. */
+.schedule-app__outlet--flush.schedule-app__outlet--flush-scroll-y.schedule-app__outlet--practice-sticky-x {
+  overflow-x: auto;
+}
+
 /** Routing + calendar split fills the schedule main column */
 .schedule-app__outlet--routing-split {
   display: flex;
@@ -396,90 +374,6 @@
   flex: 1;
   min-height: 0;
   min-width: 0;
-}
-
-/* Slide-out tasks */
-.schedule-tasks-drawer-root {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-}
-
-.schedule-tasks-drawer-backdrop {
-  position: absolute;
-  inset: 0;
-  border: none;
-  padding: 0;
-  margin: 0;
-  background: rgba(15, 23, 42, 0.35);
-  cursor: pointer;
-  pointer-events: auto;
-}
-
-.schedule-tasks-drawer {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: min(420px, calc(100vw - 16px));
-  height: 100%;
-  max-height: 100dvh;
-  background: #fff;
-  box-shadow: -12px 0 40px rgba(15, 23, 42, 0.14);
-  display: flex;
-  flex-direction: column;
-  pointer-events: auto;
-  animation: schedule-tasks-drawer-in 0.22s ease;
-}
-
-@keyframes schedule-tasks-drawer-in {
-  from {
-    transform: translateX(100%);
-    opacity: 0.6;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
-}
-
-.schedule-tasks-drawer-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 16px;
-  border-bottom: 1px solid #e2e8f0;
-  flex-shrink: 0;
-}
-
-.schedule-tasks-drawer-title {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 700;
-  color: #0f172a;
-}
-
-.schedule-tasks-drawer-close {
-  border: none;
-  background: transparent;
-  font-size: 26px;
-  line-height: 1;
-  color: #64748b;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 8px;
-}
-
-.schedule-tasks-drawer-close:hover {
-  background: #f1f5f9;
-  color: #0f172a;
-}
-
-.schedule-tasks-drawer-body {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 12px 14px 20px;
 }
 
 @media (max-width: 900px) {

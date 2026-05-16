@@ -111,7 +111,7 @@
   flex: 1;
   min-width: 0;
   line-height: 1.35;
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .routing-prefs-check--inline {
@@ -138,14 +138,464 @@
 .routing-results-options {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
+  min-width: 0;
+  align-items: flex-start;
+}
+
+@media (min-width: 768px) {
+  .routing-results-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+    gap: 12px;
+    justify-items: start;
+  }
+}
+
+/* ----- Get Best Route: mobile-first booking flow ----- */
+
+.routing-route-form-card.card {
+  padding: 16px;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+}
+
+.routing-route-form-title {
+  margin: 0 0 10px 0;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.routing-route-form-stack.routing-form-stack {
+  gap: 10px;
+}
+
+.routing-route-form-card label > .label {
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+/* One size for all field values in this form (text, date, select, number). */
+.routing-route-form-card.card .routing-form-stack input.input,
+.routing-route-form-card.card .routing-form-stack select.input,
+.routing-route-form-card.card .routing-form-stack input.date,
+.routing-route-form-card.card .routing-form-stack textarea.input {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.routing-route-hint {
+  font-size: 11px;
+  margin-top: 4px;
+  line-height: 1.35;
+}
+
+.routing-route-hint--tight {
+  margin-top: 2px;
+}
+
+.routing-date-range-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
-@media (min-width: 900px) {
-  .routing-results-options {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
-    gap: 14px;
+.routing-date-input {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.routing-date-range-sep {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.routing-calculate-time-field .routing-input-compact {
+  padding: 5px 8px;
+  min-height: 38px;
+  border-radius: 10px;
+  box-sizing: border-box;
+}
+
+.routing-visit-field > .label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.routing-calculate-time-box-legend {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  margin: 0 0 6px;
+  line-height: 1.3;
+}
+
+.routing-calculate-time-box {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px 10px;
+  margin-bottom: 6px;
+  background: var(--card);
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.routing-calculate-time-box-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.routing-calculate-time-type-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 140px;
+  cursor: pointer;
+}
+
+.routing-calculate-time-type-stack .routing-visit-type-select {
+  width: 100%;
+  align-self: stretch;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.routing-calculate-time-minutes-row {
+  min-width: 0;
+}
+
+.routing-calculate-time-minutes-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.routing-calculate-time-minutes-heading {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.routing-calculate-time-field .routing-mins-line-input {
+  width: 100%;
+  max-width: 7rem;
+  min-width: 0;
+  box-sizing: border-box;
+  text-align: left;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+@keyframes routingMinutesFlash {
+  0% {
+    background-color: #ffffff;
+    border-color: var(--border);
   }
+  12% {
+    background-color: color-mix(in srgb, var(--accent) 26%, #ffffff);
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  }
+  55% {
+    background-color: color-mix(in srgb, var(--accent) 12%, #ffffff);
+    border-color: var(--border);
+  }
+  100% {
+    background-color: #ffffff;
+    border-color: var(--border);
+  }
+}
+
+.routing-calculate-time-field .routing-mins-line-input.routing-minutes-flash--active {
+  animation: routingMinutesFlash 0.75s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .routing-calculate-time-field .routing-mins-line-input.routing-minutes-flash--active {
+    animation: routingMinutesFlash 0.35s ease-out;
+  }
+}
+
+.routing-visit-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.routing-visit-stack-label {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+/* Narrow pets field; override global `.input { width: 100% }` */
+.routing-calculate-time-field .routing-pet-input {
+  width: 3.25rem;
+  min-width: 3.25rem;
+  max-width: 3.25rem;
+  box-sizing: border-box;
+  text-align: center;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.routing-address-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.routing-address-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.routing-address-inline-ok {
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1;
+  color: #047857;
+  font-weight: 700;
+  padding: 8px 4px;
+  min-width: 28px;
+  text-align: center;
+}
+
+.routing-client-alert-banner {
+  padding: 8px 10px;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #7c2d12;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.routing-client-alert-banner strong {
+  font-weight: 700;
+}
+
+.routing-prefs-accordion {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fafbfc;
+  min-width: 0;
+}
+
+.routing-prefs-accordion-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 40px;
+  padding: 8px 10px;
+  margin: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  border-radius: 12px;
+  box-sizing: border-box;
+}
+
+.routing-prefs-accordion-trigger:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.routing-prefs-accordion-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.routing-prefs-accordion-chevron {
+  font-size: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.routing-prefs-accordion-panel {
+  border-top: 1px solid var(--border);
+}
+
+.routing-prefs-accordion-panel[hidden] {
+  display: none;
+}
+
+.routing-prefs-accordion-panel-inner {
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.routing-prefs-block {
+  min-width: 0;
+}
+
+.routing-prefs-block--subtle {
+  opacity: 0.95;
+}
+
+.routing-field-label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.routing-radio-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.routing-radio-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  box-sizing: border-box;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.routing-radio-row input[type='radio'] {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.routing-radio-row span {
+  flex: 1;
+  min-width: 0;
+}
+
+.routing-radio-row--active {
+  border-color: var(--border);
+  background: #fff;
+}
+
+.routing-radio-row--caution.routing-radio-row--active {
+  border-color: #f5c6cb;
+  background: #f8d7da;
+  color: #721c24;
+}
+
+.routing-weekday-chips {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+
+.routing-weekday-chip {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 2px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: inherit;
+  box-sizing: border-box;
+}
+
+.routing-weekday-chip:hover {
+  background: #f6fbf9;
+}
+
+.routing-weekday-chip--selected {
+  border-color: #1fbf9b;
+  background: #ecfdf5;
+  color: #047857;
+  font-weight: 600;
+}
+
+.routing-force-earliest {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.35;
+  min-height: 38px;
+  padding: 4px 0;
+  box-sizing: border-box;
+}
+
+.routing-force-earliest input[type='checkbox'] {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+}
+
+.routing-force-earliest span {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.routing-submit-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.routing-submit-btn {
+  min-height: 40px;
+  padding-left: 16px;
+  padding-right: 16px;
+  font-size: 13px;
+  font-weight: 600;
+  width: 100%;
+}
+
+@media (min-width: 420px) {
+  .routing-submit-btn {
+    width: auto;
+  }
+}
+
+/** Routing result / candidate cards: shrink inherited typography ~25% vs surrounding UI */
+.routing-result-option-card.card {
+  width: 100%;
+  max-width: min(100%, 320px);
+  box-sizing: border-box;
+  padding-left: 14px;
+  padding-right: 14px;
+  padding-bottom: 14px;
+  font-size: 75%;
 }

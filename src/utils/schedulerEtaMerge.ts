@@ -31,6 +31,8 @@ export type DayBundleIn = {
   timeline: { eta?: string | null; etd?: string | null }[];
   startDepot: { lat: number; lon: number } | null;
   endDepot: { lat: number; lon: number } | null;
+  /** From GET /appointments/doctor (top-level). */
+  startDepotTown?: string | null;
   startDepotTime: string | null;
   endDepotTime: string | null;
 };
@@ -231,6 +233,7 @@ export function mergeEtaFetchIntoDayData(day: DayBundleIn, result: any): DayData
     timeline: tl,
     startDepot: day.startDepot,
     endDepot: day.endDepot,
+    startDepotTown: day.startDepotTown?.trim() || null,
     startDepotTime: day.startDepotTime,
     endDepotTime: day.endDepotTime,
     driveSeconds: driveSeconds ?? undefined,

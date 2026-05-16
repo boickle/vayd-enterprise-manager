@@ -2,9 +2,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { createRoot } from 'react-dom/client';
-import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf';
 import { DateTime } from 'luxon';
 import type { DoctorDayProps } from './DoctorDay';
 import {
@@ -47,11 +44,8 @@ import {
   isoFromSecondsSincePracticeMidnight,
 } from '../utils/practiceTimezone';
 import './DoctorDay.css';
-import {
-  DoctorDayVisualPdfDocument,
-  type DoctorDayVisualPdfAppointmentPayload,
-  type DoctorDayVisualPdfRow,
-} from './DoctorDayVisualPdf';
+import type { DoctorDayVisualPdfAppointmentPayload, DoctorDayVisualPdfRow } from './DoctorDayVisualPdf';
+import { exportMyDayVisualPdf } from '../utils/myDayVisualPdfExport';
 
 // ===== Vertical scale: match My Week column density =====
 const PPM = 1.1;
@@ -745,17 +739,12 @@ export default function DoctorDayVisual({
     }
   }, [providers, userEmail, userDoctorId, initialDoctorId]);
 
-  /* ---------- Depot reverse geocode ---------- */
+  /* ---------- End depot reverse geocode (start office town comes from doctor-day startDepotTown) ---------- */
   useEffect(() => {
     let on = true;
     (async () => {
-      setStartDepotAddr(null);
       setEndDepotAddr(null);
       try {
-        if (startDepot) {
-          const addr = await reverseGeocode(startDepot.lat, startDepot.lon);
-          if (on) setStartDepotAddr(addr);
-        }
         if (endDepot) {
           const addr = await reverseGeocode(endDepot.lat, endDepot.lon);
           if (on) setEndDepotAddr(addr);
@@ -767,7 +756,7 @@ export default function DoctorDayVisual({
     return () => {
       on = false;
     };
-  }, [startDepot, endDepot]);
+  }, [endDepot]);
 
   /* ------------ load day (with optional preview injection) ------------ */
   useEffect(() => {
@@ -818,6 +807,7 @@ export default function DoctorDayVisual({
         setAppts(final);
         setStartDepot(resp.startDepot ?? null);
         setEndDepot(resp.endDepot ?? null);
+        setStartDepotAddr(str(resp, 'startDepotTown')?.trim() || null);
         setPracticeTimeZone(resp.timezone);
 
         const sdt = str(resp as any, 'startDepotTime');
@@ -2615,13 +2605,6 @@ export default function DoctorDayVisual({
     if (loading || pdfExporting) return;
     if (!selectedDoctorId?.trim()) return;
     setPdfExporting(true);
-    const host = document.createElement('div');
-    host.setAttribute('data-myday-visual-pdf', '1');
-    // html2canvas does not reliably paint near-zero opacity or unlaid-out hosts; keep off-screen but fully opaque.
-    host.style.cssText =
-      'position:fixed;left:-16000px;top:0;width:1240px;opacity:1;pointer-events:none;z-index:-1;background:#fff;';
-    document.body.appendChild(host);
-    const root = createRoot(host);
     try {
       const doctorName =
         providers.find((p) => String(p.id) === selectedDoctorId)?.name ?? 'Provider';
@@ -2659,86 +2642,19 @@ export default function DoctorDayVisual({
         }
       }
 
-      root.render(
-        <DoctorDayVisualPdfDocument
-          doctorName={doctorName}
-          dateLabel={dateLabel}
-          showByDriveTime={showByDriveTime}
-          practiceTimeZone={practiceTimeZone}
-          stats={stats}
-          rows={pdfRows}
-        />
-      );
-
-      await document.fonts?.ready?.catch(() => undefined);
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-      });
-      await new Promise<void>((r) => setTimeout(r, 80));
-
-      const captureEl = (host.firstElementChild as HTMLElement | null) ?? host;
-      const headerEl = captureEl.querySelector<HTMLElement>('[data-myday-pdf-header]');
-      const rowEls = Array.from(
-        captureEl.querySelectorAll<HTMLElement>('[data-myday-pdf-row]')
-      );
-
-      const captureScale = 2.5;
-      const renderToCanvas = (el: HTMLElement) =>
-        html2canvas(el, {
-          scale: captureScale,
-          useCORS: true,
-          logging: false,
-          backgroundColor: '#ffffff',
-        });
-
-      const sections: Array<{ canvas: HTMLCanvasElement; gapAfter: number }> = [];
-      if (headerEl) {
-        sections.push({ canvas: await renderToCanvas(headerEl), gapAfter: 0.06 });
-      }
-      for (const el of rowEls) {
-        sections.push({ canvas: await renderToCanvas(el), gapAfter: 0.04 });
-      }
-
-      if (sections.length === 0) {
-        console.error('My Day PDF: nothing to render');
-        return;
-      }
-
-      const pageW = 8.5;
-      const pageH = 11;
-      const margin = 0.25;
-      const maxW = pageW - 2 * margin;
-      const maxH = pageH - 2 * margin;
-      // Use the widest section to anchor inches-per-pixel; all sections share the same DOM width.
-      const refWidthPx = sections[0].canvas.width;
-      const inchesPerPx = maxW / refWidthPx;
-
-      const pdf = new jsPDF('portrait', 'in', 'letter');
-      let y = margin;
-      let firstOnPage = true;
-      for (let i = 0; i < sections.length; i++) {
-        const { canvas: c, gapAfter } = sections[i];
-        const dispW = c.width * inchesPerPx;
-        const dispH = c.height * inchesPerPx;
-        const fits = y + dispH <= margin + maxH + 1e-6;
-        if (!firstOnPage && !fits) {
-          pdf.addPage();
-          y = margin;
-          firstOnPage = true;
-        }
-        const png = c.toDataURL('image/png');
-        pdf.addImage(png, 'PNG', margin, y, dispW, dispH);
-        y += dispH + gapAfter;
-        firstOnPage = false;
-      }
-
       const safeName = doctorName.replace(/\s+/g, '_').replace(/[^\w.-]+/g, '');
-      pdf.save(`MyDay_Visual_${safeName}_${date}.pdf`);
+      await exportMyDayVisualPdf({
+        doctorName,
+        dateLabel,
+        showByDriveTime,
+        practiceTimeZone,
+        stats,
+        rows: pdfRows,
+        filenameStem: `MyDay_Visual_${safeName}_${date}`,
+      });
     } catch (e) {
       console.error(e);
     } finally {
-      root.unmount();
-      document.body.removeChild(host);
       setPdfExporting(false);
     }
   }

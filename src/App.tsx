@@ -9,6 +9,7 @@ import { useAuth } from './auth/useAuth';
 import Home from './pages/Home';
 import UserMenu from './components/UserMenu';
 import NavbarGlobalSearch from './components/NavbarGlobalSearch';
+import NavbarScheduleHorizontalNav from './components/NavbarScheduleHorizontalNav';
 import { getAccessiblePages } from './app-pages';
 import Admin from './pages/Admin';
 import { getAdminTabPages } from './admin-tabs';
@@ -318,11 +319,15 @@ export default function App() {
         !location.pathname.startsWith('/public/room-loader') &&
         !location.pathname.startsWith('/survey/') &&
         !location.pathname.startsWith('/refer-a-friend') && (
-          <header className="navbar">
+          <header
+            className={`navbar${
+              token && !isClient && location.pathname.startsWith('/schedule') ? ' navbar--schedule-shell' : ''
+            }`}
+          >
             <div className="brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <img
                 src="/final_thick_lines_cropped.jpeg"
-                alt="VAYD"
+                alt="Scout"
                 style={{
                   height: '60px',
                   width: 'auto',
@@ -341,7 +346,7 @@ export default function App() {
                   alignItems: 'center',
                 }}
               >
-                VAYD
+                Scout
                 <sup
                   style={{
                     fontSize: '9px',
@@ -357,6 +362,14 @@ export default function App() {
               </span>
             </div>
 
+            {token && !isClient && (
+              <div className="navbar__center-block">
+                <div className="navbar__mid">
+                  <NavbarScheduleHorizontalNav />
+                </div>
+                <div className="navbar__spacer" aria-hidden="true" />
+              </div>
+            )}
             {token && !isClient && <NavbarGlobalSearch />}
             {token && !isClient && <NavbarScheduleAddAppointment />}
             {token && <UserMenu menuExtras={isClient ? [] : menuExtras} />}

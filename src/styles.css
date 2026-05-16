@@ -112,28 +112,205 @@ main.schedule-main-wrapper {
   overflow: hidden;
 }
 
-.navbar-global-search {
+.navbar__center-block {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.navbar__mid {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.navbar-schedule-horizontal-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/** Collapsible schedule nav: single row + “More” instead of wrapping Admin to a second line */
+.navbar-schedule-horizontal-nav.navbar-schedule-horizontal-nav--collapse {
+  flex-wrap: nowrap;
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.navbar-schedule-nav-measure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+}
+
+.navbar-schedule-nav-inline {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+}
+
+.navbar-schedule-more {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.navbar-schedule-more > summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.navbar-schedule-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.navbar-schedule-more-chevron {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.navbar-schedule-more-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 60;
+  min-width: 240px;
+  max-width: min(320px, 90vw);
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+.navbar-schedule-more-section {
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.navbar-schedule-more-section:last-child {
+  padding-bottom: 0;
+  margin-bottom: 0;
+  border-bottom: none;
+}
+
+.navbar-schedule-more-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  margin: 0 0 6px 4px;
+}
+
+.navbar-schedule-more .schedule-app__settings-link {
+  margin: 0;
+}
+
+.navbar-schedule-more-admin {
+  display: block;
+  padding: 9px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #334155;
+  text-decoration: none;
+}
+
+.navbar-schedule-more-admin:hover {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.navbar-schedule-more-admin--active {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.navbar__spacer {
   flex: 1;
-  max-width: 420px;
-  min-width: 120px;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .navbar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .navbar .brand {
+    flex: 0 0 auto;
+  }
+
+  .navbar__center-block {
+    flex: 1 1 100%;
+    order: 3;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .navbar__mid {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .navbar__spacer {
+    display: none;
+  }
+
+  .navbar-appointment-btn {
+    margin-left: auto;
+  }
+
+  .navbar-global-search {
+    display: none;
+  }
+}
+
+.navbar-global-search {
+  flex: 0 1 300px;
+  max-width: 320px;
+  min-width: 170px;
   position: relative;
 }
 
 .navbar-global-search input {
   width: 100%;
   box-sizing: border-box;
-  padding: 8px 12px 8px 36px;
+  padding: 9px 14px 9px 38px;
   border-radius: 10px;
   border: 1px solid #cbd5e1;
   background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E")
-    10px center no-repeat;
-  font-size: 14px;
-}
-
-@media (max-width: 900px) {
-  .navbar-global-search {
-    display: none;
-  }
+    11px center no-repeat;
+  font-size: 15px;
 }
 
 .navbar-appointment-btn {
@@ -182,6 +359,63 @@ main:not(.container) {
   background: #f8fdfa;
   border-bottom: 1px solid rgba(17, 163, 106, 0.1);
   backdrop-filter: saturate(120%) blur(6px);
+}
+
+@media (min-width: 901px) {
+  .navbar.navbar--schedule-shell {
+    display: grid;
+    /* First column must fit logo + “Scout™”; a capped clamp caused overflow into the nav column. */
+    grid-template-columns: max-content minmax(0, 1fr) auto auto auto;
+    column-gap: 14px;
+    align-items: center;
+    row-gap: 8px;
+  }
+
+  .navbar.navbar--schedule-shell > .brand {
+    grid-column: 1;
+    min-width: min-content;
+    justify-self: start;
+  }
+
+  .navbar.navbar--schedule-shell > .navbar__center-block {
+    grid-column: 2;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    flex: initial;
+  }
+
+  /* Don’t let the flex spacer eat the whole column — tabs need this width for “More” math */
+  .navbar.navbar--schedule-shell .navbar__spacer {
+    flex: 0 0 0;
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+  }
+
+  .navbar.navbar--schedule-shell > .navbar-global-search {
+    grid-column: 3;
+    justify-self: end;
+  }
+
+  .navbar.navbar--schedule-shell > .navbar-appointment-btn {
+    grid-column: 4;
+  }
+
+  .navbar.navbar--schedule-shell > .user-menu-container {
+    grid-column: 5;
+  }
+
+  .navbar.navbar--schedule-shell .navbar__mid {
+    padding-left: 16px;
+    box-sizing: border-box;
+    /* Fill grid column 2 so schedule tabs measure against real width, not “More”-only shrink-wrap */
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+  }
 }
 
 .brand {

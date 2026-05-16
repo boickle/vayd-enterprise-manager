@@ -42,6 +42,10 @@ export type Client = {
   latLonValidated?: boolean;
   username?: string | null;
   alerts?: string | null;
+  /** Routing zone when range/detail APIs attach it to the client. */
+  clientZone?: { id?: number | string; name?: string | null } | null;
+  effectiveZone?: { id?: number | string; name?: string | null } | null;
+  zoneName?: string | null;
 };
 
 export type Reminder = {
@@ -142,6 +146,13 @@ export type Patient = {
   breed?: string | null;
   color?: string | null;
   weight?: number | null;
+  /** When API sends weight separately from numeric `weight` (e.g. PIMS last recorded). */
+  lastWeight?: number | string | null;
+  weightLbs?: number | string | null;
+  lastWeightLbs?: number | string | null;
+  /** ISO date for last weight when backend provides it. */
+  lastWeightDate?: string | null;
+  weightDate?: string | null;
   dob?: string | null;
   sex?: string | null;
   alerts?: string | null;
@@ -215,6 +226,16 @@ export type AppointmentType = {
   textColor?: string | null;
 };
 
+/**
+ * Swagger `AppointmentEmployeeRefDto` — id + name parts for audit UI
+ * (`createdByUser`, `modifiedByUser`, and loaded `*Employee` relations).
+ */
+export type AppointmentEmployeeRef = {
+  id: number;
+  firstName?: string | null;
+  lastName?: string | null;
+};
+
 export type Appointment = {
   id: number;
   isActive: boolean;
@@ -243,7 +264,32 @@ export type Appointment = {
   appointmentType?: AppointmentType;
   treatment?: any | null;
   created?: string;
+  /** PIMS last-modified instant when API sends it; otherwise use `updated`. */
+  modified?: string | null;
   updated?: string;
+  /** Chart primary provider from GET /appointments/doctor merge (small ref); not the visit assignee. */
+  patientPrimaryProvider?: {
+    id: number;
+    firstName?: string | null;
+    lastName?: string | null;
+    designation?: string | null;
+    title?: string | null;
+  } | null;
+  /** Display string when `createdByEmployee` was loaded in the query. */
+  createdByName?: string | null;
+  /** Display string when `modifiedByEmployee` was loaded (PIMS "modified", not "updated"). */
+  modifiedByName?: string | null;
+  createdByUser?: AppointmentEmployeeRef | null;
+  modifiedByUser?: AppointmentEmployeeRef | null;
+  createdByEmployee?: AppointmentEmployeeRef | null;
+  modifiedByEmployee?: AppointmentEmployeeRef | null;
+  /** Optional read-only alias for `modifiedByName` if the API exposes it. */
+  updatedByName?: string | null;
+  updatedByUser?: AppointmentEmployeeRef | null;
+  updatedByEmployee?: AppointmentEmployeeRef | null;
+  /** Raw string from some integrations (prefer structured `createdByUser` when both exist). */
+  createdBy?: string | null;
+  updatedBy?: string | null;
   // For externally created appointments
   externallyCreated?: boolean;
   externalCreated?: string; // External creation timestamp
@@ -255,6 +301,10 @@ export type Appointment = {
     windowStartLocal?: string | null;
     windowEndLocal?: string | null;
   } | null;
+  /** Routing / client zone when range API includes it (see `appointmentZoneShortLabel` in appointments). */
+  clientZone?: { id?: number | string; name?: string | null } | null;
+  effectiveZone?: { id?: number | string; name?: string | null } | null;
+  zoneName?: string | null;
 };
 
 export type DeclinedInventoryItem = {

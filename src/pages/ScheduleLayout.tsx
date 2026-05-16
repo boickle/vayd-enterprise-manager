@@ -1,5 +1,5 @@
-import { NavLink, Outlet, useNavigate, useLocation, Navigate, Link } from 'react-router-dom';
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { NavLink, Outlet, useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   CalendarDays,
@@ -30,8 +30,6 @@ import {
   scoutTabPermissionOk,
 } from '../scout-tabs';
 import { isAnalyticsAdmin, isEmployeeAnalyticsRestricted } from '../utils/analyticsAccess';
-import { listTasks } from '../api/tasks';
-import ScheduleTasksPanel from '../components/schedule/ScheduleTasksPanel';
 import './ScheduleLayout.css';
 
 const SCHEDULE_RAIL_COLLAPSED_KEY = 'vayd-schedule-rail-collapsed';
@@ -94,33 +92,12 @@ export default function ScheduleLayout() {
   }, [role]);
 
   const tabs = useMemo(() => getVisibleScoutTabs(abilities, roles), [abilities, roles]);
-  const homeTab = useMemo(() => tabs.find((t) => t.path === 'home'), [tabs]);
   const schedulingTabs = useMemo(() => tabs.filter((t) => t.path !== 'home'), [tabs]);
 
   const canAccessScheduleAnalytics = useMemo(
     () => isAnalyticsAdmin(roles) || isEmployeeAnalyticsRestricted(roles),
     [roles],
   );
-
-  const showAdminTab = useMemo(
-    () => roles.includes('admin') || roles.includes('superadmin'),
-    [roles]
-  );
-
-  const settingsMenuRef = useRef<HTMLDetailsElement>(null);
-  const closeSettingsMenu = useCallback(() => {
-    const el = settingsMenuRef.current;
-    if (el) el.open = false;
-  }, []);
-
-  const settingsTabFromLocation = useMemo(() => {
-    if (!location.pathname.startsWith('/schedule/settings')) return null;
-    return new URLSearchParams(location.search).get('tab');
-  }, [location.pathname, location.search]);
-
-  const [tasksDrawerOpen, setTasksDrawerOpen] = useState(false);
-  const [taskTotal, setTaskTotal] = useState<number | null>(null);
-  const [taskRefresh, setTaskRefresh] = useState(0);
 
   const [railWideEnough, setRailWideEnough] = useState(() =>
     typeof window !== 'undefined' ? window.matchMedia('(min-width: 901px)').matches : true
@@ -151,31 +128,6 @@ export default function ScheduleLayout() {
 
   const railCollapsedEffective = railCollapsed && railWideEnough;
 
-  const refreshTaskCount = useCallback(() => {
-    void listTasks({ includeDone: false, limit: 1, offset: 0 })
-      .then((res) => setTaskTotal(res.total))
-      .catch(() => setTaskTotal(null));
-  }, []);
-
-  useEffect(() => {
-    refreshTaskCount();
-  }, [refreshTaskCount, location.pathname]);
-
-  useEffect(() => {
-    if (!tasksDrawerOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setTasksDrawerOpen(false);
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [tasksDrawerOpen]);
-
-  const openTasksDrawer = useCallback(() => {
-    setTaskRefresh((k) => k + 1);
-    refreshTaskCount();
-    setTasksDrawerOpen(true);
-  }, [refreshTaskCount]);
-
   const appointmentHref = useMemo(
     () => (scoutTabPermissionOk('canSeeRouting', abilities) ? '/schedule/routing' : '/schedule/home'),
     [abilities]
@@ -199,6 +151,19 @@ export default function ScheduleLayout() {
       location.pathname === '/schedule/scheduler' ||
       location.pathname.startsWith('/schedule/scheduler/') ||
       location.pathname === '/schedule/routing',
+    [location.pathname]
+  );
+
+  /** Practice calendar (and home) can grow vertically; scroll inside outlet so toolbar/date chrome scrolls away. Routing split stays overflow-hidden. */
+  const outletFlushVerticallyScrollable = useMemo(
+    () => outletFlush && !location.pathname.startsWith('/schedule/routing'),
+    [outletFlush, location.pathname]
+  );
+
+  /** Lets practice week/day `position: sticky` stick to the outlet (see ScheduleLayout.css). */
+  const scheduleMainStickyCalendarChain = useMemo(
+    () =>
+      location.pathname === '/schedule/scheduler' || location.pathname.startsWith('/schedule/scheduler/'),
     [location.pathname]
   );
 
@@ -377,182 +342,21 @@ export default function ScheduleLayout() {
         </div>
       </aside>
 
-      <div className="schedule-app__main">
-        <nav className="schedule-app__tabs" aria-label="Schedule sections">
-          <div className="schedule-app__tabs-start">
-            {homeTab ? (
-              <NavLink
-                to={`/schedule/${homeTab.path}`}
-                end
-                className={({ isActive }) => {
-                  const active =
-                    isActive ||
-                    location.pathname === '/schedule/scheduler' ||
-                    location.pathname.startsWith('/schedule/scheduler/');
-                  return `schedule-app__tab${active ? ' schedule-app__tab--active' : ''}`;
-                }}
-              >
-                Home
-              </NavLink>
-            ) : null}
-            <NavLink
-              to="/schedule/clients"
-              className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
-            >
-              Clients
-            </NavLink>
-            <NavLink
-              to="/schedule/patients"
-              className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
-            >
-              Patients
-            </NavLink>
-            <NavLink
-              to="/schedule/inventory"
-              className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
-            >
-              Inventory
-            </NavLink>
-            <NavLink
-              to="/schedule/tasks"
-              className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
-            >
-              Tasks
-            </NavLink>
-            {showAdminTab ? (
-              <>
-                <details ref={settingsMenuRef} className="schedule-app__settings-menu">
-                  <summary
-                    className={`schedule-app__tab schedule-app__settings-summary${
-                      location.pathname.startsWith('/schedule/settings')
-                        ? ' schedule-app__tab--active'
-                        : ''
-                    }`}
-                    aria-haspopup="menu"
-                  >
-                    Settings
-                  </summary>
-                  <div className="schedule-app__settings-dropdown" role="menu" aria-label="Practice settings">
-                    <Link
-                      to="/schedule/settings"
-                      className={`schedule-app__settings-link${
-                        location.pathname.startsWith('/schedule/settings') &&
-                        (!settingsTabFromLocation || settingsTabFromLocation === 'appointment-types')
-                          ? ' schedule-app__settings-link--active'
-                          : ''
-                      }`}
-                      role="menuitem"
-                      onClick={closeSettingsMenu}
-                    >
-                      All settings
-                    </Link>
-                    <Link
-                      to={{ pathname: '/schedule/settings', search: '?tab=employee-directory' }}
-                      className={`schedule-app__settings-link${
-                        settingsTabFromLocation === 'employee-directory'
-                          ? ' schedule-app__settings-link--active'
-                          : ''
-                      }`}
-                      role="menuitem"
-                      onClick={closeSettingsMenu}
-                    >
-                      Employees
-                    </Link>
-                    <Link
-                      to={{ pathname: '/schedule/settings', search: '?tab=reminders' }}
-                      className={`schedule-app__settings-link${
-                        settingsTabFromLocation === 'reminders' ? ' schedule-app__settings-link--active' : ''
-                      }`}
-                      role="menuitem"
-                      onClick={closeSettingsMenu}
-                    >
-                      Reminders
-                    </Link>
-                    <Link
-                      to={{ pathname: '/schedule/settings', search: '?tab=employee-schedule' }}
-                      className={`schedule-app__settings-link${
-                        settingsTabFromLocation === 'employee-schedule'
-                          ? ' schedule-app__settings-link--active'
-                          : ''
-                      }`}
-                      role="menuitem"
-                      onClick={closeSettingsMenu}
-                    >
-                      Employee schedule
-                    </Link>
-                    <Link
-                      to={{ pathname: '/schedule/settings', search: '?tab=employee-zones' }}
-                      className={`schedule-app__settings-link${
-                        settingsTabFromLocation === 'employee-zones'
-                          ? ' schedule-app__settings-link--active'
-                          : ''
-                      }`}
-                      role="menuitem"
-                      onClick={closeSettingsMenu}
-                    >
-                      Employee zones
-                    </Link>
-                    <Link
-                      to={{ pathname: '/schedule/settings', search: '?tab=employee-types' }}
-                      className={`schedule-app__settings-link${
-                        settingsTabFromLocation === 'employee-types'
-                          ? ' schedule-app__settings-link--active'
-                          : ''
-                      }`}
-                      role="menuitem"
-                      onClick={closeSettingsMenu}
-                    >
-                      Employee appointment types
-                    </Link>
-                  </div>
-                </details>
-                <NavLink
-                  to="/schedule/admin"
-                  className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
-                >
-                  Admin
-                </NavLink>
-              </>
-            ) : null}
-          </div>
-          <div className="schedule-app__tabs-end">
-            <button type="button" className="schedule-app__tasks-chip" onClick={openTasksDrawer}>
-              Tasks{taskTotal != null ? ` (${taskTotal})` : ''}
-            </button>
-          </div>
-        </nav>
+      <div
+        className={`schedule-app__main${
+          scheduleMainStickyCalendarChain ? ' schedule-app__main--scheduler-sticky-outlet' : ''
+        }`}
+      >
         <div
           className={`schedule-app__outlet${outletFlush ? ' schedule-app__outlet--flush' : ''}${
             location.pathname === '/schedule/routing' ? ' schedule-app__outlet--routing-split' : ''
+          }${outletFlushVerticallyScrollable ? ' schedule-app__outlet--flush-scroll-y' : ''}${
+            scheduleMainStickyCalendarChain ? ' schedule-app__outlet--practice-sticky-x' : ''
           }`}
         >
           <Outlet context={{ schedulingToolsLinkPrefix: '/schedule/scheduling-tools' }} />
         </div>
       </div>
-
-      {tasksDrawerOpen ? (
-        <div className="schedule-tasks-drawer-root" role="presentation">
-          <button
-            type="button"
-            className="schedule-tasks-drawer-backdrop"
-            aria-label="Close tasks panel"
-            onClick={() => setTasksDrawerOpen(false)}
-          />
-          <aside className="schedule-tasks-drawer" role="dialog" aria-modal="true" aria-labelledby="schedule-tasks-drawer-title">
-            <div className="schedule-tasks-drawer-head">
-              <h2 id="schedule-tasks-drawer-title" className="schedule-tasks-drawer-title">
-                Tasks
-              </h2>
-              <button type="button" className="schedule-tasks-drawer-close" onClick={() => setTasksDrawerOpen(false)} aria-label="Close">
-                ×
-              </button>
-            </div>
-            <div className="schedule-tasks-drawer-body">
-              <ScheduleTasksPanel refreshKey={taskRefresh} className="schedule-tasks-panel--drawer" />
-            </div>
-          </aside>
-        </div>
-      ) : null}
     </div>
   );
 }

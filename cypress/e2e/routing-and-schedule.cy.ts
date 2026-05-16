@@ -1,6 +1,6 @@
 // cypress/e2e/routing-and-schedule.cy.ts
 
-describe('Routing and Schedule Loader', () => {
+describe('Routing and Fill', () => {
   beforeEach(() => {
     cy.clearAllCookies();
     cy.clearAllSessionStorage();
@@ -137,17 +137,17 @@ describe('Routing and Schedule Loader', () => {
     });
   });
 
-  describe('Schedule Loader (FillDay)', () => {
-    it('should load schedule loader results for Abigail Messina', () => {
+  describe('Fill (FillDay)', () => {
+    it('should load Fill results for Abigail Messina', () => {
       // Login as employee
       cy.loginAs('employee');
 
-      // Navigate to schedule loader (under Scheduling Tools)
+      // Navigate to Fill (under Scheduling Tools)
       cy.visit('/schedule/scheduling-tools/schedule-loader');
       cy.url().should('include', '/schedule/scheduling-tools/schedule-loader');
 
       // Wait for page to load
-      cy.contains('Schedule Loader', { timeout: 10000 }).should('be.visible');
+      cy.contains('Fill', { timeout: 10000 }).should('be.visible');
 
       // Select doctor: Abigail Messina
       cy.get('input[placeholder*="Search for doctor"]')
