@@ -32,6 +32,9 @@ export type RoutingCalendarPreviewPayloadV1 = {
   };
   appointmentTypeId: number;
   clientDisplayLabel?: string;
+  /** PATCH target when confirming from routing calendar preview (reschedule flow). */
+  rescheduleAppointmentId?: number;
+  reschedulePatientId?: string;
 };
 
 export function routingCalendarOptionKey(opt: {

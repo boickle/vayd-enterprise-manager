@@ -35,9 +35,16 @@ import {
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
 import {
+  markRescheduleIntentAppliedToRoutingForm,
+  readRoutingRescheduleIntent,
+  rescheduleIntentIsActive,
+  ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
+} from '../utils/routingRescheduleIntent';
+import {
   clearRoutingUiSnapshot,
   readRoutingUiBootstrap,
   ROUTING_REQUEST_ID_SESSION_KEY,
+  ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT,
   writeAuthDoctorCache,
   writeRoutingUiSnapshot,
 } from '../utils/routingUiSnapshot';
@@ -1405,9 +1412,98 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
+  const [hasActiveRescheduleIntent, setHasActiveRescheduleIntent] = useState(() =>
+    rescheduleIntentIsActive()
+  );
+
+  useEffect(() => {
+    function syncRescheduleIntentFlag() {
+      setHasActiveRescheduleIntent(rescheduleIntentIsActive());
+    }
+    syncRescheduleIntentFlag();
+    window.addEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, syncRescheduleIntentFlag);
+    return () =>
+      window.removeEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, syncRescheduleIntentFlag);
+  }, []);
+
+  /** Calendar “Reschedule…” → hydrate Routing form once per intent row. */
+  useEffect(() => {
+    function mergeRescheduleIntentFromCalendar() {
+      const intent = readRoutingRescheduleIntent();
+      if (!intent || intent.appliedToRoutingForm) return;
+
+      setForm((f) => ({
+        ...f,
+        newAppt: {
+          ...f.newAppt,
+          clientId: intent.clientId,
+          address: intent.address?.trim() || f.newAppt.address,
+          lat: intent.lat ?? f.newAppt.lat,
+          lon: intent.lon ?? f.newAppt.lon,
+          serviceMinutes:
+            intent.serviceMinutes > 0 ? intent.serviceMinutes : Math.max(15, f.newAppt.serviceMinutes || 45),
+        },
+      }));
+
+      const label = intent.clientDisplayLabel?.trim();
+      if (label) setClientQuery(label);
+
+      const tid = intent.appointmentTypeId;
+      if (tid != null && Number.isFinite(Number(tid))) setScheduleBookTypeId(Number(tid));
+
+      const alerts = intent.clientAlerts;
+      if (alerts !== undefined && alerts !== null) setSelectedClientAlerts(alerts);
+
+      const pimsDoc = intent.primaryDoctorPimsId?.trim();
+      if (pimsDoc) {
+        setForm((f) => ({ ...f, doctorId: pimsDoc }));
+        setDoctorQuery((q) => {
+          if (q.trim()) return q;
+          const dn = intent.primaryDoctorDisplayName?.trim();
+          return dn || `Doctor ${pimsDoc}`;
+        });
+      }
+
+      setResult(null);
+      setFeedbackError(null);
+      setFeedbackToast('Reschedule: client loaded. Run routing, open My Week, then confirm the new time.');
+      markRescheduleIntentAppliedToRoutingForm();
+    }
+
+    mergeRescheduleIntentFromCalendar();
+    window.addEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, mergeRescheduleIntentFromCalendar);
+    return () =>
+      window.removeEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, mergeRescheduleIntentFromCalendar);
+  }, []);
+
   useEffect(() => {
     if (!authToken) clearRoutingUiSnapshot();
   }, [authToken]);
+
+  /** Practice calendar (embedded) completed a book/reschedule — drop routing candidates from the pane. */
+  useEffect(() => {
+    if (!calendarWorkspaceMode) return;
+    function clearRoutingAfterCalendarBook() {
+      setResult(null);
+      setError(null);
+      setFeedbackError(null);
+      setFeedbackToast(null);
+      setFeedbackSubmittingKey(null);
+      setFeedbackSuccessKey(null);
+      setScheduleBookedKeys({});
+      setLatestRoutingRequestId(null);
+      if (typeof window !== 'undefined') {
+        try {
+          sessionStorage.removeItem(ROUTING_REQUEST_ID_SESSION_KEY);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    window.addEventListener(ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT, clearRoutingAfterCalendarBook);
+    return () =>
+      window.removeEventListener(ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT, clearRoutingAfterCalendarBook);
+  }, [calendarWorkspaceMode]);
 
   useEffect(() => {
     if (!authToken || !authDoctorInternalId?.trim()) return;
@@ -1542,6 +1638,11 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       appointmentTypeId: scheduleBookTypeId,
       clientDisplayLabel: clientQuery.trim() || undefined,
     };
+    const rescheduleRow = readRoutingRescheduleIntent();
+    if (rescheduleRow) {
+      payload.rescheduleAppointmentId = rescheduleRow.appointmentId;
+      payload.reschedulePatientId = rescheduleRow.patientId;
+    }
     writeRoutingCalendarPreview(payload);
     if (calendarWorkspaceMode) {
       window.dispatchEvent(new Event(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT));
@@ -3303,10 +3404,12 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                             ? 'Select a client first'
                             : scheduleBookTypeId == null
                               ? 'Loading appointment types…'
-                              : undefined
+                              : hasActiveRescheduleIntent
+                                ? 'Open the practice calendar to reschedule into this slot'
+                                : 'Open the practice calendar to see this slot on the week'
                         }
                       >
-                        View Placement
+                        {hasActiveRescheduleIntent ? 'Reschedule appointment' : 'View Placement'}
                       </button>
                     </div>
                   </div>

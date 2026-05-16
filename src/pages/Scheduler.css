@@ -1005,6 +1005,34 @@ label.scheduler-go-date-heading {
   color: #dc2626;
 }
 
+/** Top-right: membership + room loader / pre-appt (pen) */
+.scheduler-appt-card-icons-tr {
+  position: absolute;
+  top: 1px;
+  right: 2px;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 3px;
+  z-index: 2;
+  line-height: 0;
+}
+
+.scheduler-appt-card-icon-hit {
+  display: inline-flex;
+  line-height: 0;
+}
+
+.scheduler-preappt-rl-icon {
+  display: inline-flex;
+  line-height: 0;
+  filter: drop-shadow(0 0 0.5px rgba(255, 255, 255, 0.95)) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.22));
+}
+
+.scheduler-event:has(.scheduler-appt-card-icons-tr),
+.scheduler-all-day-span-bar:has(.scheduler-appt-card-icons-tr) {
+  padding-right: 20px;
+}
+
 .scheduler-day-bodies-row {
   display: flex;
   flex: 1;
@@ -2490,6 +2518,18 @@ label.scheduler-go-date-heading {
   font-size: 14px;
   font-weight: 500;
   color: #64748b;
+}
+
+.scheduler-edit-client-home {
+  white-space: pre-line;
+}
+
+.scheduler-edit-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748b;
+  line-height: 1.45;
 }
 
 .scheduler-edit-error {

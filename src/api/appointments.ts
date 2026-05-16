@@ -55,6 +55,26 @@ export async function fetchAppointmentsRange(params: {
   return Array.isArray(data) ? data : (data?.items ?? []);
 }
 
+/**
+ * GET /appointments/:id — full appointment row (for realtime incremental calendar updates).
+ * Optional practiceId if the API requires scoping.
+ */
+export async function fetchAppointmentById(
+  id: number | string,
+  opts?: { practiceId?: number | string }
+): Promise<Appointment | null> {
+  try {
+    const params =
+      opts?.practiceId != null ? { practiceId: String(opts.practiceId) } : undefined;
+    const { data } = await http.get<Appointment>(`/appointments/${encodeURIComponent(String(id))}`, {
+      params,
+    });
+    return data ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** POST /appointments — Vayd-native appointment (pimsType VAYD on server) */
 export type CreateAppointmentPayload = {
   practiceId: number;
@@ -84,6 +104,19 @@ export async function patchAppointment(
 ): Promise<Appointment> {
   const { data } = await http.patch<Appointment>(`/appointments/${encodeURIComponent(String(id))}`, body);
   return data;
+}
+
+/** PUT /appointments/:id/alternate-address — upsert or clear stored alternate (max 4000 chars). */
+export type SetAppointmentAlternateAddressDto = {
+  /** Non-empty trimmed text upserts; omit, `null`, or `""` removes the row. */
+  addressText?: string | null;
+};
+
+export async function putAppointmentAlternateAddress(
+  id: number | string,
+  body: SetAppointmentAlternateAddressDto
+): Promise<void> {
+  await http.put(`/appointments/${encodeURIComponent(String(id))}/alternate-address`, body);
 }
 
 /** DELETE /appointments/:id */

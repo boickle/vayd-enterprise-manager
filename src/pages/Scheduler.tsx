@@ -12,14 +12,16 @@ import {
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { DateTime } from 'luxon';
-import { AlertTriangle, Cat, Check, Dog, Heart, Printer, X } from 'lucide-react';
+import { AlertTriangle, Cat, Check, Dog, FilePen, Heart, Printer, X } from 'lucide-react';
 import {
   appointmentZoneFullName,
   appointmentZoneShortLabel,
   deleteAppointment,
   depotOfficeTownLabel,
+  fetchAppointmentById,
   fetchAppointmentsRange,
   isAppointmentCancelledOnPracticeCalendar,
+  isBlockEntry,
   isFlexBlockItem,
   patchAppointment,
   type DoctorDayPatientPrimaryProvider,
@@ -74,7 +76,20 @@ import {
   SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID,
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
-import { clearRoutingPersistenceAfterSchedulerBook } from '../utils/routingUiSnapshot';
+import {
+  buildRoutingRescheduleIntentFromAppointment,
+  clearRoutingRescheduleIntent,
+  readRoutingRescheduleIntent,
+  writeRoutingRescheduleIntent,
+} from '../utils/routingRescheduleIntent';
+import {
+  subscribePracticeCalendar,
+  type AppointmentCalendarPayload,
+} from '../utils/calendarRealtime';
+import {
+  clearRoutingPersistenceAfterSchedulerBook,
+  ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT,
+} from '../utils/routingUiSnapshot';
 import { buildMyDayVisualPdfExportPayloadFromDayData } from '../utils/myDayVisualPdfFromDayData';
 import { exportMyDayVisualPdf } from '../utils/myDayVisualPdfExport';
 import './Scheduler.css';
@@ -282,27 +297,39 @@ function patientsForAppointment(a: Appointment): Patient[] {
   return a.patient ? [a.patient] : [];
 }
 
-/** Same membership source as My Week: appointment root, primary patient, or any nested patient. */
+/**
+ * Membership for calendar cards: appointment + optional `patients[]` + client (matches room loader /
+ * range payloads; truthy flags; plan name without booleans).
+ */
 function appointmentPatientMember(appt: Appointment): {
   isMember: boolean;
   membershipName: string | null;
 } {
-  const patients = patientsForAppointment(appt);
-  const pat = appt.patient;
-  const isMember = Boolean(
-    appt.isMember ?? pat?.isMember ?? patients.some((p) => p.isMember)
-  );
-  let raw = appt.membershipName ?? pat?.membershipName;
-  if (raw == null || String(raw).trim() === '') {
-    const mem = patients.find((p) => p.isMember && p.membershipName != null && String(p.membershipName).trim() !== '');
-    raw = mem?.membershipName ?? null;
+  const clin = appt.client as { isMember?: unknown; membershipName?: string | null } | undefined;
+
+  let membershipName: string | null = null;
+  let isMember = false;
+
+  const consider = (flag: unknown, raw: unknown) => {
+    if (truthyApiFlag(flag)) isMember = true;
+    const name =
+      typeof raw === 'string' && raw.trim()
+        ? raw.trim()
+        : raw != null && String(raw).trim()
+          ? String(raw).trim()
+          : null;
+    if (name) {
+      isMember = true;
+      if (!membershipName) membershipName = name;
+    }
+  };
+
+  consider(appt.isMember, appt.membershipName);
+  consider(clin?.isMember, clin?.membershipName);
+  for (const p of patientsForAppointment(appt)) {
+    consider(p.isMember, p.membershipName);
   }
-  const membershipName =
-    typeof raw === 'string' && raw.trim()
-      ? raw.trim()
-      : raw != null && String(raw).trim()
-        ? String(raw).trim()
-        : null;
+
   return { isMember, membershipName };
 }
 
@@ -1559,8 +1586,17 @@ function SchedulerAppointmentModal({
                 fullWidth
                 value={appt.instructions?.trim() || null}
               />
+              <SchedulerModalKvCondensed
+                label="Alternate address (routing)"
+                fullWidth
+                value={appt.alternateAddress?.addressText?.trim() || null}
+              />
               <SchedulerModalKvCondensed label="Equipment" fullWidth value={appt.equipment?.trim() || null} />
               <SchedulerModalKvCondensed label="Medications" fullWidth value={appt.medications?.trim() || null} />
+              <SchedulerModalKvCondensed
+                label="External record"
+                value={appt.externallyCreated ? 'Yes' : null}
+              />
               <SchedulerModalKvCondensed
                 label="Date created"
                 value={formatAppointmentAuditDisplay(
@@ -1858,6 +1894,129 @@ function isAppointmentVisible(a: Appointment): boolean {
   return true;
 }
 
+/** Calendar range vs appointment interval (both ISO UTC). */
+function appointmentOverlapsUtcRange(
+  startIso: string,
+  endIso: string,
+  rangeStartUtc: string,
+  rangeEndUtc: string
+): boolean {
+  const s = DateTime.fromISO(startIso, { zone: 'utc' }).toMillis();
+  const e = DateTime.fromISO(endIso, { zone: 'utc' }).toMillis();
+  const rs = DateTime.fromISO(rangeStartUtc, { zone: 'utc' }).toMillis();
+  const re = DateTime.fromISO(rangeEndUtc, { zone: 'utc' }).toMillis();
+  if (!Number.isFinite(s) || !Number.isFinite(e) || !Number.isFinite(rs) || !Number.isFinite(re)) return false;
+  return s < re && e > rs;
+}
+
+/** Match `confirmStatusName` (room loader / pre-appt workflow). */
+const PRE_APPT_SENT_SNIPPET = 'Pre-Appt Email Sent';
+const PRE_APPT_COMPLETE_SNIPPET = 'Client Submitted Pre-Appt form';
+
+type RoomLoaderPreApptUiStatus = 'none' | 'sent' | 'complete';
+
+function roomLoaderPreApptStatus(confirmStatusName: string | null | undefined): RoomLoaderPreApptUiStatus {
+  const s = (confirmStatusName ?? '').trim();
+  if (!s) return 'none';
+  if (s.includes(PRE_APPT_COMPLETE_SNIPPET)) return 'complete';
+  if (s.includes(PRE_APPT_SENT_SNIPPET)) return 'sent';
+  return 'none';
+}
+
+/** API may send 1 / "true" instead of boolean for block flags. */
+function truthyApiFlag(v: unknown): boolean {
+  if (v === true || v === 1) return true;
+  if (typeof v === 'string') {
+    const t = v.trim().toLowerCase();
+    return t === 'true' || t === '1' || t === 'yes';
+  }
+  return false;
+}
+
+/**
+ * Block rows from `/appointments/range` — shape varies (strict booleans vs 1, type on appointmentType vs root).
+ */
+function isCalendarBlockAppointment(a: Appointment): boolean {
+  const o = a as unknown as Record<string, unknown>;
+  const typeRoot = typeof o.type === 'string' ? o.type : undefined;
+  const key = typeof o.key === 'string' ? o.key : undefined;
+  const isB = truthyApiFlag(o.isBlock);
+  const isPB = truthyApiFlag(o.isPersonalBlock);
+  if (
+    isBlockEntry({
+      type: typeRoot,
+      isBlock: isB ? true : undefined,
+      isPersonalBlock: isPB ? true : undefined,
+      key,
+    })
+  ) {
+    return true;
+  }
+
+  if (isFlexBlockItem(a as { blockLabel?: string; title?: string })) {
+    return true;
+  }
+
+  const at = a.appointmentType;
+  const typeBlob = `${at?.prettyName ?? ''} ${at?.name ?? ''}`.trim().toLowerCase();
+  if (
+    typeBlob === 'block' ||
+    typeBlob.includes('personal block') ||
+    typeBlob.includes('flex block') ||
+    /^block[\s/]/i.test(typeBlob) ||
+    /\bblock\s*\(/.test(typeBlob)
+  ) {
+    return true;
+  }
+
+  const apptPims = (a as { pimsType?: string | null }).pimsType?.trim().toUpperCase();
+  if (apptPims === 'BLOCK' || apptPims === 'PERSONAL_BLOCK' || apptPims === 'PERSONALBLOCK') {
+    return true;
+  }
+
+  const atPims = (at as { pimsType?: string | null } | undefined)?.pimsType?.trim().toUpperCase();
+  if (atPims === 'BLOCK' || atPims === 'PERSONAL_BLOCK') {
+    return true;
+  }
+
+  return false;
+}
+
+/** Room-loader / pre-appt icon: skip blocks, "Note To Staff" type, and all-day rows. */
+function showPreApptRoomLoaderIcon(a: Appointment): boolean {
+  if (a.allDay) return false;
+  if (isCalendarBlockAppointment(a)) return false;
+  const typeLabel = [a.appointmentType?.prettyName, a.appointmentType?.name].filter(Boolean).join(' ');
+  if (typeLabel.toLowerCase().includes('note to staff')) return false;
+  return true;
+}
+
+const PRE_APPT_STATUS_COLOR: Record<RoomLoaderPreApptUiStatus, string> = {
+  none: '#dc2626',
+  sent: '#ca8a04',
+  complete: '#16a34a',
+};
+
+function SchedulerPreApptRlIcon({ confirmStatusName }: { confirmStatusName?: string | null }) {
+  const st = roomLoaderPreApptStatus(confirmStatusName);
+  const title =
+    st === 'complete'
+      ? 'Room loader / pre-appt: client submitted form (completed)'
+      : st === 'sent'
+        ? 'Room loader / pre-appt: email sent'
+        : 'Room loader / pre-appt: not sent';
+  return (
+    <span className="scheduler-preappt-rl-icon" title={title} aria-hidden>
+      <FilePen
+        size={11}
+        color={PRE_APPT_STATUS_COLOR[st]}
+        strokeWidth={2.25}
+        absoluteStrokeWidth
+      />
+    </span>
+  );
+}
+
 export default function Scheduler({ embedInRoutingWorkspace = false }: SchedulerProps) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1905,6 +2064,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   >(() => new Map());
   /** Bump after mutations that change route order so drive/ETA refetches (avoids tying drive load to every `rawAppointments` refresh). */
   const [driveRefreshNonce, setDriveRefreshNonce] = useState(0);
+  /** When set before a drive refresh, maps are not cleared and the drive overlay is skipped (realtime soft update). */
+  const driveSoftRefreshRef = useRef(false);
   const [bookSlot, setBookSlot] = useState<SchedulerBookSlot | null>(null);
   const [bookPrefill, setBookPrefill] = useState<SchedulerBookPrefill | null>(null);
   /** Routing → My Week: proposed slot until booked or dismissed. */
@@ -1995,7 +2156,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   /** Practice-local "now" for the current-time indicator on the grid (updates on an interval). */
   const [practiceClock, setPracticeClock] = useState(() => DateTime.now().setZone(PRACTICE_TZ));
 
-  const { doctorId: authDoctorId, role } = useAuth() as { doctorId: string | null; role?: string | string[] };
+  const { token: authToken, doctorId: authDoctorId, role } = useAuth() as {
+    token: string | null;
+    doctorId: string | null;
+    role?: string | string[];
+  };
 
   const rolesLower = useMemo(() => {
     const arr = Array.isArray(role) ? role : role != null ? [role] : [];
@@ -2252,6 +2417,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [routingPreview, routingPreviewColumnKey]
   );
 
+  const routingPreviewIsReschedule = useMemo(
+    () =>
+      routingPreview?.rescheduleAppointmentId != null &&
+      Number.isFinite(Number(routingPreview.rescheduleAppointmentId)),
+    [routingPreview?.rescheduleAppointmentId]
+  );
+
   const rangeTitle = useMemo(() => {
     if (view === 'day') {
       const d = DateTime.fromISO(anchorDate!, { zone: PRACTICE_TZ });
@@ -2291,14 +2463,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, []);
 
   const loadRange = useCallback(
-    async (opts?: { refreshDrive?: boolean }) => {
+    async (opts?: { refreshDrive?: boolean; silent?: boolean; refreshDriveSoft?: boolean }) => {
       if (providers.length === 0) {
         setRawAppointments([]);
         if (providersLoadState === 'resolved') setLoading(false);
         return;
       }
       const primaryId = resolvedPrimaryProviderId.trim() || String(providers[0].id);
-      if (!appointmentRangeBlockingLoadDone.current) {
+      if (!opts?.silent) {
         setLoading(true);
       }
       setError(null);
@@ -2314,22 +2486,119 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           return;
         }
         setRawAppointments(rows);
-        if (opts?.refreshDrive) setDriveRefreshNonce((n) => n + 1);
+        if (opts?.refreshDriveSoft) {
+          driveSoftRefreshRef.current = true;
+          setDriveRefreshNonce((n) => n + 1);
+        } else if (opts?.refreshDrive) {
+          driveSoftRefreshRef.current = false;
+          setDriveRefreshNonce((n) => n + 1);
+        }
       } catch (e: unknown) {
         const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : 'Failed to load';
         setError(msg);
         setRawAppointments([]);
       } finally {
         appointmentRangeBlockingLoadDone.current = true;
-        setLoading(false);
+        if (!opts?.silent) {
+          setLoading(false);
+        }
       }
     },
     [rangeUtc.startUtc, rangeUtc.endUtc, resolvedPrimaryProviderId, providers, providersLoadState]
   );
 
+  const applyRealtimeCalendarBatch = useCallback(
+    async (batch: AppointmentCalendarPayload[]) => {
+      if (providers.length === 0) return;
+
+      const primaryId = resolvedPrimaryProviderId.trim();
+      const bumpsDrive =
+        Boolean(primaryId) && showByDriveTime && (view === 'week' || view === 'day');
+
+      const bumpDriveSoft = () => {
+        if (bumpsDrive) {
+          driveSoftRefreshRef.current = true;
+          setDriveRefreshNonce((n) => n + 1);
+        }
+      };
+
+      const dels = batch.filter((p) => p.action === 'deleted');
+      const nonDels = batch.filter((p) => p.action !== 'deleted');
+
+      if (dels.length > 0) {
+        const delSet = new Set(dels.map((d) => d.appointmentId));
+        setRawAppointments((prev) => prev.filter((a) => !delSet.has(a.id)));
+      }
+
+      if (nonDels.length === 0) {
+        if (dels.length > 0) bumpDriveSoft();
+        return;
+      }
+
+      const rows = await Promise.all(
+        nonDels.map((p) => fetchAppointmentById(p.appointmentId, { practiceId: PRACTICE_ID }))
+      );
+
+      if (rows.some((r) => r == null)) {
+        await loadRange({ silent: true, refreshDriveSoft: true });
+        return;
+      }
+
+      setRawAppointments((prev) => {
+        let next = [...prev];
+        for (let i = 0; i < nonDels.length; i++) {
+          const row = rows[i]!;
+          const prov = row.primaryProvider?.id != null ? String(row.primaryProvider.id) : '';
+          if (primaryId && prov && prov !== primaryId) {
+            next = next.filter((a) => a.id !== row.id);
+            continue;
+          }
+          if (
+            !appointmentOverlapsUtcRange(
+              row.appointmentStart,
+              row.appointmentEnd,
+              rangeUtc.startUtc,
+              rangeUtc.endUtc
+            )
+          ) {
+            next = next.filter((a) => a.id !== row.id);
+            continue;
+          }
+          const idx = next.findIndex((a) => a.id === row.id);
+          if (idx === -1) next.push(row);
+          else next[idx] = row;
+        }
+        return next;
+      });
+
+      if (dels.length > 0 || nonDels.length > 0) bumpDriveSoft();
+    },
+    [
+      providers.length,
+      resolvedPrimaryProviderId,
+      showByDriveTime,
+      view,
+      rangeUtc.startUtc,
+      rangeUtc.endUtc,
+      loadRange,
+    ]
+  );
+
   useEffect(() => {
     loadRange();
   }, [loadRange]);
+
+  /** Socket.IO — merge rows locally; soft-refresh drive (no loading flash). Fallback: silent full range if GET by id fails. */
+  useEffect(() => {
+    if (!authToken?.trim()) return;
+    return subscribePracticeCalendar({
+      practiceId: PRACTICE_ID,
+      visibleProviderId: resolvedPrimaryProviderId,
+      onBatch: (payloads) => {
+        void applyRealtimeCalendarBatch(payloads);
+      },
+    });
+  }, [authToken, resolvedPrimaryProviderId, applyRealtimeCalendarBatch]);
 
   useEffect(() => {
     const docId = resolvedPrimaryProviderId.trim();
@@ -2363,14 +2632,22 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setDoctorDayMembershipByApptId(new Map());
     setDoctorDayZonesByApptId(new Map());
     setDoctorDayPatientPcpByApptId(new Map());
-    if (canDrive) {
-      setDriveIsoByApptId(new Map());
-      setDriveDayByDate(new Map());
+
+    const softDriveUpdate = driveSoftRefreshRef.current;
+    driveSoftRefreshRef.current = false;
+
+    if (!softDriveUpdate) {
+      if (canDrive) {
+        setDriveIsoByApptId(new Map());
+        setDriveDayByDate(new Map());
+        setDriveEtaLoading(true);
+      } else {
+        setDriveIsoByApptId(null);
+        setDriveDayByDate(null);
+        setDriveEtaLoading(false);
+      }
+    } else if (canDrive) {
       setDriveEtaLoading(true);
-    } else {
-      setDriveIsoByApptId(null);
-      setDriveDayByDate(null);
-      setDriveEtaLoading(false);
     }
 
     const markFirstData = () => {
@@ -2952,6 +3229,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const start = startUtc.setZone(PRACTICE_TZ);
     const end = start.plus({ minutes: mins });
     const isAdminOrSuper = rolesLower.includes('admin') || rolesLower.includes('superadmin');
+    const ri = readRoutingRescheduleIntent();
+    const rescheduleId = routingPreview.rescheduleAppointmentId;
+    const isReschedule = rescheduleId != null && Number.isFinite(Number(rescheduleId));
+    const routingDescLine = `Routing — ${String(opt.doctorName ?? 'Doctor')} ${String(opt.date)}`;
+
     setBookPrefill({
       clientId: clientIdRaw,
       clientLabel: routingPreview.clientDisplayLabel,
@@ -2959,7 +3241,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       lockClient: !isAdminOrSuper,
       disableClientSearch: true,
       preserveDurationFromSlot: true,
-      defaultDescription: `Routing — ${String(opt.doctorName ?? 'Doctor')} ${String(opt.date)}`,
+      defaultDescription: isReschedule
+        ? (ri?.description?.trim() || routingDescLine)
+        : routingDescLine,
+      defaultInstructions: ri?.instructions?.trim() || undefined,
+      rescheduleAppointmentId: isReschedule ? Number(rescheduleId) : undefined,
+      preferredPatientId: routingPreview.reschedulePatientId?.trim() || ri?.patientId,
+      providerId: ri?.primaryProviderInternalId?.trim(),
+      modalTitle: isReschedule ? 'Reschedule appointment' : undefined,
     });
     setBookSlot({ start, end });
   }, [routingPreview, rolesLower]);
@@ -2970,14 +3259,19 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, []);
 
   const handleSchedulerBooked = useCallback(() => {
+    const wasReschedule = bookPrefill?.rescheduleAppointmentId != null;
     void loadRange({ refreshDrive: true });
-    if (routingPreview) {
+    if (embedInRoutingWorkspace) {
       clearRoutingPersistenceAfterSchedulerBook();
-      clearRoutingCalendarPreview();
+      setRoutingPreview(null);
+      window.dispatchEvent(new Event(ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT));
+    } else if (routingPreview) {
+      clearRoutingPersistenceAfterSchedulerBook();
       setRoutingPreview(null);
     }
-    setToast('Appointment saved to the schedule.');
-  }, [loadRange, routingPreview]);
+    clearRoutingRescheduleIntent();
+    setToast(wasReschedule ? 'Appointment rescheduled.' : 'Appointment saved to the schedule.');
+  }, [loadRange, routingPreview, bookPrefill?.rescheduleAppointmentId, embedInRoutingWorkspace]);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -3014,6 +3308,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           case 'edit':
             setEditAppt(appt);
             return;
+          case 'reschedule': {
+            const intent = buildRoutingRescheduleIntentFromAppointment(appt);
+            if (!intent) {
+              fail('This visit cannot be rescheduled here (needs client and patient, not a block).');
+              return;
+            }
+            writeRoutingRescheduleIntent(intent);
+            if (embedInRoutingWorkspace) {
+              showToast('Reschedule: client loaded in routing. Run routing, open My Week, then confirm.');
+            } else {
+              navigate('/schedule/routing');
+            }
+            return;
+          }
           case 'addAnotherPet': {
             if (addAnotherPetMenuReady !== true) {
               fail('No additional pets available for this time.');
@@ -3205,8 +3513,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         else fail('Something went wrong.');
       }
     },
-    [loadRange, navigate, showToast, rawAppointments, addAnotherPetMenuReady]
+    [loadRange, navigate, showToast, rawAppointments, addAnotherPetMenuReady, embedInRoutingWorkspace]
   );
+
+  const contextMenuRescheduleIntent = useMemo(() => {
+    if (!contextMenu) return null;
+    return buildRoutingRescheduleIntentFromAppointment(contextMenu.appt);
+  }, [contextMenu]);
 
   const addAnotherPetMenuOpts = useMemo(() => {
     if (
@@ -3482,15 +3795,24 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                         onMouseLeave={() => endHoverPopoverForAppt(appt.id)}
                         onContextMenu={(ev) => handleAppointmentContextMenu(ev, appt)}
                       >
-                        {member.isMember && (
-                          <span
-                            className="scheduler-appt-member-heart"
-                            aria-hidden
-                          >
-                            <Heart size={10} fill="#dc2626" color="#dc2626" strokeWidth={1.5} />
-                          </span>
+                        {(member.isMember || showPreApptRoomLoaderIcon(appt)) && (
+                          <div className="scheduler-appt-card-icons-tr" aria-hidden>
+                            {member.isMember && (
+                              <span
+                                className="scheduler-appt-card-icon-hit"
+                                title={member.membershipName?.trim() || 'Member'}
+                              >
+                                <Heart size={10} fill="#dc2626" color="#dc2626" strokeWidth={1.5} />
+                              </span>
+                            )}
+                            {showPreApptRoomLoaderIcon(appt) && (
+                              <SchedulerPreApptRlIcon confirmStatusName={appt.confirmStatusName} />
+                            )}
+                          </div>
                         )}
-                        <SchedulerEventTitleBlock appt={appt} variant="allDay" />
+                        <span className="scheduler-all-day-span-bar-text">
+                          <SchedulerEventTitleBlock appt={appt} variant="allDay" />
+                        </span>
                       </div>
                     );
                   })}
@@ -3744,7 +4066,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                         openRoutingBookForm();
                                       }}
                                     >
-                                      Book
+                                      {routingPreviewIsReschedule ? 'Reschedule' : 'Book'}
                                     </button>
                                     <span
                                       role="button"
@@ -3796,6 +4118,21 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                               onMouseLeave={() => endHoverPopoverForAppt(appt.id)}
                               onContextMenu={(e) => handleAppointmentContextMenu(e, appt)}
                             >
+                              {(member.isMember || showPreApptRoomLoaderIcon(appt)) && (
+                                <div className="scheduler-appt-card-icons-tr" aria-hidden>
+                                  {member.isMember && (
+                                    <span
+                                      className="scheduler-appt-card-icon-hit"
+                                      title={member.membershipName?.trim() || 'Member'}
+                                    >
+                                      <Heart size={10} fill="#dc2626" color="#dc2626" strokeWidth={1.5} />
+                                    </span>
+                                  )}
+                                  {showPreApptRoomLoaderIcon(appt) && (
+                                    <SchedulerPreApptRlIcon confirmStatusName={appt.confirmStatusName} />
+                                  )}
+                                </div>
+                              )}
                               <div className="scheduler-event-time">
                                 <SchedulerClientZoneBadge appt={appt} compact />
                                 {scheduledTimeLabel ? (
@@ -3803,14 +4140,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                 ) : null}
                               </div>
                               <div className="scheduler-event-title-row">
-                                {member.isMember && (
-                                  <span
-                                    className="scheduler-appt-member-heart"
-                                    aria-hidden
-                                  >
-                                    <Heart size={10} fill="#dc2626" color="#dc2626" strokeWidth={1.5} />
-                                  </span>
-                                )}
                                 <SchedulerEventTitleBlock appt={appt} />
                               </div>
                               {notesCombined ? (
@@ -4154,12 +4483,19 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           showAddAnotherPet={addAnotherPetMenuOpts.show}
           addAnotherPetDisabled={addAnotherPetMenuOpts.disabled}
           addAnotherPetTitle={addAnotherPetMenuOpts.title}
+          rescheduleDisabled={!contextMenuRescheduleIntent}
+          rescheduleDisabledTitle={
+            contextMenuRescheduleIntent
+              ? undefined
+              : 'Needs a linked client and patient. Blocks cannot be rescheduled here.'
+          }
         />
       ) : null}
 
       {editAppt &&
         createPortal(
           <SchedulerEditVisitModal
+            key={editAppt.id}
             appt={editAppt}
             practiceTz={PRACTICE_TZ}
             appointmentTypes={typeList}

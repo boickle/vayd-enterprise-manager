@@ -7,6 +7,9 @@ export const ROUTING_UI_SNAPSHOT_KEY = 'routing:ui-snapshot-v1';
 /** Same key as Routing page — last routing request id for feedback (session). */
 export const ROUTING_REQUEST_ID_SESSION_KEY = 'routing:last-request-id';
 
+/** After a practice calendar book in the routing + calendar workspace, Scheduler dispatches this so Routing clears candidate results from React state. */
+export const ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT = 'vayd:routing-workspace-scheduler-booked';
+
 const SNAPSHOT_VERSION = 1 as const;
 
 /** localStorage: last resolved PIMS id + label for the logged-in user's linked doctor (avoids empty-doctor flash on cold load). */

@@ -305,6 +305,8 @@ export type Appointment = {
   clientZone?: { id?: number | string; name?: string | null } | null;
   effectiveZone?: { id?: number | string; name?: string | null } | null;
   zoneName?: string | null;
+  /** When set, routing uses this address instead of the client’s home (PUT /appointments/:id/alternate-address). */
+  alternateAddress?: { addressText: string } | null;
 };
 
 export type DeclinedInventoryItem = {

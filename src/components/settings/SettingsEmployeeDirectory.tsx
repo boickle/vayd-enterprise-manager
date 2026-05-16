@@ -12,6 +12,7 @@ import {
   upsertEmployees,
   type EmployeeDto,
 } from '../../api/employeesMutations';
+import { PIMS_ENTITY_EDIT_ENABLED } from '../../utils/pimsEntityEditing';
 
 const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
@@ -121,7 +122,12 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (!PIMS_ENTITY_EDIT_ENABLED) setModalMode(null);
+  }, []);
+
   const openAdd = () => {
+    if (!PIMS_ENTITY_EDIT_ENABLED) return;
     setEditingId(null);
     setFirstName('');
     setLastName('');
@@ -182,6 +188,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const openEdit = async (id: number) => {
+    if (!PIMS_ENTITY_EDIT_ENABLED) return;
     setSaving(false);
     setModalMode(null);
     try {
@@ -239,6 +246,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
 
   const submitModal = async (e: FormEvent) => {
     e.preventDefault();
+    if (!PIMS_ENTITY_EDIT_ENABLED) return;
     const fn = firstName.trim();
     const ln = lastName.trim();
     if (!fn || !ln) {
@@ -283,6 +291,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const deactivate = async (emp: Employee) => {
+    if (!PIMS_ENTITY_EDIT_ENABLED) return;
     if (!window.confirm(`Deactivate ${emp.firstName} ${emp.lastName}? They will be hidden from active lists.`)) {
       return;
     }
@@ -303,6 +312,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const reactivate = async (emp: Employee) => {
+    if (!PIMS_ENTITY_EDIT_ENABLED) return;
     try {
       const full = await fetchEmployee(emp.id);
       const merged = {
@@ -320,6 +330,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const removeRow = async (emp: Employee) => {
+    if (!PIMS_ENTITY_EDIT_ENABLED) return;
     if (
       !window.confirm(
         `Permanently delete employee #${emp.id} from the database? This cannot be undone.`
@@ -345,17 +356,33 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   return (
     <div className="settings-employee-directory">
       <p className="muted" style={{ marginBottom: 16, maxWidth: 900 }}>
-        Add or edit staff using <code>POST /employees/upsert</code> (when PIMS ID is set on add) or{' '}
-        <code>POST /employees</code> (save). The editor loads the same fields returned by <code>GET /employees/:id</code>{' '}
-        (name, PIMS ids, address, phones, <code>roleIds</code>, etc.). Deactivate via <code>isActive: false</code>; delete
-        via <code>DELETE /employees?ids=…</code>.
+        {PIMS_ENTITY_EDIT_ENABLED ? (
+          <>
+            Add or edit staff using <code>POST /employees/upsert</code> (when PIMS ID is set on add) or{' '}
+            <code>POST /employees</code> (save). The editor loads the same fields returned by <code>GET /employees/:id</code>{' '}
+            (name, PIMS ids, address, phones, <code>roleIds</code>, etc.). Deactivate via <code>isActive: false</code>; delete
+            via <code>DELETE /employees?ids=…</code>.
+          </>
+        ) : (
+          <>
+            Employee directory is <strong>read-only</strong>. To enable add, edit, deactivate, and delete, set{' '}
+            <code>VITE_ENABLE_PIMS_ENTITY_EDIT=true</code> in <code>.env</code> and rebuild.
+          </>
+        )}
       </p>
 
       <div style={{ marginBottom: 12 }}>
-        <button type="button" className="btn" onClick={openAdd}>
-          + Add employee
-        </button>
-        <button type="button" className="btn secondary" style={{ marginLeft: 8 }} onClick={() => void load()}>
+        {PIMS_ENTITY_EDIT_ENABLED ? (
+          <button type="button" className="btn" onClick={openAdd}>
+            + Add employee
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="btn secondary"
+          style={{ marginLeft: PIMS_ENTITY_EDIT_ENABLED ? 8 : 0 }}
+          onClick={() => void load()}
+        >
           Refresh
         </button>
       </div>
@@ -375,7 +402,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
                 <th>PIMS user</th>
                 <th>Provider</th>
                 <th>Status</th>
-                <th>Actions</th>
+                {PIMS_ENTITY_EDIT_ENABLED ? <th>Actions</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -395,38 +422,40 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
                   <td>{empPimsUserId(emp)}</td>
                   <td>{emp.isProvider ? 'Yes' : 'No'}</td>
                   <td>{empActive(emp) ? 'Active' : 'Inactive'}</td>
-                  <td>
-                    <button type="button" className="btn secondary" onClick={() => void openEdit(emp.id)}>
-                      Edit
-                    </button>
-                    {empActive(emp) ? (
+                  {PIMS_ENTITY_EDIT_ENABLED ? (
+                    <td>
+                      <button type="button" className="btn secondary" onClick={() => void openEdit(emp.id)}>
+                        Edit
+                      </button>
+                      {empActive(emp) ? (
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          style={{ marginLeft: 6 }}
+                          onClick={() => void deactivate(emp)}
+                        >
+                          Deactivate
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          style={{ marginLeft: 6 }}
+                          onClick={() => void reactivate(emp)}
+                        >
+                          Reactivate
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="btn secondary"
-                        style={{ marginLeft: 6 }}
-                        onClick={() => void deactivate(emp)}
+                        style={{ marginLeft: 6, color: '#b91c1c' }}
+                        onClick={() => void removeRow(emp)}
                       >
-                        Deactivate
+                        Delete
                       </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        style={{ marginLeft: 6 }}
-                        onClick={() => void reactivate(emp)}
-                      >
-                        Reactivate
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="btn secondary"
-                      style={{ marginLeft: 6, color: '#b91c1c' }}
-                      onClick={() => void removeRow(emp)}
-                    >
-                      Delete
-                    </button>
-                  </td>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>
@@ -434,7 +463,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
         </div>
       )}
 
-      {modalMode && (
+      {PIMS_ENTITY_EDIT_ENABLED && modalMode && (
         <div className="settings-employee-modal-root" role="presentation">
           <button type="button" className="settings-employee-modal-backdrop" aria-label="Close" onClick={closeModal} />
           <div className="settings-employee-modal settings-employee-modal--wide" role="dialog" aria-modal="true">

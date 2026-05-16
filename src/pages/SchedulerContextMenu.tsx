@@ -42,7 +42,8 @@ export type SchedulerContextMenuAction =
   | { kind: 'quickInvoice' }
   | { kind: 'checkout' }
   | { kind: 'contact'; channel: 'phone1' | 'phone2' | 'email1' | 'email2' }
-  | { kind: 'addAnotherPet' };
+  | { kind: 'addAnotherPet' }
+  | { kind: 'reschedule' };
 
 type Props = {
   appt: Appointment;
@@ -55,6 +56,8 @@ type Props = {
   /** Grey out when no pets left or while checking. */
   addAnotherPetDisabled?: boolean;
   addAnotherPetTitle?: string;
+  rescheduleDisabled?: boolean;
+  rescheduleDisabledTitle?: string;
 };
 
 export function SchedulerAppointmentContextMenu({
@@ -66,6 +69,8 @@ export function SchedulerAppointmentContextMenu({
   showAddAnotherPet,
   addAnotherPetDisabled,
   addAnotherPetTitle,
+  rescheduleDisabled,
+  rescheduleDisabledTitle,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [placed, setPlaced] = useState<{ left: number; top: number } | null>(null);
@@ -116,6 +121,12 @@ export function SchedulerAppointmentContextMenu({
     >
       <CtxRow label="View" onPick={() => onAction({ kind: 'view' })} />
       <CtxRow label="Edit" onPick={() => onAction({ kind: 'edit' })} />
+      <CtxRow
+        label="Reschedule…"
+        disabled={Boolean(rescheduleDisabled)}
+        title={rescheduleDisabled ? rescheduleDisabledTitle : undefined}
+        onPick={() => onAction({ kind: 'reschedule' })}
+      />
       {showAddAnotherPet ? (
         <CtxRow
           label="Add another pet…"
