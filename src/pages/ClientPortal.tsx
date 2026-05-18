@@ -3019,7 +3019,7 @@ export default function ClientPortal() {
                   Referring a friend is the highest compliment you can give our team. We are grateful for your trust.
                 </p>
                 <p style={{ color: '#374151', fontSize: 14, marginBottom: 24, lineHeight: 1.5 }}>
-                  We will reach out to your friend directly. You will receive a $50 VAYD credit once their appointment is complete, plus an additional $25 credit if they become a member.
+                  We will reach out to your friend directly. You and your friend will receive a $50 VAYD credit once their appointment is complete, plus an additional $25 credit if they become a member.
                 </p>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
                   <button
@@ -3073,7 +3073,7 @@ export default function ClientPortal() {
                   Share Vet At Your Door with a friend and invite them into the Vet At Your Door veterinary experience.
                 </p>
                 <p style={{ color: '#6b7280', fontSize: 14, marginBottom: 20, lineHeight: 1.5 }}>
-                  You'll receive a <strong>$50 VAYD credit</strong> when your referral completes an appointment, and an <strong>additional $25</strong> if they become a member.
+                  You and your friend will receive a <strong>$50 VAYD credit</strong> when your referral completes an appointment, and an <strong>additional $25</strong> if they become a member.
                 </p>
                 {referralError && (
                   <div
