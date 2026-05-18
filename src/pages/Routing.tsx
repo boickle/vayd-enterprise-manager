@@ -27,6 +27,12 @@ import {
   type RoutingSlotSearchOptionalFlags,
   type RoutingV2SlotSearchResult,
 } from '../api/routing';
+import {
+  adjustRoutingSlotSearchDates,
+  diffRoutingDaysInclusive,
+  routingCalendarDatePart,
+} from '../utils/routingSlotSearchDates';
+import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import './Routing.css';
 // Removed fetchPrimaryProviders import - now using /employees/veterinarians endpoint directly
 
@@ -1722,14 +1728,6 @@ export default function Routing() {
     setShowDoctorDropdown(false);
   }
 
-  function diffDaysInclusive(aISO: string, bISO: string) {
-    const a = new Date(aISO + 'T00:00:00');
-    const b = new Date(bISO + 'T00:00:00');
-    const ms = b.getTime() - a.getTime();
-    const days = Math.floor(ms / (1000 * 60 * 60 * 24));
-    return days + 1;
-  }
-
   async function submitRoutingRequest(endpoint: string, doctorIdsArray?: string[]) {
     setError(null);
     setResult(null);
@@ -1739,7 +1737,7 @@ export default function Routing() {
     setFeedbackToast(null);
     setFeedbackError(null);
 
-    if (new Date(form.endDate) < new Date(form.startDate)) {
+    if (routingCalendarDatePart(form.endDate) < routingCalendarDatePart(form.startDate)) {
       setError('End date must be on or after the start date.');
       return;
     }
@@ -1783,7 +1781,23 @@ export default function Routing() {
       }
     }
 
-    const numDays = Math.max(1, diffDaysInclusive(form.startDate, form.endDate));
+    const isV2 = endpoint.includes('/v2');
+    const { startDate: routingStartDate, endDate: routingEndDate, numDays } =
+      isV2
+        ? adjustRoutingSlotSearchDates(
+            form.startDate,
+            form.endDate,
+            DEFAULT_PRACTICE_TIMEZONE
+          )
+        : {
+            startDate: form.startDate,
+            endDate: form.endDate,
+            numDays: diffRoutingDaysInclusive(
+              form.startDate,
+              form.endDate,
+              DEFAULT_PRACTICE_TIMEZONE
+            ),
+          };
 
     // If both edge boxes are selected, cancel the preference.
     const preferEdge: 'first' | 'last' | null =
@@ -1802,7 +1816,8 @@ export default function Routing() {
           : preferredWeekday;
 
     const base: Record<string, unknown> & RoutingSlotSearchOptionalFlags = {
-      startDate: form.startDate,
+      startDate: routingStartDate,
+      ...(isV2 ? { endDate: routingEndDate } : {}),
       numDays,
       newAppt: newApptPayload,
       useTraffic,
@@ -1818,9 +1833,6 @@ export default function Routing() {
         : {}),
       ...(preferEarliestFeasibleStart ? { preferEarliestFeasibleStart: true } : {}),
     };
-
-    // Determine if this is a v2 endpoint
-    const isV2 = endpoint.includes('/v2');
 
     let payload: any;
     if (isV2) {
@@ -1882,7 +1894,9 @@ export default function Routing() {
       return { valid: false, error: 'Please select an end date.' };
     }
 
-    if (new Date(form.endDate) < new Date(form.startDate)) {
+    const startCal = routingCalendarDatePart(form.startDate);
+    const endCal = routingCalendarDatePart(form.endDate);
+    if (endCal < startCal) {
       return { valid: false, error: 'End date must be on or after the start date.' };
     }
 
