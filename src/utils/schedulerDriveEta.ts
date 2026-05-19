@@ -18,6 +18,10 @@ import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import type { DayData } from '../pages/MyWeek';
 import { mergeEtaFetchIntoDayData, type DayBundleIn } from './schedulerEtaMerge';
 import {
+  applyEditTimePreviewToDoctorDayAppts,
+  type EditVisitTimePreview,
+} from './editVisitTimePreview';
+import {
   SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID,
   type RoutingCalendarPreviewPayloadV1,
 } from './routingCalendarPreviewStorage';
@@ -337,6 +341,8 @@ export type SchedulerDriveRoutingPreviewOptions = {
   routingPreview?: RoutingCalendarPreviewPayloadV1 | null;
   /** Practice-local YYYY-MM-DD for the preview column (must match `day.date` to apply). */
   previewPracticeDateKey?: string | null;
+  /** Move an existing visit to proposed times for drive-time preview (edit visit flow). */
+  editTimePreview?: EditVisitTimePreview | null;
 };
 
 async function fetchEtaForOneDay(
@@ -596,6 +602,13 @@ export async function fetchSchedulerDoctorDayBundle(
     const membershipByApptId = membershipMapFromDoctorDayAppointments(appts);
     const zonesByApptId = zonesMapFromDoctorDayAppointments(appts);
     const patientPrimaryProviderByApptId = patientPrimaryProviderMapFromDoctorDayAppointments(appts);
+
+    if (
+      routingPreviewOpts?.editTimePreview &&
+      routingPreviewOpts.editTimePreview.practiceDateKey === date
+    ) {
+      appts = applyEditTimePreviewToDoctorDayAppts(appts, routingPreviewOpts.editTimePreview);
+    }
 
     if (
       routingPreviewOpts?.routingPreview &&

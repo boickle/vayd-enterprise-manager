@@ -34,7 +34,11 @@ export type RoutingCalendarPreviewPayloadV1 = {
   clientDisplayLabel?: string;
   /** PATCH target when confirming from routing calendar preview (reschedule flow). */
   rescheduleAppointmentId?: number;
+  /** When rescheduling all household pets today, PATCH each id to the new slot. */
+  rescheduleAppointmentIds?: number[];
   reschedulePatientId?: string;
+  /** Pets shown on the calendar preview chip (all household when rescheduling "all pets today"). */
+  previewPatients?: { id: number | string; name: string }[];
 };
 
 export function routingCalendarOptionKey(opt: {

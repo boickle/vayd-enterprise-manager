@@ -1,3 +1,59 @@
+/* My Week — day column when doctor has no shift (null depot start/end) */
+.my-week-day-col--off {
+  background: #e2e8f0;
+}
+
+.my-week-day-col--off .my-week-day-grid {
+  background: repeating-linear-gradient(
+    -45deg,
+    #e2e8f0,
+    #e2e8f0 8px,
+    #d1d5db 8px,
+    #d1d5db 9px
+  );
+}
+
+.my-week-day-off-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #475569;
+  background: #cbd5e1;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.my-week-day-off-caption {
+  font-size: 10px;
+  font-weight: 600;
+  color: #64748b;
+  font-style: italic;
+}
+
+.my-week-day-off-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: rgba(241, 245, 249, 0.72);
+}
+
+.my-week-day-off-overlay-label {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid #94a3b8;
+}
+
 /* Container tweaks: full-width, stacked */
 .dd-section {
   display: flex;

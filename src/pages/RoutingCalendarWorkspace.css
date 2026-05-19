@@ -7,7 +7,15 @@
   background: #f1f5f9;
 }
 
-/* ~45% routing (form + results) / ~55% calendar */
+.schedule-routing-workspace--resizing {
+  cursor: col-resize;
+}
+
+.schedule-routing-workspace--resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
 .schedule-routing-workspace__routing,
 .schedule-routing-workspace__calendar {
   min-width: 0;
@@ -18,16 +26,75 @@
 }
 
 .schedule-routing-workspace__routing {
-  flex: 9 1 0;
-  border-right: 1px solid #e2e8f0;
+  flex: 0 0 var(--routing-split-pct, 45%);
+  max-width: 78%;
+  min-width: min(280px, 42%);
   background: #f1f5f9;
 }
 
 .schedule-routing-workspace__calendar {
-  flex: 11 1 0;
+  flex: 1 1 0;
+  min-width: min(320px, 38%);
+}
+
+.schedule-routing-workspace__splitter {
+  flex: 0 0 7px;
+  margin: 0 -3px;
+  position: relative;
+  z-index: 2;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+}
+
+.schedule-routing-workspace__splitter::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: #e2e8f0;
+  transition: background 0.12s ease, width 0.12s ease;
+}
+
+.schedule-routing-workspace__splitter::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 32px;
+  border-radius: 3px;
+  background: #cbd5e1;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.schedule-routing-workspace__splitter:hover::before,
+.schedule-routing-workspace__splitter:focus-visible::before,
+.schedule-routing-workspace--resizing .schedule-routing-workspace__splitter::before {
+  width: 3px;
+  background: #94a3b8;
+}
+
+.schedule-routing-workspace__splitter:hover::after,
+.schedule-routing-workspace__splitter:focus-visible::after {
+  opacity: 1;
+}
+
+.schedule-routing-workspace__splitter:focus-visible {
+  outline: none;
+}
+
+.schedule-routing-workspace__splitter:focus-visible::before {
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
 }
 
 .schedule-routing-workspace__routing-inner {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -38,16 +105,13 @@
   box-sizing: border-box;
 }
 
-/** Right pane: own scroll so routing results on the left never move the calendar column. */
 .schedule-routing-workspace__calendar-scroll {
   flex: 1;
   min-height: 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  overflow: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
+  overflow: hidden;
 }
 
 @media (max-width: 900px) {
@@ -56,14 +120,20 @@
   }
 
   .schedule-routing-workspace__routing {
-    border-right: none;
-    border-bottom: 1px solid #e2e8f0;
     flex: 0 1 auto;
+    width: 100% !important;
+    max-width: none;
+    min-width: 0;
     max-height: min(52vh, 520px);
+  }
+
+  .schedule-routing-workspace__splitter {
+    display: none;
   }
 
   .schedule-routing-workspace__calendar {
     flex: 1;
+    min-width: 0;
     min-height: min(48vh, 480px);
   }
 }

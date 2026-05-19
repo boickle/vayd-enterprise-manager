@@ -86,6 +86,59 @@ export type ScheduleOverride = {
   endDepotLon?: number | null;
 };
 
+/** Normalize HH:mm or HH:mm:ss to HH:mm for comparisons. */
+export function normalizeScheduleOverrideLocalTime(value: string | null | undefined): string {
+  const s = String(value ?? '').trim();
+  if (!s) return '';
+  const m = s.match(/^(\d{1,2}:\d{2})/);
+  return m ? m[1] : s;
+}
+
+/** Day off: no shift times, or identical start/end (e.g. cleared routing for that date). */
+export function scheduleOverrideIsOff(
+  o: Pick<ScheduleOverride, 'workStartLocal' | 'workEndLocal'>
+): boolean {
+  const start = normalizeScheduleOverrideLocalTime(o.workStartLocal);
+  const end = normalizeScheduleOverrideLocalTime(o.workEndLocal);
+  if (!start && !end) return true;
+  return Boolean(start && end && start === end);
+}
+
+export function buildScheduleOverridePayload(form: {
+  workStartLocal?: string | null;
+  workEndLocal?: string | null;
+  startDepotLat?: number | null;
+  startDepotLon?: number | null;
+  endDepotLat?: number | null;
+  endDepotLon?: number | null;
+}): {
+  workStartLocal?: string | null;
+  workEndLocal?: string | null;
+  startDepotLat?: number | null;
+  startDepotLon?: number | null;
+  endDepotLat?: number | null;
+  endDepotLon?: number | null;
+} {
+  if (scheduleOverrideIsOff(form)) {
+    return {
+      workStartLocal: null,
+      workEndLocal: null,
+      startDepotLat: null,
+      startDepotLon: null,
+      endDepotLat: null,
+      endDepotLon: null,
+    };
+  }
+  return {
+    workStartLocal: form.workStartLocal || null,
+    workEndLocal: form.workEndLocal || null,
+    startDepotLat: form.startDepotLat ?? null,
+    startDepotLon: form.startDepotLon ?? null,
+    endDepotLat: form.endDepotLat ?? null,
+    endDepotLon: form.endDepotLon ?? null,
+  };
+}
+
 export type Zone = {
   id: number;
   name: string;
@@ -270,12 +323,12 @@ export async function createScheduleOverride(
   employeeId: number,
   body: {
     date: string;
-    workStartLocal?: string;
-    workEndLocal?: string;
-    startDepotLat?: number;
-    startDepotLon?: number;
-    endDepotLat?: number;
-    endDepotLon?: number;
+    workStartLocal?: string | null;
+    workEndLocal?: string | null;
+    startDepotLat?: number | null;
+    startDepotLon?: number | null;
+    endDepotLat?: number | null;
+    endDepotLon?: number | null;
   }
 ): Promise<ScheduleOverride> {
   const { data } = await http.post(`/employees/${employeeId}/schedule-overrides`, body);
@@ -290,12 +343,12 @@ export async function updateScheduleOverride(
   employeeId: number,
   overrideId: number,
   body: {
-    workStartLocal?: string;
-    workEndLocal?: string;
-    startDepotLat?: number;
-    startDepotLon?: number;
-    endDepotLat?: number;
-    endDepotLon?: number;
+    workStartLocal?: string | null;
+    workEndLocal?: string | null;
+    startDepotLat?: number | null;
+    startDepotLon?: number | null;
+    endDepotLat?: number | null;
+    endDepotLon?: number | null;
   }
 ): Promise<ScheduleOverride> {
   const { data } = await http.put(

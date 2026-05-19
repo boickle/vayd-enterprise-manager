@@ -112,6 +112,13 @@ main.schedule-main-wrapper {
   overflow: hidden;
 }
 
+/** Let the schedule outlet scroll the full calendar (filters + grid), not a flex-trapped inner pane. */
+main.schedule-main-wrapper .scheduler-page:not(.scheduler-page--embedded) {
+  flex: none;
+  min-height: auto;
+  display: block;
+}
+
 .navbar__center-block {
   display: flex;
   align-items: center;

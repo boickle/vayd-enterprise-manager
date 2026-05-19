@@ -1,22 +1,40 @@
 /* Routing request + results layout (scoped; avoids global .grid minmax(260px) squeezing narrow panes) */
 
 .routing-page-root {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
   gap: 20px;
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
 }
 
-/* Form left, results right from tablet/desktop up; stack only on narrow viewports */
-@media (min-width: 768px) {
-  .routing-page-root {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    align-items: start;
-    gap: 20px;
-  }
+/**
+ * Routing pane under 35% of viewport: form full width, then results below.
+ * Calendar stays in the workspace column to the right.
+ */
+.routing-page-root--stack-columns {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 20px;
+}
+
+.routing-page-root--stack-columns .routing-route-form-card,
+.routing-page-root--stack-columns .routing-results-card {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
+/* Side-by-side: form left, results right (both columns always reserved). */
+.routing-page-root:not(.routing-page-root--stack-columns) .routing-route-form-card {
+  grid-column: 1;
+}
+
+.routing-page-root:not(.routing-page-root--stack-columns) .routing-results-card {
+  grid-column: 2;
 }
 
 .routing-form-stack {
@@ -34,6 +52,18 @@
 .routing-doctor-row .routing-doctor-input-wrap {
   min-width: 0;
   width: 100%;
+}
+
+.routing-input--error {
+  border-color: #dc2626 !important;
+  box-shadow: 0 0 0 1px #dc2626;
+}
+
+.routing-doctor-required-hint {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.35;
+  color: #dc2626;
 }
 
 .routing-grid-2 {
@@ -136,20 +166,18 @@
 }
 
 .routing-results-options {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
   gap: 12px;
   min-width: 0;
+  justify-items: start;
   align-items: flex-start;
 }
 
-@media (min-width: 768px) {
-  .routing-results-options {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
-    gap: 12px;
-    justify-items: start;
-  }
+.routing-page-root--stack-columns .routing-results-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 /* ----- Get Best Route: mobile-first booking flow ----- */
@@ -160,11 +188,39 @@
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
 }
 
+.routing-route-form-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-bottom: 6px;
+}
+
 .routing-route-form-title {
-  margin: 0 0 10px 0;
+  margin: 0;
   font-size: 1rem;
   font-weight: 700;
   letter-spacing: -0.01em;
+}
+
+.routing-reschedule-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #0d4d3c;
+  background: color-mix(in srgb, var(--accent, #10a37f) 18%, #ffffff);
+  border: 1px solid color-mix(in srgb, var(--accent, #10a37f) 40%, #ffffff);
+}
+
+.routing-reschedule-mode-summary {
+  margin: 0 0 10px 0;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .routing-route-form-stack.routing-form-stack {
@@ -274,7 +330,34 @@
 }
 
 .routing-calculate-time-minutes-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: flex-end;
   min-width: 0;
+}
+
+.routing-reschedule-scope-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 12rem;
+  max-width: 100%;
+}
+
+.routing-calculate-time-field .routing-reschedule-scope-select {
+  width: 100%;
+  min-width: 10rem;
+  max-width: 18rem;
+  box-sizing: border-box;
+}
+
+.routing-required-mark {
+  color: var(--danger, #c62828);
+  font-weight: 600;
 }
 
 .routing-calculate-time-minutes-stack {
@@ -302,7 +385,7 @@
   padding-right: 10px;
 }
 
-@keyframes routingMinutesFlash {
+@keyframes routingPrefillFlash {
   0% {
     background-color: #ffffff;
     border-color: var(--border);
@@ -321,13 +404,22 @@
   }
 }
 
-.routing-calculate-time-field .routing-mins-line-input.routing-minutes-flash--active {
-  animation: routingMinutesFlash 0.75s ease-out;
+.routing-page-root .input.routing-prefill-flash--active,
+.routing-page-root select.input.routing-prefill-flash--active {
+  animation: routingPrefillFlash 0.75s ease-out;
+}
+
+.routing-calculate-time-field .routing-mins-line-input.routing-minutes-flash--active,
+.routing-calculate-time-field .routing-mins-line-input.routing-prefill-flash--active {
+  animation: routingPrefillFlash 0.75s ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .routing-calculate-time-field .routing-mins-line-input.routing-minutes-flash--active {
-    animation: routingMinutesFlash 0.35s ease-out;
+  .routing-page-root .input.routing-prefill-flash--active,
+  .routing-page-root select.input.routing-prefill-flash--active,
+  .routing-calculate-time-field .routing-mins-line-input.routing-minutes-flash--active,
+  .routing-calculate-time-field .routing-mins-line-input.routing-prefill-flash--active {
+    animation: routingPrefillFlash 0.35s ease-out;
   }
 }
 

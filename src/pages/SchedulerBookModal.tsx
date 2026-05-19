@@ -41,6 +41,10 @@ export type SchedulerBookPrefill = {
   lockSlotTimes?: boolean;
   /** When set with routing preview — PATCH existing visit instead of POST create. */
   rescheduleAppointmentId?: number;
+  /** Reschedule all of these visits to the new slot (e.g. household same-day). */
+  rescheduleAppointmentIds?: number[];
+  /** Per-appointment patient when rescheduling multiple same-day visits. */
+  rescheduleVisitPatches?: { appointmentId: number; patientId: string }[];
   /** Prefer this patient in the picker (e.g. reschedule). */
   preferredPatientId?: string;
   defaultInstructions?: string;
@@ -529,18 +533,38 @@ export function SchedulerBookModal({
     try {
       const startIso = startLocal.setZone(practiceTz).toUTC().toISO()!;
       const endIso = endLocal.setZone(practiceTz).toUTC().toISO()!;
-      const rescheduleId = prefill?.rescheduleAppointmentId;
-      if (rescheduleId != null && Number.isFinite(Number(rescheduleId))) {
-        await patchAppointment(rescheduleId, {
+      const visitPatches =
+        prefill?.rescheduleVisitPatches?.filter(
+          (v) => Number.isFinite(Number(v.appointmentId)) && v.patientId?.trim()
+        ) ?? [];
+      const rescheduleIds =
+        visitPatches.length > 0
+          ? visitPatches.map((v) => Number(v.appointmentId))
+          : (
+              prefill?.rescheduleAppointmentIds?.length
+                ? prefill.rescheduleAppointmentIds
+                : prefill?.rescheduleAppointmentId != null
+                  ? [prefill.rescheduleAppointmentId]
+                  : []
+            ).filter((id) => Number.isFinite(Number(id)));
+      if (rescheduleIds.length > 0) {
+        const patchBody = {
           appointmentStart: startIso,
           appointmentEnd: endIso,
           appointmentTypeId: Number(typeId),
           primaryProviderId: Number(providerId),
-          patientId: Number(selectedPatientId),
           clientId: Number(selectedClientId),
           description: description.trim() || null,
           instructions: instructions.trim() || null,
-        });
+        };
+        for (const rescheduleId of rescheduleIds) {
+          const visitPatch = visitPatches.find((v) => Number(v.appointmentId) === rescheduleId);
+          const patientForPatch = visitPatch?.patientId ?? selectedPatientId;
+          await patchAppointment(rescheduleId, {
+            ...patchBody,
+            patientId: Number(patientForPatch),
+          });
+        }
       } else {
         await createAppointment({
           practiceId,

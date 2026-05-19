@@ -476,6 +476,25 @@ export type MyWeekProps = {
   virtualAppt?: MyWeekVirtualAppt;
 };
 
+/** Both depot shift times empty — doctor is not scheduled this day (GET /appointments/doctor). */
+export function doctorDayIsOff(dayData: DayData | null | undefined): boolean {
+  if (!dayData) return false;
+  return !String(dayData.startDepotTime ?? '').trim() && !String(dayData.endDepotTime ?? '').trim();
+}
+
+/** At least one household with routable coordinates (not a no-location / block-only day). */
+export function dayHasLocatedAppointments(dayData: DayData | null | undefined): boolean {
+  if (!dayData?.households?.length) return false;
+  return dayData.households.some(
+    (h) =>
+      !h.isNoLocation &&
+      Number.isFinite(h.lat) &&
+      Number.isFinite(h.lon) &&
+      Math.abs(h.lat) > 1e-6 &&
+      Math.abs(h.lon) > 1e-6
+  );
+}
+
 /** Seven dates Sun..Sat for the week containing the given date. */
 function weekDates(weekStart: string): string[] {
   const start = DateTime.fromISO(weekStart);
@@ -2674,15 +2693,17 @@ export default function MyWeek(props: MyWeekProps = {}) {
             );
             const dt = DateTime.fromISO(dateIso, { zone: practiceTzCol });
             const isToday = dateIso === DateTime.local().toISODate();
-            const hasApptsOrBlocks = (dayData?.households?.length ?? 0) > 0;
+            const isDoctorDayOff = doctorDayIsOff(dayData);
+            const hasLocatedAppts = dayHasLocatedAppointments(dayData);
             return (
               <div
                 key={dateIso}
+                className={isDoctorDayOff ? 'my-week-day-col my-week-day-col--off' : 'my-week-day-col'}
                 style={{
-                  flex: hasApptsOrBlocks ? '2 1 0' : '1 1 0',
-                  minWidth: 72,
+                  flex: hasLocatedAppts ? '2 1 0' : '1 1 0',
+                  minWidth: hasLocatedAppts ? 72 : 48,
                   borderLeft: '1px solid #e5e7eb',
-                  background: isToday ? '#fefce8' : undefined,
+                  background: isDoctorDayOff ? undefined : isToday ? '#fefce8' : undefined,
                 }}
               >
                 <div
@@ -2699,6 +2720,11 @@ export default function MyWeek(props: MyWeekProps = {}) {
                 >
                   <span>{dt.toFormat('ccc')}</span>
                   <span style={{ fontSize: 11, color: '#6b7280', fontWeight: 500 }}>{dt.toFormat('M/d')}</span>
+                  {isDoctorDayOff ? (
+                    <span className="my-week-day-off-badge" title="No shift scheduled (no depot start/end time)">
+                      Off
+                    </span>
+                  ) : null}
                 </div>
                 {/* Points and total driving time at top of each day; fixed height so all day columns align (no column sits higher) */}
                 <div
@@ -2717,7 +2743,9 @@ export default function MyWeek(props: MyWeekProps = {}) {
                     gap: 4,
                   }}
                 >
-                  {dayData ? (
+                  {isDoctorDayOff ? (
+                    <span className="my-week-day-off-caption">Not scheduled</span>
+                  ) : dayData ? (
                     (() => {
                       const pts = dayPoints(dayData.households);
                       const driveSec = dayTotalDriveSeconds(dayData);
@@ -2793,38 +2821,10 @@ export default function MyWeek(props: MyWeekProps = {}) {
                     </>
                   )}
                 </div>
-                <div style={{ position: 'relative', height: weekGrid.totalMinutes * PPM, padding: '0 4px' }}>
-                  {/* Thick horizontal lines at this day's startDepotTime and endDepotTime */}
-                  {dayData?.startDepotTime && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: 0,
-                        right: 0,
-                        top: depotTimeToPx(weekGrid.gridStartMinutesFromMidnight, weekGrid.totalMinutes, dayData.startDepotTime) - DEPOT_LINE_OFFSET,
-                        height: 0,
-                        borderTop: `${DEPOT_LINE_PX}px solid ${DEPOT_LINE_COLOR}`,
-                        pointerEvents: 'none',
-                        zIndex: 1,
-                      }}
-                      aria-hidden
-                    />
-                  )}
-                  {dayData?.endDepotTime && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: 0,
-                        right: 0,
-                        top: depotTimeToPx(weekGrid.gridStartMinutesFromMidnight, weekGrid.totalMinutes, dayData.endDepotTime) - DEPOT_LINE_OFFSET,
-                        height: 0,
-                        borderTop: `${DEPOT_LINE_PX}px solid ${DEPOT_LINE_COLOR}`,
-                        pointerEvents: 'none',
-                        zIndex: 1,
-                      }}
-                      aria-hidden
-                    />
-                  )}
+                <div
+                  className="my-week-day-grid"
+                  style={{ position: 'relative', height: weekGrid.totalMinutes * PPM, padding: '0 4px' }}
+                >
                   {/* Hour and half-hour lines (full width across column) */}
                   {timeTicks.map((tick, i) => (
                     <div
@@ -2842,8 +2842,49 @@ export default function MyWeek(props: MyWeekProps = {}) {
                       aria-hidden
                     />
                   ))}
+                  {isDoctorDayOff ? (
+                    <div
+                      className="my-week-day-off-overlay"
+                      role="status"
+                      aria-label={`${dt.toFormat('cccc, MMMM d')}: not scheduled`}
+                    >
+                      <span className="my-week-day-off-overlay-label">Off</span>
+                    </div>
+                  ) : null}
+                  {/* Thick horizontal lines at this day's startDepotTime and endDepotTime */}
+                  {!isDoctorDayOff && dayData?.startDepotTime && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: 0,
+                        right: 0,
+                        top: depotTimeToPx(weekGrid.gridStartMinutesFromMidnight, weekGrid.totalMinutes, dayData.startDepotTime) - DEPOT_LINE_OFFSET,
+                        height: 0,
+                        borderTop: `${DEPOT_LINE_PX}px solid ${DEPOT_LINE_COLOR}`,
+                        pointerEvents: 'none',
+                        zIndex: 1,
+                      }}
+                      aria-hidden
+                    />
+                  )}
+                  {!isDoctorDayOff && dayData?.endDepotTime && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: 0,
+                        right: 0,
+                        top: depotTimeToPx(weekGrid.gridStartMinutesFromMidnight, weekGrid.totalMinutes, dayData.endDepotTime) - DEPOT_LINE_OFFSET,
+                        height: 0,
+                        borderTop: `${DEPOT_LINE_PX}px solid ${DEPOT_LINE_COLOR}`,
+                        pointerEvents: 'none',
+                        zIndex: 1,
+                      }}
+                      aria-hidden
+                    />
+                  )}
                   {/* Drive + appointments share one layout so hatched drive bands align with blocks */}
-                  {(() => {
+                  {!isDoctorDayOff &&
+                  (() => {
                     if (!dayData?.households?.length) return null;
                     const bufferMin = dayData.appointmentBufferMinutes ?? 5;
                     const layout = computeMyWeekDayColumnLayout(

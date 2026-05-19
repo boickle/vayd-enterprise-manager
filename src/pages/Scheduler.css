@@ -21,8 +21,7 @@
   flex: 1;
   min-height: 0;
   /**
-   * Keep vertical scroll on `.scheduler-calendar-scroll` only. Without this, `.scheduler-grid-wrap`
-   * grows to the full day height and the routing workspace column scrolls the frozen headers away.
+   * Timed grid scrolls inside `.scheduler-calendar-scroll`; merge scroll moves filters off-screen.
    */
   overflow-y: hidden;
 }
@@ -359,9 +358,35 @@
   filter: grayscale(0.32);
 }
 
-.scheduler-day-body--routing-preview-focus .scheduler-event:not(.scheduler-routing-preview-slot) {
+.scheduler-day-body--routing-preview-focus
+  .scheduler-event:not(.scheduler-routing-preview-slot):not(.scheduler-edit-time-preview-slot) {
   opacity: 0.72;
   filter: grayscale(0.28);
+}
+
+/** Edit-visit time preview: highlight moved slot on the calendar (keeps type colors). */
+.scheduler-event.scheduler-edit-time-preview-slot {
+  position: relative;
+  z-index: 22;
+  overflow: visible;
+  outline: 2px solid rgba(167, 139, 250, 0.95);
+  outline-offset: 2px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.45),
+    0 4px 20px rgba(124, 58, 237, 0.45);
+}
+
+.scheduler-edit-time-preview-slot .scheduler-routing-preview-slot-hover {
+  border-radius: 4px;
+}
+
+.scheduler-page--routing-preview-focus .scheduler-edit-time-preview-slot {
+  outline-width: 3px;
+  outline-color: rgba(196, 181, 253, 0.98);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.65),
+    0 0 24px 6px rgba(167, 139, 250, 0.65),
+    0 10px 32px rgba(91, 33, 182, 0.38);
 }
 
 /**
@@ -409,12 +434,42 @@
   background: #fff;
 }
 
+/**
+ * Flex outlet between page chrome (toast / preview banners) and the calendar card.
+ * Required after edit-placement wrapper was added — without flex:1 here the embedded
+ * routing workspace calendar cannot scroll vertically.
+ */
+.scheduler-page--embedded > .scheduler-calendar-outlet {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.scheduler-page--embedded > .scheduler-calendar-outlet.scheduler-edit-placement-split {
+  flex-direction: row;
+}
+
+.scheduler-page--embedded .scheduler-toast,
+.scheduler-page--embedded .scheduler-edit-time-preview-banner,
+.scheduler-page--embedded .scheduler-routing-preview-banner {
+  flex-shrink: 0;
+}
+
 .scheduler-page--embedded .scheduler-toolbar-calendar-merge {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.scheduler-page--embedded .scheduler-toolbar {
+  flex-shrink: 0;
 }
 
 /** Routing workspace: preview — simple purple bar + frame around calendar */
@@ -710,8 +765,16 @@ label.scheduler-go-date-heading {
   overflow: visible;
 }
 
+.scheduler-range-above-grid-container {
+  container-type: inline-size;
+  container-name: scheduler-range-bar;
+  width: 100%;
+  min-width: 0;
+}
+
 .scheduler-range-above-grid {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 10px;
   margin: 0;
@@ -721,7 +784,7 @@ label.scheduler-go-date-heading {
 }
 
 .scheduler-range-above-grid-leading {
-  flex: 1 1 0;
+  grid-column: 1;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -729,9 +792,18 @@ label.scheduler-go-date-heading {
 }
 
 .scheduler-range-above-grid-spacer {
-  flex: 1 1 0;
   min-width: 0;
   pointer-events: none;
+}
+
+.scheduler-range-above-grid-nav {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .scheduler-range-above-grid-title {
@@ -741,20 +813,6 @@ label.scheduler-go-date-heading {
   font-weight: 600;
   color: #1e293b;
   min-width: 0;
-}
-
-.scheduler-range-above-grid-center {
-  flex: 0 1 auto;
-  min-width: 0;
-  display: flex;
-  justify-content: center;
-}
-
-.scheduler-range-nav {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  max-width: 100%;
 }
 
 .scheduler-range-nav-btn {
@@ -773,11 +831,52 @@ label.scheduler-go-date-heading {
 }
 
 .scheduler-range-above-grid-actions {
-  flex: 1 1 0;
+  grid-column: 3;
   min-width: 0;
   display: flex;
   justify-content: flex-end;
   align-items: center;
+}
+
+/*
+ * Narrow calendar (e.g. routing workspace): nav row on top, controls on bottom.
+ * Row 1: ← date range →
+ * Row 2: Routed timeline | Month / Week / Day
+ */
+@container scheduler-range-bar (max-width: 720px) {
+  .scheduler-range-above-grid {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    row-gap: 8px;
+    column-gap: 10px;
+  }
+
+  .scheduler-range-above-grid-nav {
+    order: 1;
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: 100%;
+    justify-content: center;
+    box-sizing: border-box;
+  }
+
+  .scheduler-range-above-grid-title {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .scheduler-range-above-grid-leading {
+    order: 2;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .scheduler-range-above-grid-actions {
+    order: 2;
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
 }
 
 .scheduler-month-grid {
@@ -867,6 +966,20 @@ label.scheduler-go-date-heading {
  * Full-page practice calendar: grow the grid to natural height and scroll the schedule outlet
  * (toolbar / “Go to date” / filters move off-screen). Embedded routing column keeps an inner scroll.
  */
+.scheduler-page:not(.scheduler-page--embedded) > .scheduler-calendar-outlet {
+  display: block;
+}
+
+.scheduler-page:not(.scheduler-page--embedded) .scheduler-scroll {
+  flex: 0 0 auto;
+  min-height: auto;
+  overflow: visible;
+}
+
+.scheduler-page:not(.scheduler-page--embedded) .scheduler-calendar-shell:not(.scheduler-calendar-shell--sticky-week) {
+  overflow: visible;
+}
+
 .scheduler-page:not(.scheduler-page--embedded) .scheduler-calendar-scroll {
   flex: 0 0 auto;
   min-height: auto;
@@ -957,6 +1070,24 @@ label.scheduler-go-date-heading {
   border-right: none;
 }
 
+.scheduler-day-header.scheduler-day-off-adjoin-right {
+  position: relative;
+  border-right: none;
+}
+
+.scheduler-day-header.scheduler-day-off-adjoin-right::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 2px;
+  background: #64748b;
+  box-shadow: 1px 0 0 rgba(255, 255, 255, 0.5);
+  z-index: 2;
+  pointer-events: none;
+}
+
 .scheduler-all-day-unified-outer {
   flex-shrink: 0;
   box-sizing: border-box;
@@ -1005,7 +1136,7 @@ label.scheduler-go-date-heading {
   color: #dc2626;
 }
 
-/** Top-right: membership + room loader / pre-appt (pen) */
+/** Top-right: room loader / pre-appt status */
 .scheduler-appt-card-icons-tr {
   position: absolute;
   top: 1px;
@@ -1024,8 +1155,25 @@ label.scheduler-go-date-heading {
 
 .scheduler-preappt-rl-icon {
   display: inline-flex;
-  line-height: 0;
-  filter: drop-shadow(0 0 0.5px rgba(255, 255, 255, 0.95)) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.22));
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 12px;
+  padding: 0 2px;
+  border-radius: 2px;
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: #fff;
+  box-sizing: border-box;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.2);
+}
+
+/** Email sent — McDonald's-style golden yellow with black type for contrast. */
+.scheduler-preappt-rl-icon--sent {
+  color: #1a1a1a;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.35);
 }
 
 .scheduler-event:has(.scheduler-appt-card-icons-tr),
@@ -1051,6 +1199,49 @@ label.scheduler-go-date-heading {
 
 .scheduler-day-bodies-row .scheduler-day-col:last-child {
   border-right: none;
+}
+
+.scheduler-day-col.scheduler-day-off-adjoin-right {
+  border-right: none;
+}
+
+.scheduler-day-col.scheduler-day-off-adjoin-right::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 2px;
+  background: #64748b;
+  box-shadow: 1px 0 0 rgba(255, 255, 255, 0.5);
+  z-index: 5;
+  pointer-events: none;
+}
+
+.scheduler-day-col--off {
+  background: #e2e8f0;
+}
+
+.scheduler-day-body--off {
+  cursor: default;
+}
+
+.scheduler-day-off-underlay {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    -45deg,
+    #e2e8f0,
+    #e2e8f0 8px,
+    #d1d5db 8px,
+    #d1d5db 9px
+  );
+}
+
+.scheduler-day-body--off .scheduler-grid-line {
+  z-index: 1;
 }
 
 .scheduler-day-body {
@@ -1172,6 +1363,24 @@ label.scheduler-go-date-heading {
   background: #f8fafc;
 }
 
+.scheduler-day-header--off {
+  background: #e2e8f0;
+}
+
+.scheduler-day-off-badge {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #475569;
+  background: #cbd5e1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
 .scheduler-day-header-date {
   font-size: 12px;
   font-weight: 600;
@@ -1223,6 +1432,16 @@ label.scheduler-go-date-heading {
   line-height: 1.3;
   max-width: 100%;
   padding: 0 4px;
+}
+
+.scheduler-day-header-adjust {
+  margin-top: 4px;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.schedule-override-modal-overlay {
+  z-index: 10000;
 }
 
 .scheduler-day-header-btn {
@@ -1507,10 +1726,38 @@ label.scheduler-go-date-heading {
   color: #16a34a;
 }
 
+.scheduler-window-warning-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  color: #b45309;
+  font-weight: 600;
+  font-size: 11px;
+  background: #fef3c7;
+  padding: 2px 5px;
+  border-radius: 4px;
+  border: 1px solid #f59e0b;
+  line-height: 1;
+}
+
+.scheduler-window-warning-badge--compact {
+  padding: 2px;
+  line-height: 0;
+}
+
+.scheduler-window-warning-badge__label {
+  white-space: nowrap;
+}
+
+.scheduler-tooltip-vh-window-warning {
+  margin-top: 6px;
+}
+
 .scheduler-event-title-row {
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 4px;
   min-width: 0;
   flex-shrink: 0;
 }
@@ -2474,9 +2721,36 @@ label.scheduler-go-date-heading {
 }
 
 .scheduler-edit-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.scheduler-edit-meta-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px 16px;
+  gap: 10px;
+}
+
+.scheduler-edit-time-block {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+
+.scheduler-edit-date-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  padding: 8px 10px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+
+.scheduler-edit-hint--time {
+  margin: -2px 0 0;
 }
 
 .scheduler-edit-field {
@@ -2548,4 +2822,112 @@ label.scheduler-go-date-heading {
   gap: 10px;
   padding: 14px 18px 18px;
   border-top: 1px solid #e2e8f0;
+}
+
+.scheduler-edit-preview-hint {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: #6d28d9;
+  line-height: 1.4;
+}
+
+.scheduler-edit-time-preview-banner .scheduler-edit-time-preview-banner-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748b;
+}
+
+/** Edit visit docked over routing pane (calendar stays visible on the right). */
+.scheduler-modal-backdrop--routing-dock {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+  background: rgba(15, 23, 42, 0.32);
+  backdrop-filter: blur(2px);
+}
+
+.scheduler-modal--edit-docked {
+  max-width: none;
+  width: 100%;
+  max-height: none;
+  height: 100%;
+  border-radius: 0;
+  box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.18);
+}
+
+.scheduler-modal-body--edit {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.scheduler-modal--edit-inline {
+  max-width: none;
+  width: 100%;
+  max-height: none;
+  height: 100%;
+  border-radius: 0;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.scheduler-edit-inline-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.scheduler-page--edit-placement {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.scheduler-page--edit-placement > .scheduler-calendar-outlet.scheduler-edit-placement-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  flex-direction: row;
+}
+
+.scheduler-edit-placement-sidebar {
+  flex: 0 0 min(400px, 38vw);
+  min-width: 300px;
+  max-width: 440px;
+  border-right: 1px solid #e2e8f0;
+  background: #f8fafc;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.scheduler-edit-placement-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 8px 10px 12px;
+  box-sizing: border-box;
+}
+
+.scheduler-page--edit-placement .scheduler-scroll {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
 }
