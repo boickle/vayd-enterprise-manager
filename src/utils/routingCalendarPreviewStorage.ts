@@ -35,6 +35,11 @@ export type RoutingCalendarPreviewPayloadV1 = {
   /** PATCH target when confirming from routing calendar preview (reschedule flow). */
   rescheduleAppointmentId?: number;
   reschedulePatientId?: string;
+  /** From POST /routing/v2 — required for POST /routing/feedback after book. */
+  routingRequestId?: string;
+  /** Index in routing `top` (0 = winner); required for accepted feedback. */
+  candidateIndex?: number;
+  candidateId?: string;
 };
 
 export function routingCalendarOptionKey(opt: {

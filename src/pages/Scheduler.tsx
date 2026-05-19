@@ -3258,20 +3258,27 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setBookPrefill(null);
   }, []);
 
-  const handleSchedulerBooked = useCallback(() => {
-    const wasReschedule = bookPrefill?.rescheduleAppointmentId != null;
-    void loadRange({ refreshDrive: true });
-    if (embedInRoutingWorkspace) {
-      clearRoutingPersistenceAfterSchedulerBook();
-      setRoutingPreview(null);
-      window.dispatchEvent(new Event(ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT));
-    } else if (routingPreview) {
-      clearRoutingPersistenceAfterSchedulerBook();
-      setRoutingPreview(null);
-    }
-    clearRoutingRescheduleIntent();
-    setToast(wasReschedule ? 'Appointment rescheduled.' : 'Appointment saved to the schedule.');
-  }, [loadRange, routingPreview, bookPrefill?.rescheduleAppointmentId, embedInRoutingWorkspace]);
+  const handleSchedulerBooked = useCallback(
+    (detail?: { routingFeedbackWarning?: string }) => {
+      const wasReschedule = bookPrefill?.rescheduleAppointmentId != null;
+      void loadRange({ refreshDrive: true });
+      if (embedInRoutingWorkspace) {
+        clearRoutingPersistenceAfterSchedulerBook();
+        setRoutingPreview(null);
+        window.dispatchEvent(new Event(ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT));
+      } else if (routingPreview) {
+        clearRoutingPersistenceAfterSchedulerBook();
+        setRoutingPreview(null);
+      }
+      clearRoutingRescheduleIntent();
+      if (detail?.routingFeedbackWarning) {
+        setToast(detail.routingFeedbackWarning);
+      } else {
+        setToast(wasReschedule ? 'Appointment rescheduled.' : 'Appointment saved to the schedule.');
+      }
+    },
+    [loadRange, routingPreview, bookPrefill?.rescheduleAppointmentId, embedInRoutingWorkspace]
+  );
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -4467,6 +4474,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           return auth || null;
         })()}
         prefill={bookPrefill}
+        routingLinkPreview={routingPreview}
         onClose={closeBookModal}
         onBooked={handleSchedulerBooked}
       />
