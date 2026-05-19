@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
 import { createAppointment, patchAppointment } from '../api/appointments';
+import type { RoutingCalendarPreviewPayloadV1 } from '../utils/routingCalendarPreviewStorage';
+import { submitRoutingAcceptedFeedbackFromPreview } from '../utils/routingBookFeedback';
 import { searchClientsStaff, fetchClientByIdStaff, type ClientSearchRow } from '../api/clientsStaff';
 import { searchPatients } from '../api/patients';
 import type { Provider } from '../api/employee';
@@ -59,8 +61,10 @@ type Props = {
   providers: Provider[];
   defaultProviderId: string | null;
   prefill?: SchedulerBookPrefill | null;
+  /** When set, POST /routing/feedback after a successful book/reschedule from routing preview. */
+  routingLinkPreview?: RoutingCalendarPreviewPayloadV1 | null;
   onClose: () => void;
-  onBooked: () => void;
+  onBooked: (detail?: { routingFeedbackWarning?: string }) => void;
 };
 
 type SearchMode = 'client' | 'patient';
@@ -160,6 +164,7 @@ export function SchedulerBookModal({
   providers,
   defaultProviderId,
   prefill,
+  routingLinkPreview,
   onClose,
   onBooked,
 }: Props) {
@@ -547,6 +552,7 @@ export function SchedulerBookModal({
                   ? [prefill.rescheduleAppointmentId]
                   : []
             ).filter((id) => Number.isFinite(Number(id)));
+      let savedAppointmentId: number | undefined;
       if (rescheduleIds.length > 0) {
         const patchBody = {
           appointmentStart: startIso,
@@ -565,8 +571,9 @@ export function SchedulerBookModal({
             patientId: Number(patientForPatch),
           });
         }
+        savedAppointmentId = rescheduleIds[0];
       } else {
-        await createAppointment({
+        const created = await createAppointment({
           practiceId,
           primaryProviderId: Number(providerId),
           clientId: Number(selectedClientId),
@@ -577,8 +584,23 @@ export function SchedulerBookModal({
           description: description.trim() || undefined,
           instructions: instructions.trim() || undefined,
         });
+        const idRaw = created?.id;
+        if (idRaw != null && Number.isFinite(Number(idRaw))) savedAppointmentId = Number(idRaw);
       }
-      onBooked();
+
+      let routingFeedbackWarning: string | undefined;
+      if (routingLinkPreview && savedAppointmentId != null) {
+        const fb = await submitRoutingAcceptedFeedbackFromPreview(
+          savedAppointmentId,
+          routingLinkPreview
+        );
+        if (!fb.submitted && fb.error) {
+          routingFeedbackWarning =
+            'Appointment saved, but routing could not be linked to this suggestion. ' + fb.error;
+        }
+      }
+
+      onBooked(routingFeedbackWarning ? { routingFeedbackWarning } : undefined);
       onClose();
     } catch (err) {
       setFormError(apiErr(err));

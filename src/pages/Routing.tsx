@@ -53,6 +53,17 @@ import {
   writeAuthDoctorCache,
   writeRoutingUiSnapshot,
 } from '../utils/routingUiSnapshot';
+import {
+  adjustRoutingSlotSearchDates,
+  diffRoutingDaysInclusive,
+  routingCalendarDatePart,
+} from '../utils/routingSlotSearchDates';
+import {
+  resolveRoutingCandidateIndex,
+  routingTopCandidatesFromResult,
+} from '../utils/routingCandidates';
+import { submitRoutingFeedback } from '../api/routingFeedback';
+import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import './Routing.css';
 
 /** Yellow wrap when an optional routing preference is on—makes checked state obvious at a glance. */
@@ -317,6 +328,8 @@ type Result = {
   winner?: Winner;
   estimatedCost?: EstimatedCost;
   alternates?: Winner[];
+  /** v2 ordered candidates (winner is typically index 0). */
+  top?: Winner[];
 
   // Any-doctor extras
   doctorPimsId?: string;
@@ -1772,6 +1785,11 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
     setFeedbackError(null);
     const merged = { ...opt, doctorPimsId: internalId } as UnifiedOption;
+    const routingRequestId =
+      opt.routingRequestId ?? latestRoutingRequestId ?? deriveRoutingRequestId(result) ?? undefined;
+    const topForIndex = result ? routingTopCandidatesFromResult(result) : [];
+    const candidateIndex = resolveRoutingCandidateIndex(opt, topForIndex);
+
     const payload: RoutingCalendarPreviewPayloadV1 = {
       version: 1,
       option: { ...(merged as unknown as Record<string, unknown>), doctorPimsId: internalId } as RoutingCalendarPreviewPayloadV1['option'],
@@ -1784,6 +1802,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       },
       appointmentTypeId: scheduleBookTypeId,
       clientDisplayLabel: clientQuery.trim() || undefined,
+      routingRequestId,
+      candidateIndex,
+      candidateId: opt.candidateId,
     };
     const rescheduleRow = readRoutingRescheduleIntent();
     if (rescheduleRow) {
@@ -1844,7 +1865,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     };
 
     try {
-      await http.post('/routing/feedback', payload);
+      await submitRoutingFeedback(payload);
       rememberRoutingRequestId(routingRequestId);
       setFeedbackToast('Thanks! We recorded that none of the suggestions were chosen.');
       setFeedbackSuccessKey(NONE_SELECTION_KEY);
@@ -2198,7 +2219,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     setFeedbackError(null);
     setScheduleBookedKeys({});
 
-    if (new Date(form.endDate) < new Date(form.startDate)) {
+    if (routingCalendarDatePart(form.endDate) < routingCalendarDatePart(form.startDate)) {
       setError('End date must be on or after the start date.');
       return;
     }
@@ -2242,7 +2263,23 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       }
     }
 
-    const numDays = Math.max(1, diffDaysInclusive(form.startDate, form.endDate));
+    const isV2 = endpoint.includes('/v2');
+    const { startDate: routingStartDate, endDate: routingEndDate, numDays } =
+      isV2
+        ? adjustRoutingSlotSearchDates(
+            form.startDate,
+            form.endDate,
+            DEFAULT_PRACTICE_TIMEZONE
+          )
+        : {
+            startDate: form.startDate,
+            endDate: form.endDate,
+            numDays: diffRoutingDaysInclusive(
+              form.startDate,
+              form.endDate,
+              DEFAULT_PRACTICE_TIMEZONE
+            ),
+          };
 
     // If both edge boxes are selected, cancel the preference.
     const preferEdge: 'first' | 'last' | null =
@@ -2261,7 +2298,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           : preferredWeekday;
 
     const base: Record<string, unknown> & RoutingSlotSearchOptionalFlags = {
-      startDate: form.startDate,
+      startDate: routingStartDate,
+      ...(isV2 ? { endDate: routingEndDate } : {}),
       numDays,
       newAppt: newApptPayload,
       useTraffic,
@@ -2277,9 +2315,6 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         : {}),
       ...(preferEarliestFeasibleStart ? { preferEarliestFeasibleStart: true } : {}),
     };
-
-    // Determine if this is a v2 endpoint
-    const isV2 = endpoint.includes('/v2');
 
     let payload: any;
     if (isV2) {
@@ -2318,6 +2353,12 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         data as RoutingV2SlotSearchResult
       ) as Result;
       setResult(normalized);
+      setFeedbackSuccessKey(null);
+      setScheduleBookedKeys({});
+      setFeedbackError(null);
+      setFeedbackToast(null);
+      const rid = deriveRoutingRequestId(normalized);
+      if (rid) rememberRoutingRequestId(rid);
     } catch (err: unknown) {
       setError(extractErrorMessage(err));
     } finally {
@@ -2339,7 +2380,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       return { valid: false, error: 'Please select an end date.' };
     }
 
-    if (new Date(form.endDate) < new Date(form.startDate)) {
+    const startCal = routingCalendarDatePart(form.startDate);
+    const endCal = routingCalendarDatePart(form.endDate);
+    if (endCal < startCal) {
       return { valid: false, error: 'End date must be on or after the start date.' };
     }
 
@@ -2399,6 +2442,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const displayOptions: UnifiedOption[] = useMemo(() => {
     const rows: UnifiedOption[] = [];
     const requestIdFromResult = result?.routingRequestId ?? latestRoutingRequestId ?? undefined;
+    const topForSingleDoctor = result ? routingTopCandidatesFromResult(result) : [];
 
     // Helper for displayInsertionIndex calculation
     const isEmptyDay = (x: any) =>
@@ -2416,12 +2460,14 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       for (const d of result.doctors) {
         const pid = d.pimsId;
         const name = d.name || doctorNames[pid] || `Doctor ${pid}`;
-        for (const w of d.top || [])
+        const doctorTop = d.top || [];
+        for (const w of doctorTop)
           rows.push({
             ...w,
             doctorPimsId: pid,
             doctorName: name,
             routingRequestId: w.routingRequestId ?? requestIdFromResult,
+            candidateIndex: resolveRoutingCandidateIndex(w, doctorTop),
           });
       }
       // Sort all options by score (lowest first)
@@ -2458,6 +2504,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           doctorPimsId: docInfo.pid,
           doctorName: docInfo.name,
           routingRequestId: result.winner.routingRequestId ?? requestIdFromResult,
+          candidateIndex: resolveRoutingCandidateIndex(result.winner, topForSingleDoctor),
         };
       }
       
@@ -2469,6 +2516,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
             doctorPimsId: docInfo.pid,
             doctorName: docInfo.name,
             routingRequestId: w.routingRequestId ?? requestIdFromResult,
+            candidateIndex: resolveRoutingCandidateIndex(w, topForSingleDoctor),
           });
         }
       }
@@ -2491,7 +2539,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         displayInsertionIndex,
         positionInDay,
         routingRequestId: r.routingRequestId ?? requestIdFromResult,
-        candidateIndex: r.candidateIndex ?? idx,
+        candidateIndex:
+          r.candidateIndex ?? resolveRoutingCandidateIndex(r, topForSingleDoctor),
       };
     });
   }, [multiDoctor, result, doctorNames, form.doctorId, latestRoutingRequestId]);

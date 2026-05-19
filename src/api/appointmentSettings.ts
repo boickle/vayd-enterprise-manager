@@ -23,6 +23,10 @@ export type AppointmentType = {
   color?: string | null;
   /** Text on colored chips: hex or named (e.g. black, #FFFFFF) from API */
   textColor?: string | null;
+  /** Minutes before scheduled time the client may arrive; 0 = fixed time; null = legacy default */
+  windowBeforeMinutes?: number | null;
+  /** Minutes after scheduled time the client may arrive; null = legacy default */
+  windowAfterMinutes?: number | null;
   practice?: {
     id: number;
     name: string;
@@ -193,18 +197,34 @@ export async function updateWeeklySchedule(
   return data;
 }
 
+export type AppointmentTypeUpdate = {
+  name?: string;
+  prettyName?: string;
+  color?: string | null;
+  textColor?: string | null;
+  windowBeforeMinutes?: number | null;
+  windowAfterMinutes?: number | null;
+  showInApptRequestForm?: boolean;
+  newPatientAllowed?: boolean;
+  formListOrder?: number | null;
+};
+
 /**
- * Update appointment type settings (prettyName, showInApptRequestForm, newPatientAllowed)
+ * Get one appointment type (includes window + color fields).
+ * GET /appointment-types/:id
+ */
+export async function fetchAppointmentType(appointmentTypeId: number): Promise<AppointmentType> {
+  const { data } = await http.get(`/appointment-types/${appointmentTypeId}`);
+  return data;
+}
+
+/**
+ * Partial update appointment type settings.
  * PUT /appointment-types/:id
  */
 export async function updateAppointmentType(
   appointmentTypeId: number,
-  updates: {
-    prettyName?: string;
-    showInApptRequestForm?: boolean;
-    newPatientAllowed?: boolean;
-    formListOrder?: number | null;
-  }
+  updates: AppointmentTypeUpdate
 ): Promise<AppointmentType> {
   const { data } = await http.put(`/appointment-types/${appointmentTypeId}`, updates);
   return data;

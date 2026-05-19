@@ -39,6 +39,11 @@ export type RoutingCalendarPreviewPayloadV1 = {
   reschedulePatientId?: string;
   /** Pets shown on the calendar preview chip (all household when rescheduling "all pets today"). */
   previewPatients?: { id: number | string; name: string }[];
+  /** From POST /routing/v2 — required for POST /routing/feedback after book. */
+  routingRequestId?: string;
+  /** Index in routing `top` (0 = winner); required for accepted feedback. */
+  candidateIndex?: number;
+  candidateId?: string;
 };
 
 export function routingCalendarOptionKey(opt: {
