@@ -1,5 +1,5 @@
 // src/pages/AppointmentRequestForm.tsx
-import React, { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import { http } from '../api/http';
@@ -194,6 +194,44 @@ type Page =
   | 'request-visit-continued'
   | 'success';
 
+function getAppointmentFormStepName(page: Page): string {
+  switch (page) {
+    case 'intro':
+      return 'Introduction';
+    case 'new-client':
+      return 'New Client Information';
+    case 'new-client-pet-info':
+      return 'Pet Information';
+    case 'existing-client':
+      return 'Existing Client Information';
+    case 'existing-client-pets':
+      return 'Select Pet(s)';
+    case 'euthanasia-intro':
+      return 'Euthanasia Details';
+    case 'euthanasia-service-area':
+      return 'Service Area Selection';
+    case 'euthanasia-portland':
+      return 'Euthanasia Scheduling (Portland)';
+    case 'euthanasia-high-peaks':
+      return 'Euthanasia Scheduling (High Peaks)';
+    case 'euthanasia-continued':
+      return 'Euthanasia Appointment Time';
+    case 'request-visit-continued':
+      return 'Appointment Time Selection';
+    case 'success':
+      return 'Success';
+    default:
+      return page;
+  }
+}
+
+function createAppointmentFormSessionId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `appt-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
 const ZONE_NOT_SERVICED_SERVICE_URL = 'www.vetatyourdoor.com/service-area';
 const ZONE_NOT_SERVICED_CALL_TEXT = 'call or text us at ';
 const ZONE_NOT_SERVICED_PHONE = '(207) 536-8387';
@@ -370,6 +408,64 @@ export default function AppointmentRequestForm() {
 
   const [searchParams, setSearchParams] = useSearchParams();
   const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
+
+  const formSessionIdRef = useRef(createAppointmentFormSessionId());
+  const formCompletedRef = useRef(false);
+  const abandonReportedRef = useRef(false);
+  const currentPageRef = useRef<Page>(currentPage);
+  const isLoggedInRef = useRef(isLoggedIn);
+  const haveUsedServicesBeforeRef = useRef(formData.haveUsedServicesBefore);
+  currentPageRef.current = currentPage;
+  isLoggedInRef.current = isLoggedIn;
+  haveUsedServicesBeforeRef.current = formData.haveUsedServicesBefore;
+
+  const getFormAnalyticsContext = useCallback(() => {
+    const page = currentPageRef.current;
+    const isExistingClient =
+      isLoggedInRef.current || haveUsedServicesBeforeRef.current === 'Yes';
+    return {
+      form_session_id: formSessionIdRef.current,
+      step: page,
+      step_name: getAppointmentFormStepName(page),
+      client_type: isExistingClient ? 'existing' : 'new',
+      is_logged_in: isLoggedInRef.current,
+    };
+  }, []);
+
+  const trackFormEvent = useCallback(
+    (eventName: string, params?: Record<string, unknown>) => {
+      trackEvent(eventName, { ...getFormAnalyticsContext(), ...params });
+    },
+    [getFormAnalyticsContext]
+  );
+
+  const trackFormAbandoned = useCallback(
+    (reason: string) => {
+      if (formCompletedRef.current || abandonReportedRef.current) return;
+      const page = currentPageRef.current;
+      if (page === 'success') return;
+      abandonReportedRef.current = true;
+      trackFormEvent('appointment_form_abandoned', { abandon_reason: reason });
+    },
+    [trackFormEvent]
+  );
+
+  useEffect(() => {
+    trackFormEvent('appointment_form_started', {
+      entry_step: currentPageRef.current,
+      entry_step_name: getAppointmentFormStepName(currentPageRef.current),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const onPageHide = () => trackFormAbandoned('page_hide');
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      trackFormAbandoned('component_unmount');
+    };
+  }, [trackFormAbandoned]);
 
   useEffect(() => {
     if (!appointmentTypeChangeModal) return;
@@ -1133,50 +1229,10 @@ export default function AppointmentRequestForm() {
     };
   }, [formData.email, isLoggedIn, practiceId]);
 
-  // Track page views for analytics
+  // Track step views for funnel / drop-off analysis in GA4
   useEffect(() => {
-    const isExistingClient = isLoggedIn || formData.haveUsedServicesBefore === 'Yes';
-    const clientType = isExistingClient ? 'existing' : 'new';
-    
-    // Map page names to user-friendly step names
-    const getStepName = (page: Page): string => {
-      switch (page) {
-        case 'intro':
-          return 'Introduction';
-        case 'new-client':
-          return 'New Client Information';
-        case 'new-client-pet-info':
-          return 'Pet Information';
-        case 'existing-client':
-          return 'Existing Client Information';
-        case 'existing-client-pets':
-          return 'Select Pet(s)';
-        case 'euthanasia-intro':
-          return 'Euthanasia Details';
-        case 'euthanasia-service-area':
-          return 'Service Area Selection';
-        case 'euthanasia-portland':
-          return 'Euthanasia Scheduling (Portland)';
-        case 'euthanasia-high-peaks':
-          return 'Euthanasia Scheduling (High Peaks)';
-        case 'euthanasia-continued':
-          return 'Euthanasia Appointment Time';
-        case 'request-visit-continued':
-          return 'Appointment Time Selection';
-        case 'success':
-          return 'Success';
-        default:
-          return page;
-      }
-    };
-
-    trackEvent('appointment_form_step_viewed', {
-      step: currentPage,
-      step_name: getStepName(currentPage),
-      client_type: clientType,
-      is_logged_in: isLoggedIn,
-    });
-  }, [currentPage, isLoggedIn, formData.haveUsedServicesBefore]);
+    trackFormEvent('appointment_form_step_viewed');
+  }, [currentPage, isLoggedIn, formData.haveUsedServicesBefore, trackFormEvent]);
 
   // Pets eligible for membership signup: for logged-in users, only selected pets that do NOT
   // have an active or pending membership (from subscription on pet OR from membership-transactions API);
@@ -1381,6 +1437,7 @@ export default function AppointmentRequestForm() {
           // This effectively cancels the back button press
           window.history.pushState({ formPage: currentPage, preventBack: true }, '', window.location.href);
         } else {
+          trackFormAbandoned('browser_back');
           // User confirmed - navigate back one more step since the browser already navigated
           // to our pushed state (same URL), we need to go back further to the actual previous route
           window.history.back();
@@ -1398,7 +1455,7 @@ export default function AppointmentRequestForm() {
       clearTimeout(timeoutId);
       window.removeEventListener('popstate', handlePopState);
     };
-  }, [currentPage]);
+  }, [currentPage, trackFormAbandoned]);
 
   // Load veterinarians for new clients (using public veterinarians endpoint)
   // Only fetch when address is valid (has line1, city, state, zip)
@@ -2619,7 +2676,7 @@ export default function AppointmentRequestForm() {
             }
           }
           setCurrentPage('new-client');
-          trackEvent('appointment_form_step_completed', {
+          trackFormEvent('appointment_form_step_completed', {
             step: 'intro',
             step_name: 'Introduction',
             next_step: 'new-client',
@@ -2630,7 +2687,7 @@ export default function AppointmentRequestForm() {
         break;
       case 'new-client':
         setCurrentPage('new-client-pet-info');
-        trackEvent('appointment_form_step_completed', {
+        trackFormEvent('appointment_form_step_completed', {
           step: 'new-client',
           step_name: 'New Client Information',
           next_step: 'new-client-pet-info',
@@ -2641,7 +2698,7 @@ export default function AppointmentRequestForm() {
       case 'new-client-pet-info':
         // Always go to request-visit-continued (euthanasia question removed)
         setCurrentPage('request-visit-continued');
-        trackEvent('appointment_form_step_completed', {
+        trackFormEvent('appointment_form_step_completed', {
           step: 'new-client-pet-info',
           step_name: 'Pet Information',
           next_step: 'request-visit-continued',
@@ -2652,7 +2709,7 @@ export default function AppointmentRequestForm() {
         break;
       case 'existing-client':
         setCurrentPage('existing-client-pets');
-        trackEvent('appointment_form_step_completed', {
+        trackFormEvent('appointment_form_step_completed', {
           step: 'existing-client',
           step_name: 'Existing Client Information',
           next_step: 'existing-client-pets',
@@ -2663,7 +2720,7 @@ export default function AppointmentRequestForm() {
       case 'existing-client-pets':
         if (formData.lookingForEuthanasiaExisting === 'Yes') {
           setCurrentPage('euthanasia-intro');
-          trackEvent('appointment_form_step_completed', {
+          trackFormEvent('appointment_form_step_completed', {
             step: 'existing-client-pets',
             step_name: 'Select Pet(s)',
             next_step: 'euthanasia-intro',
@@ -2674,7 +2731,7 @@ export default function AppointmentRequestForm() {
           });
         } else {
           setCurrentPage('request-visit-continued');
-          trackEvent('appointment_form_step_completed', {
+          trackFormEvent('appointment_form_step_completed', {
             step: 'existing-client-pets',
             step_name: 'Select Pet(s)',
             next_step: 'request-visit-continued',
@@ -2687,7 +2744,7 @@ export default function AppointmentRequestForm() {
         break;
       case 'euthanasia-intro':
         setCurrentPage('euthanasia-service-area');
-        trackEvent('appointment_form_step_completed', {
+        trackFormEvent('appointment_form_step_completed', {
           step: 'euthanasia-intro',
           step_name: 'Euthanasia Details',
           next_step: 'euthanasia-service-area',
@@ -2699,7 +2756,7 @@ export default function AppointmentRequestForm() {
       case 'euthanasia-service-area':
         if (formData.serviceArea === 'Kennebunk / Greater Portland / Augusta Area') {
           setCurrentPage('euthanasia-portland');
-          trackEvent('appointment_form_step_completed', {
+          trackFormEvent('appointment_form_step_completed', {
             step: 'euthanasia-service-area',
             step_name: 'Service Area Selection',
             next_step: 'euthanasia-portland',
@@ -2710,7 +2767,7 @@ export default function AppointmentRequestForm() {
           });
         } else if (formData.serviceArea === 'Maine High Peaks Area') {
           setCurrentPage('euthanasia-high-peaks');
-          trackEvent('appointment_form_step_completed', {
+          trackFormEvent('appointment_form_step_completed', {
             step: 'euthanasia-service-area',
             step_name: 'Service Area Selection',
             next_step: 'euthanasia-high-peaks',
@@ -2724,7 +2781,7 @@ export default function AppointmentRequestForm() {
       case 'euthanasia-portland':
       case 'euthanasia-high-peaks':
         setCurrentPage('euthanasia-continued');
-        trackEvent('appointment_form_step_completed', {
+        trackFormEvent('appointment_form_step_completed', {
           step: currentPage,
           step_name: currentPage === 'euthanasia-portland' ? 'Euthanasia Scheduling (Portland)' : 'Euthanasia Scheduling (High Peaks)',
           next_step: 'euthanasia-continued',
@@ -2734,9 +2791,25 @@ export default function AppointmentRequestForm() {
         });
         break;
       case 'euthanasia-continued':
+        trackFormEvent('appointment_form_step_completed', {
+          step: 'euthanasia-continued',
+          step_name: 'Euthanasia Appointment Time',
+          next_step: 'success',
+          client_type: clientType,
+          is_logged_in: isLoggedIn,
+          appointment_type: 'euthanasia',
+        });
         handleSubmit();
         break;
       case 'request-visit-continued':
+        trackFormEvent('appointment_form_step_completed', {
+          step: 'request-visit-continued',
+          step_name: 'Appointment Time Selection',
+          next_step: 'success',
+          client_type: clientType,
+          is_logged_in: isLoggedIn,
+          appointment_type: 'regular_visit',
+        });
         handleSubmit();
         break;
     }
@@ -2826,7 +2899,7 @@ export default function AppointmentRequestForm() {
     const userWantsToLeave = window.confirm(message);
     
     if (userWantsToLeave) {
-      // Navigate immediately after user clicks OK
+      trackFormAbandoned('exit_to_portal');
       navigate('/client-portal');
     }
   };
@@ -2836,24 +2909,26 @@ export default function AppointmentRequestForm() {
       return;
     }
 
+    const hasEuthanasiaPet =
+      (formData.selectedPetIds?.some((petId) => {
+        const petData = formData.petSpecificData?.[petId];
+        return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
+      }) ||
+        false) ||
+      (formData.newClientPets?.some((pet) => {
+        const petData = formData.petSpecificData?.[pet.id];
+        return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
+      }) ||
+        false);
+
+    const isEuthanasia =
+      formData.lookingForEuthanasia === 'Yes' ||
+      formData.lookingForEuthanasiaExisting === 'Yes' ||
+      hasEuthanasiaPet;
+    const appointmentType = isEuthanasia ? 'euthanasia' : 'regular_visit';
+
     setSubmitting(true);
     try {
-      // Determine appointment type
-      // Check old flow (lookingForEuthanasia fields) OR new flow (pet-specific needsToday)
-      const hasEuthanasiaPet = 
-        (formData.selectedPetIds?.some(petId => {
-          const petData = formData.petSpecificData?.[petId];
-          return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
-        }) || false) ||
-        (formData.newClientPets?.some(pet => {
-          const petData = formData.petSpecificData?.[pet.id];
-          return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
-        }) || false);
-      
-      const isEuthanasia = 
-        formData.lookingForEuthanasia === 'Yes' || 
-        formData.lookingForEuthanasiaExisting === 'Yes' ||
-        hasEuthanasiaPet;
       const isExistingClient = isLoggedIn || formData.haveUsedServicesBefore === 'Yes';
       
       // Build selected date/time preferences from slots
@@ -3299,10 +3374,9 @@ export default function AppointmentRequestForm() {
         ? (formData.selectedPetIds?.length || 0)
         : (formData.newClientPets?.length || 0);
       
-      trackEvent('appointment_form_submitted', {
-        client_type: isExistingClient ? 'existing' : 'new',
-        is_logged_in: isLoggedIn,
-        appointment_type: isEuthanasia ? 'euthanasia' : 'regular_visit',
+      formCompletedRef.current = true;
+      trackFormEvent('appointment_form_submitted', {
+        appointment_type: appointmentType,
         pet_count: petCount,
         has_preferred_doctor: !!submissionData.preferredDoctor,
         service_area: formData.serviceArea || formData.serviceAreaVisit || undefined,
@@ -3315,7 +3389,13 @@ export default function AppointmentRequestForm() {
       
       setCurrentPage('success');
     } catch (error: any) {
-      setErrors({ submit: error?.response?.data?.message || 'Failed to submit form. Please try again.' });
+      const errorMessage =
+        error?.response?.data?.message || 'Failed to submit form. Please try again.';
+      trackFormEvent('appointment_form_submit_failed', {
+        error_message: errorMessage,
+        appointment_type: appointmentType,
+      });
+      setErrors({ submit: errorMessage });
     } finally {
       setSubmitting(false);
     }
@@ -7717,9 +7797,8 @@ export default function AppointmentRequestForm() {
                 type="button"
                 className="appt-form-view-membership-btn"
                 onClick={() => {
-                  trackEvent('appointment_form_confirmation_membership_cta_clicked', {
+                  trackFormEvent('appointment_form_confirmation_membership_cta_clicked', {
                     eligible_pet_count: membershipEligiblePets.length,
-                    is_logged_in: isLoggedIn,
                     membership_interest: formData.membershipInterest ?? undefined,
                   });
                   setSelectedMembershipPetId(null);
