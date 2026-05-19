@@ -1,0 +1,845 @@
+.pims-patient-detail .visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.pims-patient-detail {
+  padding: 0 0 40px;
+  background: #fff;
+}
+
+.pims-patient-detail__loading,
+.pims-patient-detail__error {
+  padding: 24px;
+  font-size: 15px;
+  color: #64748b;
+}
+
+.pims-patient-detail__error {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-radius: 8px;
+}
+
+.pims-patient-detail__crumb {
+  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.pims-patient-detail__crumb a {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.pims-patient-detail__crumb a:hover {
+  text-decoration: underline;
+}
+
+.pims-patient-detail__title {
+  margin: 0 0 8px;
+  font-size: 28px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.pims-patient-detail__subhead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-size: 15px;
+  color: #334155;
+}
+
+.pims-patient-detail__subhead strong {
+  color: #0f172a;
+}
+
+.pims-patient-detail__alert {
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  border: 2px solid #fecaca;
+  background: #fef2f2;
+  border-radius: 10px;
+  color: #7f1d1d;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.pims-patient-detail__alert-icon {
+  flex-shrink: 0;
+  color: #dc2626;
+}
+
+.pims-patient-detail__card {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  padding: 20px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  margin-bottom: 20px;
+  background: #fafafa;
+}
+
+@media (max-width: 900px) {
+  .pims-patient-detail__card {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pims-patient-detail__card-col {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 18px;
+  display: flex;
+  gap: 16px;
+}
+
+.pims-patient-detail__avatar {
+  flex-shrink: 0;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: #dbeafe;
+  color: #1d4ed8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pims-patient-detail__card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.pims-patient-detail__card-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.pims-patient-detail__badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pims-patient-detail__badge--danger {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.pims-patient-detail__badge--ok {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.pims-patient-detail__badge--muted {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.pims-patient-detail__meta-line {
+  font-size: 14px;
+  color: #475569;
+  margin: 4px 0;
+  line-height: 1.4;
+}
+
+.pims-patient-detail__card-tools {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  align-self: flex-start;
+}
+
+.pims-patient-detail__icon-btn {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  padding: 6px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.pims-patient-detail__icon-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.pims-patient-detail__edit-form {
+  width: 100%;
+}
+
+.pims-patient-detail__edit-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.pims-patient-detail__btn-secondary {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #334155;
+  background: #fff;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-patient-detail__btn-secondary:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.pims-patient-detail__btn-secondary:disabled,
+.pims-patient-detail__btn-save:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.pims-patient-detail__btn-save {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: #2563eb;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-patient-detail__btn-save:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.pims-patient-detail__save-error {
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-size: 14px;
+}
+
+.pims-patient-detail__edit-readonly {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.pims-patient-detail__edit-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+}
+
+.pims-patient-detail__edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px 14px;
+}
+
+.pims-patient-detail__edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.pims-patient-detail__edit-field--full {
+  grid-column: 1 / -1;
+}
+
+.pims-patient-detail__edit-textarea {
+  min-height: 88px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.pims-patient-detail__breed-wrap {
+  position: relative;
+}
+
+.pims-patient-detail__breed-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  margin-top: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+}
+
+.pims-patient-detail__breed-option {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: 14px;
+  color: #0f172a;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-patient-detail__breed-option:hover {
+  background: #f1f5f9;
+}
+
+.pims-patient-detail__quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 12px 0 20px;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 20px;
+}
+
+.pims-patient-detail__quick button {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2563eb;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-patient-detail__quick button:hover {
+  text-decoration: underline;
+}
+
+.pims-patient-detail__mr {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+  background: #fff;
+}
+
+.pims-patient-detail__mr-head {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.pims-patient-detail__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.pims-patient-detail__tab {
+  border: none;
+  background: transparent;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  font-family: inherit;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+}
+
+.pims-patient-detail__tab:hover {
+  color: #334155;
+}
+
+.pims-patient-detail__tab--active {
+  color: #fff;
+  background: #1e40af;
+  border-bottom-color: #1e40af;
+  border-radius: 6px 6px 0 0;
+}
+
+.pims-patient-detail__tab--active:hover {
+  color: #fff;
+  background: #1d4ed8;
+}
+
+.pims-patient-detail__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+  margin-bottom: 14px;
+}
+
+.pims-patient-detail__filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.pims-patient-detail__filters input {
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.pims-patient-detail__filters button {
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: #2563eb;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-patient-detail__mr-count {
+  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 8px;
+}
+
+.pims-patient-detail__mr-table-wrap {
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.pims-patient-detail__mr-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.pims-patient-detail__mr-table th {
+  text-align: left;
+  padding: 10px 12px;
+  background: #f8fafc;
+  font-weight: 600;
+  color: #475569;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.pims-patient-detail__mr-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: top;
+}
+
+.pims-patient-detail__mr-table tbody tr:nth-child(even) {
+  background: #fafafa;
+}
+
+.pims-patient-detail__date-group {
+  background: #fef3c7 !important;
+  font-weight: 700;
+  color: #78350f;
+}
+
+.pims-patient-detail__api-note {
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #92400e;
+  line-height: 1.5;
+}
+
+.pims-patient-detail__link {
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.pims-patient-detail__link:hover {
+  text-decoration: underline;
+}
+
+.pims-patient-detail__mr-row--clickable {
+  cursor: pointer;
+}
+
+.pims-patient-detail__mr-row--clickable:hover {
+  background: #eff6ff !important;
+}
+
+.pims-patient-detail__icon-cell {
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: not-allowed;
+  line-height: 0;
+  color: inherit;
+}
+
+.pims-patient-detail__exam-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 8px;
+  margin: 0;
+  border: none;
+  border-bottom: 1px solid #f1f5f9;
+  background: #fff;
+  font-size: 13px;
+  color: #334155;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-patient-detail__exam-row:hover {
+  background: #f8fafc;
+}
+
+.pims-patient-detail__exam-row:last-child {
+  border-bottom: none;
+}
+
+.pims-patient-detail__exam-row-icons {
+  display: inline-flex;
+  gap: 4px;
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.pims-patient-detail__exam-row-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.pims-patient-detail__exam-row-ampm {
+  width: 2.25rem;
+  flex-shrink: 0;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.pims-patient-detail__exam-row-date {
+  flex-shrink: 0;
+  color: #475569;
+}
+
+.pims-patient-detail__exam-row-del {
+  flex-shrink: 0;
+  color: #dc2626;
+  opacity: 0.45;
+  line-height: 0;
+}
+
+.pims-patient-detail__mr-inline-error {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  font-size: 13px;
+}
+
+.pims-patient-detail__th-icon {
+  width: 36px;
+}
+
+.pims-patient-detail__row-icon {
+  vertical-align: middle;
+  color: #64748b;
+}
+
+.pims-patient-detail__check {
+  color: #16a34a;
+}
+
+.pims-patient-detail__dash {
+  color: #cbd5e1;
+}
+
+.pims-patient-detail__cell-expand {
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+}
+
+.pims-patient-detail__detail-cell {
+  max-width: 320px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.pims-patient-detail__detail-cell--rich {
+  max-width: min(560px, 92vw);
+}
+
+.pims-patient-detail__detail-meta {
+  white-space: pre-wrap;
+  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 10px;
+  line-height: 1.45;
+}
+
+.pims-patient-detail__html-body {
+  font-size: 14px;
+  line-height: 1.55;
+  color: #0f172a;
+}
+
+.pims-patient-detail__html-body :first-child {
+  margin-top: 0;
+}
+
+.pims-patient-detail__html-body :last-child {
+  margin-bottom: 0;
+}
+
+.pims-patient-detail__html-body a {
+  color: #2563eb;
+  word-break: break-word;
+}
+
+.pims-patient-detail__html-body img {
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+}
+
+.pims-patient-detail__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pims-patient-detail__expand-all {
+  align-self: flex-start;
+  border: none;
+  background: none;
+  padding: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2563eb;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-patient-detail__expand-all:hover {
+  text-decoration: underline;
+}
+
+.pims-patient-detail__accordion {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.pims-patient-detail__accordion-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: none;
+  background: #f8fafc;
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+
+.pims-patient-detail__accordion-head:hover {
+  background: #f1f5f9;
+}
+
+.pims-patient-detail__accordion-chev {
+  width: 1.25rem;
+  flex-shrink: 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.pims-patient-detail__accordion-body {
+  padding: 10px 14px 14px;
+  border-top: 1px solid #e2e8f0;
+  font-size: 13px;
+}
+
+.pims-patient-detail__group-line {
+  padding: 6px 0;
+  border-bottom: 1px solid #f1f5f9;
+  color: #334155;
+}
+
+.pims-patient-detail__group-line:last-child {
+  border-bottom: none;
+}
+
+.pims-patient-detail__muted {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.pims-patient-detail__muted code {
+  font-size: 12px;
+}
+
+.pims-patient-detail__rx-title {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.pims-patient-detail__rx-group {
+  margin-bottom: 20px;
+}
+
+.pims-patient-detail__rx-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #dcfce7;
+  border: 1px solid #86efac;
+  border-radius: 6px 6px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #14532d;
+}
+
+.pims-patient-detail__rx-code {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.pims-patient-detail__rx-group .pims-patient-detail__mr-table {
+  border-radius: 0 0 8px 8px;
+}
+
+.pims-patient-detail__highlights {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+@media (max-width: 1000px) {
+  .pims-patient-detail__highlights {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pims-patient-detail__hl-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 14px;
+  background: #fafafa;
+}
+
+.pims-patient-detail__hl-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.pims-patient-detail__hl-card-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.pims-patient-detail__hl-list {
+  margin: 0;
+  padding-left: 18px;
+  color: #334155;
+  font-size: 13px;
+}
+
+.pims-patient-detail__hl-list li {
+  margin-bottom: 6px;
+}
+
+.pims-patient-detail__linkish {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: inherit;
+  font-weight: 600;
+  color: #2563eb;
+  cursor: pointer;
+  font-family: inherit;
+  text-decoration: underline;
+}
+
+.pims-patient-detail__spark {
+  display: block;
+  margin-top: 8px;
+}
+
+.pims-patient-detail__wellness-list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 14px;
+  color: #334155;
+}
+
+.pims-patient-detail__wellness-list li {
+  margin-bottom: 8px;
+}

@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Box, CircularProgress } from '@mui/material';
 import { useAuth } from '../auth/useAuth';
@@ -14,7 +14,12 @@ function matchesRole(required: AnalyticsTabPage['role'], userRoles: string[]): b
   return need.some((r) => userRoles.includes(String(r)));
 }
 
-export default function Analytics() {
+type AnalyticsProps = {
+  /** Default `/analytics`; use `/schedule/analytics` when nested under the schedule app. */
+  basePath?: string;
+};
+
+export default function Analytics({ basePath = '/analytics' }: AnalyticsProps) {
   const { role } = useAuth() as { role?: string | string[] };
   const location = useLocation();
   const navigate = useNavigate();
@@ -22,6 +27,8 @@ export default function Analytics() {
   const isAdmin = isAnalyticsAdmin(normalizedRoles);
   const isEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles);
   const canAccessAnalytics = isAdmin || isEmployeeAnalytics;
+
+  const base = useMemo(() => basePath.replace(/\/$/, ''), [basePath]);
 
   const visibleTabs = getAnalyticsTabPages().filter((tab) => matchesRole(tab.role, normalizedRoles));
   const canSeePayments = visibleTabs.some((t) => t.path === 'payments');
@@ -31,7 +38,8 @@ export default function Analytics() {
   // When pathname changes, render only spinner first so it paints before the heavy child mounts.
   const pathnameRef = useRef(location.pathname);
   const pathJustChanged =
-    location.pathname.startsWith('/analytics') && location.pathname !== pathnameRef.current;
+    (location.pathname === base || location.pathname.startsWith(`${base}/`)) &&
+    location.pathname !== pathnameRef.current;
   if (pathJustChanged) pathnameRef.current = location.pathname;
   const showOutlet = !pathJustChanged;
 
@@ -45,16 +53,17 @@ export default function Analytics() {
 
   useEffect(() => {
     if (!canAccessAnalytics) {
-      navigate('/routing', { replace: true });
+      navigate('/schedule/routing', { replace: true });
       return;
     }
-    if (location.pathname === '/analytics/payments' && !canSeePayments) {
-      navigate('/analytics/vsd', { replace: true });
+    if (location.pathname === `${base}/payments` && !canSeePayments) {
+      navigate(`${base}/vsd`, { replace: true });
     }
-    if (location.pathname === '/analytics/square-reconciliation' && !canSeeSquareReconciliation) {
-      navigate(`/analytics/${firstVisiblePath}`, { replace: true });
+    if (location.pathname === `${base}/square-reconciliation` && !canSeeSquareReconciliation) {
+      navigate(`${base}/${firstVisiblePath}`, { replace: true });
     }
   }, [
+    base,
     canAccessAnalytics,
     firstVisiblePath,
     location.pathname,
@@ -80,7 +89,7 @@ export default function Analytics() {
           {visibleTabs.map((tab) => (
             <NavLink
               key={tab.path}
-              to={`/analytics/${tab.path}`}
+              to={`${base}/${tab.path}`}
               end={false}
               className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
             >

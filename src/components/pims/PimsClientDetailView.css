@@ -1,0 +1,670 @@
+.pims-client-detail {
+  padding: 0 0 32px;
+  background: #fff;
+  min-height: 400px;
+}
+
+.pims-client-detail__loading,
+.pims-client-detail__error {
+  padding: 24px;
+  font-size: 15px;
+  color: #64748b;
+}
+
+.pims-client-detail__error {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-radius: 8px;
+  margin: 16px 0;
+}
+
+.pims-client-detail__banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  padding: 14px 0 18px;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 16px;
+}
+
+.pims-client-detail__banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pims-client-detail__icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+}
+
+.pims-client-detail__icon-btn:hover {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.pims-client-detail__summary {
+  flex: 1;
+  min-width: 200px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.pims-client-detail__banner-links {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.pims-client-detail__link {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: #2563eb;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-client-detail__link:hover {
+  text-decoration: underline;
+}
+
+.pims-client-detail__confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 13px;
+  color: #334155;
+  cursor: pointer;
+  user-select: none;
+}
+
+.pims-client-detail__section {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.pims-client-detail__section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  border: none;
+  background: #f8fafc;
+  font-size: 14px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+
+.pims-client-detail__section-head:hover {
+  background: #f1f5f9;
+}
+
+.pims-client-detail__section-body {
+  padding: 16px;
+  border-top: 1px solid #e2e8f0;
+  font-size: 14px;
+  color: #475569;
+}
+
+.pims-client-detail__account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.pims-client-detail__btn {
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: #2563eb;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-client-detail__btn:hover {
+  background: #1d4ed8;
+}
+
+.pims-client-detail__btn--ghost {
+  background: #fff;
+  color: #2563eb;
+  border: 1px solid #2563eb;
+}
+
+.pims-client-detail__table-wrap {
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.pims-client-detail__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.pims-client-detail__table th {
+  text-align: left;
+  padding: 10px 12px;
+  background: #f8fafc;
+  font-weight: 600;
+  color: #475569;
+  border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;
+}
+
+.pims-client-detail__table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: top;
+}
+
+.pims-client-detail__balance-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1d4ed8;
+  margin: 0 0 12px;
+}
+
+.pims-client-detail__meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px 20px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+.pims-client-detail__meta dt {
+  margin: 0;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.pims-client-detail__meta dd {
+  margin: 2px 0 0;
+  color: #0f172a;
+}
+
+.pims-client-detail__line-link {
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.pims-client-detail__line-link:hover {
+  text-decoration: underline;
+}
+
+.pims-client-detail__totals {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.pims-client-detail__totals-inner {
+  min-width: 220px;
+  font-size: 13px;
+}
+
+.pims-client-detail__totals-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 4px 0;
+}
+
+.pims-client-detail__totals-row--strong {
+  font-weight: 700;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.pims-client-detail__tip {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: #15803d;
+}
+
+.pims-client-detail__muted {
+  color: #94a3b8;
+}
+
+.pims-client-detail__api-note {
+  padding: 14px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #92400e;
+  line-height: 1.5;
+}
+
+.pims-client-detail__profile {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 16px 18px 20px;
+  margin-bottom: 12px;
+  background: #fafbfc;
+}
+
+.pims-client-detail__profile-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 16px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.pims-client-detail__profile-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.pims-client-detail__profile-title-row .pims-client-detail__profile-title {
+  margin-bottom: 0;
+}
+
+.pims-client-detail__btn-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e40af;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-client-detail__btn-edit:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+
+.pims-client-detail__save-error {
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-size: 14px;
+}
+
+.pims-client-detail__edit-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.pims-client-detail__btn-secondary {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #334155;
+  background: #fff;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-client-detail__btn-secondary:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.pims-client-detail__btn-secondary:disabled,
+.pims-client-detail__edit-form .pims-client-detail__btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.pims-client-detail__edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px 16px;
+  margin-bottom: 8px;
+}
+
+.pims-client-detail__edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.pims-client-detail__edit-field--full {
+  grid-column: 1 / -1;
+}
+
+.pims-client-detail__textarea {
+  min-height: 88px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.pims-client-detail__edit-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.pims-client-detail__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+}
+
+.pims-client-detail__subhead {
+  margin: 18px 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.pims-client-detail__subhead:first-of-type {
+  margin-top: 0;
+}
+
+.pims-client-detail__alerts-wrap {
+  margin-bottom: 4px;
+}
+
+.pims-client-detail__alerts {
+  margin: 0;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #0f172a;
+  white-space: pre-wrap;
+}
+
+.pims-client-detail__json-inline {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.pims-client-detail__patient-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pims-client-detail__patient-card {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fafbfc;
+}
+
+.pims-client-detail__patient-img {
+  flex-shrink: 0;
+  width: 72px;
+  height: 72px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid #e2e8f0;
+  background: #f1f5f9;
+}
+
+.pims-client-detail__patient-img--placeholder {
+  background: linear-gradient(135deg, #e2e8f0, #f8fafc);
+}
+
+.pims-client-detail__patient-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.pims-client-detail__patient-title {
+  margin-bottom: 8px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.pims-client-detail__patient-link {
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.pims-client-detail__patient-link:hover {
+  text-decoration: underline;
+}
+
+.pims-client-detail__meta--patient {
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  margin-bottom: 0;
+}
+
+.pims-client-detail__patient-alerts {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #475569;
+}
+
+.pims-client-detail__patient-alerts strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #334155;
+}
+
+/* Invoice summary list: ~5 rows visible, scroll for the rest */
+.pims-client-detail__invoice-list-scroll {
+  max-height: min(268px, 45vh);
+  overflow-x: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+
+.pims-client-detail__table--invoice-summary {
+  margin-bottom: 0;
+}
+
+.pims-client-detail__table--invoice-summary thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  box-shadow: 0 1px 0 #e2e8f0;
+}
+
+.pims-client-detail__invoice-row--clickable {
+  cursor: pointer;
+}
+
+.pims-client-detail__invoice-row--clickable:hover td {
+  background: #f1f5f9;
+}
+
+.pims-client-detail__invoice-row--clickable:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+}
+
+.pims-client-detail__invoice-row-title {
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
+.pims-client-detail__invoice-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+/* Invoice detail modal */
+.pims-client-detail__inv-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px 16px;
+  overflow-y: auto;
+}
+
+.pims-client-detail__inv-modal {
+  width: 100%;
+  max-width: min(960px, 100%);
+  margin: 24px auto 40px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
+  padding: 20px 22px 22px;
+}
+
+.pims-client-detail__inv-modal-title {
+  margin: 0 0 16px;
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.pims-client-detail__inv-modal-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px 18px;
+  margin: 0 0 20px;
+  font-size: 13px;
+}
+
+.pims-client-detail__inv-modal-meta dt {
+  margin: 0;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.pims-client-detail__inv-modal-meta dd {
+  margin: 2px 0 0;
+  color: #0f172a;
+  word-break: break-word;
+}
+
+.pims-client-detail__inv-modal-subhead {
+  margin: 20px 0 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.pims-client-detail__inv-modal-table-wrap {
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  max-height: min(360px, 50vh);
+  overflow-y: auto;
+}
+
+.pims-client-detail__inv-modal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.pims-client-detail__inv-modal-table th,
+.pims-client-detail__inv-modal-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: top;
+}
+
+.pims-client-detail__inv-modal-table th {
+  background: #f8fafc;
+  font-weight: 600;
+  color: #475569;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.pims-client-detail__inv-modal-empty {
+  padding: 16px;
+  color: #64748b;
+  text-align: center;
+}
+
+.pims-client-detail__inv-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.pims-client-detail__inv-modal-close {
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-client-detail__inv-modal-close:hover {
+  background: #f1f5f9;
+}

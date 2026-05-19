@@ -1,169 +1,601 @@
-/* Appointment lengths popover (Routing doctor field) */
+/* Routing request + results layout (scoped; avoids global .grid minmax(260px) squeezing narrow panes) */
 
-.routing-appt-lengths-backdrop {
-  display: none;
-}
-
-.routing-appt-lengths-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  right: auto;
-  width: max-content;
-  max-width: calc(100vw - 24px);
-  max-height: min(320px, 52vh);
-  overflow: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-  background: #fff;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
-  padding: 12px;
-  z-index: 3000;
+.routing-page-root {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+  width: 100%;
   box-sizing: border-box;
 }
 
-.routing-appt-lengths-popover-header {
+/* Form left, results right from tablet/desktop up; stack only on narrow viewports */
+@media (min-width: 768px) {
+  .routing-page-root {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 20px;
+  }
+}
+
+.routing-form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.routing-doctor-row {
+  min-width: 0;
+  width: 100%;
+}
+
+.routing-doctor-row .routing-doctor-input-wrap {
+  min-width: 0;
+  width: 100%;
+}
+
+.routing-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .routing-grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.routing-span-full {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .routing-span-full {
+    grid-column: auto;
+  }
+}
+
+.routing-row-dates .date {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.routing-row-appt .input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.routing-prefs-card {
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.routing-prefs-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .routing-prefs-grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.routing-prefs-check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.routing-prefs-check input[type='checkbox'] {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.routing-prefs-check > span {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+  font-size: 12px;
+}
+
+.routing-prefs-check--inline {
+  align-items: center;
+}
+
+.routing-prefs-check--inline input[type='checkbox'] {
+  margin-top: 0;
+}
+
+.routing-service-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.routing-service-row select.input {
+  flex: 1 1 160px;
+  max-width: 100%;
+}
+
+.routing-results-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  align-items: flex-start;
+}
+
+@media (min-width: 768px) {
+  .routing-results-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+    gap: 12px;
+    justify-items: start;
+  }
+}
+
+/* ----- Get Best Route: mobile-first booking flow ----- */
+
+.routing-route-form-card.card {
+  padding: 16px;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+}
+
+.routing-route-form-title {
+  margin: 0 0 10px 0;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.routing-route-form-stack.routing-form-stack {
+  gap: 10px;
+}
+
+.routing-route-form-card label > .label {
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+/* One size for all field values in this form (text, date, select, number). */
+.routing-route-form-card.card .routing-form-stack input.input,
+.routing-route-form-card.card .routing-form-stack select.input,
+.routing-route-form-card.card .routing-form-stack input.date,
+.routing-route-form-card.card .routing-form-stack textarea.input {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.routing-route-hint {
+  font-size: 11px;
+  margin-top: 4px;
+  line-height: 1.35;
+}
+
+.routing-route-hint--tight {
+  margin-top: 2px;
+}
+
+.routing-date-range-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.routing-date-input {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.routing-date-range-sep {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.routing-calculate-time-field .routing-input-compact {
+  padding: 5px 8px;
+  min-height: 38px;
+  border-radius: 10px;
+  box-sizing: border-box;
+}
+
+.routing-visit-field > .label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.routing-calculate-time-box-legend {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  margin: 0 0 6px;
+  line-height: 1.3;
+}
+
+.routing-calculate-time-box {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px 10px;
+  margin-bottom: 6px;
+  background: var(--card);
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.routing-calculate-time-box-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.routing-calculate-time-type-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 140px;
+  cursor: pointer;
+}
+
+.routing-calculate-time-type-stack .routing-visit-type-select {
+  width: 100%;
+  align-self: stretch;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.routing-calculate-time-minutes-row {
+  min-width: 0;
+}
+
+.routing-calculate-time-minutes-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.routing-calculate-time-minutes-heading {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.routing-calculate-time-field .routing-mins-line-input {
+  width: 100%;
+  max-width: 7rem;
+  min-width: 0;
+  box-sizing: border-box;
+  text-align: left;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+@keyframes routingMinutesFlash {
+  0% {
+    background-color: #ffffff;
+    border-color: var(--border);
+  }
+  12% {
+    background-color: color-mix(in srgb, var(--accent) 26%, #ffffff);
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  }
+  55% {
+    background-color: color-mix(in srgb, var(--accent) 12%, #ffffff);
+    border-color: var(--border);
+  }
+  100% {
+    background-color: #ffffff;
+    border-color: var(--border);
+  }
+}
+
+.routing-calculate-time-field .routing-mins-line-input.routing-minutes-flash--active {
+  animation: routingMinutesFlash 0.75s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .routing-calculate-time-field .routing-mins-line-input.routing-minutes-flash--active {
+    animation: routingMinutesFlash 0.35s ease-out;
+  }
+}
+
+.routing-visit-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.routing-visit-stack-label {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+/* Narrow pets field; override global `.input { width: 100% }` */
+.routing-calculate-time-field .routing-pet-input {
+  width: 3.25rem;
+  min-width: 3.25rem;
+  max-width: 3.25rem;
+  box-sizing: border-box;
+  text-align: center;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.routing-address-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.routing-address-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.routing-address-inline-ok {
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1;
+  color: #047857;
+  font-weight: 700;
+  padding: 8px 4px;
+  min-width: 28px;
+  text-align: center;
+}
+
+.routing-client-alert-banner {
+  padding: 8px 10px;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #7c2d12;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.routing-client-alert-banner strong {
+  font-weight: 700;
+}
+
+.routing-prefs-accordion {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fafbfc;
+  min-width: 0;
+}
+
+.routing-prefs-accordion-trigger {
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin: -4px 0 10px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #e5e7eb;
-}
-
-.routing-appt-lengths-popover-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.routing-appt-lengths-close {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 40px;
   min-height: 40px;
-  margin: -8px -8px -8px 0;
-  padding: 0;
+  padding: 8px 10px;
+  margin: 0;
   border: none;
-  border-radius: 8px;
   background: transparent;
-  color: #64748b;
-  font-size: 22px;
-  line-height: 1;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.routing-appt-lengths-close:hover {
-  background: #f1f5f9;
-  color: #0f172a;
-}
-
-.routing-appt-lengths-popover .routing-appt-lengths-help {
-  font-size: 12px;
-  line-height: 1.45;
-  color: #64748b;
-  margin-bottom: 10px;
-  max-width: min(22rem, calc(100vw - 48px));
-}
-
-.routing-appt-lengths-popover table {
-  font-size: 13px;
-  border-collapse: collapse;
-  width: auto;
-}
-
-.routing-appt-lengths-popover th,
-.routing-appt-lengths-popover td {
-  padding: 8px 6px;
-}
-
-.routing-appt-lengths-popover th {
-  border-bottom: 1px solid #e5e7eb;
-  font-weight: 600;
-  color: #334155;
-}
-
-.routing-appt-lengths-popover th:first-child,
-.routing-appt-lengths-popover td:first-child {
   text-align: left;
-  padding-left: 0;
+  font: inherit;
+  color: inherit;
+  border-radius: 12px;
+  box-sizing: border-box;
 }
 
-.routing-appt-lengths-popover th:not(:first-child),
-.routing-appt-lengths-popover td:not(:first-child) {
-  text-align: right;
-  white-space: nowrap;
+.routing-prefs-accordion-trigger:hover {
+  background: rgba(0, 0, 0, 0.03);
 }
 
-.routing-appt-lengths-popover td:first-child {
-  vertical-align: top;
+.routing-prefs-accordion-title {
+  font-size: 12px;
+  font-weight: 600;
 }
 
-@media (min-width: 641px) {
-  .routing-appt-lengths-popover-header {
-    display: none;
-  }
+.routing-prefs-accordion-chevron {
+  font-size: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
 }
 
-@media (max-width: 640px) {
-  .routing-appt-lengths-backdrop {
-    display: block;
-    position: fixed;
-    inset: 0;
-    z-index: 2999;
-    background: rgba(15, 23, 42, 0.4);
-    -webkit-tap-highlight-color: transparent;
-    touch-action: none;
-  }
+.routing-prefs-accordion-panel {
+  border-top: 1px solid var(--border);
+}
 
-  .routing-appt-lengths-popover {
-    position: fixed;
-    left: max(10px, env(safe-area-inset-left, 0px));
-    right: max(10px, env(safe-area-inset-right, 0px));
-    top: max(10px, env(safe-area-inset-top, 0px));
-    bottom: max(10px, env(safe-area-inset-bottom, 0px));
+.routing-prefs-accordion-panel[hidden] {
+  display: none;
+}
+
+.routing-prefs-accordion-panel-inner {
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.routing-prefs-block {
+  min-width: 0;
+}
+
+.routing-prefs-block--subtle {
+  opacity: 0.95;
+}
+
+.routing-field-label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.routing-radio-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.routing-radio-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  box-sizing: border-box;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.routing-radio-row input[type='radio'] {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.routing-radio-row span {
+  flex: 1;
+  min-width: 0;
+}
+
+.routing-radio-row--active {
+  border-color: var(--border);
+  background: #fff;
+}
+
+.routing-radio-row--caution.routing-radio-row--active {
+  border-color: #f5c6cb;
+  background: #f8d7da;
+  color: #721c24;
+}
+
+.routing-weekday-chips {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+
+.routing-weekday-chip {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 2px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: inherit;
+  box-sizing: border-box;
+}
+
+.routing-weekday-chip:hover {
+  background: #f6fbf9;
+}
+
+.routing-weekday-chip--selected {
+  border-color: #1fbf9b;
+  background: #ecfdf5;
+  color: #047857;
+  font-weight: 600;
+}
+
+.routing-force-earliest {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.35;
+  min-height: 38px;
+  padding: 4px 0;
+  box-sizing: border-box;
+}
+
+.routing-force-earliest input[type='checkbox'] {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+}
+
+.routing-force-earliest span {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.routing-submit-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.routing-submit-btn {
+  min-height: 40px;
+  padding-left: 16px;
+  padding-right: 16px;
+  font-size: 13px;
+  font-weight: 600;
+  width: 100%;
+}
+
+@media (min-width: 420px) {
+  .routing-submit-btn {
     width: auto;
-    max-width: none;
-    max-height: none;
-    margin: 0;
-    border-radius: 12px;
-    padding: 14px;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
   }
+}
 
-  .routing-appt-lengths-popover .routing-appt-lengths-scroll {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior: contain;
-  }
-
-  .routing-appt-lengths-popover .routing-appt-lengths-help {
-    max-width: none;
-    font-size: 13px;
-  }
-
-  .routing-appt-lengths-popover table {
-    font-size: 14px;
-  }
-
-  .routing-appt-lengths-popover th,
-  .routing-appt-lengths-popover td {
-    padding: 10px 8px;
-  }
-
-  .routing-appt-lengths-close {
-    min-width: 44px;
-    min-height: 44px;
-  }
+/** Routing result / candidate cards: shrink inherited typography ~25% vs surrounding UI */
+.routing-result-option-card.card {
+  width: 100%;
+  max-width: min(100%, 320px);
+  box-sizing: border-box;
+  padding-left: 14px;
+  padding-right: 14px;
+  padding-bottom: 14px;
+  font-size: 75%;
 }

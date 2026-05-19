@@ -58,7 +58,7 @@ const DEFAULT_GRID_START_MINUTES = 6 * 60 + 30;
 const BUFFER_MINUTES_BEFORE_START = 30;
 
 /** Parse "HH:mm" or "HH:mm:ss" to minutes from midnight. */
-function timeStrToMinutesFromMidnight(s: string): number {
+export function timeStrToMinutesFromMidnight(s: string): number {
   const parts = s.trim().split(':');
   const h = parseInt(parts[0], 10);
   const m = parts.length >= 2 ? parseInt(parts[1], 10) : 0;
@@ -397,7 +397,7 @@ function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
   return list;
 }
 
-type DayData = {
+export type DayData = {
   date: string;
   /** IANA practice timezone for wall times on this day (from doctor-day API). */
   timezone: string;
@@ -412,6 +412,8 @@ type DayData = {
   }[];
   startDepot: Depot | null;
   endDepot: Depot | null;
+  /** From GET /appointments/doctor — e.g. "Office: Brunswick" without reverse-geocoding startDepot. */
+  startDepotTown?: string | null;
   /** Time-of-day "HH:mm" or "HH:mm:ss" when doctor leaves depot */
   startDepotTime: string | null;
   /** Time-of-day "HH:mm" or "HH:mm:ss" when doctor returns to depot */
@@ -490,7 +492,7 @@ function zoneKeyFrom(z: MiniZone | null): string {
 }
 
 /** Points for one day (exclude personal blocks and "Note To Staff"). Per patient: 1 standard, 0.5 tech, 2 euthanasia. */
-function dayPoints(households: WeekHousehold[]): number {
+export function dayPoints(households: WeekHousehold[]): number {
   return households.reduce((total, h) => {
     if (h.isPersonalBlock) return total;
     const type = (str(h.primary, 'appointmentType') || '').toLowerCase();
@@ -503,7 +505,7 @@ function dayPoints(households: WeekHousehold[]): number {
 }
 
 /** Total driving time in seconds for the day (driveSeconds + backToDepot when separate). */
-function dayTotalDriveSeconds(day: DayData): number {
+export function dayTotalDriveSeconds(day: DayData): number {
   const ds = day.driveSeconds ?? [];
   const sum = ds.reduce((a, b) => a + (typeof b === 'number' ? b : 0), 0);
   const back = day.backToDepotSec ?? 0;
@@ -563,7 +565,7 @@ function depotTimeToPx(
   return clamped * PPM;
 }
 
-type WeekGridMetrics = { gridStartMinutesFromMidnight: number; totalMinutes: number };
+export type WeekGridMetrics = { gridStartMinutesFromMidnight: number; totalMinutes: number };
 
 /** Block tops/durations and Y-offsets so visits stack with drive gaps (matches appointment div layout). */
 type MyWeekDayColumnLayout = {
@@ -576,7 +578,7 @@ type MyWeekDayColumnLayout = {
   N: number;
 };
 
-function computeMyWeekDayColumnLayout(
+export function computeMyWeekDayColumnLayout(
   dayData: DayData,
   weekGrid: WeekGridMetrics,
   dateIso: string,
@@ -725,7 +727,7 @@ function computeMyWeekDayColumnLayout(
  * Paint drive bands in the same minute-space as appointment blocks (driveOffsets).
  * The old path used raw clock minutes + cumOffsetMin, which left white gaps and stretched return past backToDepotIso.
  */
-function buildMyWeekDriveSegmentsFromLayout(
+export function buildMyWeekDriveSegmentsFromLayout(
   layout: MyWeekDayColumnLayout,
   dayData: DayData,
   weekGrid: WeekGridMetrics,
@@ -899,13 +901,12 @@ function buildMyWeekDriveSegmentsFromLayout(
     }
 
     const gapAvailMin = Math.max(0, afterBufPx / PPM);
+    const hasNumericLeg = typeof driveSecLeg === 'number' && Number.isFinite(driveSecLeg);
     const routeMinFromLeg =
-      typeof driveSecLeg === 'number' && Number.isFinite(driveSecLeg) && driveSecLeg > 0
-        ? Math.max(1, Math.round(driveSecLeg / 60))
-        : 0;
-    // Hatched band = route time when API gives it; remainder of the ETA clock gap is idle (not drive).
-    const paintDriveMin =
-      routeMinFromLeg > 0 ? Math.min(gapAvailMin, routeMinFromLeg) : gapAvailMin;
+      hasNumericLeg && driveSecLeg > 0 ? Math.max(1, Math.round(driveSecLeg / 60)) : 0;
+    // API 0 = no driving on this leg (e.g. visit → office block); do not fill the clock gap with hatched "drive".
+    // Missing / non-numeric leg: do not infer drive from idle gap (was incorrectly painting the full gap).
+    const paintDriveMin = hasNumericLeg ? Math.min(gapAvailMin, routeMinFromLeg) : 0;
     const driveH = paintDriveMin * PPM;
     if (driveH <= 1) continue;
 
@@ -1077,11 +1078,6 @@ function buildMyWeekDriveSegmentsFromLayout(
           });
         }
 
-        const dMin =
-          backSec > 0 ? backSec / 60 : Math.max(1, Math.round(arrivalMin - winStartMin));
-        const maxAvailMin = Math.max(0, arrivalMin - winStartMin);
-        const dMinCap = Math.min(dMin, maxAvailMin);
-
         const kTrail = lastAddressIdx + 1;
         const hasTrailingBlock =
           kTrail < N && isDriveBarrier(displayHouseholds[kTrail]);
@@ -1094,6 +1090,37 @@ function buildMyWeekDriveSegmentsFromLayout(
         const blockBottomMin =
           hasTrailingBlock && blockTopMin != null ? blockTopMin + durMinByIdx[kTrail] : null;
 
+        const hopBeforeFixedBlockMin =
+          hasTrailingBlock &&
+          blockTopMin != null &&
+          blockBottomMin != null &&
+          !firstTrailIsFlex &&
+          hopToTrailSec != null &&
+          Number.isFinite(hopToTrailSec) &&
+          hopToTrailSec > 0
+            ? Math.max(1, Math.round(hopToTrailSec / 60))
+            : 0;
+
+        let dMin: number;
+        if (backSec > 0) {
+          dMin = backSec / 60;
+        } else if (
+          hasTrailingBlock &&
+          blockTopMin != null &&
+          blockBottomMin != null &&
+          !firstTrailIsFlex
+        ) {
+          // Visit → fixed office/personal block: driveSeconds[k] is the routed leg; 0 = idle gap (not "drive to 5pm").
+          dMin = hopBeforeFixedBlockMin;
+        } else {
+          dMin = Math.max(1, Math.round(arrivalMin - winStartMin));
+        }
+        const maxAvailMin = Math.max(0, arrivalMin - winStartMin);
+        const dMinCap = Math.min(dMin, maxAvailMin);
+
+        if (dMinCap <= 1e-6) {
+          // No API drive leg (or nothing to paint): skip hatched "back to depot" — gap is idle / at office.
+        } else {
         let driveStartMin: number;
         let driveEndMin: number;
 
@@ -1206,14 +1233,15 @@ function buildMyWeekDriveSegmentsFromLayout(
         }
 
         if (drivePx > 1) {
-          const routeDm = Math.max(1, Math.round(dMin));
-          const titleBase = `Drive back to depot: ${routeDm} min`;
+          const paintedRouteMin = Math.max(1, Math.round((driveEndMin - driveStartMin)));
+          const titleBase = `Drive back to depot: ${paintedRouteMin} min`;
           segs.push({
             top: driveTopPx,
             height: Math.max(4, drivePx),
             title: `${titleBase} — Arrival: ${formatIsoInPracticeZone(arrivalIso, practiceTz)}`,
             kind: 'drive',
           });
+        }
         }
       } else {
         const bufUsePx = bufMinLast * PPM;
@@ -1288,6 +1316,172 @@ function buildMyWeekDriveSegmentsFromLayout(
   }
 
   return segs;
+}
+
+/** Transparent red diagonal hash where hatched drive overlaps a visit / personal block (drive intrudes on scheduled time). */
+const DRIVE_BLOCK_OVERLAP_HASH_FILL =
+  'repeating-linear-gradient(135deg, rgba(220, 38, 38, 0.3) 0px, rgba(220, 38, 38, 0.3) 4px, rgba(255, 255, 255, 0.12) 4px, rgba(255, 255, 255, 0.12) 8px)';
+
+function computeDriveBlockOverlapOverlays(
+  driveSegs: { top: number; height: number; kind: string }[],
+  layout: {
+    displayHouseholds: unknown[];
+    topMinByIdx: number[];
+    durMinByIdx: number[];
+    driveOffsets: number[];
+  },
+  ppm: number
+): { top: number; height: number; key: string }[] {
+  const rects: { top: number; height: number; key: string }[] = [];
+  const { displayHouseholds, topMinByIdx, durMinByIdx, driveOffsets } = layout;
+  const n = displayHouseholds.length;
+  const minOverlapPx = 2;
+  for (let si = 0; si < driveSegs.length; si++) {
+    const seg = driveSegs[si];
+    if (seg.kind !== 'drive') continue;
+    const s0 = seg.top;
+    const s1 = seg.top + seg.height;
+    for (let idx = 0; idx < n; idx++) {
+      const topMin = topMinByIdx[idx] ?? 0;
+      const durMin = durMinByIdx[idx] ?? 1;
+      const driveOffsetMin = driveOffsets[idx] ?? 0;
+      const b0 = topMin * ppm + driveOffsetMin * ppm;
+      const b1 = b0 + Math.max(14, durMin * ppm);
+      const o0 = Math.max(s0, b0);
+      const o1 = Math.min(s1, b1);
+      const h = o1 - o0;
+      if (h >= minOverlapPx) {
+        rects.push({ top: o0, height: h, key: `drive-overlap-${si}-${idx}-${Math.round(o0)}` });
+      }
+    }
+  }
+  return rects;
+}
+
+/** Slate diagonal hash on a trailing fixed (non-flex) personal **block** when depot arrival is **after** the block’s scheduled start (drive paint is clipped away from blocks, so pixel overlap never fires). */
+const DRIVE_DEPOT_RETURN_OVERRUN_HASH =
+  'repeating-linear-gradient(135deg, rgba(71, 85, 105, 0.4) 0px, rgba(71, 85, 105, 0.4) 5px, rgba(255, 255, 255, 0.14) 5px, rgba(255, 255, 255, 0.14) 10px)';
+
+/** In-column hatch drawn inside the trailing household row so it stacks above the block fill (sibling overlays can sit under in-flow content). */
+export type DepotReturnTrailingBlockOverrunLayer = {
+  householdIdx: number;
+  heightPx: number;
+  key: string;
+  background: string;
+};
+
+export function computeDepotReturnTrailingBlockOverrunLayers(
+  layout: MyWeekDayColumnLayout,
+  dayData: DayData,
+  weekGrid: WeekGridMetrics,
+  dateIso: string,
+  ppm: number
+): DepotReturnTrailingBlockOverrunLayer[] {
+  const practiceTz = practiceTimeZoneOrDefault(dayData.timezone);
+  const { displayHouseholds, displayTimeline, topMinByIdx, durMinByIdx, driveOffsets, ds, N } = layout;
+  const apptBufDefault = dayData.appointmentBufferMinutes ?? 5;
+
+  const toMin = (iso: string) =>
+    minutesFromDayStart(
+      weekGrid.gridStartMinutesFromMidnight,
+      weekGrid.totalMinutes,
+      iso,
+      dateIso,
+      practiceTz
+    );
+
+  const isDriveBarrier = (h: WeekHousehold | undefined) => h?.isPersonalBlock === true;
+
+  let lastAddressIdx = -1;
+  for (let i = N - 1; i >= 0; i--) {
+    if (!displayHouseholds[i]?.isPersonalBlock) {
+      lastAddressIdx = i;
+      break;
+    }
+  }
+  if (N <= 0 || lastAddressIdx < 0) return [];
+
+  const lastH = displayHouseholds[lastAddressIdx];
+  const lastIsNoAddressBlock = (lastH as { isNoLocation?: boolean }).isNoLocation === true;
+  if (lastIsNoAddressBlock) return [];
+
+  const vrIsoForBack =
+    typeof dayData.validationReturnSec === 'number' && Number.isFinite(dayData.validationReturnSec)
+      ? isoFromSecondsSincePracticeMidnight(dateIso, dayData.validationReturnSec, practiceTz)
+      : null;
+  const returnWeekClockIso =
+    dayData.backToDepotIso && DateTime.fromISO(dayData.backToDepotIso).isValid
+      ? dayData.backToDepotIso
+      : vrIsoForBack && DateTime.fromISO(vrIsoForBack).isValid
+        ? vrIsoForBack
+        : null;
+  if (!returnWeekClockIso || !DateTime.fromISO(returnWeekClockIso).isValid) return [];
+
+  const kTrailEarly = lastAddressIdx + 1;
+  const trailHEarly = kTrailEarly < N ? displayHouseholds[kTrailEarly] : null;
+  const firstTrailIsFlexEarly =
+    kTrailEarly < N &&
+    isDriveBarrier(trailHEarly ?? undefined) &&
+    (isFlexBlockItem(trailHEarly?.primary) ||
+      isFlexBlockItem({ blockLabel: trailHEarly?.client, title: trailHEarly?.client }));
+  const flexEtaEarly =
+    firstTrailIsFlexEarly && displayTimeline[kTrailEarly]?.eta
+      ? displayTimeline[kTrailEarly]!.eta!
+      : null;
+  const hopToTrailSec =
+    Array.isArray(ds) &&
+    ds.length > lastAddressIdx + 1 &&
+    typeof ds[lastAddressIdx + 1] === 'number'
+      ? ds[lastAddressIdx + 1]
+      : null;
+  const skipReturnDupToFlex =
+    (firstTrailIsFlexEarly &&
+      flexEtaEarly != null &&
+      returnWeekClockIso != null &&
+      DateTime.fromISO(flexEtaEarly).isValid &&
+      DateTime.fromISO(returnWeekClockIso).isValid &&
+      Math.abs(
+        DateTime.fromISO(returnWeekClockIso).diff(DateTime.fromISO(flexEtaEarly), 'seconds').seconds
+      ) <= 180) ||
+    (firstTrailIsFlexEarly &&
+      typeof dayData.backToDepotSec === 'number' &&
+      Number.isFinite(dayData.backToDepotSec) &&
+      hopToTrailSec != null &&
+      Math.abs(hopToTrailSec - dayData.backToDepotSec) <= 2);
+  if (skipReturnDupToFlex) return [];
+
+  const kTrail = lastAddressIdx + 1;
+  const hasTrailingBlock = kTrail < N && isDriveBarrier(displayHouseholds[kTrail]);
+  if (!hasTrailingBlock) return [];
+
+  const trailH = displayHouseholds[kTrail];
+  const firstTrailIsFlex =
+    hasTrailingBlock &&
+    (isFlexBlockItem(trailH?.primary) ||
+      isFlexBlockItem({ blockLabel: trailH?.client, title: trailH?.client }));
+  if (firstTrailIsFlex) return [];
+
+  const blockTopMin = topMinByIdx[kTrail] + driveOffsets[kTrail];
+  const blockBottomMin = blockTopMin + durMinByIdx[kTrail];
+
+  const arrivalMin = toMin(returnWeekClockIso);
+  const EPS = 1 / 60;
+  if (arrivalMin <= blockTopMin + EPS) return [];
+
+  const ovEnd = Math.min(arrivalMin, blockBottomMin);
+  const heightMin = ovEnd - blockTopMin;
+  if (heightMin * ppm < 2) return [];
+
+  const heightPx = Math.max(2, heightMin * ppm);
+
+  return [
+    {
+      householdIdx: kTrail,
+      heightPx,
+      key: `depot-return-overrun-${dateIso}-${kTrail}`,
+      background: DRIVE_DEPOT_RETURN_OVERRUN_HASH,
+    },
+  ];
 }
 
 export const MYWEEK_STORAGE_KEY = 'myweek-state';
@@ -1572,6 +1766,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
             timeline: households.map(() => ({ eta: null, etd: null })),
             startDepot: resp?.startDepot ?? null,
             endDepot: resp?.endDepot ?? null,
+            startDepotTown: str(resp as any, 'startDepotTown')?.trim() || null,
             startDepotTime: str(resp as any, 'startDepotTime') ?? null,
             endDepotTime: str(resp as any, 'endDepotTime') ?? null,
           };
@@ -2550,7 +2745,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                           })()
                         : [];
                       const scheduleLoaderHref = selectedDoctorId && hasAppts
-                        ? `/scheduling-tools/schedule-loader?targetDate=${dateIso}&doctorId=${encodeURIComponent(selectedDoctorId)}`
+                        ? `/schedule/scheduling-tools/schedule-loader?targetDate=${dateIso}&doctorId=${encodeURIComponent(selectedDoctorId)}`
                         : null;
                       return (
                         <>
@@ -2569,9 +2764,9 @@ export default function MyWeek(props: MyWeekProps = {}) {
                                   href={scheduleLoaderHref}
                                   className="btn"
                                   style={{ fontSize: 10, padding: '4px 8px', whiteSpace: 'nowrap' }}
-                                  title={`Open Schedule Loader for ${dateIso}`}
+                                  title={`Open Fill for ${dateIso}`}
                                 >
-                                  Schedule Loader
+                                  Fill
                                 </a>
                               )}
                               {mapsLinks.length > 0 && (
@@ -2668,6 +2863,27 @@ export default function MyWeek(props: MyWeekProps = {}) {
                     const driveSegs = showByDriveTime
                       ? buildMyWeekDriveSegmentsFromLayout(layout, dayDataForDrive, weekGrid, dateIso)
                       : [];
+                    const driveBlockOverlapOverlays =
+                      showByDriveTime && driveSegs.length > 0
+                        ? computeDriveBlockOverlapOverlays(driveSegs, layout, PPM).map((r) => ({
+                            ...r,
+                            background: DRIVE_BLOCK_OVERLAP_HASH_FILL,
+                          }))
+                        : [];
+                    const depotReturnOverrunLayers =
+                      showByDriveTime
+                        ? computeDepotReturnTrailingBlockOverrunLayers(
+                            layout,
+                            dayDataForDrive,
+                            weekGrid,
+                            dateIso,
+                            PPM
+                          )
+                        : [];
+                    const depotOverrunByIdx = new Map(
+                      depotReturnOverrunLayers.map((L) => [L.householdIdx, L])
+                    );
+                    const scheduleDriveOverlays = [...driveBlockOverlapOverlays];
                     const { displayHouseholds, displayTimeline, topMinByIdx, durMinByIdx, driveOffsets } =
                       layout;
                     return (
@@ -2750,6 +2966,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                           const endDepotTimeFormatted = isLastStopOfDay
                             ? formatDepotWallClockOnDate(dayData.endDepotTime, dateIso, dayData.timezone)
                             : null;
+                          const depotLayer = depotOverrunByIdx.get(idx);
                           return (
                             <div
                               key={h.key}
@@ -2927,9 +3144,46 @@ export default function MyWeek(props: MyWeekProps = {}) {
                               {isFixedTime && !h.isPersonalBlock && (
                                 <span style={{ fontSize: 10, color: '#b91c1c', fontWeight: 600 }}>Fixed</span>
                               )}
+                              {depotLayer && (
+                                <div
+                                  key={depotLayer.key}
+                                  aria-hidden
+                                  style={{
+                                    position: 'absolute',
+                                    left: 0,
+                                    right: 0,
+                                    top: 0,
+                                    height: depotLayer.heightPx,
+                                    zIndex: 3,
+                                    pointerEvents: 'none',
+                                    background: depotLayer.background,
+                                    borderTopLeftRadius: 6,
+                                    borderTopRightRadius: 6,
+                                    boxSizing: 'border-box',
+                                  }}
+                                />
+                              )}
                             </div>
                           );
                         })}
+                        {scheduleDriveOverlays.map((r) => (
+                          <div
+                            key={r.key}
+                            aria-hidden
+                            style={{
+                              position: 'absolute',
+                              left: 4,
+                              right: 4,
+                              top: r.top,
+                              height: r.height,
+                              zIndex: 20,
+                              pointerEvents: 'none',
+                              background: r.background,
+                              borderRadius: 4,
+                              boxSizing: 'border-box',
+                            }}
+                          />
+                        ))}
                       </>
                     );
                   })()}
@@ -2962,7 +3216,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
               offset: OFFSET,
               preferSide: 'left',
             });
-            const { left, top, maxCardH, width: popoverW } = pos;
+            const { left, top, bottom, maxCardH, width: popoverW } = pos;
             const practiceTzHover = practiceTimeZoneOrDefault(hoverCard.practiceTimeZone);
             const addrNoZip = stripZipFromAddressLine(hoverCard.address);
             return (
@@ -2981,7 +3235,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                 style={{
                   position: 'fixed',
                   left,
-                  top,
+                  ...(bottom != null ? { top: 'auto', bottom } : { top }),
                   zIndex: 9999,
                   width: popoverW,
                   maxWidth: CARD_MAX_W,

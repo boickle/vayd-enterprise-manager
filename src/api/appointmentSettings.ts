@@ -16,6 +16,17 @@ export type AppointmentType = {
   isDeleted: boolean;
   pimsId: string;
   pimsType: string;
+  /** When set by the API, scheduler uses this for event fill color */
+  calendarColor?: string | null;
+  colorHex?: string | null;
+  /** Fill color: hex (e.g. #00CC66) or CSS named color (e.g. pink) from API */
+  color?: string | null;
+  /** Text on colored chips: hex or named (e.g. black, #FFFFFF) from API */
+  textColor?: string | null;
+  /** Minutes before scheduled time the client may arrive; 0 = fixed time; null = legacy default */
+  windowBeforeMinutes?: number | null;
+  /** Minutes after scheduled time the client may arrive; null = legacy default */
+  windowAfterMinutes?: number | null;
   practice?: {
     id: number;
     name: string;
@@ -30,6 +41,9 @@ export type Employee = {
   title?: string;
   designation?: string;
   isProvider?: boolean;
+  pimsId?: string | number | null;
+  isActive?: boolean;
+  isDeleted?: boolean;
   imageUrl?: string | null;
   /** OpenPhone user id for call attribution / CSR coaching when synced. */
   openPhoneUserId?: string | null;
@@ -130,18 +144,34 @@ export async function updateWeeklySchedule(
   return data;
 }
 
+export type AppointmentTypeUpdate = {
+  name?: string;
+  prettyName?: string;
+  color?: string | null;
+  textColor?: string | null;
+  windowBeforeMinutes?: number | null;
+  windowAfterMinutes?: number | null;
+  showInApptRequestForm?: boolean;
+  newPatientAllowed?: boolean;
+  formListOrder?: number | null;
+};
+
 /**
- * Update appointment type settings (prettyName, showInApptRequestForm, newPatientAllowed)
+ * Get one appointment type (includes window + color fields).
+ * GET /appointment-types/:id
+ */
+export async function fetchAppointmentType(appointmentTypeId: number): Promise<AppointmentType> {
+  const { data } = await http.get(`/appointment-types/${appointmentTypeId}`);
+  return data;
+}
+
+/**
+ * Partial update appointment type settings.
  * PUT /appointment-types/:id
  */
 export async function updateAppointmentType(
   appointmentTypeId: number,
-  updates: {
-    prettyName?: string;
-    showInApptRequestForm?: boolean;
-    newPatientAllowed?: boolean;
-    formListOrder?: number | null;
-  }
+  updates: AppointmentTypeUpdate
 ): Promise<AppointmentType> {
   const { data } = await http.put(`/appointment-types/${appointmentTypeId}`, updates);
   return data;

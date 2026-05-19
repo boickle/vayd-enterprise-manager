@@ -1,5 +1,6 @@
 // src/pages/Settings.tsx
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import {
   fetchAllAppointmentTypes,
@@ -8,7 +9,6 @@ import {
   fetchEmployee,
   updateEmployeeAppointmentTypes,
   updateEmployeeScheduleZones,
-  updateAppointmentType,
   updateWeeklySchedule,
   uploadEmployeeImage,
   fetchScheduleOverrides,
@@ -50,6 +50,28 @@ import {
   type DailyGoalOverride,
 } from '../api/employeeGoals';
 import './Settings.css';
+import SettingsEmployeeDirectory from '../components/settings/SettingsEmployeeDirectory';
+import SettingsAppointmentTypes from '../components/settings/SettingsAppointmentTypes';
+
+const SETTINGS_TAB_IDS = [
+  'appointment-types',
+  'employee-types',
+  'employee-zones',
+  'employee-schedule',
+  'inventory',
+  'employee-images',
+  'employee-goals',
+  'employee-directory',
+  'reminders',
+] as const;
+type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number];
+
+function parseSettingsTabParam(tab: string | null): SettingsTabId {
+  if (tab && (SETTINGS_TAB_IDS as readonly string[]).includes(tab)) {
+    return tab as SettingsTabId;
+  }
+  return 'appointment-types';
+}
 
 /** Practice ID for reminder settings (default 1; override via env if needed) */
 const REMINDERS_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -76,24 +98,32 @@ function formatEmployeeName(emp: Employee): string {
 
 export default function Settings() {
   const { role } = useAuth() as any;
-  const [activeTab, setActiveTab] = useState<
-    | 'appointment-types'
-    | 'employee-types'
-    | 'employee-zones'
-    | 'employee-schedule'
-    | 'inventory'
-    | 'employee-images'
-    | 'employee-goals'
-    | 'reminders'
-  >('appointment-types');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = useMemo(
+    () => parseSettingsTabParam(searchParams.get('tab')),
+    [searchParams]
+  );
+  const goToTab = useCallback(
+    (tab: SettingsTabId) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (tab === 'appointment-types') next.delete('tab');
+          else next.set('tab', tab);
+          return next;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // Appointment Types state
+  // Appointment Types state (shared with employee-types tab)
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
-  const [editingAppointmentType, setEditingAppointmentType] = useState<AppointmentType | null>(null);
 
   // Employee Appointment Types state
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -185,22 +215,6 @@ export default function Settings() {
       return formatEmployeeName(a).localeCompare(formatEmployeeName(b));
     });
   }, [employees]);
-
-  // Sort appointment types: first by showInApptRequestForm (true first), then by formListOrder
-  const sortedAppointmentTypes = useMemo(() => {
-    return [...appointmentTypes].sort((a, b) => {
-      // First, sort by showInApptRequestForm (true first)
-      const aShowInForm = a.showInApptRequestForm === true ? 0 : 1;
-      const bShowInForm = b.showInApptRequestForm === true ? 0 : 1;
-      if (aShowInForm !== bShowInForm) {
-        return aShowInForm - bShowInForm;
-      }
-      // Then sort by formListOrder (ascending, null values at the end)
-      const aOrder = a.formListOrder ?? Number.MAX_SAFE_INTEGER;
-      const bOrder = b.formListOrder ?? Number.MAX_SAFE_INTEGER;
-      return aOrder - bOrder;
-    });
-  }, [appointmentTypes]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -365,31 +379,6 @@ export default function Settings() {
       setError(err?.response?.data?.message || err?.message || 'Failed to update goals');
     } finally {
       setGoalsSaving(false);
-    }
-  };
-
-  const handleSaveAppointmentType = async () => {
-    if (!editingAppointmentType) return;
-    setSaving(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      const updated = await updateAppointmentType(editingAppointmentType.id, {
-        prettyName: editingAppointmentType.prettyName,
-        showInApptRequestForm: editingAppointmentType.showInApptRequestForm,
-        newPatientAllowed: editingAppointmentType.newPatientAllowed,
-        formListOrder: editingAppointmentType.formListOrder ?? null,
-      });
-      setAppointmentTypes((prev) =>
-        prev.map((at) => (at.id === updated.id ? updated : at))
-      );
-      setEditingAppointmentType(null);
-      setSuccess('Appointment type updated successfully');
-      setTimeout(() => setSuccess(null), 3000);
-    } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to update appointment type');
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -1057,49 +1046,55 @@ export default function Settings() {
         <div className="settings-tabs">
           <button
             className={`settings-tab ${activeTab === 'appointment-types' ? 'active' : ''}`}
-            onClick={() => setActiveTab('appointment-types')}
+            onClick={() => goToTab('appointment-types')}
           >
             Appointment Types
           </button>
           <button
             className={`settings-tab ${activeTab === 'employee-types' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-types')}
+            onClick={() => goToTab('employee-types')}
           >
             Employee Appointment Types
           </button>
           <button
             className={`settings-tab ${activeTab === 'employee-zones' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-zones')}
+            onClick={() => goToTab('employee-zones')}
           >
             Employee Zones
           </button>
           <button
             className={`settings-tab ${activeTab === 'employee-schedule' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-schedule')}
+            onClick={() => goToTab('employee-schedule')}
           >
             Employee Schedule
           </button>
           <button
             className={`settings-tab ${activeTab === 'inventory' ? 'active' : ''}`}
-            onClick={() => setActiveTab('inventory')}
+            onClick={() => goToTab('inventory')}
           >
             Inventory
           </button>
           <button
             className={`settings-tab ${activeTab === 'employee-images' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-images')}
+            onClick={() => goToTab('employee-images')}
           >
             Employee Images
           </button>
           <button
             className={`settings-tab ${activeTab === 'employee-goals' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-goals')}
+            onClick={() => goToTab('employee-goals')}
           >
             Employee Goals
           </button>
           <button
+            className={`settings-tab ${activeTab === 'employee-directory' ? 'active' : ''}`}
+            onClick={() => goToTab('employee-directory')}
+          >
+            Employees
+          </button>
+          <button
             className={`settings-tab ${activeTab === 'reminders' ? 'active' : ''}`}
-            onClick={() => setActiveTab('reminders')}
+            onClick={() => goToTab('reminders')}
           >
             Reminders
           </button>
@@ -1129,128 +1124,25 @@ export default function Settings() {
         {/* Appointment Types Tab */}
         {activeTab === 'appointment-types' && (
           <div className="settings-section">
-            <h2 className="settings-section-title">Appointment Form Settings</h2>
+            <h2 className="settings-section-title">Appointment Types</h2>
             <p className="settings-section-description">
-              Configure which appointment types appear in the appointment request form and whether they allow new patients.
+              Manage display names, scheduler colors, arrival windows, and appointment request form options for each
+              appointment type.
             </p>
-
-            <div className="settings-table-container">
-              <table className="settings-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Pretty Name</th>
-                    <th>Show in Form</th>
-                    <th>New Patients Allowed</th>
-                    <th>Form List Order</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedAppointmentTypes.map((type) => (
-                    <tr key={type.id}>
-                      <td>{type.name}</td>
-                      <td>
-                        {editingAppointmentType?.id === type.id ? (
-                          <input
-                            type="text"
-                            value={editingAppointmentType.prettyName}
-                            onChange={(e) =>
-                              setEditingAppointmentType({
-                                ...editingAppointmentType,
-                                prettyName: e.target.value,
-                              })
-                            }
-                            className="settings-input"
-                          />
-                        ) : (
-                          type.prettyName || type.name
-                        )}
-                      </td>
-                      <td>
-                        {editingAppointmentType?.id === type.id ? (
-                          <input
-                            type="checkbox"
-                            checked={editingAppointmentType.showInApptRequestForm}
-                            onChange={(e) =>
-                              setEditingAppointmentType({
-                                ...editingAppointmentType,
-                                showInApptRequestForm: e.target.checked,
-                              })
-                            }
-                          />
-                        ) : (
-                          type.showInApptRequestForm ? 'Yes' : 'No'
-                        )}
-                      </td>
-                      <td>
-                        {editingAppointmentType?.id === type.id ? (
-                          <input
-                            type="checkbox"
-                            checked={editingAppointmentType.newPatientAllowed}
-                            onChange={(e) =>
-                              setEditingAppointmentType({
-                                ...editingAppointmentType,
-                                newPatientAllowed: e.target.checked,
-                              })
-                            }
-                          />
-                        ) : (
-                          type.newPatientAllowed ? 'Yes' : 'No'
-                        )}
-                      </td>
-                      <td>
-                        {editingAppointmentType?.id === type.id ? (
-                          <input
-                            type="number"
-                            value={editingAppointmentType.formListOrder ?? ''}
-                            onChange={(e) =>
-                              setEditingAppointmentType({
-                                ...editingAppointmentType,
-                                formListOrder: e.target.value === '' ? null : Number(e.target.value),
-                              })
-                            }
-                            className="settings-input"
-                            placeholder="Order (1 = top)"
-                            min="1"
-                            style={{ width: '100px' }}
-                          />
-                        ) : (
-                          type.formListOrder ?? '—'
-                        )}
-                      </td>
-                      <td>
-                        {editingAppointmentType?.id === type.id ? (
-                          <div className="settings-action-buttons">
-                            <button
-                              className="btn"
-                              onClick={handleSaveAppointmentType}
-                              disabled={saving}
-                            >
-                              {saving ? 'Saving...' : 'Save'}
-                            </button>
-                            <button
-                              className="btn secondary"
-                              onClick={() => setEditingAppointmentType(null)}
-                              disabled={saving}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            className="btn secondary"
-                            onClick={() => setEditingAppointmentType(type)}
-                          >
-                            Edit
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <SettingsAppointmentTypes
+              types={appointmentTypes}
+              onTypesChange={setAppointmentTypes}
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
           </div>
         )}
 
@@ -2806,6 +2698,29 @@ export default function Settings() {
               </div>
             </div>
           )}
+          </div>
+        )}
+
+        {/* Employees directory (CRUD via POST /employees, upsert, DELETE) */}
+        {activeTab === 'employee-directory' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Employees</h2>
+            <p className="settings-section-description">
+              View staff for your practice. When editing is enabled (<code>VITE_ENABLE_PIMS_ENTITY_EDIT=true</code>), you
+              can add, edit, deactivate, or remove employees via the same save and upsert paths as EVet import.
+            </p>
+            <SettingsEmployeeDirectory
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
           </div>
         )}
 

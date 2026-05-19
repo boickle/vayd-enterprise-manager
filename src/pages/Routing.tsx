@@ -10,7 +10,9 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react';
+import { useAuth } from '../auth/AuthProvider';
 import { fetchDoctorMonth, type MiniZone } from '../api/appointments';
+import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import { http } from '../api/http';
 import {
   monthsCoveringRange,
@@ -20,21 +22,44 @@ import {
 import { Field } from '../components/Field';
 import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
-import { PreviewMyDayModal } from '../components/PreviewMyDayModal';
 import { validateAddress } from '../api/geo';
 import {
   normalizeRoutingV2SlotSearchResponse,
   type RoutingSlotSearchOptionalFlags,
   type RoutingV2SlotSearchResult,
 } from '../api/routing';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
+  writeRoutingCalendarPreview,
+  type RoutingCalendarPreviewPayloadV1,
+} from '../utils/routingCalendarPreviewStorage';
+import {
+  markRescheduleIntentAppliedToRoutingForm,
+  readRoutingRescheduleIntent,
+  rescheduleIntentIsActive,
+  ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
+} from '../utils/routingRescheduleIntent';
+import {
+  clearRoutingUiSnapshot,
+  readRoutingUiBootstrap,
+  ROUTING_REQUEST_ID_SESSION_KEY,
+  ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT,
+  writeAuthDoctorCache,
+  writeRoutingUiSnapshot,
+} from '../utils/routingUiSnapshot';
 import {
   adjustRoutingSlotSearchDates,
   diffRoutingDaysInclusive,
   routingCalendarDatePart,
 } from '../utils/routingSlotSearchDates';
+import {
+  resolveRoutingCandidateIndex,
+  routingTopCandidatesFromResult,
+} from '../utils/routingCandidates';
+import { submitRoutingFeedback } from '../api/routingFeedback';
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import './Routing.css';
-// Removed fetchPrimaryProviders import - now using /employees/veterinarians endpoint directly
 
 /** Yellow wrap when an optional routing preference is on—makes checked state obvious at a glance. */
 const ROUTING_PREF_CHECKED_LABEL: CSSProperties = {
@@ -44,6 +69,17 @@ const ROUTING_PREF_CHECKED_LABEL: CSSProperties = {
   padding: '6px 10px',
   boxSizing: 'border-box',
 };
+
+/** Preferred day chips (ISO weekday 1–7); labels are one-line abbreviations. */
+const ROUTING_WEEKDAY_CHIPS: Array<{ n: number; label: string; title: string }> = [
+  { n: 1, label: 'M', title: 'Monday' },
+  { n: 2, label: 'T', title: 'Tuesday' },
+  { n: 3, label: 'W', title: 'Wednesday' },
+  { n: 4, label: 'Th', title: 'Thursday' },
+  { n: 5, label: 'F', title: 'Friday' },
+  { n: 6, label: 'Sa', title: 'Saturday' },
+  { n: 7, label: 'Su', title: 'Sunday' },
+];
 
 // =========================
 // Types
@@ -287,6 +323,8 @@ type Result = {
   winner?: Winner;
   estimatedCost?: EstimatedCost;
   alternates?: Winner[];
+  /** v2 ordered candidates (winner is typically index 0). */
+  top?: Winner[];
 
   // Any-doctor extras
   doctorPimsId?: string;
@@ -490,6 +528,20 @@ const SCOUT_PRESERVED_DAY_CHIP: CSSProperties = {
   border: '1px solid #fcd34d',
 };
 
+const ROUTING_RESULT_FONT_SCALE = 0.75;
+
+const SCOUT_BADGE_CHIP_DENSE: CSSProperties = {
+  ...SCOUT_BADGE_CHIP,
+  fontSize: Math.round(11 * ROUTING_RESULT_FONT_SCALE),
+  padding: '2px 6px',
+};
+
+const SCOUT_PRESERVED_DAY_CHIP_DENSE: CSSProperties = {
+  ...SCOUT_PRESERVED_DAY_CHIP,
+  fontSize: Math.round(11 * ROUTING_RESULT_FONT_SCALE),
+  padding: '2px 6px',
+};
+
 /** Purple “Zone-aware” pill (Results header + consistency). */
 const SCOUT_ZONE_AWARE_BADGE_STYLE: CSSProperties = {
   display: 'inline-block',
@@ -645,6 +697,7 @@ function scoutZoneAwareDeltaUi(row: {
 }): { value: string; title: string } | null {
   const d = row.scoutZoneAwareScoreDelta;
   if (typeof d !== 'number' || !Number.isFinite(d)) return null;
+  if (d === 0) return null;
   const n9 = row.scoutMultiAnchorDayN9;
   const pr = row.scoutPreservedEmptyDayPenalty;
   const n9Ok = typeof n9 === 'number' && Number.isFinite(n9);
@@ -687,12 +740,15 @@ function ScoutZoneAwareDiagnosticsRow({
   row,
   hideZoneClass,
   variant = 'block',
+  dense,
 }: {
   row: ScoutZoneAwareDiagFields;
   /** When true, omit depot→candidate zone class (shown once in Results header for this search). */
   hideZoneClass?: boolean;
   /** `inline`: no outer margin—use inside a parent flex row with day stat badges. */
   variant?: 'block' | 'inline';
+  /** Smaller chip + label text (routing result cards). */
+  dense?: boolean;
 }) {
   const zc = hideZoneClass ? null : scoutZoneClassRaw(row.scoutZoneClass);
   const n6Show =
@@ -716,11 +772,13 @@ function ScoutZoneAwareDiagnosticsRow({
     Number.isFinite(row.scoutPreservedEmptyDayPenalty) &&
     row.scoutPreservedEmptyDayPenalty > 0;
   if (!zc && !n6Show && !n7Show && !n8Show && !n9Crossing && !preservedShow) return null;
+  const chipStyle = dense ? SCOUT_BADGE_CHIP_DENSE : SCOUT_BADGE_CHIP;
+  const preservedStyle = dense ? SCOUT_PRESERVED_DAY_CHIP_DENSE : SCOUT_PRESERVED_DAY_CHIP;
   const inner = (
     <>
       {zc ? (
         <span
-          style={SCOUT_BADGE_CHIP}
+          style={chipStyle}
           title="From depot→candidate drive: ≤15 min = local, ≥25 min = anchor, between = corridor. Same minute thresholds as anchor legs counted for N9."
         >
           Zone class: {scoutFormatZoneClassLabel(zc)}
@@ -744,13 +802,13 @@ function ScoutZoneAwareDiagnosticsRow({
         </span>
       ) : null}
       {n9Copy ? (
-        <span style={SCOUT_BADGE_CHIP} title={n9Copy.tooltip}>
+        <span style={chipStyle} title={n9Copy.tooltip}>
           {n9Copy.label}
         </span>
       ) : null}
       {preservedShow ? (
         <span
-          style={SCOUT_PRESERVED_DAY_CHIP}
+          style={preservedStyle}
           title="Additive score from consuming a preserved empty anchor-seed day (server). Panel mix: GET /patients/provider/:id/zone-percentages. Do not recompute in the client."
         >
           Uses preserved empty day
@@ -767,7 +825,7 @@ function ScoutZoneAwareDiagnosticsRow({
           flexWrap: 'wrap',
           gap: '4px 10px',
           alignItems: 'center',
-          fontSize: 11,
+          fontSize: dense ? Math.round(11 * ROUTING_RESULT_FONT_SCALE) : 11,
         }}
       >
         {inner}
@@ -778,7 +836,7 @@ function ScoutZoneAwareDiagnosticsRow({
     <div
       className="muted"
       style={{
-        fontSize: 11,
+        fontSize: dense ? Math.round(11 * ROUTING_RESULT_FONT_SCALE) : 11,
         marginBottom: 6,
         display: 'flex',
         flexWrap: 'wrap',
@@ -973,15 +1031,19 @@ function scoutHouseholdsAndPatientsFromRow(row: ScoutRoutingGapRow): {
 function ScoutDayStatBadges({
   row,
   embedded,
+  dense,
 }: {
   row: ScoutRoutingGapRow;
   /** When true, return chip nodes only (no wrapper) so they sit in a parent flex row. */
   embedded?: boolean;
+  /** Smaller chip typography (routing result cards). */
+  dense?: boolean;
 }) {
+  const chipStyle = dense ? SCOUT_BADGE_CHIP_DENSE : SCOUT_BADGE_CHIP;
   const chips: JSX.Element[] = [];
   if (row.dayIsEmpty === true) {
     chips.push(
-      <span key="empty" style={SCOUT_BADGE_CHIP} title="No households or patients scheduled this day (scout).">
+      <span key="empty" style={chipStyle} title="No households or patients scheduled this day (scout).">
         Empty day
       </span>
     );
@@ -990,7 +1052,7 @@ function ScoutDayStatBadges({
     chips.push(
       <span
         key="strategic"
-        style={SCOUT_BADGE_CHIP}
+        style={chipStyle}
         title="Strategic light: at most one household scheduled this day."
       >
         Strategic light
@@ -1008,7 +1070,7 @@ function ScoutDayStatBadges({
         ? 'Households and patients scheduled on this day.'
         : 'Households scheduled this day. Patient total appears when the API sends dayPatientCount.';
     chips.push(
-      <span key="hhpt" style={SCOUT_BADGE_CHIP} title={title}>
+      <span key="hhpt" style={chipStyle} title={title}>
         {label}
       </span>
     );
@@ -1067,6 +1129,37 @@ function extractErrorMessage(err: unknown): string {
     return maybe.response?.data?.message ?? maybe.message ?? 'Request failed';
   }
   return 'Request failed';
+}
+
+function pickStr(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s || null;
+}
+
+const ROUTING_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+
+function SlotChip({ slot }: { slot?: Slot | null }) {
+  return null; // Slot labels (Early / Mid / Late) not shown
+}
+
+function EdgeChip({ first, last }: { first?: boolean; last?: boolean }) {
+  if (!first && !last) return null;
+  const text = first ? 'First of day' : 'Last of day';
+  return (
+    <span
+      style={{
+        background: '#eef2ff',
+        color: '#3730a3',
+        padding: '2px 8px',
+        borderRadius: 999,
+        fontSize: Math.round(12 * ROUTING_RESULT_FONT_SCALE),
+        fontWeight: 600,
+      }}
+    >
+      {text}
+    </span>
+  );
 }
 
 /** "HH:mm" or "HH:mm:ss" → seconds since midnight */
@@ -1166,8 +1259,6 @@ function endOfDayOverrunSeconds(
   return delta < 0 ? -delta : 0;
 }
 
-const ROUTING_REQUEST_STORAGE_KEY = 'routing:last-request-id';
-const SELECTED_DOCTORS_STORAGE_KEY = 'routing:selected-doctors';
 const NONE_SELECTION_KEY = '__routing-none__';
 
 function deriveRoutingRequestId(res: Result | null | undefined): string | undefined {
@@ -1195,40 +1286,77 @@ function deriveRoutingRequestId(res: Result | null | undefined): string | undefi
 /* Component */
 // =========================
 
-export default function Routing() {
+type RoutingProps = {
+  /** When true, "Book appointment" updates the embedded calendar via event instead of navigating to `/schedule/scheduler`. */
+  calendarWorkspaceMode?: boolean;
+};
+
+export default function Routing({ calendarWorkspaceMode = false }: RoutingProps) {
+  const { token: authToken, userId: authUserId, doctorId: authDoctorInternalId } = useAuth();
+  const bootstrap = useMemo(() => readRoutingUiBootstrap(), []);
+
   // -------- Form state --------
-  const [form, setForm] = useState<RouteRequest>({
-    doctorId: '',
-    startDate: new Date().toISOString().slice(0, 10),
-    endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-    newAppt: { serviceMinutes: 45, address: '' },
-  });
+  const [form, setForm] = useState<RouteRequest>(() => ({ ...bootstrap.form }));
 
   // Preferences
-  const [preferredWeekday, setPreferredWeekday] = useState<number[]>([]); // 1..7, supports multiple days
+  const [preferredWeekday, setPreferredWeekday] = useState<number[]>(() => [...bootstrap.preferredWeekday]);
   const [preferredTimeOfDay, setPreferredTimeOfDay] = useState<'first' | 'middle' | 'end' | null>(
-    null
-  ); // send exactly these
+    () => bootstrap.preferredTimeOfDay
+  );
   /** UI: "Force Earliest Time"; API: `preferEarliestFeasibleStart` on empty-day routing. */
-  const [preferEarliestFeasibleStart, setPreferEarliestFeasibleStart] = useState(false);
-  const [edgeFirst, setEdgeFirst] = useState(false);
-  const [edgeLast, setEdgeLast] = useState(false);
+  const [preferEarliestFeasibleStart, setPreferEarliestFeasibleStart] = useState(
+    () => bootstrap.preferEarliestFeasibleStart
+  );
+  const [edgeFirst, setEdgeFirst] = useState(() => bootstrap.edgeFirst);
+  const [edgeLast, setEdgeLast] = useState(() => bootstrap.edgeLast);
 
   // Toggles
-  const [multiDoctor, setMultiDoctor] = useState(false);
-  const [useTraffic, setUseTraffic] = useState(false);
+  const [multiDoctor, setMultiDoctor] = useState(() => bootstrap.multiDoctor);
+  const [useTraffic, setUseTraffic] = useState(() => bootstrap.useTraffic);
   const [maxAddedDriveMinutes] = useState(20);
   // Reserve/Overflow option: 'reserve-only' | 'reserve-overflow' | null
-  const [reserveOption, setReserveOption] = useState<'reserve-only' | 'reserve-overflow' | null>(null);
+  const [reserveOption, setReserveOption] = useState<'reserve-only' | 'reserve-overflow' | null>(
+    () => bootstrap.reserveOption
+  );
 
   // -------- UX state --------
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<Result | null>(null);
+  const [result, setResult] = useState<Result | null>(() => (bootstrap.result as Result | null) ?? null);
   const [addressError, setAddressError] = useState<string | null>(null);
+  const [schedulingPrefsOpen, setSchedulingPrefsOpen] = useState(false);
+  const [routingMinutesPulse, setRoutingMinutesPulse] = useState(false);
+  const routingMinutesPulseClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Last type|pets combo applied by the auto-minutes effect (flash when combo changes even if minutes stay the same). */
+  const routingCalcComboKeyRef = useRef<string | null>(null);
+
+  const triggerRoutingMinutesPulse = useCallback(() => {
+    if (routingMinutesPulseClearRef.current) {
+      clearTimeout(routingMinutesPulseClearRef.current);
+      routingMinutesPulseClearRef.current = null;
+    }
+    setRoutingMinutesPulse(false);
+    requestAnimationFrame(() => {
+      setRoutingMinutesPulse(true);
+      routingMinutesPulseClearRef.current = setTimeout(() => {
+        routingMinutesPulseClearRef.current = null;
+        setRoutingMinutesPulse(false);
+      }, 900);
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (routingMinutesPulseClearRef.current) {
+        clearTimeout(routingMinutesPulseClearRef.current);
+        routingMinutesPulseClearRef.current = null;
+      }
+    },
+    []
+  );
 
   // -------- Client search --------
-  const [clientQuery, setClientQuery] = useState('');
+  const [clientQuery, setClientQuery] = useState(() => bootstrap.clientQuery);
   const [clientResults, setClientResults] = useState<Client[]>([]);
   const [clientSearching, setClientSearching] = useState(false);
   const [showClientDropdown, setShowClientDropdown] = useState(false);
@@ -1236,13 +1364,11 @@ export default function Routing() {
   const latestClientQueryRef = useRef('');
 
   // -------- Doctor search --------
-  const [doctorQuery, setDoctorQuery] = useState('');
+  const [doctorQuery, setDoctorQuery] = useState(() => bootstrap.doctorQuery);
   const [doctorResults, setDoctorResults] = useState<Doctor[]>([]);
   const [doctorSearching, setDoctorSearching] = useState(false);
   const [showDoctorDropdown, setShowDoctorDropdown] = useState(false);
   const doctorBoxRef = useRef<HTMLDivElement | null>(null);
-  const apptLengthsWrapRef = useRef<HTMLDivElement | null>(null);
-  const [apptLengthsOpen, setApptLengthsOpen] = useState(false);
   const [apptLengthsLoading, setApptLengthsLoading] = useState(false);
   const [apptLengthsRows, setApptLengthsRows] = useState<AvgMinutesByTypeRow[]>([]);
   const [apptLengthsError, setApptLengthsError] = useState<string | null>(null);
@@ -1254,18 +1380,17 @@ export default function Routing() {
   const [clientActiveIdx, setClientActiveIdx] = useState<number>(-1);
 
   // -------- Winner doctor name cache --------
-  const [doctorNames, setDoctorNames] = useState<Record<string, string>>({});
+  const [doctorNames, setDoctorNames] = useState<Record<string, string>>(() => ({ ...bootstrap.doctorNames }));
   const doctorNameReqs = useRef<Record<string, Promise<string>>>({});
 
-  const [schedulePreview, setSchedulePreview] = useState<null | { opt: UnifiedOption; scope: 'day' | 'week' }>(
-    null
-  );
   const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({});
-  const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(null); // 👈 NEW
+  const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(
+    () => bootstrap.selectedClientAlerts
+  );
   const [latestRoutingRequestId, setLatestRoutingRequestId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     try {
-      return sessionStorage.getItem(ROUTING_REQUEST_STORAGE_KEY);
+      return sessionStorage.getItem(ROUTING_REQUEST_ID_SESSION_KEY);
     } catch {
       return null;
     }
@@ -1276,7 +1401,7 @@ export default function Routing() {
     setLatestRoutingRequestId(id);
     if (typeof window !== 'undefined') {
       try {
-        sessionStorage.setItem(ROUTING_REQUEST_STORAGE_KEY, id);
+        sessionStorage.setItem(ROUTING_REQUEST_ID_SESSION_KEY, id);
       } catch {
         /* ignore persistence errors */
       }
@@ -1286,46 +1411,197 @@ export default function Routing() {
   const [feedbackSubmittingKey, setFeedbackSubmittingKey] = useState<string | null>(null);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
-  const [feedbackSuccessKey, setFeedbackSuccessKey] = useState<string | null>(null);
+  const [feedbackSuccessKey, setFeedbackSuccessKey] = useState<string | null>(
+    () => bootstrap.feedbackSuccessKey
+  );
+  const [scheduleBookTypeId, setScheduleBookTypeId] = useState<number | null>(
+    () => bootstrap.scheduleBookTypeId
+  );
+  /** Option keys for which POST /appointments succeeded (calendar book flow). */
+  const [scheduleBookedKeys, setScheduleBookedKeys] = useState<Record<string, true>>(
+    () => ({ ...bootstrap.scheduleBookedKeys })
+  );
 
-  // -------- Doctor selection modal (for multi-doctor mode) --------
-  const [showDoctorSelectionModal, setShowDoctorSelectionModal] = useState(false);
-  const [allProviders, setAllProviders] = useState<Array<{ id: string | number; name: string; email: string; pimsId: string }>>([]);
-  const [selectedDoctorIds, setSelectedDoctorIds] = useState<string[]>([]);
-  const [providersLoading, setProvidersLoading] = useState(false);
-  const [pendingEndpoint, setPendingEndpoint] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  async function openMyDay(opt: UnifiedOption) {
-    // 👇 allow undefined here
-    let internalId: string | undefined = doctorIdByPims[opt.doctorPimsId];
+  const [hasActiveRescheduleIntent, setHasActiveRescheduleIntent] = useState(() =>
+    rescheduleIntentIsActive()
+  );
 
-    if (!internalId) {
-      try {
-        const { data } = await http.get(`/employees/pims/${encodeURIComponent(opt.doctorPimsId)}`);
-        const emp = Array.isArray(data) ? data[0] : data;
+  useEffect(() => {
+    function syncRescheduleIntentFlag() {
+      setHasActiveRescheduleIntent(rescheduleIntentIsActive());
+    }
+    syncRescheduleIntentFlag();
+    window.addEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, syncRescheduleIntentFlag);
+    return () =>
+      window.removeEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, syncRescheduleIntentFlag);
+  }, []);
 
-        // 👇 resolve to a temp, then narrow
-        const resolvedId =
-          (emp?.id != null ? String(emp.id) : undefined) ??
-          (emp?.employee?.id != null ? String(emp.employee.id) : undefined);
+  /** Calendar “Reschedule…” → hydrate Routing form once per intent row. */
+  useEffect(() => {
+    function mergeRescheduleIntentFromCalendar() {
+      const intent = readRoutingRescheduleIntent();
+      if (!intent || intent.appliedToRoutingForm) return;
 
-        if (resolvedId) {
-          internalId = resolvedId;
-          setDoctorIdByPims((m) => ({ ...m, [opt.doctorPimsId]: resolvedId }));
-        }
-      } catch {
-        /* ignore; we'll bail below if still missing */
+      setForm((f) => ({
+        ...f,
+        newAppt: {
+          ...f.newAppt,
+          clientId: intent.clientId,
+          address: intent.address?.trim() || f.newAppt.address,
+          lat: intent.lat ?? f.newAppt.lat,
+          lon: intent.lon ?? f.newAppt.lon,
+          serviceMinutes:
+            intent.serviceMinutes > 0 ? intent.serviceMinutes : Math.max(15, f.newAppt.serviceMinutes || 45),
+        },
+      }));
+
+      const label = intent.clientDisplayLabel?.trim();
+      if (label) setClientQuery(label);
+
+      const tid = intent.appointmentTypeId;
+      if (tid != null && Number.isFinite(Number(tid))) setScheduleBookTypeId(Number(tid));
+
+      const alerts = intent.clientAlerts;
+      if (alerts !== undefined && alerts !== null) setSelectedClientAlerts(alerts);
+
+      const pimsDoc = intent.primaryDoctorPimsId?.trim();
+      if (pimsDoc) {
+        setForm((f) => ({ ...f, doctorId: pimsDoc }));
+        setDoctorQuery((q) => {
+          if (q.trim()) return q;
+          const dn = intent.primaryDoctorDisplayName?.trim();
+          return dn || `Doctor ${pimsDoc}`;
+        });
       }
+
+      setResult(null);
+      setFeedbackError(null);
+      setFeedbackToast('Reschedule: client loaded. Run routing, open My Week, then confirm the new time.');
+      markRescheduleIntentAppliedToRoutingForm();
     }
 
-    if (!internalId) return; // couldn’t resolve → don’t open
+    mergeRescheduleIntentFromCalendar();
+    window.addEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, mergeRescheduleIntentFromCalendar);
+    return () =>
+      window.removeEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, mergeRescheduleIntentFromCalendar);
+  }, []);
 
-    // Pass INTERNAL id via the same property your Preview/DoctorDay read
-    setSchedulePreview({ opt: { ...opt, doctorPimsId: internalId }, scope: 'day' });
-  }
-  function closeSchedulePreview() {
-    setSchedulePreview(null);
-  }
+  useEffect(() => {
+    if (!authToken) clearRoutingUiSnapshot();
+  }, [authToken]);
+
+  /** Practice calendar (embedded) completed a book/reschedule — drop routing candidates from the pane. */
+  useEffect(() => {
+    if (!calendarWorkspaceMode) return;
+    function clearRoutingAfterCalendarBook() {
+      setResult(null);
+      setError(null);
+      setFeedbackError(null);
+      setFeedbackToast(null);
+      setFeedbackSubmittingKey(null);
+      setFeedbackSuccessKey(null);
+      setScheduleBookedKeys({});
+      setLatestRoutingRequestId(null);
+      if (typeof window !== 'undefined') {
+        try {
+          sessionStorage.removeItem(ROUTING_REQUEST_ID_SESSION_KEY);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    window.addEventListener(ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT, clearRoutingAfterCalendarBook);
+    return () =>
+      window.removeEventListener(ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT, clearRoutingAfterCalendarBook);
+  }, [calendarWorkspaceMode]);
+
+  useEffect(() => {
+    if (!authToken || !authDoctorInternalId?.trim()) return;
+    const internal = authDoctorInternalId.trim();
+    const cacheUserId = authUserId?.trim() || null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await http.get(`/employees/${encodeURIComponent(internal)}`);
+        const emp = Array.isArray(data) ? data[0] : data;
+        const pimsRaw =
+          emp?.pimsId != null
+            ? String(emp.pimsId)
+            : emp?.employee?.pimsId != null
+              ? String(emp.employee.pimsId)
+              : '';
+        const pimsId = pimsRaw.trim();
+        if (cancelled || !pimsId) return;
+        const displayName = buildDoctorName(emp, `Doctor ${pimsId}`);
+        if (cacheUserId) writeAuthDoctorCache(cacheUserId, pimsId, displayName);
+        setForm((f) => (f.doctorId.trim() ? f : { ...f, doctorId: pimsId }));
+        setDoctorQuery((q) => (q.trim() ? q : displayName));
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken, authUserId, authDoctorInternalId]);
+
+  useEffect(() => {
+    if (loading || !authToken) return;
+    const uid = authUserId?.trim() || null;
+    writeRoutingUiSnapshot({
+      v: 1,
+      userId: uid,
+      form,
+      result,
+      multiDoctor,
+      useTraffic,
+      preferredWeekday,
+      preferredTimeOfDay,
+      preferEarliestFeasibleStart,
+      edgeFirst,
+      edgeLast,
+      reserveOption,
+      clientQuery,
+      doctorQuery,
+      doctorNames,
+      scheduleBookedKeys,
+      feedbackSuccessKey,
+      selectedClientAlerts,
+      scheduleBookTypeId,
+    });
+  }, [
+    loading,
+    authToken,
+    authUserId,
+    form,
+    result,
+    multiDoctor,
+    useTraffic,
+    preferredWeekday,
+    preferredTimeOfDay,
+    preferEarliestFeasibleStart,
+    edgeFirst,
+    edgeLast,
+    reserveOption,
+    clientQuery,
+    doctorQuery,
+    doctorNames,
+    scheduleBookedKeys,
+    feedbackSuccessKey,
+    selectedClientAlerts,
+    scheduleBookTypeId,
+  ]);
+
+  useEffect(() => {
+    const b = searchParams.get('booked');
+    if (!b) return;
+    setScheduleBookedKeys((m) => ({ ...m, [b]: true }));
+    setFeedbackToast('Appointment added to the schedule.');
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   async function openMyWeek(opt: UnifiedOption) {
     let internalId: string | undefined = doctorIdByPims[opt.doctorPimsId];
@@ -1345,54 +1621,61 @@ export default function Routing() {
       }
     }
     if (!internalId) return;
-    setSchedulePreview({ opt: { ...opt, doctorPimsId: internalId }, scope: 'week' });
+
+    const clientIdRaw = form.newAppt.clientId?.trim();
+    if (!clientIdRaw) {
+      setFeedbackError('Select a client before opening the calendar preview.');
+      return;
+    }
+    if (scheduleBookTypeId == null) {
+      setFeedbackError('Appointment types are still loading. Try again in a moment.');
+      return;
+    }
+    if (!opt.suggestedStartIso) {
+      setFeedbackError('This option has no suggested start time.');
+      return;
+    }
+
+    setFeedbackError(null);
+    const merged = { ...opt, doctorPimsId: internalId } as UnifiedOption;
+    const routingRequestId =
+      opt.routingRequestId ?? latestRoutingRequestId ?? deriveRoutingRequestId(result) ?? undefined;
+    const topForIndex = result ? routingTopCandidatesFromResult(result) : [];
+    const candidateIndex = resolveRoutingCandidateIndex(opt, topForIndex);
+
+    const payload: RoutingCalendarPreviewPayloadV1 = {
+      version: 1,
+      option: { ...(merged as unknown as Record<string, unknown>), doctorPimsId: internalId } as RoutingCalendarPreviewPayloadV1['option'],
+      serviceMinutes: Math.max(1, Number(form.newAppt.serviceMinutes) || 30),
+      newApptMeta: {
+        clientId: form.newAppt.clientId,
+        address: form.newAppt.address,
+        lat: form.newAppt.lat,
+        lon: form.newAppt.lon,
+      },
+      appointmentTypeId: scheduleBookTypeId,
+      clientDisplayLabel: clientQuery.trim() || undefined,
+      routingRequestId,
+      candidateIndex,
+      candidateId: opt.candidateId,
+    };
+    const rescheduleRow = readRoutingRescheduleIntent();
+    if (rescheduleRow) {
+      payload.rescheduleAppointmentId = rescheduleRow.appointmentId;
+      payload.reschedulePatientId = rescheduleRow.patientId;
+    }
+    writeRoutingCalendarPreview(payload);
+    if (calendarWorkspaceMode) {
+      window.dispatchEvent(new Event(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT));
+    } else {
+      navigate('/schedule/scheduler?routingPreview=1');
+    }
   }
 
   const hasFinalSelection = feedbackSuccessKey != null;
 
-  async function submitFeedbackForOption(opt: UnifiedOption) {
-    if (hasFinalSelection) return;
-    const optionKey = `${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${opt.candidateIndex ?? ''}`;
-    setFeedbackSubmittingKey(optionKey);
-    setFeedbackError(null);
-    setFeedbackToast(null);
-
-    const routingRequestId =
-      opt.routingRequestId ?? latestRoutingRequestId ?? deriveRoutingRequestId(result);
-    if (!routingRequestId) {
-      setFeedbackError('Missing routing request identifier for this suggestion.');
-      setFeedbackSubmittingKey(null);
-      return;
-    }
-
-    const payload: {
-      routingRequestId: string;
-      appointmentId?: number;
-      candidateId?: string;
-      candidateIndex?: number;
-      selectionStatus?: 'accepted' | 'rejected';
-    } = {
-      routingRequestId,
-      selectionStatus: 'accepted',
-    };
-
-    if (opt.appointmentId != null) {
-      const appointmentId = Number(opt.appointmentId);
-      if (Number.isFinite(appointmentId)) payload.appointmentId = appointmentId;
-    }
-    if (opt.candidateId) payload.candidateId = opt.candidateId;
-    if (opt.candidateIndex != null) payload.candidateIndex = opt.candidateIndex;
-
-    try {
-      await http.post('/routing/feedback', payload);
-      rememberRoutingRequestId(routingRequestId);
-      setFeedbackToast('Thanks! Your selection was recorded.');
-      setFeedbackSuccessKey(optionKey);
-    } catch (err) {
-      setFeedbackError(extractErrorMessage(err));
-    } finally {
-      setFeedbackSubmittingKey(null);
-    }
+  function routingOptionKey(opt: UnifiedOption): string {
+    return `${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${opt.candidateIndex ?? ''}`;
   }
 
   async function submitFeedbackForNone() {
@@ -1415,7 +1698,7 @@ export default function Routing() {
     };
 
     try {
-      await http.post('/routing/feedback', payload);
+      await submitRoutingFeedback(payload);
       rememberRoutingRequestId(routingRequestId);
       setFeedbackToast('Thanks! We recorded that none of the suggestions were chosen.');
       setFeedbackSuccessKey(NONE_SELECTION_KEY);
@@ -1492,6 +1775,26 @@ export default function Routing() {
     };
   }, [feedbackToast]);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetchAllAppointmentTypes(ROUTING_PRACTICE_ID)
+      .then((rows) => {
+        if (cancelled) return;
+        const active = rows.filter((t) => t.isActive !== false && !t.isDeleted);
+        const prefer =
+          active.find((t) =>
+            /wellness|standard|check-up|checkup|office/i.test(String(t.prettyName || t.name || ''))
+          ) ?? active[0];
+        if (prefer?.id != null) {
+          setScheduleBookTypeId((cur) => (cur != null ? cur : Number(prefer.id)));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // =========================
   // Effects
   // =========================
@@ -1557,16 +1860,12 @@ export default function Routing() {
       if (doctorBoxRef.current && !doctorBoxRef.current.contains(e.target as Node)) {
         setShowDoctorDropdown(false);
       }
-      if (apptLengthsWrapRef.current && !apptLengthsWrapRef.current.contains(e.target as Node)) {
-        setApptLengthsOpen(false);
-      }
     }
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
   useEffect(() => {
-    setApptLengthsOpen(false);
     setRoutingApptStatsTypeKey('');
     setRoutingPetCount(1);
     if (!form.doctorId.trim()) {
@@ -1605,41 +1904,34 @@ export default function Routing() {
   }, [form.doctorId, loadApptLengthStats]);
 
   useEffect(() => {
-    if (!routingApptStatsTypeKey) return;
+    if (!routingApptStatsTypeKey.trim()) {
+      routingCalcComboKeyRef.current = null;
+      return;
+    }
     const row = apptLengthsRows.find((r) => r.typeName === routingApptStatsTypeKey);
     if (!row) return;
     const mins = estimatedServiceMinutesFromStatsRow(row, routingPetCount);
     if (mins == null || mins < 1) return;
-    setForm((f) => ({
-      ...f,
-      newAppt: { ...f.newAppt, serviceMinutes: mins },
-    }));
-  }, [routingApptStatsTypeKey, routingPetCount, apptLengthsRows]);
 
-  useEffect(() => {
-    if (!apptLengthsOpen) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setApptLengthsOpen(false);
+    const comboKey = `${routingApptStatsTypeKey}|${routingPetCount}`;
+    const comboChanged = routingCalcComboKeyRef.current !== comboKey;
+    routingCalcComboKeyRef.current = comboKey;
+
+    let didUpdateMinutes = false;
+    setForm((f) => {
+      if (f.newAppt.serviceMinutes === mins) return f;
+      didUpdateMinutes = true;
+      return { ...f, newAppt: { ...f.newAppt, serviceMinutes: mins } };
+    });
+
+    if (didUpdateMinutes || comboChanged) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          triggerRoutingMinutesPulse();
+        });
+      });
     }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [apptLengthsOpen]);
-
-  useEffect(() => {
-    if (!apptLengthsOpen) return;
-    const mq = window.matchMedia('(max-width: 640px)');
-    if (!mq.matches) return undefined;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const onMq = () => {
-      document.body.style.overflow = mq.matches ? 'hidden' : prev;
-    };
-    mq.addEventListener('change', onMq);
-    return () => {
-      mq.removeEventListener('change', onMq);
-      document.body.style.overflow = prev;
-    };
-  }, [apptLengthsOpen]);
+  }, [routingApptStatsTypeKey, routingPetCount, apptLengthsRows, triggerRoutingMinutesPulse]);
 
   // Fetch doctor name if missing
   useEffect(() => {
@@ -1736,6 +2028,7 @@ export default function Routing() {
     setFeedbackSuccessKey(null);
     setFeedbackToast(null);
     setFeedbackError(null);
+    setScheduleBookedKeys({});
 
     if (routingCalendarDatePart(form.endDate) < routingCalendarDatePart(form.startDate)) {
       setError('End date must be on or after the start date.');
@@ -1838,17 +2131,15 @@ export default function Routing() {
     if (isV2) {
       // v2 endpoint supports new multi-doctor format
       if (multiDoctor && doctorIdsArray && doctorIdsArray.length > 0) {
-        // Use doctorIds array when provided (from modal selection)
         payload = {
           doctorIds: doctorIdsArray,
           ...base,
           maxAddedDriveMinutes,
         };
       } else if (multiDoctor) {
-        // Fallback to allowOtherDoctors if no doctorIds provided
+        const ids = form.doctorId.trim() ? [form.doctorId.trim()] : [];
         payload = {
-          doctorId: form.doctorId, // Primary doctor (preferred in tie-breakers)
-          allowOtherDoctors: true, // Search all available doctors
+          doctorIds: ids,
           ...base,
           maxAddedDriveMinutes,
         };
@@ -1873,6 +2164,12 @@ export default function Routing() {
         data as RoutingV2SlotSearchResult
       ) as Result;
       setResult(normalized);
+      setFeedbackSuccessKey(null);
+      setScheduleBookedKeys({});
+      setFeedbackError(null);
+      setFeedbackToast(null);
+      const rid = deriveRoutingRequestId(normalized);
+      if (rid) rememberRoutingRequestId(rid);
     } catch (err: unknown) {
       setError(extractErrorMessage(err));
     } finally {
@@ -1927,128 +2224,17 @@ export default function Routing() {
     }
 
     const endpoint = '/routing/v2';
-    
-    // If multi-doctor is selected, show modal first
+
     if (multiDoctor) {
-      setPendingEndpoint(endpoint);
-      setShowDoctorSelectionModal(true);
+      const primary = form.doctorId.trim();
+      if (!primary) {
+        setError('Please select a doctor.');
+        return;
+      }
+      await submitRoutingRequest(endpoint, [primary]);
     } else {
       await submitRoutingRequest(endpoint);
     }
-  }
-
-  // Fetch providers when modal opens
-  useEffect(() => {
-    if (!showDoctorSelectionModal) return;
-
-    let alive = true;
-    (async () => {
-      setProvidersLoading(true);
-      try {
-        // Fetch veterinarians from the new endpoint
-        const { data } = await http.get('/employees/veterinarians');
-        const veterinarians: any[] = Array.isArray(data) ? data : [];
-        
-        if (!alive) return;
-        
-        // Map veterinarians to provider format
-        // The endpoint already returns veterinarians (D.V.M/V.M.D), so no need to filter
-        const providersWithPims = veterinarians
-          .filter((v) => v.isActive !== false) // Only include active veterinarians
-          .map((v) => {
-            const pimsId = v.pimsId ? String(v.pimsId) : null;
-            const id = v.id ?? v.pimsId;
-            const name = buildDoctorName(v, `Veterinarian ${id ?? ''}`).trim();
-            
-            return {
-              id: id,
-              name,
-              email: v?.email || '',
-              pimsId: pimsId || String(id), // Use pimsId if available, otherwise use id
-            };
-          });
-        
-        setAllProviders(providersWithPims);
-        
-        // Load previously selected doctor IDs from localStorage, or select all by default
-        let defaultSelectedIds: string[] = [];
-        try {
-          const stored = localStorage.getItem(SELECTED_DOCTORS_STORAGE_KEY);
-          if (stored) {
-            const parsed = JSON.parse(stored);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              // Only use stored IDs that are still valid (exist in current providers)
-              const validPimsIds = providersWithPims.map((p) => p.pimsId || String(p.id)).filter(Boolean);
-              defaultSelectedIds = parsed.filter((id: string) => validPimsIds.includes(id));
-            }
-          }
-        } catch {
-          // If parsing fails, fall back to selecting all
-        }
-        
-        // If no stored selections or stored selections are invalid, select all providers by default
-        if (defaultSelectedIds.length === 0) {
-          defaultSelectedIds = providersWithPims.map((p) => p.pimsId || String(p.id)).filter(Boolean);
-        }
-        
-        setSelectedDoctorIds(defaultSelectedIds);
-      } catch (err) {
-        console.error('Failed to fetch providers:', err);
-        if (!alive) return;
-        setError('Failed to load doctors. Please try again.');
-      } finally {
-        if (alive) setProvidersLoading(false);
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [showDoctorSelectionModal]);
-
-  // Handle doctor selection checkbox toggle
-  function toggleDoctorSelection(doctorId: string) {
-    setSelectedDoctorIds((prev) => {
-      if (prev.includes(doctorId)) {
-        return prev.filter((id) => id !== doctorId);
-      } else {
-        return [...prev, doctorId];
-      }
-    });
-  }
-
-  // Handle modal confirm
-  async function handleConfirmDoctorSelection() {
-    if (selectedDoctorIds.length === 0) {
-      setError('Please select at least one doctor.');
-      return;
-    }
-
-    // Save selected doctor IDs to localStorage
-    try {
-      localStorage.setItem(SELECTED_DOCTORS_STORAGE_KEY, JSON.stringify(selectedDoctorIds));
-    } catch {
-      // If localStorage fails, continue anyway
-    }
-
-    setShowDoctorSelectionModal(false);
-    const endpoint = pendingEndpoint || (multiDoctor ? '/routing/any-doctor' : '/routing');
-    setPendingEndpoint(null);
-    
-    // For v2 endpoint, use doctorIds array
-    if (endpoint.includes('/v2')) {
-      await submitRoutingRequest(endpoint, selectedDoctorIds);
-    } else {
-      // For v1 endpoint, still use the old format
-      await submitRoutingRequest(endpoint);
-    }
-  }
-
-  // Handle modal cancel
-  function handleCancelDoctorSelection() {
-    setShowDoctorSelectionModal(false);
-    setPendingEndpoint(null);
-    setSelectedDoctorIds([]);
   }
 
   // =========================
@@ -2058,6 +2244,7 @@ export default function Routing() {
   const displayOptions: UnifiedOption[] = useMemo(() => {
     const rows: UnifiedOption[] = [];
     const requestIdFromResult = result?.routingRequestId ?? latestRoutingRequestId ?? undefined;
+    const topForSingleDoctor = result ? routingTopCandidatesFromResult(result) : [];
 
     // Helper for displayInsertionIndex calculation
     const isEmptyDay = (x: any) =>
@@ -2075,12 +2262,14 @@ export default function Routing() {
       for (const d of result.doctors) {
         const pid = d.pimsId;
         const name = d.name || doctorNames[pid] || `Doctor ${pid}`;
-        for (const w of d.top || [])
+        const doctorTop = d.top || [];
+        for (const w of doctorTop)
           rows.push({
             ...w,
             doctorPimsId: pid,
             doctorName: name,
             routingRequestId: w.routingRequestId ?? requestIdFromResult,
+            candidateIndex: resolveRoutingCandidateIndex(w, doctorTop),
           });
       }
       // Sort all options by score (lowest first)
@@ -2117,6 +2306,7 @@ export default function Routing() {
           doctorPimsId: docInfo.pid,
           doctorName: docInfo.name,
           routingRequestId: result.winner.routingRequestId ?? requestIdFromResult,
+          candidateIndex: resolveRoutingCandidateIndex(result.winner, topForSingleDoctor),
         };
       }
       
@@ -2128,6 +2318,7 @@ export default function Routing() {
             doctorPimsId: docInfo.pid,
             doctorName: docInfo.name,
             routingRequestId: w.routingRequestId ?? requestIdFromResult,
+            candidateIndex: resolveRoutingCandidateIndex(w, topForSingleDoctor),
           });
         }
       }
@@ -2150,7 +2341,8 @@ export default function Routing() {
         displayInsertionIndex,
         positionInDay,
         routingRequestId: r.routingRequestId ?? requestIdFromResult,
-        candidateIndex: r.candidateIndex ?? idx,
+        candidateIndex:
+          r.candidateIndex ?? resolveRoutingCandidateIndex(r, topForSingleDoctor),
       };
     });
   }, [multiDoctor, result, doctorNames, form.doctorId, latestRoutingRequestId]);
@@ -2186,47 +2378,23 @@ export default function Routing() {
   // Render
   // =========================
 
-  const weekdayLabels: Array<{ n: number; label: string }> = [
-    { n: 1, label: 'Mon' },
-    { n: 2, label: 'Tue' },
-    { n: 3, label: 'Wed' },
-    { n: 4, label: 'Thu' },
-    { n: 5, label: 'Fri' },
-    { n: 6, label: 'Sat' },
-    { n: 7, label: 'Sun' },
-  ];
-
   return (
-    <div className="grid" style={{ alignItems: 'start' }}>
+    <div className="routing-page-root">
       {/* ------- Form ------- */}
-      <div className="card">
-        <h2 style={{ marginTop: 0 }}>Get Best Route</h2>
-        <form onSubmit={onSubmit} className="grid" style={{ gap: 12 }}>
+      <div className="card routing-route-form-card">
+        <h2 className="routing-route-form-title">Get Best Route</h2>
+        <form onSubmit={onSubmit} className="routing-form-stack routing-route-form-stack">
           {/* Doctor picker */}
-          <div className="grid" style={{ gridTemplateColumns: 'minmax(16rem, 1fr) 1fr', gap: 12 }}>
+          <div className="routing-doctor-row">
             <Field label="Doctor">
-              <div ref={apptLengthsWrapRef} style={{ position: 'relative', width: '100%' }}>
-                {apptLengthsOpen && (
-                  <div
-                    className="routing-appt-lengths-backdrop"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      setApptLengthsOpen(false);
-                    }}
-                    aria-hidden
-                  />
-                )}
-                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                  <div
-                    ref={doctorBoxRef}
-                    style={{
-                      position: 'relative',
-                      flexGrow: 1,
-                      flexShrink: 0,
-                      flexBasis: 'auto',
-                      minWidth: '16rem',
-                    }}
-                  >
+              <div style={{ position: 'relative', width: '100%' }}>
+                <div
+                  ref={doctorBoxRef}
+                  className="routing-doctor-input-wrap"
+                  style={{
+                    position: 'relative',
+                  }}
+                >
                   <input
                     className="input"
                     style={{ width: '100%', boxSizing: 'border-box' }}
@@ -2335,198 +2503,139 @@ export default function Routing() {
                     })}
                   </ul>
                 )}
-                  </div>
-
-                  <div style={{ position: 'relative', flexShrink: 0, paddingTop: 2 }}>
-                    <button
-                      type="button"
-                      className="btn secondary"
-                      disabled={!form.doctorId.trim()}
-                      title={
-                        form.doctorId.trim()
-                          ? 'Average booked minutes by appointment type (last 30 days)'
-                          : 'Select a doctor first'
-                      }
-                      style={{
-                        fontSize: 12,
-                        padding: '8px 10px',
-                        whiteSpace: 'nowrap',
-                        lineHeight: 1.2,
-                      }}
-                      onClick={() => {
-                        if (!form.doctorId.trim()) return;
-                        if (apptLengthsOpen) {
-                          setApptLengthsOpen(false);
-                          return;
-                        }
-                        setApptLengthsOpen(true);
-                        void loadApptLengthStats();
-                      }}
-                    >
-                      Appt lengths
-                    </button>
-
-                    {apptLengthsOpen && (
-                      <div
-                        className="routing-appt-lengths-popover"
-                        role="dialog"
-                        aria-labelledby="routing-appt-lengths-heading"
-                      >
-                        <div className="routing-appt-lengths-popover-header">
-                          <span id="routing-appt-lengths-heading" className="routing-appt-lengths-popover-title">
-                            Appt lengths
-                          </span>
-                          <button
-                            type="button"
-                            className="routing-appt-lengths-close"
-                            aria-label="Close"
-                            onClick={() => setApptLengthsOpen(false)}
-                          >
-                            ×
-                          </button>
-                        </div>
-                        <div className="routing-appt-lengths-scroll">
-                          <div className="routing-appt-lengths-help">
-                            Average booked minutes per appointment by type over the last 30 days (same rules as
-                            Analytics → Time Spent; blocks excluded). Regular vs multi-pet slots are split into
-                            separate averages.
-                          </div>
-                          {apptLengthsLoading && <div className="muted">Loading…</div>}
-                          {apptLengthsError && (
-                            <div style={{ color: '#b91c1c', fontSize: 13 }}>{apptLengthsError}</div>
-                          )}
-                          {!apptLengthsLoading && !apptLengthsError && apptLengthsRows.length === 0 && (
-                            <div className="muted" style={{ fontSize: 13 }}>
-                              No appointments in this window.
-                            </div>
-                          )}
-                          {!apptLengthsLoading && !apptLengthsError && apptLengthsRows.length > 0 && (
-                            <table>
-                              <thead>
-                                <tr>
-                                  <th>Type</th>
-                                  <th>Avg min</th>
-                                  <th>Multipet avg</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {apptLengthsRows.map((row) => (
-                                  <tr key={row.typeName}>
-                                    <td>{row.typeName}</td>
-                                    <td>{row.count > 0 ? row.avgMinutes : '—'}</td>
-                                    <td>{row.multipetAvgMinutes != null ? row.multipetAvgMinutes : '—'}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
                 </div>
               </div>
             </Field>
           </div>
 
-          {/* Dates */}
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Field label="Start Date">
+          {/* Date range */}
+          <Field label="Date">
+            <div className="routing-date-range-row">
               <input
-                className="date"
+                className="date routing-date-input"
                 type="date"
                 value={form.startDate}
                 onChange={(e) => onChange('startDate', e.target.value)}
                 required
               />
-            </Field>
-            <Field label="End Date">
+              <span className="routing-date-range-sep" aria-hidden="true">
+                →
+              </span>
               <input
-                className="date"
+                className="date routing-date-input"
                 type="date"
                 value={form.endDate}
                 onChange={(e) => onChange('endDate', e.target.value)}
                 required
               />
-            </Field>
-          </div>
+            </div>
+          </Field>
 
-          {/* Appointment & client */}
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Field label="Service minutes">
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: 8,
-                  alignItems: 'center',
-                }}
-              >
-                <input
-                  className="input"
-                  type="number"
-                  min={1}
-                  style={{ width: 88 }}
-                  value={form.newAppt.serviceMinutes}
-                  onChange={(e) => onNewApptChange('serviceMinutes', Number(e.target.value))}
-                />
-                <select
-                  className="input"
-                  aria-label="Appointment type from averages"
-                  style={{ minWidth: 160, flex: '1 1 140px' }}
-                  disabled={!form.doctorId.trim() || apptLengthsLoading}
-                  value={routingApptStatsTypeKey}
-                  onChange={(e) => setRoutingApptStatsTypeKey(e.target.value)}
-                >
-                  <option value="">Type (optional)</option>
-                  {apptLengthsRows.map((row) => (
-                    <option key={row.typeName} value={row.typeName}>
-                      {row.typeName}
-                    </option>
-                  ))}
-                </select>
-                <label
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  <span className="muted" style={{ fontSize: 13 }}>
+          {/* Calculate time: bordered type + pets; minutes on next line */}
+          <div className="routing-visit-field routing-calculate-time-field">
+            <div id="routing-calculate-time-legend" className="routing-calculate-time-box-legend">
+              Calculate Time (optional)
+            </div>
+            <div
+              role="group"
+              className="routing-calculate-time-box"
+              aria-labelledby="routing-calculate-time-legend"
+            >
+              <div className="routing-calculate-time-box-inner">
+                <label className="routing-calculate-time-type-stack" htmlFor="routing-visit-type-select">
+                  <span className="routing-visit-stack-label muted">Appointment Type</span>
+                  <select
+                    id="routing-visit-type-select"
+                    className="input routing-input-compact routing-visit-type-select"
+                    disabled={!form.doctorId.trim() || apptLengthsLoading}
+                    value={routingApptStatsTypeKey}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setRoutingApptStatsTypeKey(next);
+                      if (!next.trim()) setRoutingPetCount(1);
+                    }}
+                  >
+                    <option value="">Select type…</option>
+                    {apptLengthsRows.map((row) => (
+                      <option key={row.typeName} value={row.typeName}>
+                        {row.typeName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="routing-visit-stack" htmlFor="routing-visit-pets">
+                  <span
+                    className="routing-visit-stack-label muted"
+                    title="Optional. Used with appointment type to estimate minutes."
+                  >
                     Pets
                   </span>
                   <input
-                    className="input"
+                    id="routing-visit-pets"
+                    className="input routing-input-compact routing-pet-input"
                     type="number"
                     min={1}
-                    style={{ width: 64 }}
-                    value={routingPetCount}
+                    inputMode="numeric"
+                    disabled={!routingApptStatsTypeKey.trim()}
+                    title={
+                      routingApptStatsTypeKey.trim()
+                        ? undefined
+                        : 'Select an appointment type to set the number of pets.'
+                    }
+                    value={routingApptStatsTypeKey.trim() ? routingPetCount : ''}
                     onChange={(e) => {
-                      const v = Math.floor(Number(e.target.value));
+                      const raw = e.target.value;
+                      if (raw === '') {
+                        setRoutingPetCount(1);
+                        return;
+                      }
+                      const v = Math.floor(Number(raw));
                       setRoutingPetCount(Number.isFinite(v) && v >= 1 ? v : 1);
                     }}
                   />
                 </label>
               </div>
-              {!form.doctorId.trim() ? (
-                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                  Select a doctor to load appointment types (same data as Appt lengths).
-                </div>
-              ) : apptLengthsLoading && apptLengthsRows.length === 0 ? (
-                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                  Loading appointment types…
-                </div>
-              ) : apptLengthsRows.length === 0 && !apptLengthsError ? (
-                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                  No appointment types in the last 30 days for this doctor.
-                </div>
-              ) : apptLengthsError ? (
-                <div style={{ color: '#b91c1c', fontSize: 12, marginTop: 6 }}>{apptLengthsError}</div>
-              ) : null}
-            </Field>
+            </div>
+            <div className="routing-calculate-time-minutes-row">
+              <label className="routing-calculate-time-minutes-stack" htmlFor="routing-visit-mins">
+                <span
+                  className="routing-calculate-time-minutes-heading muted"
+                  title="Service length in minutes—auto-filled from type and pets, or type to override."
+                >
+                  Minutes
+                </span>
+                <input
+                  id="routing-visit-mins"
+                  className={`input routing-input-compact routing-mins-line-input${
+                    routingMinutesPulse ? ' routing-minutes-flash--active' : ''
+                  }`}
+                  aria-label="Service minutes"
+                  title="Auto-filled when you pick a type and pets, or enter minutes here to override."
+                  type="number"
+                  min={1}
+                  inputMode="numeric"
+                  value={form.newAppt.serviceMinutes}
+                  onChange={(e) => onNewApptChange('serviceMinutes', Number(e.target.value))}
+                />
+              </label>
+            </div>
+            {!form.doctorId.trim() ? (
+              <div className="muted routing-route-hint">
+                Select a doctor to load appointment type averages (last 30 days).
+              </div>
+            ) : apptLengthsLoading && apptLengthsRows.length === 0 ? (
+              <div className="muted routing-route-hint">Loading appointment types…</div>
+            ) : apptLengthsRows.length === 0 && !apptLengthsError ? (
+              <div className="muted routing-route-hint">
+                No appointment types in the last 30 days for this doctor.
+              </div>
+            ) : apptLengthsError ? (
+              <div className="danger routing-route-hint">{apptLengthsError}</div>
+            ) : null}
+          </div>
 
-            <Field label="Search Client (last name)">
+          {/* Client */}
+          <Field label="Client">
               <div ref={clientBoxRef} style={{ position: 'relative' }}>
                 <input
                   className="input"
@@ -2644,257 +2753,229 @@ export default function Routing() {
               </div>
             </Field>
 
-            <Field label="Address (optional)">
+          <Field label="Address">
+            <div className="routing-address-row">
               <input
-                className="input"
+                className="input routing-address-input"
                 value={form.newAppt.address ?? ''}
                 onChange={(e) => onNewApptChange('address', e.target.value)}
-                placeholder="123 Main St, Portland ME"
+                placeholder="Street, city (optional if client has address)"
+                autoComplete="street-address"
               />
-              {addressError ? (
-                <div className="danger" style={{ marginTop: 6 }}>
-                  {addressError}
-                </div>
-              ) : (
+              {!addressError &&
                 form.newAppt.lat != null &&
                 form.newAppt.lon != null &&
-                (form.newAppt.address ?? '').trim() && (
-                  <div className="muted" style={{ marginTop: 6 }}>
-                    ✓ Address verified
-                  </div>
-                )
-              )}
-            </Field>
-            {!clientSearching && selectedClientAlerts && selectedClientAlerts.trim() && (
-              <div
-                style={{
-                  marginTop: 6,
-                  padding: '8px 10px',
-                  background: '#fff7ed', // soft amber
-                  border: '1px solid #fdba74', // amber border
-                  color: '#7c2d12', // dark amber text
-                  borderRadius: 8,
-                  whiteSpace: 'pre-wrap', // keep line breaks from server
-                  fontSize: 13,
-                  lineHeight: 1.3,
-                }}
-              >
-                <strong style={{ fontWeight: 700 }}>Client alert:</strong> {selectedClientAlerts}
-              </div>
-            )}
-          </div>
-
-          {/* Preferences */}
-          <div className="card" style={{ padding: 12, background: '#f8fafc' }}>
-            <h4 style={{ margin: '4px 0 10px 0' }}>Preferences (optional)</h4>
-
-            {/* Toggles */}
-            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <Field label="Reserve/Overflow">
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <label
-                    style={{
-                      display: 'flex',
-                      gap: 8,
-                      alignItems: 'center',
-                      padding: '4px 8px',
-                      borderRadius: 6,
-                      cursor: 'pointer',
-                    }}
-                    className={reserveOption === 'reserve-only' ? 'field-red' : ''}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={reserveOption === 'reserve-only'}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          // Check this one, uncheck the other
-                          setReserveOption('reserve-only');
-                        } else {
-                          // Uncheck this one
-                          setReserveOption(null);
-                        }
-                      }}
-                    />
-                    <span>Use Reserve Time (no overflow)</span>
-                  </label>
-                  <label
-                    style={{
-                      display: 'flex',
-                      gap: 8,
-                      alignItems: 'center',
-                      padding: '4px 8px',
-                      borderRadius: 6,
-                      cursor: 'pointer',
-                    }}
-                    className={reserveOption === 'reserve-overflow' ? 'field-red' : ''}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={reserveOption === 'reserve-overflow'}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          // Check this one, uncheck the other
-                          setReserveOption('reserve-overflow');
-                        } else {
-                          // Uncheck this one
-                          setReserveOption(null);
-                        }
-                      }}
-                    />
-                    <span>Use Reserve + Allow Overflow</span>
-                  </label>
-                </div>
-              </Field>
-
-              <Field label="Multi-doctor">
-                <label
-                  style={{
-                    display: 'flex',
-                    gap: 8,
-                    alignItems: 'center',
-                    cursor: 'pointer',
-                    ...(multiDoctor ? ROUTING_PREF_CHECKED_LABEL : {}),
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={multiDoctor}
-                    onChange={(e) => setMultiDoctor(e.target.checked)}
-                  />
-                  <span>Try other doctors for best fit</span>
-                </label>
-              </Field>
+                (form.newAppt.address ?? '').trim().length > 0 && (
+                  <span className="routing-address-inline-ok" title="Address verified">
+                    ✓
+                  </span>
+                )}
             </div>
+            {addressError ? <div className="danger routing-route-hint">{addressError}</div> : null}
+          </Field>
 
-            {/* Preferred weekday */}
-            <Field label="Preferred Day of Week">
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                {weekdayLabels.map(({ n, label }) => (
-                  <label
-                    key={n}
-                    style={{
-                      display: 'inline-flex',
-                      gap: 6,
-                      alignItems: 'center',
-                      cursor: 'pointer',
-                      ...(preferredWeekday.includes(n) ? ROUTING_PREF_CHECKED_LABEL : {}),
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={preferredWeekday.includes(n)}
-                      onChange={() => {
-                        setPreferredWeekday((cur) => {
-                          if (cur.includes(n)) {
-                            return cur.filter((day) => day !== n);
-                          } else {
-                            return [...cur, n].sort((a, b) => a - b);
-                          }
-                        });
-                      }}
-                    />
-                    <span>{label}</span>
-                  </label>
-                ))}
-              </div>
-              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                Select one or more days. Multiple selections are supported.
-              </div>
-            </Field>
+          {!clientSearching && selectedClientAlerts && selectedClientAlerts.trim() && (
+            <div className="routing-client-alert-banner">
+              <strong>Client alert:</strong> {selectedClientAlerts}
+            </div>
+          )}
 
-            {/* Preferred time of day */}
-            <Field label="Preferred Time of Day">
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                {[
-                  { key: 'first', label: 'First part of day' },
-                  // { key: 'middle', label: 'Middle of day' },
-                  { key: 'end', label: 'End of day' },
-                ].map(({ key, label }) => (
-                  <label
-                    key={key}
-                    style={{
-                      display: 'inline-flex',
-                      gap: 6,
-                      alignItems: 'center',
-                      cursor: 'pointer',
-                      ...(preferredTimeOfDay === (key as 'first' | 'middle' | 'end')
-                        ? ROUTING_PREF_CHECKED_LABEL
-                        : {}),
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={preferredTimeOfDay === (key as 'first' | 'middle' | 'end')}
-                      onChange={() =>
-                        setPreferredTimeOfDay((cur) => (cur === key ? null : (key as any)))
-                      }
-                    />
-                    <span>{label}</span>
-                  </label>
-                ))}
-                <label
-                  style={{ display: 'inline-flex', gap: 6, alignItems: 'center', marginLeft: 8 }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={preferredTimeOfDay === null}
-                    onChange={() => setPreferredTimeOfDay(null)}
-                  />
-                  <span>None</span>
-                </label>
-              </div>
-              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                Only one time window can be selected. Click again to unselect.
-              </div>
-            </Field>
-
-            <div style={{ marginTop: 10, maxWidth: 560 }}>
+          <Field label="Reserve handling">
+            <div className="routing-radio-stack">
               <label
-                style={{
-                  display: 'inline-flex',
-                  gap: 8,
-                  alignItems: 'center',
-                  cursor: 'pointer',
-                  ...(preferEarliestFeasibleStart ? ROUTING_PREF_CHECKED_LABEL : {}),
-                }}
+                className={`routing-radio-row${reserveOption === null ? ' routing-radio-row--active' : ''}`}
               >
                 <input
-                  type="checkbox"
-                  checked={preferEarliestFeasibleStart}
-                  onChange={(e) => setPreferEarliestFeasibleStart(e.target.checked)}
+                  type="radio"
+                  name="routing-reserve"
+                  checked={reserveOption === null}
+                  onChange={() => setReserveOption(null)}
                 />
-                <span style={{ fontWeight: 600 }}>Force Earliest Time</span>
+                <span>Protect reserve (default)</span>
               </label>
-              {preferEarliestFeasibleStart && (
-                <div
-                  style={{
-                    marginTop: 10,
-                    padding: '10px 12px',
-                    borderRadius: 8,
-                    backgroundColor: '#fefce8',
-                    border: '1px solid #fde68a',
-                  }}
-                >
-                  <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
-                    Turn on when the appointment must be early (outliers, long drives, front-loading the
-                    day).
-                  </div>
-                  <div className="muted" style={{ fontSize: 13, lineHeight: 1.5, marginTop: 8 }}>
-                    <strong>Only applies on empty days.</strong> You’ll still see optimized times—this adds an
-                    early option (shown in yellow).
+              <label
+                className={`routing-radio-row routing-radio-row--caution${
+                  reserveOption === 'reserve-only' ? ' routing-radio-row--active' : ''
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="routing-reserve"
+                  checked={reserveOption === 'reserve-only'}
+                  onChange={() => setReserveOption('reserve-only')}
+                />
+                <span>Use Reserve</span>
+              </label>
+              <label
+                className={`routing-radio-row routing-radio-row--caution${
+                  reserveOption === 'reserve-overflow' ? ' routing-radio-row--active' : ''
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="routing-reserve"
+                  checked={reserveOption === 'reserve-overflow'}
+                  onChange={() => setReserveOption('reserve-overflow')}
+                />
+                <span>Use Reserve and Allow Overflow</span>
+              </label>
+            </div>
+          </Field>
+
+          {/* Scheduling preferences (collapsed by default) */}
+          <div className="routing-prefs-accordion">
+            <button
+              type="button"
+              className="routing-prefs-accordion-trigger"
+              aria-expanded={schedulingPrefsOpen}
+              aria-controls="routing-scheduling-prefs-panel"
+              id="routing-scheduling-prefs-heading"
+              onClick={() => setSchedulingPrefsOpen((o) => !o)}
+            >
+              <span className="routing-prefs-accordion-title">Scheduling Preferences</span>
+              <span className="routing-prefs-accordion-chevron" aria-hidden="true">
+                {schedulingPrefsOpen ? '▾' : '▸'}
+              </span>
+            </button>
+
+            <div
+              id="routing-scheduling-prefs-panel"
+              role="region"
+              aria-labelledby="routing-scheduling-prefs-heading"
+              className="routing-prefs-accordion-panel"
+              hidden={!schedulingPrefsOpen}
+            >
+              <div className="routing-prefs-accordion-panel-inner">
+                <div className="routing-prefs-block">
+                  <div className="routing-field-label">Provider preference</div>
+                  <div className="routing-radio-stack">
+                    <label
+                      className={`routing-radio-row${!multiDoctor ? ' routing-radio-row--active' : ''}`}
+                    >
+                      <input
+                        type="radio"
+                        name="routing-provider-pref"
+                        checked={!multiDoctor}
+                        onChange={() => setMultiDoctor(false)}
+                      />
+                      <span>
+                        {doctorQuery.trim()
+                          ? `${doctorQuery.trim()} only`
+                          : 'This doctor only'}
+                      </span>
+                    </label>
+                    <label
+                      className={`routing-radio-row${multiDoctor ? ' routing-radio-row--active' : ''}`}
+                      style={multiDoctor ? ROUTING_PREF_CHECKED_LABEL : undefined}
+                    >
+                      <input
+                        type="radio"
+                        name="routing-provider-pref"
+                        checked={multiDoctor}
+                        onChange={() => setMultiDoctor(true)}
+                      />
+                      <span>Best fit across doctors</span>
+                    </label>
                   </div>
                 </div>
-              )}
-            </div>
 
-            {/* Edge preference (kept hidden for now) */}
-            {/* ... */}
+                <div className="routing-prefs-block">
+                  <div className="routing-field-label">Preferred day</div>
+                  <div className="routing-weekday-chips" role="group" aria-label="Preferred days">
+                    {ROUTING_WEEKDAY_CHIPS.map(({ n, label, title }) => {
+                      const on = preferredWeekday.includes(n);
+                      return (
+                        <button
+                          key={n}
+                          type="button"
+                          title={title}
+                          className={`routing-weekday-chip${on ? ' routing-weekday-chip--selected' : ''}`}
+                          aria-pressed={on}
+                          aria-label={title}
+                          onClick={() => {
+                            setPreferredWeekday((cur) => {
+                              if (cur.includes(n)) return cur.filter((d) => d !== n);
+                              return [...cur, n].sort((a, b) => a - b);
+                            });
+                          }}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="muted routing-route-hint routing-route-hint--tight">
+                    Optional. Pick one or more days.
+                  </div>
+                </div>
+
+                <div className="routing-prefs-block">
+                  <div className="routing-field-label">Preferred time</div>
+                  <div className="routing-radio-stack">
+                    <label
+                      className={`routing-radio-row${
+                        preferredTimeOfDay === null || preferredTimeOfDay === 'middle'
+                          ? ' routing-radio-row--active'
+                          : ''
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="routing-time-pref"
+                        checked={preferredTimeOfDay === null || preferredTimeOfDay === 'middle'}
+                        onChange={() => setPreferredTimeOfDay(null)}
+                      />
+                      <span>Any</span>
+                    </label>
+                    <label
+                      className={`routing-radio-row${
+                        preferredTimeOfDay === 'first' ? ' routing-radio-row--active' : ''
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="routing-time-pref"
+                        checked={preferredTimeOfDay === 'first'}
+                        onChange={() => setPreferredTimeOfDay('first')}
+                      />
+                      <span>Early</span>
+                    </label>
+                    <label
+                      className={`routing-radio-row${
+                        preferredTimeOfDay === 'end' ? ' routing-radio-row--active' : ''
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="routing-time-pref"
+                        checked={preferredTimeOfDay === 'end'}
+                        onChange={() => setPreferredTimeOfDay('end')}
+                      />
+                      <span>End of day</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="routing-prefs-block routing-prefs-block--subtle">
+                  <label className="routing-force-earliest">
+                    <input
+                      type="checkbox"
+                      checked={preferEarliestFeasibleStart}
+                      onChange={(e) => setPreferEarliestFeasibleStart(e.target.checked)}
+                    />
+                    <span>Force earliest available</span>
+                  </label>
+                  <div className="muted routing-route-hint routing-route-hint--tight">
+                    May reduce routing efficiency.
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           {error && <div className="danger">{error}</div>}
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <button className="btn" type="submit" disabled={loading}>
+          <div className="routing-submit-row">
+            <button className="btn routing-submit-btn" type="submit" disabled={loading}>
               {loading ? 'Calculating…' : 'Get Best Route'}
             </button>
           </div>
@@ -2912,48 +2993,89 @@ export default function Routing() {
             marginBottom: result ? 6 : 0,
           }}
         >
-          <h3 style={{ marginTop: 0, marginBottom: 0 }}>Results</h3>
+          <h3 style={{ marginTop: 0, marginBottom: 0 }}>
+            {result ? 'Results (lower score is better)' : 'Results'}
+          </h3>
           {result && scoutPolicyZoneAware(result.scoutEmptyDayPolicy) ? (
             <Fragment>
-              <span
-                style={SCOUT_ZONE_AWARE_BADGE_STYLE}
-                title="Scout empty-day policy is zone_aware. Liaison copy and day badges appear on each result and per gap."
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  flexWrap: 'nowrap',
+                  minWidth: 0,
+                }}
               >
-                Zone-aware
-              </span>
-              {(() => {
-                const b = routingZoneAwareResultsBanner;
-                if (!b) return null;
-                const poly = b.polyLine;
-                const zc = b.zoneClassRaw;
-                const combined =
-                  poly && zc
-                    ? `${poly}: ${scoutZoneClassBannerTitleCase(zc)}`
-                    : poly
-                      ? poly
-                      : zc
-                        ? scoutZoneClassBannerTitleCase(zc)
-                        : null;
-                if (!combined) return null;
-                const title =
-                  poly && zc
-                    ? `Geocoded routing zone (${poly}). Depot→candidate drive class: ${scoutZoneClassBannerTitleCase(zc)} (≤15 min local, ≥25 min anchor, between corridor).`
-                    : poly
-                      ? 'Geocoded routing zone for this search (effective zone when present, otherwise client zone).'
-                      : 'From depot→candidate drive: ≤15 min = local, ≥25 min = anchor, between = corridor.';
-                const chipStyle = poly ? SCOUT_RESULTS_ZONE_NAME_CHIP : SCOUT_BADGE_CHIP;
-                return (
-                  <span style={chipStyle} title={title}>
-                    {combined}
-                  </span>
-                );
-              })()}
+                <span
+                  style={SCOUT_ZONE_AWARE_BADGE_STYLE}
+                  title="Scout empty-day policy is zone_aware. Liaison copy and day badges appear on each result and per gap."
+                >
+                  Zone-aware
+                </span>
+                {(() => {
+                  const b = routingZoneAwareResultsBanner;
+                  if (!b) return null;
+                  const poly = b.polyLine;
+                  const zc = b.zoneClassRaw;
+                  const combined =
+                    poly && zc
+                      ? `${poly}: ${scoutZoneClassBannerTitleCase(zc)}`
+                      : poly
+                        ? poly
+                        : zc
+                          ? scoutZoneClassBannerTitleCase(zc)
+                          : null;
+                  if (!combined) return null;
+                  const title =
+                    poly && zc
+                      ? `Geocoded routing zone (${poly}). Depot→candidate drive class: ${scoutZoneClassBannerTitleCase(zc)} (≤15 min local, ≥25 min anchor, between corridor).`
+                      : poly
+                        ? 'Geocoded routing zone for this search (effective zone when present, otherwise client zone).'
+                        : 'From depot→candidate drive: ≤15 min = local, ≥25 min = anchor, between = corridor.';
+                  const chipStyle = poly ? SCOUT_RESULTS_ZONE_NAME_CHIP : SCOUT_BADGE_CHIP;
+                  return (
+                    <span
+                      style={{
+                        ...chipStyle,
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                      title={title}
+                    >
+                      {combined}
+                    </span>
+                  );
+                })()}
+              </div>
             </Fragment>
           ) : null}
         </div>
 
-        {result ? (
-          <div style={{ fontSize: 12, fontWeight: 'bold', marginBottom: 8 }}>Lower score is better</div>
+        {result && displayOptions.length > 0 ? (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              marginBottom: 12,
+            }}
+          >
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => submitFeedbackForNone()}
+              disabled={
+                hasFinalSelection ||
+                feedbackSubmittingKey === NONE_SELECTION_KEY ||
+                feedbackSuccessKey === NONE_SELECTION_KEY
+              }
+            >
+              {feedbackSubmittingKey === NONE_SELECTION_KEY ? 'Saving…' : 'None chosen'}
+            </button>
+          </div>
         ) : null}
 
         {feedbackToast && (
@@ -2984,26 +3106,11 @@ export default function Routing() {
 
         {result && displayOptions.length > 0 && (
           <Fragment>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-              <button
-                type="button"
-                className="btn secondary"
-                onClick={() => submitFeedbackForNone()}
-                disabled={
-                  hasFinalSelection ||
-                  feedbackSubmittingKey === NONE_SELECTION_KEY ||
-                  feedbackSuccessKey === NONE_SELECTION_KEY
-                }
-              >
-                {feedbackSubmittingKey === NONE_SELECTION_KEY ? 'Saving…' : 'None chosen'}
-              </button>
-            </div>
-            <div className="grid" style={{ gap: 14 }}>
+            <div className="routing-results-options">
               {displayOptions.map((opt, idx) => {
                 const headerColor = colorForDoctor(opt.doctorPimsId);
-                const optionKey = `${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${opt.candidateIndex ?? ''}`;
-                const submitting = feedbackSubmittingKey === optionKey;
-                const selected = feedbackSuccessKey === optionKey;
+                const optionKey = routingOptionKey(opt);
+                const scheduleBooked = Boolean(scheduleBookedKeys[optionKey]);
                 const whitespaceAfterBookingSec =
                   (opt as any).whitespaceAfterBookingSeconds ??
                   (function () {
@@ -3050,11 +3157,15 @@ export default function Routing() {
                     (candidateScoutRow.scoutLiaisonLabelIds ?? []).some(Boolean));
                 const metricsRow = scoutDayMetricsForCandidate(opt);
                 const zoneAwareDeltaLine = showScoutUi ? scoutZoneAwareDeltaUi(opt) : null;
+                const visitWindowTime =
+                  opt.arrivalWindow?.windowStartIso && opt.arrivalWindow?.windowEndIso
+                    ? `${isoToTime(opt.arrivalWindow.windowStartIso)} – ${isoToTime(opt.arrivalWindow.windowEndIso)}`
+                    : isoToTime(opt.suggestedStartIso);
 
                 return (
                   <div
                     key={`${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${idx}`}
-                    className="card"
+                    className="card routing-result-option-card"
                     style={{
                       position: 'relative',
                       paddingTop: 48,
@@ -3148,6 +3259,28 @@ export default function Routing() {
                       {isoToTime(opt.suggestedStartIso)}
                     </h3>
 
+                    {scheduleBooked && (
+                      <div
+                        style={{
+                          marginBottom: 12,
+                          padding: '10px 12px',
+                          borderRadius: 8,
+                          border: '1px solid #86efac',
+                          background: '#f0fdf4',
+                          color: '#166534',
+                          fontSize: Math.round(14 * ROUTING_RESULT_FONT_SCALE),
+                          fontWeight: 700,
+                        }}
+                      >
+                        Appointment booked
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
+                      <SlotChip slot={opt.slot ?? null} />
+                      <EdgeChip first={opt.isFirstEdge} last={opt.isLastEdge} />
+                    </div>
+
                     {(opt.scoringComponents?.downstreamWindowEdge ?? 0) > 0 && (
                       <div
                         style={{
@@ -3157,7 +3290,7 @@ export default function Routing() {
                           background: '#fef3c7',
                           border: '1px solid #f59e0b',
                           color: '#92400e',
-                          fontSize: 13,
+                          fontSize: Math.round(13 * ROUTING_RESULT_FONT_SCALE),
                           fontWeight: 600,
                         }}
                       >
@@ -3176,11 +3309,12 @@ export default function Routing() {
                             marginBottom: 8,
                           }}
                         >
-                          <ScoutDayStatBadges row={metricsRow} embedded />
+                          <ScoutDayStatBadges row={metricsRow} embedded dense />
                           <ScoutZoneAwareDiagnosticsRow
                             row={opt}
                             hideZoneClass
                             variant="inline"
+                            dense
                           />
                         </div>
                         {scoutPreservedAnchorZonesStillNote(result?.scoutPreservedEmptyDayWeeks, opt)}
@@ -3217,13 +3351,14 @@ export default function Routing() {
                                   marginBottom: 8,
                                 }}
                               >
-                                <ScoutDayStatBadges row={gap} embedded />
+                                <ScoutDayStatBadges row={gap} embedded dense />
                                 <ScoutZoneAwareDiagnosticsRow
                                   row={gap}
                                   hideZoneClass={Boolean(
                                     routingZoneAwareResultsBanner?.zoneClassRaw
                                   )}
                                   variant="inline"
+                                  dense
                                 />
                               </div>
                               {scoutPreservedAnchorZonesStillNote(result?.scoutPreservedEmptyDayWeeks, {
@@ -3234,7 +3369,7 @@ export default function Routing() {
                               {gapDeltaLine ? (
                                 <div
                                   className="muted"
-                                  style={{ fontSize: 11, marginTop: 4, marginBottom: 4 }}
+                                  style={{ fontSize: Math.round(11 * ROUTING_RESULT_FONT_SCALE), marginTop: 4, marginBottom: 4 }}
                                   title={gapDeltaLine.title}
                                 >
                                   <strong>Zone-aware Δ:</strong> {gapDeltaLine.value}
@@ -3256,13 +3391,7 @@ export default function Routing() {
                       />
                       <KeyValue
                         k="Visit Window"
-                        v={
-                          <strong>
-                            {opt.arrivalWindow?.windowStartIso && opt.arrivalWindow?.windowEndIso
-                              ? `${isoToTime(opt.arrivalWindow.windowStartIso)} – ${isoToTime(opt.arrivalWindow.windowEndIso)}`
-                              : isoToTime(opt.suggestedStartIso)}
-                          </strong>
-                        }
+                        v={<strong>{visitWindowTime}</strong>}
                       />
                       <KeyValue
                         k="Added Drive"
@@ -3289,7 +3418,7 @@ export default function Routing() {
                     {zoneAwareDeltaLine ? (
                       <div
                         className="muted"
-                        style={{ fontSize: 12, marginTop: 4, marginBottom: 4 }}
+                        style={{ fontSize: Math.round(12 * ROUTING_RESULT_FONT_SCALE), marginTop: 4, marginBottom: 4 }}
                         title={zoneAwareDeltaLine.title}
                       >
                         <strong>Zone-aware Δ:</strong> {zoneAwareDeltaLine.value}
@@ -3308,28 +3437,20 @@ export default function Routing() {
                       <button
                         type="button"
                         className="btn secondary"
-                        onClick={() => openMyDay(opt)}
-                      >
-                        My Day
-                      </button>
-                      <button
-                        type="button"
-                        className="btn secondary"
                         onClick={() => openMyWeek(opt)}
+                        disabled={!form.newAppt.clientId?.trim() || scheduleBookTypeId == null}
+                        aria-label="View placement on the practice calendar"
+                        title={
+                          !form.newAppt.clientId?.trim()
+                            ? 'Select a client first'
+                            : scheduleBookTypeId == null
+                              ? 'Loading appointment types…'
+                              : hasActiveRescheduleIntent
+                                ? 'Open the practice calendar to reschedule into this slot'
+                                : 'Open the practice calendar to see this slot on the week'
+                        }
                       >
-                        My Week
-                      </button>
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (hasFinalSelection) return;
-                          submitFeedbackForOption(opt);
-                        }}
-                        disabled={hasFinalSelection || submitting || selected}
-                      >
-                        {selected ? 'Booked' : submitting ? 'Booking…' : 'Booked this Appointment'}
+                        {hasActiveRescheduleIntent ? 'Reschedule appointment' : 'View Placement'}
                       </button>
                     </div>
                   </div>
@@ -3340,159 +3461,6 @@ export default function Routing() {
         )}
 
       </div>
-      {schedulePreview && (
-        <PreviewMyDayModal
-          key={`routing-preview-${schedulePreview.opt.date}-${schedulePreview.opt.insertionIndex}-${schedulePreview.opt.suggestedStartIso}`}
-          option={schedulePreview.opt}
-          scheduleScope={schedulePreview.scope}
-          onScheduleScopeChange={(scope) =>
-            setSchedulePreview((p) => (p ? { ...p, scope } : null))
-          }
-          onClose={closeSchedulePreview}
-          serviceMinutes={form.newAppt.serviceMinutes}
-          newApptMeta={{
-            clientId: form.newAppt.clientId,
-            address: form.newAppt.address,
-            lat: form.newAppt.lat,
-            lon: form.newAppt.lon,
-          }}
-        />
-      )}
-
-      {/* Doctor Selection Modal for Multi-Doctor Mode */}
-      {showDoctorSelectionModal && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10000,
-          }}
-          onClick={handleCancelDoctorSelection}
-        >
-          <div
-            style={{
-              backgroundColor: 'white',
-              borderRadius: 8,
-              padding: 24,
-              maxWidth: 600,
-              width: '90%',
-              maxHeight: '80vh',
-              overflow: 'auto',
-              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 style={{ marginTop: 0, marginBottom: 16 }}>Select Doctors</h2>
-            <p style={{ marginTop: 0, marginBottom: 20, color: '#666' }}>
-              Select the doctors to include in the routing search. All doctors are selected by default.
-            </p>
-
-            {providersLoading ? (
-              <div style={{ textAlign: 'center', padding: 40 }}>
-                <p>Loading doctors...</p>
-              </div>
-            ) : allProviders.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 40 }}>
-                <p>No doctors found.</p>
-              </div>
-            ) : (
-              <div style={{ marginBottom: 24 }}>
-                {allProviders.map((provider) => {
-                  const doctorId = provider.pimsId || String(provider.id);
-                  const isSelected = selectedDoctorIds.includes(doctorId);
-                  return (
-                    <label
-                      key={doctorId}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        padding: '12px 8px',
-                        cursor: 'pointer',
-                        borderRadius: 8,
-                        marginBottom: 4,
-                        border: '1px solid transparent',
-                        boxSizing: 'border-box',
-                        ...(isSelected
-                          ? {
-                              backgroundColor: '#fef9c3',
-                              borderColor: '#ca8a04',
-                            }
-                          : { backgroundColor: 'transparent' }),
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!isSelected) {
-                          e.currentTarget.style.backgroundColor = '#f9fafb';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!isSelected) {
-                          e.currentTarget.style.backgroundColor = 'transparent';
-                        } else {
-                          e.currentTarget.style.backgroundColor = '#fef9c3';
-                        }
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleDoctorSelection(doctorId)}
-                        style={{
-                          marginRight: 12,
-                          width: 18,
-                          height: 18,
-                          cursor: 'pointer',
-                        }}
-                      />
-                      <span style={{ fontSize: 16 }}>{provider.name}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                onClick={handleCancelDoctorSelection}
-                style={{
-                  padding: '10px 20px',
-                  borderRadius: 6,
-                  border: '1px solid #ccc',
-                  backgroundColor: 'white',
-                  cursor: 'pointer',
-                  fontSize: 14,
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDoctorSelection}
-                disabled={selectedDoctorIds.length === 0 || providersLoading}
-                style={{
-                  padding: '10px 20px',
-                  borderRadius: 6,
-                  border: 'none',
-                  backgroundColor: selectedDoctorIds.length === 0 || providersLoading ? '#ccc' : '#4FB128',
-                  color: 'white',
-                  cursor: selectedDoctorIds.length === 0 || providersLoading ? 'not-allowed' : 'pointer',
-                  fontSize: 14,
-                  fontWeight: 600,
-                }}
-              >
-                Confirm ({selectedDoctorIds.length} selected)
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

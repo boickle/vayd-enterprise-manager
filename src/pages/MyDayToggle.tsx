@@ -8,6 +8,9 @@ import { MYWEEK_STORAGE_KEY, weekStartSunday } from './MyWeek';
 
 type Mode = 'list' | 'visual';
 
+/** When true, show the header button that navigates to legacy `/schedule/my-week`. */
+const SHOW_LEGACY_MY_WEEK_NAV = false;
+
 export default function MyDayToggle(props: DoctorDayProps) {
   const navigate = useNavigate();
   const [mode, setMode] = useState<Mode>('visual');
@@ -50,7 +53,46 @@ export default function MyDayToggle(props: DoctorDayProps) {
     } catch {
       /* ignore */
     }
-    navigate('/doctorweek');
+    navigate('/schedule/my-week');
+  }
+
+  function goToPracticeCalendar() {
+    let doctorId =
+      mode === 'visual' ? visualDoctorIdRef.current : listDoctorIdRef.current;
+    let dateIso =
+      mode === 'visual' ? visualDateRef.current : listDateRef.current;
+    if (mode === 'visual') {
+      const sel = document.querySelector('#vdd-doc') as HTMLSelectElement | null;
+      if (sel?.value) doctorId = sel.value;
+      const dIn = document.querySelector('#vdd-date') as HTMLInputElement | null;
+      if (dIn?.value) dateIso = dIn.value;
+    } else {
+      const sel = document.querySelector('#dd-doctor') as HTMLSelectElement | null;
+      if (sel?.value) doctorId = sel.value;
+      const dIn = document.querySelector('#dd-date') as HTMLInputElement | null;
+      if (dIn?.value) dateIso = dIn.value;
+    }
+    doctorId = doctorId || props.initialDoctorId || '';
+    dateIso = dateIso || props.initialDate || DateTime.local().toISODate() || '';
+    try {
+      const raw = sessionStorage.getItem(MYWEEK_STORAGE_KEY);
+      const prev = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      sessionStorage.setItem(
+        MYWEEK_STORAGE_KEY,
+        JSON.stringify({
+          ...prev,
+          weekStart: weekStartSunday(dateIso),
+          selectedDoctorId: doctorId,
+        })
+      );
+    } catch {
+      /* ignore */
+    }
+    const q = new URLSearchParams();
+    q.set('fromMyDay', '1');
+    q.set('date', dateIso);
+    if (doctorId) q.set('provider', doctorId);
+    navigate(`/schedule/scheduler?${q.toString()}`);
   }
 
   return (
@@ -60,9 +102,15 @@ export default function MyDayToggle(props: DoctorDayProps) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <h2 style={{ margin: 0 }}>My Day</h2>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button type="button" className="btn btn--ghost" onClick={goToMyWeek}>
-              My Week
-            </button>
+            {SHOW_LEGACY_MY_WEEK_NAV ? (
+              <button type="button" className="btn btn--ghost" onClick={goToMyWeek}>
+                My Week
+              </button>
+            ) : (
+              <button type="button" className="btn btn--ghost" onClick={goToPracticeCalendar}>
+                Practice calendar
+              </button>
+            )}
             <span className="muted" style={{ fontSize: 12 }}>
               View:
             </span>
