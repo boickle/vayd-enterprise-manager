@@ -1,0 +1,294 @@
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
+import {
+  formatAddressFields,
+  placeDetailsToAddressFields,
+  publicGeoAutocomplete,
+  publicGeoPlaceDetails,
+  type GeoAutocompleteSuggestion,
+} from '../api/geo';
+
+export type AddressFields = {
+  line1: string;
+  line2?: string;
+  city: string;
+  state: string;
+  zip: string;
+  country: string;
+  lat?: number;
+  lon?: number;
+};
+
+type AddressAutocompleteProps = {
+  value: AddressFields;
+  onChange: (address: AddressFields) => void;
+  error?: string;
+  placeholder?: string;
+  id?: string;
+  /** Reset zone/vet lookups when address changes */
+  onAddressResolved?: () => void;
+};
+
+function newSessionToken(): string {
+  return crypto.randomUUID();
+}
+
+function isAddressComplete(addr: AddressFields): boolean {
+  return Boolean(
+    addr.line1?.trim() && addr.city?.trim() && addr.state?.trim() && addr.zip?.trim()
+  );
+}
+
+export function AddressAutocomplete({
+  value,
+  onChange,
+  error,
+  placeholder = 'Start typing your address',
+  id: idProp,
+  onAddressResolved,
+}: AddressAutocompleteProps) {
+  const autoId = useId();
+  const inputId = idProp ?? `address-autocomplete-${autoId}`;
+  const listboxId = `${inputId}-listbox`;
+
+  const [inputValue, setInputValue] = useState(() => formatAddressFields(value));
+  const [suggestions, setSuggestions] = useState<GeoAutocompleteSuggestion[]>([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [loadingPlace, setLoadingPlace] = useState(false);
+  const [highlightIndex, setHighlightIndex] = useState(-1);
+  const [placeSelected, setPlaceSelected] = useState(() => isAddressComplete(value));
+
+  const sessionTokenRef = useRef<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const skipSyncRef = useRef(false);
+
+  useEffect(() => {
+    if (skipSyncRef.current) {
+      skipSyncRef.current = false;
+      return;
+    }
+    const formatted = formatAddressFields(value);
+    if (formatted) {
+      setInputValue(formatted);
+      setPlaceSelected(isAddressComplete(value));
+    }
+  }, [value.line1, value.line2, value.city, value.state, value.zip]);
+
+  const ensureSessionToken = useCallback(() => {
+    if (!sessionTokenRef.current) {
+      sessionTokenRef.current = newSessionToken();
+    }
+    return sessionTokenRef.current;
+  }, []);
+
+  const clearSuggestions = useCallback(() => {
+    setSuggestions([]);
+    setOpen(false);
+    setHighlightIndex(-1);
+  }, []);
+
+  const fetchSuggestions = useCallback(
+    async (query: string) => {
+      if (query.trim().length < 3) {
+        clearSuggestions();
+        return;
+      }
+      setLoading(true);
+      try {
+        const token = ensureSessionToken();
+        const results = await publicGeoAutocomplete(query.trim(), token, { country: 'US' });
+        setSuggestions(results);
+        setOpen(results.length > 0);
+        setHighlightIndex(-1);
+      } catch {
+        clearSuggestions();
+      } finally {
+        setLoading(false);
+      }
+    },
+    [clearSuggestions, ensureSessionToken]
+  );
+
+  const handleInputChange = (text: string) => {
+    setInputValue(text);
+    setPlaceSelected(false);
+    sessionTokenRef.current = newSessionToken();
+
+    skipSyncRef.current = true;
+    onChange({
+      line1: '',
+      line2: undefined,
+      city: '',
+      state: '',
+      zip: '',
+      country: 'US',
+      lat: undefined,
+      lon: undefined,
+    });
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      fetchSuggestions(text);
+    }, 300);
+  };
+
+  const selectSuggestion = async (suggestion: GeoAutocompleteSuggestion) => {
+    setLoadingPlace(true);
+    setOpen(false);
+    setInputValue(suggestion.description);
+    try {
+      const token = sessionTokenRef.current ?? newSessionToken();
+      const details = await publicGeoPlaceDetails(suggestion.placeId, token);
+      const fields = placeDetailsToAddressFields(details);
+      skipSyncRef.current = true;
+      onChange(fields);
+      setInputValue(details.formattedAddress);
+      setPlaceSelected(true);
+      sessionTokenRef.current = newSessionToken();
+      onAddressResolved?.();
+    } catch {
+      setPlaceSelected(false);
+    } finally {
+      setLoadingPlace(false);
+      clearSuggestions();
+    }
+  };
+
+  const handleFocus = () => {
+    ensureSessionToken();
+    if (inputValue.trim().length >= 3 && suggestions.length > 0) {
+      setOpen(true);
+    }
+  };
+
+  const handleBlur = (e: React.FocusEvent) => {
+    const related = e.relatedTarget as Node | null;
+    if (related && containerRef.current?.contains(related)) return;
+    setTimeout(() => setOpen(false), 150);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!open || suggestions.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightIndex((i) => (i + 1) % suggestions.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightIndex((i) => (i <= 0 ? suggestions.length - 1 : i - 1));
+    } else if (e.key === 'Enter' && highlightIndex >= 0) {
+      e.preventDefault();
+      selectSuggestion(suggestions[highlightIndex]);
+    } else if (e.key === 'Escape') {
+      clearSuggestions();
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
+
+  const showHint = inputValue.trim().length > 0 && inputValue.trim().length < 3;
+  const busy = loading || loadingPlace;
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative' }}>
+      <input
+        id={inputId}
+        type="text"
+        role="combobox"
+        aria-expanded={open}
+        aria-controls={listboxId}
+        aria-autocomplete="list"
+        autoComplete="off"
+        value={inputValue}
+        onChange={(e) => handleInputChange(e.target.value)}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder}
+        style={{
+          width: '100%',
+          padding: '12px',
+          border: `1px solid ${error ? '#ef4444' : '#d1d5db'}`,
+          borderRadius: '8px',
+          fontSize: '14px',
+        }}
+      />
+      {busy && (
+        <div
+          style={{
+            position: 'absolute',
+            right: '12px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            fontSize: '12px',
+            color: '#6b7280',
+          }}
+        >
+          …
+        </div>
+      )}
+      {showHint && (
+        <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+          Type at least 3 characters to search
+        </div>
+      )}
+      {open && suggestions.length > 0 && (
+        <ul
+          id={listboxId}
+          role="listbox"
+          style={{
+            position: 'absolute',
+            zIndex: 50,
+            top: '100%',
+            left: 0,
+            right: 0,
+            margin: '4px 0 0',
+            padding: 0,
+            listStyle: 'none',
+            backgroundColor: '#fff',
+            border: '1px solid #d1d5db',
+            borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+            maxHeight: '240px',
+            overflowY: 'auto',
+          }}
+        >
+          {suggestions.map((s, index) => (
+            <li
+              key={s.placeId}
+              role="option"
+              aria-selected={index === highlightIndex}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => selectSuggestion(s)}
+              style={{
+                padding: '10px 12px',
+                cursor: 'pointer',
+                backgroundColor: index === highlightIndex ? '#f0fdf4' : '#fff',
+                borderBottom: index < suggestions.length - 1 ? '1px solid #f3f4f6' : undefined,
+              }}
+            >
+              <div style={{ fontSize: '14px', fontWeight: 500, color: '#111827' }}>{s.mainText}</div>
+              {s.secondaryText && (
+                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>
+                  {s.secondaryText}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {placeSelected && isAddressComplete(value) && !error && (
+        <div style={{ fontSize: '12px', color: '#059669', marginTop: '6px' }}>
+          Address confirmed
+        </div>
+      )}
+      {error && (
+        <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>{error}</div>
+      )}
+    </div>
+  );
+}

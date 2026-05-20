@@ -103,3 +103,117 @@ export async function validateAddress(
     };
   }
 }
+
+// ------------------------------
+// Places autocomplete
+// ------------------------------
+export type GeoAutocompleteSuggestion = {
+  placeId: string;
+  description: string;
+  mainText: string;
+  secondaryText: string;
+};
+
+export type GeoStructuredAddress = {
+  address1: string;
+  address2: string | null;
+  city: string;
+  state: string;
+  zipcode: string;
+  country: string;
+};
+
+export type GeoPlaceDetails = {
+  placeId: string;
+  formattedAddress: string;
+  lat: number;
+  lon: number;
+  address: GeoStructuredAddress;
+};
+
+export type GeoAutocompleteOpts = {
+  country?: string;
+  adminArea?: string;
+  bounds?: ForwardGeocodeOpts['bounds'];
+};
+
+function autocompleteParams(
+  q: string,
+  sessionToken: string,
+  opts?: GeoAutocompleteOpts
+): Record<string, string> {
+  const params: Record<string, string> = { q, sessionToken };
+  if (opts?.country) params.country = opts.country;
+  if (opts?.adminArea) params.adminArea = opts.adminArea;
+  const bounds = boundsToParam(opts?.bounds);
+  if (bounds) params.bounds = bounds;
+  return params;
+}
+
+export async function publicGeoAutocomplete(
+  q: string,
+  sessionToken: string,
+  opts?: GeoAutocompleteOpts
+): Promise<GeoAutocompleteSuggestion[]> {
+  const { data } = await http.get('/public/geo/autocomplete', {
+    params: autocompleteParams(q, sessionToken, opts),
+  });
+  return Array.isArray(data?.suggestions) ? data.suggestions : [];
+}
+
+export async function publicGeoPlaceDetails(
+  placeId: string,
+  sessionToken: string
+): Promise<GeoPlaceDetails> {
+  const { data } = await http.get(`/public/geo/place/${encodeURIComponent(placeId)}`, {
+    params: { sessionToken },
+  });
+  return data as GeoPlaceDetails;
+}
+
+export async function geoAutocomplete(
+  q: string,
+  sessionToken: string,
+  opts?: GeoAutocompleteOpts
+): Promise<GeoAutocompleteSuggestion[]> {
+  const { data } = await http.get('/geo/autocomplete', {
+    params: autocompleteParams(q, sessionToken, opts),
+  });
+  return Array.isArray(data?.suggestions) ? data.suggestions : [];
+}
+
+export async function geoPlaceDetails(
+  placeId: string,
+  sessionToken: string
+): Promise<GeoPlaceDetails> {
+  const { data } = await http.get(`/geo/place/${encodeURIComponent(placeId)}`, {
+    params: { sessionToken },
+  });
+  return data as GeoPlaceDetails;
+}
+
+export function placeDetailsToAddressFields(details: GeoPlaceDetails) {
+  const { address: a } = details;
+  return {
+    line1: a.address1 || '',
+    line2: a.address2 || undefined,
+    city: a.city || '',
+    state: a.state || '',
+    zip: a.zipcode || '',
+    country: a.country || 'US',
+    lat: details.lat,
+    lon: details.lon,
+  };
+}
+
+export function formatAddressFields(addr: {
+  line1?: string;
+  line2?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+}): string {
+  const line = [addr.line1, addr.line2].filter(Boolean).join(', ');
+  const locality = [addr.city, addr.state, addr.zip].filter(Boolean).join(', ');
+  return [line, locality].filter(Boolean).join(', ');
+}
