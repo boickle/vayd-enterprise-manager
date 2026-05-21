@@ -124,6 +124,37 @@ export async function deleteAppointment(id: number | string): Promise<void> {
   await http.delete(`/appointments/${encodeURIComponent(String(id))}`);
 }
 
+/** Body for POST /appointments/:id/actual-start and .../actual-end */
+export type AppointmentActualTimeBody = {
+  /** Strict ISO8601 with offset or Z; omit for server “now”. */
+  at?: string;
+  clear?: boolean;
+};
+
+/** POST /appointments/:id/actual-start — record or clear real visit start. */
+export async function postAppointmentActualStart(
+  id: number | string,
+  body: AppointmentActualTimeBody = {}
+): Promise<Appointment> {
+  const { data } = await http.post<Appointment>(
+    `/appointments/${encodeURIComponent(String(id))}/actual-start`,
+    body
+  );
+  return data;
+}
+
+/** POST /appointments/:id/actual-end — record or clear real visit end. */
+export async function postAppointmentActualEnd(
+  id: number | string,
+  body: AppointmentActualTimeBody = {}
+): Promise<Appointment> {
+  const { data } = await http.post<Appointment>(
+    `/appointments/${encodeURIComponent(String(id))}/actual-end`,
+    body
+  );
+  return data;
+}
+
 export type Depot = {
   lat: number;
   lon: number;

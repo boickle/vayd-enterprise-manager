@@ -245,6 +245,10 @@ export type Appointment = {
   description?: string | null;
   appointmentStart: string;
   appointmentEnd: string;
+  /** Real visit start (doctor); null when not recorded. */
+  appointmentStartActual?: string | null;
+  /** Real visit end (doctor); null when not recorded. */
+  appointmentEndActual?: string | null;
   isComplete: boolean;
   allDay: boolean;
   instructions?: string | null;
