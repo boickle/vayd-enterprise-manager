@@ -2896,77 +2896,79 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
       if (cancelled) return;
 
-      for (const date of dates) {
-        try {
-          const { bundle: rawBundle, membershipByApptId, zonesByApptId, patientPrimaryProviderByApptId } =
-            await fetchSchedulerDoctorDayBundle(date, docId, driveRoutingOpts);
-          if (cancelled) return;
+      await Promise.all(
+        dates.map(async (date) => {
+          try {
+            const { bundle: rawBundle, membershipByApptId, zonesByApptId, patientPrimaryProviderByApptId } =
+              await fetchSchedulerDoctorDayBundle(date, docId, driveRoutingOpts);
+            if (cancelled) return;
 
-          const dayIn = applyScheduleOverrideToDayBundle(
-            rawBundle,
-            overridesByDate.get(date) ?? null
-          );
+            const dayIn = applyScheduleOverrideToDayBundle(
+              rawBundle,
+              overridesByDate.get(date) ?? null
+            );
 
-          setDoctorDayMembershipByApptId((prev) => {
-            const m = new Map(prev);
-            for (const [k, v] of membershipByApptId) {
-              m.set(k, v);
-            }
-            return m;
-          });
-          setDoctorDayZonesByApptId((prev) => {
-            const m = new Map(prev);
-            for (const [k, v] of zonesByApptId) {
-              m.set(k, v);
-            }
-            return m;
-          });
-          setDoctorDayPatientPcpByApptId((prev) => {
-            const m = new Map(prev);
-            for (const [k, v] of patientPrimaryProviderByApptId) {
-              m.set(k, v);
-            }
-            return m;
-          });
+            setDoctorDayMembershipByApptId((prev) => {
+              const m = new Map(prev);
+              for (const [k, v] of membershipByApptId) {
+                m.set(k, v);
+              }
+              return m;
+            });
+            setDoctorDayZonesByApptId((prev) => {
+              const m = new Map(prev);
+              for (const [k, v] of zonesByApptId) {
+                m.set(k, v);
+              }
+              return m;
+            });
+            setDoctorDayPatientPcpByApptId((prev) => {
+              const m = new Map(prev);
+              for (const [k, v] of patientPrimaryProviderByApptId) {
+                m.set(k, v);
+              }
+              return m;
+            });
 
-          if (!dayIn) {
+            if (!dayIn) {
+              markFirstData();
+              return;
+            }
+
+            const interim = schedulerDriveScheduleOnlyFromBundle(dayIn);
+            setDriveDayByDate((prev) => new Map(prev).set(interim.date, interim.dayData));
+
+            if (!canDrive) {
+              markFirstData();
+              return;
+            }
+
+            setDriveIsoByApptId((prev) => {
+              const m = new Map(prev);
+              for (const [k, v] of interim.isoPairs) {
+                m.set(k, v);
+              }
+              return m;
+            });
             markFirstData();
-            continue;
+
+            const r = await fetchSchedulerDriveEtasForDayBundle(dayIn, docId, driveRoutingOpts);
+            if (cancelled) return;
+            setDriveDayByDate((prev) => new Map(prev).set(r.date, r.dayData));
+            setDriveIsoByApptId((prev) => {
+              const m = new Map(prev);
+              for (const [k, v] of r.isoPairs) {
+                m.set(k, v);
+              }
+              return m;
+            });
+          } catch {
+            /* skip day — other dates may still succeed */
+          } finally {
+            bumpDone();
           }
-
-          const interim = schedulerDriveScheduleOnlyFromBundle(dayIn);
-          setDriveDayByDate((prev) => new Map(prev).set(interim.date, interim.dayData));
-
-          if (!canDrive) {
-            markFirstData();
-            continue;
-          }
-
-          setDriveIsoByApptId((prev) => {
-            const m = new Map(prev);
-            for (const [k, v] of interim.isoPairs) {
-              m.set(k, v);
-            }
-            return m;
-          });
-          markFirstData();
-
-          const r = await fetchSchedulerDriveEtasForDayBundle(dayIn, docId, driveRoutingOpts);
-          if (cancelled) return;
-          setDriveDayByDate((prev) => new Map(prev).set(r.date, r.dayData));
-          setDriveIsoByApptId((prev) => {
-            const m = new Map(prev);
-            for (const [k, v] of r.isoPairs) {
-              m.set(k, v);
-            }
-            return m;
-          });
-        } catch {
-          /* skip day — other dates may still succeed */
-        } finally {
-          bumpDone();
-        }
-      }
+        })
+      );
     })();
 
     return () => {
