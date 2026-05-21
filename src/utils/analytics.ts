@@ -16,19 +16,55 @@ declare global {
   }
 }
 
+const gaMeasurementId = import.meta.env.VITE_GA_MEASUREMENT_ID as string | undefined;
+
 /**
- * Initialize Google Analytics
- * This should be called once when the app loads
+ * Create dataLayer + gtag stub immediately so events queue before gtag.js loads.
+ * Without this, early events can fire with no params or be dropped entirely.
+ */
+export const ensureGtagReady = (): void => {
+  if (typeof window === 'undefined') return;
+  window.dataLayer = window.dataLayer || [];
+  if (!window.gtag) {
+    window.gtag = function () {
+      // eslint-disable-next-line prefer-rest-params
+      window.dataLayer.push(arguments);
+    };
+  }
+};
+
+/**
+ * GA4 can omit or mishandle undefined/null and boolean custom params in some reports.
+ * Send primitives only (string | number).
+ */
+export const sanitizeGa4EventParams = (
+  params?: Record<string, unknown>
+): Record<string, string | number> => {
+  if (!params) return {};
+  const out: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === 'boolean') {
+      out[key] = value ? 'true' : 'false';
+    } else if (typeof value === 'number' && Number.isFinite(value)) {
+      out[key] = value;
+    } else if (typeof value === 'string' && value.length > 0) {
+      out[key] = value;
+    } else {
+      out[key] = String(value);
+    }
+  }
+  return out;
+};
+
+/**
+ * Initialize Google Analytics (call after gtag.js script loads, or immediately after ensureGtagReady).
  */
 export const initGA = (measurementId?: string, additionalTagIds: string[] = []): void => {
   if (typeof window === 'undefined') return;
   if (!measurementId && additionalTagIds.length === 0) return;
 
-  // Initialize dataLayer
-  window.dataLayer = window.dataLayer || [];
-  window.gtag = function () {
-    window.dataLayer.push(arguments);
-  };
+  ensureGtagReady();
   window.gtag('js', new Date());
 
   if (measurementId) {
@@ -48,10 +84,11 @@ export const initGA = (measurementId?: string, additionalTagIds: string[] = []):
  * Track a page view
  */
 export const trackPageView = (path: string, title?: string): void => {
-  if (typeof window === 'undefined' || !window.gtag) return;
-  if (!import.meta.env.VITE_GA_MEASUREMENT_ID) return;
+  if (typeof window === 'undefined') return;
+  if (!gaMeasurementId) return;
 
-  window.gtag('config', import.meta.env.VITE_GA_MEASUREMENT_ID, {
+  ensureGtagReady();
+  window.gtag('config', gaMeasurementId, {
     page_path: path,
     page_title: title || document.title,
   });
@@ -62,11 +99,25 @@ export const trackPageView = (path: string, title?: string): void => {
  */
 export const trackEvent = (
   eventName: string,
-  eventParams?: Record<string, any>
+  eventParams?: Record<string, unknown>
 ): void => {
-  if (typeof window === 'undefined' || !window.gtag) return;
+  if (typeof window === 'undefined') return;
 
-  window.gtag('event', eventName, eventParams);
+  ensureGtagReady();
+
+  const sanitized = sanitizeGa4EventParams(eventParams);
+  const payload: Record<string, string | number> = { ...sanitized };
+
+  // When GA4 + Google Ads tags are both configured, send custom params to GA4 explicitly.
+  if (gaMeasurementId) {
+    payload.send_to = gaMeasurementId;
+  }
+
+  if (Object.keys(payload).length > 0) {
+    window.gtag('event', eventName, payload);
+  } else {
+    window.gtag('event', eventName);
+  }
 };
 
 /**

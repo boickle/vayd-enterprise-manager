@@ -5,7 +5,7 @@ import App from './App';
 import './styles.css';
 import { AuthProvider } from './auth/AuthProvider';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { initGA } from './utils/analytics';
+import { ensureGtagReady, initGA } from './utils/analytics';
 
 // Prevent iOS Safari address bar from showing on scroll
 if (typeof window !== 'undefined') {
@@ -35,13 +35,15 @@ if (typeof window !== 'undefined') {
   const initialTagId = gaMeasurementId || googleAdsTagId;
 
   if (initialTagId) {
-    // Load gtag script once
+    // Stub + config immediately so early events (e.g. appointment form) keep parameters.
+    ensureGtagReady();
+    initGA(gaMeasurementId, googleAdsTagId ? [googleAdsTagId] : []);
+
     const script = document.createElement('script');
     script.async = true;
     script.src = `https://www.googletagmanager.com/gtag/js?id=${initialTagId}`;
     document.head.appendChild(script);
 
-    // Initialize tags after script loads
     script.onload = () => {
       initGA(gaMeasurementId, googleAdsTagId ? [googleAdsTagId] : []);
     };

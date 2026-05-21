@@ -1,6 +1,139 @@
 /// <reference types="cypress" />
 import '../support/e2e';
 
+type GeoAddressPreset = {
+  suggestion: {
+    placeId: string;
+    description: string;
+    mainText: string;
+    secondaryText: string;
+  };
+  place: {
+    placeId: string;
+    formattedAddress: string;
+    lat: number;
+    lon: number;
+    address: {
+      address1: string;
+      address2: string | null;
+      city: string;
+      state: string;
+      zipcode: string;
+      country: string;
+    };
+  };
+};
+
+const GEO_ADDRESSES: Record<string, GeoAddressPreset> = {
+  durham: {
+    suggestion: {
+      placeId: 'place-durham',
+      description: '24 Orchard Ln, Durham, ME 04111, USA',
+      mainText: '24 Orchard Ln',
+      secondaryText: 'Durham, ME 04111, USA',
+    },
+    place: {
+      placeId: 'place-durham',
+      formattedAddress: '24 Orchard Ln, Durham, ME 04111, USA',
+      lat: 43.9,
+      lon: -70.2,
+      address: {
+        address1: '24 Orchard Ln',
+        address2: null,
+        city: 'Durham',
+        state: 'ME',
+        zipcode: '04111',
+        country: 'US',
+      },
+    },
+  },
+  freeport: {
+    suggestion: {
+      placeId: 'place-freeport',
+      description: '456 Oak Ave, Freeport, ME 04032, USA',
+      mainText: '456 Oak Ave',
+      secondaryText: 'Freeport, ME 04032, USA',
+    },
+    place: {
+      placeId: 'place-freeport',
+      formattedAddress: '456 Oak Ave, Freeport, ME 04032, USA',
+      lat: 43.85,
+      lon: -70.1,
+      address: {
+        address1: '456 Oak Ave',
+        address2: null,
+        city: 'Freeport',
+        state: 'ME',
+        zipcode: '04032',
+        country: 'US',
+      },
+    },
+  },
+  portland: {
+    suggestion: {
+      placeId: 'place-portland',
+      description: '789 Emergency St, Portland, ME 04101, USA',
+      mainText: '789 Emergency St',
+      secondaryText: 'Portland, ME 04101, USA',
+    },
+    place: {
+      placeId: 'place-portland',
+      formattedAddress: '789 Emergency St, Portland, ME 04101, USA',
+      lat: 43.65,
+      lon: -70.25,
+      address: {
+        address1: '789 Emergency St',
+        address2: null,
+        city: 'Portland',
+        state: 'ME',
+        zipcode: '04101',
+        country: 'US',
+      },
+    },
+  },
+  augusta: {
+    suggestion: {
+      placeId: 'place-augusta',
+      description: '999 New Address St, Augusta, ME 04330, USA',
+      mainText: '999 New Address St',
+      secondaryText: 'Augusta, ME 04330, USA',
+    },
+    place: {
+      placeId: 'place-augusta',
+      formattedAddress: '999 New Address St, Augusta, ME 04330, USA',
+      lat: 44.31,
+      lon: -69.77,
+      address: {
+        address1: '999 New Address St',
+        address2: null,
+        city: 'Augusta',
+        state: 'ME',
+        zipcode: '04330',
+        country: 'US',
+      },
+    },
+  },
+};
+
+function stubGeoAddress(preset: keyof typeof GEO_ADDRESSES) {
+  const { suggestion, place } = GEO_ADDRESSES[preset];
+  cy.intercept('GET', '**/public/geo/autocomplete*', {
+    statusCode: 200,
+    body: { suggestions: [suggestion] },
+  }).as('geoAutocomplete');
+  cy.intercept('GET', '**/public/geo/place/*', {
+    statusCode: 200,
+    body: place,
+  }).as('geoPlace');
+}
+
+function pickAddress(inputId: string, query: string, description: string) {
+  cy.get(`#${inputId}`).type(query);
+  cy.wait('@geoAutocomplete');
+  cy.get(`#${inputId}-listbox`).contains(description).click();
+  cy.wait('@geoPlace');
+}
+
 describe('Appointment Request Form - Complete Flow Tests', () => {
   const clientEmail = Cypress.env('CLIENT_EMAIL');
   const clientPassword = Cypress.env('CLIENT_PASSWORD');
@@ -50,10 +183,8 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       cy.contains('button', 'Next').click();
 
       // Step 2: New Client Page - Address and vet info
-      cy.get('input[placeholder="Street Address"]').type('24 Orchard Ln');
-      cy.get('input[placeholder="City"]').type('Durham');
-      cy.get('input[placeholder="State"]').type('ME');
-      cy.get('input[placeholder="Zip"]').type('04111');
+      stubGeoAddress('durham');
+      pickAddress('physical-address', '24 Orchard', GEO_ADDRESSES.durham.suggestion.description);
       cy.wait('@getPublicVeterinarians');
       
       // Wait for veterinarians to load and select first veterinarian (index 1, after "I have no preference")
@@ -89,13 +220,10 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       
       // Select species - find the species dropdown (it's a select element)
       cy.get('label').contains('Species').parent().find('select').first().select('2'); // Feline
-      cy.wait('@getBreeds', { timeout: 15000 });
       
-      // Select breed (using type-ahead) - wait for the input to be enabled
+      // Enter breed as free-form text
       cy.get('label').contains('Breed').parent().find('input[type="text"]').first().should('not.be.disabled');
-      cy.get('label').contains('Breed').parent().find('input[type="text"]').first().type('Maine');
-      cy.wait(500); // Wait for dropdown to appear
-      cy.get('div').contains('Maine Coon').first().click();
+      cy.get('label').contains('Breed').parent().find('input[type="text"]').first().type('Maine Coon');
       
       cy.get('input[placeholder="e.g., 5 years"]').first().type('5 years');
       cy.get('label').contains('Spayed/Neutered').parent().find('select').first().select('Yes');
@@ -165,8 +293,7 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
         expect(payload.newClientPets[0].name).to.equal('Fluffy');
         expect(payload.newClientPets[0].species).to.exist;
         expect(payload.newClientPets[0].speciesId).to.exist;
-        expect(payload.newClientPets[0].breed).to.include('Maine');
-        expect(payload.newClientPets[0].breedId).to.exist;
+        expect(payload.newClientPets[0].breed).to.equal('Maine Coon');
         expect(payload.newClientPets[0].age).to.equal('5 years');
         expect(payload.newClientPets[0].spayedNeutered).to.equal('Yes');
         expect(payload.newClientPets[0].color).to.equal('Orange');
@@ -215,10 +342,8 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       cy.contains('button', 'Next').click();
 
       // Step 2: New Client Page - Address and vet info
-      cy.get('input[placeholder="Street Address"]').type('24 Orchard Ln');
-      cy.get('input[placeholder="City"]').type('Durham');
-      cy.get('input[placeholder="State"]').type('ME');
-      cy.get('input[placeholder="Zip"]').type('04111');
+      stubGeoAddress('durham');
+      pickAddress('physical-address', '24 Orchard', GEO_ADDRESSES.durham.suggestion.description);
       cy.wait('@getPublicVeterinarians');
       
       // Wait for veterinarians to load and select "I have no preference"
@@ -239,13 +364,10 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       
       // Select species - find the species dropdown (it's a select element)
       cy.get('label').contains('Species').parent().find('select').first().select('2'); // Feline
-      cy.wait('@getBreeds', { timeout: 15000 });
       
-      // Select breed (using type-ahead) - wait for the input to be enabled
+      // Enter breed as free-form text
       cy.get('label').contains('Breed').parent().find('input[type="text"]').first().should('not.be.disabled');
-      cy.get('label').contains('Breed').parent().find('input[type="text"]').first().type('Maine');
-      cy.wait(500); // Wait for dropdown to appear
-      cy.get('div').contains('Maine Coon').first().click();
+      cy.get('label').contains('Breed').parent().find('input[type="text"]').first().type('Maine Coon');
       
       cy.get('input[placeholder="e.g., 5 years"]').first().type('5 years');
       cy.get('label').contains('Spayed/Neutered').parent().find('select').first().select('Yes');
@@ -333,10 +455,8 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       cy.contains('button', 'Next').click();
 
       // Address page
-      cy.get('input[placeholder="Street Address"]').type('456 Oak Ave');
-      cy.get('input[placeholder="City"]').type('Freeport');
-      cy.get('input[placeholder="State"]').type('ME');
-      cy.get('input[placeholder="Zip"]').type('04032');
+      stubGeoAddress('freeport');
+      pickAddress('physical-address', '456 Oak', GEO_ADDRESSES.freeport.suggestion.description);
       cy.wait('@getPublicVeterinarians');
       
       cy.get('select').then(($select) => {
@@ -356,10 +476,7 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       
       cy.get('input[placeholder="Enter pet name"]').first().type('Buddy');
       cy.get('label').contains('Species').parent().find('select').first().select('1'); // Canine
-      cy.wait('@getBreeds');
-      cy.get('label').contains('Breed').parent().find('input[type="text"]').first().type('Golden');
-      cy.wait(500);
-      cy.get('div').contains('Golden Retriever').first().click();
+      cy.get('label').contains('Breed').parent().find('input[type="text"]').first().type('Golden Retriever');
       cy.get('input[placeholder="e.g., 5 years"]').first().type('3 years');
       cy.get('label').contains('Spayed/Neutered').parent().find('select').first().select('Yes');
       cy.get('input[placeholder="Color"]').first().type('Golden');
@@ -374,14 +491,8 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       
       cy.get('input[placeholder="Enter pet name"]').last().type('Max');
       cy.get('label').contains('Species').parent().find('select').last().select('1'); // Canine
-      // Wait a bit for breeds to load (might reuse breeds if same species, so API call might not happen)
-      cy.wait(2000);
-      // Verify breed input is enabled (breeds should be loaded) - scroll into view first
       cy.get('label').contains('Breed').parent().find('input[type="text"]').last().scrollIntoView({ offset: { top: -100, left: 0 } }).should('not.be.disabled');
-      cy.get('label').contains('Breed').parent().find('input[type="text"]').last().clear().type('Labrador', { force: true });
-      cy.wait(1000); // Wait for dropdown to appear
-      // Click on Labrador from the dropdown
-      cy.get('div').contains('Labrador', { timeout: 5000 }).first().click();
+      cy.get('label').contains('Breed').parent().find('input[type="text"]').last().clear().type('Labrador Retriever', { force: true });
       cy.get('input[placeholder="e.g., 5 years"]').last().type('2 years');
       cy.get('label').contains('Spayed/Neutered').parent().find('select').last().select('No');
       cy.get('input[placeholder="Color"]').last().type('Black');
@@ -445,10 +556,8 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       cy.contains('Can we text this number').parent().find('input[value="Yes"]').check();
       cy.contains('button', 'Next').click();
 
-      cy.get('input[placeholder="Street Address"]').type('789 Emergency St');
-      cy.get('input[placeholder="City"]').type('Portland');
-      cy.get('input[placeholder="State"]').type('ME');
-      cy.get('input[placeholder="Zip"]').type('04101');
+      stubGeoAddress('portland');
+      pickAddress('physical-address', '789 Emer', GEO_ADDRESSES.portland.suggestion.description);
       cy.wait('@getPublicVeterinarians');
       
       cy.get('select').then(($select) => {
@@ -468,10 +577,7 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       
       cy.get('input[placeholder="Enter pet name"]').first().type('Emergency Pet');
       cy.get('label').contains('Species').parent().find('select').first().select('1');
-      cy.wait('@getBreeds');
-      cy.get('label').contains('Breed').parent().find('input[type="text"]').first().type('Mix');
-      cy.wait(500);
-      cy.get('div').contains('Mixed').first().click();
+      cy.get('label').contains('Breed').parent().find('input[type="text"]').first().type('Mixed Breed');
       cy.get('input[placeholder="e.g., 5 years"]').first().type('8 years');
       cy.get('label').contains('Spayed/Neutered').parent().find('select').first().select('Yes');
       cy.get('input[placeholder="Color"]').first().type('Brown');
@@ -649,10 +755,7 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       
       cy.get('input[placeholder="Enter pet name"]').last().type('New Pet');
       cy.get('label').contains('Species').parent().find('select').last().select('2'); // Feline
-      cy.wait('@getBreeds');
       cy.get('label').contains('Breed').parent().find('input[type="text"]').last().type('Siamese');
-      cy.wait(500);
-      cy.get('div').contains('Siamese').first().click();
       cy.get('input[placeholder="e.g., 5 years"]').last().type('1 year');
       cy.get('label').contains('Spayed/Neutered').parent().find('select').last().select('Yes');
       cy.get('input[placeholder="Color"]').last().type('Seal Point');
@@ -697,7 +800,7 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
         expect(payload.existingClientNewPets.length).to.equal(1);
         expect(payload.existingClientNewPets[0].name).to.equal('New Pet');
         expect(payload.existingClientNewPets[0].speciesId).to.exist;
-        expect(payload.existingClientNewPets[0].breedId).to.exist;
+        expect(payload.existingClientNewPets[0].breed).to.equal('Siamese');
         expect(payload.existingClientNewPets[0].weight).to.equal(8);
         
         // Verify pet specific data includes both pets
@@ -728,11 +831,9 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       // Answer "No" to address question
       cy.contains('Is this the address where we will come to see you').parent().find('input[value="No"]').check();
       
-      // Enter new address - find the input field after answering "No"
-      cy.contains('Please let us know where we will meet you').parent().parent().find('input[placeholder="Street Address"]').type('999 New Address St');
-      cy.get('input[placeholder="City"]').last().type('Augusta');
-      cy.get('input[placeholder="State"]').last().type('ME');
-      cy.get('input[placeholder="Zip"]').last().type('04330');
+      // Enter new address via autocomplete
+      stubGeoAddress('augusta');
+      pickAddress('new-physical-address', '999 New', GEO_ADDRESSES.augusta.suggestion.description);
       cy.wait('@checkZone');
       // Wait for veterinarians dropdown to be ready instead of API call
       cy.get('select').should('not.contain', 'Loading doctors...', { timeout: 20000 });
