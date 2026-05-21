@@ -3390,13 +3390,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                       {showWindow && (
                         <span>
                           <b>Window of arrival:</b>{' '}
-                          {hoverCard.isFixedTime ? (
-                            <>
-                              {formatIsoTimeShortInPracticeZone(hoverCard.startIso, practiceTzHover)}
-                              {' – '}
-                              {formatIsoTimeShortInPracticeZone(hoverCard.endIso, practiceTzHover)}
-                            </>
-                          ) : (
+                          {hoverCard.windowStartIso || hoverCard.windowEndIso ? (
                             <>
                               {hoverCard.windowStartIso
                                 ? formatIsoTimeShortInPracticeZone(hoverCard.windowStartIso, practiceTzHover)
@@ -3405,6 +3399,16 @@ export default function MyWeek(props: MyWeekProps = {}) {
                               {hoverCard.windowEndIso
                                 ? formatIsoTimeShortInPracticeZone(hoverCard.windowEndIso, practiceTzHover)
                                 : '—'}
+                            </>
+                          ) : hoverCard.isFixedTime ? (
+                            <>
+                              {formatIsoTimeShortInPracticeZone(hoverCard.startIso, practiceTzHover)}
+                              {' – '}
+                              {formatIsoTimeShortInPracticeZone(hoverCard.endIso, practiceTzHover)}
+                            </>
+                          ) : (
+                            <>
+                              {'— – —'}
                             </>
                           )}
                         </span>

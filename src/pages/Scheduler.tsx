@@ -1184,11 +1184,13 @@ function buildSchedulerDriveHintForAppt(
     (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
     (h as { windowStartIso?: string | null }).windowStartIso ??
     (h as { effectiveWindow?: { startIso?: string } }).effectiveWindow?.startIso ??
+    appt.effectiveWindow?.startIso ??
     null;
   const windowEndIso =
     (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
     (h as { windowEndIso?: string | null }).windowEndIso ??
     (h as { effectiveWindow?: { endIso?: string } }).effectiveWindow?.endIso ??
+    appt.effectiveWindow?.endIso ??
     null;
   const windowWarning = computeSchedulerTimelineWindowWarning(h, slot, showByDriveTime, (p) =>
     isFlexBlockItem(p as { blockLabel?: string; title?: string } | null | undefined)
@@ -1230,6 +1232,30 @@ function visitDetailsEtaEtdLine(driveHint: SchedulerHoverDriveHint | null | unde
   return `${e} – ${d}`;
 }
 
+/** Format arrival window for Visit Highlights (appointment-type windows, not booked slot). */
+function formatSchedulerArrivalWindowLine(hint: SchedulerHoverDriveHint): string {
+  const tz = hint.practiceTz;
+  if (hint.windowStartIso || hint.windowEndIso) {
+    const a = hint.windowStartIso
+      ? formatIsoTimeShortInPracticeZone(hint.windowStartIso, tz)
+      : '—';
+    const b = hint.windowEndIso
+      ? formatIsoTimeShortInPracticeZone(hint.windowEndIso, tz)
+      : '—';
+    return `${a} – ${b}`;
+  }
+  if (hint.isFixedTime && !hint.isPersonalBlock) {
+    const a = hint.schedStartIso
+      ? formatIsoTimeShortInPracticeZone(hint.schedStartIso, tz)
+      : '—';
+    const b = hint.schedEndIso
+      ? formatIsoTimeShortInPracticeZone(hint.schedEndIso, tz)
+      : '—';
+    return `${a} – ${b}`;
+  }
+  return '— – —';
+}
+
 /** Window / arrival range: drive-day slot when available, else appointment `arrivalWindow`. */
 function visitDetailsWindowLine(
   appt: Appointment,
@@ -1237,27 +1263,15 @@ function visitDetailsWindowLine(
 ): string | null {
   if (driveHint) {
     const showWindow =
-      !!(driveHint.windowStartIso || driveHint.windowEndIso) &&
-      !(driveHint.isPersonalBlock && driveHint.isFixedTime);
-    if (showWindow) {
-      const tz = driveHint.practiceTz;
-      if (driveHint.isFixedTime && !driveHint.isPersonalBlock) {
-        const a = driveHint.schedStartIso
-          ? formatIsoTimeShortInPracticeZone(driveHint.schedStartIso, tz)
-          : '—';
-        const b = driveHint.schedEndIso
-          ? formatIsoTimeShortInPracticeZone(driveHint.schedEndIso, tz)
-          : '—';
-        return `${a} – ${b}`;
-      }
-      const a = driveHint.windowStartIso
-        ? formatIsoTimeShortInPracticeZone(driveHint.windowStartIso, tz)
-        : '—';
-      const b = driveHint.windowEndIso
-        ? formatIsoTimeShortInPracticeZone(driveHint.windowEndIso, tz)
-        : '—';
-      return `${a} – ${b}`;
+      !!(driveHint.windowStartIso || driveHint.windowEndIso) ||
+      (driveHint.isFixedTime && !driveHint.isPersonalBlock && !!(driveHint.schedStartIso || driveHint.schedEndIso));
+    if (showWindow && !(driveHint.isPersonalBlock && driveHint.isFixedTime)) {
+      return formatSchedulerArrivalWindowLine(driveHint);
     }
+  }
+  const ew = appt.effectiveWindow;
+  if (ew?.startIso && ew?.endIso) {
+    return `${formatIsoTimeShortInPracticeZone(ew.startIso, PRACTICE_TZ)} – ${formatIsoTimeShortInPracticeZone(ew.endIso, PRACTICE_TZ)}`;
   }
   const aw = appt.arrivalWindow;
   if (aw?.windowStartLocal && aw?.windowEndLocal) {
@@ -1362,8 +1376,10 @@ function SchedulerHoverContent({
           (() => {
             const showArrive = !!(driveHint.etaIso || driveHint.etdIso);
             const showWindow =
-              !!(driveHint.windowStartIso || driveHint.windowEndIso) &&
-              !(driveHint.isPersonalBlock && driveHint.isFixedTime);
+              !!(driveHint.windowStartIso || driveHint.windowEndIso) ||
+              (driveHint.isFixedTime &&
+                !driveHint.isPersonalBlock &&
+                !!(driveHint.schedStartIso || driveHint.schedEndIso));
             if (!showArrive && !showWindow) return null;
             return (
               <div className="scheduler-tooltip-drive-block">
@@ -1378,29 +1394,9 @@ function SchedulerHoverContent({
                       : '—'}
                   </VisitHighlightsRow>
                 ) : null}
-                {showWindow ? (
+                {showWindow && !(driveHint.isPersonalBlock && driveHint.isFixedTime) ? (
                   <VisitHighlightsRow label="Window of arrival">
-                    {driveHint.isFixedTime && !driveHint.isPersonalBlock ? (
-                      <>
-                        {driveHint.schedStartIso
-                          ? formatIsoTimeShortInPracticeZone(driveHint.schedStartIso, driveHint.practiceTz)
-                          : '—'}
-                        {' – '}
-                        {driveHint.schedEndIso
-                          ? formatIsoTimeShortInPracticeZone(driveHint.schedEndIso, driveHint.practiceTz)
-                          : '—'}
-                      </>
-                    ) : (
-                      <>
-                        {driveHint.windowStartIso
-                          ? formatIsoTimeShortInPracticeZone(driveHint.windowStartIso, driveHint.practiceTz)
-                          : '—'}
-                        {' – '}
-                        {driveHint.windowEndIso
-                          ? formatIsoTimeShortInPracticeZone(driveHint.windowEndIso, driveHint.practiceTz)
-                          : '—'}
-                      </>
-                    )}
+                    {formatSchedulerArrivalWindowLine(driveHint)}
                   </VisitHighlightsRow>
                 ) : null}
               </div>
