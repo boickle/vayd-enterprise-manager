@@ -2600,6 +2600,18 @@ label.scheduler-go-date-heading {
   cursor: not-allowed;
 }
 
+.scheduler-actual-visit-scheduled {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.scheduler-actual-visit-footer {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 /* —— Appointment context (right-click) menu —— */
 .scheduler-ctx-menu {
   position: fixed;

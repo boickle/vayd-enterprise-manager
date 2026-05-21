@@ -43,7 +43,13 @@ export type SchedulerContextMenuAction =
   | { kind: 'checkout' }
   | { kind: 'contact'; channel: 'phone1' | 'phone2' | 'email1' | 'email2' }
   | { kind: 'addAnotherPet' }
-  | { kind: 'reschedule' };
+  | { kind: 'reschedule' }
+  | { kind: 'actualStartNow' }
+  | { kind: 'actualStartSet' }
+  | { kind: 'actualStartClear' }
+  | { kind: 'actualEndNow' }
+  | { kind: 'actualEndSet' }
+  | { kind: 'actualEndClear' };
 
 type Props = {
   appt: Appointment;
@@ -74,7 +80,12 @@ export function SchedulerAppointmentContextMenu({
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [placed, setPlaced] = useState<{ left: number; top: number } | null>(null);
-  const [openSub, setOpenSub] = useState<'status' | 'confirm' | 'contact' | null>(null);
+  const [openSub, setOpenSub] = useState<
+    'status' | 'confirm' | 'contact' | 'startVisit' | 'endVisit' | null
+  >(null);
+
+  const hasActualStart = Boolean(appt.appointmentStartActual);
+  const hasActualEnd = Boolean(appt.appointmentEndActual);
 
   useLayoutEffect(() => {
     const el = rootRef.current;
@@ -136,6 +147,30 @@ export function SchedulerAppointmentContextMenu({
         />
       ) : null}
       <CtxRow label="Complete" onPick={() => onAction({ kind: 'complete' })} />
+      <CtxParentRow
+        label="Start visit"
+        open={openSub === 'startVisit'}
+        onOpen={() => setOpenSub('startVisit')}
+        onCloseSub={() => setOpenSub(null)}
+      >
+        <CtxSubRow label="Use current time" onPick={() => onAction({ kind: 'actualStartNow' })} />
+        <CtxSubRow label="Set time…" onPick={() => onAction({ kind: 'actualStartSet' })} />
+        {hasActualStart ? (
+          <CtxSubRow label="Clear actual start" onPick={() => onAction({ kind: 'actualStartClear' })} />
+        ) : null}
+      </CtxParentRow>
+      <CtxParentRow
+        label="End visit"
+        open={openSub === 'endVisit'}
+        onOpen={() => setOpenSub('endVisit')}
+        onCloseSub={() => setOpenSub(null)}
+      >
+        <CtxSubRow label="Use current time" onPick={() => onAction({ kind: 'actualEndNow' })} />
+        <CtxSubRow label="Set time…" onPick={() => onAction({ kind: 'actualEndSet' })} />
+        {hasActualEnd ? (
+          <CtxSubRow label="Clear actual end" onPick={() => onAction({ kind: 'actualEndClear' })} />
+        ) : null}
+      </CtxParentRow>
       <CtxRow label="Remove" onPick={() => onAction({ kind: 'remove' })} />
       <CtxParentRow
         label="Status"

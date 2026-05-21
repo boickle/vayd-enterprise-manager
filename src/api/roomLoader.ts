@@ -245,6 +245,10 @@ export type Appointment = {
   description?: string | null;
   appointmentStart: string;
   appointmentEnd: string;
+  /** Real visit start (doctor); null when not recorded. */
+  appointmentStartActual?: string | null;
+  /** Real visit end (doctor); null when not recorded. */
+  appointmentEndActual?: string | null;
   isComplete: boolean;
   allDay: boolean;
   instructions?: string | null;
@@ -431,6 +435,78 @@ export async function searchRoomLoaders(params?: RoomLoaderSearchParams): Promis
 // Get single room loader by ID
 export async function getRoomLoader(id: number): Promise<RoomLoader> {
   const { data } = await http.get<RoomLoader>(`/room-loader/${id}`);
+  return data;
+}
+
+// =============================================================================
+// Room loader reconciliation (estimate vs chart)
+// =============================================================================
+
+export type SummaryLineItem = {
+  name?: string;
+  code?: string;
+  price?: number;
+  lineTotal?: number;
+  quantity?: number;
+  checked?: boolean;
+  crossedOut?: boolean;
+  uncheckable?: boolean;
+  declined?: boolean;
+  priceAdjustedByMembership?: boolean;
+  wellnessPlanPricing?: { priceAdjustedByMembership?: boolean; [key: string]: unknown };
+  searchableItem?: {
+    procedure?: { id?: number; code?: string };
+    inventoryItem?: { id?: number; code?: string };
+    lab?: { id?: number; code?: string };
+  };
+};
+
+export type SummaryForPdf = {
+  title?: string;
+  pets?: Array<{
+    patientId?: number;
+    id?: number;
+    patientName?: string;
+    subtotal?: number;
+    rows?: SummaryLineItem[];
+  }>;
+  grandTotal?: number;
+  additionalItems?: {
+    label?: string;
+    items?: SummaryLineItem[];
+    subtotal?: number;
+    tax?: number;
+    taxLabel?: string;
+  };
+};
+
+export type TreatmentItemLine = {
+  id: number;
+  quantity: number;
+  price: number;
+  serviceFee?: number;
+  totalPrice?: number | null;
+  minimumPrice?: number | null;
+  tierPrice?: number | null;
+  isDeclined: boolean;
+  serviceDate: string;
+  inventoryItem?: { id: number; name: string; code?: string; [key: string]: unknown };
+  procedure?: { id: number; name: string; code?: string; [key: string]: unknown };
+  lab?: { id: number; name: string; code?: string; [key: string]: unknown };
+  prescriptions?: Array<{ id?: number; name?: string; [key: string]: unknown }>;
+};
+
+export type RoomLoaderReconciliation = RoomLoader & {
+  reconciliation: true;
+  responseFromClient?: {
+    summaryForPdf?: SummaryForPdf;
+    formAnswersForPdf?: Record<string, unknown>;
+    [key: string]: unknown;
+  } | null;
+};
+
+export async function getRoomLoaderReconciliation(id: number): Promise<RoomLoaderReconciliation> {
+  const { data } = await http.get<RoomLoaderReconciliation>(`/room-loader/${id}/reconciliation`);
   return data;
 }
 

@@ -24,6 +24,8 @@ import {
   isBlockEntry,
   isFlexBlockItem,
   patchAppointment,
+  postAppointmentActualEnd,
+  postAppointmentActualStart,
   type DoctorDayPatientPrimaryProvider,
 } from '../api/appointments';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
@@ -84,6 +86,10 @@ import {
   SchedulerEditVisitModal,
   type SchedulerEditVisitModalHandle,
 } from './SchedulerEditVisitModal';
+import {
+  SchedulerActualVisitTimeModal,
+  type ActualVisitTimeField,
+} from './SchedulerActualVisitTimeModal';
 import {
   clearRoutingCalendarPreview,
   readRoutingCalendarPreview,
@@ -2225,6 +2231,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [contextMenu, setContextMenu] = useState<{ appt: Appointment; x: number; y: number } | null>(
     null
   );
+  const [actualVisitModal, setActualVisitModal] = useState<{
+    appt: Appointment;
+    field: ActualVisitTimeField;
+  } | null>(null);
   /** null = not applicable or loading; true = at least one pet can be added; false = none left */
   const [addAnotherPetMenuReady, setAddAnotherPetMenuReady] = useState<boolean | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -2882,77 +2892,79 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
       if (cancelled) return;
 
-      for (const date of dates) {
-        try {
-          const { bundle: rawBundle, membershipByApptId, zonesByApptId, patientPrimaryProviderByApptId } =
-            await fetchSchedulerDoctorDayBundle(date, docId, driveRoutingOpts);
-          if (cancelled) return;
+      await Promise.all(
+        dates.map(async (date) => {
+          try {
+            const { bundle: rawBundle, membershipByApptId, zonesByApptId, patientPrimaryProviderByApptId } =
+              await fetchSchedulerDoctorDayBundle(date, docId, driveRoutingOpts);
+            if (cancelled) return;
 
-          const dayIn = applyScheduleOverrideToDayBundle(
-            rawBundle,
-            overridesByDate.get(date) ?? null
-          );
+            const dayIn = applyScheduleOverrideToDayBundle(
+              rawBundle,
+              overridesByDate.get(date) ?? null
+            );
 
-          setDoctorDayMembershipByApptId((prev) => {
-            const m = new Map(prev);
-            for (const [k, v] of membershipByApptId) {
-              m.set(k, v);
-            }
-            return m;
-          });
-          setDoctorDayZonesByApptId((prev) => {
-            const m = new Map(prev);
-            for (const [k, v] of zonesByApptId) {
-              m.set(k, v);
-            }
-            return m;
-          });
-          setDoctorDayPatientPcpByApptId((prev) => {
-            const m = new Map(prev);
-            for (const [k, v] of patientPrimaryProviderByApptId) {
-              m.set(k, v);
-            }
-            return m;
-          });
+            setDoctorDayMembershipByApptId((prev) => {
+              const m = new Map(prev);
+              for (const [k, v] of membershipByApptId) {
+                m.set(k, v);
+              }
+              return m;
+            });
+            setDoctorDayZonesByApptId((prev) => {
+              const m = new Map(prev);
+              for (const [k, v] of zonesByApptId) {
+                m.set(k, v);
+              }
+              return m;
+            });
+            setDoctorDayPatientPcpByApptId((prev) => {
+              const m = new Map(prev);
+              for (const [k, v] of patientPrimaryProviderByApptId) {
+                m.set(k, v);
+              }
+              return m;
+            });
 
-          if (!dayIn) {
+            if (!dayIn) {
+              markFirstData();
+              return;
+            }
+
+            const interim = schedulerDriveScheduleOnlyFromBundle(dayIn);
+            setDriveDayByDate((prev) => new Map(prev).set(interim.date, interim.dayData));
+
+            if (!canDrive) {
+              markFirstData();
+              return;
+            }
+
+            setDriveIsoByApptId((prev) => {
+              const m = new Map(prev);
+              for (const [k, v] of interim.isoPairs) {
+                m.set(k, v);
+              }
+              return m;
+            });
             markFirstData();
-            continue;
+
+            const r = await fetchSchedulerDriveEtasForDayBundle(dayIn, docId, driveRoutingOpts);
+            if (cancelled) return;
+            setDriveDayByDate((prev) => new Map(prev).set(r.date, r.dayData));
+            setDriveIsoByApptId((prev) => {
+              const m = new Map(prev);
+              for (const [k, v] of r.isoPairs) {
+                m.set(k, v);
+              }
+              return m;
+            });
+          } catch {
+            /* skip day — other dates may still succeed */
+          } finally {
+            bumpDone();
           }
-
-          const interim = schedulerDriveScheduleOnlyFromBundle(dayIn);
-          setDriveDayByDate((prev) => new Map(prev).set(interim.date, interim.dayData));
-
-          if (!canDrive) {
-            markFirstData();
-            continue;
-          }
-
-          setDriveIsoByApptId((prev) => {
-            const m = new Map(prev);
-            for (const [k, v] of interim.isoPairs) {
-              m.set(k, v);
-            }
-            return m;
-          });
-          markFirstData();
-
-          const r = await fetchSchedulerDriveEtasForDayBundle(dayIn, docId, driveRoutingOpts);
-          if (cancelled) return;
-          setDriveDayByDate((prev) => new Map(prev).set(r.date, r.dayData));
-          setDriveIsoByApptId((prev) => {
-            const m = new Map(prev);
-            for (const [k, v] of r.isoPairs) {
-              m.set(k, v);
-            }
-            return m;
-          });
-        } catch {
-          /* skip day — other dates may still succeed */
-        } finally {
-          bumpDone();
-        }
-      }
+        })
+      );
     })();
 
     return () => {
@@ -3639,6 +3651,25 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setContextMenu({ appt, x: e.clientX, y: e.clientY });
   }, [cancelScheduledHoverPopover]);
 
+  const applyActualVisitTimeUpdate = useCallback(
+    async (updated: Appointment, message: string) => {
+      setRawAppointments((prev) => {
+        const idx = prev.findIndex((a) => a.id === updated.id);
+        if (idx === -1) return prev;
+        const next = [...prev];
+        next[idx] = updated;
+        return next;
+      });
+      if (modalAppt?.id === updated.id) setModalAppt(updated);
+      if (contextMenu?.appt.id === updated.id) {
+        setContextMenu((m) => (m ? { ...m, appt: updated } : m));
+      }
+      showToast(message);
+      await loadRange({ refreshDrive: true });
+    },
+    [loadRange, modalAppt?.id, contextMenu?.appt.id, showToast]
+  );
+
   const handleAppointmentMenuAction = useCallback(
     async (action: SchedulerContextMenuAction, appt: Appointment) => {
       if (action.kind !== 'remove') setContextMenu(null);
@@ -3650,6 +3681,32 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
       try {
         switch (action.kind) {
+          case 'actualStartNow': {
+            const updated = await postAppointmentActualStart(appt.id, {});
+            await applyActualVisitTimeUpdate(updated, 'Visit start recorded.');
+            return;
+          }
+          case 'actualStartSet':
+            setActualVisitModal({ appt, field: 'start' });
+            return;
+          case 'actualStartClear': {
+            const updated = await postAppointmentActualStart(appt.id, { clear: true });
+            await applyActualVisitTimeUpdate(updated, 'Actual start cleared.');
+            return;
+          }
+          case 'actualEndNow': {
+            const updated = await postAppointmentActualEnd(appt.id, {});
+            await applyActualVisitTimeUpdate(updated, 'Visit end recorded.');
+            return;
+          }
+          case 'actualEndSet':
+            setActualVisitModal({ appt, field: 'end' });
+            return;
+          case 'actualEndClear': {
+            const updated = await postAppointmentActualEnd(appt.id, { clear: true });
+            await applyActualVisitTimeUpdate(updated, 'Actual end cleared.');
+            return;
+          }
           case 'view':
             setModalAppt(appt);
             return;
@@ -3863,7 +3920,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         else fail('Something went wrong.');
       }
     },
-    [loadRange, navigate, showToast, rawAppointments, addAnotherPetMenuReady, embedInRoutingWorkspace]
+    [
+      loadRange,
+      navigate,
+      showToast,
+      rawAppointments,
+      addAnotherPetMenuReady,
+      embedInRoutingWorkspace,
+      applyActualVisitTimeUpdate,
+    ]
   );
 
   const contextMenuRescheduleIntent = useMemo(() => {
@@ -5024,6 +5089,26 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               ? undefined
               : 'Needs a linked client and patient. Blocks cannot be rescheduled here.'
           }
+        />
+      ) : null}
+
+      {actualVisitModal ? (
+        <SchedulerActualVisitTimeModal
+          key={`${actualVisitModal.appt.id}-${actualVisitModal.field}`}
+          appt={actualVisitModal.appt}
+          field={actualVisitModal.field}
+          practiceTz={PRACTICE_TZ}
+          accentColor={
+            colorsForAppointment(actualVisitModal.appt, typeList, typeFillMap).fill
+          }
+          onClose={() => setActualVisitModal(null)}
+          onSaved={(updated) => {
+            void applyActualVisitTimeUpdate(
+              updated,
+              actualVisitModal.field === 'start' ? 'Visit start saved.' : 'Visit end saved.'
+            );
+            setActualVisitModal(null);
+          }}
         />
       ) : null}
 

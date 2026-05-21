@@ -1,11 +1,13 @@
 // src/pages/AppointmentRequestForm.tsx
-import React, { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import { http } from '../api/http';
 import { fetchClientPets, type Pet, fetchClientInfo, fetchWellnessPlansForPatient } from '../api/clientPortal';
 import { fetchPrimaryProviders, fetchVeterinarians, type Provider } from '../api/employee';
 import { validateAddress } from '../api/geo';
+import { AddressAutocomplete, type AddressFields } from '../components/AddressAutocomplete';
+import { ManualAddressFields } from '../components/ManualAddressFields';
 import { normalizeRoutingV2SlotSearchResponse, type RoutingV2SlotSearchResult } from '../api/routing';
 import { DateTime } from 'luxon';
 import {
@@ -29,6 +31,23 @@ const SHOW_DOCTOR_SELECTION = false;
 
 /** Set to true to show time slots ("Here are some possible dates and times..."). Code preserved for potential re-enable. */
 const SHOW_TIME_SLOTS = false;
+
+function veterinarianLookupParams(
+  address: string,
+  lat?: number,
+  lon?: number,
+  practiceId?: number
+): Record<string, string | number> {
+  const params: Record<string, string | number> = {};
+  if (practiceId != null) params.practiceId = practiceId;
+  if (lat != null && lon != null && Number.isFinite(lat) && Number.isFinite(lon)) {
+    params.lat = lat;
+    params.lon = lon;
+  } else if (address) {
+    params.address = address;
+  }
+  return params;
+}
 
 type FormData = {
   // Intro page
@@ -57,23 +76,11 @@ type FormData = {
   
   // New Client Info
   phoneNumbers: string;
-  physicalAddress: {
-    line1: string;
-    line2?: string;
-    city: string;
-    state: string;
-    zip: string;
-    country: string;
-  };
+  physicalAddress: AddressFields;
   mailingAddressSame: 'Yes, it is different.' | 'No, it is the same.' | '';
-  mailingAddress?: {
-    line1: string;
-    line2?: string;
-    city: string;
-    state: string;
-    zip: string;
-    country: string;
-  };
+  mailingAddress?: AddressFields;
+  /** PO Box or other mailing address not found in autocomplete */
+  mailingAddressManualEntry?: boolean;
   otherPersonsOnAccount?: string;
   condoApartmentInfo?: string;
   petInfo: string; // Name, Species, Age, Spayed/Neutered, Breed, Color, Weight (legacy, kept for backward compatibility)
@@ -129,23 +136,9 @@ type FormData = {
   preferredDoctorExisting?: string;
   lookingForEuthanasiaExisting?: 'Yes' | 'No' | '';
   isThisTheAddressWhereWeWillCome?: 'Yes' | 'No' | '';
-  newPhysicalAddress?: {
-    line1: string;
-    line2?: string;
-    city: string;
-    state: string;
-    zip: string;
-    country: string;
-  };
+  newPhysicalAddress?: AddressFields;
   differentMailingAddress?: 'Yes' | 'No' | '';
-  newMailingAddress?: {
-    line1: string;
-    line2?: string;
-    city: string;
-    state: string;
-    zip: string;
-    country: string;
-  };
+  newMailingAddress?: AddressFields;
   hadVetCareElsewhere?: 'Yes' | 'No' | '';
   mayWeAskForRecords?: 'Yes' | 'No' | '';
   haveWeSeenPetBefore?: 'Yes' | 'No' | '';
@@ -193,6 +186,44 @@ type Page =
   | 'euthanasia-continued'
   | 'request-visit-continued'
   | 'success';
+
+function getAppointmentFormStepName(page: Page): string {
+  switch (page) {
+    case 'intro':
+      return 'Introduction';
+    case 'new-client':
+      return 'New Client Information';
+    case 'new-client-pet-info':
+      return 'Pet Information';
+    case 'existing-client':
+      return 'Existing Client Information';
+    case 'existing-client-pets':
+      return 'Select Pet(s)';
+    case 'euthanasia-intro':
+      return 'Euthanasia Details';
+    case 'euthanasia-service-area':
+      return 'Service Area Selection';
+    case 'euthanasia-portland':
+      return 'Euthanasia Scheduling (Portland)';
+    case 'euthanasia-high-peaks':
+      return 'Euthanasia Scheduling (High Peaks)';
+    case 'euthanasia-continued':
+      return 'Euthanasia Appointment Time';
+    case 'request-visit-continued':
+      return 'Appointment Time Selection';
+    case 'success':
+      return 'Success';
+    default:
+      return page;
+  }
+}
+
+function createAppointmentFormSessionId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `appt-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
 
 const ZONE_NOT_SERVICED_SERVICE_URL = 'www.vetatyourdoor.com/service-area';
 const ZONE_NOT_SERVICED_CALL_TEXT = 'call or text us at ';
@@ -311,6 +342,7 @@ export default function AppointmentRequestForm() {
       country: '',
     },
     mailingAddressSame: '',
+    mailingAddressManualEntry: false,
     petInfo: '',
     newClientPets: [],
     existingClientNewPets: [],
@@ -342,11 +374,7 @@ export default function AppointmentRequestForm() {
   const lastCheckedAddressRef = useRef<string>(''); // Track last checked address to avoid duplicate zone checks
   const clientLocationRef = useRef<{ lat?: number; lon?: number; address?: string }>({}); // Store client location for veterinarian lookup
   const [speciesList, setSpeciesList] = useState<Array<{ id: number; name: string; prettyName?: string; showInUi?: boolean }>>([]); // List of available species
-  const [breedsBySpecies, setBreedsBySpecies] = useState<Record<number, Array<{ id: number; name: string }>>>({}); // Breeds keyed by species ID
   const [loadingSpecies, setLoadingSpecies] = useState(false);
-  const [loadingBreeds, setLoadingBreeds] = useState<Record<number, boolean>>({}); // Loading state per species
-  const [breedSearchTerms, setBreedSearchTerms] = useState<Record<string, string>>({}); // Search terms for breed dropdowns, keyed by pet ID
-  const [breedDropdownOpen, setBreedDropdownOpen] = useState<Record<string, boolean>>({}); // Track which breed dropdowns are open, keyed by pet ID
   const [clientLocationReady, setClientLocationReady] = useState(false); // Track when client location is available for veterinarian fetch
   const [showMembershipModal, setShowMembershipModal] = useState(false);
   const [selectedMembershipPetId, setSelectedMembershipPetId] = useState<string | null>(null);
@@ -370,6 +398,64 @@ export default function AppointmentRequestForm() {
 
   const [searchParams, setSearchParams] = useSearchParams();
   const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
+
+  const formSessionIdRef = useRef(createAppointmentFormSessionId());
+  const formCompletedRef = useRef(false);
+  const abandonReportedRef = useRef(false);
+  const currentPageRef = useRef<Page>(currentPage);
+  const isLoggedInRef = useRef(isLoggedIn);
+  const haveUsedServicesBeforeRef = useRef(formData.haveUsedServicesBefore);
+  currentPageRef.current = currentPage;
+  isLoggedInRef.current = isLoggedIn;
+  haveUsedServicesBeforeRef.current = formData.haveUsedServicesBefore;
+
+  const getFormAnalyticsContext = useCallback(() => {
+    const page = currentPageRef.current;
+    const isExistingClient =
+      isLoggedInRef.current || haveUsedServicesBeforeRef.current === 'Yes';
+    return {
+      form_session_id: formSessionIdRef.current,
+      step: page,
+      step_name: getAppointmentFormStepName(page),
+      client_type: isExistingClient ? 'existing' : 'new',
+      is_logged_in: isLoggedInRef.current,
+    };
+  }, []);
+
+  const trackFormEvent = useCallback(
+    (eventName: string, params?: Record<string, unknown>) => {
+      trackEvent(eventName, { ...getFormAnalyticsContext(), ...params });
+    },
+    [getFormAnalyticsContext]
+  );
+
+  const trackFormAbandoned = useCallback(
+    (reason: string) => {
+      if (formCompletedRef.current || abandonReportedRef.current) return;
+      const page = currentPageRef.current;
+      if (page === 'success') return;
+      abandonReportedRef.current = true;
+      trackFormEvent('appointment_form_abandoned', { abandon_reason: reason });
+    },
+    [trackFormEvent]
+  );
+
+  useEffect(() => {
+    trackFormEvent('appointment_form_started', {
+      entry_step: currentPageRef.current,
+      entry_step_name: getAppointmentFormStepName(currentPageRef.current),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const onPageHide = () => trackFormAbandoned('page_hide');
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      trackFormAbandoned('component_unmount');
+    };
+  }, [trackFormAbandoned]);
 
   useEffect(() => {
     if (!appointmentTypeChangeModal) return;
@@ -1133,50 +1219,10 @@ export default function AppointmentRequestForm() {
     };
   }, [formData.email, isLoggedIn, practiceId]);
 
-  // Track page views for analytics
+  // Track step views for funnel / drop-off analysis in GA4
   useEffect(() => {
-    const isExistingClient = isLoggedIn || formData.haveUsedServicesBefore === 'Yes';
-    const clientType = isExistingClient ? 'existing' : 'new';
-    
-    // Map page names to user-friendly step names
-    const getStepName = (page: Page): string => {
-      switch (page) {
-        case 'intro':
-          return 'Introduction';
-        case 'new-client':
-          return 'New Client Information';
-        case 'new-client-pet-info':
-          return 'Pet Information';
-        case 'existing-client':
-          return 'Existing Client Information';
-        case 'existing-client-pets':
-          return 'Select Pet(s)';
-        case 'euthanasia-intro':
-          return 'Euthanasia Details';
-        case 'euthanasia-service-area':
-          return 'Service Area Selection';
-        case 'euthanasia-portland':
-          return 'Euthanasia Scheduling (Portland)';
-        case 'euthanasia-high-peaks':
-          return 'Euthanasia Scheduling (High Peaks)';
-        case 'euthanasia-continued':
-          return 'Euthanasia Appointment Time';
-        case 'request-visit-continued':
-          return 'Appointment Time Selection';
-        case 'success':
-          return 'Success';
-        default:
-          return page;
-      }
-    };
-
-    trackEvent('appointment_form_step_viewed', {
-      step: currentPage,
-      step_name: getStepName(currentPage),
-      client_type: clientType,
-      is_logged_in: isLoggedIn,
-    });
-  }, [currentPage, isLoggedIn, formData.haveUsedServicesBefore]);
+    trackFormEvent('appointment_form_step_viewed');
+  }, [currentPage, isLoggedIn, formData.haveUsedServicesBefore, trackFormEvent]);
 
   // Pets eligible for membership signup: for logged-in users, only selected pets that do NOT
   // have an active or pending membership (from subscription on pet OR from membership-transactions API);
@@ -1381,6 +1427,7 @@ export default function AppointmentRequestForm() {
           // This effectively cancels the back button press
           window.history.pushState({ formPage: currentPage, preventBack: true }, '', window.location.href);
         } else {
+          trackFormAbandoned('browser_back');
           // User confirmed - navigate back one more step since the browser already navigated
           // to our pushed state (same URL), we need to go back further to the actual previous route
           window.history.back();
@@ -1398,7 +1445,7 @@ export default function AppointmentRequestForm() {
       clearTimeout(timeoutId);
       window.removeEventListener('popstate', handlePopState);
     };
-  }, [currentPage]);
+  }, [currentPage, trackFormAbandoned]);
 
   // Load veterinarians for new clients (using public veterinarians endpoint)
   // Only fetch when address is valid (has line1, city, state, zip)
@@ -1475,10 +1522,12 @@ export default function AppointmentRequestForm() {
             if (!alive) return;
 
             // Fetch raw veterinarian data directly from API to get appointmentTypes
-            const params: any = { practiceId };
-            if (currentAddress) {
-              params.address = currentAddress;
-            }
+            const params = veterinarianLookupParams(
+              currentAddress,
+              formData.physicalAddress?.lat,
+              formData.physicalAddress?.lon,
+              practiceId
+            );
             const { data } = await http.get('/public/appointments/veterinarians', { params });
             const rawVeterinarians: any[] = Array.isArray(data) ? data : (data?.items ?? data?.veterinarians ?? []);
             
@@ -1538,7 +1587,7 @@ export default function AppointmentRequestForm() {
         clearTimeout(debounceTimeoutId);
       }
     };
-  }, [isLoggedIn, practiceId, formData.physicalAddress?.line1, formData.physicalAddress?.city, formData.physicalAddress?.state, formData.physicalAddress?.zip]);
+  }, [isLoggedIn, practiceId, formData.physicalAddress?.line1, formData.physicalAddress?.city, formData.physicalAddress?.state, formData.physicalAddress?.zip, formData.physicalAddress?.lat, formData.physicalAddress?.lon]);
 
   // Load client data if logged in
   useEffect(() => {
@@ -1847,10 +1896,11 @@ export default function AppointmentRequestForm() {
           if (!alive) return;
           
           // Fetch raw veterinarian data directly from API to get appointmentTypes
-          const params: any = {};
-          if (currentAddress) {
-            params.address = currentAddress;
-          }
+          const params = veterinarianLookupParams(
+            currentAddress,
+            formData.newPhysicalAddress?.lat,
+            formData.newPhysicalAddress?.lon
+          );
           const { data } = await http.get('/employees/veterinarians', { params });
           const rawVeterinarians: any[] = Array.isArray(data) ? data : [];
           
@@ -1899,6 +1949,8 @@ export default function AppointmentRequestForm() {
     formData.newPhysicalAddress?.city,
     formData.newPhysicalAddress?.state,
     formData.newPhysicalAddress?.zip,
+    formData.newPhysicalAddress?.lat,
+    formData.newPhysicalAddress?.lon,
   ]);
 
   // Fetch veterinarians for logged-in users when client location becomes available
@@ -2102,67 +2154,14 @@ export default function AppointmentRequestForm() {
     isLoggedIn,
   ]);
 
-  // Fetch breeds when species is selected for any pet
-  useEffect(() => {
-    // Check all pets (both newClientPets and existingClientNewPets) for selected species
-    const allPets = [
-      ...(formData.newClientPets || []),
-      ...(formData.existingClientNewPets || [])
-    ];
-    
-    const speciesToFetch = new Set<number>();
-    allPets.forEach(pet => {
-      if (pet.speciesId && !breedsBySpecies.hasOwnProperty(pet.speciesId) && !loadingBreeds[pet.speciesId]) {
-        speciesToFetch.add(pet.speciesId);
-      }
-    });
-
-    if (speciesToFetch.size === 0) return;
-
-    let alive = true;
-    (async () => {
-      // Fetch breeds for all species in parallel
-      const fetchPromises = Array.from(speciesToFetch).map(async (speciesId) => {
-        setLoadingBreeds(prev => ({ ...prev, [speciesId]: true }));
-        try {
-          const response = await http.get(`/public/species-breeds?practiceId=${practiceId}&speciesId=${speciesId}`);
-          if (!alive) return;
-          console.log(`[AppointmentForm] Breeds response for species ${speciesId}:`, response.data);
-          const breeds = Array.isArray(response.data?.breeds) ? response.data.breeds : [];
-          console.log(`[AppointmentForm] Processed breeds for species ${speciesId}:`, breeds.map((b: any) => ({ id: b.id, name: b.name })));
-          if (alive) {
-            setBreedsBySpecies(prev => ({
-              ...prev,
-              [speciesId]: breeds.map((b: any) => ({ id: b.id, name: b.name }))
-            }));
-          }
-        } catch (error) {
-          console.error(`[AppointmentForm] Failed to load breeds for species ${speciesId}:`, error);
-          // On error, set empty array to indicate no breeds available
-          if (alive) {
-            setBreedsBySpecies(prev => ({
-              ...prev,
-              [speciesId]: []
-            }));
-          }
-        } finally {
-          if (alive) {
-            setLoadingBreeds(prev => ({ ...prev, [speciesId]: false }));
-          }
-        }
-      });
-      
-      await Promise.all(fetchPromises);
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [practiceId, formData.newClientPets, formData.existingClientNewPets]);
-
   const updateFormData = (field: keyof FormData, value: any) => {
     setFormData(prev => {
       const updated = { ...prev, [field]: value };
+
+      if (field === 'mailingAddressSame' && value === 'No, it is the same.') {
+        updated.mailingAddressManualEntry = false;
+        updated.mailingAddress = undefined;
+      }
       
       // When "No" is selected for isThisTheAddressWhereWeWillCome, clear physicalAddress and providers
       // (Reversed logic: "No" means they need a new address)
@@ -2183,6 +2182,13 @@ export default function AppointmentRequestForm() {
         setPublicProviders([]);
         // Clear preferred doctor selection
         updated.preferredDoctorExisting = '';
+        updated.newPhysicalAddress = {
+          line1: '',
+          city: '',
+          state: '',
+          zip: '',
+          country: 'US',
+        };
       }
       
       // When "Yes" is selected for isThisTheAddressWhereWeWillCome, restore original address and clear newPhysicalAddress
@@ -2220,6 +2226,17 @@ export default function AppointmentRequestForm() {
     });
   };
 
+  const setAddressFields = (
+    field: 'physicalAddress' | 'mailingAddress' | 'newPhysicalAddress',
+    address: AddressFields
+  ) => {
+    lastCheckedAddressRef.current = '';
+    setFormData((prev) => ({
+      ...prev,
+      [field]: address,
+    }));
+  };
+
   const validatePage = (page: Page): boolean => {
     const newErrors: Record<string, string> = {};
 
@@ -2237,17 +2254,27 @@ export default function AppointmentRequestForm() {
       case 'new-client':
         // Only validate new client page if user is not logged in
         if (!isLoggedIn) {
-        if (!formData.physicalAddress.line1.trim()) newErrors['physicalAddress.line1'] = 'Street address is required';
-        if (!formData.physicalAddress.city.trim()) newErrors['physicalAddress.city'] = 'City is required';
-        if (!formData.physicalAddress.state.trim()) newErrors['physicalAddress.state'] = 'State is required';
-        if (!formData.physicalAddress.zip.trim()) newErrors['physicalAddress.zip'] = 'Zip code is required';
+        if (!formData.physicalAddress.line1.trim() || !formData.physicalAddress.city.trim() || !formData.physicalAddress.state.trim() || !formData.physicalAddress.zip.trim()) {
+          newErrors['physicalAddress.line1'] = 'Please select your address from the suggestions';
+        }
         if (errors.zoneNotServiced) newErrors.zoneNotServiced = errors.zoneNotServiced;
         if (!formData.mailingAddressSame) newErrors.mailingAddressSame = 'Please select whether your mailing address is different from your physical address';
         if (formData.mailingAddressSame === 'Yes, it is different.') {
-          if (!formData.mailingAddress?.line1?.trim()) newErrors['mailingAddress.line1'] = 'Mailing street address is required';
-          if (!formData.mailingAddress?.city?.trim()) newErrors['mailingAddress.city'] = 'Mailing city is required';
-          if (!formData.mailingAddress?.state?.trim()) newErrors['mailingAddress.state'] = 'Mailing state is required';
-          if (!formData.mailingAddress?.zip?.trim()) newErrors['mailingAddress.zip'] = 'Mailing zip code is required';
+          if (formData.mailingAddressManualEntry) {
+            if (!formData.mailingAddress?.line1?.trim()) {
+              newErrors['mailingAddress.line1'] = 'Mailing address line is required';
+            }
+            if (!formData.mailingAddress?.city?.trim()) newErrors['mailingAddress.city'] = 'City is required';
+            if (!formData.mailingAddress?.state?.trim()) newErrors['mailingAddress.state'] = 'State is required';
+            if (!formData.mailingAddress?.zip?.trim()) newErrors['mailingAddress.zip'] = 'Zip code is required';
+          } else if (
+            !formData.mailingAddress?.line1?.trim() ||
+            !formData.mailingAddress?.city?.trim() ||
+            !formData.mailingAddress?.state?.trim() ||
+            !formData.mailingAddress?.zip?.trim()
+          ) {
+            newErrors['mailingAddress.line1'] = 'Please select your mailing address from the suggestions';
+          }
         }
         if (!formData.previousVeterinaryPractices?.trim()) newErrors.previousVeterinaryPractices = 'Previous veterinary practices are required';
         // Doctor selection moved to request-visit-continued page
@@ -2278,25 +2305,11 @@ export default function AppointmentRequestForm() {
               if (!pet.sex?.trim()) {
                 newErrors[`newClientPet.${pet.id}.sex`] = 'Sex is required';
               }
-              // Breed validation: If "Other" is selected, breed is always optional (can be empty or free-form text)
-              // Check both selectedSpecies name and pet.otherSpecies to detect "Other" species
+              // Breed is optional for "Other" species; otherwise required as free-form text
               const isOtherSpecies = selectedSpecies?.name === 'Other' || !!pet.otherSpecies?.trim();
-              if (!isOtherSpecies && pet.speciesId) {
-                // For non-"Other" species, only require breed if we're certain breeds exist
-                const breedsHaveLoaded = breedsBySpecies.hasOwnProperty(pet.speciesId);
-                const breedsCurrentlyLoading = loadingBreeds[pet.speciesId] === true;
-                
-                // Only check breed requirement if breeds have finished loading (not loading, and have loaded)
-                if (!breedsCurrentlyLoading && breedsHaveLoaded) {
-                  const breedsArray = breedsBySpecies[pet.speciesId];
-                  // Only require breed if breeds array exists, is an array, and has at least one breed
-                  if (breedsArray && Array.isArray(breedsArray) && breedsArray.length > 0 && !pet.breed?.trim()) {
-                    newErrors[`newClientPet.${pet.id}.breed`] = 'Breed is required';
-                  }
-                }
-                // If breeds are loading or haven't loaded yet, don't require breed
+              if (!isOtherSpecies && pet.speciesId && !pet.breed?.trim()) {
+                newErrors[`newClientPet.${pet.id}.breed`] = 'Breed is required';
               }
-              // If "Other" is selected, breed is optional (no validation needed)
               if (!pet.color?.trim()) {
                 newErrors[`newClientPet.${pet.id}.color`] = 'Color is required';
               }
@@ -2359,10 +2372,9 @@ export default function AppointmentRequestForm() {
           if (!formData.isThisTheAddressWhereWeWillCome) newErrors.isThisTheAddressWhereWeWillCome = 'Please select an option';
           // If they answered "No", require all fields for the other (visit) address
           if (formData.isThisTheAddressWhereWeWillCome === 'No') {
-            if (!formData.newPhysicalAddress?.line1?.trim()) newErrors['newPhysicalAddress.line1'] = 'Street address is required';
-            if (!formData.newPhysicalAddress?.city?.trim()) newErrors['newPhysicalAddress.city'] = 'City is required';
-            if (!formData.newPhysicalAddress?.state?.trim()) newErrors['newPhysicalAddress.state'] = 'State is required';
-            if (!formData.newPhysicalAddress?.zip?.trim()) newErrors['newPhysicalAddress.zip'] = 'Zip code is required';
+            if (!formData.newPhysicalAddress?.line1?.trim() || !formData.newPhysicalAddress?.city?.trim() || !formData.newPhysicalAddress?.state?.trim() || !formData.newPhysicalAddress?.zip?.trim()) {
+              newErrors['newPhysicalAddress.line1'] = 'Please select your address from the suggestions';
+            }
             if (errors.zoneNotServiced) newErrors.zoneNotServiced = errors.zoneNotServiced;
           }
         }
@@ -2427,25 +2439,11 @@ export default function AppointmentRequestForm() {
               if (!pet.sex?.trim()) {
                 newErrors[`existingClientNewPet.${pet.id}.sex`] = 'Sex is required';
               }
-              // Breed validation: If "Other" is selected, breed is always optional (can be empty or free-form text)
-              // Check both selectedSpecies name and pet.otherSpecies to detect "Other" species
+              // Breed is optional for "Other" species; otherwise required as free-form text
               const isOtherSpecies = selectedSpecies?.name === 'Other' || !!pet.otherSpecies?.trim();
-              if (!isOtherSpecies && pet.speciesId) {
-                // For non-"Other" species, only require breed if we're certain breeds exist
-                const breedsHaveLoaded = breedsBySpecies.hasOwnProperty(pet.speciesId);
-                const breedsCurrentlyLoading = loadingBreeds[pet.speciesId] === true;
-                
-                // Only check breed requirement if breeds have finished loading (not loading, and have loaded)
-                if (!breedsCurrentlyLoading && breedsHaveLoaded) {
-                  const breedsArray = breedsBySpecies[pet.speciesId];
-                  // Only require breed if breeds array exists, is an array, and has at least one breed
-                  if (breedsArray && Array.isArray(breedsArray) && breedsArray.length > 0 && !pet.breed?.trim()) {
-                    newErrors[`existingClientNewPet.${pet.id}.breed`] = 'Breed is required';
-                  }
-                }
-                // If breeds are loading or haven't loaded yet, don't require breed
+              if (!isOtherSpecies && pet.speciesId && !pet.breed?.trim()) {
+                newErrors[`existingClientNewPet.${pet.id}.breed`] = 'Breed is required';
               }
-              // If "Other" is selected, breed is optional (no validation needed)
               if (!pet.color?.trim()) {
                 newErrors[`existingClientNewPet.${pet.id}.color`] = 'Color is required';
               }
@@ -2619,7 +2617,7 @@ export default function AppointmentRequestForm() {
             }
           }
           setCurrentPage('new-client');
-          trackEvent('appointment_form_step_completed', {
+          trackFormEvent('appointment_form_step_completed', {
             step: 'intro',
             step_name: 'Introduction',
             next_step: 'new-client',
@@ -2630,7 +2628,7 @@ export default function AppointmentRequestForm() {
         break;
       case 'new-client':
         setCurrentPage('new-client-pet-info');
-        trackEvent('appointment_form_step_completed', {
+        trackFormEvent('appointment_form_step_completed', {
           step: 'new-client',
           step_name: 'New Client Information',
           next_step: 'new-client-pet-info',
@@ -2641,7 +2639,7 @@ export default function AppointmentRequestForm() {
       case 'new-client-pet-info':
         // Always go to request-visit-continued (euthanasia question removed)
         setCurrentPage('request-visit-continued');
-        trackEvent('appointment_form_step_completed', {
+        trackFormEvent('appointment_form_step_completed', {
           step: 'new-client-pet-info',
           step_name: 'Pet Information',
           next_step: 'request-visit-continued',
@@ -2652,7 +2650,7 @@ export default function AppointmentRequestForm() {
         break;
       case 'existing-client':
         setCurrentPage('existing-client-pets');
-        trackEvent('appointment_form_step_completed', {
+        trackFormEvent('appointment_form_step_completed', {
           step: 'existing-client',
           step_name: 'Existing Client Information',
           next_step: 'existing-client-pets',
@@ -2663,7 +2661,7 @@ export default function AppointmentRequestForm() {
       case 'existing-client-pets':
         if (formData.lookingForEuthanasiaExisting === 'Yes') {
           setCurrentPage('euthanasia-intro');
-          trackEvent('appointment_form_step_completed', {
+          trackFormEvent('appointment_form_step_completed', {
             step: 'existing-client-pets',
             step_name: 'Select Pet(s)',
             next_step: 'euthanasia-intro',
@@ -2674,7 +2672,7 @@ export default function AppointmentRequestForm() {
           });
         } else {
           setCurrentPage('request-visit-continued');
-          trackEvent('appointment_form_step_completed', {
+          trackFormEvent('appointment_form_step_completed', {
             step: 'existing-client-pets',
             step_name: 'Select Pet(s)',
             next_step: 'request-visit-continued',
@@ -2687,7 +2685,7 @@ export default function AppointmentRequestForm() {
         break;
       case 'euthanasia-intro':
         setCurrentPage('euthanasia-service-area');
-        trackEvent('appointment_form_step_completed', {
+        trackFormEvent('appointment_form_step_completed', {
           step: 'euthanasia-intro',
           step_name: 'Euthanasia Details',
           next_step: 'euthanasia-service-area',
@@ -2699,7 +2697,7 @@ export default function AppointmentRequestForm() {
       case 'euthanasia-service-area':
         if (formData.serviceArea === 'Kennebunk / Greater Portland / Augusta Area') {
           setCurrentPage('euthanasia-portland');
-          trackEvent('appointment_form_step_completed', {
+          trackFormEvent('appointment_form_step_completed', {
             step: 'euthanasia-service-area',
             step_name: 'Service Area Selection',
             next_step: 'euthanasia-portland',
@@ -2710,7 +2708,7 @@ export default function AppointmentRequestForm() {
           });
         } else if (formData.serviceArea === 'Maine High Peaks Area') {
           setCurrentPage('euthanasia-high-peaks');
-          trackEvent('appointment_form_step_completed', {
+          trackFormEvent('appointment_form_step_completed', {
             step: 'euthanasia-service-area',
             step_name: 'Service Area Selection',
             next_step: 'euthanasia-high-peaks',
@@ -2724,7 +2722,7 @@ export default function AppointmentRequestForm() {
       case 'euthanasia-portland':
       case 'euthanasia-high-peaks':
         setCurrentPage('euthanasia-continued');
-        trackEvent('appointment_form_step_completed', {
+        trackFormEvent('appointment_form_step_completed', {
           step: currentPage,
           step_name: currentPage === 'euthanasia-portland' ? 'Euthanasia Scheduling (Portland)' : 'Euthanasia Scheduling (High Peaks)',
           next_step: 'euthanasia-continued',
@@ -2734,9 +2732,25 @@ export default function AppointmentRequestForm() {
         });
         break;
       case 'euthanasia-continued':
+        trackFormEvent('appointment_form_step_completed', {
+          step: 'euthanasia-continued',
+          step_name: 'Euthanasia Appointment Time',
+          next_step: 'success',
+          client_type: clientType,
+          is_logged_in: isLoggedIn,
+          appointment_type: 'euthanasia',
+        });
         handleSubmit();
         break;
       case 'request-visit-continued':
+        trackFormEvent('appointment_form_step_completed', {
+          step: 'request-visit-continued',
+          step_name: 'Appointment Time Selection',
+          next_step: 'success',
+          client_type: clientType,
+          is_logged_in: isLoggedIn,
+          appointment_type: 'regular_visit',
+        });
         handleSubmit();
         break;
     }
@@ -2826,7 +2840,7 @@ export default function AppointmentRequestForm() {
     const userWantsToLeave = window.confirm(message);
     
     if (userWantsToLeave) {
-      // Navigate immediately after user clicks OK
+      trackFormAbandoned('exit_to_portal');
       navigate('/client-portal');
     }
   };
@@ -2836,24 +2850,26 @@ export default function AppointmentRequestForm() {
       return;
     }
 
+    const hasEuthanasiaPet =
+      (formData.selectedPetIds?.some((petId) => {
+        const petData = formData.petSpecificData?.[petId];
+        return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
+      }) ||
+        false) ||
+      (formData.newClientPets?.some((pet) => {
+        const petData = formData.petSpecificData?.[pet.id];
+        return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
+      }) ||
+        false);
+
+    const isEuthanasia =
+      formData.lookingForEuthanasia === 'Yes' ||
+      formData.lookingForEuthanasiaExisting === 'Yes' ||
+      hasEuthanasiaPet;
+    const appointmentType = isEuthanasia ? 'euthanasia' : 'regular_visit';
+
     setSubmitting(true);
     try {
-      // Determine appointment type
-      // Check old flow (lookingForEuthanasia fields) OR new flow (pet-specific needsToday)
-      const hasEuthanasiaPet = 
-        (formData.selectedPetIds?.some(petId => {
-          const petData = formData.petSpecificData?.[petId];
-          return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
-        }) || false) ||
-        (formData.newClientPets?.some(pet => {
-          const petData = formData.petSpecificData?.[pet.id];
-          return petData?.needsToday ? isEuthanasiaAppointmentType(petData.needsToday) : false;
-        }) || false);
-      
-      const isEuthanasia = 
-        formData.lookingForEuthanasia === 'Yes' || 
-        formData.lookingForEuthanasiaExisting === 'Yes' ||
-        hasEuthanasiaPet;
       const isExistingClient = isLoggedIn || formData.haveUsedServicesBefore === 'Yes';
       
       // Build selected date/time preferences from slots
@@ -3299,10 +3315,9 @@ export default function AppointmentRequestForm() {
         ? (formData.selectedPetIds?.length || 0)
         : (formData.newClientPets?.length || 0);
       
-      trackEvent('appointment_form_submitted', {
-        client_type: isExistingClient ? 'existing' : 'new',
-        is_logged_in: isLoggedIn,
-        appointment_type: isEuthanasia ? 'euthanasia' : 'regular_visit',
+      formCompletedRef.current = true;
+      trackFormEvent('appointment_form_submitted', {
+        appointment_type: appointmentType,
         pet_count: petCount,
         has_preferred_doctor: !!submissionData.preferredDoctor,
         service_area: formData.serviceArea || formData.serviceAreaVisit || undefined,
@@ -3315,7 +3330,13 @@ export default function AppointmentRequestForm() {
       
       setCurrentPage('success');
     } catch (error: any) {
-      setErrors({ submit: error?.response?.data?.message || 'Failed to submit form. Please try again.' });
+      const errorMessage =
+        error?.response?.data?.message || 'Failed to submit form. Please try again.';
+      trackFormEvent('appointment_form_submit_failed', {
+        error_message: errorMessage,
+        appointment_type: appointmentType,
+      });
+      setErrors({ submit: errorMessage });
     } finally {
       setSubmitting(false);
     }
@@ -3557,58 +3578,13 @@ export default function AppointmentRequestForm() {
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
                 What is your full physical address (where we should show up)? <span style={{ color: '#ef4444' }}>*</span>
               </label>
-              <input
-                type="text"
-                value={formData.physicalAddress?.line1 || ''}
-                onChange={(e) => updateNestedFormData('physicalAddress', 'line1', e.target.value)}
-                placeholder="Street Address"
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  border: `1px solid ${errors['physicalAddress.line1'] ? '#ef4444' : '#d1d5db'}`,
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  marginBottom: '12px',
-                }}
+              <AddressAutocomplete
+                id="physical-address"
+                value={formData.physicalAddress}
+                onChange={(address) => setAddressFields('physicalAddress', address)}
+                error={errors['physicalAddress.line1']}
+                placeholder="Start typing your address"
               />
-              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr 1fr', gap: '12px' }}>
-                <input
-                  type="text"
-                  value={formData.physicalAddress?.city || ''}
-                  onChange={(e) => updateNestedFormData('physicalAddress', 'city', e.target.value)}
-                  placeholder="City"
-                  style={{
-                    padding: '12px',
-                    border: `1px solid ${errors['physicalAddress.city'] ? '#ef4444' : '#d1d5db'}`,
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                  }}
-                />
-                <input
-                  type="text"
-                  value={formData.physicalAddress?.state || ''}
-                  onChange={(e) => updateNestedFormData('physicalAddress', 'state', e.target.value)}
-                  placeholder="State"
-                  style={{
-                    padding: '12px',
-                    border: `1px solid ${errors['physicalAddress.state'] ? '#ef4444' : '#d1d5db'}`,
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                  }}
-                />
-                <input
-                  type="text"
-                  value={formData.physicalAddress?.zip || ''}
-                  onChange={(e) => updateNestedFormData('physicalAddress', 'zip', e.target.value)}
-                  placeholder="Zip"
-                  style={{
-                    padding: '12px',
-                    border: `1px solid ${errors['physicalAddress.zip'] ? '#ef4444' : '#d1d5db'}`,
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                  }}
-                />
-              </div>
               {errors.zoneNotServiced && (
                 <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
                   {renderZoneNotServicedMessage(errors.zoneNotServiced)}
@@ -3660,52 +3636,83 @@ export default function AppointmentRequestForm() {
                 <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
                   Please enter your MAILING address here. <span style={{ color: '#ef4444' }}>*</span>
                 </label>
-                <input
-                  type="text"
-                  value={formData.mailingAddress?.line1 || ''}
-                  onChange={(e) => updateNestedFormData('mailingAddress', 'line1', e.target.value)}
-                  placeholder="Street Address"
+                <label
                   style={{
-                    width: '100%',
-                    padding: '12px',
-                    border: `1px solid ${errors['mailingAddress.line1'] ? '#ef4444' : '#d1d5db'}`,
-                    borderRadius: '8px',
-                    fontSize: '14px',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '8px',
                     marginBottom: '12px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    color: '#374151',
                   }}
-                />
-                {errors['mailingAddress.line1'] && (
-                  <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '-8px', marginBottom: '12px' }}>
-                    {errors['mailingAddress.line1']}
-                  </div>
-                )}
-                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr 1fr', gap: '12px' }}>
+                >
                   <input
-                    type="text"
-                    value={formData.mailingAddress?.city || ''}
-                    onChange={(e) => updateNestedFormData('mailingAddress', 'city', e.target.value)}
-                    placeholder="City"
-                    style={{ padding: '12px', border: `1px solid ${errors['mailingAddress.city'] ? '#ef4444' : '#d1d5db'}`, borderRadius: '8px', fontSize: '14px' }}
+                    type="checkbox"
+                    checked={!!formData.mailingAddressManualEntry}
+                    onChange={(e) => {
+                      const manual = e.target.checked;
+                      setFormData((prev) => ({
+                        ...prev,
+                        mailingAddressManualEntry: manual,
+                        mailingAddress: {
+                          line1: '',
+                          city: '',
+                          state: '',
+                          zip: '',
+                          country: 'US',
+                        },
+                      }));
+                      if (errors['mailingAddress.line1']) {
+                        setErrors((prev) => {
+                          const next = { ...prev };
+                          delete next['mailingAddress.line1'];
+                          delete next['mailingAddress.city'];
+                          delete next['mailingAddress.state'];
+                          delete next['mailingAddress.zip'];
+                          return next;
+                        });
+                      }
+                    }}
+                    style={{ marginTop: '3px' }}
                   />
-                  <input
-                    type="text"
-                    value={formData.mailingAddress?.state || ''}
-                    onChange={(e) => updateNestedFormData('mailingAddress', 'state', e.target.value)}
-                    placeholder="State"
-                    style={{ padding: '12px', border: `1px solid ${errors['mailingAddress.state'] ? '#ef4444' : '#d1d5db'}`, borderRadius: '8px', fontSize: '14px' }}
+                  <span>
+                    My mailing address is a PO Box or isn&apos;t listed — I&apos;ll enter it manually
+                  </span>
+                </label>
+                {formData.mailingAddressManualEntry ? (
+                  <ManualAddressFields
+                    value={
+                      formData.mailingAddress ?? {
+                        line1: '',
+                        city: '',
+                        state: '',
+                        zip: '',
+                        country: 'US',
+                      }
+                    }
+                    onChange={(address) => setAddressFields('mailingAddress', address)}
+                    errors={errors}
+                    errorPrefix="mailingAddress"
+                    isMobile={isMobile}
+                    line1Placeholder="PO Box 123"
                   />
-                  <input
-                    type="text"
-                    value={formData.mailingAddress?.zip || ''}
-                    onChange={(e) => updateNestedFormData('mailingAddress', 'zip', e.target.value)}
-                    placeholder="Zip"
-                    style={{ padding: '12px', border: `1px solid ${errors['mailingAddress.zip'] ? '#ef4444' : '#d1d5db'}`, borderRadius: '8px', fontSize: '14px' }}
+                ) : (
+                  <AddressAutocomplete
+                    id="mailing-address"
+                    value={
+                      formData.mailingAddress ?? {
+                        line1: '',
+                        city: '',
+                        state: '',
+                        zip: '',
+                        country: 'US',
+                      }
+                    }
+                    onChange={(address) => setAddressFields('mailingAddress', address)}
+                    error={errors['mailingAddress.line1']}
+                    placeholder="Start typing your mailing address"
                   />
-                </div>
-                {(errors['mailingAddress.city'] || errors['mailingAddress.state'] || errors['mailingAddress.zip']) && (
-                  <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
-                    {errors['mailingAddress.city'] || errors['mailingAddress.state'] || errors['mailingAddress.zip']}
-                  </div>
                 )}
               </div>
             )}
@@ -3877,7 +3884,7 @@ export default function AppointmentRequestForm() {
             newClientPets: (prev.newClientPets || []).map(pet => {
               if (pet.id !== petId) return pet;
               
-              // If species is being changed, clear breed and breedId
+              // If species is being changed, clear breed
               if (field === 'speciesId') {
                 const selectedSpecies = speciesList.find(s => s.id === Number(value));
                 return {
@@ -3886,16 +3893,6 @@ export default function AppointmentRequestForm() {
                   species: selectedSpecies?.name || '',
                   breed: undefined,
                   breedId: undefined
-                };
-              }
-              
-              // If breed is being changed, update breed name
-              if (field === 'breedId') {
-                const selectedBreed = breedsBySpecies[pet.speciesId || 0]?.find(b => b.id === Number(value));
-                return {
-                  ...pet,
-                  breedId: value ? Number(value) : undefined,
-                  breed: selectedBreed?.name || ''
                 };
               }
               
@@ -3990,15 +3987,7 @@ export default function AppointmentRequestForm() {
                             </label>
                             <select
                               value={pet.speciesId || ''}
-                              onChange={(e) => {
-                                const newSpeciesId = e.target.value;
-                                updateNewClientPet(pet.id, 'speciesId', newSpeciesId);
-                                // Clear breed fields when species changes
-                                updateNewClientPet(pet.id, 'breed', '');
-                                updateNewClientPet(pet.id, 'breedId', '');
-                                setBreedSearchTerms(prev => ({ ...prev, [pet.id]: '' }));
-                                setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: false }));
-                              }}
+                              onChange={(e) => updateNewClientPet(pet.id, 'speciesId', e.target.value)}
                               style={{
                                 padding: '8px',
                                 border: `1px solid ${errors[`newClientPet.${pet.id}.species`] ? '#ef4444' : '#d1d5db'}`,
@@ -4100,139 +4089,26 @@ export default function AppointmentRequestForm() {
                               </div>
                             )}
                           </div>
-                          <div style={{ position: 'relative' }}>
-                            {(() => {
-                              // Check if breeds exist for this species
-                              const hasBreeds = pet.speciesId && 
-                                breedsBySpecies[pet.speciesId] && 
-                                breedsBySpecies[pet.speciesId].length > 0;
-                              const isLoading = pet.speciesId && loadingBreeds[pet.speciesId];
-                              return (
-                                <>
-                                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
-                                    Breed {hasBreeds && !isLoading && <span style={{ color: '#ef4444' }}>*</span>}
-                                  </label>
-                                  {/* If no breeds available (and not loading), show simple text input */}
-                                  {pet.speciesId && !isLoading && !hasBreeds ? (
-                                    <input
-                                      type="text"
-                                      value={pet.breed || ''}
-                                      onChange={(e) => updateNewClientPet(pet.id, 'breed', e.target.value)}
-                                      placeholder="Enter breed"
-                                      style={{
-                                        padding: '8px',
-                                        border: `1px solid ${errors[`newClientPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
-                                        borderRadius: '6px',
-                                        fontSize: '14px',
-                                        width: '100%',
-                                        backgroundColor: '#fff',
-                                      }}
-                                    />
-                                  ) : (
-                                    /* Otherwise, show autocomplete input */
-                                <>
-                                  <input
-                                    type="text"
-                                    value={pet.breed || breedSearchTerms[pet.id] || ''}
-                                    onChange={(e) => {
-                                      const searchTerm = e.target.value;
-                                      setBreedSearchTerms(prev => ({ ...prev, [pet.id]: searchTerm }));
-                                      setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: true }));
-                                      // Clear selection if user is typing
-                                      if (searchTerm !== pet.breed) {
-                                        updateNewClientPet(pet.id, 'breedId', '');
-                                        updateNewClientPet(pet.id, 'breed', '');
-                                      }
-                                    }}
-                                    onFocus={() => {
-                                      if (pet.speciesId) {
-                                        setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: true }));
-                                      }
-                                    }}
-                                    onBlur={() => {
-                                      // Delay closing to allow click on dropdown item
-                                      setTimeout(() => {
-                                        setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: false }));
-                                      }, 200);
-                                    }}
-                                    disabled={!pet.speciesId}
-                                    placeholder={!pet.speciesId 
-                                      ? 'Select species first...' 
-                                      : loadingBreeds[pet.speciesId]
-                                      ? 'Loading breeds...'
-                                      : 'Type to search breeds...'}
-                                    style={{
-                                      padding: '8px',
-                                      border: `1px solid ${errors[`newClientPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
-                                      borderRadius: '6px',
-                                      fontSize: '14px',
-                                      width: '100%',
-                                      backgroundColor: pet.speciesId ? '#fff' : '#f3f4f6',
-                                      cursor: pet.speciesId ? 'text' : 'not-allowed',
-                                    }}
-                                  />
-                                  {pet.speciesId && breedDropdownOpen[pet.id] && breedsBySpecies[pet.speciesId] && (
-                              <div
-                                style={{
-                                  position: 'absolute',
-                                  top: '100%',
-                                  left: 0,
-                                  right: 0,
-                                  zIndex: 1000,
-                                  backgroundColor: '#fff',
-                                  border: '1px solid #d1d5db',
-                                  borderRadius: '6px',
-                                  marginTop: '4px',
-                                  maxHeight: '200px',
-                                  overflowY: 'auto',
-                                  boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-                                }}
-                              >
-                                {breedsBySpecies[pet.speciesId]
-                                  .filter(breed => 
-                                    breed.name.toLowerCase().includes((breedSearchTerms[pet.id] || '').toLowerCase())
-                                  )
-                                  .slice(0, 50) // Limit to 50 results for performance
-                                  .map(breed => (
-                                    <div
-                                      key={breed.id}
-                                      onClick={() => {
-                                        updateNewClientPet(pet.id, 'breedId', breed.id.toString());
-                                        updateNewClientPet(pet.id, 'breed', breed.name);
-                                        setBreedSearchTerms(prev => ({ ...prev, [pet.id]: breed.name }));
-                                        setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: false }));
-                                      }}
-                                      style={{
-                                        padding: '8px 12px',
-                                        cursor: 'pointer',
-                                        borderBottom: '1px solid #f3f4f6',
-                                        backgroundColor: pet.breedId === breed.id ? '#f0fdf4' : '#fff',
-                                      }}
-                                      onMouseEnter={(e) => {
-                                        e.currentTarget.style.backgroundColor = '#f9fafb';
-                                      }}
-                                      onMouseLeave={(e) => {
-                                        e.currentTarget.style.backgroundColor = pet.breedId === breed.id ? '#f0fdf4' : '#fff';
-                                      }}
-                                    >
-                                      {breed.name}
-                                    </div>
-                                  ))}
-                                {breedsBySpecies[pet.speciesId].filter(breed => 
-                                  breed.name.toLowerCase().includes((breedSearchTerms[pet.id] || '').toLowerCase())
-                                ).length === 0 && (
-                                  <div style={{ padding: '8px 12px', color: '#6b7280', fontSize: '14px' }}>
-                                    No breeds found
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                                  </>
-                                  )
-                                }
-                              </>
-                            );
-                          })()}
+                          <div>
+                            <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                              Breed {pet.speciesId && speciesList.find(s => s.id === pet.speciesId)?.name !== 'Other' && !pet.otherSpecies?.trim() && <span style={{ color: '#ef4444' }}>*</span>}
+                            </label>
+                            <input
+                              type="text"
+                              value={pet.breed || ''}
+                              onChange={(e) => updateNewClientPet(pet.id, 'breed', e.target.value)}
+                              disabled={!pet.speciesId}
+                              placeholder={!pet.speciesId ? 'Select species first...' : 'Enter breed'}
+                              style={{
+                                padding: '8px',
+                                border: `1px solid ${errors[`newClientPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
+                                borderRadius: '6px',
+                                fontSize: '14px',
+                                width: '100%',
+                                backgroundColor: pet.speciesId ? '#fff' : '#f3f4f6',
+                                cursor: pet.speciesId ? 'text' : 'not-allowed',
+                              }}
+                            />
                             {errors[`newClientPet.${pet.id}.breed`] && (
                               <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
                                 {errors[`newClientPet.${pet.id}.breed`]}
@@ -4929,64 +4805,21 @@ export default function AppointmentRequestForm() {
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
                     Please let us know where we will meet you. <span style={{ color: '#ef4444' }}>*</span>
                   </label>
-                  <input
-                    type="text"
-                    value={formData.newPhysicalAddress?.line1 || ''}
-                    onChange={(e) => updateNestedFormData('newPhysicalAddress', 'line1', e.target.value)}
-                    placeholder="Street Address"
-                    style={{
-                      width: '100%',
-                      padding: '12px',
-                      border: `1px solid ${errors['newPhysicalAddress.line1'] ? '#ef4444' : '#d1d5db'}`,
-                      borderRadius: '8px',
-                      fontSize: '14px',
-                      marginBottom: '12px',
-                    }}
+                  <AddressAutocomplete
+                    id="new-physical-address"
+                    value={
+                      formData.newPhysicalAddress ?? {
+                        line1: '',
+                        city: '',
+                        state: '',
+                        zip: '',
+                        country: 'US',
+                      }
+                    }
+                    onChange={(address) => setAddressFields('newPhysicalAddress', address)}
+                    error={errors['newPhysicalAddress.line1']}
+                    placeholder="Start typing your address"
                   />
-                  {errors['newPhysicalAddress.line1'] && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '-8px', marginBottom: '8px' }}>{errors['newPhysicalAddress.line1']}</div>}
-                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr 1fr', gap: '12px' }}>
-                    <input
-                      type="text"
-                      value={formData.newPhysicalAddress?.city || ''}
-                      onChange={(e) => updateNestedFormData('newPhysicalAddress', 'city', e.target.value)}
-                      placeholder="City"
-                      style={{ 
-                        padding: '12px', 
-                        border: `1px solid ${errors['newPhysicalAddress.city'] ? '#ef4444' : '#d1d5db'}`, 
-                        borderRadius: '8px', 
-                        fontSize: '14px' 
-                      }}
-                    />
-                    <input
-                      type="text"
-                      value={formData.newPhysicalAddress?.state || ''}
-                      onChange={(e) => updateNestedFormData('newPhysicalAddress', 'state', e.target.value)}
-                      placeholder="State"
-                      style={{ 
-                        padding: '12px', 
-                        border: `1px solid ${errors['newPhysicalAddress.state'] ? '#ef4444' : '#d1d5db'}`, 
-                        borderRadius: '8px', 
-                        fontSize: '14px' 
-                      }}
-                    />
-                    <input
-                      type="text"
-                      value={formData.newPhysicalAddress?.zip || ''}
-                      onChange={(e) => updateNestedFormData('newPhysicalAddress', 'zip', e.target.value)}
-                      placeholder="Zip"
-                      style={{ 
-                        padding: '12px', 
-                        border: `1px solid ${errors['newPhysicalAddress.zip'] ? '#ef4444' : '#d1d5db'}`, 
-                        borderRadius: '8px', 
-                        fontSize: '14px' 
-                      }}
-                    />
-                  </div>
-                  {(errors['newPhysicalAddress.city'] || errors['newPhysicalAddress.state'] || errors['newPhysicalAddress.zip']) && (
-                    <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
-                      {errors['newPhysicalAddress.city'] || errors['newPhysicalAddress.state'] || errors['newPhysicalAddress.zip']}
-                    </div>
-                  )}
                   {errors.zoneNotServiced && (
                     <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
                       {renderZoneNotServicedMessage(errors.zoneNotServiced)}
@@ -5188,7 +5021,7 @@ export default function AppointmentRequestForm() {
             existingClientNewPets: (prev.existingClientNewPets || []).map(pet => {
               if (pet.id !== petId) return pet;
               
-              // If species is being changed, clear breed and breedId
+              // If species is being changed, clear breed
               if (field === 'speciesId') {
                 const selectedSpecies = speciesList.find(s => s.id === Number(value));
                 return {
@@ -5197,16 +5030,6 @@ export default function AppointmentRequestForm() {
                   species: selectedSpecies?.name || '',
                   breed: undefined,
                   breedId: undefined
-                };
-              }
-              
-              // If breed is being changed, update breed name
-              if (field === 'breedId') {
-                const selectedBreed = breedsBySpecies[pet.speciesId || 0]?.find(b => b.id === Number(value));
-                return {
-                  ...pet,
-                  breedId: value ? Number(value) : undefined,
-                  breed: selectedBreed?.name || ''
                 };
               }
               
@@ -5685,15 +5508,7 @@ export default function AppointmentRequestForm() {
                                 </label>
                                 <select
                                   value={pet.speciesId || ''}
-                                  onChange={(e) => {
-                                    const newSpeciesId = e.target.value;
-                                    updateExistingClientNewPet(pet.id, 'speciesId', newSpeciesId);
-                                    // Clear breed fields when species changes
-                                    updateExistingClientNewPet(pet.id, 'breed', '');
-                                    updateExistingClientNewPet(pet.id, 'breedId', '');
-                                    setBreedSearchTerms(prev => ({ ...prev, [pet.id]: '' }));
-                                    setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: false }));
-                                  }}
+                                  onChange={(e) => updateExistingClientNewPet(pet.id, 'speciesId', e.target.value)}
                                   style={{
                                     padding: '8px',
                                     border: `1px solid ${errors[`existingClientNewPet.${pet.id}.species`] ? '#ef4444' : '#d1d5db'}`,
@@ -5795,139 +5610,26 @@ export default function AppointmentRequestForm() {
                                   </div>
                                 )}
                               </div>
-                              <div style={{ position: 'relative' }}>
-                                {(() => {
-                                  // Check if breeds exist for this species
-                                  const hasBreeds = pet.speciesId && 
-                                    breedsBySpecies[pet.speciesId] && 
-                                    breedsBySpecies[pet.speciesId].length > 0;
-                                  const isLoading = pet.speciesId && loadingBreeds[pet.speciesId];
-                                  return (
-                                    <>
-                                      <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
-                                        Breed {hasBreeds && !isLoading && <span style={{ color: '#ef4444' }}>*</span>}
-                                      </label>
-                                      {/* If no breeds available (and not loading), show simple text input */}
-                                      {pet.speciesId && !isLoading && !hasBreeds ? (
-                                        <input
-                                          type="text"
-                                          value={pet.breed || ''}
-                                          onChange={(e) => updateExistingClientNewPet(pet.id, 'breed', e.target.value)}
-                                          placeholder="Enter breed"
-                                          style={{
-                                            padding: '8px',
-                                            border: `1px solid ${errors[`existingClientNewPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
-                                            borderRadius: '6px',
-                                            fontSize: '14px',
-                                            width: '100%',
-                                            backgroundColor: '#fff',
-                                          }}
-                                        />
-                                      ) : (
-                                        /* Otherwise, show autocomplete input */
-                                    <>
-                                      <input
-                                        type="text"
-                                        value={pet.breed || breedSearchTerms[pet.id] || ''}
-                                        onChange={(e) => {
-                                          const searchTerm = e.target.value;
-                                          setBreedSearchTerms(prev => ({ ...prev, [pet.id]: searchTerm }));
-                                          setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: true }));
-                                          // Clear selection if user is typing
-                                          if (searchTerm !== pet.breed) {
-                                            updateExistingClientNewPet(pet.id, 'breedId', '');
-                                            updateExistingClientNewPet(pet.id, 'breed', '');
-                                          }
-                                        }}
-                                        onFocus={() => {
-                                          if (pet.speciesId) {
-                                            setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: true }));
-                                          }
-                                        }}
-                                        onBlur={() => {
-                                          // Delay closing to allow click on dropdown item
-                                          setTimeout(() => {
-                                            setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: false }));
-                                          }, 200);
-                                        }}
-                                        disabled={!pet.speciesId}
-                                        placeholder={!pet.speciesId 
-                                          ? 'Select species first...' 
-                                          : loadingBreeds[pet.speciesId]
-                                          ? 'Loading breeds...'
-                                          : 'Type to search breeds...'}
-                                        style={{
-                                          padding: '8px',
-                                          border: `1px solid ${errors[`existingClientNewPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
-                                          borderRadius: '6px',
-                                          fontSize: '14px',
-                                          width: '100%',
-                                          backgroundColor: pet.speciesId ? '#fff' : '#f3f4f6',
-                                          cursor: pet.speciesId ? 'text' : 'not-allowed',
-                                        }}
-                                      />
-                                      {pet.speciesId && breedDropdownOpen[pet.id] && breedsBySpecies[pet.speciesId] && (
-                                  <div
-                                    style={{
-                                      position: 'absolute',
-                                      top: '100%',
-                                      left: 0,
-                                      right: 0,
-                                      zIndex: 1000,
-                                      backgroundColor: '#fff',
-                                      border: '1px solid #d1d5db',
-                                      borderRadius: '6px',
-                                      marginTop: '4px',
-                                      maxHeight: '200px',
-                                      overflowY: 'auto',
-                                      boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-                                    }}
-                                  >
-                                    {breedsBySpecies[pet.speciesId]
-                                      .filter(breed => 
-                                        breed.name.toLowerCase().includes((breedSearchTerms[pet.id] || '').toLowerCase())
-                                      )
-                                      .slice(0, 50) // Limit to 50 results for performance
-                                      .map(breed => (
-                                        <div
-                                          key={breed.id}
-                                          onClick={() => {
-                                            updateExistingClientNewPet(pet.id, 'breedId', breed.id.toString());
-                                            updateExistingClientNewPet(pet.id, 'breed', breed.name);
-                                            setBreedSearchTerms(prev => ({ ...prev, [pet.id]: breed.name }));
-                                            setBreedDropdownOpen(prev => ({ ...prev, [pet.id]: false }));
-                                          }}
-                                          style={{
-                                            padding: '8px 12px',
-                                            cursor: 'pointer',
-                                            borderBottom: '1px solid #f3f4f6',
-                                            backgroundColor: pet.breedId === breed.id ? '#f0fdf4' : '#fff',
-                                          }}
-                                          onMouseEnter={(e) => {
-                                            e.currentTarget.style.backgroundColor = '#f9fafb';
-                                          }}
-                                          onMouseLeave={(e) => {
-                                            e.currentTarget.style.backgroundColor = pet.breedId === breed.id ? '#f0fdf4' : '#fff';
-                                          }}
-                                        >
-                                          {breed.name}
-                                        </div>
-                                      ))}
-                                    {breedsBySpecies[pet.speciesId].filter(breed => 
-                                      breed.name.toLowerCase().includes((breedSearchTerms[pet.id] || '').toLowerCase())
-                                    ).length === 0 && (
-                                      <div style={{ padding: '8px 12px', color: '#6b7280', fontSize: '14px' }}>
-                                        No breeds found
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                                      </>
-                                      )
-                                    }
-                                  </>
-                                );
-                              })()}
+                              <div>
+                                <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
+                                  Breed {pet.speciesId && speciesList.find(s => s.id === pet.speciesId)?.name !== 'Other' && !pet.otherSpecies?.trim() && <span style={{ color: '#ef4444' }}>*</span>}
+                                </label>
+                                <input
+                                  type="text"
+                                  value={pet.breed || ''}
+                                  onChange={(e) => updateExistingClientNewPet(pet.id, 'breed', e.target.value)}
+                                  disabled={!pet.speciesId}
+                                  placeholder={!pet.speciesId ? 'Select species first...' : 'Enter breed'}
+                                  style={{
+                                    padding: '8px',
+                                    border: `1px solid ${errors[`existingClientNewPet.${pet.id}.breed`] ? '#ef4444' : '#d1d5db'}`,
+                                    borderRadius: '6px',
+                                    fontSize: '14px',
+                                    width: '100%',
+                                    backgroundColor: pet.speciesId ? '#fff' : '#f3f4f6',
+                                    cursor: pet.speciesId ? 'text' : 'not-allowed',
+                                  }}
+                                />
                                 {errors[`existingClientNewPet.${pet.id}.breed`] && (
                                   <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
                                     {errors[`existingClientNewPet.${pet.id}.breed`]}
@@ -7717,9 +7419,8 @@ export default function AppointmentRequestForm() {
                 type="button"
                 className="appt-form-view-membership-btn"
                 onClick={() => {
-                  trackEvent('appointment_form_confirmation_membership_cta_clicked', {
+                  trackFormEvent('appointment_form_confirmation_membership_cta_clicked', {
                     eligible_pet_count: membershipEligiblePets.length,
-                    is_logged_in: isLoggedIn,
                     membership_interest: formData.membershipInterest ?? undefined,
                   });
                   setSelectedMembershipPetId(null);
