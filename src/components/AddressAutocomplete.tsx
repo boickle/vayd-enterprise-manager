@@ -26,13 +26,33 @@ type AddressAutocompleteProps = {
   id?: string;
   /** Reset zone/vet lookups when address changes */
   onAddressResolved?: () => void;
+  /** Show only line1 in the input (e.g. depot locations resolved from lat/lon). */
+  singleLine?: boolean;
+  /** Extra class for the text input (e.g. settings-input). */
+  inputClassName?: string;
+  /** Show green "Address confirmed" hint below the field. */
+  showConfirmedMessage?: boolean;
 };
 
 function newSessionToken(): string {
   return crypto.randomUUID();
 }
 
-function isAddressComplete(addr: AddressFields): boolean {
+function formatDisplayValue(addr: AddressFields, singleLine?: boolean): string {
+  if (singleLine) return addr.line1?.trim() || '';
+  return formatAddressFields(addr);
+}
+
+function isAddressComplete(addr: AddressFields, singleLine?: boolean): boolean {
+  if (singleLine) {
+    return Boolean(
+      addr.line1?.trim() &&
+        addr.lat != null &&
+        addr.lon != null &&
+        Number.isFinite(addr.lat) &&
+        Number.isFinite(addr.lon)
+    );
+  }
   return Boolean(
     addr.line1?.trim() && addr.city?.trim() && addr.state?.trim() && addr.zip?.trim()
   );
@@ -45,18 +65,21 @@ export function AddressAutocomplete({
   placeholder = 'Start typing your address',
   id: idProp,
   onAddressResolved,
+  singleLine = false,
+  inputClassName,
+  showConfirmedMessage = true,
 }: AddressAutocompleteProps) {
   const autoId = useId();
   const inputId = idProp ?? `address-autocomplete-${autoId}`;
   const listboxId = `${inputId}-listbox`;
 
-  const [inputValue, setInputValue] = useState(() => formatAddressFields(value));
+  const [inputValue, setInputValue] = useState(() => formatDisplayValue(value, singleLine));
   const [suggestions, setSuggestions] = useState<GeoAutocompleteSuggestion[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingPlace, setLoadingPlace] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
-  const [placeSelected, setPlaceSelected] = useState(() => isAddressComplete(value));
+  const [placeSelected, setPlaceSelected] = useState(() => isAddressComplete(value, singleLine));
 
   const sessionTokenRef = useRef<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -68,12 +91,12 @@ export function AddressAutocomplete({
       skipSyncRef.current = false;
       return;
     }
-    const formatted = formatAddressFields(value);
+    const formatted = formatDisplayValue(value, singleLine);
     if (formatted) {
       setInputValue(formatted);
-      setPlaceSelected(isAddressComplete(value));
+      setPlaceSelected(isAddressComplete(value, singleLine));
     }
-  }, [value.line1, value.line2, value.city, value.state, value.zip]);
+  }, [value.line1, value.line2, value.city, value.state, value.zip, value.lat, value.lon, singleLine]);
 
   const ensureSessionToken = useCallback(() => {
     if (!sessionTokenRef.current) {
@@ -142,7 +165,19 @@ export function AddressAutocomplete({
       const details = await publicGeoPlaceDetails(suggestion.placeId, token);
       const fields = placeDetailsToAddressFields(details);
       skipSyncRef.current = true;
-      onChange(fields);
+      if (singleLine) {
+        onChange({
+          line1: details.formattedAddress,
+          city: '',
+          state: '',
+          zip: '',
+          country: fields.country,
+          lat: fields.lat,
+          lon: fields.lon,
+        });
+      } else {
+        onChange(fields);
+      }
       setInputValue(details.formattedAddress);
       setPlaceSelected(true);
       sessionTokenRef.current = newSessionToken();
@@ -203,19 +238,28 @@ export function AddressAutocomplete({
         aria-controls={listboxId}
         aria-autocomplete="list"
         autoComplete="off"
+        className={inputClassName}
         value={inputValue}
         onChange={(e) => handleInputChange(e.target.value)}
         onFocus={handleFocus}
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
-        style={{
-          width: '100%',
-          padding: '12px',
-          border: `1px solid ${error ? '#ef4444' : '#d1d5db'}`,
-          borderRadius: '8px',
-          fontSize: '14px',
-        }}
+        style={
+          inputClassName
+            ? {
+                width: '100%',
+                maxWidth: 'none',
+                borderColor: error ? '#ef4444' : undefined,
+              }
+            : {
+                width: '100%',
+                padding: '12px',
+                border: `1px solid ${error ? '#ef4444' : '#d1d5db'}`,
+                borderRadius: '8px',
+                fontSize: '14px',
+              }
+        }
       />
       {busy && (
         <div
@@ -281,7 +325,7 @@ export function AddressAutocomplete({
           ))}
         </ul>
       )}
-      {placeSelected && isAddressComplete(value) && !error && (
+      {showConfirmedMessage && placeSelected && isAddressComplete(value, singleLine) && !error && (
         <div style={{ fontSize: '12px', color: '#059669', marginTop: '6px' }}>
           Address confirmed
         </div>
