@@ -8,6 +8,9 @@ interface ImportMetaEnv {
   readonly VITE_GOOGLE_ADS_TAG_ID?: string;
   /** In lower envs: set to 'true' to show "Become a Member" / create-client. In production, create-client is always enabled. */
   readonly VITE_SHOW_CREATE_CLIENT: string;
+  readonly VITE_APPOINTMENT_FORM_DRAFTS_ENABLED?: string;
+  /** Minutes of inactivity before idle_timeout abandon (default 15; 0 disables). */
+  readonly VITE_APPOINTMENT_FORM_ABANDON_IDLE_MINUTES?: string;
 }
 
 interface ImportMeta {

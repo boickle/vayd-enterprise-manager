@@ -21,6 +21,8 @@ import {
   type AppointmentType,
 } from '../api/publicAppointments';
 import { trackEvent } from '../utils/analytics';
+import { useAppointmentFormDraftPersistence } from '../hooks/useAppointmentFormDraftPersistence';
+import type { AppointmentFormDraftSnapshotInput } from '../utils/appointmentFormDraftSnapshot';
 import { isProduction } from '../utils/env';
 import { listMembershipTransactions } from '../api/membershipTransactions';
 import MembershipSignup from './MembershipSignup';
@@ -218,13 +220,6 @@ function getAppointmentFormStepName(page: Page): string {
   }
 }
 
-function createAppointmentFormSessionId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return `appt-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
 const ZONE_NOT_SERVICED_SERVICE_URL = 'www.vetatyourdoor.com/service-area';
 const ZONE_NOT_SERVICED_CALL_TEXT = 'call or text us at ';
 const ZONE_NOT_SERVICED_PHONE = '(207) 536-8387';
@@ -399,15 +394,20 @@ export default function AppointmentRequestForm() {
   const [searchParams, setSearchParams] = useSearchParams();
   const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
 
-  const formSessionIdRef = useRef(createAppointmentFormSessionId());
-  const formCompletedRef = useRef(false);
-  const abandonReportedRef = useRef(false);
   const currentPageRef = useRef<Page>(currentPage);
   const isLoggedInRef = useRef(isLoggedIn);
   const haveUsedServicesBeforeRef = useRef(formData.haveUsedServicesBefore);
+  const formDataRef = useRef(formData);
+  const userEmailRef = useRef(userEmail);
+  const userIdRef = useRef(userId);
+  const ongoingCareInterestRef = useRef(ongoingCareInterest);
   currentPageRef.current = currentPage;
   isLoggedInRef.current = isLoggedIn;
   haveUsedServicesBeforeRef.current = formData.haveUsedServicesBefore;
+  formDataRef.current = formData;
+  userEmailRef.current = userEmail;
+  userIdRef.current = userId;
+  ongoingCareInterestRef.current = ongoingCareInterest;
 
   const getFormAnalyticsContext = useCallback(() => {
     const page = currentPageRef.current;
@@ -429,16 +429,64 @@ export default function AppointmentRequestForm() {
     [getFormAnalyticsContext]
   );
 
-  const trackFormAbandoned = useCallback(
+  const gaAbandonTrackedRef = useRef(false);
+
+  const getDraftSnapshotInput = useCallback((): AppointmentFormDraftSnapshotInput => {
+    const fd = formDataRef.current;
+    return {
+      email: fd.email,
+      userEmail: userEmailRef.current,
+      fullName: fd.fullName,
+      haveUsedServicesBefore: fd.haveUsedServicesBefore,
+      phoneNumbers: fd.phoneNumbers,
+      bestPhoneNumber: fd.bestPhoneNumber,
+      canWeText: fd.canWeText,
+      physicalAddress: fd.physicalAddress,
+      newPhysicalAddress: fd.newPhysicalAddress,
+      isThisTheAddressWhereWeWillCome: fd.isThisTheAddressWhereWeWillCome,
+      selectedPetIds: fd.selectedPetIds,
+      newClientPets: fd.newClientPets,
+      existingClientNewPets: fd.existingClientNewPets,
+      petSpecificData: fd.petSpecificData as Record<string, unknown> | undefined,
+      howSoon: fd.howSoon,
+      serviceArea: fd.serviceArea,
+      serviceAreaVisit: fd.serviceAreaVisit,
+      lookingForEuthanasia: fd.lookingForEuthanasia,
+      lookingForEuthanasiaExisting: fd.lookingForEuthanasiaExisting,
+      preferredDoctor: fd.preferredDoctor,
+      preferredDoctorExisting: fd.preferredDoctorExisting,
+      visitDetails: fd.visitDetails,
+      needsUrgentScheduling: fd.needsUrgentScheduling,
+      preferredDateTime: fd.preferredDateTime,
+      preferredDateTimeVisit: fd.preferredDateTimeVisit,
+      selectedDateTimeSlots: fd.selectedDateTimeSlots,
+      selectedDateTimeSlotsVisit: fd.selectedDateTimeSlotsVisit,
+      membershipInterest: fd.membershipInterest,
+      howDidYouHearAboutUs: fd.howDidYouHearAboutUs,
+      anythingElse: fd.anythingElse,
+      isLoggedIn: isLoggedInRef.current,
+    };
+  }, []);
+
+  const trackGaAbandon = useCallback(
     (reason: string) => {
-      if (formCompletedRef.current || abandonReportedRef.current) return;
+      if (gaAbandonTrackedRef.current) return;
       const page = currentPageRef.current;
       if (page === 'success') return;
-      abandonReportedRef.current = true;
+      gaAbandonTrackedRef.current = true;
       trackFormEvent('appointment_form_abandoned', { abandon_reason: reason });
     },
     [trackFormEvent]
   );
+
+  const { formSessionIdRef, markFormCompleted, sendAbandon, shouldPersistDraft } =
+    useAppointmentFormDraftPersistence({
+      practiceId,
+      currentPage,
+      getSnapshotInput: getDraftSnapshotInput,
+      getStepName: (step) => getAppointmentFormStepName(step as Page),
+      trackGaAbandon,
+    });
 
   useEffect(() => {
     trackFormEvent('appointment_form_started', {
@@ -448,14 +496,24 @@ export default function AppointmentRequestForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Intro: browser back leaves the route (e.g. after in-form Previous from new-client).
   useEffect(() => {
-    const onPageHide = () => trackFormAbandoned('page_hide');
-    window.addEventListener('pagehide', onPageHide);
-    return () => {
-      window.removeEventListener('pagehide', onPageHide);
-      trackFormAbandoned('component_unmount');
+    if (currentPage !== 'intro') return;
+
+    if (shouldPersistDraft()) {
+      const state = window.history.state;
+      if (!state?.formPage || state.formPage !== 'intro') {
+        window.history.pushState({ formPage: 'intro', preventBack: true }, '', window.location.href);
+      }
+    }
+
+    const handleIntroPopState = () => {
+      void sendAbandon('browser_back', { awaitPutThenPost: true });
     };
-  }, [trackFormAbandoned]);
+
+    window.addEventListener('popstate', handleIntroPopState);
+    return () => window.removeEventListener('popstate', handleIntroPopState);
+  }, [currentPage, shouldPersistDraft, sendAbandon]);
 
   useEffect(() => {
     if (!appointmentTypeChangeModal) return;
@@ -1427,10 +1485,12 @@ export default function AppointmentRequestForm() {
           // This effectively cancels the back button press
           window.history.pushState({ formPage: currentPage, preventBack: true }, '', window.location.href);
         } else {
-          trackFormAbandoned('browser_back');
-          // User confirmed - navigate back one more step since the browser already navigated
-          // to our pushed state (same URL), we need to go back further to the actual previous route
-          window.history.back();
+          void (async () => {
+            await sendAbandon('browser_back', { awaitPutThenPost: true });
+            // User confirmed - navigate back one more step since the browser already navigated
+            // to our pushed state (same URL), we need to go back further to the actual previous route
+            window.history.back();
+          })();
         }
         
         setTimeout(() => {
@@ -1445,7 +1505,7 @@ export default function AppointmentRequestForm() {
       clearTimeout(timeoutId);
       window.removeEventListener('popstate', handlePopState);
     };
-  }, [currentPage, trackFormAbandoned]);
+  }, [currentPage, sendAbandon]);
 
   // Load veterinarians for new clients (using public veterinarians endpoint)
   // Only fetch when address is valid (has line1, city, state, zip)
@@ -2840,8 +2900,11 @@ export default function AppointmentRequestForm() {
     const userWantsToLeave = window.confirm(message);
     
     if (userWantsToLeave) {
-      trackFormAbandoned('exit_to_portal');
-      navigate('/client-portal');
+      void (async () => {
+        trackGaAbandon('exit_to_portal');
+        await sendAbandon('exit_to_portal', { awaitPutThenPost: true });
+        navigate('/client-portal');
+      })();
     }
   };
 
@@ -3263,6 +3326,7 @@ export default function AppointmentRequestForm() {
         ongoingCareInterest: ongoingCareInterest || undefined,
         
         // Metadata
+        formSessionId: formSessionIdRef.current,
         submittedAt: new Date().toISOString(),
         formFlow: {
           startedAsLoggedIn: isLoggedIn,
@@ -3315,7 +3379,7 @@ export default function AppointmentRequestForm() {
         ? (formData.selectedPetIds?.length || 0)
         : (formData.newClientPets?.length || 0);
       
-      formCompletedRef.current = true;
+      markFormCompleted();
       trackFormEvent('appointment_form_submitted', {
         appointment_type: appointmentType,
         pet_count: petCount,
