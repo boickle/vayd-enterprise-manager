@@ -32,7 +32,18 @@ export function resolvePracticeIdFromToken(token: string | null): number {
 export function resolveEmployeeIdFromToken(token: string | null): number | null {
   if (!token) return null;
   const p = decodeJwtPayload(token);
-  const raw = p?.employeeId ?? p?.employee_id;
+  if (!p) return null;
+  const employeeObj = p.employee;
+  const nestedId =
+    employeeObj && typeof employeeObj === 'object' && 'id' in employeeObj
+      ? (employeeObj as { id?: unknown }).id
+      : null;
+  const raw =
+    p.employeeId ??
+    p.employee_id ??
+    p.staffEmployeeId ??
+    p.staff_employee_id ??
+    nestedId;
   if (raw == null) return null;
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;

@@ -1,8 +1,24 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { DateTime } from 'luxon';
 import { useAuth } from '../auth/useAuth';
 import { listPracticeBranches, type PracticeBranch } from '../api/branchInventory';
 import { fetchAllEmployees, type Employee } from '../api/appointmentSettings';
+import { searchClientsStaff, type ClientSearchRow } from '../api/clientsStaff';
+import { searchPatientsStaff, type PatientSearchRow } from '../api/patients';
+import { formatEmployeeDisplayName } from '../utils/employeeDisplayName';
+import {
+  fromDatetimeLocalValue,
+  toDatetimeLocalValue,
+  validateTaskScheduleOrder,
+} from '../utils/taskDateTime';
+import {
+  type TaskPriorityChoice,
+  isTaskPriorityUrgent,
+  priorityToApi,
+} from '../utils/taskPriority';
+import { primaryClientLabelForPatientRow } from '../utils/pimsPatientSearchRow';
+import { taskLinkDisplayLabel, useTaskLinkLabels } from '../utils/taskLinkDisplay';
 import {
   completeTask,
   createTask,
@@ -13,7 +29,17 @@ import {
   type TaskLinkRow,
   type TaskListItem,
 } from '../api/tasks';
-import { resolveEmployeeIdFromToken, resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import {
+  countTaskBuckets,
+  filterMyOpenTasksByBucket,
+  filterOpenTasksAssignedToEmployeeIds,
+  notifyTasksChanged,
+  normalizeEmployeeId,
+  resolveMyEmployeeIds,
+  taskAssigneeEmployeeId,
+  type TaskDueBucket,
+} from '../utils/taskOwnership';
 import PimsTaskDetailView from '../components/pims/PimsTaskDetailView';
 import './PimsTasksPage.css';
 
@@ -21,12 +47,36 @@ const PAGE_SIZE = 50;
 const CLIENT_FILTER_CAP = 200;
 const LINK_FETCH_CAP = 28;
 
-type TabId = 'all' | 'queue' | 'mine' | 'done';
+type TabId = 'active' | 'expired' | 'upcoming' | 'sent' | 'completed';
+
+const BUCKET_TABS: TaskDueBucket[] = ['active', 'expired', 'upcoming'];
+
+function isBucketTab(tab: TabId): tab is TaskDueBucket {
+  return (BUCKET_TABS as string[]).includes(tab);
+}
+
+function filterSentTasks(rows: TaskListItem[], myEmployeeIds: number[]): TaskListItem[] {
+  if (myEmployeeIds.length === 0) return [];
+  return rows.filter((t) => {
+    const creator = normalizeEmployeeId(t.createdByEmployeeId);
+    return creator != null && myEmployeeIds.includes(creator);
+  });
+}
 
 function normalizeRoles(role: string | string[] | undefined): string[] {
   if (!role) return [];
   const arr = Array.isArray(role) ? role : [role];
   return arr.map((r) => String(r).toLowerCase().trim()).filter(Boolean);
+}
+
+function humanStartLine(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  if (d.getTime() > Date.now()) {
+    return `Starts ${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}`;
+  }
+  return null;
 }
 
 function humanDueLine(iso: string | null): string {
@@ -47,6 +97,7 @@ function humanDueLine(iso: string | null): string {
 
 function isUrgentTask(t: TaskListItem): boolean {
   if (t.status === 'done') return false;
+  if (isTaskPriorityUrgent(t.priority)) return true;
   if (t.status === 'open' && t.assignedToEmployeeId == null) return true;
   if (!t.dueAt) return false;
   const due = new Date(t.dueAt).getTime();
@@ -54,11 +105,16 @@ function isUrgentTask(t: TaskListItem): boolean {
   return due <= Date.now() + day;
 }
 
-function canActOnTask(t: TaskListItem, myEmployeeId: number | null, isPracticeAdmin: boolean): boolean {
+function canActOnTask(t: TaskListItem, myEmployeeIds: number[], isPracticeAdmin: boolean): boolean {
   if (t.status === 'done') return false;
   if (isPracticeAdmin) return true;
-  if (myEmployeeId == null) return false;
-  return t.assignedToEmployeeId === myEmployeeId || t.createdByEmployeeId === myEmployeeId;
+  if (myEmployeeIds.length === 0) return false;
+  const assignee = taskAssigneeEmployeeId(t);
+  const creator = normalizeEmployeeId(t.createdByEmployeeId);
+  return (
+    (assignee != null && myEmployeeIds.includes(assignee)) ||
+    (creator != null && myEmployeeIds.includes(creator))
+  );
 }
 
 function errMsg(e: unknown): string {
@@ -70,22 +126,188 @@ function errMsg(e: unknown): string {
   return 'Request failed';
 }
 
-function fromDatetimeLocalValue(local: string): string | null {
-  if (!local.trim()) return null;
-  const d = new Date(local);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString();
+function dateToDatetimeLocal(d: Date): string {
+  return toDatetimeLocalValue(d.toISOString());
 }
 
-function linkLabel(l: TaskLinkRow): string {
-  const t = l.entityType.replace(/_/g, ' ');
-  return `${t} #${l.entityId}`;
+type DueScheduleUnit = 'days' | 'weeks' | 'months';
+type DueStartMode = 'today' | 'relative';
+
+function applyStartSchedule(amount: number, unit: DueScheduleUnit): string {
+  const n = Math.max(1, Math.floor(amount) || 1);
+  const start = DateTime.now().plus({ [unit]: n });
+  return dateToDatetimeLocal(start.toJSDate());
+}
+
+function applyStartToday(): string {
+  return dateToDatetimeLocal(DateTime.now().toJSDate());
+}
+
+function pickStr(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s || null;
+}
+
+function clientDisplayName(c: ClientSearchRow): string {
+  const both = [pickStr(c.firstName), pickStr(c.lastName)].filter(Boolean).join(' ');
+  return both || `Client #${c.id}`;
+}
+
+function patientSearchLabel(row: Record<string, unknown>): string {
+  const joined = [pickStr(row.firstName), pickStr(row.lastName)].filter(Boolean).join(' ').trim();
+  const name = pickStr(row.name) ?? (joined || 'Patient');
+  const owner = primaryClientLabelForPatientRow(row as PatientSearchRow);
+  return owner ? `${name} (${owner})` : name;
+}
+
+type LinkPick = { id: number; label: string };
+
+function TaskLinkEntityPicker({
+  kind,
+  disabled,
+  value,
+  onChange,
+  practiceId,
+}: {
+  kind: 'patient' | 'client';
+  disabled?: boolean;
+  value: LinkPick | null;
+  onChange: (next: LinkPick | null) => void;
+  practiceId?: number;
+}) {
+  const [query, setQuery] = useState(value?.label ?? '');
+  const [results, setResults] = useState<LinkPick[]>([]);
+  const [open, setOpen] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const seq = useRef(0);
+
+  useEffect(() => {
+    setQuery(value?.label ?? '');
+  }, [value?.id, value?.label]);
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (value && q === value.label) {
+      setResults([]);
+      return;
+    }
+    if (!q) {
+      setResults([]);
+      return;
+    }
+    const id = ++seq.current;
+    const timer = window.setTimeout(async () => {
+      setSearching(true);
+      try {
+        if (kind === 'client') {
+          const rows = await searchClientsStaff(q);
+          if (seq.current !== id) return;
+          setResults(
+            rows.slice(0, 8).map((c) => ({
+              id: Number(c.id),
+              label: clientDisplayName(c),
+            }))
+          );
+          setOpen(true);
+        } else {
+          const rows = await searchPatientsStaff(q, {
+            ...(practiceId != null ? { practiceId } : {}),
+            activeOnly: true,
+          });
+          if (seq.current !== id) return;
+          setResults(
+            rows
+              .filter((r) => r && typeof r === 'object')
+              .slice(0, 8)
+              .map((r) => {
+                const row = r as Record<string, unknown>;
+                const idRaw = row.id ?? row.patientId;
+                return {
+                  id: Number(idRaw),
+                  label: patientSearchLabel(row),
+                };
+              })
+              .filter((x) => Number.isFinite(x.id))
+          );
+          setOpen(true);
+        }
+      } catch {
+        if (seq.current === id) setResults([]);
+      } finally {
+        if (seq.current === id) setSearching(false);
+      }
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [query, kind, practiceId, value]);
+
+  return (
+    <div className="pims-tasks__link-search" ref={wrapRef}>
+      <input
+        type="search"
+        placeholder={kind === 'client' ? 'Search client name…' : 'Search patient name…'}
+        value={query}
+        disabled={disabled}
+        autoComplete="off"
+        onChange={(e) => {
+          const next = e.target.value;
+          setQuery(next);
+          if (value && next !== value.label) onChange(null);
+        }}
+        onFocus={() => results.length > 0 && setOpen(true)}
+      />
+      {value ? (
+        <button
+          type="button"
+          className="pims-tasks__link-clear"
+          disabled={disabled}
+          onClick={() => {
+            onChange(null);
+            setQuery('');
+            setResults([]);
+          }}
+        >
+          Clear
+        </button>
+      ) : null}
+      {searching ? <span className="pims-tasks__field-hint">Searching…</span> : null}
+      {open && results.length > 0 ? (
+        <ul className="pims-tasks__link-dropdown" role="listbox">
+          {results.map((r) => (
+            <li key={r.id}>
+              <button
+                type="button"
+                role="option"
+                className="pims-tasks__link-dd-item"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  onChange(r);
+                  setQuery(r.label);
+                  setOpen(false);
+                }}
+              >
+                {r.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
 }
 
 export default function PimsTasksPage() {
-  const { token, role } = useAuth() as { token: string | null; role: string | string[] };
+  const { token, role, userEmail, userId, doctorId } = useAuth();
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
-  const myEmployeeId = useMemo(() => resolveEmployeeIdFromToken(token), [token]);
   const roles = useMemo(() => normalizeRoles(role), [role]);
   const isPracticeAdmin = useMemo(
     () => roles.includes('admin') || roles.includes('superadmin'),
@@ -97,8 +319,21 @@ export default function PimsTasksPage() {
 
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const myEmployeeIds = useMemo(
+    () =>
+      resolveMyEmployeeIds({
+        token,
+        doctorId,
+        userEmail,
+        userId,
+        employees,
+      }),
+    [token, doctorId, userEmail, userId, employees]
+  );
+  const myEmployeeId = myEmployeeIds[0] ?? null;
   const [branchFilter, setBranchFilter] = useState<string>('');
-  const [tab, setTab] = useState<TabId>('mine');
+  const [tab, setTab] = useState<TabId>('active');
+  const [myOpenTasks, setMyOpenTasks] = useState<TaskListItem[]>([]);
 
   const [items, setItems] = useState<TaskListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -106,16 +341,18 @@ export default function PimsTasksPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [linksByTaskId, setLinksByTaskId] = useState<Record<number, TaskLinkRow[]>>({});
+  const allTaskLinks = useMemo(() => Object.values(linksByTaskId).flat(), [linksByTaskId]);
+  const linkLabels = useTaskLinkLabels(allTaskLinks);
   const [reassignTask, setReassignTask] = useState<TaskListItem | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
   useEffect(() => {
-    if (searchParams.get('new') === '1') {
-      setCreateOpen(true);
-      const next = new URLSearchParams(searchParams);
-      next.delete('new');
-      setSearchParams(next, { replace: true });
-    }
+    if (searchParams.get('new') !== '1') return;
+    setCreateOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('new');
+    next.delete('taskId');
+    setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
   useEffect(() => {
@@ -147,14 +384,56 @@ export default function PimsTasksPage() {
   const employeeMap = useMemo(() => {
     const m = new Map<number, string>();
     for (const e of employees) {
-      m.set(e.id, [e.firstName, e.lastName].filter(Boolean).join(' ').trim() || e.email);
+      m.set(e.id, formatEmployeeDisplayName(e) || e.email);
     }
     return m;
   }, [employees]);
 
   const branchIdNum = branchFilter === '' ? undefined : Number(branchFilter);
 
+  const bucketCounts = useMemo(() => countTaskBuckets(myOpenTasks), [myOpenTasks]);
+
+  const loadMyOpenTasks = useCallback(async () => {
+    const res = await listTasks({
+      includeDone: false,
+      branchId: branchIdNum,
+      limit: CLIENT_FILTER_CAP,
+      offset: 0,
+    });
+    const mine =
+      myEmployeeIds.length === 0 ? [] : filterOpenTasksAssignedToEmployeeIds(res.items, myEmployeeIds);
+    setMyOpenTasks(mine);
+    return mine;
+  }, [branchIdNum, myEmployeeIds]);
+
   useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        await loadMyOpenTasks();
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setError(errMsg(e));
+          setMyOpenTasks([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadMyOpenTasks]);
+
+  useEffect(() => {
+    if (!isBucketTab(tab)) return;
+    const rows =
+      myEmployeeIds.length === 0 ? [] : filterMyOpenTasksByBucket(myOpenTasks, tab);
+    setItems(rows);
+    setTotal(rows.length);
+    setOffset(rows.length);
+  }, [tab, myOpenTasks, myEmployeeIds]);
+
+  useEffect(() => {
+    if (isBucketTab(tab)) return;
     setOffset(0);
     setItems([]);
     setLoading(true);
@@ -162,41 +441,22 @@ export default function PimsTasksPage() {
     let cancelled = false;
     void (async () => {
       try {
-        if (tab === 'queue' || tab === 'mine') {
+        if (tab === 'sent') {
           const res = await listTasks({
-            includeDone: false,
-            status: tab === 'queue' ? 'open' : undefined,
+            includeDone: true,
             branchId: branchIdNum,
             limit: CLIENT_FILTER_CAP,
             offset: 0,
           });
           if (cancelled) return;
-          let rows = res.items;
-          if (tab === 'queue') {
-            rows = rows.filter((t) => t.status === 'open' && t.assignedToEmployeeId == null);
-          } else if (tab === 'mine' && myEmployeeId != null) {
-            rows = rows.filter((t) => t.assignedToEmployeeId === myEmployeeId);
-          } else if (tab === 'mine') {
-            rows = [];
-          }
+          const rows = filterSentTasks(res.items, myEmployeeIds);
           setItems(rows);
           setTotal(rows.length);
           setOffset(rows.length);
-        } else if (tab === 'done') {
+        } else if (tab === 'completed') {
           const res = await listTasks({
             includeDone: true,
             status: 'done',
-            branchId: branchIdNum,
-            limit: PAGE_SIZE,
-            offset: 0,
-          });
-          if (cancelled) return;
-          setItems(res.items);
-          setTotal(res.total);
-          setOffset(res.items.length);
-        } else {
-          const res = await listTasks({
-            includeDone: false,
             branchId: branchIdNum,
             limit: PAGE_SIZE,
             offset: 0,
@@ -218,7 +478,7 @@ export default function PimsTasksPage() {
     return () => {
       cancelled = true;
     };
-  }, [tab, branchFilter, branchIdNum, myEmployeeId]);
+  }, [tab, branchFilter, branchIdNum, myEmployeeIds]);
 
   useEffect(() => {
     const slice = items.slice(0, LINK_FETCH_CAP);
@@ -246,32 +506,20 @@ export default function PimsTasksPage() {
   }, [items]);
 
   const loadMore = useCallback(async () => {
-    if (tab === 'queue' || tab === 'mine') return;
+    if (tab !== 'completed') return;
     setLoading(true);
     setError(null);
     try {
-      if (tab === 'done') {
-        const res = await listTasks({
-          includeDone: true,
-          status: 'done',
-          branchId: branchIdNum,
-          limit: PAGE_SIZE,
-          offset,
-        });
-        setItems((prev) => [...prev, ...res.items]);
-        setTotal(res.total);
-        setOffset((o) => o + res.items.length);
-      } else {
-        const res = await listTasks({
-          includeDone: false,
-          branchId: branchIdNum,
-          limit: PAGE_SIZE,
-          offset,
-        });
-        setItems((prev) => [...prev, ...res.items]);
-        setTotal(res.total);
-        setOffset((o) => o + res.items.length);
-      }
+      const res = await listTasks({
+        includeDone: true,
+        status: 'done',
+        branchId: branchIdNum,
+        limit: PAGE_SIZE,
+        offset,
+      });
+      setItems((prev) => [...prev, ...res.items]);
+      setTotal(res.total);
+      setOffset((o) => o + res.items.length);
     } catch (e: unknown) {
       setError(errMsg(e));
     } finally {
@@ -280,45 +528,32 @@ export default function PimsTasksPage() {
   }, [tab, branchIdNum, offset]);
 
   const refreshList = useCallback(() => {
-    setOffset(0);
-    setItems([]);
     setLoading(true);
     setError(null);
     void (async () => {
       try {
-        if (tab === 'queue' || tab === 'mine') {
+        if (isBucketTab(tab)) {
+          const mine = await loadMyOpenTasks();
+          const rows = filterMyOpenTasksByBucket(mine, tab);
+          setItems(rows);
+          setTotal(rows.length);
+          setOffset(rows.length);
+        } else if (tab === 'sent') {
           const res = await listTasks({
-            includeDone: false,
-            status: tab === 'queue' ? 'open' : undefined,
+            includeDone: true,
             branchId: branchIdNum,
             limit: CLIENT_FILTER_CAP,
             offset: 0,
           });
-          let rows = res.items;
-          if (tab === 'queue') {
-            rows = rows.filter((t) => t.status === 'open' && t.assignedToEmployeeId == null);
-          } else if (tab === 'mine' && myEmployeeId != null) {
-            rows = rows.filter((t) => t.assignedToEmployeeId === myEmployeeId);
-          } else if (tab === 'mine') {
-            rows = [];
-          }
+          const rows = filterSentTasks(res.items, myEmployeeIds);
           setItems(rows);
           setTotal(rows.length);
           setOffset(rows.length);
-        } else if (tab === 'done') {
+        } else if (tab === 'completed') {
+          setOffset(0);
           const res = await listTasks({
             includeDone: true,
             status: 'done',
-            branchId: branchIdNum,
-            limit: PAGE_SIZE,
-            offset: 0,
-          });
-          setItems(res.items);
-          setTotal(res.total);
-          setOffset(res.items.length);
-        } else {
-          const res = await listTasks({
-            includeDone: false,
             branchId: branchIdNum,
             limit: PAGE_SIZE,
             offset: 0,
@@ -330,11 +565,12 @@ export default function PimsTasksPage() {
       } catch (e: unknown) {
         setError(errMsg(e));
         setItems([]);
+        setMyOpenTasks([]);
       } finally {
         setLoading(false);
       }
     })();
-  }, [tab, branchIdNum, myEmployeeId]);
+  }, [tab, branchIdNum, myEmployeeId, loadMyOpenTasks]);
 
   const backFromDetail = useCallback(() => {
     const next = new URLSearchParams(searchParams);
@@ -343,7 +579,7 @@ export default function PimsTasksPage() {
   }, [searchParams, setSearchParams]);
 
   const { urgent, normal } = useMemo(() => {
-    if (tab === 'done') {
+    if (tab === 'completed') {
       return { urgent: [] as TaskListItem[], normal: items };
     }
     const u: TaskListItem[] = [];
@@ -359,6 +595,7 @@ export default function PimsTasksPage() {
     try {
       await completeTask(id);
       refreshList();
+      notifyTasksChanged();
     } catch (e: unknown) {
       setError(errMsg(e));
     }
@@ -375,17 +612,20 @@ export default function PimsTasksPage() {
           myEmployeeId={myEmployeeId}
           isPracticeAdmin={isPracticeAdmin}
           onBack={backFromDetail}
-          onUpdated={refreshList}
+          onUpdated={() => {
+            refreshList();
+            notifyTasksChanged();
+          }}
         />
       </div>
     );
   }
 
-  const canLoadMore = tab === 'all' || tab === 'done' ? offset < total && !loading : false;
+  const canLoadMore = tab === 'completed' ? offset < total && !loading : false;
 
   const renderTaskCard = (row: TaskListItem) => {
     const links = linksByTaskId[row.id];
-    const canAct = canActOnTask(row, myEmployeeId, isPracticeAdmin);
+    const canAct = canActOnTask(row, myEmployeeIds, isPracticeAdmin);
     return (
       <article key={row.id} className="pims-task-card">
         <div className="pims-task-card__top">
@@ -394,6 +634,9 @@ export default function PimsTasksPage() {
           </Link>
           <span className={`pims-task-card__pill pims-task-card__pill--${row.status}`}>{row.status}</span>
         </div>
+        {humanStartLine(row.startAt) ? (
+          <p className="pims-task-card__due pims-task-card__due--start">{humanStartLine(row.startAt)}</p>
+        ) : null}
         <p className="pims-task-card__due">{humanDueLine(row.dueAt)}</p>
         {links && links.length > 0 ? (
           <div className="pims-task-card__linked">
@@ -401,7 +644,7 @@ export default function PimsTasksPage() {
             {links.map((l, i) => (
               <span key={l.id ?? `${l.entityType}-${l.entityId}-${i}`}>
                 {i > 0 ? ' · ' : null}
-                <TaskLinkInline link={l} />
+                <TaskLinkInline link={l} labels={linkLabels} />
               </span>
             ))}
           </div>
@@ -414,10 +657,18 @@ export default function PimsTasksPage() {
               {row.branchIds.map((id) => branchMap.get(id) ?? `#${id}`).join(', ')}
             </span>
           ) : null}
-          {row.assignedToEmployeeId != null && (
+          {tab === 'sent' ? (
             <span className="pims-task-card__assignee">
-              {employeeMap.get(row.assignedToEmployeeId) ?? `Employee #${row.assignedToEmployeeId}`}
+              {row.assignedToEmployeeId != null
+                ? `Assigned to ${employeeMap.get(row.assignedToEmployeeId) ?? `employee #${row.assignedToEmployeeId}`}`
+                : 'Unassigned (queue)'}
             </span>
+          ) : (
+            row.assignedToEmployeeId != null && (
+              <span className="pims-task-card__assignee">
+                {employeeMap.get(row.assignedToEmployeeId) ?? `Employee #${row.assignedToEmployeeId}`}
+              </span>
+            )
           )}
         </div>
         {canAct && (
@@ -437,23 +688,25 @@ export default function PimsTasksPage() {
   return (
     <div className="pims-tasks">
       <div className="pims-tasks__head">
-        <div>
-          <h1 className="pims-tasks__title">{tab === 'mine' ? 'My tasks' : 'Tasks'}</h1>
-          {tab === 'mine' && <p className="pims-tasks__subtitle">Assigned to me</p>}
-        </div>
         <button type="button" className="pims-tasks__add" onClick={() => setCreateOpen(true)}>
           + Task
         </button>
+        <div>
+          <h1 className="pims-tasks__title">{tab === 'sent' ? 'Sent tasks' : 'Tasks'}</h1>
+          {tab === 'sent' && <p className="pims-tasks__subtitle">Created by me</p>}
+          {isBucketTab(tab) && <p className="pims-tasks__subtitle">Assigned to me</p>}
+        </div>
       </div>
 
       <div className="pims-tasks__toolbar">
         <div className="pims-tasks__tabs" role="tablist" aria-label="Task views">
           {(
             [
-              ['mine', 'My tasks'],
-              ['all', 'Active'],
-              ['queue', 'Queue'],
-              ['done', 'Done'],
+              ['active', `Active (${bucketCounts.active})`],
+              ['expired', `Expired (${bucketCounts.expired})`],
+              ['upcoming', `Upcoming (${bucketCounts.upcoming})`],
+              ['sent', 'Sent'],
+              ['completed', 'Completed'],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -462,7 +715,7 @@ export default function PimsTasksPage() {
               role="tab"
               aria-selected={tab === id}
               className={`pims-tasks__tab${tab === id ? ' pims-tasks__tab--active' : ''}`}
-              onClick={() => setTab(id)}
+              onClick={() => setTab(id as TabId)}
             >
               {label}
             </button>
@@ -488,31 +741,32 @@ export default function PimsTasksPage() {
         </label>
       </div>
 
-      {(tab === 'queue' || tab === 'mine') && (
+      {(isBucketTab(tab) || tab === 'sent') && (
         <p className="pims-tasks__count">
-          Showing up to {CLIENT_FILTER_CAP} visible tasks for this filter. Use Active for full pagination.
+          Showing up to {CLIENT_FILTER_CAP} open tasks assigned to you for Active / Expired / Upcoming counts.
         </p>
       )}
-      {tab === 'mine' && myEmployeeId == null && (
+      {(isBucketTab(tab) || tab === 'sent') && myEmployeeIds.length === 0 && (
         <p className="pims-tasks__count pims-tasks__count--warn">
-          Your session does not include an employee id, so My tasks cannot filter. Use Active or add an employee id to your JWT.
+          Your session does not include an employee id, so assigned and sent filters cannot run. Match your login email to an employee record or add employeeId to your JWT.
         </p>
       )}
 
       <p className="pims-tasks__count">
-        {tab !== 'queue' && tab !== 'mine' && (
+        {tab === 'completed' ? (
           <>
             {loading && items.length === 0 ? 'Loading…' : `${items.length} shown`}
             {total > 0 && ` · ${total} total`}
           </>
+        ) : (
+          !loading && `${items.length} task${items.length === 1 ? '' : 's'}`
         )}
-        {(tab === 'queue' || tab === 'mine') && !loading && `${items.length} task${items.length === 1 ? '' : 's'}`}
       </p>
 
       {error && <div className="pims-tasks__error">{error}</div>}
 
       <div className="pims-tasks__board">
-        {tab === 'done' ? (
+        {tab === 'completed' ? (
           <section className="pims-tasks__section">
             <h2 className="pims-tasks__section-title">Completed</h2>
             {loading && items.length === 0 ? (
@@ -561,6 +815,7 @@ export default function PimsTasksPage() {
           onSaved={() => {
             setReassignTask(null);
             refreshList();
+            notifyTasksChanged();
           }}
         />
       )}
@@ -574,6 +829,7 @@ export default function PimsTasksPage() {
           onCreated={(id) => {
             setCreateOpen(false);
             refreshList();
+            notifyTasksChanged();
             const next = new URLSearchParams(searchParams);
             next.set('taskId', String(id));
             setSearchParams(next, { replace: false });
@@ -584,8 +840,14 @@ export default function PimsTasksPage() {
   );
 }
 
-function TaskLinkInline({ link }: { link: TaskLinkRow }) {
-  const label = linkLabel(link);
+function TaskLinkInline({
+  link,
+  labels,
+}: {
+  link: TaskLinkRow;
+  labels: Record<string, string>;
+}) {
+  const label = taskLinkDisplayLabel(link, labels);
   if (link.entityType === 'patient') {
     return (
       <Link className="pims-task-card__link" to={`/pims/patients?patientId=${encodeURIComponent(String(link.entityId))}`}>
@@ -650,7 +912,7 @@ function ReassignModal({ task, employees, onClose, onSaved }: ReassignProps) {
             <option value="">Queue (unassigned)</option>
             {employees.map((em) => (
               <option key={em.id} value={String(em.id)}>
-                {[em.firstName, em.lastName].filter(Boolean).join(' ') || em.email}
+                {formatEmployeeDisplayName(em) || em.email}
               </option>
             ))}
           </select>
@@ -677,21 +939,37 @@ type ModalProps = {
 };
 
 function CreateTaskModal({ branches, employees, isPracticeAdmin, onClose, onCreated }: ModalProps) {
+  const { token } = useAuth();
+  const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [dueLocal, setDueLocal] = useState('');
-  const [startLocal, setStartLocal] = useState('');
+  const [startLocal, setStartLocal] = useState(() => applyStartSchedule(1, 'weeks'));
+  const [dueStartMode, setDueStartMode] = useState<DueStartMode>('relative');
+  const [dueAmount, setDueAmount] = useState('1');
+  const [dueUnit, setDueUnit] = useState<DueScheduleUnit>('weeks');
   const [assignee, setAssignee] = useState('');
   const [watchers, setWatchers] = useState<number[]>([]);
-  const [priority, setPriority] = useState('');
+  const [priority, setPriority] = useState<TaskPriorityChoice>('normal');
   const [linkedKind, setLinkedKind] = useState<'patient' | 'client'>('patient');
-  const [linkedId, setLinkedId] = useState('');
+  const [linkedPick, setLinkedPick] = useState<LinkPick | null>(null);
   const [branchSel, setBranchSel] = useState<Record<number, boolean>>({});
-  const [escalationMinutes, setEscalationMinutes] = useState('');
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   const activeBranches = useMemo(() => branches.filter((b) => b.isActive !== false), [branches]);
+
+  useEffect(() => {
+    if (dueStartMode === 'today') {
+      setStartLocal(applyStartToday());
+      setDueLocal('');
+      return;
+    }
+    const amt = Number(dueAmount);
+    if (!Number.isFinite(amt) || amt < 1) return;
+    setStartLocal(applyStartSchedule(amt, dueUnit));
+    setDueLocal('');
+  }, [dueAmount, dueUnit, dueStartMode]);
 
   useEffect(() => {
     if (activeBranches.length === 1) {
@@ -716,34 +994,21 @@ function CreateTaskModal({ branches, employees, isPracticeAdmin, onClose, onCrea
     }
 
     const linksPayload: { entityType: TaskLinkEntityType; entityId: number }[] = [];
-    const lid = linkedId.trim() ? Number(linkedId.trim()) : NaN;
-    if (linkedId.trim() && Number.isFinite(lid)) {
+    if (linkedPick && Number.isFinite(linkedPick.id)) {
       const et: TaskLinkEntityType = linkedKind === 'client' ? 'client' : 'patient';
-      linksPayload.push({ entityType: et, entityId: lid });
+      linksPayload.push({ entityType: et, entityId: linkedPick.id });
     }
 
-    let priorityNum: number | undefined;
-    if (priority.trim()) {
-      const p = Number(priority);
-      if (!Number.isFinite(p)) {
-        setFormError('Priority must be a number');
-        return;
-      }
-      priorityNum = p;
+    const startAt = fromDatetimeLocalValue(startLocal);
+    const dueAt = fromDatetimeLocalValue(dueLocal);
+    if (!startAt) {
+      setFormError('Choose a start date and time');
+      return;
     }
-
-    let escalationIntervalSeconds: number | undefined;
-    if (escalationMinutes.trim()) {
-      const mins = Number(escalationMinutes);
-      if (!Number.isFinite(mins) || mins < 1) {
-        setFormError('Escalation interval must be at least 1 minute');
-        return;
-      }
-      escalationIntervalSeconds = Math.round(mins * 60);
-      if (escalationIntervalSeconds < 60) {
-        setFormError('Escalation must be at least 60 seconds');
-        return;
-      }
+    const scheduleErr = validateTaskScheduleOrder(startAt, dueAt);
+    if (scheduleErr) {
+      setFormError(scheduleErr);
+      return;
     }
 
     setBusy(true);
@@ -754,12 +1019,13 @@ function CreateTaskModal({ branches, employees, isPracticeAdmin, onClose, onCrea
         body: body.trim() || null,
         branchIds: selectedBranchIds,
         assignedToEmployeeId: assigneeId,
-        dueAt: fromDatetimeLocalValue(dueLocal),
-        priority: priorityNum,
+        startAt,
+        dueAt,
+        priority: priorityToApi(priority),
         watcherEmployeeIds: [...new Set(watchers)],
         links: linksPayload.length ? linksPayload : undefined,
-        escalationIntervalSeconds,
       });
+      notifyTasksChanged();
       onCreated(created.id);
     } catch (e: unknown) {
       setFormError(errMsg(e));
@@ -790,64 +1056,149 @@ function CreateTaskModal({ branches, employees, isPracticeAdmin, onClose, onCrea
               <option value="">Queue (unassigned)</option>
               {employees.map((em) => (
                 <option key={em.id} value={String(em.id)}>
-                  {[em.firstName, em.lastName].filter(Boolean).join(' ') || em.email}
+                  {formatEmployeeDisplayName(em) || em.email}
                 </option>
               ))}
             </select>
             <span className="pims-tasks__field-hint">Primary owner. Add more people as watchers below.</span>
           </label>
 
-          <label className="pims-tasks__modal-field">
-            <span>Also notify (watchers)</span>
-            <select
-              multiple
-              className="pims-tasks__modal-multi"
-              value={watchers.map(String)}
-              onChange={(e) => {
-                const selected = Array.from(e.target.selectedOptions).map((o) => Number(o.value));
-                setWatchers(selected.filter(Number.isFinite));
-              }}
-              disabled={busy}
-            >
-              {employees.map((em) => (
-                <option key={em.id} value={String(em.id)}>
-                  {[em.firstName, em.lastName].filter(Boolean).join(' ') || em.email}
-                </option>
-              ))}
-            </select>
-            <span className="pims-tasks__field-hint">Hold Ctrl/Cmd to select multiple. Groups are not supported yet.</span>
-          </label>
+          <div className="pims-tasks__modal-field">
+            <div className="pims-tasks__watchers-head">
+              <span>Also notify (watchers)</span>
+              <button
+                type="button"
+                className="pims-tasks__watchers-clear"
+                disabled={busy || watchers.length === 0}
+                onClick={() => setWatchers([])}
+              >
+                Clear watchers
+              </button>
+            </div>
+            <div className="pims-tasks__checks pims-tasks__checks--scroll">
+              {employees.map((em) => {
+                const emName = formatEmployeeDisplayName(em) || em.email;
+                const checked = watchers.includes(em.id);
+                return (
+                  <label key={em.id} className="pims-tasks__check">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={busy}
+                      onChange={(e) => {
+                        setWatchers((prev) =>
+                          e.target.checked ? [...prev, em.id] : prev.filter((id) => id !== em.id)
+                        );
+                      }}
+                    />
+                    {emName}
+                  </label>
+                );
+              })}
+            </div>
+            <span className="pims-tasks__field-hint">Optional. Use Clear watchers if none should be notified.</span>
+          </div>
+
+          <div className="pims-tasks__modal-field">
+            <span id="due-start-label">When to start</span>
+            <div className="pims-tasks__due-start" role="radiogroup" aria-labelledby="due-start-label">
+              <label className="pims-tasks__due-start-option">
+                <input
+                  type="radio"
+                  name="dueStartMode"
+                  value="today"
+                  checked={dueStartMode === 'today'}
+                  onChange={() => setDueStartMode('today')}
+                  disabled={busy}
+                />
+                Today
+              </label>
+              <label className="pims-tasks__due-start-option pims-tasks__due-start-option--relative">
+                <input
+                  type="radio"
+                  name="dueStartMode"
+                  value="relative"
+                  checked={dueStartMode === 'relative'}
+                  onChange={() => setDueStartMode('relative')}
+                  disabled={busy}
+                />
+                <input
+                  type="number"
+                  min={1}
+                  value={dueAmount}
+                  onChange={(e) => setDueAmount(e.target.value)}
+                  disabled={busy || dueStartMode !== 'relative'}
+                  aria-label="Amount"
+                />
+                <select
+                  value={dueUnit}
+                  onChange={(e) => setDueUnit(e.target.value as DueScheduleUnit)}
+                  disabled={busy || dueStartMode !== 'relative'}
+                  aria-label="Time unit"
+                >
+                  <option value="days">days</option>
+                  <option value="weeks">weeks</option>
+                  <option value="months">months</option>
+                </select>
+                <span className="pims-tasks__due-schedule-suffix">from now</span>
+              </label>
+            </div>
+            <span className="pims-tasks__field-hint">
+              Choose Today or a time from now to set Start. Due stays blank unless you set it below.
+            </span>
+          </div>
 
           <div className="pims-tasks__modal-row2">
             <label className="pims-tasks__modal-field">
               <span>Start</span>
-              <input type="datetime-local" value={startLocal} onChange={(e) => setStartLocal(e.target.value)} disabled={busy} />
-              <span className="pims-tasks__field-hint">For your reference only; not stored on the task yet.</span>
+              <input
+                type="datetime-local"
+                value={startLocal}
+                onChange={(e) => setStartLocal(e.target.value)}
+                disabled={busy}
+                required
+              />
+              <span className="pims-tasks__field-hint">When work should begin (required).</span>
             </label>
             <label className="pims-tasks__modal-field">
-              <span>End (due)</span>
+              <span>Due</span>
               <input type="datetime-local" value={dueLocal} onChange={(e) => setDueLocal(e.target.value)} disabled={busy} />
+              <span className="pims-tasks__field-hint">Deadline. Clear to leave unset.</span>
             </label>
           </div>
 
           <label className="pims-tasks__modal-field">
             <span>Priority</span>
-            <input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} disabled={busy} placeholder="Optional number" />
+            <select
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as TaskPriorityChoice)}
+              disabled={busy}
+            >
+              <option value="normal">Not Urgent</option>
+              <option value="urgent">Urgent</option>
+            </select>
           </label>
 
           <div className="pims-tasks__modal-field">
             <span>Linked to (optional)</span>
-            <div className="pims-tasks__modal-inline">
-              <select value={linkedKind} onChange={(e) => setLinkedKind(e.target.value as 'patient' | 'client')} disabled={busy}>
+            <div className="pims-tasks__modal-inline pims-tasks__modal-inline--link">
+              <select
+                value={linkedKind}
+                onChange={(e) => {
+                  setLinkedKind(e.target.value as 'patient' | 'client');
+                  setLinkedPick(null);
+                }}
+                disabled={busy}
+              >
                 <option value="patient">Patient</option>
                 <option value="client">Client</option>
               </select>
-              <input
-                type="number"
-                placeholder="Record id"
-                value={linkedId}
-                onChange={(e) => setLinkedId(e.target.value)}
+              <TaskLinkEntityPicker
+                kind={linkedKind}
                 disabled={busy}
+                value={linkedPick}
+                onChange={setLinkedPick}
+                practiceId={practiceId}
               />
             </div>
           </div>
@@ -876,14 +1227,6 @@ function CreateTaskModal({ branches, employees, isPracticeAdmin, onClose, onCrea
               <span className="pims-tasks__field-hint">You may only use branches on your profile; the server returns 403 otherwise.</span>
             )}
           </div>
-
-          <details className="pims-tasks__advanced">
-            <summary>Advanced</summary>
-            <label className="pims-tasks__modal-field">
-              <span>Escalation repeat (minutes)</span>
-              <input type="number" min={1} value={escalationMinutes} onChange={(e) => setEscalationMinutes(e.target.value)} disabled={busy} />
-            </label>
-          </details>
         </div>
         <div className="pims-tasks__modal-actions pims-tasks__modal-actions--center">
           <button type="button" className="pims-tasks__modal-cancel" disabled={busy} onClick={onClose}>

@@ -10,6 +10,9 @@ export const ROUTING_REQUEST_ID_SESSION_KEY = 'routing:last-request-id';
 /** After a practice calendar book in the routing + calendar workspace, Scheduler dispatches this so Routing clears candidate results from React state. */
 export const ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT = 'vayd:routing-workspace-scheduler-booked';
 
+/** Calendar “Dismiss” during reschedule — clear intent and reset the Get Best Route form. */
+export const ROUTING_DISMISS_RESCHEDULE_EVENT = 'vayd:routing-dismiss-reschedule';
+
 const SNAPSHOT_VERSION = 1 as const;
 
 /** localStorage: last resolved PIMS id + label for the logged-in user's linked doctor (avoids empty-doctor flash on cold load). */
@@ -83,13 +86,17 @@ function currentUserIdFromStorage(): string | null {
   }
 }
 
-function defaultForm(): SnapshotRouteRequest {
+export function createDefaultRoutingForm(): SnapshotRouteRequest {
   return {
     doctorId: '',
     startDate: new Date().toISOString().slice(0, 10),
     endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
     newAppt: { serviceMinutes: 45, address: '' },
   };
+}
+
+function defaultForm(): SnapshotRouteRequest {
+  return createDefaultRoutingForm();
 }
 
 function emptyBootstrap(): RoutingUiBootstrap {

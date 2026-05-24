@@ -91,6 +91,8 @@ export function computeHoverPopoverPosition(args: {
   preferSide?: 'left' | 'right';
   /** Estimated popover height for placement (Visit Highlights card). */
   cardEstH?: number;
+  /** Only place beside the anchor (left/right), not above/below — keeps calendar hoverable. */
+  horizontalOnly?: boolean;
 }): HoverPopoverPositionResult {
   const {
     anchor,
@@ -104,6 +106,7 @@ export function computeHoverPopoverPosition(args: {
     offset,
     preferSide = 'right',
     cardEstH = 260,
+    horizontalOnly = false,
   } = args;
 
   const pad = padding;
@@ -134,7 +137,7 @@ export function computeHoverPopoverPosition(args: {
     let best = pool[0]!;
 
     /** When the anchor sits low, prefer flipping above so tall cards (or scrollable max-height) stay on-screen. */
-    if (anchorRect) {
+    if (!horizontalOnly && anchorRect) {
       const roomBelow = vwH - pad - (anchorRect.bottom + offset);
       if (roomBelow < H + 72) {
         const bottomFit = scored.find((s) => s.p.mode === 'bottom' && s.fits);
@@ -148,6 +151,10 @@ export function computeHoverPopoverPosition(args: {
     }
     /** Use all space from `top` to the bottom of the viewport (no artificial cap — avoids clipping). */
     let top = best.p.top;
+    if (horizontalOnly) {
+      const maxCardH = Math.max(160, Math.min(H, vwH - pad - top));
+      return { left: best.p.left, top, maxCardH, width };
+    }
     let maxCardH = vwH - pad - top;
     const minReadable = 280;
     if (maxCardH < minReadable) {
@@ -160,7 +167,9 @@ export function computeHoverPopoverPosition(args: {
   };
 
   if (anchor) {
-    const vTop = clamp(anchor.top + (anchor.height - H) / 2, pad, vwH - pad - H);
+    const vTop = horizontalOnly
+      ? clamp(anchor.top, pad, vwH - pad - H)
+      : clamp(anchor.top + (anchor.height - H) / 2, pad, vwH - pad - H);
 
     const rightLeft = anchor.right + offset;
     const leftLeft = anchor.left - offset - width;
@@ -180,19 +189,18 @@ export function computeHoverPopoverPosition(args: {
       besideSecond.push({ mode: 'top', left: leftLeft, top: vTop });
     }
 
-    const placements: Placement[] = [
-      ...besideFirst,
-      ...besideSecond,
-      { mode: 'top', left: belowLeft, top: belowTop },
-    ];
-    /** Prefer offering "flip above" whenever there is room — old `H * 0.8` gate hid this option near the bottom of the viewport. */
-    if (spaceAbove > pad) {
-      placements.push({
-        mode: 'bottom',
-        left: aboveLeft,
-        bottom: aboveBottom,
-        spaceH: spaceAbove,
-      });
+    const placements: Placement[] = [...besideFirst, ...besideSecond];
+    if (!horizontalOnly) {
+      placements.push({ mode: 'top', left: belowLeft, top: belowTop });
+      /** Prefer offering "flip above" whenever there is room — old `H * 0.8` gate hid this option near the bottom of the viewport. */
+      if (spaceAbove > pad) {
+        placements.push({
+          mode: 'bottom',
+          left: aboveLeft,
+          bottom: aboveBottom,
+          spaceH: spaceAbove,
+        });
+      }
     }
 
     return pickBest(placements, anchor);
@@ -206,4 +214,45 @@ export function computeHoverPopoverPosition(args: {
   top = clamp(top, pad, vwH - pad - H);
   const maxCardH = Math.min(vwH - 2 * pad, vwH - pad - top);
   return { left, top, maxCardH, width };
+}
+
+/** Pin edit-visit preview popover beside the day column, not over the appointment stack. */
+export function computeEditPreviewPopoverPosition(args: {
+  slotAnchor: HoverAnchorRect;
+  dayColumnAnchor: HoverAnchorRect | null;
+  vwW: number;
+  vwH: number;
+  cardW: number;
+  cardEstH: number;
+  padding: number;
+  gutter: number;
+}): HoverPopoverPositionResult {
+  const { slotAnchor, dayColumnAnchor, vwW, vwH, cardW, cardEstH, padding, gutter } = args;
+  const pad = padding;
+  const width = cardW;
+  const H = clamp(cardEstH, 200, vwH - 2 * pad);
+  const column = dayColumnAnchor ?? slotAnchor;
+  const top = clamp(slotAnchor.top, pad, vwH - pad - H);
+
+  const leftOfColumn = column.left - gutter - width;
+  if (leftOfColumn >= pad) {
+    return { left: leftOfColumn, top, maxCardH: Math.min(H, vwH - pad - top), width };
+  }
+
+  const rightOfColumn = column.right + gutter;
+  if (rightOfColumn + width <= vwW - pad) {
+    return { left: rightOfColumn, top, maxCardH: Math.min(H, vwH - pad - top), width };
+  }
+
+  const leftOfSlot = slotAnchor.left - gutter - width;
+  if (leftOfSlot >= pad) {
+    return { left: leftOfSlot, top, maxCardH: Math.min(H, vwH - pad - top), width };
+  }
+
+  return {
+    left: pad,
+    top,
+    maxCardH: Math.min(H, vwH - pad - top),
+    width: Math.min(width, vwW - 2 * pad),
+  };
 }

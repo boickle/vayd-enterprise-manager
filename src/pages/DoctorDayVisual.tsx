@@ -21,8 +21,8 @@ import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
 import { AlertTriangle, Heart } from 'lucide-react';
 import {
-  fixedTimeRouteEtaMeaningfullyAfterScheduledStart,
-  shouldShowEtaWindowWarning,
+  clientFixedTimeUsesDoctorDayClockForDriveLayout,
+  computeDriveTimeWindowWarning,
 } from '../utils/windowWarning';
 import {
   computeHoverPopoverPosition,
@@ -458,7 +458,7 @@ function visualHouseholdIsClientFixedTime(h: Household): boolean {
  */
 function visualHouseholdUsesDoctorDayClockForLayout(
   h: Household,
-  slot: { eta?: string | null; etd?: string | null } | undefined,
+  slot: { eta?: string | null; etd?: string | null; windowStartIso?: string | null; windowEndIso?: string | null } | undefined,
   showByDriveTime: boolean,
   blockMetaForFlex?: { blockLabel?: string; title?: string } | null
 ): boolean {
@@ -467,14 +467,22 @@ function visualHouseholdUsesDoctorDayClockForLayout(
   const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(flexSource));
   if (h.isPersonalBlock && !flexBlock) return true;
   if (!visualHouseholdIsClientFixedTime(h)) return false;
-  const eta = slot?.eta;
-  const schedStart = h.startIso;
-  if (!eta || !schedStart) return true;
-  const etaDt = DateTime.fromISO(eta);
-  const schedDt = DateTime.fromISO(schedStart);
-  if (!etaDt.isValid || !schedDt.isValid) return true;
-  if (fixedTimeRouteEtaMeaningfullyAfterScheduledStart(schedStart, eta)) return false;
-  return true;
+  const windowStartIso =
+    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
+    h.windowStartIso ??
+    h.effectiveWindow?.startIso ??
+    null;
+  const windowEndIso =
+    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
+    h.windowEndIso ??
+    h.effectiveWindow?.endIso ??
+    null;
+  return clientFixedTimeUsesDoctorDayClockForDriveLayout({
+    schedStartIso: h.startIso,
+    etaIso: slot?.eta,
+    windowStartIso,
+    windowEndIso,
+  });
 }
 
 /* ----------------- schedule bounds (for work start) ----------------- */
@@ -2526,13 +2534,20 @@ export default function DoctorDayVisual({
             ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
             : adjustedWindowForStart(date, h.startIso!, schedStartIso, practiceTimeZone);
 
-      const clientFixedRoutePushedPastSchedule =
-        showByDriveTime && visualHouseholdIsClientFixedTime(h) && !doctorDayClock;
+      const windowEndForWarn =
+        (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
+        ew?.endIso ??
+        (h as { windowEndIso?: string | null }).windowEndIso ??
+        null;
       const windowWarning =
         showByDriveTime &&
         !h.isPersonalBlock &&
-        ((useDriveTime && !isFixedTime && shouldShowEtaWindowWarning(etaIso, winEndIso)) ||
-          clientFixedRoutePushedPastSchedule);
+        computeDriveTimeWindowWarning({
+          etaIso,
+          windowEndIso: windowEndForWarn,
+          isClientFixedTime: visualHouseholdIsClientFixedTime(h),
+          scheduledStartIso: h.startIso,
+        });
 
       const blockLabelMeta = blockLabelMetaEarly;
       const blockTitleText =
@@ -2553,6 +2568,9 @@ export default function DoctorDayVisual({
         key: h.key,
         client: blockTitleText,
         address: h.address,
+        clientPhone: h.isPersonalBlock
+          ? undefined
+          : str(h.primary, 'clientPhone') ?? undefined,
         durMin,
         etaIso:
           showByDriveTime && doctorDayClock
@@ -3050,18 +3068,22 @@ export default function DoctorDayVisual({
                   ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
                   : adjustedWindowForStart(date, h.startIso!, schedStartIso, practiceTimeZone);
 
-            // Client Fixed Time: scheduled start should hold; route ETA after start = forced move (Olivia-style).
-            const clientFixedRoutePushedPastSchedule =
-              showByDriveTime &&
-              visualHouseholdIsClientFixedTime(h) &&
-              !doctorDayClock;
+            const windowEndForWarn =
+              (slotWindow?.windowStartIso != null && slotWindow?.windowEndIso != null
+                ? slotWindow.windowEndIso
+                : null) ??
+              ew?.endIso ??
+              (h as { windowEndIso?: string | null }).windowEndIso ??
+              null;
             const windowWarning =
               showByDriveTime &&
               !h.isPersonalBlock &&
-              ((useDriveTime &&
-                !isFixedTime &&
-                shouldShowEtaWindowWarning(etaIso, winEndIso)) ||
-                clientFixedRoutePushedPastSchedule);
+              computeDriveTimeWindowWarning({
+                etaIso,
+                windowEndIso: windowEndForWarn,
+                isClientFixedTime: visualHouseholdIsClientFixedTime(h),
+                scheduledStartIso: h.startIso,
+              });
 
             const previewPatients = h.patients.slice(0, 3);
             const moreCount = Math.max(0, (h.patients?.length || 0) - 3);

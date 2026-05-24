@@ -282,6 +282,24 @@
   box-shadow: 0 0 0 1px #cbd5e1;
 }
 
+.pims-task-detail__row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 520px) {
+  .pims-task-detail__row2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pims-task-detail__timeline-detail {
+  font-size: 13px;
+  color: #475569;
+  margin-top: 2px;
+}
+
 .pims-task-detail__timeline-title {
   font-weight: 600;
   color: #0f172a;

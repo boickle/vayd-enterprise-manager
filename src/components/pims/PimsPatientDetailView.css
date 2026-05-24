@@ -64,6 +64,27 @@
   color: #0f172a;
 }
 
+.pims-patient-detail__evet-name-link {
+  color: #2563eb;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.pims-patient-detail__evet-name-link:hover {
+  text-decoration: underline;
+}
+
+.pims-patient-detail__evet-name-link--title {
+  font-size: inherit;
+  font-weight: inherit;
+  color: #2563eb;
+}
+
+.pims-patient-detail__evet-name-link--card {
+  font-size: inherit;
+  font-weight: inherit;
+}
+
 .pims-patient-detail__alert {
   display: flex;
   gap: 12px;

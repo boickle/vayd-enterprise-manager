@@ -22,8 +22,8 @@ import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
 import { AlertTriangle, Heart } from 'lucide-react';
 import {
-  fixedTimeRouteEtaMeaningfullyAfterScheduledStart,
-  shouldShowEtaWindowWarning,
+  clientFixedTimeUsesDoctorDayClockForDriveLayout,
+  computeDriveTimeWindowWarning,
 } from '../utils/windowWarning';
 import {
   computeHoverPopoverPosition,
@@ -264,26 +264,34 @@ function weekHouseholdIsFixedTimeAppointment(h: WeekHousehold): boolean {
 
 /**
  * When true, block position (and matching hover arrive times) use doctor-day startIso/endIso.
- * Client Fixed Time uses ETA when routing arrival is after the booked start (slippage); otherwise calendar start
- * (e.g. early clamp). Non-flex personal blocks always use doctor day.
+ * Client Fixed Time with an arrival window uses routed ETA/ETD; legacy no-window rows may stay on calendar start.
+ * Non-flex personal blocks always use doctor day.
  */
 function weekHouseholdUsesDoctorDayClockForLayout(
   h: WeekHousehold,
-  slot: { eta?: string | null; etd?: string | null } | undefined,
+  slot: { eta?: string | null; etd?: string | null; windowStartIso?: string | null; windowEndIso?: string | null } | undefined,
   showByDriveTime: boolean
 ): boolean {
   if (!showByDriveTime) return true;
   const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(h.primary));
   if (h.isPersonalBlock && !flexBlock) return true;
   if (!weekHouseholdIsClientFixedTime(h)) return false;
-  const eta = slot?.eta;
-  const schedStart = h.startIso;
-  if (!eta || !schedStart) return true;
-  const etaDt = DateTime.fromISO(eta);
-  const schedDt = DateTime.fromISO(schedStart);
-  if (!etaDt.isValid || !schedDt.isValid) return true;
-  if (fixedTimeRouteEtaMeaningfullyAfterScheduledStart(schedStart, eta)) return false;
-  return true;
+  const windowStartIso =
+    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
+    h.windowStartIso ??
+    h.effectiveWindow?.startIso ??
+    null;
+  const windowEndIso =
+    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
+    h.windowEndIso ??
+    h.effectiveWindow?.endIso ??
+    null;
+  return clientFixedTimeUsesDoctorDayClockForDriveLayout({
+    schedStartIso: h.startIso,
+    etaIso: slot?.eta,
+    windowStartIso,
+    windowEndIso,
+  });
 }
 
 /** Household grouping key: same client at same location = one stop; different clients at same address = separate stops. */
@@ -2992,17 +3000,15 @@ export default function MyWeek(props: MyWeekProps = {}) {
                             h.windowEndIso ??
                             h.effectiveWindow?.endIso ??
                             null;
-                          // Client Fixed Time: booked start should hold; ETA after start = route forced the stop off schedule.
-                          const clientFixedRoutePushedPastSchedule =
-                            showByDriveTime &&
-                            weekHouseholdIsClientFixedTime(h) &&
-                            !doctorDayClock;
                           const windowWarning =
                             showByDriveTime &&
                             !h.isPersonalBlock &&
-                            ((!isFixedTime &&
-                              shouldShowEtaWindowWarning(etaIso, windowEndForWarn)) ||
-                              clientFixedRoutePushedPastSchedule);
+                            computeDriveTimeWindowWarning({
+                              etaIso,
+                              windowEndIso: windowEndForWarn,
+                              isClientFixedTime: weekHouseholdIsClientFixedTime(h),
+                              scheduledStartIso: h.startIso,
+                            });
                           const isLastStopOfDay = idx === displayHouseholds.length - 1;
                           const endDepotTimeFormatted = isLastStopOfDay
                             ? formatDepotWallClockOnDate(dayData.endDepotTime, dateIso, dayData.timezone)

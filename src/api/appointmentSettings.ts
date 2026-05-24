@@ -37,6 +37,8 @@ export type Employee = {
   id: number;
   firstName: string;
   lastName: string;
+  middleName?: string | null;
+  middleInitial?: string | null;
   email: string;
   title?: string;
   designation?: string;

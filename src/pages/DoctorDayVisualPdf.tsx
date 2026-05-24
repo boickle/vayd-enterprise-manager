@@ -24,6 +24,7 @@ export type DoctorDayVisualPdfAppointmentPayload = {
   key: string;
   client: string;
   address: string;
+  clientPhone?: string;
   clientAlert?: string;
   durMin: number;
   etaIso?: string | null;
@@ -168,6 +169,14 @@ function AppointmentPdfBlock({
           }}
         >
           <span style={{ fontWeight: 800, color: '#14532d', fontSize: 22 }}>{payload.client}</span>
+          {payload.clientPhone ? (
+            <>
+              <span style={{ color: '#64748b' }}>·</span>
+              <span style={{ color: '#0f172a', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                {payload.clientPhone}
+              </span>
+            </>
+          ) : null}
           <span style={{ color: '#64748b' }}>·</span>
           <span style={{ color: '#64748b', flex: '1 1 12rem', minWidth: 0 }}>{addrNoZip}</span>
           {payload.windowWarning && (

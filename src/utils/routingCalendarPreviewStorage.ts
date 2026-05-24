@@ -10,6 +10,9 @@ export const ROUTING_CALENDAR_PREVIEW_STORAGE_KEY = 'vayd:routing-calendar-previ
 /** Fired on `window` after `writeRoutingCalendarPreview` when the practice calendar is embedded beside Routing. */
 export const ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT = 'vayd:routing-calendar-preview-updated';
 
+/** Return embedded calendar to the visit being rescheduled (clear purple preview, green highlight). */
+export const ROUTING_FOCUS_RESCHEDULE_SOURCE_EVENT = 'vayd:routing-focus-reschedule-source';
+
 export type RoutingCalendarPreviewPayloadV1 = {
   version: 1;
   /** Routing candidate (UnifiedOption) with internal doctor id in `doctorPimsId`. */
@@ -44,6 +47,11 @@ export type RoutingCalendarPreviewPayloadV1 = {
   /** Index in routing `top` (0 = winner); required for accepted feedback. */
   candidateIndex?: number;
   candidateId?: string;
+  /**
+   * Routing result card key (`doctorPimsId-date-insertionIndex-candidateIndex`) using the
+   * list’s PIMS doctor id — not the internal id stored on `option.doctorPimsId` for the calendar.
+   */
+  listOptionKey?: string;
 };
 
 export function routingCalendarOptionKey(opt: {
@@ -75,6 +83,7 @@ export function writeRoutingCalendarPreview(payload: RoutingCalendarPreviewPaylo
   } catch {
     /* quota / private mode */
   }
+  notifyRoutingCalendarPreviewUpdated();
 }
 
 export function clearRoutingCalendarPreview(): void {
@@ -83,5 +92,27 @@ export function clearRoutingCalendarPreview(): void {
     sessionStorage.removeItem(ROUTING_CALENDAR_PREVIEW_STORAGE_KEY);
   } catch {
     /* ignore */
+  }
+  notifyRoutingCalendarPreviewUpdated();
+}
+
+/** Match key used by Routing result cards (`routingOptionKey`). */
+export function routingCalendarPreviewOptionKey(preview: RoutingCalendarPreviewPayloadV1): string {
+  if (preview.listOptionKey?.trim()) return preview.listOptionKey.trim();
+  const o = preview.option;
+  const cand =
+    preview.candidateIndex ??
+    (typeof o.candidateIndex === 'number' ? o.candidateIndex : undefined);
+  return routingCalendarOptionKey({
+    doctorPimsId: String(o.doctorPimsId ?? ''),
+    date: String(o.date ?? ''),
+    insertionIndex: Number(o.insertionIndex ?? 0),
+    candidateIndex: cand,
+  });
+}
+
+function notifyRoutingCalendarPreviewUpdated(): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT));
   }
 }

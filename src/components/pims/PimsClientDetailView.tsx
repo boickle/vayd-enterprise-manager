@@ -19,9 +19,13 @@ import { patchClientStaff, saveClients, type ClientDto } from '../../api/clients
 import { apiBaseUrl } from '../../api/http';
 import PimsAppointmentsSection from './PimsAppointmentsSection';
 import { PIMS_ENTITY_EDIT_ENABLED } from '../../utils/pimsEntityEditing';
+import { evetClientLink } from '../../utils/evet';
 import './PimsClientDetailView.css';
 
 const PIMS_CLIENT_DETAIL_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+
+/** Hide until in-app payment/deposit flows ship; buttons stay in DOM for later wiring. */
+const HIDE_ACCOUNT_BALANCE_SECONDARY_ACTIONS = true;
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -785,9 +789,11 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
     );
   }
 
-  const summaryParts = [name];
-  if (phone) summaryParts.push(`C: ${phone}`);
-  if (balance != null) summaryParts.push(formatUsd(balance));
+  const clientPimsId = pickStr(payload.pimsId) ?? String(payload.id ?? clientId);
+  const summaryTail = [
+    phone ? `C: ${phone}` : null,
+    balance != null ? formatUsd(balance) : null,
+  ].filter(Boolean);
 
   const billing =
     payload.billing && typeof payload.billing === 'object'
@@ -872,7 +878,18 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
             <UserPlus size={18} />
           </button>
         </div>
-        <div className="pims-client-detail__summary">{summaryParts.join(' - ')}</div>
+        <div className="pims-client-detail__summary">
+          <a
+            href={evetClientLink(clientPimsId)}
+            target="_blank"
+            rel="noreferrer"
+            className="pims-client-detail__evet-name-link"
+            title="Open client in eVet"
+          >
+            {name}
+          </a>
+          {summaryTail.length > 0 ? <span> - {summaryTail.join(' - ')}</span> : null}
+        </div>
         <div className="pims-client-detail__banner-links">
           <button type="button" className="pims-client-detail__link" onClick={onBack}>
             Back to List
@@ -1471,13 +1488,22 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
               <button type="button" className="pims-client-detail__btn">
                 View History
               </button>
-              <button type="button" className="pims-client-detail__btn">
+              <button
+                type="button"
+                className={`pims-client-detail__btn${HIDE_ACCOUNT_BALANCE_SECONDARY_ACTIONS ? ' pims-client-detail__btn--hidden' : ''}`}
+              >
                 Make Payment
               </button>
-              <button type="button" className="pims-client-detail__btn">
+              <button
+                type="button"
+                className={`pims-client-detail__btn${HIDE_ACCOUNT_BALANCE_SECONDARY_ACTIONS ? ' pims-client-detail__btn--hidden' : ''}`}
+              >
                 Make Deposit
               </button>
-              <button type="button" className="pims-client-detail__btn pims-client-detail__btn--ghost">
+              <button
+                type="button"
+                className={`pims-client-detail__btn pims-client-detail__btn--ghost${HIDE_ACCOUNT_BALANCE_SECONDARY_ACTIONS ? ' pims-client-detail__btn--hidden' : ''}`}
+              >
                 More ▾
               </button>
             </div>

@@ -13,13 +13,20 @@ const PRACTICE_CALENDAR_CANCELLED_STATUSES = new Set([
   'cancelled',
 ]);
 
+/** PATCH cancel + analytics — server/PIMS confirm label for removed visits. */
+export const PRACTICE_CALENDAR_CANCEL_CONFIRM_STATUS = 'Canceled Appointment';
+
 /**
  * True when confirm or appointment status marks the visit cancelled (same labels as cancellations analytics).
  * Used by Scheduler and related booking overlap logic.
  */
 export function isAppointmentCancelledOnPracticeCalendar(
-  a: Pick<Appointment, 'confirmStatusName' | 'statusName'>
+  a: Pick<Appointment, 'confirmStatusName' | 'statusName'> & Record<string, unknown>
 ): boolean {
+  if (truthyApiFlag(a.cancellationFlag)) return true;
+  if (truthyApiFlag(a.isCancelled) || truthyApiFlag(a.cancelled) || truthyApiFlag(a.isCanceled)) {
+    return true;
+  }
   const norm = (v: string | null | undefined) => {
     if (typeof v !== 'string') return '';
     const t = v.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -52,7 +59,8 @@ export async function fetchAppointmentsRange(params: {
     query.primaryProviderId = String(params.primaryProviderId);
   }
   const { data } = await http.get('/appointments/range', { params: query });
-  return Array.isArray(data) ? data : (data?.items ?? []);
+  const rows: Appointment[] = Array.isArray(data) ? data : (data?.items ?? []);
+  return rows.map(normalizeRangeAppointment);
 }
 
 /**
@@ -69,7 +77,7 @@ export async function fetchAppointmentById(
     const { data } = await http.get<Appointment>(`/appointments/${encodeURIComponent(String(id))}`, {
       params,
     });
-    return data ?? null;
+    return data ? normalizeRangeAppointment(data) : null;
   } catch {
     return null;
   }
@@ -80,7 +88,10 @@ export type CreateAppointmentPayload = {
   practiceId: number;
   primaryProviderId: number;
   clientId: number;
-  patientId: number;
+  /** Omitted when the client has no patients on file. */
+  patientId?: number;
+  /** Optional routing stop address (e.g. address-only Get Best Route). */
+  alternateAddressText?: string | null;
   appointmentTypeId: number;
   appointmentStart: string;
   appointmentEnd: string;
@@ -100,10 +111,187 @@ export async function createAppointment(body: CreateAppointmentPayload): Promise
 /** PATCH /appointments/:id — partial update (field names match Appointment / server contract). */
 export async function patchAppointment(
   id: number | string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  opts?: { practiceId?: number | string }
 ): Promise<Appointment> {
-  const { data } = await http.patch<Appointment>(`/appointments/${encodeURIComponent(String(id))}`, body);
+  const params =
+    opts?.practiceId != null ? { practiceId: String(opts.practiceId) } : undefined;
+  const { data } = await http.patch<Appointment>(
+    `/appointments/${encodeURIComponent(String(id))}`,
+    body,
+    { params }
+  );
   return data;
+}
+
+/** Mark visit cancelled (practice calendar / PIMS sync). Reason optional for no-location visits. */
+export type CancelAppointmentPatch = {
+  cancellationFlag: true;
+  cancellationReason?: string | null;
+};
+
+export function truthyApiFlag(v: unknown): boolean {
+  if (v === true || v === 1) return true;
+  if (typeof v === 'string') {
+    const t = v.trim().toLowerCase();
+    return t === 'true' || t === '1' || t === 'yes';
+  }
+  return false;
+}
+
+function alternateAddressTextFromObject(alt: unknown): string | null {
+  if (typeof alt === 'string' && alt.trim()) return alt.trim();
+  if (!alt || typeof alt !== 'object') return null;
+  const o = alt as Record<string, unknown>;
+  for (const key of ['addressText', 'text', 'address', 'formatted', 'fullAddress', 'line1']) {
+    const v = o[key];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+/** Routing alternate stop — nested `alternateAddress` or flat `alternateAddressText` from range/doctor-day APIs. */
+export function appointmentAlternateAddressText(
+  a: Pick<Appointment, 'alternateAddress'> & Record<string, unknown>
+): string | null {
+  const nested = alternateAddressTextFromObject(a.alternateAddress);
+  if (nested) return nested;
+  for (const key of ['alternateAddressText', 'alternate_address_text', 'routingAlternateAddress']) {
+    const v = a[key];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  const meta = a.newApptMeta;
+  if (meta && typeof meta === 'object') {
+    const addr = (meta as { address?: unknown }).address;
+    if (typeof addr === 'string' && addr.trim()) return addr.trim();
+  }
+  return null;
+}
+
+export function appointmentHasAlternateLocation(
+  a: Pick<Appointment, 'alternateAddress'> & Record<string, unknown>
+): boolean {
+  if (truthyApiFlag(a.isAlternateStop)) return true;
+  return appointmentAlternateAddressText(a) != null;
+}
+
+/** Coerce range/realtime rows so calendar UI always sees nested + flat alternate fields when present. */
+export function normalizeRangeAppointment(row: Appointment): Appointment {
+  const raw = row as Appointment & Record<string, unknown>;
+  const text = appointmentAlternateAddressText(raw);
+  const hasAlt = appointmentHasAlternateLocation(raw);
+  if (!text && !hasAlt) return row;
+  const out = { ...row } as Appointment & Record<string, unknown>;
+  if (text) {
+    out.alternateAddress = { addressText: text };
+    out.alternateAddressText = text;
+  }
+  if (hasAlt && !truthyApiFlag(out.isAlternateStop)) {
+    out.isAlternateStop = true;
+  }
+  return out;
+}
+
+export function isAppointmentNoLocation(
+  a: Pick<Appointment, 'client'> & Record<string, unknown>
+): boolean {
+  if (Boolean(a.isNoLocation ?? a.noLocation ?? a.unroutable) || a.routingAvailable === false) {
+    return true;
+  }
+  const client = a.client;
+  const lat =
+    typeof a.lat === 'number' ? a.lat : typeof client?.lat === 'number' ? client.lat : null;
+  const lon =
+    typeof a.lon === 'number' ? a.lon : typeof client?.lon === 'number' ? client.lon : null;
+  if (lat == null || lon == null) return true;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return true;
+  if (Math.abs(lat) < 1e-6 && Math.abs(lon) < 1e-6) return true;
+  return false;
+}
+
+/**
+ * Personal / flex blocks on the practice calendar (e.g. "Back to office at 4pm").
+ * Not the same as doctor-day `noloc:*` routing keys on client visits.
+ */
+export function isPracticeCalendarBlockAppointment(a: Appointment): boolean {
+  const o = a as Record<string, unknown>;
+  const typeRoot = typeof o.type === 'string' ? o.type : undefined;
+  const isB = truthyApiFlag(o.isBlock);
+  const isPB = truthyApiFlag(o.isPersonalBlock);
+  if (
+    isBlockEntry({
+      type: typeRoot,
+      isBlock: isB ? true : undefined,
+      isPersonalBlock: isPB ? true : undefined,
+    })
+  ) {
+    return true;
+  }
+  if (isFlexBlockItem(a as { blockLabel?: string; title?: string })) {
+    return true;
+  }
+  const at = a.appointmentType;
+  const typeBlob = `${at?.prettyName ?? ''} ${at?.name ?? ''}`.trim().toLowerCase();
+  if (
+    typeBlob === 'block' ||
+    typeBlob.includes('personal block') ||
+    typeBlob.includes('flex block') ||
+    /^block[\s/]/i.test(typeBlob) ||
+    /\bblock\s*\(/.test(typeBlob)
+  ) {
+    return true;
+  }
+  const apptPims = (a as { pimsType?: string | null }).pimsType?.trim().toUpperCase();
+  if (apptPims === 'BLOCK' || apptPims === 'PERSONAL_BLOCK' || apptPims === 'PERSONALBLOCK') {
+    return true;
+  }
+  const atPims = (at as { pimsType?: string | null } | undefined)?.pimsType?.trim().toUpperCase();
+  if (atPims === 'BLOCK' || atPims === 'PERSONAL_BLOCK') {
+    return true;
+  }
+  return false;
+}
+
+/** Scheduler Remove: personal/flex blocks and no-location rows use confirm-only (no reason). */
+export function appointmentRemoveRequiresCancellationReason(
+  a: Appointment & Record<string, unknown>
+): boolean {
+  if (isPracticeCalendarBlockAppointment(a)) return false;
+  if (isAppointmentNoLocation(a)) return false;
+  return true;
+}
+
+/** Merge cancel fields onto a row so the calendar hides it even if the API omits confirm status. */
+export function appointmentWithCancelledFields(
+  row: Appointment,
+  cancellationReason?: string | null
+): Appointment {
+  const out = { ...row } as Appointment & Record<string, unknown>;
+  out.confirmStatusName = PRACTICE_CALENDAR_CANCEL_CONFIRM_STATUS;
+  out.cancellationFlag = true;
+  if (cancellationReason?.trim()) {
+    out.cancellationReason = cancellationReason.trim();
+  }
+  out.isActive = false;
+  return out;
+}
+
+export async function cancelAppointment(
+  id: number | string,
+  body: CancelAppointmentPatch,
+  opts?: { practiceId?: number | string }
+): Promise<Appointment> {
+  const trimmedReason = body.cancellationReason?.trim();
+  const payload: Record<string, unknown> = {
+    cancellationFlag: true,
+    confirmStatusName: PRACTICE_CALENDAR_CANCEL_CONFIRM_STATUS,
+    ...(trimmedReason ? { cancellationReason: trimmedReason } : {}),
+  };
+  const data = await patchAppointment(id, payload, opts);
+  return appointmentWithCancelledFields(
+    data,
+    trimmedReason ?? body.cancellationReason ?? null
+  );
 }
 
 /** PUT /appointments/:id/alternate-address — upsert or clear stored alternate (max 4000 chars). */
@@ -222,11 +410,39 @@ export type DoctorDayPatientPrimaryProvider = {
   title?: string | null;
 };
 
+function doctorDayPhoneStr(v: unknown): string | undefined {
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+}
+
+/** Primary + secondary client phones from a doctor-day appointment row (or nested `client`). */
+export function clientPhoneLineFromDoctorDayPayload(a: unknown): string | undefined {
+  if (!a || typeof a !== 'object') return undefined;
+  const row = a as Record<string, unknown>;
+  const client =
+    row.client && typeof row.client === 'object' ? (row.client as Record<string, unknown>) : null;
+  const phone1 =
+    doctorDayPhoneStr(row.clientPhone1) ??
+    doctorDayPhoneStr(row.phone1) ??
+    (client ? doctorDayPhoneStr(client.phone1) : undefined) ??
+    doctorDayPhoneStr(row.clientPhone) ??
+    doctorDayPhoneStr(row.phone) ??
+    (client ? doctorDayPhoneStr(client.mobilePhone) : undefined) ??
+    (client ? doctorDayPhoneStr(client.homePhone) : undefined);
+  const phone2 =
+    doctorDayPhoneStr(row.clientPhone2) ??
+    doctorDayPhoneStr(row.phone2) ??
+    (client ? doctorDayPhoneStr(client.phone2) : undefined);
+  const unique = [...new Set([phone1, phone2].filter(Boolean) as string[])];
+  return unique.length ? unique.join(' · ') : undefined;
+}
+
 export type DoctorDayAppt = {
   id: number | string;
   clientName: string;
   clientPimsId?: string;
   clientAlert?: string;
+  /** Formatted client phone(s) when returned on doctor-day rows. */
+  clientPhone?: string;
   patientName?: string;
   patientPimsId?: string;
   confirmStatusName?: string;
@@ -236,6 +452,10 @@ export type DoctorDayAppt = {
 
   startIso?: string;
   endIso?: string;
+  /** Booked visit times when doctor-day includes them (edit-time preview / ETA). */
+  appointmentStart?: string;
+  appointmentEnd?: string;
+  serviceMinutes?: number;
   appointmentType?: string;
 
   address1?: string;
@@ -477,6 +697,7 @@ export async function fetchDoctorDay(
       clientName: a?.clientName ?? 'Client',
       clientPimsId: a?.clientPimsId,
       clientAlert: a?.clientAlert,
+      clientPhone: clientPhoneLineFromDoctorDayPayload(a),
       patientName: a?.patientName,
       alerts: a?.alerts,
       patientPimsId: a?.patientPimsId,

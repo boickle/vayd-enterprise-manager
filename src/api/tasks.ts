@@ -27,6 +27,9 @@ export type TaskListItem = {
   assignedToEmployeeId: number | null;
   defaultAssigneeEmployeeId: number | null;
   createdByEmployeeId: number;
+  /** When work should begin (scheduling window start). */
+  startAt: string | null;
+  /** Deadline / end of window. */
   dueAt: string | null;
   priority: number | null;
   source: TaskSource;
@@ -108,6 +111,7 @@ export type CreateTaskBody = {
   assignedToEmployeeId?: number | null;
   defaultAssigneeEmployeeId?: number | null;
   body?: string | null;
+  startAt?: string | null;
   dueAt?: string | null;
   priority?: number | null;
   watcherEmployeeIds?: number[];
@@ -129,6 +133,7 @@ export type PatchTaskBody = Partial<{
   status: TaskStatus;
   assignedToEmployeeId: number | null;
   defaultAssigneeEmployeeId: number | null;
+  startAt: string | null;
   dueAt: string | null;
   priority: number | null;
   branchIds: number[];

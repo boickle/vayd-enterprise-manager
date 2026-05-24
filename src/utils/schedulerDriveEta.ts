@@ -6,6 +6,7 @@ import { DateTime } from 'luxon';
 import {
   fetchDoctorDay,
   clientDisplayName,
+  isAppointmentCancelledOnPracticeCalendar,
   isBlockEntry,
   blockDisplayLabel,
   miniZoneFromPayload,
@@ -25,6 +26,12 @@ import {
   SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID,
   type RoutingCalendarPreviewPayloadV1,
 } from './routingCalendarPreviewStorage';
+import {
+  buildRoutingRescheduleContextForSlotSearch,
+  readRoutingRescheduleIntent,
+  rescheduleScopeTargets,
+  type RoutingRescheduleIntentV1,
+} from './routingRescheduleIntent';
 
 const str = (o: unknown, k: string) =>
   typeof (o as Record<string, unknown>)?.[k] === 'string' ? ((o as Record<string, unknown>)[k] as string) : undefined;
@@ -202,6 +209,41 @@ function formatAddress(a: DoctorDayAppt) {
   );
 }
 
+function serviceMinutesFromIsoPair(
+  startIso: string | null | undefined,
+  endIso: string | null | undefined
+): number | undefined {
+  if (!startIso?.trim() || !endIso?.trim()) return undefined;
+  const start = DateTime.fromISO(startIso);
+  const end = DateTime.fromISO(endIso);
+  if (!start.isValid || !end.isValid) return undefined;
+  const mins = Math.round(end.diff(start, 'minutes').minutes);
+  if (!Number.isFinite(mins) || mins <= 0) return undefined;
+  return Math.max(1, mins);
+}
+
+function etaHouseholdSchedulingFields(h: SchedulerDriveHousehold): {
+  startIso: string | null | undefined;
+  endIso: string | null | undefined;
+  appointmentStart?: string;
+  appointmentEnd?: string;
+  serviceMinutes?: number;
+} {
+  const primary = h.primary;
+  const appointmentStart = primary.appointmentStart ?? h.startIso ?? undefined;
+  const appointmentEnd = primary.appointmentEnd ?? h.endIso ?? undefined;
+  const serviceMinutes =
+    primary.serviceMinutes ??
+    serviceMinutesFromIsoPair(appointmentStart ?? null, appointmentEnd ?? null);
+  return {
+    startIso: h.startIso,
+    endIso: h.endIso,
+    ...(appointmentStart ? { appointmentStart } : {}),
+    ...(appointmentEnd ? { appointmentEnd } : {}),
+    ...(serviceMinutes != null ? { serviceMinutes } : {}),
+  };
+}
+
 export type SchedulerDriveHousehold = {
   key: string;
   client: string;
@@ -343,7 +385,24 @@ export type SchedulerDriveRoutingPreviewOptions = {
   previewPracticeDateKey?: string | null;
   /** Move an existing visit to proposed times for drive-time preview (edit visit flow). */
   editTimePreview?: EditVisitTimePreview | null;
+  /** Active reschedule row — omits moved visits from doctor-day + passes `rescheduleContext` to `/routing/eta`. */
+  rescheduleIntent?: RoutingRescheduleIntentV1 | null;
 };
+
+/** Drop visits being rescheduled from doctor-day simulation (server `loadDoctorDay` parity). */
+export function omitRescheduleTargetsFromDoctorDayAppts(
+  appts: DoctorDayAppt[],
+  intent: RoutingRescheduleIntentV1 | null | undefined
+): DoctorDayAppt[] {
+  if (!intent) return appts;
+  const omit = new Set(rescheduleScopeTargets(intent).appointmentIds);
+  if (omit.size === 0) return appts;
+  return appts.filter((a) => {
+    if ((a as { isPreview?: boolean }).isPreview) return true;
+    const id = a.id;
+    return typeof id !== 'number' || !omit.has(id);
+  });
+}
 
 async function fetchEtaForOneDay(
   day: DayBundleIn,
@@ -438,6 +497,12 @@ async function fetchEtaForOneDay(
     }
   }
 
+  const rescheduleIntent = routingOpts?.rescheduleIntent ?? readRoutingRescheduleIntent();
+  const rescheduleContext =
+    rescheduleIntent != null
+      ? buildRoutingRescheduleContextForSlotSearch(rescheduleIntent, day.date, day.date)
+      : undefined;
+
   const payload = {
     doctorId,
     date: day.date,
@@ -445,8 +510,7 @@ async function fetchEtaForOneDay(
       key: h.key,
       lat: h.lat,
       lon: h.lon,
-      startIso: h.startIso,
-      endIso: h.endIso,
+      ...etaHouseholdSchedulingFields(h),
       ...etaHouseholdArrivalWindowPayload({
         isBlock: !!h.isPersonalBlock,
         isNoLocation: !!h.isNoLocation,
@@ -461,6 +525,7 @@ async function fetchEtaForOneDay(
     endDepot: day.endDepot ? { lat: day.endDepot.lat, lon: day.endDepot.lon } : undefined,
     useTraffic: false,
     ...candidateExtras,
+    ...(rescheduleContext ? { rescheduleContext } : {}),
   };
 
   const result: any = await fetchEtas(payload as any);
@@ -587,6 +652,50 @@ function membershipMapFromDoctorDayAppointments(
   return out;
 }
 
+/**
+ * Remove a cancelled visit from cached drive-day layout immediately (before doctor-day refetch).
+ * Drops the household when it was the only appointment there; otherwise strips the id from `sourceAppointmentIds`.
+ */
+export function dropAppointmentFromDriveDayData(dayData: DayData, apptId: string | number): DayData {
+  const idStr = String(apptId);
+  const households = dayData.households ?? [];
+  const timeline = dayData.timeline ?? [];
+  const newHouseholds: DayData['households'] = [];
+  const newTimeline: DayData['timeline'] = [];
+
+  for (let i = 0; i < households.length; i++) {
+    const h = households[i];
+    const ids = h.sourceAppointmentIds ?? [];
+    if (!ids.some((id) => String(id) === idStr)) {
+      newHouseholds.push(h);
+      newTimeline.push(timeline[i] ?? {});
+      continue;
+    }
+    if (ids.length <= 1) continue;
+    newHouseholds.push({
+      ...h,
+      sourceAppointmentIds: ids.filter((id) => String(id) !== idStr),
+    });
+    newTimeline.push(timeline[i] ?? {});
+  }
+
+  if (newHouseholds.length === households.length) return dayData;
+
+  const n = newHouseholds.length;
+  let driveSeconds = dayData.driveSeconds;
+  if (Array.isArray(driveSeconds) && driveSeconds.length > 0) {
+    driveSeconds = driveSeconds.slice(0, Math.max(0, n > 0 ? n + 1 : 0));
+  }
+
+  return {
+    ...dayData,
+    households: newHouseholds,
+    timeline: newTimeline,
+    driveSeconds,
+    routingOrderIndices: null,
+  };
+}
+
 /** GET doctor-day + households (no `/routing/eta`) plus membership keyed by appointment id. */
 export async function fetchSchedulerDoctorDayBundle(
   date: string,
@@ -615,19 +724,25 @@ export async function fetchSchedulerDoctorDayBundle(
       routingPreviewOpts.previewPracticeDateKey &&
       routingPreviewOpts.previewPracticeDateKey === date
     ) {
+      const ri = routingPreviewOpts.rescheduleIntent ?? readRoutingRescheduleIntent();
+      appts = omitRescheduleTargetsFromDoctorDayAppts(appts, ri);
       appts = injectDoctorDayAppointmentsRoutingPreview(appts, routingPreviewOpts.routingPreview);
+    } else if (routingPreviewOpts?.rescheduleIntent) {
+      appts = omitRescheduleTargetsFromDoctorDayAppts(appts, routingPreviewOpts.rescheduleIntent);
     }
 
+    appts = appts.filter(
+      (a) => !isAppointmentCancelledOnPracticeCalendar(a as Record<string, unknown>)
+    );
+
     const households = buildHouseholdsWithSourceIds(appts);
-    if (households.length === 0) {
-      return { bundle: null, membershipByApptId, zonesByApptId, patientPrimaryProviderByApptId };
-    }
 
     const tz =
       typeof (resp as any)?.timezone === 'string' && (resp as any).timezone.trim()
         ? String((resp as any).timezone).trim()
         : 'America/New_York';
 
+    // Keep bundle even with zero visits so day-off days (null depot times) still reach the scheduler.
     const bundle: DayBundleIn = {
       date,
       timezone: tz,

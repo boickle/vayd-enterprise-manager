@@ -60,6 +60,16 @@
   color: #0f172a;
 }
 
+.pims-client-detail__evet-name-link {
+  color: #2563eb;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.pims-client-detail__evet-name-link:hover {
+  text-decoration: underline;
+}
+
 .pims-client-detail__banner-links {
   display: flex;
   align-items: center;
@@ -148,6 +158,10 @@
 
 .pims-client-detail__btn:hover {
   background: #1d4ed8;
+}
+
+.pims-client-detail__btn--hidden {
+  display: none;
 }
 
 .pims-client-detail__btn--ghost {

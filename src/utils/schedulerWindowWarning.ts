@@ -1,8 +1,8 @@
 import { DateTime } from 'luxon';
 import type { DayData } from '../pages/MyWeek';
 import {
-  fixedTimeRouteEtaMeaningfullyAfterScheduledStart,
-  shouldShowEtaWindowWarning,
+  clientFixedTimeUsesDoctorDayClockForDriveLayout,
+  computeDriveTimeWindowWarning,
 } from './windowWarning';
 
 type HouseholdLike = DayData['households'][number];
@@ -46,8 +46,7 @@ export function schedulerHouseholdIsFixedTimeAppointment(
 }
 
 /**
- * When true, layout/hover use doctor-day booked times. False when client Fixed Time ETA slipped past start.
- * Mirrors My Week `weekHouseholdUsesDoctorDayClockForLayout`.
+ * When true, layout/hover use doctor-day booked times. Mirrors My Week `weekHouseholdUsesDoctorDayClockForLayout`.
  */
 export function schedulerHouseholdUsesDoctorDayClockForLayout(
   h: HouseholdLike,
@@ -59,11 +58,22 @@ export function schedulerHouseholdUsesDoctorDayClockForLayout(
   const flexBlock = Boolean(h.isPersonalBlock && isFlexBlock(h.primary));
   if (h.isPersonalBlock && !flexBlock) return true;
   if (!schedulerHouseholdIsClientFixedTime(h)) return false;
-  const eta = slot?.eta;
-  const schedStart = h.startIso;
-  if (!eta || !schedStart) return true;
-  if (fixedTimeRouteEtaMeaningfullyAfterScheduledStart(schedStart, eta)) return false;
-  return true;
+  const windowStartIso =
+    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
+    (h as { windowStartIso?: string | null }).windowStartIso ??
+    (h as { effectiveWindow?: { startIso?: string } }).effectiveWindow?.startIso ??
+    null;
+  const windowEndIso =
+    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
+    (h as { windowEndIso?: string | null }).windowEndIso ??
+    (h as { effectiveWindow?: { endIso?: string } }).effectiveWindow?.endIso ??
+    null;
+  return clientFixedTimeUsesDoctorDayClockForDriveLayout({
+    schedStartIso: h.startIso,
+    etaIso: slot?.eta,
+    windowStartIso,
+    windowEndIso,
+  });
 }
 
 export function windowEndIsoForSchedulerWarning(
@@ -87,23 +97,12 @@ export function computeSchedulerTimelineWindowWarning(
 ): boolean {
   if (!showByDriveTime || h.isPersonalBlock) return false;
 
-  const isFixedTime = schedulerHouseholdIsFixedTimeAppointment(h, isFlexBlock);
-  const isClientFixedTime = schedulerHouseholdIsClientFixedTime(h);
-  const doctorDayClock = schedulerHouseholdUsesDoctorDayClockForLayout(
-    h,
-    slot,
-    showByDriveTime,
-    isFlexBlock
-  );
-  const etaIso = slot?.eta ?? null;
-  const windowEndForWarn = windowEndIsoForSchedulerWarning(h, slot);
-
-  const clientFixedRoutePushedPastSchedule = isClientFixedTime && !doctorDayClock;
-
-  return (
-    (!isFixedTime && shouldShowEtaWindowWarning(etaIso, windowEndForWarn)) ||
-    clientFixedRoutePushedPastSchedule
-  );
+  return computeDriveTimeWindowWarning({
+    etaIso: slot?.eta ?? null,
+    windowEndIso: windowEndIsoForSchedulerWarning(h, slot),
+    isClientFixedTime: schedulerHouseholdIsClientFixedTime(h),
+    scheduledStartIso: h.startIso,
+  });
 }
 
 export function computeSchedulerWindowWarningForAppointment(

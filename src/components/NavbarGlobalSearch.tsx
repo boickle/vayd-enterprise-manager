@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
-import { searchPimsClientsAndPatients, type PimsPatientSearchHit } from '../api/pimsSearch';
+import {
+  clientPimsIdFromSearchRow,
+  searchPimsClientsAndPatients,
+  type PimsPatientSearchHit,
+} from '../api/pimsSearch';
 import type { ClientSearchRow } from '../api/clientsStaff';
+import { evetClientLink, evetPatientLink } from '../utils/evet';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import './NavbarGlobalSearch.css';
 
 export default function NavbarGlobalSearch() {
@@ -67,25 +73,24 @@ export default function NavbarGlobalSearch() {
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
-  const goClient = useCallback(
-    (id: string | number) => {
-      setOpen(false);
-      setQ('');
-      navigate(`${clientsBase}?clientId=${encodeURIComponent(String(id))}`);
-    },
-    [navigate, clientsBase]
-  );
+  const openEvetClient = useCallback((c: ClientSearchRow) => {
+    setOpen(false);
+    setQ('');
+    window.open(evetClientLink(clientPimsIdFromSearchRow(c)), '_blank', 'noopener,noreferrer');
+  }, []);
 
-  const goPatient = useCallback(
-    (id: string | number) => {
-      setOpen(false);
-      setQ('');
-      navigate(`${patientsBase}?patientId=${encodeURIComponent(String(id))}`);
-    },
-    [navigate, patientsBase]
-  );
+  const openEvetPatient = useCallback((p: PimsPatientSearchHit) => {
+    setOpen(false);
+    setQ('');
+    window.open(evetPatientLink(p.patientPimsId), '_blank', 'noopener,noreferrer');
+  }, []);
+
+  function patientHitLabel(p: PimsPatientSearchHit): string {
+    return p.clientLabel ? `${p.name} (${p.clientLabel})` : p.name;
+  }
 
   const goClientsSearch = useCallback(() => {
+    if (blockRoutingCalendarPreviewNavigation()) return;
     const t = q.trim();
     if (!t) {
       navigate(clientsBase);
@@ -96,6 +101,7 @@ export default function NavbarGlobalSearch() {
   }, [navigate, q, clientsBase]);
 
   const goPatientsSearch = useCallback(() => {
+    if (blockRoutingCalendarPreviewNavigation()) return;
     const t = q.trim();
     if (!t) {
       navigate(patientsBase);
@@ -112,25 +118,26 @@ export default function NavbarGlobalSearch() {
 
   return (
     <div className="navbar-global-search" ref={wrapRef}>
-      <div className="navbar-global-search__field">
-        <input
-          type="search"
-          placeholder="Search clients, patients, phone…"
-          aria-label="Global search"
-          autoComplete="off"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onFocus={() => q.trim() && (clients.length > 0 || patients.length > 0 || err) && setOpen(true)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              goAdvancedSearch();
-            }
-          }}
-        />
-        {loading && <span className="navbar-global-search__loading">Searching…</span>}
-      </div>
-      {open && (q.trim() || err) && (
+      <div className="navbar-global-search__input-wrap">
+        <div className="navbar-global-search__field">
+          <input
+            type="search"
+            placeholder="Search clients, patients, phone…"
+            aria-label="Global search"
+            autoComplete="off"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onFocus={() => q.trim() && (clients.length > 0 || patients.length > 0 || err) && setOpen(true)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                goAdvancedSearch();
+              }
+            }}
+          />
+          {loading && <span className="navbar-global-search__loading">Searching…</span>}
+        </div>
+        {open && (q.trim() || err) && (
         <div className="navbar-global-search__dropdown" role="listbox">
           {err && <div className="navbar-global-search__msg">{err}</div>}
           {!err && clients.length === 0 && patients.length === 0 && !loading && q.trim() && (
@@ -142,11 +149,16 @@ export default function NavbarGlobalSearch() {
               <ul>
                 {clients.slice(0, 8).map((c) => (
                   <li key={`c-${c.id}`}>
-                    <button type="button" className="navbar-global-search__hit" onClick={() => goClient(c.id)}>
+                    <button
+                      type="button"
+                      className="navbar-global-search__hit"
+                      title="Open client in eVet"
+                      onClick={() => openEvetClient(c)}
+                    >
                       <span className="navbar-global-search__hit-name">
                         {[c.firstName, c.lastName].filter(Boolean).join(' ') || `Client #${c.id}`}
                       </span>
-                      <span className="navbar-global-search__hit-meta">#{String(c.id)}</span>
+                      <span className="navbar-global-search__hit-meta">#{clientPimsIdFromSearchRow(c)}</span>
                     </button>
                   </li>
                 ))}
@@ -158,12 +170,15 @@ export default function NavbarGlobalSearch() {
               <div className="navbar-global-search__heading">Patients</div>
               <ul>
                 {patients.slice(0, 8).map((p) => (
-                  <li key={`p-${p.id}`}>
-                    <button type="button" className="navbar-global-search__hit" onClick={() => goPatient(p.id)}>
-                      <span className="navbar-global-search__hit-name">{p.name}</span>
-                      {p.clientLabel && (
-                        <span className="navbar-global-search__hit-meta">Owner: {p.clientLabel}</span>
-                      )}
+                  <li key={`p-${p.id}-${p.clientPimsId ?? ''}`}>
+                    <button
+                      type="button"
+                      className="navbar-global-search__hit"
+                      title="Open patient in eVet"
+                      onClick={() => openEvetPatient(p)}
+                    >
+                      <span className="navbar-global-search__hit-name">{patientHitLabel(p)}</span>
+                      <span className="navbar-global-search__hit-meta">#{p.patientPimsId}</span>
                     </button>
                   </li>
                 ))}
@@ -179,7 +194,11 @@ export default function NavbarGlobalSearch() {
             </button>
           </div>
         </div>
-      )}
+        )}
+      </div>
+      <p className="navbar-global-search__evet-hint">
+        Search to connect to patient or client in eVet/Pulse
+      </p>
     </div>
   );
 }

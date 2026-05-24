@@ -2,14 +2,12 @@ import { NavLink, Outlet, useNavigate, useLocation, Navigate } from 'react-route
 import { useEffect, useMemo, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
-  CalendarDays,
   CalendarPlus,
   ClipboardPlus,
   DoorOpen,
   FlaskConical,
   LineChart,
   ListChecks,
-  MapPinned,
   Package,
   PackageSearch,
   PanelLeft,
@@ -19,37 +17,27 @@ import {
   ShoppingCart,
   Calculator,
   UserPlus,
-  Wrench,
 } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import {
   getVisibleScoutTabs,
   getFirstScoutSegment,
   SCHEDULE_OUTLET_EXTRA_SEGMENTS,
-  SHOW_MY_WEEK_SCOUT_TAB,
   scoutTabPermissionOk,
 } from '../scout-tabs';
 import { isAnalyticsAdmin, isEmployeeAnalyticsRestricted } from '../utils/analyticsAccess';
+import {
+  useRoutingCalendarPreviewActive,
+  useRoutingCalendarPreviewNavigationGuard,
+} from '../utils/routingCalendarPreviewGuard';
 import './ScheduleLayout.css';
 
 const SCHEDULE_RAIL_COLLAPSED_KEY = 'vayd-schedule-rail-collapsed';
 
-function scoutTabIcon(tabPath: string): LucideIcon {
-  switch (tabPath) {
-    case 'routing':
-      return MapPinned;
-    case 'my-day':
-      return CalendarDays;
-    case 'my-week':
-      return CalendarDays;
-    case 'scheduling-tools':
-      return Wrench;
-    case 'room-loader':
-      return DoorOpen;
-    default:
-      return CalendarDays;
-  }
-}
+/** Sidebar quick actions / queues hidden until flows are ready. */
+const SHOW_RAIL_NEW_CLIENT = false;
+const SHOW_RAIL_RESTOCK_LOCATION = false;
+const SHOW_RAIL_WORK_QUEUES = false;
 
 /** Default child under `/schedule`. */
 export function ScheduleIndexRedirect() {
@@ -92,7 +80,6 @@ export default function ScheduleLayout() {
   }, [role]);
 
   const tabs = useMemo(() => getVisibleScoutTabs(abilities, roles), [abilities, roles]);
-  const schedulingTabs = useMemo(() => tabs.filter((t) => t.path !== 'home'), [tabs]);
 
   const canAccessScheduleAnalytics = useMemo(
     () => isAnalyticsAdmin(roles) || isEmployeeAnalyticsRestricted(roles),
@@ -109,6 +96,9 @@ export default function ScheduleLayout() {
       return false;
     }
   });
+
+  const routingCalendarPreviewActive = useRoutingCalendarPreviewActive();
+  useRoutingCalendarPreviewNavigationGuard(routingCalendarPreviewActive);
 
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 901px)');
@@ -213,16 +203,18 @@ export default function ScheduleLayout() {
               </span>
               <span className="schedule-app__quick-link-label">+ Appointment</span>
             </NavLink>
-            <NavLink
-              to="/schedule/clients"
-              className="schedule-app__quick-link"
-              title={railCollapsedEffective ? 'New Client' : undefined}
-            >
-              <span className="schedule-app__quick-link-icon" aria-hidden>
-                <UserPlus size={18} strokeWidth={1.75} />
-              </span>
-              <span className="schedule-app__quick-link-label">New Client</span>
-            </NavLink>
+            {SHOW_RAIL_NEW_CLIENT ? (
+              <NavLink
+                to="/schedule/clients"
+                className="schedule-app__quick-link"
+                title={railCollapsedEffective ? 'New Client' : undefined}
+              >
+                <span className="schedule-app__quick-link-icon" aria-hidden>
+                  <UserPlus size={18} strokeWidth={1.75} />
+                </span>
+                <span className="schedule-app__quick-link-label">New Client</span>
+              </NavLink>
+            ) : null}
             <NavLink
               to="/schedule/room-loader"
               className="schedule-app__quick-link"
@@ -233,18 +225,20 @@ export default function ScheduleLayout() {
               </span>
               <span className="schedule-app__quick-link-label">Send Room Loader</span>
             </NavLink>
+            {SHOW_RAIL_RESTOCK_LOCATION ? (
+              <NavLink
+                to="/schedule/inventory"
+                className="schedule-app__quick-link"
+                title={railCollapsedEffective ? 'Restock Location' : undefined}
+              >
+                <span className="schedule-app__quick-link-icon" aria-hidden>
+                  <Package size={18} strokeWidth={1.75} />
+                </span>
+                <span className="schedule-app__quick-link-label">Restock Location</span>
+              </NavLink>
+            ) : null}
             <NavLink
-              to="/schedule/inventory"
-              className="schedule-app__quick-link"
-              title={railCollapsedEffective ? 'Restock Location' : undefined}
-            >
-              <span className="schedule-app__quick-link-icon" aria-hidden>
-                <Package size={18} strokeWidth={1.75} />
-              </span>
-              <span className="schedule-app__quick-link-label">Restock Location</span>
-            </NavLink>
-            <NavLink
-              to="/schedule/tasks"
+              to={{ pathname: '/schedule/tasks', search: '?new=1' }}
               className="schedule-app__quick-link"
               title={railCollapsedEffective ? 'New Task' : undefined}
             >
@@ -269,47 +263,13 @@ export default function ScheduleLayout() {
             ) : null}
           </nav>
 
-          {schedulingTabs.length > 0 ? (
+          {SHOW_RAIL_WORK_QUEUES ? (
             <>
-              <h2 className="schedule-app__rail-title schedule-app__rail-title--second">Scheduling</h2>
-              <nav className="schedule-app__quick schedule-app__quick--sub" aria-label="Scheduling tools">
-                {schedulingTabs.map((tab) => {
-                  const TabIcon = scoutTabIcon(tab.path);
-                  return (
-                    <NavLink
-                      key={tab.path}
-                      to={`/schedule/${tab.path}`}
-                      className="schedule-app__quick-link schedule-app__quick-link--sub"
-                      title={railCollapsedEffective ? tab.label : undefined}
-                    >
-                      <span className="schedule-app__quick-link-icon" aria-hidden>
-                        <TabIcon size={17} strokeWidth={1.75} />
-                      </span>
-                      <span className="schedule-app__quick-link-label">{tab.label}</span>
-                    </NavLink>
-                  );
-                })}
-                {!SHOW_MY_WEEK_SCOUT_TAB && scoutTabPermissionOk('canSeeDoctorDay', abilities) ? (
-                  <NavLink
-                    to="/schedule/scheduler"
-                    className="schedule-app__quick-link schedule-app__quick-link--sub"
-                    title={railCollapsedEffective ? 'Practice calendar' : undefined}
-                  >
-                    <span className="schedule-app__quick-link-icon" aria-hidden>
-                      <CalendarDays size={17} strokeWidth={1.75} />
-                    </span>
-                    <span className="schedule-app__quick-link-label">Practice calendar</span>
-                  </NavLink>
-                ) : null}
-              </nav>
-            </>
-          ) : null}
+              <div className="schedule-app__rail-divider" role="presentation" />
 
-          <div className="schedule-app__rail-divider" role="presentation" />
-
-          <h2 className="schedule-app__rail-title">Work queues</h2>
-          <ul className="schedule-app__queues">
-            {WORK_QUEUE_ROWS.map((row) => {
+              <h2 className="schedule-app__rail-title">Work queues</h2>
+              <ul className="schedule-app__queues">
+                {WORK_QUEUE_ROWS.map((row) => {
               const QIcon = row.icon;
               const countTitle = `${row.label} (${row.count})`;
               return (
@@ -338,7 +298,9 @@ export default function ScheduleLayout() {
                 </li>
               );
             })}
-          </ul>
+              </ul>
+            </>
+          ) : null}
         </div>
       </aside>
 
