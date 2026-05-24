@@ -14,13 +14,20 @@
  *   GET /clients/:id/billing or GET /clients/:id/invoices — not used by this bundle yet.
  */
 import { searchClientsStaff, type ClientSearchRow } from './clientsStaff';
-import { searchPatientsStaff } from './patients';
+import { searchPatientsStaff, type PatientSearchRow } from './patients';
+import {
+  clientsForPatientSearchRow,
+  patientPimsIdFromSearchRow,
+  primaryClientLabelForPatientRow,
+} from '../utils/pimsPatientSearchRow';
 
 export type PimsPatientSearchHit = {
   id: number | string;
   name: string;
   clientId: number | string | null;
   clientLabel: string | null;
+  patientPimsId: string;
+  clientPimsId: string | null;
 };
 
 function pickStr(v: unknown): string | null {
@@ -29,25 +36,35 @@ function pickStr(v: unknown): string | null {
   return s || null;
 }
 
+function patientDisplayName(row: PatientSearchRow): string {
+  const r = row as Record<string, unknown>;
+  const joined = [pickStr(row.firstName), pickStr(row.lastName)].filter(Boolean).join(' ').trim();
+  return (pickStr(row.name) ?? pickStr(r.patientName) ?? joined) || 'Patient';
+}
+
 function normalizePatientSearchRow(row: unknown): PimsPatientSearchHit | null {
   if (!row || typeof row !== 'object') return null;
-  const o = row as Record<string, unknown>;
-  const idRaw = o.id ?? o.patientId;
+  const o = row as PatientSearchRow;
+  const idRaw = (o as Record<string, unknown>).id ?? (o as Record<string, unknown>).patientId;
   if (idRaw == null || (typeof idRaw !== 'string' && typeof idRaw !== 'number')) return null;
   const id = idRaw;
-  const joined = [pickStr(o.firstName), pickStr(o.lastName)].filter(Boolean).join(' ').trim();
-  const name = pickStr(o.name) ?? (joined || 'Patient');
-  const client = o.client as Record<string, unknown> | undefined;
-  const clientId =
-    (o.clientId as number | string | undefined) ??
-    (client?.id as number | string | undefined) ??
-    null;
-  let clientLabel: string | null = null;
-  if (client) {
-    clientLabel =
-      [pickStr(client.firstName), pickStr(client.lastName)].filter(Boolean).join(' ').trim() || null;
-  }
-  return { id, name, clientId, clientLabel };
+  const name = patientDisplayName(o);
+  const owners = clientsForPatientSearchRow(o);
+  const primary = owners[0];
+  return {
+    id,
+    name,
+    clientId: primary?.id ?? null,
+    clientLabel: primaryClientLabelForPatientRow(o),
+    patientPimsId: patientPimsIdFromSearchRow(o, id),
+    clientPimsId: primary?.pimsId ?? null,
+  };
+}
+
+/** PIMS id for eVet client deep link from a `/clients/search` row. */
+export function clientPimsIdFromSearchRow(c: ClientSearchRow): string {
+  const r = c as Record<string, unknown>;
+  return pickStr(r.pimsId) ?? String(c.id);
 }
 
 export type PimsUnifiedSearchResult = {

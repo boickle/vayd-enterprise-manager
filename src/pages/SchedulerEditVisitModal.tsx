@@ -4,12 +4,14 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { DateTime } from 'luxon';
-import { patchAppointment, putAppointmentAlternateAddress } from '../api/appointments';
-import type { Appointment, Patient } from '../api/roomLoader';
+import { commitEditVisit, type EditVisitFormSnapshot } from '../utils/editVisitCommit';
+import type { Appointment } from '../api/roomLoader';
 import type { AppointmentType } from '../api/appointmentSettings';
 import type { Provider } from '../api/employee';
 import {
@@ -18,13 +20,16 @@ import {
   formatPracticeDateLabel,
   toTimeLocalValue,
 } from '../utils/editVisitTimeFields';
+import type { EditVisitPreviewKind } from '../utils/editVisitTimePreview';
+import type { EditVisitPreviewScoreCompare } from '../utils/editVisitTypeScoreCompare';
+import { EditVisitOverflowTag } from '../components/EditVisitOverflowTag';
+import {
+  SchedulerVisitClientZoneBadge,
+  SchedulerVisitPatientContext,
+} from '../components/SchedulerVisitPatientContext';
+import { submitTypeChangeAcceptedFeedback } from '../utils/routingBookFeedback';
+import { fullClientHouseholdName } from '../utils/schedulerVisitDisplay';
 import './Scheduler.css';
-
-function patientsForAppointment(a: Appointment): Patient[] {
-  const multi = (a as { patients?: Patient[] }).patients;
-  if (Array.isArray(multi) && multi.length > 0) return multi;
-  return a.patient ? [a.patient] : [];
-}
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -38,6 +43,7 @@ export type SchedulerEditVisitModalHandle = {
 
 type Props = {
   appt: Appointment;
+  practiceId: number;
   practiceTz: string;
   appointmentTypes: AppointmentType[];
   providers: Provider[];
@@ -47,17 +53,38 @@ type Props = {
   /** Inline panel in split sidebar (main schedule or routing after View Placement). */
   inlinePaneMode?: boolean;
   placementPreviewActive?: boolean;
+  placementPreviewKind?: EditVisitPreviewKind | null;
+  /** When type preview is on the calendar, PATCH uses this id (matches preview storage). */
+  draftPreviewAppointmentTypeId?: number | null;
+  /** Authoritative preview times while placement preview is active (survives sidebar portal remount). */
+  draftPreviewAppointmentStart?: string | null;
+  draftPreviewAppointmentEnd?: string | null;
+  /** Latest form values for calendar Book / Adjust time. */
+  onFormSnapshotChange?: (snapshot: EditVisitFormSnapshot | null) => void;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (updated?: Appointment, detail?: { routingFeedbackWarning?: string }) => void;
   onViewPlacement?: (startUtc: string, endUtc: string) => void;
+  /** Preview drive/windows when only the appointment type changes (times unchanged). */
+  onPreviewSchedule?: (startUtc: string, endUtc: string, appointmentTypeId: number) => void;
   /** While placement preview is on the calendar, keep drive/calendar in sync. */
-  onPlacementTimesChange?: (startUtc: string, endUtc: string) => void;
+  onPlacementTimesChange?: (
+    startUtc: string,
+    endUtc: string,
+    appointmentTypeId: number,
+    kind: EditVisitPreviewKind
+  ) => void;
+  typeScoreCompare?: EditVisitPreviewScoreCompare | null;
+  typeScoreLoading?: boolean;
+  typeScoreError?: string | null;
+  /** Shown after Book from type preview (split view stays open). */
+  bookedSummary?: string | null;
 };
 
 export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle, Props>(
   function SchedulerEditVisitModal(
     {
       appt,
+      practiceId,
       practiceTz,
       appointmentTypes,
       providers,
@@ -65,15 +92,23 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       dockInRoutingPane = false,
       inlinePaneMode = false,
       placementPreviewActive = false,
+      placementPreviewKind = null,
+      draftPreviewAppointmentTypeId = null,
+      draftPreviewAppointmentStart = null,
+      draftPreviewAppointmentEnd = null,
+      onFormSnapshotChange,
       onClose,
       onSaved,
       onViewPlacement,
+      onPreviewSchedule,
       onPlacementTimesChange,
+      typeScoreCompare = null,
+      typeScoreLoading = false,
+      typeScoreError = null,
+      bookedSummary = null,
     },
     ref
   ) {
-    const patients = useMemo(() => patientsForAppointment(appt), [appt]);
-
     const appointmentDateKey = useMemo(
       () => appointmentPracticeDateKey(appt.appointmentStart, practiceTz) ?? '',
       [appt.appointmentStart, practiceTz]
@@ -83,30 +118,35 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       [appointmentDateKey, practiceTz]
     );
 
-    const [appointmentTypeId, setAppointmentTypeId] = useState<string>(
-      String(appt.appointmentType?.id ?? '')
-    );
-    const [primaryProviderId, setPrimaryProviderId] = useState<string>(
-      String(appt.primaryProvider?.id ?? '')
-    );
+    const [appointmentTypeId, setAppointmentTypeId] = useState<string>(() => {
+      if (
+        placementPreviewKind === 'type' &&
+        draftPreviewAppointmentTypeId != null &&
+        Number.isFinite(Number(draftPreviewAppointmentTypeId))
+      ) {
+        return String(draftPreviewAppointmentTypeId);
+      }
+      return String(appt.appointmentType?.id ?? '');
+    });
+    const primaryProviderId = String(appt.primaryProvider?.id ?? '');
     const [description, setDescription] = useState(appt.description ?? '');
-    const [statusName, setStatusName] = useState(appt.statusName ?? '');
-    const [confirmStatusName, setConfirmStatusName] = useState(appt.confirmStatusName ?? '');
-    const [isComplete, setIsComplete] = useState(appt.isComplete);
+    const statusName = appt.statusName ?? '';
+    const confirmStatusName = appt.confirmStatusName ?? '';
+    const isComplete = appt.isComplete;
     const [startTime, setStartTime] = useState(() =>
       toTimeLocalValue(appt.appointmentStart, practiceTz)
     );
     const [endTime, setEndTime] = useState(() => toTimeLocalValue(appt.appointmentEnd, practiceTz));
-    const [alternateAddressText, setAlternateAddressText] = useState(
-      () => appt.alternateAddress?.addressText ?? ''
-    );
+    const alternateAddressText = (appt.alternateAddress?.addressText ?? '').trim();
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const placementPreviewWasActiveRef = useRef(false);
 
-    const patientLine = useMemo(() => {
-      if (patients.length === 0) return '—';
-      return patients.map((p) => p.name).join(', ');
-    }, [patients]);
+    const visitStartEnd = useMemo(() => {
+      const start = DateTime.fromISO(appt.appointmentStart, { zone: practiceTz });
+      const end = DateTime.fromISO(appt.appointmentEnd, { zone: practiceTz });
+      return { start, end };
+    }, [appt.appointmentStart, appt.appointmentEnd, practiceTz]);
 
     const clientHomeSummary = useMemo(() => {
       const c = appt.client;
@@ -126,21 +166,121 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       return { startUtc, endUtc };
     }, [appointmentDateKey, startTime, endTime, practiceTz]);
 
+    const initialTypeId = String(appt.appointmentType?.id ?? '');
+
     const timesDirty = useMemo(() => {
-      const { startUtc, endUtc } = buildStartEndUtc();
-      if (!startUtc || !endUtc) return false;
-      return startUtc !== appt.appointmentStart || endUtc !== appt.appointmentEnd;
-    }, [buildStartEndUtc, appt.appointmentStart, appt.appointmentEnd]);
+      const origStart = toTimeLocalValue(appt.appointmentStart, practiceTz);
+      const origEnd = toTimeLocalValue(appt.appointmentEnd, practiceTz);
+      return startTime.trim() !== origStart || endTime.trim() !== origEnd;
+    }, [appt.appointmentStart, appt.appointmentEnd, practiceTz, startTime, endTime]);
+
+    const typeDirty = appointmentTypeId !== initialTypeId;
+
+    const previewKind: EditVisitPreviewKind = timesDirty ? 'time' : 'type';
+
+    const effectiveAppointmentTypeId = useMemo(() => {
+      if (
+        placementPreviewKind === 'type' &&
+        draftPreviewAppointmentTypeId != null &&
+        Number.isFinite(Number(draftPreviewAppointmentTypeId))
+      ) {
+        return Number(draftPreviewAppointmentTypeId);
+      }
+      return Number(appointmentTypeId);
+    }, [placementPreviewKind, draftPreviewAppointmentTypeId, appointmentTypeId]);
 
     useEffect(() => {
-      if (!placementPreviewActive || !onPlacementTimesChange) return;
+      if (
+        placementPreviewActive &&
+        placementPreviewKind === 'type' &&
+        draftPreviewAppointmentTypeId != null &&
+        Number.isFinite(Number(draftPreviewAppointmentTypeId))
+      ) {
+        const next = String(draftPreviewAppointmentTypeId);
+        setAppointmentTypeId((prev) => (prev === next ? prev : next));
+      }
+    }, [placementPreviewActive, placementPreviewKind, draftPreviewAppointmentTypeId]);
+
+    useEffect(() => {
+      if (!onFormSnapshotChange) return;
+      const tid = effectiveAppointmentTypeId;
+      const pid = Number(primaryProviderId);
+      if (!Number.isFinite(tid) || tid <= 0 || !Number.isFinite(pid) || pid <= 0) {
+        onFormSnapshotChange(null);
+        return;
+      }
+      onFormSnapshotChange({
+        appointmentTypeId: tid,
+        primaryProviderId: pid,
+        description,
+        statusName,
+        confirmStatusName,
+        isComplete,
+        alternateAddressText,
+        initialAlternateAddressText: (appt.alternateAddress?.addressText ?? '').trim(),
+      });
+    }, [
+      onFormSnapshotChange,
+      effectiveAppointmentTypeId,
+      primaryProviderId,
+      description,
+      statusName,
+      confirmStatusName,
+      isComplete,
+      alternateAddressText,
+      appt.alternateAddress?.addressText,
+    ]);
+
+    useLayoutEffect(() => {
+      if (!placementPreviewActive || !draftPreviewAppointmentStart || !draftPreviewAppointmentEnd) {
+        return;
+      }
+      const nextStart = toTimeLocalValue(draftPreviewAppointmentStart, practiceTz);
+      const nextEnd = toTimeLocalValue(draftPreviewAppointmentEnd, practiceTz);
+      if (nextStart) setStartTime(nextStart);
+      if (nextEnd) setEndTime(nextEnd);
+    }, [
+      placementPreviewActive,
+      draftPreviewAppointmentStart,
+      draftPreviewAppointmentEnd,
+      practiceTz,
+    ]);
+
+    useEffect(() => {
+      if (!placementPreviewActive || !onPlacementTimesChange) {
+        placementPreviewWasActiveRef.current = false;
+        return;
+      }
+      const justActivated = !placementPreviewWasActiveRef.current;
+      placementPreviewWasActiveRef.current = true;
+      // Preview times were set by View Placement / Preview schedule — do not overwrite on mount
+      // (sidebar portal remount resets local time fields to saved appointment times).
+      if (justActivated) return;
+
       const { startUtc, endUtc } = buildStartEndUtc();
-      if (startUtc && endUtc) onPlacementTimesChange(startUtc, endUtc);
-    }, [startTime, endTime, placementPreviewActive, onPlacementTimesChange, buildStartEndUtc]);
+      const tid = effectiveAppointmentTypeId;
+      if (!startUtc || !endUtc || !Number.isFinite(tid) || tid <= 0) return;
+      onPlacementTimesChange(startUtc, endUtc, tid, previewKind);
+    }, [
+      startTime,
+      endTime,
+      effectiveAppointmentTypeId,
+      placementPreviewActive,
+      onPlacementTimesChange,
+      buildStartEndUtc,
+      previewKind,
+    ]);
 
     const handleSave = useCallback(async () => {
       setError(null);
-      const tid = Number(appointmentTypeId);
+      const tidFromPreview =
+        placementPreviewActive &&
+        placementPreviewKind === 'type' &&
+        draftPreviewAppointmentTypeId != null &&
+        Number.isFinite(Number(draftPreviewAppointmentTypeId))
+          ? Number(draftPreviewAppointmentTypeId)
+          : null;
+      const tid = tidFromPreview ?? Number(appointmentTypeId);
       const pid = Number(primaryProviderId);
       if (!Number.isFinite(tid) || tid <= 0) {
         setError('Choose a valid appointment type.');
@@ -159,47 +299,35 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         setError('End time must be after start time.');
         return;
       }
-      const trimmedAlt = alternateAddressText.trim();
-      if (trimmedAlt.length > 4000) {
-        setError('Alternate address must be 4000 characters or fewer.');
-        return;
-      }
-      const initialAlt = (appt.alternateAddress?.addressText ?? '').trim();
-      const alternateDirty = initialAlt !== trimmedAlt;
 
       setSaving(true);
       try {
-        await patchAppointment(appt.id, {
-          appointmentTypeId: tid,
-          primaryProviderId: pid,
-          description: description.trim() || null,
-          statusName: statusName.trim() || null,
-          confirmStatusName: confirmStatusName.trim() || null,
-          isComplete,
+        const updated = await commitEditVisit({
+          appointmentId: Number(appt.id),
+          practiceId,
           appointmentStart: startUtc,
           appointmentEnd: endUtc,
+          form: {
+            appointmentTypeId: tid,
+            primaryProviderId: pid,
+            description,
+            statusName,
+            confirmStatusName,
+            isComplete,
+            alternateAddressText,
+            initialAlternateAddressText: alternateAddressText,
+          },
+          previewAppointmentTypeId: tidFromPreview,
         });
-        if (alternateDirty) {
-          try {
-            await putAppointmentAlternateAddress(appt.id, {
-              addressText: trimmedAlt === '' ? null : trimmedAlt,
-            });
-          } catch (putErr: unknown) {
-            onSaved();
-            const ax = putErr as {
-              response?: { data?: { message?: string | string[] } };
-              message?: string;
-            };
-            const m = ax?.response?.data?.message;
-            if (Array.isArray(m)) setError(`Visit saved, but alternate address failed: ${m.join(', ')}`);
-            else if (typeof m === 'string' && m.trim())
-              setError(`Visit saved, but alternate address failed: ${m}`);
-            else if (ax?.message) setError(`Visit saved, but alternate address failed: ${ax.message}`);
-            else setError('Visit saved, but the alternate address could not be updated. Try again.');
-            return;
+        let routingFeedbackWarning: string | undefined;
+        if (placementPreviewActive && typeScoreCompare?.feedbackHandoff) {
+          const fb = await submitTypeChangeAcceptedFeedback(typeScoreCompare.feedbackHandoff);
+          if (!fb.submitted && fb.error) {
+            routingFeedbackWarning =
+              'Appointment saved, but routing score could not be linked. ' + fb.error;
           }
         }
-        onSaved();
+        onSaved(updated, routingFeedbackWarning ? { routingFeedbackWarning } : undefined);
         onClose();
       } catch (e: unknown) {
         const ax = e as { response?: { data?: { message?: string | string[] } }; message?: string };
@@ -221,6 +349,11 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       statusName,
       confirmStatusName,
       isComplete,
+      practiceId,
+      placementPreviewActive,
+      placementPreviewKind,
+      draftPreviewAppointmentTypeId,
+      typeScoreCompare,
       onSaved,
       onClose,
     ]);
@@ -231,21 +364,39 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       onClose();
     }
 
-    function handleViewPlacementClick() {
+    function validateTimes(): { startUtc: string; endUtc: string } | null {
       setError(null);
       const { startUtc, endUtc } = buildStartEndUtc();
       if (!startUtc || !endUtc) {
         setError('Enter valid start and end times.');
-        return;
+        return null;
       }
       if (DateTime.fromISO(endUtc) <= DateTime.fromISO(startUtc)) {
         setError('End time must be after start time.');
+        return null;
+      }
+      return { startUtc, endUtc };
+    }
+
+    function handleViewPlacementClick() {
+      const times = validateTimes();
+      if (!times) return;
+      onViewPlacement?.(times.startUtc, times.endUtc);
+    }
+
+    function handlePreviewScheduleClick() {
+      const times = validateTimes();
+      if (!times) return;
+      const tid = Number(appointmentTypeId);
+      if (!Number.isFinite(tid) || tid <= 0) {
+        setError('Choose a valid appointment type.');
         return;
       }
-      onViewPlacement?.(startUtc, endUtc);
+      onPreviewSchedule?.(times.startUtc, times.endUtc, tid);
     }
 
     const canViewPlacement = Boolean(onViewPlacement && timesDirty && !placementPreviewActive);
+    const canPreviewSchedule = Boolean(onPreviewSchedule && typeDirty && !placementPreviewActive);
 
     const modalPanel = (
       <div
@@ -267,10 +418,31 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         <div className="scheduler-modal-header">
           <div className="scheduler-modal-header-text">
             <p className="scheduler-modal-eyebrow">Edit visit</p>
-            <h2 id="scheduler-edit-title">Edit Visit</h2>
-            {placementPreviewActive ? (
+            <h2 id="scheduler-edit-title" className="scheduler-modal-title-h">
+              <span className="scheduler-modal-title-client">
+                {fullClientHouseholdName(appt.client)}
+              </span>
+              <SchedulerVisitClientZoneBadge appt={appt} compact />
+            </h2>
+            <SchedulerVisitPatientContext appt={appt} providers={providers} practiceTz={practiceTz} />
+            {visitStartEnd.start.isValid && visitStartEnd.end.isValid ? (
+              <p className="scheduler-modal-subtitle">
+                {visitStartEnd.start.toFormat('EEEE, MMMM d, yyyy')}
+                <span className="scheduler-modal-subtitle-sep">·</span>
+                {visitStartEnd.start.toFormat('h:mm a')} – {visitStartEnd.end.toFormat('h:mm a')}
+              </p>
+            ) : (
+              <p className="scheduler-modal-subtitle">{appointmentDateLabel}</p>
+            )}
+            {bookedSummary ? (
+              <p className="scheduler-edit-booked-summary" role="status">
+                {bookedSummary}
+              </p>
+            ) : placementPreviewActive ? (
               <p className="scheduler-edit-preview-hint">
-                Preview on the calendar — use Adjust time on the visit or dismiss with ×.
+                {placementPreviewKind === 'type'
+                  ? 'Appointment type preview on the calendar — hover the visit to book or dismiss (×).'
+                  : 'Time preview on the calendar — hover the visit for Adjust time or dismiss (×).'}
               </p>
             ) : null}
           </div>
@@ -281,6 +453,63 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
 
         <div className="scheduler-modal-body scheduler-modal-body--edit">
           {error ? <p className="scheduler-edit-error">{error}</p> : null}
+
+          {placementPreviewActive ? (
+            <div
+              className="scheduler-edit-type-score-panel"
+              role="status"
+              aria-live="polite"
+            >
+              <p className="scheduler-edit-type-score-panel-title">
+                {placementPreviewKind === 'type'
+                  ? 'Routing score (same slot)'
+                  : 'Routing score (proposed time)'}
+              </p>
+              {typeScoreLoading ? (
+                <p className="scheduler-edit-hint">
+                  {placementPreviewKind === 'type'
+                    ? 'Comparing scores for the new appointment type…'
+                    : 'Comparing scores for the proposed time…'}
+                </p>
+              ) : typeScoreError ? (
+                <p className="scheduler-edit-hint scheduler-edit-type-score-panel-error">
+                  {typeScoreError}
+                </p>
+              ) : typeScoreCompare?.originalScoreLine ||
+                typeScoreCompare?.summaryLine ||
+                typeScoreCompare?.newTypeUnavailableLine ||
+                typeScoreCompare?.overflowOverrunSeconds != null ? (
+                <>
+                  {typeScoreCompare.originalScoreLine ? (
+                    <p className="scheduler-edit-type-score-panel-line">
+                      {typeScoreCompare.originalScoreLine}
+                    </p>
+                  ) : null}
+                  {typeScoreCompare.summaryLine ? (
+                    <p className="scheduler-edit-type-score-panel-line">{typeScoreCompare.summaryLine}</p>
+                  ) : null}
+                  {typeScoreCompare.newTypeUnavailableLine ? (
+                    <p className="scheduler-edit-hint scheduler-edit-type-score-panel-unavailable">
+                      {typeScoreCompare.newTypeUnavailableLine}
+                    </p>
+                  ) : null}
+                  {typeScoreCompare.overflowOverrunSeconds != null ? (
+                    <EditVisitOverflowTag overrunSeconds={typeScoreCompare.overflowOverrunSeconds} />
+                  ) : null}
+                  {placementPreviewKind === 'type' && typeScoreCompare.windowLine ? (
+                    <p className="scheduler-edit-hint">
+                      {typeScoreCompare.windowLine}
+                      {typeScoreCompare.windowWarningMayChange
+                        ? ' Window warnings on the calendar may change after you book.'
+                        : null}
+                    </p>
+                  ) : null}
+                </>
+              ) : (
+                <p className="scheduler-edit-hint">Score comparison will appear when routing data loads.</p>
+              )}
+            </div>
+          ) : null}
 
           <section className="scheduler-modal-section">
             <div className="scheduler-edit-grid">
@@ -293,59 +522,10 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                   <option value="">—</option>
                   {appointmentTypes.map((t) => (
                     <option key={t.id} value={String(t.id)}>
-                      {t.prettyName || t.name}
+                      {t.name || t.prettyName}
                     </option>
                   ))}
                 </select>
-              </label>
-
-              <label className="scheduler-edit-field">
-                <span>Primary provider *</span>
-                <select
-                  value={primaryProviderId}
-                  onChange={(e) => setPrimaryProviderId(e.target.value)}
-                >
-                  <option value="">—</option>
-                  {providers.map((p) => (
-                    <option key={String(p.id)} value={String(p.id)}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="scheduler-edit-field">
-                <span>Patient</span>
-                <input type="text" readOnly value={patientLine} />
-              </label>
-
-              <label className="scheduler-edit-field">
-                <span>Status</span>
-                <input
-                  type="text"
-                  value={statusName}
-                  onChange={(e) => setStatusName(e.target.value)}
-                  placeholder="— None —"
-                />
-              </label>
-
-              <label className="scheduler-edit-field">
-                <span>Confirm status</span>
-                <input
-                  type="text"
-                  value={confirmStatusName}
-                  onChange={(e) => setConfirmStatusName(e.target.value)}
-                  placeholder="—"
-                />
-              </label>
-
-              <label className="scheduler-edit-field scheduler-edit-field--checkbox">
-                <input
-                  type="checkbox"
-                  checked={isComplete}
-                  onChange={(e) => setIsComplete(e.target.checked)}
-                />
-                <span>Is complete</span>
               </label>
 
               <label className="scheduler-edit-field scheduler-edit-field--full">
@@ -399,7 +579,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                 </label>
               </div>
               <p className="scheduler-edit-hint scheduler-edit-hint--time">
-                Date cannot be changed here. Adjust start and end times only.
+                Date can only be changed by rescheduling. Adjust start and end times only.
               </p>
 
               {clientHomeSummary ? (
@@ -409,20 +589,15 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                 </div>
               ) : null}
 
-              <label className="scheduler-edit-field scheduler-edit-field--full">
+              <div className="scheduler-edit-field scheduler-edit-readonly scheduler-edit-field--full">
                 <span>Alternate address (routing)</span>
-                <textarea
-                  rows={2}
-                  maxLength={4000}
-                  value={alternateAddressText}
-                  onChange={(e) => setAlternateAddressText(e.target.value)}
-                  placeholder="Leave blank to use the client's home address for routing."
-                  aria-describedby="scheduler-edit-alt-hint"
-                />
-                <p id="scheduler-edit-alt-hint" className="scheduler-edit-hint">
-                  Optional. Clear and save to remove ({alternateAddressText.length}/4000).
+                <div className="scheduler-edit-client-home">
+                  {alternateAddressText || '— Uses client home address for routing.'}
+                </div>
+                <p className="scheduler-edit-hint">
+                  Alternate stop location can only be set when rescheduling.
                 </p>
-              </label>
+              </div>
             </div>
           </section>
         </div>
@@ -439,6 +614,15 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
               disabled={saving}
             >
               View Placement
+            </button>
+          ) : canPreviewSchedule ? (
+            <button
+              type="button"
+              className="btn"
+              onClick={handlePreviewScheduleClick}
+              disabled={saving}
+            >
+              Preview schedule
             </button>
           ) : (
             <button type="button" className="btn" onClick={() => void handleSave()} disabled={saving}>

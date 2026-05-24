@@ -1,7 +1,8 @@
 // src/components/UserMenu.tsx
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, type MouseEvent as ReactMouseEvent } from 'react';
 import { useNavigate, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
+import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import './UserMenu.css';
 
 export default function UserMenu({ menuExtras = [] }: { menuExtras?: { label: string; to: string }[] }) {
@@ -38,17 +39,23 @@ export default function UserMenu({ menuExtras = [] }: { menuExtras?: { label: st
   }, [isOpen]);
 
   const handleLogout = async () => {
+    if (blockRoutingCalendarPreviewNavigation()) return;
     setIsOpen(false);
     await logout();
     nav('/login');
   };
 
   const handleSettings = () => {
+    if (blockRoutingCalendarPreviewNavigation()) return;
     setIsOpen(false);
     nav('/admin');
   };
 
-  const handlePageClick = () => {
+  const handlePageClick = (e: ReactMouseEvent<HTMLAnchorElement>) => {
+    if (blockRoutingCalendarPreviewNavigation()) {
+      e.preventDefault();
+      return;
+    }
     setIsOpen(false);
   };
 

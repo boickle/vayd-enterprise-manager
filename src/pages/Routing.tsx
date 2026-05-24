@@ -26,15 +26,28 @@ import { validateAddress } from '../api/geo';
 import {
   normalizeRoutingV2SlotSearchResponse,
   type RoutingSlotSearchOptionalFlags,
+  type RescheduleOriginalBooking,
   type RoutingV2SlotSearchResult,
 } from '../api/routing';
+import {
+  rescheduleOriginalScoreSummary,
+  rescheduleScoreHeaderSuffix,
+  resolveOriginalVisitForScoreCompare,
+} from '../utils/routingRescheduleScoreCompare';
+import { WINDOW_WARNING_MINUTES_FROM_END } from '../utils/windowWarning';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
+  clearRoutingCalendarPreview,
+  readRoutingCalendarPreview,
   ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
+  ROUTING_FOCUS_RESCHEDULE_SOURCE_EVENT,
+  routingCalendarPreviewOptionKey,
   writeRoutingCalendarPreview,
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
+import { alertAndBlockRoutingCalendarPreviewLeave } from '../utils/routingCalendarPreviewGuard';
 import {
+  buildRoutingRescheduleContextForSlotSearch,
   clearRoutingRescheduleIntent,
   markRescheduleIntentAppliedToRoutingForm,
   readRoutingRescheduleIntent,
@@ -47,7 +60,9 @@ import {
 } from '../utils/routingRescheduleIntent';
 import {
   clearRoutingUiSnapshot,
+  createDefaultRoutingForm,
   readRoutingUiBootstrap,
+  ROUTING_DISMISS_RESCHEDULE_EVENT,
   ROUTING_REQUEST_ID_SESSION_KEY,
   ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT,
   writeAuthDoctorCache,
@@ -354,6 +369,8 @@ type Result = {
    * Omitted for legacy, no candidates, or when zone-aware preserve did not run.
    */
   scoutPreservedEmptyDayWeeks?: ScoutPreservedEmptyDayWeek[] | null;
+  /** Present when slot search used `rescheduleContext` and feedback snapshot exists. */
+  rescheduleOriginalBooking?: RescheduleOriginalBooking;
 };
 
 type Client = {
@@ -1281,6 +1298,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
   const routingPageRootRef = useRef<HTMLDivElement>(null);
   const [stackFormAndResults, setStackFormAndResults] = useState(false);
+  const [calendarPreviewTick, setCalendarPreviewTick] = useState(0);
 
   useEffect(() => {
     const el = routingPageRootRef.current;
@@ -1366,7 +1384,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       routingPrefillFlashClearRef.current = setTimeout(() => {
         routingPrefillFlashClearRef.current = null;
         setRoutingPrefillFlash({});
-      }, 900);
+      }, 1200);
     });
   }, []);
 
@@ -1428,6 +1446,40 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const doctorNameReqs = useRef<Record<string, Promise<string>>>({});
 
   const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({});
+
+  const activeCalendarPreviewOptionKey = useMemo(() => {
+    const preview = readRoutingCalendarPreview();
+    if (!preview) return null;
+    if (preview.listOptionKey?.trim()) return preview.listOptionKey.trim();
+    const o = preview.option;
+    const cand =
+      preview.candidateIndex ??
+      (typeof o.candidateIndex === 'number' ? o.candidateIndex : undefined);
+    const internalDoctor = String(o.doctorPimsId ?? '').trim();
+    const pimsFromMap = Object.entries(doctorIdByPims).find(([, id]) => id === internalDoctor)?.[0];
+    if (pimsFromMap) {
+      return `${pimsFromMap}-${String(o.date ?? '')}-${String(o.insertionIndex ?? '')}-${cand ?? ''}`;
+    }
+    return routingCalendarPreviewOptionKey(preview);
+  }, [calendarPreviewTick, doctorIdByPims]);
+
+  useEffect(() => {
+    if (!calendarWorkspaceMode) return;
+    const bump = () => setCalendarPreviewTick((n) => n + 1);
+    bump();
+    window.addEventListener(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT, bump);
+    return () => window.removeEventListener(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT, bump);
+  }, [calendarWorkspaceMode]);
+
+  useEffect(() => {
+    if (!calendarWorkspaceMode || !activeCalendarPreviewOptionKey) return;
+    const root = routingPageRootRef.current;
+    const el = root?.querySelector(
+      `[data-routing-calendar-preview-card="${CSS.escape(activeCalendarPreviewOptionKey)}"]`
+    );
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [calendarWorkspaceMode, activeCalendarPreviewOptionKey]);
+
   const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(
     () => bootstrap.selectedClientAlerts
   );
@@ -1486,6 +1538,30 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     [hasActiveRescheduleIntent, activeRescheduleIntent]
   );
 
+  const routingRescheduleHighlightClass = useCallback(
+    (field: RoutingPrefillFlashField | 'scope') => {
+      if (!hasActiveRescheduleIntent) return '';
+      const ri = activeRescheduleIntent;
+      if (!ri) return '';
+      if (field === 'scope') {
+        return showRescheduleScopeField ? ' routing-reschedule-prefill-highlight' : '';
+      }
+      if (field === 'doctor' && !ri.primaryDoctorPimsId?.trim()) return '';
+      if (field === 'client' && !ri.clientId?.trim()) return '';
+      if (field === 'address' && !ri.address?.trim()) return '';
+      if (field === 'minutes' && !(ri.serviceMinutes > 0)) return '';
+      if (
+        field === 'apptType' &&
+        !ri.appointmentTypeName?.trim() &&
+        (ri.appointmentTypeId == null || !Number.isFinite(Number(ri.appointmentTypeId)))
+      ) {
+        return '';
+      }
+      return ' routing-reschedule-prefill-highlight';
+    },
+    [hasActiveRescheduleIntent, activeRescheduleIntent, showRescheduleScopeField]
+  );
+
   const rescheduleScopePetLabel = useMemo(() => {
     const ri = activeRescheduleIntent;
     if (!ri) return 'This pet only';
@@ -1510,6 +1586,42 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     setRescheduleScope('');
     setRescheduleScopeError(false);
   }, []);
+
+  const resetRoutingFormAfterRescheduleDismiss = useCallback(() => {
+    setForm((f) => {
+      const empty = createDefaultRoutingForm();
+      const keepDoctorId = f.doctorId.trim();
+      return {
+        ...empty,
+        doctorId: keepDoctorId || empty.doctorId,
+      };
+    });
+    setClientQuery('');
+    setSelectedClientAlerts(null);
+    setRoutingApptStatsTypeKey('');
+    setScheduleBookTypeId(null);
+    setRescheduleScope('');
+    setRescheduleScopeError(false);
+    setResult(null);
+    setFeedbackError(null);
+    setFeedbackToast(null);
+  }, []);
+
+  const rescheduleOriginalVisitForCompare = useMemo(() => {
+    if (!hasActiveRescheduleIntent || !result?.rescheduleOriginalBooking) return null;
+    return resolveOriginalVisitForScoreCompare(
+      result.rescheduleOriginalBooking,
+      activeRescheduleIntent?.appointmentId
+    );
+  }, [hasActiveRescheduleIntent, result?.rescheduleOriginalBooking, activeRescheduleIntent?.appointmentId]);
+
+  const rescheduleOriginalScoreSummaryLine = useMemo(
+    () =>
+      hasActiveRescheduleIntent
+        ? rescheduleOriginalScoreSummary(rescheduleOriginalVisitForCompare)
+        : null,
+    [hasActiveRescheduleIntent, rescheduleOriginalVisitForCompare]
+  );
 
   const rescheduleModeSummary = useMemo(() => {
     const ri = activeRescheduleIntent;
@@ -1578,6 +1690,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       const tid = intent.appointmentTypeId;
       if (tid != null && Number.isFinite(Number(tid))) setScheduleBookTypeId(Number(tid));
 
+      const typeName = intent.appointmentTypeName?.trim();
+      if (typeName) setRoutingApptStatsTypeKey(typeName);
+
       const alerts = intent.clientAlerts;
       if (alerts !== undefined && alerts !== null) setSelectedClientAlerts(alerts);
 
@@ -1596,6 +1711,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       if (label) flashFields.push('client');
       if (intent.address?.trim()) flashFields.push('address');
       if (intent.serviceMinutes > 0) flashFields.push('minutes');
+      if (typeName || (tid != null && Number.isFinite(Number(tid)))) flashFields.push('apptType');
       if (flashFields.length > 0) triggerRoutingPrefillFlash(flashFields);
 
       if (!rescheduleRequiresScopeChoice(intent)) {
@@ -1616,6 +1732,16 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     return () =>
       window.removeEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, mergeRescheduleIntentFromCalendar);
   }, [triggerRoutingPrefillFlash]);
+
+  useEffect(() => {
+    if (!calendarWorkspaceMode) return;
+    function onDismissReschedule() {
+      setHasActiveRescheduleIntent(false);
+      resetRoutingFormAfterRescheduleDismiss();
+    }
+    window.addEventListener(ROUTING_DISMISS_RESCHEDULE_EVENT, onDismissReschedule);
+    return () => window.removeEventListener(ROUTING_DISMISS_RESCHEDULE_EVENT, onDismissReschedule);
+  }, [calendarWorkspaceMode, resetRoutingFormAfterRescheduleDismiss]);
 
   /** Leave reschedule mode when doctor or client changes on the routing form (not when dismissing a preview slot). */
   useEffect(() => {
@@ -1769,9 +1895,15 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     }
     if (!internalId) return;
 
-    const clientIdRaw = form.newAppt.clientId?.trim();
-    if (!clientIdRaw) {
-      setFeedbackError('Select a client before opening the calendar preview.');
+    const hasCoords =
+      Number.isFinite(form.newAppt.lat as number) && Number.isFinite(form.newAppt.lon as number);
+    const hasAddress = (form.newAppt.address ?? '').trim().length > 0;
+    if (!hasCoords) {
+      setFeedbackError(
+        hasAddress
+          ? 'Verify the address before viewing placement on the calendar.'
+          : 'Select a client or enter a valid street address.'
+      );
       return;
     }
     if (scheduleBookTypeId == null) {
@@ -1784,6 +1916,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     }
 
     setFeedbackError(null);
+    const listOptionKey = routingOptionKey(opt);
     const merged = { ...opt, doctorPimsId: internalId } as UnifiedOption;
     const routingRequestId =
       opt.routingRequestId ?? latestRoutingRequestId ?? deriveRoutingRequestId(result) ?? undefined;
@@ -1792,16 +1925,19 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
     const payload: RoutingCalendarPreviewPayloadV1 = {
       version: 1,
+      listOptionKey,
       option: { ...(merged as unknown as Record<string, unknown>), doctorPimsId: internalId } as RoutingCalendarPreviewPayloadV1['option'],
       serviceMinutes: Math.max(1, Number(form.newAppt.serviceMinutes) || 30),
       newApptMeta: {
-        clientId: form.newAppt.clientId,
+        ...(form.newAppt.clientId?.trim()
+          ? { clientId: form.newAppt.clientId.trim() }
+          : {}),
         address: form.newAppt.address,
         lat: form.newAppt.lat,
         lon: form.newAppt.lon,
       },
       appointmentTypeId: scheduleBookTypeId,
-      clientDisplayLabel: clientQuery.trim() || undefined,
+      clientDisplayLabel: form.newAppt.clientId?.trim() ? clientQuery.trim() || undefined : undefined,
       routingRequestId,
       candidateIndex,
       candidateId: opt.candidateId,
@@ -1833,10 +1969,17 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     }
     writeRoutingCalendarPreview(payload);
     if (calendarWorkspaceMode) {
-      window.dispatchEvent(new Event(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT));
+      setCalendarPreviewTick((n) => n + 1);
     } else {
       navigate('/schedule/scheduler?routingPreview=1');
     }
+  }
+
+  function focusRescheduleSourceOnCalendar() {
+    if (!calendarWorkspaceMode || !hasActiveRescheduleIntent) return;
+    clearRoutingCalendarPreview();
+    setCalendarPreviewTick((n) => n + 1);
+    window.dispatchEvent(new Event(ROUTING_FOCUS_RESCHEDULE_SOURCE_EVENT));
   }
 
   const hasFinalSelection = feedbackSuccessKey != null;
@@ -1965,6 +2108,15 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   // =========================
   // Effects
   // =========================
+
+  /** Drop stale clientId from session restore when the client field is empty (e.g. prior visit). */
+  useEffect(() => {
+    if (clientQuery.trim()) return;
+    setForm((f) => {
+      if (!f.newAppt.clientId?.trim()) return f;
+      return { ...f, newAppt: { ...f.newAppt, clientId: undefined } };
+    });
+  }, []);
 
   // Client search
   useEffect(() => {
@@ -2145,6 +2297,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     setForm((f) => {
       if (key === 'address') {
         setAddressError(null);
+        setSelectedClientAlerts(null);
         return {
           ...f,
           newAppt: {
@@ -2152,6 +2305,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
             address: (value as string) ?? '',
             lat: undefined,
             lon: undefined,
+            clientId: undefined,
           },
         };
       }
@@ -2346,6 +2500,17 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         : { doctorId: form.doctorId, ...base };
     }
 
+    if (isV2) {
+      const rescheduleContext = buildRoutingRescheduleContextForSlotSearch(
+        readRoutingRescheduleIntent(),
+        routingStartDate,
+        routingEndDate
+      );
+      if (rescheduleContext) {
+        payload = { ...payload, rescheduleContext };
+      }
+    }
+
     setLoading(true);
     try {
       const { data } = await http.post<Result>(endpoint, payload);
@@ -2413,7 +2578,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    
+
+    if (alertAndBlockRoutingCalendarPreviewLeave()) return;
+
     // Validate form first
     const validation = validateForm();
     if (!validation.valid) {
@@ -2616,6 +2783,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                       'input',
                       doctorRequiredBeforeApptType ? 'routing-input--error' : '',
                       routingPrefillFlashClass('doctor'),
+                      routingRescheduleHighlightClass('doctor'),
                     ]
                       .filter(Boolean)
                       .join(' ')}
@@ -2782,7 +2950,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                   <span className="routing-visit-stack-label muted">Appointment Type</span>
                   <select
                     id="routing-visit-type-select"
-                    className={`input routing-input-compact routing-visit-type-select${routingPrefillFlashClass('apptType')}`}
+                    className={`input routing-input-compact routing-visit-type-select${routingPrefillFlashClass('apptType')}${routingRescheduleHighlightClass('apptType')}`}
                     disabled={apptLengthsLoading}
                     value={routingApptStatsTypeKey}
                     onMouseDown={(e) => {
@@ -2872,7 +3040,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                   id="routing-visit-mins"
                   className={`input routing-input-compact routing-mins-line-input${
                     routingMinutesPulse ? ' routing-minutes-flash--active' : ''
-                  }${routingPrefillFlashClass('minutes')}`}
+                  }${routingPrefillFlashClass('minutes')}${routingRescheduleHighlightClass('minutes')}`}
                   aria-label="Service minutes"
                     title="Auto-filled when you pick a type and pets, or enter minutes here to override."
                     type="number"
@@ -2898,7 +3066,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                     id="routing-reschedule-scope"
                     className={`input routing-input-compact routing-reschedule-scope-select${
                       rescheduleScopeError ? ' routing-input--error' : ''
-                    }`}
+                    }${routingRescheduleHighlightClass('scope')}`}
                     required
                     aria-required
                     aria-invalid={rescheduleScopeError}
@@ -2939,12 +3107,19 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           <Field label="Client">
               <div ref={clientBoxRef} style={{ position: 'relative' }}>
                 <input
-                  className={`input${routingPrefillFlashClass('client')}`}
+                  className={`input${routingPrefillFlashClass('client')}${routingRescheduleHighlightClass('client')}`}
                   value={clientQuery}
                   onChange={(e) => {
-                    setClientQuery(e.target.value);
+                    const next = e.target.value;
+                    setClientQuery(next);
                     setClientActiveIdx(-1);
                     setSelectedClientAlerts(null);
+                    if (!next.trim()) {
+                      setForm((f) => ({
+                        ...f,
+                        newAppt: { ...f.newAppt, clientId: undefined },
+                      }));
+                    }
                   }}
                   placeholder="Type last name..."
                   onFocus={() => clientResults.length && setShowClientDropdown(true)}
@@ -3057,7 +3232,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           <Field label="Address">
             <div className="routing-address-row">
               <input
-                className={`input routing-address-input${routingPrefillFlashClass('address')}`}
+                className={`input routing-address-input${routingPrefillFlashClass('address')}${routingRescheduleHighlightClass('address')}`}
                 value={form.newAppt.address ?? ''}
                 onChange={(e) => onNewApptChange('address', e.target.value)}
                 placeholder="Street, city (optional if client has address)"
@@ -3295,8 +3470,17 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           }}
         >
           <h3 style={{ marginTop: 0, marginBottom: 0 }}>
-            {result ? 'Results (lower score is better)' : 'Results'}
+            {result
+              ? hasActiveRescheduleIntent
+                ? 'Results (lower score is better — vs. original booking)'
+                : 'Results (lower score is better)'
+              : 'Results'}
           </h3>
+          {rescheduleOriginalScoreSummaryLine ? (
+            <p className="routing-reschedule-original-score-summary muted" style={{ margin: 0, fontSize: 12 }}>
+              {rescheduleOriginalScoreSummaryLine}
+            </p>
+          ) : null}
           {result && scoutPolicyZoneAware(result.scoutEmptyDayPolicy) ? (
             <Fragment>
               <div
@@ -3462,14 +3646,51 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                     ? `${isoToTime(opt.arrivalWindow.windowStartIso)} – ${isoToTime(opt.arrivalWindow.windowEndIso)}`
                     : isoToTime(opt.suggestedStartIso);
 
+                const isCalendarPreviewCard =
+                  calendarWorkspaceMode &&
+                  activeCalendarPreviewOptionKey != null &&
+                  activeCalendarPreviewOptionKey === optionKey;
+
+                const hasRoutingPlacementTarget =
+                  (Number.isFinite(form.newAppt.lat as number) &&
+                    Number.isFinite(form.newAppt.lon as number)) ||
+                  Boolean(form.newAppt.clientId?.trim());
+                const viewPlacementDisabled =
+                  !hasRoutingPlacementTarget ||
+                  scheduleBookTypeId == null ||
+                  (showRescheduleScopeField && !rescheduleScope);
+                const viewPlacementTitle = !hasRoutingPlacementTarget
+                  ? 'Enter and verify an address, or select a client'
+                  : scheduleBookTypeId == null
+                    ? 'Loading appointment types…'
+                    : showRescheduleScopeField && !rescheduleScope
+                      ? 'Choose which pets to reschedule'
+                      : hasActiveRescheduleIntent
+                        ? 'View placement on the practice calendar to reschedule this visit'
+                        : 'View placement on the practice calendar';
+
                 return (
-                  <div
+                  <button
                     key={`${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${idx}`}
-                    className="card routing-result-option-card"
+                    type="button"
+                    data-routing-calendar-preview-card={optionKey}
+                    className={[
+                      'card',
+                      'routing-result-option-card',
+                      isCalendarPreviewCard ? 'routing-result-option-card--calendar-preview' : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    disabled={viewPlacementDisabled}
+                    title={viewPlacementTitle}
+                    aria-label={viewPlacementTitle}
+                    onClick={() => {
+                      void openMyWeek(opt);
+                    }}
                     style={{
                       position: 'relative',
                       paddingTop: 48,
-                      ...(isEarlierFeasibleEmptyDay
+                      ...(isEarlierFeasibleEmptyDay && !isCalendarPreviewCard
                         ? {
                             backgroundColor: '#fefce8',
                             border: '1px solid #fde68a',
@@ -3501,11 +3722,17 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                       >
                         {opt.doctorName}
                       </span>
-                      {typeof opt.score === 'number' && (
-                        <span style={{ fontWeight: 600, opacity: 0.9, whiteSpace: 'nowrap' }}>
-                          (Score: {Number.isInteger(opt.score) ? String(opt.score) : opt.score.toFixed(2)})
-                        </span>
-                      )}
+                      {typeof opt.score === 'number' &&
+                        (() => {
+                          const scoreLabel = hasActiveRescheduleIntent
+                            ? rescheduleScoreHeaderSuffix(opt.score, rescheduleOriginalVisitForCompare)
+                            : `(Score: ${Number.isInteger(opt.score) ? String(opt.score) : opt.score.toFixed(2)})`;
+                          return scoreLabel ? (
+                            <span style={{ fontWeight: 600, opacity: 0.9, whiteSpace: 'nowrap' }}>
+                              {scoreLabel}
+                            </span>
+                          ) : null;
+                        })()}
                       <span style={{ marginLeft: 'auto' }}>
                         <DoctorIcon />
                       </span>
@@ -3594,7 +3821,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                           fontWeight: 600,
                         }}
                       >
-                        ⚠ At least one downstream appointment is pushed within 15 minutes of its window end.
+                        {`⚠ At least one downstream appointment is pushed within ${WINDOW_WARNING_MINUTES_FROM_END} minutes of its window end.`}
                       </div>
                     )}
 
@@ -3705,41 +3932,35 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                       />
                     </div>
 
-                    <div
-                      style={{
-                        marginTop: 16,
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        gap: 8,
-                        justifyContent: 'flex-end',
-                      }}
-                    >
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        onClick={() => openMyWeek(opt)}
-                        disabled={
-                          !form.newAppt.clientId?.trim() ||
-                          scheduleBookTypeId == null ||
-                          (showRescheduleScopeField && !rescheduleScope)
-                        }
-                        aria-label="View placement on the practice calendar"
-                        title={
-                          !form.newAppt.clientId?.trim()
-                            ? 'Select a client first'
-                            : scheduleBookTypeId == null
-                              ? 'Loading appointment types…'
-                              : showRescheduleScopeField && !rescheduleScope
-                                ? 'Choose which pets to reschedule'
-                              : hasActiveRescheduleIntent
-                                ? 'Open the practice calendar to place the rescheduled visit in this slot'
-                                : 'Open the practice calendar to see this slot on the week'
-                        }
-                      >
-                        View Placement
-                      </button>
+                    <div className="routing-result-option-card-placement-row">
+                      <div className="routing-result-option-card-placement-actions">
+                        {calendarWorkspaceMode &&
+                        hasActiveRescheduleIntent &&
+                        isCalendarPreviewCard ? (
+                          <button
+                            type="button"
+                            className="btn secondary routing-result-option-card-placement-btn"
+                            title="Back to where this visit is on the schedule now"
+                            disabled={viewPlacementDisabled}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                            }}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              focusRescheduleSourceOnCalendar();
+                            }}
+                          >
+                            Back
+                          </button>
+                        ) : null}
+                        <span className="btn secondary routing-result-option-card-placement-cta">
+                          View Placement
+                        </span>
+                      </div>
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>

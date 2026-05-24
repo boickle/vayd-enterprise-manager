@@ -134,6 +134,29 @@ main.schedule-main-wrapper .scheduler-page:not(.scheduler-page--embedded) {
   flex: 0 1 auto;
 }
 
+.navbar-schedule-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15em;
+  height: 1.15em;
+  padding: 0 4px;
+  margin-left: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff !important;
+  background: #dc2626;
+  border-radius: 3px;
+  vertical-align: super;
+  box-sizing: border-box;
+}
+
+.schedule-app__tab--active .navbar-schedule-tab-badge {
+  color: #fff !important;
+  background: #dc2626;
+}
+
 .navbar-schedule-horizontal-nav {
   display: flex;
   flex-wrap: wrap;
@@ -376,12 +399,15 @@ main:not(.container) {
     column-gap: 14px;
     align-items: center;
     row-gap: 8px;
+    /* Room for eVet hint under global search (positioned absolute, does not affect row height). */
+    padding-bottom: 26px;
   }
 
   .navbar.navbar--schedule-shell > .brand {
     grid-column: 1;
     min-width: min-content;
     justify-self: start;
+    align-self: center;
   }
 
   .navbar.navbar--schedule-shell > .navbar__center-block {
@@ -390,6 +416,7 @@ main:not(.container) {
     align-items: center;
     min-width: 0;
     flex: initial;
+    align-self: center;
   }
 
   /* Don’t let the flex spacer eat the whole column — tabs need this width for “More” math */
@@ -405,14 +432,17 @@ main:not(.container) {
   .navbar.navbar--schedule-shell > .navbar-global-search {
     grid-column: 3;
     justify-self: end;
+    align-self: center;
   }
 
   .navbar.navbar--schedule-shell > .navbar-appointment-btn {
     grid-column: 4;
+    align-self: center;
   }
 
   .navbar.navbar--schedule-shell > .user-menu-container {
     grid-column: 5;
+    align-self: center;
   }
 
   .navbar.navbar--schedule-shell .navbar__mid {

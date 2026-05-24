@@ -12,8 +12,8 @@ import {
 } from '../api/appointments';
 import { dayPoints, dayTotalDriveSeconds, type DayData, type WeekHousehold } from '../pages/MyWeek';
 import {
-  fixedTimeRouteEtaMeaningfullyAfterScheduledStart,
-  shouldShowEtaWindowWarning,
+  clientFixedTimeUsesDoctorDayClockForDriveLayout,
+  computeDriveTimeWindowWarning,
 } from './windowWarning';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
 import type {
@@ -46,21 +46,29 @@ function weekHouseholdIsClientFixedTime(h: WeekHousehold): boolean {
 
 function weekHouseholdUsesDoctorDayClockForLayout(
   h: WeekHousehold,
-  slot: { eta?: string | null; etd?: string | null } | undefined,
+  slot: { eta?: string | null; etd?: string | null; windowStartIso?: string | null; windowEndIso?: string | null } | undefined,
   showByDriveTime: boolean
 ): boolean {
   if (!showByDriveTime) return true;
   const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(h.primary));
   if (h.isPersonalBlock && !flexBlock) return true;
   if (!weekHouseholdIsClientFixedTime(h)) return false;
-  const eta = slot?.eta;
-  const schedStart = h.startIso;
-  if (!eta || !schedStart) return true;
-  const etaDt = DateTime.fromISO(eta);
-  const schedDt = DateTime.fromISO(schedStart);
-  if (!etaDt.isValid || !schedDt.isValid) return true;
-  if (fixedTimeRouteEtaMeaningfullyAfterScheduledStart(schedStart, eta)) return false;
-  return true;
+  const windowStartIso =
+    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
+    h.windowStartIso ??
+    h.effectiveWindow?.startIso ??
+    null;
+  const windowEndIso =
+    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
+    h.windowEndIso ??
+    h.effectiveWindow?.endIso ??
+    null;
+  return clientFixedTimeUsesDoctorDayClockForDriveLayout({
+    schedStartIso: h.startIso,
+    etaIso: slot?.eta,
+    windowStartIso,
+    windowEndIso,
+  });
 }
 
 function eightThirtyIsoFor(date: string, practiceTz: string): string {
@@ -300,13 +308,20 @@ function buildAppointmentPayload(
         ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
         : adjustedWindowForStart(dateIso, h.startIso ?? resolvedStartIso, undefined, practiceTimeZone);
 
-  const clientFixedRoutePushedPastSchedule =
-    showByDriveTime && weekHouseholdIsClientFixedTime(h) && !doctorDayClock;
+  const windowEndForWarn =
+    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
+    ew?.endIso ??
+    (h as { windowEndIso?: string | null }).windowEndIso ??
+    null;
   const windowWarning =
     showByDriveTime &&
     !h.isPersonalBlock &&
-    ((useDriveTime && !isFixedTime && shouldShowEtaWindowWarning(etaIso, winEndIso)) ||
-      clientFixedRoutePushedPastSchedule);
+    computeDriveTimeWindowWarning({
+      etaIso,
+      windowEndIso: windowEndForWarn,
+      isClientFixedTime: weekHouseholdIsClientFixedTime(h),
+      scheduledStartIso: h.startIso,
+    });
 
   const blockTitleText = h.isPersonalBlock
     ? blockDisplayLabel(h.primary)
@@ -326,6 +341,7 @@ function buildAppointmentPayload(
     key: h.key,
     client: blockTitleText,
     address: h.address,
+    clientPhone: h.isPersonalBlock ? undefined : str(h.primary, 'clientPhone'),
     durMin,
     etaIso:
       showByDriveTime && doctorDayClock

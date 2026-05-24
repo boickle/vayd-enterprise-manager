@@ -2,15 +2,41 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
-import { createAppointment, patchAppointment } from '../api/appointments';
+import {
+  createAppointment,
+  patchAppointment,
+  putAppointmentAlternateAddress,
+} from '../api/appointments';
 import type { RoutingCalendarPreviewPayloadV1 } from '../utils/routingCalendarPreviewStorage';
 import { submitRoutingAcceptedFeedbackFromPreview } from '../utils/routingBookFeedback';
 import { searchClientsStaff, fetchClientByIdStaff, type ClientSearchRow } from '../api/clientsStaff';
 import { searchPatients } from '../api/patients';
 import type { Provider } from '../api/employee';
 import type { AppointmentType } from '../api/appointmentSettings';
+import type { RescheduleVisitPatch } from '../utils/routingRescheduleIntent';
 import { Field } from '../components/Field';
+import { appendScoutBookedDescription } from '../utils/bookedAppointmentDescription';
 import './Scheduler.css';
+
+export type { RescheduleVisitPatch };
+
+type RescheduleVisitEdit = {
+  appointmentId: number;
+  patientId: string;
+  patientName: string;
+  appointmentTypeId?: number;
+  appointmentTypeLabel: string;
+  scheduledTimeLabel: string;
+  description: string;
+};
+
+type RoutingBookVisitEdit = {
+  patientId: string;
+  patientName: string;
+  selected: boolean;
+  appointmentTypeId: string;
+  description: string;
+};
 
 export type SchedulerBookSlot = {
   start: DateTime;
@@ -19,8 +45,11 @@ export type SchedulerBookSlot = {
 
 /** Optional prefill when opening from routing / calendar preview (same form as empty-slot book). */
 export type SchedulerBookPrefill = {
-  clientId: string;
+  /** Omitted when routing by address only — user picks a client in the book dialog. */
+  clientId?: string;
   clientLabel?: string;
+  /** Routing address for PUT /appointments/:id/alternate-address (overrides client home for routing). */
+  routingAlternateAddress?: string;
   appointmentTypeId?: number;
   /** When true, hide client search — only admins should get false from routing. */
   lockClient?: boolean;
@@ -45,10 +74,14 @@ export type SchedulerBookPrefill = {
   rescheduleAppointmentId?: number;
   /** Reschedule all of these visits to the new slot (e.g. household same-day). */
   rescheduleAppointmentIds?: number[];
-  /** Per-appointment patient when rescheduling multiple same-day visits. */
-  rescheduleVisitPatches?: { appointmentId: number; patientId: string }[];
+  /** Per-appointment patient, type, and description when rescheduling (e.g. all pets today). */
+  rescheduleVisitPatches?: RescheduleVisitPatch[];
   /** Prefer this patient in the picker (e.g. reschedule). */
   preferredPatientId?: string;
+  /** Initial selection when booking from routing preview (e.g. preview chip pets). */
+  preferredPatientIds?: string[];
+  /** Routing calendar preview — lock slot/provider; multi-pet book at same time. */
+  routingPreviewBook?: boolean;
   defaultInstructions?: string;
 };
 
@@ -69,7 +102,7 @@ type Props = {
 
 type SearchMode = 'client' | 'patient';
 
-type PetRow = { id: number | string; name: string };
+type PetRow = { id: number | string; name: string; isActive?: boolean; isDeleted?: boolean };
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -95,7 +128,12 @@ export function extractPatientsFromClientPayload(payload: unknown): PetRow[] {
     const id = idRaw;
     const joined = [pickStr(o.firstName), pickStr(o.lastName)].filter(Boolean).join(' ').trim();
     const name = pickStr(o.name) ?? (joined || 'Patient');
-    out.push({ id, name });
+    out.push({
+      id,
+      name,
+      isActive: o.isActive === true || o.isActive === 1 ? true : o.isActive === false ? false : undefined,
+      isDeleted: o.isDeleted === true || o.isDeleted === 1 ? true : o.isDeleted === false ? false : undefined,
+    });
   }
   return out;
 }
@@ -201,6 +239,9 @@ export function SchedulerBookModal({
 
   const [description, setDescription] = useState('');
   const [instructions, setInstructions] = useState('');
+  const [alternateAddressText, setAlternateAddressText] = useState('');
+  const [rescheduleVisitEdits, setRescheduleVisitEdits] = useState<RescheduleVisitEdit[]>([]);
+  const [routingBookVisitEdits, setRoutingBookVisitEdits] = useState<RoutingBookVisitEdit[]>([]);
 
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -209,6 +250,30 @@ export function SchedulerBookModal({
     () => appointmentTypes.find((t) => String(t.id) === typeId),
     [appointmentTypes, typeId]
   );
+
+  const selectedProvider = useMemo(
+    () => providers.find((p) => String(p.id) === providerId),
+    [providers, providerId]
+  );
+
+  const isRescheduleBook = prefill?.rescheduleAppointmentId != null;
+
+  const isRoutingPreviewBook = Boolean(prefill?.routingPreviewBook && !isRescheduleBook);
+
+  const routingBookHasPrefilledClient = Boolean(prefill?.clientId?.trim());
+
+  const lockedRoutingBookFields = isRescheduleBook || isRoutingPreviewBook;
+
+  const hasLinkedClient = Boolean(selectedClientId?.trim());
+
+  /** Address-only routing: alternate stop overrides client home; hide once a client is linked. */
+  const showRoutingAlternateAddress = Boolean(
+    isRoutingPreviewBook && prefill?.routingAlternateAddress?.trim() && !hasLinkedClient
+  );
+
+  const perVisitReschedule = isRescheduleBook && rescheduleVisitEdits.length > 0;
+
+  const perVisitRoutingBook = isRoutingPreviewBook && routingBookVisitEdits.length > 0;
 
   const endLocal = useMemo(() => {
     if (!startLocal?.isValid) return null;
@@ -223,8 +288,14 @@ export function SchedulerBookModal({
 
   const petChoices = useMemo(() => {
     const ex = new Set((prefill?.excludePatientIds ?? []).map((id) => String(id)));
-    return clientPets.filter((p) => !ex.has(String(p.id)));
+    return clientPets.filter((p) => {
+      if (p.isDeleted === true || p.isActive === false) return false;
+      return !ex.has(String(p.id));
+    });
   }, [clientPets, prefill?.excludePatientIds]);
+
+  const clientHasNoPetsOnFile =
+    hasLinkedClient && !loadingClientPets && petChoices.length === 0;
 
   const bookSessionKey = useMemo(() => {
     if (!open || !slot) return '';
@@ -246,7 +317,11 @@ export function SchedulerBookModal({
       String(prefill?.lockSlotTimes ?? false),
       String(prefill?.rescheduleAppointmentId ?? ''),
       prefill?.preferredPatientId ?? '',
+      prefill?.preferredPatientIds?.join(',') ?? '',
+      String(prefill?.routingPreviewBook ?? false),
       prefill?.defaultInstructions ?? '',
+      prefill?.routingAlternateAddress ?? '',
+      JSON.stringify(prefill?.rescheduleVisitPatches ?? []),
     ].join('\t');
   }, [
     open,
@@ -266,7 +341,11 @@ export function SchedulerBookModal({
     prefill?.lockSlotTimes,
     prefill?.rescheduleAppointmentId,
     prefill?.preferredPatientId,
+    prefill?.preferredPatientIds,
+    prefill?.routingPreviewBook,
     prefill?.defaultInstructions,
+    prefill?.routingAlternateAddress,
+    prefill?.rescheduleVisitPatches,
   ]);
 
   useEffect(() => {
@@ -281,8 +360,35 @@ export function SchedulerBookModal({
     setClientPets([]);
     setSelectedPatientId(null);
     setSelectedPatientLabel('');
-    setDescription(prefill?.defaultDescription?.trim() ?? '');
+    const patches = prefill?.rescheduleVisitPatches?.filter(
+      (v) => Number.isFinite(Number(v.appointmentId)) && v.patientId?.trim()
+    );
+    if (patches?.length) {
+      setRescheduleVisitEdits(
+        patches.map((p) => {
+          const tid =
+            p.appointmentTypeId != null && Number.isFinite(Number(p.appointmentTypeId))
+              ? Number(p.appointmentTypeId)
+              : undefined;
+          return {
+            appointmentId: Number(p.appointmentId),
+            patientId: String(p.patientId).trim(),
+            patientName: p.patientName?.trim() || `Pet ${p.patientId}`,
+            appointmentTypeId: tid,
+            appointmentTypeLabel: p.appointmentTypeLabel?.trim() || '—',
+            scheduledTimeLabel: p.scheduledTimeLabel?.trim() || '—',
+            description: p.description?.trim() ?? '',
+          };
+        })
+      );
+      setDescription('');
+    } else {
+      setRescheduleVisitEdits([]);
+      setRoutingBookVisitEdits([]);
+      setDescription(prefill?.defaultDescription?.trim() ?? '');
+    }
     setInstructions(prefill?.defaultInstructions?.trim() ?? '');
+    setAlternateAddressText(prefill?.routingAlternateAddress?.trim() ?? '');
     setFormError(null);
     setShowClientDd(false);
     setShowPatientDd(false);
@@ -348,22 +454,23 @@ export function SchedulerBookModal({
   }, [open, slot, appointmentTypes, prefill?.appointmentTypeId]);
 
   useEffect(() => {
-    if (!bookSessionKey || !open || !slot || !prefill?.clientId) return;
+    const cid = prefill?.clientId?.trim();
+    if (!bookSessionKey || !open || !slot || !cid) return;
     let cancelled = false;
     setLoadingClientPets(true);
     (async () => {
       try {
-        const payload = await fetchClientByIdStaff(prefill.clientId);
+        const payload = await fetchClientByIdStaff(cid);
         if (cancelled) return;
-        setSelectedClientId(String(prefill.clientId));
-        setSelectedClientLabel(prefill.clientLabel?.trim() || `Client #${prefill.clientId}`);
+        setSelectedClientId(cid);
+        setSelectedClientLabel(prefill?.clientLabel?.trim() || `Client #${cid}`);
         setClientPets(extractPatientsFromClientPayload(payload));
         setSelectedPatientId(null);
         setSelectedPatientLabel('');
       } catch {
         if (cancelled) return;
-        setSelectedClientId(String(prefill.clientId));
-        setSelectedClientLabel(prefill.clientLabel?.trim() || `Client #${prefill.clientId}`);
+        setSelectedClientId(cid);
+        setSelectedClientLabel(prefill?.clientLabel?.trim() || `Client #${cid}`);
         setClientPets([]);
         setSelectedPatientId(null);
         setSelectedPatientLabel('');
@@ -384,6 +491,50 @@ export function SchedulerBookModal({
     setSelectedPatientId(want);
     setSelectedPatientLabel(hit.name);
   }, [prefill?.preferredPatientId, petChoices]);
+
+  useEffect(() => {
+    if (!open || !prefill?.routingPreviewBook) {
+      setRoutingBookVisitEdits([]);
+      return;
+    }
+    if (petChoices.length === 0) {
+      setRoutingBookVisitEdits([]);
+      return;
+    }
+    const preferred = new Set(
+      (
+        prefill.preferredPatientIds ??
+        (prefill.preferredPatientId ? [prefill.preferredPatientId] : [])
+      ).map(String)
+    );
+    const defaultType =
+      prefill.appointmentTypeId != null &&
+      appointmentTypes.some((t) => String(t.id) === String(prefill.appointmentTypeId))
+        ? String(prefill.appointmentTypeId)
+        : appointmentTypes[0]
+          ? String(appointmentTypes[0].id)
+          : '';
+    const defaultDesc = prefill.defaultDescription?.trim() ?? '';
+    setRoutingBookVisitEdits(
+      petChoices.map((p, idx) => ({
+        patientId: String(p.id),
+        patientName: p.name,
+        selected:
+          preferred.size > 0 ? preferred.has(String(p.id)) : idx === 0,
+        appointmentTypeId: defaultType,
+        description: defaultDesc,
+      }))
+    );
+  }, [
+    open,
+    prefill?.routingPreviewBook,
+    prefill?.preferredPatientIds,
+    prefill?.preferredPatientId,
+    prefill?.appointmentTypeId,
+    prefill?.defaultDescription,
+    petChoices,
+    appointmentTypes,
+  ]);
 
   useEffect(() => {
     if (prefill?.preserveDurationFromSlot) return;
@@ -480,8 +631,7 @@ export function SchedulerBookModal({
     setLoadingClientPets(true);
     try {
       const payload = await fetchClientByIdStaff(id);
-      const pets = extractPatientsFromClientPayload(payload);
-      setClientPets(pets);
+      setClientPets(extractPatientsFromClientPayload(payload));
     } catch {
       setClientPets([]);
     } finally {
@@ -517,16 +667,37 @@ export function SchedulerBookModal({
       setFormError('Select a client (search by client or patient).');
       return;
     }
-    if (!selectedPatientId) {
-      setFormError('Select a patient.');
-      return;
+    if (perVisitReschedule) {
+      if (
+        rescheduleVisitEdits.some(
+          (v) => v.appointmentTypeId == null || !Number.isFinite(Number(v.appointmentTypeId))
+        )
+      ) {
+        setFormError('One of the visits is missing an appointment type.');
+        return;
+      }
+    } else if (perVisitRoutingBook) {
+      const selected = routingBookVisitEdits.filter((v) => v.selected);
+      if (selected.length === 0) {
+        setFormError('Select at least one patient.');
+        return;
+      }
+      if (selected.some((v) => !v.appointmentTypeId.trim())) {
+        setFormError('Select an appointment type for each patient.');
+        return;
+      }
+    } else {
+      if (!clientHasNoPetsOnFile && !selectedPatientId) {
+        setFormError('Select a patient.');
+        return;
+      }
+      if (!typeId) {
+        setFormError('Select an appointment type.');
+        return;
+      }
     }
     if (!providerId) {
       setFormError('Select a provider.');
-      return;
-    }
-    if (!typeId) {
-      setFormError('Select an appointment type.');
       return;
     }
     if (!startLocal?.isValid || !endLocal?.isValid) {
@@ -543,49 +714,98 @@ export function SchedulerBookModal({
           (v) => Number.isFinite(Number(v.appointmentId)) && v.patientId?.trim()
         ) ?? [];
       const rescheduleIds =
-        visitPatches.length > 0
-          ? visitPatches.map((v) => Number(v.appointmentId))
-          : (
-              prefill?.rescheduleAppointmentIds?.length
-                ? prefill.rescheduleAppointmentIds
-                : prefill?.rescheduleAppointmentId != null
-                  ? [prefill.rescheduleAppointmentId]
-                  : []
-            ).filter((id) => Number.isFinite(Number(id)));
+        perVisitReschedule && rescheduleVisitEdits.length > 0
+          ? [...new Set(rescheduleVisitEdits.map((v) => v.appointmentId))]
+          : visitPatches.length > 0
+            ? [...new Set(visitPatches.map((v) => Number(v.appointmentId)))]
+            : (
+                prefill?.rescheduleAppointmentIds?.length
+                  ? prefill.rescheduleAppointmentIds
+                  : prefill?.rescheduleAppointmentId != null
+                    ? [prefill.rescheduleAppointmentId]
+                    : []
+              ).filter((id) => Number.isFinite(Number(id)));
+      const trimmedAlt = hasLinkedClient ? '' : alternateAddressText.trim();
+      if (trimmedAlt.length > 4000) {
+        setFormError('Alternate address must be 4000 characters or fewer.');
+        setSubmitting(false);
+        return;
+      }
+
+      async function saveAlternateForAppointment(apptId: number) {
+        if (!trimmedAlt) return;
+        await putAppointmentAlternateAddress(apptId, { addressText: trimmedAlt });
+      }
+
+      const descriptionForNewBook = (raw: string) =>
+        appendScoutBookedDescription(raw, practiceTz);
+
       let savedAppointmentId: number | undefined;
       if (rescheduleIds.length > 0) {
         const patchBody = {
           appointmentStart: startIso,
           appointmentEnd: endIso,
-          appointmentTypeId: Number(typeId),
           primaryProviderId: Number(providerId),
           clientId: Number(selectedClientId),
           description: description.trim() || null,
-          instructions: instructions.trim() || null,
         };
         for (const rescheduleId of rescheduleIds) {
+          const edit = perVisitReschedule
+            ? rescheduleVisitEdits.find((v) => v.appointmentId === rescheduleId)
+            : undefined;
           const visitPatch = visitPatches.find((v) => Number(v.appointmentId) === rescheduleId);
-          const patientForPatch = visitPatch?.patientId ?? selectedPatientId;
+          const patientForPatch = edit?.patientId ?? visitPatch?.patientId ?? selectedPatientId;
           await patchAppointment(rescheduleId, {
             ...patchBody,
+            appointmentTypeId: Number(edit?.appointmentTypeId ?? typeId),
+            description: (edit?.description ?? description).trim() || null,
             patientId: Number(patientForPatch),
           });
         }
         savedAppointmentId = rescheduleIds[0];
+        if (trimmedAlt && savedAppointmentId != null) {
+          for (const rescheduleId of rescheduleIds) {
+            await saveAlternateForAppointment(rescheduleId);
+          }
+        }
+      } else if (perVisitRoutingBook) {
+        const selected = routingBookVisitEdits.filter((v) => v.selected);
+        for (const visit of selected) {
+          const created = await createAppointment({
+            practiceId,
+            primaryProviderId: Number(providerId),
+            clientId: Number(selectedClientId),
+            patientId: Number(visit.patientId),
+            appointmentTypeId: Number(visit.appointmentTypeId),
+            appointmentStart: startIso,
+            appointmentEnd: endIso,
+            description: descriptionForNewBook(visit.description) || undefined,
+          });
+          const idRaw = created?.id;
+          if (idRaw != null && Number.isFinite(Number(idRaw))) {
+            const apptId = Number(idRaw);
+            if (savedAppointmentId == null) savedAppointmentId = apptId;
+            await saveAlternateForAppointment(apptId);
+          }
+        }
       } else {
         const created = await createAppointment({
           practiceId,
           primaryProviderId: Number(providerId),
           clientId: Number(selectedClientId),
-          patientId: Number(selectedPatientId),
+          ...(selectedPatientId ? { patientId: Number(selectedPatientId) } : {}),
+          ...(trimmedAlt ? { alternateAddressText: trimmedAlt } : {}),
           appointmentTypeId: Number(typeId),
           appointmentStart: startIso,
           appointmentEnd: endIso,
-          description: description.trim() || undefined,
+          description: descriptionForNewBook(description) || undefined,
           instructions: instructions.trim() || undefined,
         });
         const idRaw = created?.id;
-        if (idRaw != null && Number.isFinite(Number(idRaw))) savedAppointmentId = Number(idRaw);
+        if (idRaw != null && Number.isFinite(Number(idRaw))) {
+          savedAppointmentId = Number(idRaw);
+          await saveAlternateForAppointment(savedAppointmentId);
+        }
       }
 
       let routingFeedbackWarning: string | undefined;
@@ -611,10 +831,9 @@ export function SchedulerBookModal({
 
   if (!open || !slot || !startLocal) return null;
 
-  const isRescheduleBook = prefill?.rescheduleAppointmentId != null;
-
   const timeInputValue = startLocal.toFormat('HH:mm');
   const dateInputValue = startLocal.toISODate() ?? '';
+  const routingBookSelectedCount = routingBookVisitEdits.filter((v) => v.selected).length;
 
   return createPortal(
     <div className="scheduler-modal-backdrop" role="presentation" onMouseDown={onClose}>
@@ -629,7 +848,11 @@ export function SchedulerBookModal({
           <div>
             <h2 id="scheduler-book-title">
               {prefill?.modalTitle?.trim() ||
-                (isRescheduleBook ? 'Reschedule appointment' : 'Book appointment')}
+                (isRescheduleBook
+                  ? perVisitReschedule && rescheduleVisitEdits.length > 1
+                    ? 'Reschedule appointments'
+                    : 'Reschedule appointment'
+                  : 'Book appointment')}
             </h2>
             <p className="scheduler-book-slot-summary">
               {startLocal.setZone(practiceTz).toFormat('EEEE, MMM d, yyyy')} · {startLocal.toFormat('h:mm a')} –{' '}
@@ -642,7 +865,24 @@ export function SchedulerBookModal({
         </div>
 
         <form className="scheduler-book-form" onSubmit={handleSubmit}>
-          {prefill?.lockClient || prefill?.disableClientSearch ? (
+          {showRoutingAlternateAddress ? (
+            <label className="scheduler-book-field scheduler-book-field--full">
+              <span className="scheduler-book-field-label">Alternate address (routing)</span>
+              <textarea
+                className="scheduler-book-textarea"
+                rows={2}
+                maxLength={4000}
+                value={alternateAddressText}
+                onChange={(e) => setAlternateAddressText(e.target.value)}
+                placeholder="Used for routing and drive time instead of the client's home address."
+              />
+              <p className="scheduler-book-hint muted">
+                Pre-filled from Get Best Route. Overrides the client home address when set.
+              </p>
+            </label>
+          ) : null}
+
+          {prefill?.lockClient || (prefill?.disableClientSearch && routingBookHasPrefilledClient) ? (
             <div className="scheduler-book-selected" style={{ marginBottom: 12 }}>
               <span className="scheduler-book-selected-label">Client</span>
               <span className="scheduler-book-selected-value">
@@ -652,16 +892,18 @@ export function SchedulerBookModal({
               </span>
               {prefill?.coVisitAddPet ? (
                 <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
-                  This adds another appointment at the same time for a different pet. Pets already on the schedule
-                  for this client at this time are not listed below.
+                  This adds another appointment at the same time for a different pet. Pets already scheduled in
+                  this visit block (same time or back-to-back with this appointment) are not listed below.
+                </p>
+              ) : prefill?.routingPreviewBook ? (
+                <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
+                  {routingBookHasPrefilledClient
+                    ? 'Choose one or more patients for this slot. Each patient gets their own appointment at the same time with its own type and description.'
+                    : 'Optionally search for a client below, then choose patients. The alternate address above is used for routing regardless of client home address.'}
                 </p>
               ) : prefill?.lockClient ? (
                 <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
                   Select which patient is being booked for this visit.
-                </p>
-              ) : prefill?.disableClientSearch ? (
-                <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
-                  Client is set from routing. Go back to routing results to choose a different client.
                 </p>
               ) : null}
             </div>
@@ -763,8 +1005,15 @@ export function SchedulerBookModal({
             </>
           )}
 
+          {!perVisitReschedule && !perVisitRoutingBook ? (
           <Field label="Patient">
-            {loadingClientPets ? (
+            {isRescheduleBook ? (
+              <div className="scheduler-book-selected">
+                <span className="scheduler-book-selected-value">
+                  {selectedPatientLabel || '…'}
+                </span>
+              </div>
+            ) : loadingClientPets ? (
               <div className="scheduler-book-hint">Loading patients…</div>
             ) : petChoices.length > 0 ? (
               <select
@@ -791,7 +1040,11 @@ export function SchedulerBookModal({
               </div>
             ) : selectedClientId && clientPets.length > 0 ? (
               <div className="scheduler-book-hint muted">
-                Every pet on file for this client already has an appointment overlapping this time.
+                Every pet on file for this client is already in this visit block on the schedule.
+              </div>
+            ) : clientHasNoPetsOnFile ? (
+              <div className="scheduler-book-hint muted">
+                No patients on file for this client. You can book without selecting a patient.
               </div>
             ) : (
               <div className="scheduler-book-hint muted">
@@ -801,116 +1054,273 @@ export function SchedulerBookModal({
               </div>
             )}
           </Field>
+          ) : null}
 
-          <div className="scheduler-book-row2">
-            <Field label="Provider">
-              <select
-                className="scheduler-book-input"
-                value={providerId}
-                onChange={(e) => setProviderId(e.target.value)}
-                disabled={Boolean(prefill?.lockProvider)}
-                required
-              >
-                <option value="">Select…</option>
-                {providers.map((p) => (
-                  <option key={String(p.id)} value={String(p.id)}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Appointment type">
-              <select
-                className="scheduler-book-input"
-                value={typeId}
-                onChange={(e) => setTypeId(e.target.value)}
-                required
-              >
-                <option value="">Select…</option>
-                {appointmentTypes.map((t) => (
-                  <option key={t.id} value={String(t.id)}>
-                    {t.prettyName || t.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
+          {lockedRoutingBookFields ? (
+            <>
+              <div className="scheduler-book-row2">
+                <Field label="Provider">
+                  <div className="scheduler-book-selected">
+                    <span className="scheduler-book-selected-value">
+                      {selectedProvider?.name ?? '…'}
+                    </span>
+                  </div>
+                </Field>
+                {isRescheduleBook && !perVisitReschedule ? (
+                  <Field label="Appointment type">
+                    <div className="scheduler-book-selected">
+                      <span className="scheduler-book-selected-value">
+                        {selectedType?.name || selectedType?.prettyName || '…'}
+                      </span>
+                    </div>
+                  </Field>
+                ) : null}
+              </div>
+              <div className="scheduler-book-row2">
+                <Field label="Date">
+                  <div className="scheduler-book-selected">
+                    <span className="scheduler-book-selected-value">
+                      {startLocal.setZone(practiceTz).toFormat('MM/dd/yyyy')}
+                    </span>
+                  </div>
+                </Field>
+                <Field label="Start time">
+                  <div className="scheduler-book-selected">
+                    <span className="scheduler-book-selected-value">
+                      {startLocal.toFormat('h:mm a')}
+                    </span>
+                  </div>
+                </Field>
+                <Field label="Duration">
+                  <div className="scheduler-book-selected">
+                    <span className="scheduler-book-selected-value">{durationMin} min</span>
+                  </div>
+                </Field>
+              </div>
+              {perVisitReschedule ? (
+                <div className="scheduler-book-reschedule-visits">
+                  {rescheduleVisitEdits.map((visit, idx) => (
+                    <div
+                      key={`${visit.appointmentId}-${visit.patientId}`}
+                      className="scheduler-book-reschedule-visit"
+                    >
+                      <div className="scheduler-book-reschedule-visit-meta">
+                        <span className="scheduler-book-reschedule-visit-name">
+                          {visit.patientName}
+                        </span>
+                        <span className="scheduler-book-reschedule-visit-was muted">
+                          Was {visit.scheduledTimeLabel}
+                        </span>
+                        <span className="scheduler-book-reschedule-visit-type muted">
+                          {visit.appointmentTypeLabel}
+                        </span>
+                      </div>
+                      <label className="scheduler-book-reschedule-visit-desc">
+                        <span className="scheduler-book-reschedule-visit-desc-label muted">
+                          Description
+                        </span>
+                        <textarea
+                          className="scheduler-book-textarea scheduler-book-textarea--compact"
+                          value={visit.description}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            setRescheduleVisitEdits((rows) =>
+                              rows.map((row, i) =>
+                                i === idx ? { ...row, description: next } : row
+                              )
+                            );
+                          }}
+                          rows={3}
+                          placeholder="Notes for this visit…"
+                        />
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {perVisitRoutingBook ? (
+                <div className="scheduler-book-reschedule-visits">
+                  {routingBookVisitEdits.map((visit, idx) => (
+                    <div key={visit.patientId} className="scheduler-book-reschedule-visit">
+                      <label className="scheduler-book-routing-patient-check">
+                        <input
+                          type="checkbox"
+                          checked={visit.selected}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setRoutingBookVisitEdits((rows) =>
+                              rows.map((row, i) => (i === idx ? { ...row, selected: checked } : row))
+                            );
+                          }}
+                        />
+                        <span className="scheduler-book-reschedule-visit-name">{visit.patientName}</span>
+                      </label>
+                      <Field label="Appointment type">
+                        <select
+                          className="scheduler-book-input"
+                          value={visit.appointmentTypeId}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            setRoutingBookVisitEdits((rows) =>
+                              rows.map((row, i) =>
+                                i === idx ? { ...row, appointmentTypeId: next } : row
+                              )
+                            );
+                          }}
+                          required={visit.selected}
+                          disabled={!visit.selected}
+                        >
+                          <option value="">Select…</option>
+                          {appointmentTypes.map((t) => (
+                            <option key={t.id} value={String(t.id)}>
+                              {t.name || t.prettyName}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                      <label className="scheduler-book-reschedule-visit-desc">
+                        <span className="scheduler-book-reschedule-visit-desc-label muted">
+                          Description (optional)
+                        </span>
+                        <textarea
+                          className="scheduler-book-textarea scheduler-book-textarea--compact"
+                          value={visit.description}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            setRoutingBookVisitEdits((rows) =>
+                              rows.map((row, i) =>
+                                i === idx ? { ...row, description: next } : row
+                              )
+                            );
+                          }}
+                          rows={2}
+                          placeholder="Notes for this visit…"
+                          disabled={!visit.selected}
+                        />
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              ) : isRoutingPreviewBook ? (
+                <div className="scheduler-book-hint muted">
+                  {!selectedClientId
+                    ? 'Search for a client above to choose which patients to book.'
+                    : loadingClientPets
+                      ? 'Loading patients…'
+                      : clientHasNoPetsOnFile
+                        ? 'No patients on file for this client — you can book without a patient.'
+                        : clientPets.length > 0
+                          ? 'Every pet on file for this client is already scheduled in this time slot.'
+                          : 'No patients on file for this client.'}
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <div className="scheduler-book-row2">
+                <Field label="Provider">
+                  <select
+                    className="scheduler-book-input"
+                    value={providerId}
+                    onChange={(e) => setProviderId(e.target.value)}
+                    disabled={Boolean(prefill?.lockProvider)}
+                    required
+                  >
+                    <option value="">Select…</option>
+                    {providers.map((p) => (
+                      <option key={String(p.id)} value={String(p.id)}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Appointment type">
+                  <select
+                    className="scheduler-book-input"
+                    value={typeId}
+                    onChange={(e) => setTypeId(e.target.value)}
+                    required
+                  >
+                    <option value="">Select…</option>
+                    {appointmentTypes.map((t) => (
+                      <option key={t.id} value={String(t.id)}>
+                        {t.name || t.prettyName}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
 
-          <div className="scheduler-book-row2">
-            <Field label="Date">
-              <input
-                type="date"
-                className="scheduler-book-input"
-                value={dateInputValue}
-                onChange={(e) => {
-                  const iso = e.target.value;
-                  if (!iso) return;
-                  setStartLocal((prev) => {
-                    if (!prev?.isValid) return prev;
-                    const next = DateTime.fromISO(iso, { zone: practiceTz }).set({
-                      hour: prev.hour,
-                      minute: prev.minute,
-                      second: 0,
-                      millisecond: 0,
-                    });
-                    return next.isValid ? next : prev;
-                  });
-                }}
-                disabled={Boolean(prefill?.lockSlotTimes)}
+              <div className="scheduler-book-row2">
+                <Field label="Date">
+                  <input
+                    type="date"
+                    className="scheduler-book-input"
+                    value={dateInputValue}
+                    onChange={(e) => {
+                      const iso = e.target.value;
+                      if (!iso) return;
+                      setStartLocal((prev) => {
+                        if (!prev?.isValid) return prev;
+                        const next = DateTime.fromISO(iso, { zone: practiceTz }).set({
+                          hour: prev.hour,
+                          minute: prev.minute,
+                          second: 0,
+                          millisecond: 0,
+                        });
+                        return next.isValid ? next : prev;
+                      });
+                    }}
+                    disabled={Boolean(prefill?.lockSlotTimes)}
+                  />
+                </Field>
+                <Field label="Start time">
+                  <input
+                    type="time"
+                    className="scheduler-book-input"
+                    value={timeInputValue}
+                    step={300}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (!v || !startLocal) return;
+                      const [hh, mm] = v.split(':').map((x) => parseInt(x, 10));
+                      if (Number.isNaN(hh) || Number.isNaN(mm)) return;
+                      setStartLocal(
+                        startLocal.set({ hour: hh, minute: mm, second: 0, millisecond: 0 })
+                      );
+                    }}
+                    disabled={Boolean(prefill?.lockSlotTimes)}
+                  />
+                </Field>
+                <Field label="Duration">
+                  <select
+                    className="scheduler-book-input"
+                    value={durationMin}
+                    onChange={(e) => setDurationMin(Number(e.target.value))}
+                    disabled={Boolean(prefill?.lockSlotTimes)}
+                  >
+                    {durationOpts.map((m) => (
+                      <option key={m} value={m}>
+                        {m} min
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+            </>
+          )}
+
+          {!perVisitReschedule && !perVisitRoutingBook ? (
+            <Field label="Description (optional)">
+              <textarea
+                className="scheduler-book-textarea"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={2}
+                placeholder="Reason for visit, internal notes…"
               />
             </Field>
-            <Field label="Start time">
-              <input
-                type="time"
-                className="scheduler-book-input"
-                value={timeInputValue}
-                step={300}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (!v || !startLocal) return;
-                  const [hh, mm] = v.split(':').map((x) => parseInt(x, 10));
-                  if (Number.isNaN(hh) || Number.isNaN(mm)) return;
-                  setStartLocal(
-                    startLocal.set({ hour: hh, minute: mm, second: 0, millisecond: 0 })
-                  );
-                }}
-                disabled={Boolean(prefill?.lockSlotTimes)}
-              />
-            </Field>
-            <Field label="Duration">
-              <select
-                className="scheduler-book-input"
-                value={durationMin}
-                onChange={(e) => setDurationMin(Number(e.target.value))}
-                disabled={Boolean(prefill?.lockSlotTimes)}
-              >
-                {durationOpts.map((m) => (
-                  <option key={m} value={m}>
-                    {m} min
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-
-          <Field label="Description (optional)">
-            <textarea
-              className="scheduler-book-textarea"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={2}
-              placeholder="Reason for visit, internal notes…"
-            />
-          </Field>
-          <Field label="Instructions (optional)">
-            <textarea
-              className="scheduler-book-textarea"
-              value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
-              rows={2}
-              placeholder="Special instructions for the provider…"
-            />
-          </Field>
+          ) : null}
 
           {formError ? <div className="scheduler-book-error">{formError}</div> : null}
 
@@ -925,7 +1335,9 @@ export function SchedulerBookModal({
                   : 'Booking…'
                 : isRescheduleBook
                   ? 'Reschedule appointment'
-                  : 'Book appointment'}
+                  : isRoutingPreviewBook && routingBookSelectedCount > 1
+                    ? `Book ${routingBookSelectedCount} appointments`
+                    : 'Book appointment'}
             </button>
           </div>
         </form>

@@ -39,6 +39,7 @@ import { htmlToPlainText, looksLikeHtmlFragment } from '../../utils/sanitizeComm
 import { PimsExamDetailModal } from './PimsExamDetailModal';
 import PimsAppointmentsSection from './PimsAppointmentsSection';
 import { PIMS_ENTITY_EDIT_ENABLED } from '../../utils/pimsEntityEditing';
+import { evetPatientLink } from '../../utils/evet';
 import './PimsPatientDetailView.css';
 
 const PIMS_DETAIL_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -606,6 +607,9 @@ export default function PimsPatientDetailView({
 
   const client = payload ? clientBlockFromPatient(payload) : null;
   const pname = payload ? patientNameFrom(payload) : '';
+  const patientPimsId = payload
+    ? pickStr(payload.pimsId) ?? String(payload.id ?? patientId)
+    : '';
   const cname = client ? clientDisplayName(client) : pickStr(payload?.clientName) ?? '—';
   const alert = payload ? alertText(payload, client) : null;
   const badge = payload ? patientDetailStatus(payload) : { label: '—', variant: 'muted' as const };
@@ -816,20 +820,32 @@ export default function PimsPatientDetailView({
   const wellnessPlanCount = wellnessPlans.length;
   const latestWeightPoint = weightHistoryPoints[weightHistoryPoints.length - 1];
 
+  const patientEvetNameLink = (label: string, className?: string) => (
+    <a
+      href={evetPatientLink(patientPimsId)}
+      target="_blank"
+      rel="noreferrer"
+      className={className ?? 'pims-patient-detail__evet-name-link'}
+      title="Open patient in eVet"
+    >
+      {label}
+    </a>
+  );
+
   return (
     <div className="pims-patient-detail">
       <nav className="pims-patient-detail__crumb" aria-label="Breadcrumb">
         <Link to={patientsListPath}>Patients</Link>
         <span aria-hidden> / </span>
-        <span>{displayTitle}</span>
+        <span>{patientEvetNameLink(displayTitle)}</span>
       </nav>
 
-      <h1 className="pims-patient-detail__title">{displayTitle}</h1>
+      <h1 className="pims-patient-detail__title">{patientEvetNameLink(displayTitle, 'pims-patient-detail__evet-name-link pims-patient-detail__evet-name-link--title')}</h1>
       <div className="pims-patient-detail__subhead">
         <span>
           <strong>{cname}</strong>
           <span aria-hidden> | </span>
-          <strong>{displayTitle}</strong>
+          <strong>{patientEvetNameLink(displayTitle)}</strong>
         </span>
       </div>
 
@@ -1051,7 +1067,7 @@ export default function PimsPatientDetailView({
             ) : (
               <>
                 <div className="pims-patient-detail__card-title">
-                  {pname}
+                  {patientEvetNameLink(pname, 'pims-patient-detail__evet-name-link pims-patient-detail__evet-name-link--card')}
                   <span className="pims-patient-detail__meta-line" style={{ fontWeight: 500, margin: 0 }}>
                     {' '}
                     | {String(payload.id ?? patientId)}

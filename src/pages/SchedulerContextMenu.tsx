@@ -1,25 +1,15 @@
 // Right-click appointment menu on practice scheduler calendar
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from 'react';
 import { createPortal } from 'react-dom';
 import type { Appointment, Client } from '../api/roomLoader';
 import './Scheduler.css';
-
-const STATUS_PRESETS = [
-  'None',
-  'NEW Records Received and Uploaded',
-  'Records Not Needed',
-  'Records Requested',
-] as const;
-
-const CONFIRM_PRESETS = [
-  'None',
-  'Euth Form Completed by Client',
-  'Euth Form Sent',
-  'Pre-Appt Email Sent 2x',
-  'Client Submitted Pre-Appt form',
-  'Pre-Appt Email Sent',
-  'Canceled Appointment',
-] as const;
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -28,28 +18,23 @@ function pickStr(v: unknown): string | null {
 }
 
 export type SchedulerContextMenuAction =
+  | { kind: 'addPet' }
+  | { kind: 'reschedule' }
   | { kind: 'view' }
   | { kind: 'edit' }
+  | { kind: 'visitTimes' }
   | { kind: 'complete' }
+  | { kind: 'addCharges' }
   | { kind: 'remove' }
-  | { kind: 'setStatus'; value: string | null }
-  | { kind: 'setConfirm'; value: string | null }
-  | { kind: 'googleMaps' }
-  | { kind: 'sendForm' }
-  | { kind: 'enterWeight' }
-  | { kind: 'goMr' }
-  | { kind: 'goClient' }
-  | { kind: 'quickInvoice' }
-  | { kind: 'checkout' }
-  | { kind: 'contact'; channel: 'phone1' | 'phone2' | 'email1' | 'email2' }
-  | { kind: 'addAnotherPet' }
-  | { kind: 'reschedule' }
-  | { kind: 'actualStartNow' }
-  | { kind: 'actualStartSet' }
-  | { kind: 'actualStartClear' }
-  | { kind: 'actualEndNow' }
-  | { kind: 'actualEndSet' }
-  | { kind: 'actualEndClear' };
+  | { kind: 'viewChart' }
+  | { kind: 'writeMedicalNote' }
+  | { kind: 'call'; phone: 'phone1' | 'phone2' }
+  | { kind: 'text'; phone: 'phone1' | 'phone2' }
+  | { kind: 'viewClientInfo' }
+  | { kind: 'roomLoader' }
+  | { kind: 'checkout' };
+
+type OpenGroup = 'scheduling' | 'visit' | 'patient' | 'client';
 
 type Props = {
   appt: Appointment;
@@ -57,13 +42,18 @@ type Props = {
   anchorPoint: { x: number; y: number };
   onClose: () => void;
   onAction: (action: SchedulerContextMenuAction) => void;
-  /** Employee-only: book a same-time visit for another pet on this client. */
-  showAddAnotherPet?: boolean;
-  /** Grey out when no pets left or while checking. */
-  addAnotherPetDisabled?: boolean;
-  addAnotherPetTitle?: string;
+  showAddPet?: boolean;
+  addPetDisabled?: boolean;
+  addPetTitle?: string;
   rescheduleDisabled?: boolean;
   rescheduleDisabledTitle?: string;
+  removeDisabled?: boolean;
+  removeTitle?: string;
+  roomLoaderMenuLabel: string;
+  /** Admins/superadmins only — shows "Edit Appointment" under Scheduling */
+  showEditAppointment?: boolean;
+  completeDisabled?: boolean;
+  completeDisabledTitle?: string;
 };
 
 export function SchedulerAppointmentContextMenu({
@@ -72,20 +62,21 @@ export function SchedulerAppointmentContextMenu({
   anchorPoint,
   onClose,
   onAction,
-  showAddAnotherPet,
-  addAnotherPetDisabled,
-  addAnotherPetTitle,
+  showAddPet,
+  addPetDisabled,
+  addPetTitle,
   rescheduleDisabled,
   rescheduleDisabledTitle,
+  removeDisabled,
+  removeTitle,
+  roomLoaderMenuLabel,
+  showEditAppointment,
+  completeDisabled: completeDisabledProp,
+  completeDisabledTitle: completeDisabledTitleProp,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [placed, setPlaced] = useState<{ left: number; top: number } | null>(null);
-  const [openSub, setOpenSub] = useState<
-    'status' | 'confirm' | 'contact' | 'startVisit' | 'endVisit' | null
-  >(null);
-
-  const hasActualStart = Boolean(appt.appointmentStartActual);
-  const hasActualEnd = Boolean(appt.appointmentEndActual);
+  const [openGroup, setOpenGroup] = useState<OpenGroup | null>(null);
 
   useLayoutEffect(() => {
     const el = rootRef.current;
@@ -107,7 +98,9 @@ export function SchedulerAppointmentContextMenu({
     };
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
-      if (rootRef.current && !rootRef.current.contains(t)) onClose();
+      if (rootRef.current?.contains(t)) return;
+      if (t instanceof Element && t.closest('.scheduler-ctx-flyout')) return;
+      onClose();
     };
     window.addEventListener('keydown', onKey);
     window.addEventListener('mousedown', onDown, true);
@@ -119,128 +112,109 @@ export function SchedulerAppointmentContextMenu({
 
   const phone1 = pickStr(client?.phone1);
   const phone2 = pickStr(client?.phone2);
-  const email1 = pickStr(client?.email);
-  const email2 = pickStr(client?.secondEmail);
+
+  const completeDisabled = completeDisabledProp ?? appt.isComplete;
+  const completeTitle =
+    completeDisabledTitleProp ??
+    (appt.isComplete ? 'This visit is already complete.' : undefined);
+
+  const closeScheduling = () => setOpenGroup(null);
 
   const menu = (
     <div
       ref={rootRef}
-      className="scheduler-ctx-menu"
+      className="scheduler-ctx-menu scheduler-ctx-menu--grouped"
       role="menu"
       style={placed ? { left: placed.left, top: placed.top } : { left: -9999, top: -9999 }}
       onContextMenu={(e) => e.preventDefault()}
     >
-      <CtxRow label="View" onPick={() => onAction({ kind: 'view' })} />
-      <CtxRow label="Edit" onPick={() => onAction({ kind: 'edit' })} />
-      <CtxRow
-        label="Reschedule…"
-        disabled={Boolean(rescheduleDisabled)}
-        title={rescheduleDisabled ? rescheduleDisabledTitle : undefined}
-        onPick={() => onAction({ kind: 'reschedule' })}
-      />
-      {showAddAnotherPet ? (
-        <CtxRow
-          label="Add another pet…"
-          disabled={addAnotherPetDisabled}
-          title={addAnotherPetTitle}
-          onPick={() => onAction({ kind: 'addAnotherPet' })}
+      <CtxParentRow
+        label="Scheduling"
+        menuRootRef={rootRef}
+        open={openGroup === 'scheduling'}
+        onOpen={() => setOpenGroup('scheduling')}
+        onCloseSub={closeScheduling}
+      >
+        {showAddPet ? (
+          <CtxSubRow
+            label="Add Pet"
+            disabled={addPetDisabled}
+            onPick={() => onAction({ kind: 'addPet' })}
+            title={addPetTitle}
+          />
+        ) : null}
+        <CtxSubRow
+          label="Reschedule"
+          disabled={Boolean(rescheduleDisabled)}
+          title={rescheduleDisabled ? rescheduleDisabledTitle : undefined}
+          onPick={() => onAction({ kind: 'reschedule' })}
         />
-      ) : null}
-      <CtxRow label="Complete" onPick={() => onAction({ kind: 'complete' })} />
-      <CtxParentRow
-        label="Start visit"
-        open={openSub === 'startVisit'}
-        onOpen={() => setOpenSub('startVisit')}
-        onCloseSub={() => setOpenSub(null)}
-      >
-        <CtxSubRow label="Use current time" onPick={() => onAction({ kind: 'actualStartNow' })} />
-        <CtxSubRow label="Set time…" onPick={() => onAction({ kind: 'actualStartSet' })} />
-        {hasActualStart ? (
-          <CtxSubRow label="Clear actual start" onPick={() => onAction({ kind: 'actualStartClear' })} />
+        <CtxSubRow label="View appointment" onPick={() => onAction({ kind: 'view' })} />
+        {showEditAppointment ? (
+          <CtxSubRow label="Edit Appointment" onPick={() => onAction({ kind: 'edit' })} />
         ) : null}
-      </CtxParentRow>
-      <CtxParentRow
-        label="End visit"
-        open={openSub === 'endVisit'}
-        onOpen={() => setOpenSub('endVisit')}
-        onCloseSub={() => setOpenSub(null)}
-      >
-        <CtxSubRow label="Use current time" onPick={() => onAction({ kind: 'actualEndNow' })} />
-        <CtxSubRow label="Set time…" onPick={() => onAction({ kind: 'actualEndSet' })} />
-        {hasActualEnd ? (
-          <CtxSubRow label="Clear actual end" onPick={() => onAction({ kind: 'actualEndClear' })} />
-        ) : null}
-      </CtxParentRow>
-      <CtxRow label="Remove" onPick={() => onAction({ kind: 'remove' })} />
-      <CtxParentRow
-        label="Status"
-        open={openSub === 'status'}
-        onOpen={() => setOpenSub('status')}
-        onCloseSub={() => setOpenSub(null)}
-      >
-        {STATUS_PRESETS.map((label) => (
-          <CtxSubRow
-            key={label}
-            label={label}
-            onPick={() =>
-              onAction({ kind: 'setStatus', value: label === 'None' ? null : label })
-            }
-          />
-        ))}
-      </CtxParentRow>
-      <CtxParentRow
-        label="Confirm"
-        open={openSub === 'confirm'}
-        onOpen={() => setOpenSub('confirm')}
-        onCloseSub={() => setOpenSub(null)}
-      >
-        {CONFIRM_PRESETS.map((label) => (
-          <CtxSubRow
-            key={label}
-            label={label}
-            onPick={() =>
-              onAction({ kind: 'setConfirm', value: label === 'None' ? null : label })
-            }
-          />
-        ))}
+        <CtxSubRow
+          label="Remove"
+          disabled={Boolean(removeDisabled)}
+          title={removeDisabled ? removeTitle : undefined}
+          onPick={() => onAction({ kind: 'remove' })}
+        />
       </CtxParentRow>
 
-      <div className="scheduler-ctx-sep" />
-
-      <CtxRow label="Google Maps" onPick={() => onAction({ kind: 'googleMaps' })} />
-      <CtxRow label="Send Form" onPick={() => onAction({ kind: 'sendForm' })} />
-      <CtxRow label="Enter Weight" onPick={() => onAction({ kind: 'enterWeight' })} />
-      <CtxRow label="Go To MR" onPick={() => onAction({ kind: 'goMr' })} />
-      <CtxRow label="Go to Client" onPick={() => onAction({ kind: 'goClient' })} />
-      <CtxRow label="Go to Quick Invoicing" onPick={() => onAction({ kind: 'quickInvoice' })} />
-      <CtxRow label="Go to Checkout" onPick={() => onAction({ kind: 'checkout' })} />
       <CtxParentRow
-        label="Contact Client"
-        open={openSub === 'contact'}
-        onOpen={() => setOpenSub('contact')}
-        onCloseSub={() => setOpenSub(null)}
-        noIcon
+        label="On Visit Day"
+        menuRootRef={rootRef}
+        open={openGroup === 'visit'}
+        onOpen={() => setOpenGroup('visit')}
+        onCloseSub={() => setOpenGroup(null)}
+      >
+        <CtxSubRow label="Start / End Visit" onPick={() => onAction({ kind: 'visitTimes' })} />
+        <CtxSubRow
+          label="Complete"
+          disabled={completeDisabled}
+          title={completeTitle}
+          onPick={() => onAction({ kind: 'complete' })}
+        />
+        <CtxSubRow label="Add Charges" onPick={() => onAction({ kind: 'addCharges' })} />
+      </CtxParentRow>
+
+      <CtxParentRow
+        label="Patient"
+        menuRootRef={rootRef}
+        open={openGroup === 'patient'}
+        onOpen={() => setOpenGroup('patient')}
+        onCloseSub={() => setOpenGroup(null)}
+      >
+        <CtxSubRow label="View Chart" onPick={() => onAction({ kind: 'viewChart' })} />
+        <CtxSubRow label="Write Medical Note" onPick={() => onAction({ kind: 'writeMedicalNote' })} />
+      </CtxParentRow>
+
+      <CtxParentRow
+        label="Client"
+        menuRootRef={rootRef}
+        open={openGroup === 'client'}
+        onOpen={() => setOpenGroup('client')}
+        onCloseSub={() => setOpenGroup(null)}
       >
         <CtxSubRow
-          label={phone1 ? `Call ${phone1}` : 'Call primary (no number)'}
+          label={phone1 ? `Call ${phone1}` : 'Call (no number)'}
           disabled={!phone1}
-          onPick={() => phone1 && onAction({ kind: 'contact', channel: 'phone1' })}
+          onPick={() => phone1 && onAction({ kind: 'call', phone: 'phone1' })}
         />
+        {phone2 ? (
+          <CtxSubRow label={`Call ${phone2}`} onPick={() => onAction({ kind: 'call', phone: 'phone2' })} />
+        ) : null}
         <CtxSubRow
-          label={phone2 ? `Call ${phone2}` : 'Call secondary (no number)'}
-          disabled={!phone2}
-          onPick={() => phone2 && onAction({ kind: 'contact', channel: 'phone2' })}
+          label={phone1 ? `Text ${phone1}` : 'Text (no number)'}
+          disabled={!phone1}
+          onPick={() => phone1 && onAction({ kind: 'text', phone: 'phone1' })}
         />
-        <CtxSubRow
-          label={email1 ? `Email ${email1}` : 'Email primary (none)'}
-          disabled={!email1}
-          onPick={() => email1 && onAction({ kind: 'contact', channel: 'email1' })}
-        />
-        <CtxSubRow
-          label={email2 ? `Email ${email2}` : 'Email secondary (none)'}
-          disabled={!email2}
-          onPick={() => email2 && onAction({ kind: 'contact', channel: 'email2' })}
-        />
+        {phone2 ? (
+          <CtxSubRow label={`Text ${phone2}`} onPick={() => onAction({ kind: 'text', phone: 'phone2' })} />
+        ) : null}
+        <CtxSubRow label="View Client Info" onPick={() => onAction({ kind: 'viewClientInfo' })} />
+        <CtxSubRow label={roomLoaderMenuLabel} onPick={() => onAction({ kind: 'roomLoader' })} />
+        <CtxSubRow label="Checkout" onPick={() => onAction({ kind: 'checkout' })} />
       </CtxParentRow>
     </div>
   );
@@ -248,7 +222,7 @@ export function SchedulerAppointmentContextMenu({
   return createPortal(menu, document.body);
 }
 
-function CtxRow({
+function CtxSubRow({
   label,
   onPick,
   disabled,
@@ -262,31 +236,136 @@ function CtxRow({
   return (
     <button
       type="button"
-      className="scheduler-ctx-item"
+      className="scheduler-ctx-subitem"
       role="menuitem"
       disabled={disabled}
       title={title}
-      onClick={onPick}
+      onClick={() => {
+        if (!disabled) onPick();
+      }}
     >
       {label}
     </button>
   );
 }
 
-function CtxSubRow({
-  label,
-  onPick,
-  disabled,
-}: {
-  label: string;
-  onPick: () => void;
-  disabled?: boolean;
-}) {
+type CtxFlyoutPlacement = {
+  side: 'left' | 'right';
+  left: number;
+  top: number;
+  maxHeight: number;
+};
+
+const CTX_FLYOUT_PAD = 8;
+const CTX_FLYOUT_GAP = 2;
+/** Slight overlap with the parent row so the pointer can reach the portaled flyout without a dead zone. */
+const CTX_FLYOUT_OVERLAP = 14;
+const CTX_FLYOUT_CLOSE_MS = 280;
+const CTX_FLYOUT_Z = 10051;
+const CTX_FLYOUT_EST_WIDTH = 240;
+
+function ctxFlyoutPlacementEqual(a: CtxFlyoutPlacement, b: CtxFlyoutPlacement): boolean {
   return (
-    <button type="button" className="scheduler-ctx-subitem" role="menuitem" disabled={disabled} onClick={onPick}>
-      {label}
-    </button>
+    a.side === b.side &&
+    Math.abs(a.left - b.left) < 1 &&
+    Math.abs(a.top - b.top) < 1 &&
+    Math.abs(a.maxHeight - b.maxHeight) < 1
   );
+}
+
+function isNodeInMenuOrFlyout(node: Node | null, menuRoot: HTMLElement | null): boolean {
+  if (!node) return false;
+  if (menuRoot?.contains(node)) return true;
+  return node instanceof Element && Boolean(node.closest('.scheduler-ctx-flyout'));
+}
+
+function horizontalFlyoutLeft(
+  side: 'left' | 'right',
+  wrapRect: DOMRect,
+  flyW: number,
+  vpW: number
+): { side: 'left' | 'right'; left: number } {
+  let resolvedSide = side;
+  let left =
+    resolvedSide === 'right'
+      ? wrapRect.right - CTX_FLYOUT_OVERLAP
+      : wrapRect.left - flyW + CTX_FLYOUT_OVERLAP;
+
+  if (resolvedSide === 'right' && left + flyW > vpW - CTX_FLYOUT_PAD) {
+    resolvedSide = 'left';
+    left = wrapRect.left - flyW + CTX_FLYOUT_OVERLAP;
+  }
+  if (resolvedSide === 'left' && left < CTX_FLYOUT_PAD) {
+    resolvedSide = 'right';
+    left = wrapRect.right - CTX_FLYOUT_OVERLAP;
+  }
+
+  left = Math.min(Math.max(left, CTX_FLYOUT_PAD), vpW - CTX_FLYOUT_PAD - flyW);
+  return { side: resolvedSide, left };
+}
+
+function verticalFlyoutTop(wrapRect: DOMRect, flyH: number, vpH: number): number {
+  let top = wrapRect.top;
+  if (top + flyH > vpH - CTX_FLYOUT_PAD) {
+    top = wrapRect.bottom - flyH;
+  }
+  if (top + flyH > vpH - CTX_FLYOUT_PAD) {
+    top = vpH - CTX_FLYOUT_PAD - flyH;
+  }
+  return Math.max(CTX_FLYOUT_PAD, top);
+}
+
+/** Estimate position before the flyout has been measured (avoids visibility:hidden flash). */
+function estimateCtxFlyoutPlacement(
+  wrapEl: HTMLElement,
+  opts: { nested?: boolean }
+): CtxFlyoutPlacement {
+  const vpW = window.innerWidth;
+  const vpH = window.innerHeight;
+  const wrapRect = wrapEl.getBoundingClientRect();
+  const flyW = CTX_FLYOUT_EST_WIDTH;
+  const flyH = 120;
+  const parentFlyout = opts.nested ? wrapEl.closest('.scheduler-ctx-flyout') : null;
+  const parentFlyoutOpensLeft = parentFlyout
+    ? parentFlyout.getBoundingClientRect().right <= wrapRect.left + 2
+    : false;
+
+  const { side, left } = horizontalFlyoutLeft(
+    parentFlyoutOpensLeft ? 'left' : 'right',
+    wrapRect,
+    flyW,
+    vpW
+  );
+  const top = verticalFlyoutTop(wrapRect, flyH, vpH);
+  return { side, left, top, maxHeight: Math.max(120, vpH - top - CTX_FLYOUT_PAD) };
+}
+
+/** Viewport-fixed submenu position so flyouts are not clipped by the root menu box. */
+function measureCtxFlyoutPlacement(
+  wrapEl: HTMLElement,
+  flyoutEl: HTMLElement,
+  opts: { nested?: boolean }
+): CtxFlyoutPlacement {
+  const vpW = window.innerWidth;
+  const vpH = window.innerHeight;
+  const wrapRect = wrapEl.getBoundingClientRect();
+  const flyW = flyoutEl.offsetWidth || CTX_FLYOUT_EST_WIDTH;
+  const flyH = flyoutEl.offsetHeight || 120;
+  const parentFlyout = opts.nested ? wrapEl.closest('.scheduler-ctx-flyout') : null;
+  const parentFlyoutOpensLeft = parentFlyout
+    ? parentFlyout.getBoundingClientRect().right <= wrapRect.left + 2
+    : false;
+
+  const { side, left } = horizontalFlyoutLeft(
+    parentFlyoutOpensLeft ? 'left' : 'right',
+    wrapRect,
+    flyW,
+    vpW
+  );
+  const top = verticalFlyoutTop(wrapRect, flyH, vpH);
+  const maxHeight = Math.max(120, vpH - top - CTX_FLYOUT_PAD);
+
+  return { side, left, top, maxHeight };
 }
 
 function CtxParentRow({
@@ -295,33 +374,141 @@ function CtxParentRow({
   open,
   onOpen,
   onCloseSub,
-  noIcon,
+  nested,
+  menuRootRef,
 }: {
   label: string;
-  children: React.ReactNode;
+  children: ReactNode;
   open: boolean;
   onOpen: () => void;
   onCloseSub: () => void;
-  noIcon?: boolean;
+  /** Nested parent row inside a flyout (e.g. View/Edit under Scheduling). */
+  nested?: boolean;
+  menuRootRef: React.RefObject<HTMLElement | null>;
 }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const flyoutRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pointerRef = useRef({ x: 0, y: 0 });
+  const [placement, setPlacement] = useState<CtxFlyoutPlacement | null>(null);
+
+  const cancelCloseTimer = () => {
+    if (closeTimerRef.current != null) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+
+  const isHoverTargetActive = (node: Node | null): boolean => {
+    if (isNodeInMenuOrFlyout(node, menuRootRef.current)) return true;
+    if (flyoutRef.current && node && flyoutRef.current.contains(node)) return true;
+    return false;
+  };
+
+  const scheduleClose = (e?: ReactMouseEvent) => {
+    const related = (e?.relatedTarget instanceof Node ? e.relatedTarget : null) as Node | null;
+    if (isHoverTargetActive(related)) return;
+
+    const { x, y } = pointerRef.current;
+    if (isHoverTargetActive(document.elementFromPoint(x, y))) return;
+
+    cancelCloseTimer();
+    closeTimerRef.current = setTimeout(() => {
+      if (isHoverTargetActive(document.elementFromPoint(x, y))) return;
+      onCloseSub();
+    }, CTX_FLYOUT_CLOSE_MS);
+  };
+
+  useEffect(() => {
+    if (open) cancelCloseTimer();
+    return () => cancelCloseTimer();
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPlacement(null);
+      return;
+    }
+    if (wrapRef.current) {
+      const estimate = estimateCtxFlyoutPlacement(wrapRef.current, { nested });
+      setPlacement((prev) => (prev && ctxFlyoutPlacementEqual(prev, estimate) ? prev : estimate));
+    }
+  }, [open, nested]);
+
+  useLayoutEffect(() => {
+    if (!open || !wrapRef.current) return;
+
+    const remeasure = () => {
+      if (!wrapRef.current || !flyoutRef.current) return;
+      const next = measureCtxFlyoutPlacement(wrapRef.current, flyoutRef.current, { nested });
+      setPlacement((prev) => (prev && ctxFlyoutPlacementEqual(prev, next) ? prev : next));
+    };
+
+    remeasure();
+    if (!flyoutRef.current) {
+      requestAnimationFrame(remeasure);
+    }
+    window.addEventListener('resize', remeasure);
+    return () => window.removeEventListener('resize', remeasure);
+  }, [open, nested]);
+
   return (
     <div
-      className={`scheduler-ctx-parent-wrap${open ? ' scheduler-ctx-parent-wrap--open' : ''}`}
-      onMouseEnter={onOpen}
-      onMouseLeave={onCloseSub}
+      ref={wrapRef}
+      className={`scheduler-ctx-parent-wrap${open ? ' scheduler-ctx-parent-wrap--open' : ''}${nested ? ' scheduler-ctx-parent-wrap--nested' : ''}`}
+      onMouseEnter={(e) => {
+        pointerRef.current = { x: e.clientX, y: e.clientY };
+        cancelCloseTimer();
+        onOpen();
+      }}
+      onMouseMove={(e) => {
+        pointerRef.current = { x: e.clientX, y: e.clientY };
+      }}
+      onMouseLeave={(e) => scheduleClose(e)}
     >
-      <div className="scheduler-ctx-item scheduler-ctx-item--parent" aria-haspopup="menu" aria-expanded={open}>
-        {!noIcon ? <span className="scheduler-ctx-chevron" aria-hidden /> : null}
+      <div
+        className={
+          nested
+            ? 'scheduler-ctx-subitem scheduler-ctx-subitem--parent'
+            : 'scheduler-ctx-item scheduler-ctx-item--parent'
+        }
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        {!nested ? <span className="scheduler-ctx-chevron" aria-hidden /> : null}
         <span className="scheduler-ctx-parent-label">{label}</span>
         <span className="scheduler-ctx-arrow" aria-hidden>
-          ›
+          {open && placement?.side === 'left' ? '‹' : '›'}
         </span>
       </div>
-      {open ? (
-        <div className="scheduler-ctx-flyout" onMouseDown={(e) => e.stopPropagation()}>
-          {children}
-        </div>
-      ) : null}
+      {open && placement
+        ? createPortal(
+            <div
+              ref={flyoutRef}
+              className={`scheduler-ctx-flyout scheduler-ctx-flyout--${placement.side}`}
+              role="menu"
+              style={{
+                position: 'fixed',
+                left: placement.left,
+                top: placement.top,
+                maxHeight: placement.maxHeight,
+                zIndex: CTX_FLYOUT_Z,
+              }}
+              onMouseEnter={(e) => {
+                pointerRef.current = { x: e.clientX, y: e.clientY };
+                cancelCloseTimer();
+              }}
+              onMouseMove={(e) => {
+                pointerRef.current = { x: e.clientX, y: e.clientY };
+              }}
+              onMouseLeave={(e) => scheduleClose(e)}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              {children}
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-// Record actual visit start/end from scheduler context menu
+// Record actual visit start/end from scheduler context menu (single screen for both)
 import { useCallback, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
@@ -15,11 +15,12 @@ import {
 } from '../utils/editVisitTimeFields';
 import './Scheduler.css';
 
-export type ActualVisitTimeField = 'start' | 'end';
+export type ActualVisitTimeField = 'start' | 'end' | 'both';
 
 type Props = {
   appt: Appointment;
-  field: ActualVisitTimeField;
+  /** `both` — combined Start / End Visit screen (default from context menu). */
+  field?: ActualVisitTimeField;
   practiceTz: string;
   accentColor: string;
   onClose: () => void;
@@ -46,43 +47,80 @@ function patientsLabel(appt: Appointment): string {
   return pickStr(appt.patient?.name) ?? '—';
 }
 
+function defaultStartTimeLocal(
+  existingIso: string | null | undefined,
+  practiceTz: string
+): string {
+  if (existingIso) return toTimeLocalValue(existingIso, practiceTz);
+  return DateTime.now().setZone(practiceTz).toFormat('HH:mm');
+}
+
+function defaultEndTimeLocal(
+  existingEndIso: string | null | undefined,
+  existingStartIso: string | null | undefined,
+  practiceTz: string
+): string {
+  if (existingEndIso) return toTimeLocalValue(existingEndIso, practiceTz);
+  if (existingStartIso) return DateTime.now().setZone(practiceTz).toFormat('HH:mm');
+  return '';
+}
+
 export function SchedulerActualVisitTimeModal({
   appt,
-  field,
+  field = 'both',
   practiceTz,
   accentColor,
   onClose,
   onSaved,
 }: Props) {
-  const isStart = field === 'start';
-  const existingIso = isStart ? appt.appointmentStartActual : appt.appointmentEndActual;
+  const isBoth = field === 'both';
+  const isStartOnly = field === 'start';
+  const isEndOnly = field === 'end';
+
+  const existingStartIso = appt.appointmentStartActual ?? null;
+  const existingEndIso = appt.appointmentEndActual ?? null;
+
   const dateKey = useMemo(() => {
-    const ref = existingIso ?? appt.appointmentStart;
+    const ref = existingStartIso ?? existingEndIso ?? appt.appointmentStart;
     return appointmentPracticeDateKey(ref, practiceTz) ?? '';
-  }, [existingIso, appt.appointmentStart, practiceTz]);
+  }, [existingStartIso, existingEndIso, appt.appointmentStart, practiceTz]);
   const dateLabel = useMemo(
     () => (dateKey ? formatPracticeDateLabel(dateKey, practiceTz) : '—'),
     [dateKey, practiceTz]
   );
 
-  const [timeLocal, setTimeLocal] = useState(() => {
-    if (existingIso) return toTimeLocalValue(existingIso, practiceTz);
-    return DateTime.now().setZone(practiceTz).toFormat('HH:mm');
-  });
+  const [startTimeLocal, setStartTimeLocal] = useState(() =>
+    isEndOnly ? '' : defaultStartTimeLocal(existingStartIso, practiceTz)
+  );
+  const [endTimeLocal, setEndTimeLocal] = useState(() =>
+    isStartOnly ? '' : defaultEndTimeLocal(existingEndIso, existingStartIso, practiceTz)
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const title = isStart ? 'Start visit' : 'End visit';
-  const fieldLabel = isStart ? 'Actual start time' : 'Actual end time';
+  const title = isBoth ? 'Start / End Visit' : isStartOnly ? 'Start visit' : 'End visit';
 
-  const post = useCallback(
-    async (body: { at?: string; clear?: boolean }) => {
+  const saveStart = useCallback(
+    async (body: { at?: string; clear?: boolean }) => postAppointmentActualStart(appt.id, body),
+    [appt.id]
+  );
+
+  const saveEnd = useCallback(
+    async (body: { at?: string; clear?: boolean }) => postAppointmentActualEnd(appt.id, body),
+    [appt.id]
+  );
+
+  const postBoth = useCallback(
+    async (opts: {
+      start?: { at?: string; clear?: boolean };
+      end?: { at?: string; clear?: boolean };
+    }) => {
       setSaving(true);
       setError(null);
       try {
-        const updated = isStart
-          ? await postAppointmentActualStart(appt.id, body)
-          : await postAppointmentActualEnd(appt.id, body);
+        let updated = appt;
+        if (opts.start) updated = await saveStart(opts.start);
+        if (opts.end) updated = await saveEnd(opts.end);
         onSaved(updated);
         onClose();
       } catch (e: unknown) {
@@ -91,30 +129,74 @@ export function SchedulerActualVisitTimeModal({
         if (Array.isArray(m)) setError(m.join(', '));
         else if (typeof m === 'string' && m.trim()) setError(m);
         else if (ax?.message) setError(ax.message);
-        else setError('Could not save visit time.');
+        else setError('Could not save visit times.');
       } finally {
         setSaving(false);
       }
     },
-    [appt.id, isStart, onClose, onSaved]
+    [appt, onClose, onSaved, saveEnd, saveStart]
   );
 
-  const handleUseNow = () => void post({});
-
-  const handleSaveTime = () => {
+  const handleSave = () => {
     if (!dateKey) {
       setError('Could not determine visit date.');
       return;
     }
-    const at = combineDateAndTimeToUtc(dateKey, timeLocal, practiceTz);
-    if (!at) {
-      setError('Enter a valid time.');
+    if (isStartOnly) {
+      const at = combineDateAndTimeToUtc(dateKey, startTimeLocal, practiceTz);
+      if (!at) {
+        setError('Enter a valid start time.');
+        return;
+      }
+      void postBoth({ start: { at } });
       return;
     }
-    void post({ at });
+    if (isEndOnly) {
+      const at = combineDateAndTimeToUtc(dateKey, endTimeLocal, practiceTz);
+      if (!at) {
+        setError('Enter a valid end time.');
+        return;
+      }
+      void postBoth({ end: { at } });
+      return;
+    }
+    const startAt = startTimeLocal.trim()
+      ? combineDateAndTimeToUtc(dateKey, startTimeLocal, practiceTz)
+      : null;
+    const endAt = endTimeLocal.trim()
+      ? combineDateAndTimeToUtc(dateKey, endTimeLocal, practiceTz)
+      : null;
+    if (!startAt && !endAt) {
+      setError('Enter at least one time.');
+      return;
+    }
+    if (startTimeLocal.trim() && !startAt) {
+      setError('Enter a valid start time.');
+      return;
+    }
+    if (endTimeLocal.trim() && !endAt) {
+      setError('Enter a valid end time.');
+      return;
+    }
+    void postBoth({
+      ...(startAt ? { start: { at: startAt } } : {}),
+      ...(endAt ? { end: { at: endAt } } : {}),
+    });
   };
 
-  const handleClear = () => void post({ clear: true });
+  const handleClearStart = () => void postBoth({ start: { clear: true } });
+  const handleClearEnd = () => void postBoth({ end: { clear: true } });
+
+  const handleUseNowStart = () => {
+    setStartTimeLocal(DateTime.now().setZone(practiceTz).toFormat('HH:mm'));
+    if (!endTimeLocal.trim() && (existingStartIso || startTimeLocal)) {
+      setEndTimeLocal(DateTime.now().setZone(practiceTz).toFormat('HH:mm'));
+    }
+  };
+
+  const handleUseNowEnd = () => {
+    setEndTimeLocal(DateTime.now().setZone(practiceTz).toFormat('HH:mm'));
+  };
 
   const clientName = useMemo(() => {
     const c = appt.client;
@@ -143,7 +225,7 @@ export function SchedulerActualVisitTimeModal({
         <div className="scheduler-modal-accent" aria-hidden />
         <div className="scheduler-modal-header">
           <div className="scheduler-modal-header-text">
-            <p className="scheduler-modal-eyebrow">{title}</p>
+            <p className="scheduler-modal-eyebrow">Visit times</p>
             <h2 id="scheduler-actual-visit-title">{title}</h2>
             <p className="scheduler-modal-subtitle">
               {clientName}
@@ -163,10 +245,13 @@ export function SchedulerActualVisitTimeModal({
             <p className="scheduler-actual-visit-scheduled">
               Scheduled: {formatPracticeTime(appt.appointmentStart, practiceTz)} –{' '}
               {formatPracticeTime(appt.appointmentEnd, practiceTz)}
-              {existingIso ? (
+              {existingStartIso || existingEndIso ? (
                 <>
                   <br />
-                  Recorded {isStart ? 'start' : 'end'}: {formatPracticeTime(existingIso, practiceTz)}
+                  Recorded:{' '}
+                  {existingStartIso ? formatPracticeTime(existingStartIso, practiceTz) : '—'}
+                  {' – '}
+                  {existingEndIso ? formatPracticeTime(existingEndIso, practiceTz) : '—'}
                 </>
               ) : null}
             </p>
@@ -177,17 +262,36 @@ export function SchedulerActualVisitTimeModal({
                 <input type="text" readOnly value={dateLabel} />
               </div>
 
-              <label className="scheduler-edit-field">
-                <span>{fieldLabel}</span>
-                <input
-                  type="time"
-                  value={timeLocal}
-                  onChange={(e) => setTimeLocal(e.target.value)}
-                  disabled={saving}
-                />
-              </label>
-            </div>
+              {!isEndOnly ? (
+                <label className="scheduler-edit-field">
+                  <span>Actual start time</span>
+                  <input
+                    type="time"
+                    value={startTimeLocal}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setStartTimeLocal(v);
+                      if (v.trim() && !endTimeLocal.trim() && !existingEndIso) {
+                        setEndTimeLocal(DateTime.now().setZone(practiceTz).toFormat('HH:mm'));
+                      }
+                    }}
+                    disabled={saving}
+                  />
+                </label>
+              ) : null}
 
+              {!isStartOnly ? (
+                <label className="scheduler-edit-field">
+                  <span>Actual end time</span>
+                  <input
+                    type="time"
+                    value={endTimeLocal}
+                    onChange={(e) => setEndTimeLocal(e.target.value)}
+                    disabled={saving}
+                  />
+                </label>
+              ) : null}
+            </div>
           </section>
         </div>
 
@@ -195,21 +299,28 @@ export function SchedulerActualVisitTimeModal({
           <button type="button" className="btn secondary" disabled={saving} onClick={onClose}>
             Cancel
           </button>
-          {existingIso ? (
-            <button type="button" className="btn secondary" disabled={saving} onClick={handleClear}>
-              Clear
+          {existingStartIso && !isEndOnly ? (
+            <button type="button" className="btn secondary" disabled={saving} onClick={handleClearStart}>
+              Clear start
             </button>
           ) : null}
-          <button
-            type="button"
-            className="btn secondary"
-            disabled={saving || !timeLocal.trim()}
-            onClick={handleSaveTime}
-          >
-            {saving ? 'Saving…' : 'Save entered time'}
-          </button>
-          <button type="button" className="btn" disabled={saving} onClick={handleUseNow}>
-            {saving ? 'Saving…' : 'Use current time'}
+          {existingEndIso && !isStartOnly ? (
+            <button type="button" className="btn secondary" disabled={saving} onClick={handleClearEnd}>
+              Clear end
+            </button>
+          ) : null}
+          {!isEndOnly ? (
+            <button type="button" className="btn secondary" disabled={saving} onClick={handleUseNowStart}>
+              Now (start)
+            </button>
+          ) : null}
+          {!isStartOnly ? (
+            <button type="button" className="btn secondary" disabled={saving} onClick={handleUseNowEnd}>
+              Now (end)
+            </button>
+          ) : null}
+          <button type="button" className="btn" disabled={saving} onClick={handleSave}>
+            {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
       </div>

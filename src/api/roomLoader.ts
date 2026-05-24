@@ -305,6 +305,8 @@ export type Appointment = {
     windowStartLocal?: string | null;
     windowEndLocal?: string | null;
   } | null;
+  /** Appointment-type window from doctor-day merge (± minutes around booked start). */
+  effectiveWindow?: { startIso: string; endIso: string } | null;
   /** Routing / client zone when range API includes it (see `appointmentZoneShortLabel` in appointments). */
   clientZone?: { id?: number | string; name?: string | null } | null;
   effectiveZone?: { id?: number | string; name?: string | null } | null;

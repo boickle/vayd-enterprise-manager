@@ -11,6 +11,15 @@ import {
 } from '../../api/tasks';
 import type { PracticeBranch } from '../../api/branchInventory';
 import type { Employee } from '../../api/appointmentSettings';
+import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
+import {
+  formatTaskIso,
+  fromDatetimeLocalValue,
+  toDatetimeLocalValue,
+  validateTaskScheduleOrder,
+} from '../../utils/taskDateTime';
+import { priorityApiLabel } from '../../utils/taskPriority';
+import { taskLinkDisplayLabel, useTaskLinkLabels } from '../../utils/taskLinkDisplay';
 import './PimsTaskDetailView.css';
 
 function isTaskLinkEntityType(s: string): s is TaskLinkEntityType {
@@ -32,9 +41,29 @@ function formatEventType(eventType: string): string {
     escalation_sent: 'Escalation reminder',
     body_changed: 'Description changed',
     due_changed: 'Due date changed',
+    due_at_changed: 'Due date changed',
+    start_at_changed: 'Start date changed',
     title_changed: 'Title changed',
   };
   return known[eventType] ?? eventType.replace(/_/g, ' ');
+}
+
+function scheduleChangeDetail(eventType: string, payload: unknown): string | null {
+  if (
+    eventType !== 'start_at_changed' &&
+    eventType !== 'due_at_changed' &&
+    eventType !== 'due_changed'
+  ) {
+    return null;
+  }
+  if (!payload || typeof payload !== 'object') return null;
+  const p = payload as Record<string, unknown>;
+  const fromRaw = p.from ?? p.old ?? p.previous ?? p.before;
+  const toRaw = p.to ?? p.new ?? p.next ?? p.after;
+  const from =
+    typeof fromRaw === 'string' || fromRaw === null ? formatTaskIso(fromRaw as string | null) : '—';
+  const to = typeof toRaw === 'string' || toRaw === null ? formatTaskIso(toRaw as string | null) : '—';
+  return `${from} → ${to}`;
 }
 
 function linkHref(entityType: string, entityId: number): string | null {
@@ -92,7 +121,7 @@ export default function PimsTaskDetailView({
   const employeeMap = useMemo(() => {
     const m = new Map<number, string>();
     for (const e of employees) {
-      const name = [e.firstName, e.lastName].filter(Boolean).join(' ').trim() || e.email;
+      const name = formatEmployeeDisplayName(e) || e.email;
       m.set(e.id, name);
     }
     return m;
@@ -147,6 +176,7 @@ export default function PimsTaskDetailView({
   }, [task, myEmployeeId, canMutate]);
 
   const latestEscalation = task?.events?.[0]?.eventType === 'escalation_sent';
+  const linkLabels = useTaskLinkLabels(task?.links);
 
   const eventsChronological = useMemo(() => {
     if (!task?.events?.length) return [];
@@ -263,8 +293,12 @@ export default function PimsTaskDetailView({
             <dd>{task.body?.trim() ? task.body : '—'}</dd>
           </div>
           <div>
+            <dt>Start</dt>
+            <dd>{formatTaskIso(task.startAt)}</dd>
+          </div>
+          <div>
             <dt>Due</dt>
-            <dd>{formatIso(task.dueAt)}</dd>
+            <dd>{formatTaskIso(task.dueAt)}</dd>
           </div>
           <div>
             <dt>Branches</dt>
@@ -288,12 +322,10 @@ export default function PimsTaskDetailView({
               <dd>{employeeLabel(employeeMap, task.defaultAssigneeEmployeeId)}</dd>
             </div>
           )}
-          {task.priority != null && (
-            <div>
-              <dt>Priority</dt>
-              <dd>{task.priority}</dd>
-            </div>
-          )}
+          <div>
+            <dt>Priority</dt>
+            <dd>{priorityApiLabel(task.priority)}</dd>
+          </div>
         </dl>
       </section>
 
@@ -336,16 +368,15 @@ export default function PimsTaskDetailView({
           <ul className="pims-task-detail__list">
             {task.links.map((l) => {
               const href = linkHref(l.entityType, l.entityId);
+              const label = taskLinkDisplayLabel(l, linkLabels);
               return (
                 <li key={l.id}>
                   {href ? (
                     <Link to={href} className="pims-task-detail__link">
-                      {l.entityType} #{l.entityId}
+                      {label}
                     </Link>
                   ) : (
-                    <span>
-                      {l.entityType} #{l.entityId}
-                    </span>
+                    <span>{label}</span>
                   )}
                 </li>
               );
@@ -364,6 +395,11 @@ export default function PimsTaskDetailView({
               <div className="pims-task-detail__timeline-dot" />
               <div className="pims-task-detail__timeline-body">
                 <div className="pims-task-detail__timeline-title">{formatEventType(ev.eventType)}</div>
+                {scheduleChangeDetail(ev.eventType, ev.payload) ? (
+                  <div className="pims-task-detail__timeline-detail">
+                    {scheduleChangeDetail(ev.eventType, ev.payload)}
+                  </div>
+                ) : null}
                 <div className="pims-task-detail__timeline-meta">
                   {formatIso(ev.created)}
                   {ev.actorEmployeeId != null && (
@@ -429,6 +465,7 @@ function TaskEditForm({
 }: EditProps) {
   const [title, setTitle] = useState(task.title);
   const [body, setBody] = useState(task.body ?? '');
+  const [startLocal, setStartLocal] = useState(() => toDatetimeLocalValue(task.startAt));
   const [dueLocal, setDueLocal] = useState(() => toDatetimeLocalValue(task.dueAt));
   const [branchSel, setBranchSel] = useState<Record<number, boolean>>(() => {
     const m: Record<number, boolean> = {};
@@ -486,13 +523,22 @@ function TaskEditForm({
       }
     }
 
+    const startAt = fromDatetimeLocalValue(startLocal);
+    const dueAt = fromDatetimeLocalValue(dueLocal);
+    const scheduleErr = validateTaskScheduleOrder(startAt, dueAt);
+    if (scheduleErr) {
+      setActionError(scheduleErr);
+      return;
+    }
+
     setBusy(true);
     setActionError(null);
     try {
       const patch: Parameters<typeof patchTask>[1] = {
         title: title.trim(),
         body: body.trim() || null,
-        dueAt: fromDatetimeLocalValue(dueLocal),
+        startAt,
+        dueAt,
         branchIds: selectedBranchIds,
         assignedToEmployeeId: assigneeId,
         watcherEmployeeIds: [...new Set(watchers)],
@@ -522,10 +568,23 @@ function TaskEditForm({
           <span>Description</span>
           <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={4} disabled={busy} />
         </label>
-        <label className="pims-task-detail__field">
-          <span>Due</span>
-          <input type="datetime-local" value={dueLocal} onChange={(e) => setDueLocal(e.target.value)} disabled={busy} />
-        </label>
+        <div className="pims-task-detail__row2">
+          <label className="pims-task-detail__field">
+            <span>Start</span>
+            <input
+              type="datetime-local"
+              value={startLocal}
+              onChange={(e) => setStartLocal(e.target.value)}
+              disabled={busy}
+            />
+            <span className="pims-task-detail__field-hint">Clear to remove start date.</span>
+          </label>
+          <label className="pims-task-detail__field">
+            <span>Due</span>
+            <input type="datetime-local" value={dueLocal} onChange={(e) => setDueLocal(e.target.value)} disabled={busy} />
+            <span className="pims-task-detail__field-hint">Clear to remove due date.</span>
+          </label>
+        </div>
 
         <div className="pims-task-detail__field">
           <span>Branches</span>
@@ -553,7 +612,7 @@ function TaskEditForm({
             <option value="">Queue (unassigned)</option>
             {employees.map((em) => (
               <option key={em.id} value={String(em.id)}>
-                {[em.firstName, em.lastName].filter(Boolean).join(' ') || em.email}
+                {formatEmployeeDisplayName(em) || em.email}
               </option>
             ))}
           </select>
@@ -573,7 +632,7 @@ function TaskEditForm({
           >
             {employees.map((em) => (
               <option key={em.id} value={String(em.id)}>
-                {[em.firstName, em.lastName].filter(Boolean).join(' ') || em.email}
+                {formatEmployeeDisplayName(em) || em.email}
               </option>
             ))}
           </select>
@@ -643,17 +702,3 @@ function TaskEditForm({
   );
 }
 
-function toDatetimeLocalValue(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function fromDatetimeLocalValue(local: string): string | null {
-  if (!local.trim()) return null;
-  const d = new Date(local);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString();
-}
