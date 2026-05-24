@@ -2,37 +2,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
-import { fetchAllEmployees } from '../api/appointmentSettings';
-import { listTasks } from '../api/tasks';
 import { getVisibleScoutTabs } from '../scout-tabs';
-import {
-  navTasksBadgeCount,
-  resolveMyEmployeeIds,
-  VAYD_TASKS_CHANGED,
-} from '../utils/taskOwnership';
+import TasksNavLabel from './TasksNavLabel';
+import { useTaskNavBadges } from '../hooks/useTaskNavBadges';
 import '../pages/ScheduleLayout.css';
-
-const TASK_NAV_COUNT_CAP = 200;
 
 /** Hide Inventory tab until the module is ready for general staff. */
 const SHOW_NAV_INVENTORY = false;
-
-function formatTaskNavCount(n: number): string {
-  if (n > 99) return '99+';
-  return String(n);
-}
-
-function TasksTabLabel({ count }: { count: number }) {
-  if (count <= 0) return <>Tasks</>;
-  return (
-    <>
-      Tasks
-      <sup className="navbar-schedule-tab-badge" aria-label={`${count} active or expired tasks`}>
-        {formatTaskNavCount(count)}
-      </sup>
-    </>
-  );
-}
 
 const SCHED_NAV_GAP_PX = 6;
 /** Reserve width for “More” summary (tab padding + label + chevron) */
@@ -130,21 +106,9 @@ function SettingsSubmenuLinks({
 export default function NavbarScheduleHorizontalNav() {
   const location = useLocation();
   const auth = useAuth();
-  const { token, userEmail, userId, doctorId } = auth;
   const { abilities, role } = auth as { abilities?: string[]; role?: string | string[] };
-  const [employees, setEmployees] = useState<{ id: number; email?: string | null }[]>([]);
-  const myEmployeeIds = useMemo(
-    () =>
-      resolveMyEmployeeIds({
-        token,
-        doctorId,
-        userEmail,
-        userId,
-        employees,
-      }),
-    [token, doctorId, userEmail, userId, employees]
-  );
-  const [myTaskCount, setMyTaskCount] = useState(0);
+  const scheduleNavEnabled = location.pathname.startsWith('/schedule');
+  const { assignedCount, watchingCount } = useTaskNavBadges(scheduleNavEnabled);
 
   const roles = useMemo(() => {
     const arr = Array.isArray(role) ? role : role ? [role] : [];
@@ -210,66 +174,6 @@ export default function NavbarScheduleHorizontalNav() {
     if (!location.pathname.startsWith('/schedule/settings')) return null;
     return new URLSearchParams(location.search).get('tab');
   }, [location.pathname, location.search]);
-
-  useEffect(() => {
-    if (!location.pathname.startsWith('/schedule')) {
-      setEmployees([]);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const em = await fetchAllEmployees();
-        if (!cancelled) setEmployees(em);
-      } catch {
-        if (!cancelled) setEmployees([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [location.pathname]);
-
-  useEffect(() => {
-    if (!location.pathname.startsWith('/schedule')) {
-      setMyTaskCount(0);
-      return;
-    }
-    if (myEmployeeIds.length === 0) {
-      setMyTaskCount(0);
-      return;
-    }
-    let cancelled = false;
-    const loadCount = async () => {
-      try {
-        const res = await listTasks({
-          includeDone: false,
-          limit: TASK_NAV_COUNT_CAP,
-          offset: 0,
-        });
-        if (cancelled) return;
-        setMyTaskCount(navTasksBadgeCount(res.items, myEmployeeIds));
-      } catch {
-        if (!cancelled) setMyTaskCount(0);
-      }
-    };
-    void loadCount();
-    const onRefresh = () => void loadCount();
-    window.addEventListener('focus', onRefresh);
-    window.addEventListener(VAYD_TASKS_CHANGED, onRefresh);
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') void loadCount();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    const interval = window.setInterval(() => void loadCount(), 45_000);
-    return () => {
-      cancelled = true;
-      window.removeEventListener('focus', onRefresh);
-      window.removeEventListener(VAYD_TASKS_CHANGED, onRefresh);
-      document.removeEventListener('visibilitychange', onVisible);
-      clearInterval(interval);
-    };
-  }, [location.pathname, myEmployeeIds]);
 
   /** First index that moves into “More”; equal to itemKeys.length when everything fits on one row */
   const [splitIndex, setSplitIndex] = useState(() => Number.MAX_SAFE_INTEGER);
@@ -382,7 +286,7 @@ export default function NavbarScheduleHorizontalNav() {
             to="/schedule/tasks"
             className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
           >
-            <TasksTabLabel count={myTaskCount} />
+            <TasksNavLabel assignedCount={assignedCount} watchingCount={watchingCount} />
           </NavLink>
         );
       case 'settings':
@@ -425,7 +329,11 @@ export default function NavbarScheduleHorizontalNav() {
       <div ref={measureRef} className="navbar-schedule-nav-measure" aria-hidden>
         {itemKeys.map((key) => (
           <span key={key} data-sched-nav-measure className="schedule-app__tab">
-            {key === 'tasks' ? <TasksTabLabel count={myTaskCount} /> : MEASURE_LABEL[key]}
+            {key === 'tasks' ? (
+              <TasksNavLabel assignedCount={assignedCount} watchingCount={watchingCount} />
+            ) : (
+              MEASURE_LABEL[key]
+            )}
           </span>
         ))}
       </div>

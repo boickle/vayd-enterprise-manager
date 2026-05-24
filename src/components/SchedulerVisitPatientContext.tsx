@@ -209,11 +209,29 @@ type ClientContextProps = {
   appt: Appointment;
 };
 
+export function clientAlertsTextForAppointment(appt: Appointment): string | null {
+  const fromClient = pickStr(appt.client?.alerts)?.trim();
+  if (fromClient) return fromClient;
+  const row = appt as Appointment & Record<string, unknown>;
+  return pickStr(row.clientAlert)?.trim() ?? null;
+}
+
+/** Client alerts directly under the modal title client name (view + edit). */
+export function SchedulerVisitClientHeaderAlerts({ appt }: ClientContextProps) {
+  const clientAlerts = clientAlertsTextForAppointment(appt);
+  if (!clientAlerts) return null;
+  return (
+    <div className="scheduler-modal-client-header-alerts" role="alert">
+      <span className="scheduler-modal-client-header-alerts-title">Client alerts</span>
+      {clientAlerts}
+    </div>
+  );
+}
+
 export function SchedulerVisitClientContext({ appt }: ClientContextProps) {
   const c = appt.client;
   if (!c) return null;
 
-  const clientAlerts = pickStr(c.alerts)?.trim();
   const addrLine = clientAddressOneLine(c);
   const addrMultiline = clientAddressMultiline(c);
   const phoneLine = clientPhonesLine(c);
@@ -271,12 +289,6 @@ export function SchedulerVisitClientContext({ appt }: ClientContextProps) {
         {pickStr(c.county) ? <VisitHighlightsRow label="County">{pickStr(c.county)}</VisitHighlightsRow> : null}
         {pickStr(c.username) ? (
           <VisitHighlightsRow label="Username">{pickStr(c.username)}</VisitHighlightsRow>
-        ) : null}
-        {clientAlerts ? (
-          <div className="scheduler-tooltip-vh-alerts" role="alert">
-            <span className="scheduler-tooltip-vh-alerts-title">Client alerts</span>
-            {clientAlerts}
-          </div>
         ) : null}
       </div>
       {hasAlternateLocation ? (

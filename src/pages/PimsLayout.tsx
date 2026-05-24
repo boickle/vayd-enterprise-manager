@@ -16,6 +16,8 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import PimsChromeHeader from '../components/pims/PimsChromeHeader';
+import TasksNavLabel from '../components/TasksNavLabel';
+import { useTaskNavBadges } from '../hooks/useTaskNavBadges';
 import './PimsLayout.css';
 
 type NavLeaf = { to: string; label: string };
@@ -80,6 +82,7 @@ export default function PimsLayout() {
   const navigate = useNavigate();
   const pathname = location.pathname;
   const { abilities } = useAuth() as { abilities?: string[] };
+  const { assignedCount, watchingCount } = useTaskNavBadges(true);
 
   const navItems = useMemo(() => buildNav(abilities), [abilities]);
 
@@ -140,7 +143,13 @@ export default function PimsLayout() {
                     <span className="pims-nav-icon">
                       <Icon size={20} strokeWidth={1.75} />
                     </span>
-                    <span className="pims-nav-label">{g.label}</span>
+                    <span className="pims-nav-label">
+                      {g.id === 'tasks' ? (
+                        <TasksNavLabel assignedCount={assignedCount} watchingCount={watchingCount} />
+                      ) : (
+                        g.label
+                      )}
+                    </span>
                   </NavLink>
                 );
               }

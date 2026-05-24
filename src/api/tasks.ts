@@ -38,6 +38,8 @@ export type TaskListItem = {
   created: string;
   updated: string;
   branchIds: number[];
+  /** Present on list rows — caller's relationship to the task. */
+  involvement?: TaskInvolvementFlags;
 };
 
 export type TaskWatcherRow = {
@@ -82,12 +84,33 @@ export type TaskListResponse = {
   offset: number;
 };
 
+export type TaskInvolvementFilter = 'assigned' | 'watching' | 'created';
+
+export type TaskInvolvementFlags = {
+  assignee: boolean;
+  creator: boolean;
+  watcher: boolean;
+};
+
 export type ListTasksParams = {
   status?: TaskStatus;
   branchId?: number;
   includeDone?: boolean;
+  involvement?: TaskInvolvementFilter;
   limit?: number;
   offset?: number;
+};
+
+export type TaskSummaryBucket = {
+  active: number;
+  expired: number;
+  upcoming: number;
+  total: number;
+};
+
+export type TaskSummaryResponse = {
+  assigned: TaskSummaryBucket;
+  watching: TaskSummaryBucket;
 };
 
 export async function listTasks(params?: ListTasksParams): Promise<TaskListResponse> {
@@ -97,6 +120,27 @@ export async function listTasks(params?: ListTasksParams): Promise<TaskListRespo
     total: typeof data?.total === 'number' ? data.total : 0,
     limit: typeof data?.limit === 'number' ? data.limit : 50,
     offset: typeof data?.offset === 'number' ? data.offset : 0,
+  };
+}
+
+export async function fetchTasksSummary(params?: { branchId?: number }): Promise<TaskSummaryResponse> {
+  const { data } = await http.get<TaskSummaryResponse>('/tasks/summary', { params });
+  const empty: TaskSummaryBucket = { active: 0, expired: 0, upcoming: 0, total: 0 };
+  const assigned = data?.assigned ?? empty;
+  const watching = data?.watching ?? empty;
+  return {
+    assigned: {
+      active: assigned.active ?? 0,
+      expired: assigned.expired ?? 0,
+      upcoming: assigned.upcoming ?? 0,
+      total: assigned.total ?? 0,
+    },
+    watching: {
+      active: watching.active ?? 0,
+      expired: watching.expired ?? 0,
+      upcoming: watching.upcoming ?? 0,
+      total: watching.total ?? 0,
+    },
   };
 }
 

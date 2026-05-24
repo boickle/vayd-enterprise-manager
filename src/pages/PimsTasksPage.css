@@ -79,10 +79,42 @@
   background: #f8fafc;
 }
 
-.pims-tasks__tab--active {
+.pims-tasks__tab--selected {
   background: #eff6ff;
   border-color: #93c5fd;
   color: #1d4ed8;
+}
+
+/* Active bucket — match red nav superscript (#dc2626) */
+.pims-tasks__tab--assigned {
+  color: #dc2626;
+  border-color: #fca5a5;
+}
+
+.pims-tasks__tab--assigned:hover {
+  background: #fef2f2;
+}
+
+.pims-tasks__tab--assigned.pims-tasks__tab--selected {
+  background: #fef2f2;
+  border-color: #f87171;
+  color: #dc2626;
+}
+
+/* Watching — match purple nav superscript (#7c3aed) */
+.pims-tasks__tab--watching {
+  color: #7c3aed;
+  border-color: #c4b5fd;
+}
+
+.pims-tasks__tab--watching:hover {
+  background: #f5f3ff;
+}
+
+.pims-tasks__tab--watching.pims-tasks__tab--selected {
+  background: #f5f3ff;
+  border-color: #a78bfa;
+  color: #7c3aed;
 }
 
 .pims-tasks__filter {

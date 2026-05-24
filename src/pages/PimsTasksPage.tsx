@@ -22,23 +22,25 @@ import { taskLinkDisplayLabel, useTaskLinkLabels } from '../utils/taskLinkDispla
 import {
   completeTask,
   createTask,
+  fetchTasksSummary,
   getTask,
   listTasks,
   patchTask,
   type TaskLinkEntityType,
   type TaskLinkRow,
   type TaskListItem,
+  type TaskSummaryResponse,
 } from '../api/tasks';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import {
-  countTaskBuckets,
-  filterMyOpenTasksByBucket,
-  filterOpenTasksAssignedToEmployeeIds,
+  filterMyOpenTasksByAssignedTab,
+  filterVisibleWatchingTasks,
   notifyTasksChanged,
   normalizeEmployeeId,
   resolveMyEmployeeIds,
   taskAssigneeEmployeeId,
-  type TaskDueBucket,
+  VAYD_TASKS_CHANGED,
+  type AssignedTasksTab,
 } from '../utils/taskOwnership';
 import PimsTaskDetailView from '../components/pims/PimsTaskDetailView';
 import './PimsTasksPage.css';
@@ -47,21 +49,16 @@ const PAGE_SIZE = 50;
 const CLIENT_FILTER_CAP = 200;
 const LINK_FETCH_CAP = 28;
 
-type TabId = 'active' | 'expired' | 'upcoming' | 'sent' | 'completed';
+type TabId = AssignedTasksTab | 'watching' | 'sent' | 'completed';
 
-const BUCKET_TABS: TaskDueBucket[] = ['active', 'expired', 'upcoming'];
-
-function isBucketTab(tab: TabId): tab is TaskDueBucket {
-  return (BUCKET_TABS as string[]).includes(tab);
+function isBucketTab(tab: TabId): tab is AssignedTasksTab {
+  return tab === 'active' || tab === 'expired';
 }
 
-function filterSentTasks(rows: TaskListItem[], myEmployeeIds: number[]): TaskListItem[] {
-  if (myEmployeeIds.length === 0) return [];
-  return rows.filter((t) => {
-    const creator = normalizeEmployeeId(t.createdByEmployeeId);
-    return creator != null && myEmployeeIds.includes(creator);
-  });
-}
+const EMPTY_SUMMARY: TaskSummaryResponse = {
+  assigned: { active: 0, expired: 0, upcoming: 0, total: 0 },
+  watching: { active: 0, expired: 0, upcoming: 0, total: 0 },
+};
 
 function normalizeRoles(role: string | string[] | undefined): string[] {
   if (!role) return [];
@@ -333,7 +330,16 @@ export default function PimsTasksPage() {
   const myEmployeeId = myEmployeeIds[0] ?? null;
   const [branchFilter, setBranchFilter] = useState<string>('');
   const [tab, setTab] = useState<TabId>('active');
+  const [taskSummary, setTaskSummary] = useState<TaskSummaryResponse>(EMPTY_SUMMARY);
   const [myOpenTasks, setMyOpenTasks] = useState<TaskListItem[]>([]);
+  const [watchingTasks, setWatchingTasks] = useState<TaskListItem[]>([]);
+
+  const visibleWatchingTasks = useMemo(
+    () => filterVisibleWatchingTasks(watchingTasks),
+    [watchingTasks]
+  );
+
+  const watchingTabCount = visibleWatchingTasks.length;
 
   const [items, setItems] = useState<TaskListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -391,49 +397,117 @@ export default function PimsTasksPage() {
 
   const branchIdNum = branchFilter === '' ? undefined : Number(branchFilter);
 
-  const bucketCounts = useMemo(() => countTaskBuckets(myOpenTasks), [myOpenTasks]);
+  const loadTaskSummary = useCallback(async () => {
+    try {
+      const summary = await fetchTasksSummary(
+        branchIdNum != null && Number.isFinite(branchIdNum) ? { branchId: branchIdNum } : undefined
+      );
+      setTaskSummary(summary);
+      return summary;
+    } catch {
+      setTaskSummary(EMPTY_SUMMARY);
+      return EMPTY_SUMMARY;
+    }
+  }, [branchIdNum]);
 
-  const loadMyOpenTasks = useCallback(async () => {
+  const loadAssignedOpenTasks = useCallback(async () => {
+    if (myEmployeeIds.length === 0) {
+      setMyOpenTasks([]);
+      return [];
+    }
     const res = await listTasks({
+      involvement: 'assigned',
       includeDone: false,
       branchId: branchIdNum,
       limit: CLIENT_FILTER_CAP,
       offset: 0,
     });
-    const mine =
-      myEmployeeIds.length === 0 ? [] : filterOpenTasksAssignedToEmployeeIds(res.items, myEmployeeIds);
-    setMyOpenTasks(mine);
-    return mine;
+    setMyOpenTasks(res.items);
+    return res.items;
+  }, [branchIdNum, myEmployeeIds]);
+
+  const loadWatchingOpenTasks = useCallback(async () => {
+    if (myEmployeeIds.length === 0) {
+      setWatchingTasks([]);
+      return [];
+    }
+    const res = await listTasks({
+      involvement: 'watching',
+      includeDone: false,
+      branchId: branchIdNum,
+      limit: CLIENT_FILTER_CAP,
+      offset: 0,
+    });
+    setWatchingTasks(res.items);
+    return filterVisibleWatchingTasks(res.items);
   }, [branchIdNum, myEmployeeIds]);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        await loadMyOpenTasks();
+        await Promise.all([loadTaskSummary(), loadAssignedOpenTasks(), loadWatchingOpenTasks()]);
       } catch (e: unknown) {
         if (!cancelled) {
           setError(errMsg(e));
           setMyOpenTasks([]);
+          setTaskSummary(EMPTY_SUMMARY);
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [loadMyOpenTasks]);
+  }, [loadTaskSummary, loadAssignedOpenTasks, loadWatchingOpenTasks]);
 
   useEffect(() => {
+    const onChanged = () => {
+      void loadTaskSummary();
+      void loadWatchingOpenTasks();
+      if (isBucketTab(tab)) void loadAssignedOpenTasks();
+    };
+    window.addEventListener(VAYD_TASKS_CHANGED, onChanged);
+    return () => window.removeEventListener(VAYD_TASKS_CHANGED, onChanged);
+  }, [tab, loadTaskSummary, loadAssignedOpenTasks, loadWatchingOpenTasks]);
+
+  useEffect(() => {
+    if (tab === 'watching') {
+      setItems(visibleWatchingTasks);
+      setTotal(visibleWatchingTasks.length);
+      setOffset(visibleWatchingTasks.length);
+      return;
+    }
     if (!isBucketTab(tab)) return;
-    const rows =
-      myEmployeeIds.length === 0 ? [] : filterMyOpenTasksByBucket(myOpenTasks, tab);
+    const rows = myEmployeeIds.length === 0 ? [] : filterMyOpenTasksByAssignedTab(myOpenTasks, tab);
     setItems(rows);
     setTotal(rows.length);
     setOffset(rows.length);
-  }, [tab, myOpenTasks, myEmployeeIds]);
+  }, [tab, myOpenTasks, visibleWatchingTasks, myEmployeeIds]);
 
   useEffect(() => {
-    if (isBucketTab(tab)) return;
+    if (tab !== 'watching') return;
+    setLoading(true);
+    setError(null);
+    let cancelled = false;
+    void (async () => {
+      try {
+        await loadWatchingOpenTasks();
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setError(errMsg(e));
+          setWatchingTasks([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, loadWatchingOpenTasks]);
+
+  useEffect(() => {
+    if (isBucketTab(tab) || tab === 'watching') return;
     setOffset(0);
     setItems([]);
     setLoading(true);
@@ -443,16 +517,16 @@ export default function PimsTasksPage() {
       try {
         if (tab === 'sent') {
           const res = await listTasks({
+            involvement: 'created',
             includeDone: true,
             branchId: branchIdNum,
             limit: CLIENT_FILTER_CAP,
             offset: 0,
           });
           if (cancelled) return;
-          const rows = filterSentTasks(res.items, myEmployeeIds);
-          setItems(rows);
-          setTotal(rows.length);
-          setOffset(rows.length);
+          setItems(res.items);
+          setTotal(res.items.length);
+          setOffset(res.items.length);
         } else if (tab === 'completed') {
           const res = await listTasks({
             includeDone: true,
@@ -532,23 +606,29 @@ export default function PimsTasksPage() {
     setError(null);
     void (async () => {
       try {
+        await loadTaskSummary();
         if (isBucketTab(tab)) {
-          const mine = await loadMyOpenTasks();
-          const rows = filterMyOpenTasksByBucket(mine, tab);
+          const mine = await loadAssignedOpenTasks();
+          const rows = filterMyOpenTasksByAssignedTab(mine, tab);
+          setItems(rows);
+          setTotal(rows.length);
+          setOffset(rows.length);
+        } else if (tab === 'watching') {
+          const rows = await loadWatchingOpenTasks();
           setItems(rows);
           setTotal(rows.length);
           setOffset(rows.length);
         } else if (tab === 'sent') {
           const res = await listTasks({
+            involvement: 'created',
             includeDone: true,
             branchId: branchIdNum,
             limit: CLIENT_FILTER_CAP,
             offset: 0,
           });
-          const rows = filterSentTasks(res.items, myEmployeeIds);
-          setItems(rows);
-          setTotal(rows.length);
-          setOffset(rows.length);
+          setItems(res.items);
+          setTotal(res.items.length);
+          setOffset(res.items.length);
         } else if (tab === 'completed') {
           setOffset(0);
           const res = await listTasks({
@@ -566,11 +646,13 @@ export default function PimsTasksPage() {
         setError(errMsg(e));
         setItems([]);
         setMyOpenTasks([]);
+        setWatchingTasks([]);
+        setTaskSummary(EMPTY_SUMMARY);
       } finally {
         setLoading(false);
       }
     })();
-  }, [tab, branchIdNum, myEmployeeId, loadMyOpenTasks]);
+  }, [tab, branchIdNum, loadAssignedOpenTasks, loadWatchingOpenTasks, loadTaskSummary]);
 
   const backFromDetail = useCallback(() => {
     const next = new URLSearchParams(searchParams);
@@ -692,9 +774,12 @@ export default function PimsTasksPage() {
           + Task
         </button>
         <div>
-          <h1 className="pims-tasks__title">{tab === 'sent' ? 'Sent tasks' : 'Tasks'}</h1>
+          <h1 className="pims-tasks__title">
+            {tab === 'sent' ? 'Sent tasks' : tab === 'watching' ? 'Watching' : 'Tasks'}
+          </h1>
           {tab === 'sent' && <p className="pims-tasks__subtitle">Created by me</p>}
           {isBucketTab(tab) && <p className="pims-tasks__subtitle">Assigned to me</p>}
+          {tab === 'watching' && <p className="pims-tasks__subtitle">Tasks you watch (not assigned to you)</p>}
         </div>
       </div>
 
@@ -702,9 +787,9 @@ export default function PimsTasksPage() {
         <div className="pims-tasks__tabs" role="tablist" aria-label="Task views">
           {(
             [
-              ['active', `Active (${bucketCounts.active})`],
-              ['expired', `Expired (${bucketCounts.expired})`],
-              ['upcoming', `Upcoming (${bucketCounts.upcoming})`],
+              ['active', `Active (${taskSummary.assigned.active + taskSummary.assigned.upcoming})`],
+              ['expired', `Expired (${taskSummary.assigned.expired})`],
+              ['watching', `Watching (${watchingTabCount})`],
               ['sent', 'Sent'],
               ['completed', 'Completed'],
             ] as const
@@ -714,7 +799,9 @@ export default function PimsTasksPage() {
               type="button"
               role="tab"
               aria-selected={tab === id}
-              className={`pims-tasks__tab${tab === id ? ' pims-tasks__tab--active' : ''}`}
+              className={`pims-tasks__tab${tab === id ? ' pims-tasks__tab--selected' : ''}${
+                id === 'active' ? ' pims-tasks__tab--assigned' : ''
+              }${id === 'watching' ? ' pims-tasks__tab--watching' : ''}`}
               onClick={() => setTab(id as TabId)}
             >
               {label}
@@ -741,12 +828,16 @@ export default function PimsTasksPage() {
         </label>
       </div>
 
-      {(isBucketTab(tab) || tab === 'sent') && (
+      {(isBucketTab(tab) || tab === 'watching' || tab === 'sent') && (
         <p className="pims-tasks__count">
-          Showing up to {CLIENT_FILTER_CAP} open tasks assigned to you for Active / Expired / Upcoming counts.
+          {isBucketTab(tab)
+            ? `Showing up to ${CLIENT_FILTER_CAP} open tasks assigned to you.`
+            : tab === 'watching'
+              ? `Showing open tasks you are watching that are due today or earlier (up to ${CLIENT_FILTER_CAP}).`
+              : 'Tasks you created.'}
         </p>
       )}
-      {(isBucketTab(tab) || tab === 'sent') && myEmployeeIds.length === 0 && (
+      {(isBucketTab(tab) || tab === 'watching' || tab === 'sent') && myEmployeeIds.length === 0 && (
         <p className="pims-tasks__count pims-tasks__count--warn">
           Your session does not include an employee id, so assigned and sent filters cannot run. Match your login email to an employee record or add employeeId to your JWT.
         </p>
@@ -944,8 +1035,8 @@ function CreateTaskModal({ branches, employees, isPracticeAdmin, onClose, onCrea
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [dueLocal, setDueLocal] = useState('');
-  const [startLocal, setStartLocal] = useState(() => applyStartSchedule(1, 'weeks'));
-  const [dueStartMode, setDueStartMode] = useState<DueStartMode>('relative');
+  const [startLocal, setStartLocal] = useState(() => applyStartToday());
+  const [dueStartMode, setDueStartMode] = useState<DueStartMode>('today');
   const [dueAmount, setDueAmount] = useState('1');
   const [dueUnit, setDueUnit] = useState<DueScheduleUnit>('weeks');
   const [assignee, setAssignee] = useState('');

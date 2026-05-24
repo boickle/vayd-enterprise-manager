@@ -6,6 +6,11 @@ export function evetClientLink(pimsId: string) {
   return `${EVET_HOST}/Practice/Clients/Edit/${pimsId}`;
 }
 
+/** Create a new client in eVet. */
+export function evetCreateClientLink() {
+  return `${EVET_HOST}/Practice/Clients/Create/0`;
+}
+
 export function evetPatientLink(pimsId: string) {
   return `${EVET_HOST}/Practice/Patients/Edit/${pimsId}`;
 }

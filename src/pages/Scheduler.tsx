@@ -85,6 +85,7 @@ import ScheduleOverrideModal from '../components/ScheduleOverrideModal';
 import { EditVisitPreviewPopover } from '../components/EditVisitPreviewPopover';
 import {
   SchedulerVisitClientContext,
+  SchedulerVisitClientHeaderAlerts,
   SchedulerVisitClientZoneBadge,
   SchedulerVisitPatientContext,
 } from '../components/SchedulerVisitPatientContext';
@@ -112,7 +113,7 @@ import {
 } from '../utils/editVisitTypeScoreCompare';
 import { fetchEditVisitTimeScoreCompare } from '../utils/editVisitTimeScoreCompare';
 import { appointmentPracticeDateKey } from '../utils/editVisitTimeFields';
-import { submitTypeChangeAcceptedFeedback } from '../utils/routingBookFeedback';
+import { submitEditVisitPreviewAcceptedFeedback } from '../utils/routingBookFeedback';
 import {
   SchedulerBookModal,
   type SchedulerBookPrefill,
@@ -154,6 +155,11 @@ import {
   appointmentHasNoPatient,
   patientsForAppointment,
 } from '../utils/schedulerAddPet';
+import {
+  patientSexAbbrevDisplay,
+  patientSexHighlightTone,
+} from '../utils/schedulerVisitDisplay';
+import { enrichAppointmentPatientProfiles } from '../utils/schedulerPatientEnrich';
 import {
   buildRescheduleVisitPatches,
   buildRoutingRescheduleIntentFromAppointment,
@@ -618,6 +624,30 @@ function SchedulerApptCompleteBadge({ appt }: { appt: Appointment }) {
   );
 }
 
+function appointmentActualVisitTimesTitle(appt: Appointment, practiceTz: string): string | null {
+  const startIso = pickStr(appt.appointmentStartActual);
+  const endIso = pickStr(appt.appointmentEndActual);
+  if (!startIso && !endIso) return null;
+  const fmt = (iso: string) => {
+    const dt = DateTime.fromISO(iso, { zone: 'utc' }).setZone(practiceTz);
+    return dt.isValid ? dt.toFormat('h:mm a') : '—';
+  };
+  if (startIso && endIso) return `Visit: ${fmt(startIso)} – ${fmt(endIso)}`;
+  if (startIso) return `Visit started: ${fmt(startIso)}`;
+  return `Visit ended: ${fmt(endIso!)}`;
+}
+
+/** Clock when actual visit start/end has been recorded (Start / End Visit). */
+function SchedulerApptVisitTimesBadge({ appt }: { appt: Appointment }) {
+  const title = appointmentActualVisitTimesTitle(appt, PRACTICE_TZ);
+  if (!title) return null;
+  return (
+    <span className="scheduler-appt-visit-times-badge" title={title} aria-label={title}>
+      ⏰
+    </span>
+  );
+}
+
 function SchedulerMemberHeartInline({ membershipName }: { membershipName: string | null }) {
   return (
     <span className="scheduler-appt-member-heart" title={membershipName?.trim() || 'Member'} aria-hidden>
@@ -658,6 +688,7 @@ function SchedulerEventTitleBlock({
         {member.isMember ? <SchedulerMemberHeartInline membershipName={member.membershipName} /> : null}
         <span className="scheduler-event-title-fallback">{desc}</span>
         {zoneInTitle && zone ? <SchedulerZoneBadgeInline zoneShort={zone} title={zoneTitle} compact /> : null}
+        <SchedulerApptVisitTimesBadge appt={appt} />
         <SchedulerApptCompleteBadge appt={appt} />
       </Shell>
     );
@@ -676,6 +707,7 @@ function SchedulerEventTitleBlock({
         {member.isMember ? <SchedulerMemberHeartInline membershipName={member.membershipName} /> : null}
         <span className="scheduler-event-title-fallback">{fallback}</span>
         {zoneInTitle && zone ? <SchedulerZoneBadgeInline zoneShort={zone} title={zoneTitle} compact /> : null}
+        <SchedulerApptVisitTimesBadge appt={appt} />
         <SchedulerApptCompleteBadge appt={appt} />
       </Shell>
     );
@@ -697,10 +729,14 @@ function SchedulerEventTitleBlock({
       {clientLast ? (
         <>
           <span className="scheduler-event-title-client-last"> {clientLast}</span>
+          <SchedulerApptVisitTimesBadge appt={appt} />
           <SchedulerApptCompleteBadge appt={appt} />
         </>
       ) : (
-        <SchedulerApptCompleteBadge appt={appt} />
+        <>
+          <SchedulerApptVisitTimesBadge appt={appt} />
+          <SchedulerApptCompleteBadge appt={appt} />
+        </>
       )}
     </Shell>
   );
@@ -782,33 +818,6 @@ function patientBreedDisplayOnly(p: Patient): string | null {
   return pickStr(p.breedEntity?.name) ?? pickStr(p.breed) ?? null;
 }
 
-/** Compact sex for tooltip, e.g. FS / FI / MN / MI. */
-function patientSexAbbrevDisplay(p: Patient): string | null {
-  const raw = pickStr(p.sex)?.trim();
-  if (!raw) return null;
-  const compact = raw.replace(/[\s._-]+/g, '').toLowerCase();
-  if (compact === 'fs' || compact === 'sf') return 'FS';
-  if (compact === 'fi') return 'FI';
-  if (compact === 'mn') return 'MN';
-  if (compact === 'mi') return 'MI';
-  if (compact === 'cm') return 'CM';
-  if (compact === 'f') return 'F';
-  if (compact === 'm') return 'M';
-  const s = raw.toLowerCase();
-  const spayed = s.includes('spayed') || /\bspay\b/.test(s);
-  const neutered = s.includes('neutered') || s.includes('castrat') || /\bneuter\b/.test(s);
-  if (s.includes('female') || s.includes('bitch') || s.includes('queen')) {
-    return spayed ? 'FS' : 'FI';
-  }
-  if (s.includes('male') && !s.includes('female')) {
-    return neutered ? 'MN' : 'MI';
-  }
-  if (spayed && !s.includes('male')) return 'FS';
-  if (neutered && !s.includes('female')) return 'MN';
-  if (raw.length <= 4 && /^[A-Za-z]+$/i.test(raw)) return raw.toUpperCase();
-  return null;
-}
-
 /** Age from DOB at practice-local "today", e.g. `9y 1m`, `6m`, `3w`. */
 function patientAgeYearsMonthsDisplay(p: Patient): string | null {
   const dobIso = pickStr(p.dob);
@@ -886,21 +895,6 @@ function patientSpeciesIconKind(p: Patient): 'dog' | 'cat' | null {
   if (spec.includes('canine') || spec.includes('dog')) return 'dog';
   if (spec.includes('feline') || spec.includes('cat')) return 'cat';
   return null;
-}
-
-/** Blue vs pink patient highlight from PIMS sex string (best-effort); recognizes FS/FI/MN/MI etc. */
-function patientSexHighlightTone(p: Patient): 'male' | 'female' | 'neutral' {
-  const raw = (pickStr(p.sex) ?? '').trim();
-  if (!raw) return 'neutral';
-  const compact = raw.replace(/[\s._-]+/g, '').toLowerCase();
-  if (compact === 'fs' || compact === 'fi' || compact === 'sf' || compact === 'f') return 'female';
-  if (compact === 'mn' || compact === 'mi' || compact === 'm') return 'male';
-  const s = raw.toLowerCase();
-  if (s.includes('female') || s.includes('bitch') || s.includes('queen')) return 'female';
-  if (s.includes('male') && !s.includes('female')) return 'male';
-  if (s.includes('spayed') || /\bspay\b/.test(s)) return 'female';
-  if (s.includes('neutered') || s.includes('castrat') || /\bneuter\b/.test(s)) return 'male';
-  return 'neutral';
 }
 
 function userLikeLabel(v: unknown): string | null {
@@ -1292,18 +1286,23 @@ function buildSchedulerDriveHintForAppt(
   const isFixedTime = schedulerHouseholdFixedTimeApprox(h);
   const etaIso = slot?.eta ?? null;
   const etdIso = slot?.etd ?? null;
+  /** Appointment-type window (incl. type-preview patches) wins over routed slot windows. */
+  const apptWindowStart = appt.effectiveWindow?.startIso ?? null;
+  const apptWindowEnd = appt.effectiveWindow?.endIso ?? null;
   const windowStartIso =
-    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
-    (h as { windowStartIso?: string | null }).windowStartIso ??
-    (h as { effectiveWindow?: { startIso?: string } }).effectiveWindow?.startIso ??
-    appt.effectiveWindow?.startIso ??
-    null;
+    apptWindowStart && apptWindowEnd
+      ? apptWindowStart
+      : (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
+        (h as { windowStartIso?: string | null }).windowStartIso ??
+        (h as { effectiveWindow?: { startIso?: string } }).effectiveWindow?.startIso ??
+        null;
   const windowEndIso =
-    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
-    (h as { windowEndIso?: string | null }).windowEndIso ??
-    (h as { effectiveWindow?: { endIso?: string } }).effectiveWindow?.endIso ??
-    appt.effectiveWindow?.endIso ??
-    null;
+    apptWindowStart && apptWindowEnd
+      ? apptWindowEnd
+      : (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
+        (h as { windowEndIso?: string | null }).windowEndIso ??
+        (h as { effectiveWindow?: { endIso?: string } }).effectiveWindow?.endIso ??
+        null;
   const windowWarning = computeSchedulerTimelineWindowWarning(h, slot, showByDriveTime, (p) =>
     isFlexBlockItem(p as { blockLabel?: string; title?: string } | null | undefined)
   );
@@ -1342,6 +1341,45 @@ function visitDetailsEtaEtdLine(driveHint: SchedulerHoverDriveHint | null | unde
   const e = driveHint.etaIso ? formatIsoTimeShortInPracticeZone(driveHint.etaIso, tz) : '—';
   const d = driveHint.etdIso ? formatIsoTimeShortInPracticeZone(driveHint.etdIso, tz) : '—';
   return `${e} – ${d}`;
+}
+
+function visitTimeDeltaMinutes(
+  actualIso: string,
+  referenceIso: string,
+  practiceTz: string
+): number | null {
+  const actual = DateTime.fromISO(actualIso, { zone: 'utc' }).setZone(practiceTz);
+  const reference = DateTime.fromISO(referenceIso, { zone: 'utc' }).setZone(practiceTz);
+  if (!actual.isValid || !reference.isValid) return null;
+  return Math.round(actual.diff(reference, 'minutes').minutes);
+}
+
+function formatVisitTimeDeltaLabel(deltaMinutes: number): string {
+  const abs = Math.abs(deltaMinutes);
+  const unit = abs === 1 ? 'minute' : 'minutes';
+  if (deltaMinutes === 0) return 'ON TIME';
+  if (deltaMinutes < 0) return `${abs} ${unit} EARLY`;
+  return `${abs} ${unit} LATE`;
+}
+
+function visitDetailsActualTimeValue(
+  actualIso: string,
+  referenceIso: string | null | undefined,
+  practiceTz: string
+): ReactNode {
+  const time = formatIsoTimeShortInPracticeZone(actualIso, practiceTz);
+  if (!referenceIso) return time;
+  const delta = visitTimeDeltaMinutes(actualIso, referenceIso, practiceTz);
+  if (delta == null) return time;
+  const label = formatVisitTimeDeltaLabel(delta);
+  const tone = delta === 0 ? 'on-time' : delta < 0 ? 'early' : 'late';
+  return (
+    <>
+      {time}
+      {' · '}
+      <span className={`scheduler-visit-time-delta scheduler-visit-time-delta--${tone}`}>{label}</span>
+    </>
+  );
 }
 
 /** Format arrival window for Visit Highlights (appointment-type windows, not booked slot). */
@@ -1685,6 +1723,8 @@ function SchedulerAppointmentModal({
   const typeName = appt.appointmentType?.name || appt.appointmentType?.prettyName || 'Appointment';
   const etaLine = visitDetailsEtaEtdLine(driveHint ?? null);
   const windowLine = visitDetailsWindowLine(appt, driveHint ?? null);
+  const actualStartIso = pickStr(appt.appointmentStartActual);
+  const actualEndIso = pickStr(appt.appointmentEndActual);
 
   return (
     <div
@@ -1711,6 +1751,7 @@ function SchedulerAppointmentModal({
               <span className="scheduler-modal-title-client">{fullClientHouseholdName(c)}</span>
               <SchedulerVisitClientZoneBadge appt={appt} compact />
             </h2>
+            <SchedulerVisitClientHeaderAlerts appt={appt} />
             <SchedulerVisitPatientContext appt={appt} providers={providers} practiceTz={PRACTICE_TZ} />
             {start.isValid && end.isValid ? (
               <p className="scheduler-modal-subtitle">
@@ -1737,6 +1778,18 @@ function SchedulerAppointmentModal({
               <SchedulerModalKvCondensed label="Confirm status" value={pickStr(appt.confirmStatusName)} />
               {etaLine ? (
                 <SchedulerModalKvCondensed label="ETA/ETD" value={etaLine} />
+              ) : null}
+              {actualStartIso ? (
+                <SchedulerModalKvCondensed
+                  label="Actual arrival"
+                  value={visitDetailsActualTimeValue(actualStartIso, driveHint?.etaIso, PRACTICE_TZ)}
+                />
+              ) : null}
+              {actualEndIso ? (
+                <SchedulerModalKvCondensed
+                  label="Actual leave"
+                  value={visitDetailsActualTimeValue(actualEndIso, driveHint?.etdIso, PRACTICE_TZ)}
+                />
               ) : null}
               {windowLine ? (
                 <SchedulerModalKvCondensed label="Window" value={windowLine} />
@@ -1855,6 +1908,16 @@ function appointmentIsTodayOrFuture(appt: Appointment, practiceTz: string): bool
   if (!apptDay.isValid) return false;
   const today = DateTime.now().setZone(practiceTz).startOf('day');
   return apptDay.toMillis() >= today.toMillis();
+}
+
+/** Visit is on a calendar day after today — Start / End Visit is not available yet. */
+function appointmentIsFutureVisit(appt: Appointment, practiceTz: string): boolean {
+  const startRaw = appt.appointmentStart;
+  if (!startRaw) return false;
+  const apptDay = DateTime.fromISO(startRaw, { zone: 'utc' }).setZone(practiceTz).startOf('day');
+  if (!apptDay.isValid) return false;
+  const today = DateTime.now().setZone(practiceTz).startOf('day');
+  return apptDay.toMillis() > today.toMillis();
 }
 
 /** Visits being rescheduled (routing workspace, before a purple preview slot is chosen). */
@@ -2418,6 +2481,44 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         return next;
       });
     });
+    return () => {
+      cancelled = true;
+    };
+  }, [hover?.appt?.id, hover?.appt]);
+
+  /** Range rows may omit patient sex — hydrate from GET /appointments/:id on hover. */
+  useEffect(() => {
+    const appt = hover?.appt;
+    if (!appt?.id || appt.id === SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID) return;
+    const pts = patientsForAppointment(appt);
+    if (pts.length === 0) return;
+    if (!pts.some((p) => !patientSexAbbrevDisplay(p))) return;
+
+    let cancelled = false;
+    void (async () => {
+      let full: Appointment = appt;
+      if (!patientsForAppointment(full).some((p) => patientSexAbbrevDisplay(p))) {
+        full = await enrichAppointmentPatientProfiles(full);
+      }
+      if (!patientsForAppointment(full).some((p) => patientSexAbbrevDisplay(p))) {
+        const fetched = await fetchAppointmentById(appt.id, { practiceId: PRACTICE_ID });
+        if (cancelled || !fetched) return;
+        full = await enrichAppointmentPatientProfiles(fetched);
+      }
+
+      const hydratedPts = patientsForAppointment(full);
+      if (!hydratedPts.some((p) => patientSexAbbrevDisplay(p))) return;
+      setHover((prev) =>
+        prev?.appt.id === appt.id ? { ...prev, appt: full! } : prev
+      );
+      setRawAppointments((prev) => {
+        const idx = prev.findIndex((a) => a.id === appt.id);
+        if (idx === -1) return prev;
+        const next = [...prev];
+        next[idx] = full!;
+        return next;
+      });
+    })();
     return () => {
       cancelled = true;
     };
@@ -3532,15 +3633,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setAnchorDate(iso);
   };
 
-  const hoverDriveHint = useMemo((): SchedulerHoverDriveHint | null => {
+  const hoverAppt = useMemo(() => {
     if (!hover) return null;
+    return calendarAppointments.find((a) => a.id === hover.appt.id) ?? hover.appt;
+  }, [hover, calendarAppointments]);
+
+  const hoverDriveHint = useMemo((): SchedulerHoverDriveHint | null => {
+    if (!hoverAppt) return null;
     return buildSchedulerDriveHintForAppt(
-      hover.appt,
+      hoverAppt,
       showByDriveTime,
       resolvedPrimaryProviderId,
       driveDayByDate
     );
-  }, [hover, showByDriveTime, resolvedPrimaryProviderId, driveDayByDate]);
+  }, [hoverAppt, showByDriveTime, resolvedPrimaryProviderId, driveDayByDate]);
 
   const modalDriveHint = useMemo((): SchedulerHoverDriveHint | null => {
     if (!modalAppt) return null;
@@ -4080,7 +4186,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         }
         let routingFeedbackWarning: string | undefined;
         if (editPreviewScoreCompare?.feedbackHandoff) {
-          const fb = await submitTypeChangeAcceptedFeedback(editPreviewScoreCompare.feedbackHandoff);
+          const fb = await submitEditVisitPreviewAcceptedFeedback(editPreviewScoreCompare.feedbackHandoff);
           if (!fb.submitted && fb.error) {
             routingFeedbackWarning =
               'Appointment saved, but routing score could not be linked. ' + fb.error;
@@ -4263,6 +4369,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       try {
         switch (action.kind) {
           case 'visitTimes':
+            if (appointmentIsFutureVisit(appt, PRACTICE_TZ)) {
+              fail('Start / End Visit is not available for future visits.');
+              return;
+            }
             setActualVisitModal(appt);
             return;
           case 'complete': {
@@ -5597,7 +5707,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               maxHeight: tooltipPos.maxCardH,
             }}
           >
-            <SchedulerHoverContent appt={hover.appt} driveHint={hoverDriveHint} providers={providers} />
+            <SchedulerHoverContent appt={hoverAppt!} driveHint={hoverDriveHint} providers={providers} />
           </div>,
           document.body
         )}
@@ -5746,6 +5856,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               : undefined
           }
           showEditAppointment={canManualBookOnCalendar}
+          visitTimesDisabled={appointmentIsFutureVisit(contextMenu.appt, PRACTICE_TZ)}
+          visitTimesDisabledTitle={
+            appointmentIsFutureVisit(contextMenu.appt, PRACTICE_TZ)
+              ? 'Start / End Visit is not available for future visits.'
+              : undefined
+          }
           completeDisabled={
             contextMenu.appt.isComplete ||
             isAppointmentCancelledOnPracticeCalendar(contextMenu.appt) ||

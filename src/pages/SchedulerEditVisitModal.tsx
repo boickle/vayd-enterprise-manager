@@ -12,6 +12,10 @@ import {
 import { DateTime } from 'luxon';
 import { commitEditVisit, type EditVisitFormSnapshot } from '../utils/editVisitCommit';
 import type { Appointment } from '../api/roomLoader';
+import {
+  appointmentAlternateAddressText,
+  appointmentHasAlternateLocation,
+} from '../api/appointments';
 import type { AppointmentType } from '../api/appointmentSettings';
 import type { Provider } from '../api/employee';
 import {
@@ -24,10 +28,11 @@ import type { EditVisitPreviewKind } from '../utils/editVisitTimePreview';
 import type { EditVisitPreviewScoreCompare } from '../utils/editVisitTypeScoreCompare';
 import { EditVisitOverflowTag } from '../components/EditVisitOverflowTag';
 import {
+  SchedulerVisitClientHeaderAlerts,
   SchedulerVisitClientZoneBadge,
   SchedulerVisitPatientContext,
 } from '../components/SchedulerVisitPatientContext';
-import { submitTypeChangeAcceptedFeedback } from '../utils/routingBookFeedback';
+import { submitEditVisitPreviewAcceptedFeedback } from '../utils/routingBookFeedback';
 import { fullClientHouseholdName } from '../utils/schedulerVisitDisplay';
 import './Scheduler.css';
 
@@ -137,7 +142,8 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       toTimeLocalValue(appt.appointmentStart, practiceTz)
     );
     const [endTime, setEndTime] = useState(() => toTimeLocalValue(appt.appointmentEnd, practiceTz));
-    const alternateAddressText = (appt.alternateAddress?.addressText ?? '').trim();
+    const alternateAddressText = appointmentAlternateAddressText(appt) ?? '';
+    const hasAlternateRoutingAddress = appointmentHasAlternateLocation(appt);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const placementPreviewWasActiveRef = useRef(false);
@@ -321,7 +327,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         });
         let routingFeedbackWarning: string | undefined;
         if (placementPreviewActive && typeScoreCompare?.feedbackHandoff) {
-          const fb = await submitTypeChangeAcceptedFeedback(typeScoreCompare.feedbackHandoff);
+          const fb = await submitEditVisitPreviewAcceptedFeedback(typeScoreCompare.feedbackHandoff);
           if (!fb.submitted && fb.error) {
             routingFeedbackWarning =
               'Appointment saved, but routing score could not be linked. ' + fb.error;
@@ -424,6 +430,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
               </span>
               <SchedulerVisitClientZoneBadge appt={appt} compact />
             </h2>
+            <SchedulerVisitClientHeaderAlerts appt={appt} />
             <SchedulerVisitPatientContext appt={appt} providers={providers} practiceTz={practiceTz} />
             {visitStartEnd.start.isValid && visitStartEnd.end.isValid ? (
               <p className="scheduler-modal-subtitle">
@@ -462,8 +469,8 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
             >
               <p className="scheduler-edit-type-score-panel-title">
                 {placementPreviewKind === 'type'
-                  ? 'Routing score (same slot)'
-                  : 'Routing score (proposed time)'}
+                  ? 'Routing score (same slot, in-place compare)'
+                  : 'Routing score (proposed time, in-place compare)'}
               </p>
               {typeScoreLoading ? (
                 <p className="scheduler-edit-hint">
@@ -475,18 +482,19 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                 <p className="scheduler-edit-hint scheduler-edit-type-score-panel-error">
                   {typeScoreError}
                 </p>
-              ) : typeScoreCompare?.originalScoreLine ||
-                typeScoreCompare?.summaryLine ||
+              ) : typeScoreCompare?.summaryLine ||
+                typeScoreCompare?.originalScoreLine ||
                 typeScoreCompare?.newTypeUnavailableLine ||
                 typeScoreCompare?.overflowOverrunSeconds != null ? (
                 <>
-                  {typeScoreCompare.originalScoreLine ? (
-                    <p className="scheduler-edit-type-score-panel-line">
-                      {typeScoreCompare.originalScoreLine}
-                    </p>
-                  ) : null}
                   {typeScoreCompare.summaryLine ? (
                     <p className="scheduler-edit-type-score-panel-line">{typeScoreCompare.summaryLine}</p>
+                  ) : null}
+                  {typeScoreCompare.originalScoreLine &&
+                  typeScoreCompare.originalScoreLine !== typeScoreCompare.summaryLine ? (
+                    <p className="scheduler-edit-type-score-panel-line scheduler-edit-hint">
+                      {typeScoreCompare.originalScoreLine}
+                    </p>
                   ) : null}
                   {typeScoreCompare.newTypeUnavailableLine ? (
                     <p className="scheduler-edit-hint scheduler-edit-type-score-panel-unavailable">
@@ -582,22 +590,58 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                 Date can only be changed by rescheduling. Adjust start and end times only.
               </p>
 
-              {clientHomeSummary ? (
-                <div className="scheduler-edit-field scheduler-edit-readonly">
-                  <span>Client home address</span>
-                  <div className="scheduler-edit-client-home">{clientHomeSummary}</div>
+              {hasAlternateRoutingAddress ? (
+                <div
+                  className="scheduler-edit-alternate-callout"
+                  role="alert"
+                  aria-label="Alternate routing address"
+                >
+                  <div className="scheduler-edit-alternate-callout-head">
+                    <span
+                      className="scheduler-alt-location-badge scheduler-alt-location-badge--callout"
+                      title="Alternate routing address (overrides client home for drive time)"
+                      aria-hidden
+                    >
+                      ALT
+                    </span>
+                    <span className="scheduler-edit-alternate-callout-title">
+                      Alternate address (routing)
+                    </span>
+                  </div>
+                  <p className="scheduler-edit-alternate-callout-lead">
+                    This visit routes to a different stop than the client&apos;s home address.
+                  </p>
+                  <p className="scheduler-edit-alternate-callout-address">
+                    {alternateAddressText || 'Alternate address on file (loading…)'}
+                  </p>
+                  {clientHomeSummary ? (
+                    <p className="scheduler-edit-alternate-callout-home">
+                      <span className="scheduler-edit-alternate-callout-home-label">Client home: </span>
+                      {clientHomeSummary.replace(/\n/g, ', ')}
+                    </p>
+                  ) : null}
+                  <p className="scheduler-edit-alternate-callout-hint">
+                    Drive time and ETA use the alternate address above. To change it, reschedule this visit.
+                  </p>
                 </div>
-              ) : null}
+              ) : (
+                <>
+                  {clientHomeSummary ? (
+                    <div className="scheduler-edit-field scheduler-edit-readonly">
+                      <span>Client home address</span>
+                      <div className="scheduler-edit-client-home">{clientHomeSummary}</div>
+                    </div>
+                  ) : null}
 
-              <div className="scheduler-edit-field scheduler-edit-readonly scheduler-edit-field--full">
-                <span>Alternate address (routing)</span>
-                <div className="scheduler-edit-client-home">
-                  {alternateAddressText || '— Uses client home address for routing.'}
-                </div>
-                <p className="scheduler-edit-hint">
-                  Alternate stop location can only be set when rescheduling.
-                </p>
-              </div>
+                  <div className="scheduler-edit-field scheduler-edit-readonly scheduler-edit-field--full">
+                    <span>Alternate address (routing)</span>
+                    <div className="scheduler-edit-client-home">Uses client home address for routing.</div>
+                    <p className="scheduler-edit-hint">
+                      Alternate stop location can only be set when rescheduling.
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
           </section>
         </div>

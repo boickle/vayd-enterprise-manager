@@ -15,6 +15,7 @@ import type { Provider } from '../api/employee';
 import type { AppointmentType } from '../api/appointmentSettings';
 import type { RescheduleVisitPatch } from '../utils/routingRescheduleIntent';
 import { Field } from '../components/Field';
+import { BookPatientRemindersLink } from '../components/BookPatientRemindersLink';
 import { appendScoutBookedDescription } from '../utils/bookedAppointmentDescription';
 import './Scheduler.css';
 
@@ -102,7 +103,13 @@ type Props = {
 
 type SearchMode = 'client' | 'patient';
 
-type PetRow = { id: number | string; name: string; isActive?: boolean; isDeleted?: boolean };
+type PetRow = {
+  id: number | string;
+  name: string;
+  alerts?: string | null;
+  isActive?: boolean;
+  isDeleted?: boolean;
+};
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -131,11 +138,40 @@ export function extractPatientsFromClientPayload(payload: unknown): PetRow[] {
     out.push({
       id,
       name,
+      alerts: pickStr(o.alerts),
       isActive: o.isActive === true || o.isActive === 1 ? true : o.isActive === false ? false : undefined,
       isDeleted: o.isDeleted === true || o.isDeleted === 1 ? true : o.isDeleted === false ? false : undefined,
     });
   }
   return out;
+}
+
+export function extractClientAlertsFromPayload(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const row = payload as Record<string, unknown>;
+  return pickStr(row.alerts) ?? pickStr(row.clientAlert);
+}
+
+function BookClientAlerts({ alerts }: { alerts: string | null | undefined }) {
+  const text = alerts?.trim();
+  if (!text) return null;
+  return (
+    <div className="scheduler-modal-client-header-alerts scheduler-book-client-alerts" role="alert">
+      <span className="scheduler-modal-client-header-alerts-title">Client alerts</span>
+      {text}
+    </div>
+  );
+}
+
+function BookPatientAlerts({ alerts }: { alerts: string | null | undefined }) {
+  const text = alerts?.trim();
+  if (!text) return null;
+  return (
+    <div className="scheduler-modal-alerts-box scheduler-book-patient-alerts" role="alert">
+      <span className="scheduler-modal-alerts-box-label">Patient alerts</span>
+      {text}
+    </div>
+  );
 }
 
 function clientDisplayName(c: ClientSearchRow): string {
@@ -226,6 +262,7 @@ export function SchedulerBookModal({
 
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [selectedClientLabel, setSelectedClientLabel] = useState('');
+  const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(null);
   const [clientPets, setClientPets] = useState<PetRow[]>([]);
   const [loadingClientPets, setLoadingClientPets] = useState(false);
 
@@ -294,6 +331,23 @@ export function SchedulerBookModal({
     });
   }, [clientPets, prefill?.excludePatientIds]);
 
+  const patientAlertsById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of clientPets) {
+      const alerts = p.alerts?.trim();
+      if (alerts) map.set(String(p.id), alerts);
+    }
+    return map;
+  }, [clientPets]);
+
+  const patientAlertsFor = useCallback(
+    (patientId: string | null | undefined) => {
+      if (!patientId?.trim()) return null;
+      return patientAlertsById.get(patientId.trim()) ?? null;
+    },
+    [patientAlertsById]
+  );
+
   const clientHasNoPetsOnFile =
     hasLinkedClient && !loadingClientPets && petChoices.length === 0;
 
@@ -357,6 +411,7 @@ export function SchedulerBookModal({
     setPatientResults([]);
     setSelectedClientId(null);
     setSelectedClientLabel('');
+    setSelectedClientAlerts(null);
     setClientPets([]);
     setSelectedPatientId(null);
     setSelectedPatientLabel('');
@@ -465,6 +520,7 @@ export function SchedulerBookModal({
         setSelectedClientId(cid);
         setSelectedClientLabel(prefill?.clientLabel?.trim() || `Client #${cid}`);
         setClientPets(extractPatientsFromClientPayload(payload));
+        setSelectedClientAlerts(extractClientAlertsFromPayload(payload));
         setSelectedPatientId(null);
         setSelectedPatientLabel('');
       } catch {
@@ -472,6 +528,7 @@ export function SchedulerBookModal({
         setSelectedClientId(cid);
         setSelectedClientLabel(prefill?.clientLabel?.trim() || `Client #${cid}`);
         setClientPets([]);
+        setSelectedClientAlerts(null);
         setSelectedPatientId(null);
         setSelectedPatientLabel('');
       } finally {
@@ -501,12 +558,6 @@ export function SchedulerBookModal({
       setRoutingBookVisitEdits([]);
       return;
     }
-    const preferred = new Set(
-      (
-        prefill.preferredPatientIds ??
-        (prefill.preferredPatientId ? [prefill.preferredPatientId] : [])
-      ).map(String)
-    );
     const defaultType =
       prefill.appointmentTypeId != null &&
       appointmentTypes.some((t) => String(t.id) === String(prefill.appointmentTypeId))
@@ -515,12 +566,12 @@ export function SchedulerBookModal({
           ? String(appointmentTypes[0].id)
           : '';
     const defaultDesc = prefill.defaultDescription?.trim() ?? '';
+    const autoSelectOnlyPet = petChoices.length === 1;
     setRoutingBookVisitEdits(
-      petChoices.map((p, idx) => ({
+      petChoices.map((p) => ({
         patientId: String(p.id),
         patientName: p.name,
-        selected:
-          preferred.size > 0 ? preferred.has(String(p.id)) : idx === 0,
+        selected: autoSelectOnlyPet,
         appointmentTypeId: defaultType,
         description: defaultDesc,
       }))
@@ -528,8 +579,6 @@ export function SchedulerBookModal({
   }, [
     open,
     prefill?.routingPreviewBook,
-    prefill?.preferredPatientIds,
-    prefill?.preferredPatientId,
     prefill?.appointmentTypeId,
     prefill?.defaultDescription,
     petChoices,
@@ -628,12 +677,15 @@ export function SchedulerBookModal({
     setSelectedPatientId(null);
     setSelectedPatientLabel('');
     setClientPets([]);
+    setSelectedClientAlerts(null);
     setLoadingClientPets(true);
     try {
       const payload = await fetchClientByIdStaff(id);
       setClientPets(extractPatientsFromClientPayload(payload));
+      setSelectedClientAlerts(extractClientAlertsFromPayload(payload));
     } catch {
       setClientPets([]);
+      setSelectedClientAlerts(null);
     } finally {
       setLoadingClientPets(false);
     }
@@ -650,12 +702,19 @@ export function SchedulerBookModal({
       setSelectedClientLabel(p.clientLabel ?? `Client #${p.clientId}`);
       setLoadingClientPets(true);
       fetchClientByIdStaff(p.clientId)
-        .then((payload) => setClientPets(extractPatientsFromClientPayload(payload)))
-        .catch(() => setClientPets([]))
+        .then((payload) => {
+          setClientPets(extractPatientsFromClientPayload(payload));
+          setSelectedClientAlerts(extractClientAlertsFromPayload(payload));
+        })
+        .catch(() => {
+          setClientPets([]);
+          setSelectedClientAlerts(null);
+        })
         .finally(() => setLoadingClientPets(false));
     } else {
       setSelectedClientId(null);
       setSelectedClientLabel('');
+      setSelectedClientAlerts(null);
       setClientPets([]);
     }
   }, []);
@@ -890,6 +949,7 @@ export function SchedulerBookModal({
                   prefill?.clientLabel?.trim() ||
                   (prefill?.clientId ? `Client #${prefill.clientId}` : '…')}
               </span>
+              <BookClientAlerts alerts={selectedClientAlerts} />
               {prefill?.coVisitAddPet ? (
                 <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
                   This adds another appointment at the same time for a different pet. Pets already scheduled in
@@ -1000,6 +1060,7 @@ export function SchedulerBookModal({
                 <div className="scheduler-book-selected">
                   <span className="scheduler-book-selected-label">Client</span>
                   <span className="scheduler-book-selected-value">{selectedClientLabel}</span>
+                  <BookClientAlerts alerts={selectedClientAlerts} />
                 </div>
               ) : null}
             </>
@@ -1008,15 +1069,25 @@ export function SchedulerBookModal({
           {!perVisitReschedule && !perVisitRoutingBook ? (
           <Field label="Patient">
             {isRescheduleBook ? (
-              <div className="scheduler-book-selected">
-                <span className="scheduler-book-selected-value">
-                  {selectedPatientLabel || '…'}
-                </span>
-              </div>
+              <>
+                <div className="scheduler-book-selected scheduler-book-patient-name-row">
+                  <span className="scheduler-book-selected-value">
+                    {selectedPatientLabel || '…'}
+                  </span>
+                  {selectedPatientId ? (
+                    <BookPatientRemindersLink
+                      patientId={selectedPatientId}
+                      patientName={selectedPatientLabel || ''}
+                    />
+                  ) : null}
+                </div>
+                <BookPatientAlerts alerts={patientAlertsFor(selectedPatientId)} />
+              </>
             ) : loadingClientPets ? (
               <div className="scheduler-book-hint">Loading patients…</div>
             ) : petChoices.length > 0 ? (
-              <select
+              <>
+                <select
                 className="scheduler-book-input"
                 value={selectedPatientId ?? ''}
                 onChange={(e) => {
@@ -1034,10 +1105,29 @@ export function SchedulerBookModal({
                   </option>
                 ))}
               </select>
+                {selectedPatientId ? (
+                  <>
+                    <div className="scheduler-book-patient-reminders-below">
+                      <BookPatientRemindersLink
+                        patientId={selectedPatientId}
+                        patientName={selectedPatientLabel || ''}
+                      />
+                    </div>
+                    <BookPatientAlerts alerts={patientAlertsFor(selectedPatientId)} />
+                  </>
+                ) : null}
+              </>
             ) : selectedPatientId ? (
-              <div className="scheduler-book-selected">
-                <span className="scheduler-book-selected-value">{selectedPatientLabel}</span>
-              </div>
+              <>
+                <div className="scheduler-book-selected scheduler-book-patient-name-row">
+                  <span className="scheduler-book-selected-value">{selectedPatientLabel}</span>
+                  <BookPatientRemindersLink
+                    patientId={selectedPatientId}
+                    patientName={selectedPatientLabel || ''}
+                  />
+                </div>
+                <BookPatientAlerts alerts={patientAlertsFor(selectedPatientId)} />
+              </>
             ) : selectedClientId && clientPets.length > 0 ? (
               <div className="scheduler-book-hint muted">
                 Every pet on file for this client is already in this visit block on the schedule.
@@ -1105,9 +1195,15 @@ export function SchedulerBookModal({
                       className="scheduler-book-reschedule-visit"
                     >
                       <div className="scheduler-book-reschedule-visit-meta">
-                        <span className="scheduler-book-reschedule-visit-name">
-                          {visit.patientName}
-                        </span>
+                        <div className="scheduler-book-patient-name-row">
+                          <span className="scheduler-book-reschedule-visit-name">
+                            {visit.patientName}
+                          </span>
+                          <BookPatientRemindersLink
+                            patientId={visit.patientId}
+                            patientName={visit.patientName}
+                          />
+                        </div>
                         <span className="scheduler-book-reschedule-visit-was muted">
                           Was {visit.scheduledTimeLabel}
                         </span>
@@ -1115,6 +1211,7 @@ export function SchedulerBookModal({
                           {visit.appointmentTypeLabel}
                         </span>
                       </div>
+                      <BookPatientAlerts alerts={patientAlertsFor(visit.patientId)} />
                       <label className="scheduler-book-reschedule-visit-desc">
                         <span className="scheduler-book-reschedule-visit-desc-label muted">
                           Description
@@ -1142,19 +1239,30 @@ export function SchedulerBookModal({
                 <div className="scheduler-book-reschedule-visits">
                   {routingBookVisitEdits.map((visit, idx) => (
                     <div key={visit.patientId} className="scheduler-book-reschedule-visit">
-                      <label className="scheduler-book-routing-patient-check">
-                        <input
-                          type="checkbox"
-                          checked={visit.selected}
-                          onChange={(e) => {
-                            const checked = e.target.checked;
-                            setRoutingBookVisitEdits((rows) =>
-                              rows.map((row, i) => (i === idx ? { ...row, selected: checked } : row))
-                            );
-                          }}
+                      <div className="scheduler-book-routing-patient-head">
+                        <label className="scheduler-book-routing-patient-check">
+                          <input
+                            type="checkbox"
+                            checked={visit.selected}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setRoutingBookVisitEdits((rows) =>
+                                rows.map((row, i) =>
+                                  i === idx ? { ...row, selected: checked } : row
+                                )
+                              );
+                            }}
+                          />
+                          <span className="scheduler-book-reschedule-visit-name">
+                            {visit.patientName}
+                          </span>
+                        </label>
+                        <BookPatientRemindersLink
+                          patientId={visit.patientId}
+                          patientName={visit.patientName}
                         />
-                        <span className="scheduler-book-reschedule-visit-name">{visit.patientName}</span>
-                      </label>
+                      </div>
+                      <BookPatientAlerts alerts={patientAlertsFor(visit.patientId)} />
                       <Field label="Appointment type">
                         <select
                           className="scheduler-book-input"

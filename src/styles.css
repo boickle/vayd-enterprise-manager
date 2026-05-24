@@ -157,6 +157,15 @@ main.schedule-main-wrapper .scheduler-page:not(.scheduler-page--embedded) {
   background: #dc2626;
 }
 
+.navbar-schedule-tab-badge--watching {
+  background: #7c3aed;
+}
+
+.schedule-app__tab--active .navbar-schedule-tab-badge--watching {
+  color: #fff !important;
+  background: #7c3aed;
+}
+
 .navbar-schedule-horizontal-nav {
   display: flex;
   flex-wrap: wrap;

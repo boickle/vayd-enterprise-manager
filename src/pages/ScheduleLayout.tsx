@@ -30,12 +30,12 @@ import {
   useRoutingCalendarPreviewActive,
   useRoutingCalendarPreviewNavigationGuard,
 } from '../utils/routingCalendarPreviewGuard';
+import { evetCreateClientLink } from '../utils/evet';
 import './ScheduleLayout.css';
 
 const SCHEDULE_RAIL_COLLAPSED_KEY = 'vayd-schedule-rail-collapsed';
 
 /** Sidebar quick actions / queues hidden until flows are ready. */
-const SHOW_RAIL_NEW_CLIENT = false;
 const SHOW_RAIL_RESTOCK_LOCATION = false;
 const SHOW_RAIL_WORK_QUEUES = false;
 
@@ -203,18 +203,18 @@ export default function ScheduleLayout() {
               </span>
               <span className="schedule-app__quick-link-label">+ Appointment</span>
             </NavLink>
-            {SHOW_RAIL_NEW_CLIENT ? (
-              <NavLink
-                to="/schedule/clients"
-                className="schedule-app__quick-link"
-                title={railCollapsedEffective ? 'New Client' : undefined}
-              >
-                <span className="schedule-app__quick-link-icon" aria-hidden>
-                  <UserPlus size={18} strokeWidth={1.75} />
-                </span>
-                <span className="schedule-app__quick-link-label">New Client</span>
-              </NavLink>
-            ) : null}
+            <a
+              href={evetCreateClientLink()}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="schedule-app__quick-link"
+              title={railCollapsedEffective ? 'New Client' : undefined}
+            >
+              <span className="schedule-app__quick-link-icon" aria-hidden>
+                <UserPlus size={18} strokeWidth={1.75} />
+              </span>
+              <span className="schedule-app__quick-link-label">+ New Client</span>
+            </a>
             <NavLink
               to="/schedule/room-loader"
               className="schedule-app__quick-link"

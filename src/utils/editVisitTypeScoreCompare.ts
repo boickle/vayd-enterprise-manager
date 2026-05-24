@@ -4,76 +4,14 @@ import type { Provider } from '../api/employee';
 import { fetchTypeChangePreview, type TypeChangePreviewResponse } from '../api/routing';
 import type { TypeChangeFeedbackHandoff } from '../api/routing';
 import type { Appointment } from '../api/roomLoader';
-import {
-  feedbackHandoffFromPreviewResult,
-  inPlacePreviewOverflowOverrunSeconds,
-} from './editVisitPreviewScoreHandoff';
-import {
-  rescheduleOriginalScoreSummary,
-  rescheduleScoreHeaderSuffix,
-} from './routingRescheduleScoreCompare';
+import { buildEditVisitPreviewScoreCompare } from './editVisitInPlaceScoreCompare';
 
-export type EditVisitTypeScoreCompare = {
-  originalScore: number | null;
-  newScore: number | null;
-  headerSuffix: string | null;
-  summaryLine: string | null;
-  originalScoreLine: string | null;
-  newTypeUnavailableLine: string | null;
-  windowLine: string | null;
-  windowWarningMayChange: boolean;
-  arrivalWindowAfter: { startIso: string; endIso: string } | null;
-  withNewTypeFeasible: boolean | null;
-  withNewTypeReason: string | null;
-  /** From `withNewType.scoringComponents` — downstream visits may need window badges on the calendar. */
-  downstreamWindowEdge: number | null;
-  /** When preview scored with depot overflow — informational, does not block score or feedback. */
-  overflowOverrunSeconds: number | null;
-  /** For POST /routing/feedback after Book; null when infeasible or unscorable. */
-  feedbackHandoff: TypeChangeFeedbackHandoff | null;
-};
+export type EditVisitTypeScoreCompare = import('./editVisitInPlaceScoreCompare').EditVisitPreviewScoreCompare;
 
 /** Shared score-compare shape for type and time edit-visit previews. */
 export type EditVisitPreviewScoreCompare = EditVisitTypeScoreCompare;
 
-function formatScore(n: number): string {
-  return Number.isInteger(n) ? String(n) : n.toFixed(1);
-}
-
-export function humanizeInPlaceReason(
-  reason: string,
-  context: 'type' | 'time' = 'type'
-): string {
-  const r = reason.trim().toLowerCase();
-  switch (r) {
-    case 'window-violation':
-      return context === 'time'
-        ? 'This time cannot be served within the arrival window at this slot.'
-        : 'This type cannot be served on time at the current slot (arrival window or fixed-time violation).';
-    case 'personal-block-conflict':
-      return 'The visit overlaps a personal block at this time.';
-    case 'overtime':
-      return context === 'time'
-        ? 'This time would push return-to-depot past the allowed overtime.'
-        : 'This type at this slot would push return-to-depot past the allowed overtime.';
-    case 'drive-infeasible':
-      return context === 'time'
-        ? 'Drive timing is infeasible at this time on the route.'
-        : 'Drive timing is infeasible at this slot with the new type.';
-    default:
-      return reason.trim().replace(/-/g, ' ');
-  }
-}
-
-/** Numeric score from in-place preview snapshot — include even when feasible is false. */
-export function inPlacePreviewNewScore(
-  snapshot: { found?: boolean; score?: number | null } | null | undefined
-): number | null {
-  if (!snapshot?.found || typeof snapshot.score !== 'number' || !Number.isFinite(snapshot.score)) {
-    return null;
-  }
-  return snapshot.score;
-}
+export { humanizeInPlaceReason, inPlacePreviewNewScore } from './editVisitInPlaceScoreCompare';
 
 function resolveDoctorPimsId(appt: Appointment, providers: readonly Provider[]): string | null {
   const pp = appt.primaryProvider;
@@ -159,6 +97,7 @@ export async function fetchEditVisitTypeScoreCompare(args: {
   const empty = (summaryLine: string): EditVisitTypeScoreCompare => ({
     originalScore: null,
     newScore: null,
+    delta: null,
     headerSuffix: null,
     summaryLine,
     originalScoreLine: null,
@@ -194,24 +133,6 @@ export async function fetchEditVisitTypeScoreCompare(args: {
     preview.arrivalWindow?.after?.startIso && preview.arrivalWindow?.after?.endIso
       ? preview.arrivalWindow.after
       : null;
-  const withNewTypeFeasible =
-    preview.withNewType.feasible === true
-      ? true
-      : preview.withNewType.feasible === false
-        ? false
-        : null;
-  const withNewTypeReason = preview.withNewType.reason?.trim() || null;
-  const downstreamEdge = preview.withNewType.scoringComponents?.downstreamWindowEdge;
-  const downstreamWindowEdge =
-    typeof downstreamEdge === 'number' && Number.isFinite(downstreamEdge) && downstreamEdge > 0
-      ? downstreamEdge
-      : null;
-  const feedbackHandoff = feedbackHandoffFromPreviewResult({
-    feedbackHandoff: preview.feedbackHandoff,
-    withNew: preview.withNewType,
-    apptId,
-  });
-  const overflowOverrunSeconds = inPlacePreviewOverflowOverrunSeconds(preview.withNewType);
 
   const windowLine = windowLineFromPreview(preview, originalType, newType, practiceTz);
   const windowWarningMayChange = Boolean(
@@ -220,70 +141,15 @@ export async function fetchEditVisitTypeScoreCompare(args: {
         isFixedTimeTypeName(originalType?.name || originalType?.prettyName || ''))
   );
 
-  const originalScore =
-    preview.original.found && typeof preview.original.score === 'number'
-      ? preview.original.score
-      : null;
-  const newScore = inPlacePreviewNewScore(preview.withNewType);
-  const isInfeasible = preview.withNewType.feasible === false;
-
-  const originalVisitForSummary = {
-    found: originalScore != null,
-    score: originalScore ?? undefined,
-    appointmentId: apptId,
-  };
-  const originalScoreLine = rescheduleOriginalScoreSummary(originalVisitForSummary);
-
-  if (newScore == null) {
-    const reason = preview.withNewType.reason
-      ? humanizeInPlaceReason(preview.withNewType.reason, 'type')
-      : preview.withNewType.feasible === false
-        ? 'This type is not feasible at the current scheduled time.'
-        : 'Could not score this visit at the current slot with the new type.';
-    return {
-      originalScore,
-      newScore: null,
-      headerSuffix: null,
-      summaryLine: originalScoreLine == null ? reason : null,
-      originalScoreLine,
-      newTypeUnavailableLine: reason,
-      windowLine,
-      windowWarningMayChange,
-      arrivalWindowAfter,
-      withNewTypeFeasible,
-      withNewTypeReason,
-      downstreamWindowEdge,
-      overflowOverrunSeconds,
-      feedbackHandoff: null,
-    };
-  }
-
-  const headerSuffix = rescheduleScoreHeaderSuffix(newScore, originalVisitForSummary);
-  const summaryLine = headerSuffix
-    ? headerSuffix.replace(/^\(/, '').replace(/\)$/, '')
-    : `Score with new type: ${formatScore(newScore)}`;
-
-  const infeasibleReason =
-    isInfeasible && preview.withNewType.reason
-      ? humanizeInPlaceReason(preview.withNewType.reason, 'type')
-      : isInfeasible
-        ? 'This type is not feasible at the current scheduled time.'
-        : null;
-
-  return {
-    originalScore,
-    newScore,
-    headerSuffix,
-    summaryLine,
-    originalScoreLine: infeasibleReason ? null : originalScoreLine,
-    newTypeUnavailableLine: infeasibleReason,
+  return buildEditVisitPreviewScoreCompare({
+    original: preview.original,
+    withNew: preview.withNewType,
+    apiDelta: preview.delta,
+    context: 'type',
+    apptId,
+    feedbackHandoffRaw: preview.feedbackHandoff,
     windowLine,
     windowWarningMayChange,
     arrivalWindowAfter,
-    withNewTypeFeasible,
-    withNewTypeReason,
-    downstreamWindowEdge,
-    overflowOverrunSeconds,
-    feedbackHandoff: isInfeasible ? null : feedbackHandoff,
-  };
+  });
 }

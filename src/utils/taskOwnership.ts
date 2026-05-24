@@ -1,4 +1,4 @@
-import type { TaskListItem } from '../api/tasks';
+import type { TaskListItem, TaskSummaryResponse } from '../api/tasks';
 import { resolveEmployeeIdFromToken } from './practiceIdFromToken';
 
 /** Fired after task create, complete, or reassignment so the nav badge can refresh. */
@@ -112,6 +112,27 @@ function startOfDayMsForTimestamp(ms: number): number {
 }
 
 /**
+ * Watching tab + purple nav badge: hide until the due calendar day (or, with no due,
+ * until the start calendar day when start is set).
+ */
+export function isWatchingTaskVisible(task: TaskListItem, now = Date.now()): boolean {
+  if (!isTaskOpen(task)) return false;
+  const due = taskDueMs(task);
+  if (due != null) {
+    return startOfDayMsForTimestamp(due) <= startOfTodayMs(now);
+  }
+  const start = taskStartMs(task);
+  if (start != null) {
+    return startOfDayMsForTimestamp(start) <= startOfTodayMs(now);
+  }
+  return true;
+}
+
+export function filterVisibleWatchingTasks(items: TaskListItem[], now = Date.now()): TaskListItem[] {
+  return items.filter((t) => isWatchingTaskVisible(t, now));
+}
+
+/**
  * Work has not begun yet: start is on a future calendar day, or (no start) due is after this week.
  * Start "today" counts as active even if the clock time is later today.
  */
@@ -154,6 +175,37 @@ export function navTasksBadgeCount(items: TaskListItem[], employeeIds: number[],
     const bucket = classifyOpenTaskByDue(t, now);
     return bucket === 'active' || bucket === 'expired';
   }).length;
+}
+
+/** Red nav badge: assigned open tasks (active + upcoming + expired). */
+export function navAssignedBadgeCountFromSummary(summary: TaskSummaryResponse): number {
+  const a = summary.assigned;
+  return a.active + a.upcoming + a.expired;
+}
+
+/** Purple nav badge: watching tasks visible today (due/start day reached). */
+export function navWatchingBadgeCountFromSummary(summary: TaskSummaryResponse): number {
+  return summary.watching.active + summary.watching.expired;
+}
+
+export function navWatchingBadgeCountFromTasks(items: TaskListItem[], now = Date.now()): number {
+  return filterVisibleWatchingTasks(items, now).length;
+}
+
+export type AssignedTasksTab = 'active' | 'expired';
+
+export function filterMyOpenTasksByAssignedTab(
+  items: TaskListItem[],
+  tab: AssignedTasksTab,
+  now = Date.now()
+): TaskListItem[] {
+  if (tab === 'expired') {
+    return items.filter((t) => classifyOpenTaskByDue(t, now) === 'expired');
+  }
+  return items.filter((t) => {
+    const bucket = classifyOpenTaskByDue(t, now);
+    return bucket === 'active' || bucket === 'upcoming';
+  });
 }
 
 export function filterMyOpenTasksByBucket(items: TaskListItem[], bucket: TaskDueBucket, now = Date.now()): TaskListItem[] {

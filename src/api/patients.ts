@@ -70,6 +70,66 @@ export async function fetchPatientByIdStaff(patientId: string | number): Promise
   return data;
 }
 
+/** GET /patients/pims/:pimsId — patient by eVet/PIMS id (use when calendar rows only have patientPimsId). */
+export async function fetchPatientByPimsIdStaff(pimsId: string | number): Promise<unknown> {
+  const { data } = await http.get(`/patients/pims/${encodeURIComponent(String(pimsId))}`);
+  return data;
+}
+
+function pickPatientLookupStr(v: unknown): string {
+  if (v == null) return '';
+  const s = String(v).trim();
+  return s && s !== '0' ? s : '';
+}
+
+/** Resolve PIMS + internal ids from appointment / client patient rows. */
+export function patientLookupIdsFromRow(p: {
+  id?: number | string;
+  pimsId?: string | number | null;
+  [key: string]: unknown;
+}): { pimsId: string; internalId: string } {
+  const row = p as Record<string, unknown>;
+  const pimsId =
+    pickPatientLookupStr(p.pimsId) ||
+    pickPatientLookupStr(row.patientPimsId) ||
+    pickPatientLookupStr(row.pims_id);
+  const internalId =
+    pickPatientLookupStr(p.id) ||
+    pickPatientLookupStr(row.patientId) ||
+    pickPatientLookupStr(row.dbId);
+  return { pimsId, internalId };
+}
+
+/** Load patient chart row using PIMS id first, then internal id, then PIMS fallback on `id`. */
+export async function fetchPatientProfileForRow(p: {
+  id?: number | string;
+  pimsId?: string | number | null;
+  [key: string]: unknown;
+}): Promise<unknown | null> {
+  const { pimsId, internalId } = patientLookupIdsFromRow(p);
+
+  if (pimsId) {
+    try {
+      return await fetchPatientByPimsIdStaff(pimsId);
+    } catch {
+      /* try internal id below */
+    }
+  }
+  if (internalId) {
+    try {
+      return await fetchPatientByIdStaff(internalId);
+    } catch {
+      /* id may be an eVet PIMS id without a separate pimsId field */
+    }
+    try {
+      return await fetchPatientByPimsIdStaff(internalId);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 /**
  * GET /patients/:id/medical-record — chart bundle (labs, exams, complaints, …).
  * Returns null when the backend responds 404 (no medical record row for this patient).

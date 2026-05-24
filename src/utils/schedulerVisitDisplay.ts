@@ -81,10 +81,82 @@ export function patientBreedDisplayOnly(p: Patient): string | null {
   return pickStr(p.breedEntity?.name) ?? pickStr(p.breed) ?? null;
 }
 
-export function patientSexAbbrevDisplay(p: Patient): string | null {
-  const raw = pickStr(p.sex)?.trim();
-  if (!raw) return null;
-  const compact = raw.replace(/[\s._-]+/g, '').toLowerCase();
+const PATIENT_SEX_SOURCE_KEYS = [
+  'sex',
+  'gender',
+  'sexDescription',
+  'sexAndNeuter',
+  'sexAndNeuterStatus',
+] as const;
+
+const PATIENT_ALTERED_STATUS_KEYS = [
+  'neuterStatus',
+  'spayNeuterStatus',
+  'alteredStatus',
+  'altered',
+  'sexStatus',
+] as const;
+
+function patientRecordFields(p: Patient): Record<string, unknown> {
+  return p as unknown as Record<string, unknown>;
+}
+
+function nestedRecord(v: unknown): Record<string, unknown> | null {
+  return v != null && typeof v === 'object' && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : null;
+}
+
+/** Collect sex / altered strings from a raw patient API object (nested entities included). */
+export function sexSourceStringsFromRecord(o: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const push = (v: unknown) => {
+    if (typeof v === 'string' || typeof v === 'number') {
+      const s = pickStr(v);
+      if (s) out.push(s);
+      return;
+    }
+    const nested = nestedRecord(v);
+    if (nested) {
+      const name = pickStr(nested.name) ?? pickStr(nested.description) ?? pickStr(nested.label);
+      if (name) out.push(name);
+    }
+  };
+
+  for (const k of PATIENT_SEX_SOURCE_KEYS) push(o[k]);
+  for (const k of ['sexEntity', 'sex_entity', 'patientSex', 'sexName'] as const) {
+    push(o[k]);
+  }
+
+  const sexPart =
+    pickStr(o.sex) ??
+    pickStr(o.gender) ??
+    (() => {
+      const nested = nestedRecord(o.sex) ?? nestedRecord(o.sexEntity);
+      return nested ? pickStr(nested.name) ?? pickStr(nested.description) : null;
+    })();
+  const alteredPart = PATIENT_ALTERED_STATUS_KEYS.map((k) => pickStr(o[k]))
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  if (sexPart && alteredPart) out.push(`${sexPart} ${alteredPart}`);
+  else if (alteredPart) out.push(alteredPart);
+
+  const nestedPatient = nestedRecord(o.patient);
+  if (nestedPatient) out.push(...sexSourceStringsFromRecord(nestedPatient));
+
+  return [...new Set(out)];
+}
+
+/** Collect sex / altered strings from all common PIMS patient field shapes. */
+export function patientSexSourceStrings(p: Patient): string[] {
+  return sexSourceStringsFromRecord(patientRecordFields(p));
+}
+
+function patientSexAbbrevFromString(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const compact = trimmed.replace(/[\s._-]+/g, '').toLowerCase();
   if (compact === 'fs' || compact === 'sf') return 'FS';
   if (compact === 'fi') return 'FI';
   if (compact === 'mn') return 'MN';
@@ -92,18 +164,39 @@ export function patientSexAbbrevDisplay(p: Patient): string | null {
   if (compact === 'cm') return 'CM';
   if (compact === 'f') return 'F';
   if (compact === 'm') return 'M';
-  const s = raw.toLowerCase();
+  if (/^femalespayed$/i.test(compact) || /^spayedfemale$/i.test(compact)) return 'FS';
+  if (/^femaleintact$/i.test(compact) || /^intactfemale$/i.test(compact)) return 'FI';
+  if (/^maleneutered$/i.test(compact) || /^neuteredmale$/i.test(compact) || /^malecastrated$/i.test(compact)) {
+    return 'MN';
+  }
+  if (/^maleintact$/i.test(compact) || /^intactmale$/i.test(compact)) return 'MI';
+  const s = trimmed.toLowerCase();
   const spayed = s.includes('spayed') || /\bspay\b/.test(s);
   const neutered = s.includes('neutered') || s.includes('castrat') || /\bneuter\b/.test(s);
+  const intact = s.includes('intact');
   if (s.includes('female') || s.includes('bitch') || s.includes('queen')) {
-    return spayed ? 'FS' : 'FI';
+    if (spayed || neutered) return 'FS';
+    if (intact) return 'FI';
+    return spayed ? 'FS' : neutered ? 'FS' : 'FI';
   }
   if (s.includes('male') && !s.includes('female')) {
+    if (neutered || spayed) return 'MN';
+    if (intact) return 'MI';
     return neutered ? 'MN' : 'MI';
   }
   if (spayed && !s.includes('male')) return 'FS';
   if (neutered && !s.includes('female')) return 'MN';
-  if (raw.length <= 4 && /^[A-Za-z]+$/i.test(raw)) return raw.toUpperCase();
+  if (intact && !s.includes('male')) return 'FI';
+  if (intact && s.includes('male')) return 'MI';
+  if (trimmed.length <= 4 && /^[A-Za-z]+$/i.test(trimmed)) return trimmed.toUpperCase();
+  return null;
+}
+
+export function patientSexAbbrevDisplay(p: Patient): string | null {
+  for (const raw of patientSexSourceStrings(p)) {
+    const abbr = patientSexAbbrevFromString(raw);
+    if (abbr) return abbr;
+  }
   return null;
 }
 
@@ -144,16 +237,22 @@ export function patientSpeciesIconKind(p: Patient): 'dog' | 'cat' | null {
 }
 
 export function patientSexHighlightTone(p: Patient): 'male' | 'female' | 'neutral' {
-  const raw = (pickStr(p.sex) ?? '').trim();
-  if (!raw) return 'neutral';
-  const compact = raw.replace(/[\s._-]+/g, '').toLowerCase();
-  if (compact === 'fs' || compact === 'fi' || compact === 'sf' || compact === 'f') return 'female';
-  if (compact === 'mn' || compact === 'mi' || compact === 'm') return 'male';
-  const s = raw.toLowerCase();
-  if (s.includes('female') || s.includes('bitch') || s.includes('queen')) return 'female';
-  if (s.includes('male') && !s.includes('female')) return 'male';
-  if (s.includes('spayed') || /\bspay\b/.test(s)) return 'female';
-  if (s.includes('neutered') || s.includes('castrat') || /\bneuter\b/.test(s)) return 'male';
+  for (const raw of patientSexSourceStrings(p)) {
+    const compact = raw.replace(/[\s._-]+/g, '').toLowerCase();
+    if (compact === 'fs' || compact === 'fi' || compact === 'sf' || compact === 'f') return 'female';
+    if (compact === 'mn' || compact === 'mi' || compact === 'm') return 'male';
+    if (/^femalespayed$/i.test(compact) || /^femaleintact$/i.test(compact) || /^spayedfemale$/i.test(compact)) {
+      return 'female';
+    }
+    if (/^maleneutered$/i.test(compact) || /^maleintact$/i.test(compact) || /^neuteredmale$/i.test(compact)) {
+      return 'male';
+    }
+    const s = raw.toLowerCase();
+    if (s.includes('female') || s.includes('bitch') || s.includes('queen')) return 'female';
+    if (s.includes('male') && !s.includes('female')) return 'male';
+    if (s.includes('spayed') || /\bspay\b/.test(s)) return 'female';
+    if (s.includes('neutered') || s.includes('castrat') || /\bneuter\b/.test(s)) return 'male';
+  }
   return 'neutral';
 }
 

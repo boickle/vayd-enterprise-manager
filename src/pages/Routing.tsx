@@ -23,6 +23,7 @@ import { Field } from '../components/Field';
 import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
 import { validateAddress } from '../api/geo';
+import { fetchVeterinarians } from '../api/employee';
 import {
   normalizeRoutingV2SlotSearchResponse,
   type RoutingSlotSearchOptionalFlags,
@@ -1256,6 +1257,9 @@ function endOfDayOverrunSeconds(
 }
 
 const NONE_SELECTION_KEY = '__routing-none__';
+const SELECTED_DOCTORS_STORAGE_KEY = 'routing:selected-doctors';
+
+type RoutingDoctorPick = { id: string | number; name: string; email: string; pimsId: string };
 
 function deriveRoutingRequestId(res: Result | null | undefined): string | undefined {
   if (!res) return undefined;
@@ -1440,6 +1444,13 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const latestDoctorQueryRef = useRef('');
   const [doctorActiveIdx, setDoctorActiveIdx] = useState<number>(-1);
   const [clientActiveIdx, setClientActiveIdx] = useState<number>(-1);
+
+  // -------- Doctor selection modal (Best fit across doctors) --------
+  const [showDoctorSelectionModal, setShowDoctorSelectionModal] = useState(false);
+  const [allProviders, setAllProviders] = useState<RoutingDoctorPick[]>([]);
+  const [selectedDoctorIds, setSelectedDoctorIds] = useState<string[]>([]);
+  const [providersLoading, setProvidersLoading] = useState(false);
+  const [pendingEndpoint, setPendingEndpoint] = useState<string | null>(null);
 
   // -------- Winner doctor name cache --------
   const [doctorNames, setDoctorNames] = useState<Record<string, string>>(() => ({ ...bootstrap.doctorNames }));
@@ -2591,15 +2602,98 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     const endpoint = '/routing/v2';
 
     if (multiDoctor) {
-      const primary = form.doctorId.trim();
-      if (!primary) {
-        setError('Please select a doctor.');
-        return;
-      }
-      await submitRoutingRequest(endpoint, [primary]);
-    } else {
-      await submitRoutingRequest(endpoint);
+      setPendingEndpoint(endpoint);
+      setShowDoctorSelectionModal(true);
+      return;
     }
+    await submitRoutingRequest(endpoint);
+  }
+
+  useEffect(() => {
+    if (!showDoctorSelectionModal) return;
+
+    let alive = true;
+    void (async () => {
+      setProvidersLoading(true);
+      try {
+        const veterinarians = await fetchVeterinarians();
+        if (!alive) return;
+
+        const providersWithPims: RoutingDoctorPick[] = veterinarians.map((v) => {
+          const pimsId = v.pimsId ? String(v.pimsId) : String(v.id);
+          return {
+            id: v.id,
+            name: v.name?.trim() || buildDoctorName(v, `Veterinarian ${v.id ?? ''}`),
+            email: v.email || '',
+            pimsId,
+          };
+        });
+
+        setAllProviders(providersWithPims);
+
+        let defaultSelectedIds: string[] = [];
+        try {
+          const stored = localStorage.getItem(SELECTED_DOCTORS_STORAGE_KEY);
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              const validPimsIds = providersWithPims.map((p) => p.pimsId).filter(Boolean);
+              defaultSelectedIds = parsed.filter(
+                (id: unknown) => typeof id === 'string' && validPimsIds.includes(id)
+              );
+            }
+          }
+        } catch {
+          /* fall back to all */
+        }
+
+        if (defaultSelectedIds.length === 0) {
+          defaultSelectedIds = providersWithPims.map((p) => p.pimsId).filter(Boolean);
+        }
+
+        setSelectedDoctorIds(defaultSelectedIds);
+      } catch (err) {
+        console.error('Failed to fetch providers:', err);
+        if (!alive) return;
+        setError('Failed to load doctors. Please try again.');
+      } finally {
+        if (alive) setProvidersLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [showDoctorSelectionModal]);
+
+  function toggleDoctorSelection(doctorId: string) {
+    setSelectedDoctorIds((prev) =>
+      prev.includes(doctorId) ? prev.filter((id) => id !== doctorId) : [...prev, doctorId]
+    );
+  }
+
+  function handleCancelDoctorSelection() {
+    setShowDoctorSelectionModal(false);
+    setPendingEndpoint(null);
+    setSelectedDoctorIds([]);
+  }
+
+  async function handleConfirmDoctorSelection() {
+    if (selectedDoctorIds.length === 0) {
+      setError('Please select at least one doctor.');
+      return;
+    }
+
+    try {
+      localStorage.setItem(SELECTED_DOCTORS_STORAGE_KEY, JSON.stringify(selectedDoctorIds));
+    } catch {
+      /* ignore */
+    }
+
+    setShowDoctorSelectionModal(false);
+    const endpoint = pendingEndpoint || '/routing/v2';
+    setPendingEndpoint(null);
+    await submitRoutingRequest(endpoint, selectedDoctorIds);
   }
 
   // =========================
@@ -3968,6 +4062,71 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         )}
 
       </div>
+
+      {showDoctorSelectionModal ? (
+        <div
+          className="routing-doctor-select-backdrop"
+          role="presentation"
+          onClick={handleCancelDoctorSelection}
+        >
+          <div
+            className="routing-doctor-select-modal"
+            role="dialog"
+            aria-modal
+            aria-labelledby="routing-doctor-select-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="routing-doctor-select-title" className="routing-doctor-select-title">
+              Select Doctors
+            </h2>
+            <p className="routing-doctor-select-lead">
+              Choose which doctors to include in the search. Your selections are saved for next time.
+            </p>
+
+            {providersLoading ? (
+              <p className="routing-doctor-select-empty">Loading doctors…</p>
+            ) : allProviders.length === 0 ? (
+              <p className="routing-doctor-select-empty">No doctors found.</p>
+            ) : (
+              <div className="routing-doctor-select-list">
+                {allProviders.map((provider) => {
+                  const doctorId = provider.pimsId || String(provider.id);
+                  const isSelected = selectedDoctorIds.includes(doctorId);
+                  return (
+                    <label
+                      key={doctorId}
+                      className={`routing-doctor-select-row${
+                        isSelected ? ' routing-doctor-select-row--selected' : ''
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleDoctorSelection(doctorId)}
+                      />
+                      <span>{provider.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="routing-doctor-select-actions">
+              <button type="button" className="btn secondary" onClick={handleCancelDoctorSelection}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn routing-doctor-select-confirm"
+                onClick={() => void handleConfirmDoctorSelection()}
+                disabled={selectedDoctorIds.length === 0 || providersLoading}
+              >
+                Confirm ({selectedDoctorIds.length} selected)
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

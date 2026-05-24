@@ -1,19 +1,7 @@
 import type { Provider } from '../api/employee';
 import { fetchTimeChangePreview } from '../api/routing';
 import type { Appointment } from '../api/roomLoader';
-import {
-  feedbackHandoffFromPreviewResult,
-  inPlacePreviewOverflowOverrunSeconds,
-} from './editVisitPreviewScoreHandoff';
-import {
-  humanizeInPlaceReason,
-  inPlacePreviewNewScore,
-  type EditVisitPreviewScoreCompare,
-} from './editVisitTypeScoreCompare';
-import {
-  rescheduleOriginalScoreSummary,
-  rescheduleScoreHeaderSuffix,
-} from './routingRescheduleScoreCompare';
+import { buildEditVisitPreviewScoreCompare, type EditVisitPreviewScoreCompare } from './editVisitInPlaceScoreCompare';
 
 export type { EditVisitPreviewScoreCompare };
 
@@ -52,6 +40,7 @@ export async function fetchEditVisitTimeScoreCompare(args: {
   const empty = (summaryLine: string): EditVisitPreviewScoreCompare => ({
     originalScore: null,
     newScore: null,
+    delta: null,
     headerSuffix: null,
     summaryLine,
     originalScoreLine: null,
@@ -90,94 +79,15 @@ export async function fetchEditVisitTimeScoreCompare(args: {
   });
 
   if (!preview) {
-    return empty(
-      'Score comparison for time changes is not available yet (server update pending). Drive preview still works.'
-    );
+    return empty('Could not load time-change score preview.');
   }
 
-  const withNewTimeFeasible =
-    preview.withNewTime.feasible === true
-      ? true
-      : preview.withNewTime.feasible === false
-        ? false
-        : null;
-  const withNewTimeReason = preview.withNewTime.reason?.trim() || null;
-  const downstreamEdge = preview.withNewTime.scoringComponents?.downstreamWindowEdge;
-  const downstreamWindowEdge =
-    typeof downstreamEdge === 'number' && Number.isFinite(downstreamEdge) && downstreamEdge > 0
-      ? downstreamEdge
-      : null;
-  const feedbackHandoff = feedbackHandoffFromPreviewResult({
-    feedbackHandoff: preview.feedbackHandoff,
+  return buildEditVisitPreviewScoreCompare({
+    original: preview.original,
     withNew: preview.withNewTime,
+    apiDelta: preview.delta,
+    context: 'time',
     apptId,
+    feedbackHandoffRaw: preview.feedbackHandoff,
   });
-  const overflowOverrunSeconds = inPlacePreviewOverflowOverrunSeconds(preview.withNewTime);
-
-  const originalScore =
-    preview.original.found && typeof preview.original.score === 'number'
-      ? preview.original.score
-      : null;
-  const newScore = inPlacePreviewNewScore(preview.withNewTime);
-  const isInfeasible = preview.withNewTime.feasible === false;
-
-  const originalVisitForSummary = {
-    found: originalScore != null,
-    score: originalScore ?? undefined,
-    appointmentId: apptId,
-  };
-  const originalScoreLine = rescheduleOriginalScoreSummary(originalVisitForSummary);
-
-  if (newScore == null) {
-    const reason = preview.withNewTime.reason
-      ? humanizeInPlaceReason(preview.withNewTime.reason, 'time')
-      : preview.withNewTime.feasible === false
-        ? 'This time is not feasible for the visit on this route.'
-        : 'Could not score this visit at the proposed time.';
-    return {
-      originalScore,
-      newScore: null,
-      headerSuffix: null,
-      summaryLine: originalScoreLine == null ? reason : null,
-      originalScoreLine,
-      newTypeUnavailableLine: reason,
-      windowLine: null,
-      windowWarningMayChange: false,
-      arrivalWindowAfter: null,
-      withNewTypeFeasible: withNewTimeFeasible,
-      withNewTypeReason: withNewTimeReason,
-      downstreamWindowEdge,
-      overflowOverrunSeconds,
-      feedbackHandoff: null,
-    };
-  }
-
-  const headerSuffix = rescheduleScoreHeaderSuffix(newScore, originalVisitForSummary);
-  const summaryLine = headerSuffix
-    ? headerSuffix.replace(/^\(/, '').replace(/\)$/, '')
-    : `Score with new time: ${Number.isInteger(newScore) ? String(newScore) : newScore.toFixed(1)}`;
-
-  const infeasibleReason =
-    isInfeasible && preview.withNewTime.reason
-      ? humanizeInPlaceReason(preview.withNewTime.reason, 'time')
-      : isInfeasible
-        ? 'This time is not feasible for the visit on this route.'
-        : null;
-
-  return {
-    originalScore,
-    newScore,
-    headerSuffix,
-    summaryLine,
-    originalScoreLine: infeasibleReason ? null : originalScoreLine,
-    newTypeUnavailableLine: infeasibleReason,
-    windowLine: null,
-    windowWarningMayChange: false,
-    arrivalWindowAfter: null,
-    withNewTypeFeasible: withNewTimeFeasible,
-    withNewTypeReason: withNewTimeReason,
-    downstreamWindowEdge,
-    overflowOverrunSeconds,
-    feedbackHandoff: isInfeasible ? null : feedbackHandoff,
-  };
 }

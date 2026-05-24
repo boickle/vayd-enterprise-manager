@@ -57,11 +57,10 @@ function defaultStartTimeLocal(
 
 function defaultEndTimeLocal(
   existingEndIso: string | null | undefined,
-  existingStartIso: string | null | undefined,
+  _existingStartIso: string | null | undefined,
   practiceTz: string
 ): string {
   if (existingEndIso) return toTimeLocalValue(existingEndIso, practiceTz);
-  if (existingStartIso) return DateTime.now().setZone(practiceTz).toFormat('HH:mm');
   return '';
 }
 
@@ -189,9 +188,6 @@ export function SchedulerActualVisitTimeModal({
 
   const handleUseNowStart = () => {
     setStartTimeLocal(DateTime.now().setZone(practiceTz).toFormat('HH:mm'));
-    if (!endTimeLocal.trim() && (existingStartIso || startTimeLocal)) {
-      setEndTimeLocal(DateTime.now().setZone(practiceTz).toFormat('HH:mm'));
-    }
   };
 
   const handleUseNowEnd = () => {
@@ -268,13 +264,7 @@ export function SchedulerActualVisitTimeModal({
                   <input
                     type="time"
                     value={startTimeLocal}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setStartTimeLocal(v);
-                      if (v.trim() && !endTimeLocal.trim() && !existingEndIso) {
-                        setEndTimeLocal(DateTime.now().setZone(practiceTz).toFormat('HH:mm'));
-                      }
-                    }}
+                    onChange={(e) => setStartTimeLocal(e.target.value)}
                     disabled={saving}
                   />
                 </label>

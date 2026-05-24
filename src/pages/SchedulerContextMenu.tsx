@@ -52,6 +52,8 @@ type Props = {
   roomLoaderMenuLabel: string;
   /** Admins/superadmins only — shows "Edit Appointment" under Scheduling */
   showEditAppointment?: boolean;
+  visitTimesDisabled?: boolean;
+  visitTimesDisabledTitle?: string;
   completeDisabled?: boolean;
   completeDisabledTitle?: string;
 };
@@ -71,6 +73,8 @@ export function SchedulerAppointmentContextMenu({
   removeTitle,
   roomLoaderMenuLabel,
   showEditAppointment,
+  visitTimesDisabled,
+  visitTimesDisabledTitle,
   completeDisabled: completeDisabledProp,
   completeDisabledTitle: completeDisabledTitleProp,
 }: Props) {
@@ -168,7 +172,12 @@ export function SchedulerAppointmentContextMenu({
         onOpen={() => setOpenGroup('visit')}
         onCloseSub={() => setOpenGroup(null)}
       >
-        <CtxSubRow label="Start / End Visit" onPick={() => onAction({ kind: 'visitTimes' })} />
+        <CtxSubRow
+          label="Start / End Visit"
+          disabled={Boolean(visitTimesDisabled)}
+          title={visitTimesDisabled ? visitTimesDisabledTitle : undefined}
+          onPick={() => onAction({ kind: 'visitTimes' })}
+        />
         <CtxSubRow
           label="Complete"
           disabled={completeDisabled}

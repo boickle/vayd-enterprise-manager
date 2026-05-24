@@ -5,15 +5,112 @@ import {
 } from '../api/appointments';
 import type { Appointment, Patient } from '../api/roomLoader';
 import { extractPatientsFromClientPayload } from '../pages/SchedulerBookModal';
+import { pickStr } from './schedulerVisitDisplay';
 import { SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID } from './routingCalendarPreviewStorage';
 
 type ClientPetRow = { id: number | string; name: string; isActive?: boolean; isDeleted?: boolean };
 
+function patientIdsMatch(a: Patient, b: Patient): boolean {
+  if (String(a.id) === String(b.id) && Number(a.id) > 0) return true;
+  const ap = a.pimsId != null ? String(a.pimsId).trim() : '';
+  const bp = b.pimsId != null ? String(b.pimsId).trim() : '';
+  if (ap !== '' && bp !== '' && ap === bp) return true;
+  const an = pickStr(a.name)?.toLowerCase();
+  const bn = pickStr(b.name)?.toLowerCase();
+  return !!(an && bn && an === bn);
+}
+
+function normalizePatientRow(p: Patient): Patient {
+  const row = p as Patient & Record<string, unknown>;
+  const pimsId =
+    pickStr(row.pimsId) ??
+    pickStr(row.patientPimsId) ??
+    pickStr(row.pims_id) ??
+    undefined;
+  if (pimsId && pickStr(row.pimsId) !== pimsId) {
+    return { ...p, pimsId };
+  }
+  return p;
+}
+
+function enrichPatientFromFallback(primary: Patient, fallback: Patient): Patient {
+  const out = { ...primary } as Patient & Record<string, unknown>;
+  const fo = fallback as Record<string, unknown>;
+  const mergeKeys = [
+    'sex',
+    'gender',
+    'sexDescription',
+    'sexAndNeuter',
+    'sexAndNeuterStatus',
+    'neuterStatus',
+    'spayNeuterStatus',
+    'alteredStatus',
+    'altered',
+    'sexStatus',
+    'dob',
+    'breed',
+    'breedEntity',
+    'species',
+    'speciesEntity',
+    'alerts',
+    'weight',
+    'lastWeight',
+    'lastWeightDate',
+    'weightLbs',
+    'lastWeightLbs',
+  ];
+  for (const k of mergeKeys) {
+    const cur = out[k];
+    const fb = fo[k];
+    if ((cur == null || cur === '') && fb != null && fb !== '') {
+      out[k] = fb;
+    }
+  }
+  return out;
+}
+
+function patientFromAppointmentFlatFields(a: Appointment): Patient | null {
+  const row = a as Appointment & Record<string, unknown>;
+  const name = pickStr(row.patientName);
+  if (!name) return null;
+  const pimsId = pickStr(row.patientPimsId);
+  const idRaw = row.patientId ?? pimsId ?? 0;
+  const id = typeof idRaw === 'number' ? idRaw : Number(idRaw);
+  return {
+    id: Number.isFinite(id) && id > 0 ? id : 0,
+    name,
+    pimsId: pimsId ?? undefined,
+    alerts: pickStr(row.alerts) ?? undefined,
+    sex:
+      pickStr(row.patientSex) ??
+      pickStr(row.sex) ??
+      pickStr(row.gender) ??
+      pickStr(row.sexDescription) ??
+      pickStr(row.sexAndNeuter) ??
+      undefined,
+    dob: pickStr(row.patientDob) ?? pickStr(row.dob) ?? undefined,
+    breed: pickStr(row.patientBreed) ?? pickStr(row.breed) ?? undefined,
+    species: pickStr(row.patientSpecies) ?? pickStr(row.species) ?? undefined,
+    isActive: true,
+    isDeleted: false,
+    pimsType: 'EVET',
+  } as Patient;
+}
+
 /** Support `patients[]` from API when present; otherwise single `patient`. */
 export function patientsForAppointment(a: Appointment): Patient[] {
+  const sing = a.patient ? normalizePatientRow(a.patient) : null;
   const multi = (a as { patients?: Patient[] }).patients;
-  if (Array.isArray(multi) && multi.length > 0) return multi;
-  return a.patient ? [a.patient] : [];
+  if (Array.isArray(multi) && multi.length > 0) {
+    return multi.map((raw) => {
+      const p = normalizePatientRow(raw);
+      if (sing && patientIdsMatch(p, sing)) return enrichPatientFromFallback(p, sing);
+      return p;
+    });
+  }
+  if (sing) return [sing];
+  const flat = patientFromAppointmentFlatFields(a);
+  return flat ? [normalizePatientRow(flat)] : [];
 }
 
 /** Client visit with no linked patient (e.g. booked from routing without pets on file). */

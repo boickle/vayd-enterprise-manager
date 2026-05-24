@@ -126,14 +126,15 @@ export function EditVisitPreviewPopover({
           </p>
         ) : (
           <>
-            {scoreCompare?.originalScoreLine ? (
-              <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--strong">
-                {scoreCompare.originalScoreLine}
-              </p>
-            ) : null}
             {scoreCompare?.summaryLine ? (
               <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--strong">
                 {scoreCompare.summaryLine}
+              </p>
+            ) : null}
+            {scoreCompare?.originalScoreLine &&
+            scoreCompare.originalScoreLine !== scoreCompare.summaryLine ? (
+              <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--muted">
+                {scoreCompare.originalScoreLine}
               </p>
             ) : null}
             {scoreCompare?.newTypeUnavailableLine ? (

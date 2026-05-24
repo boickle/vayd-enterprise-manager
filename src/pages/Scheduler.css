@@ -1982,6 +1982,26 @@ label.scheduler-go-date-heading {
   color: #16a34a;
 }
 
+.scheduler-appt-visit-times-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: 3px;
+  padding: 0 2px;
+  border-radius: 2px;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.06);
+  vertical-align: middle;
+  line-height: 1;
+  font-size: 10px;
+}
+
+.scheduler-event-title-client-last + .scheduler-appt-visit-times-badge {
+  margin-left: 2px;
+}
+
 .scheduler-window-warning-badge {
   display: inline-flex;
   align-items: center;
@@ -2367,6 +2387,31 @@ label.scheduler-go-date-heading {
   min-width: 0;
 }
 
+.scheduler-modal-client-header-alerts {
+  width: 100%;
+  margin: 2px 0 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 2px solid #fecaca;
+  background: linear-gradient(180deg, #fef2f2 0%, #fee2e2 100%);
+  color: #991b1b;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.scheduler-modal-client-header-alerts-title {
+  display: block;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #b91c1c;
+  margin-bottom: 5px;
+}
+
 .scheduler-modal-patient-header-block {
   margin: 0 0 10px;
   display: flex;
@@ -2624,6 +2669,23 @@ label.scheduler-go-date-heading {
   word-break: break-word;
 }
 
+.scheduler-visit-time-delta {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.scheduler-visit-time-delta--early {
+  color: #15803d;
+}
+
+.scheduler-visit-time-delta--late {
+  color: #b45309;
+}
+
+.scheduler-visit-time-delta--on-time {
+  color: #64748b;
+}
+
 .scheduler-modal-k {
   font-size: 11px;
   font-weight: 600;
@@ -2848,13 +2910,135 @@ label.scheduler-go-date-heading {
   color: #0d4d3c;
 }
 
+.scheduler-book-routing-patient-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.scheduler-book-patient-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+}
+
+.scheduler-book-patient-reminders-below {
+  margin-top: 6px;
+}
+
+.scheduler-book-client-alerts {
+  margin-top: 8px;
+  margin-bottom: 0;
+  width: 100%;
+}
+
+.scheduler-book-patient-alerts {
+  margin-top: 8px;
+  margin-bottom: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.scheduler-book-view-reminders-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1a56db;
+  text-decoration: underline;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.scheduler-book-view-reminders-link:hover {
+  color: #0d3d99;
+}
+
+.scheduler-book-reminders-backdrop {
+  z-index: 12000;
+}
+
+.scheduler-book-reminders-modal {
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(70vh, 480px);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.scheduler-book-reminders-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+
+.scheduler-book-reminders-head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #111827;
+}
+
+.scheduler-book-reminders-body {
+  padding: 12px 16px 16px;
+  overflow-y: auto;
+}
+
+.scheduler-book-reminders-error {
+  color: #b42318;
+}
+
+.scheduler-book-reminders-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scheduler-book-reminders-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #10a37f) 6%, #ffffff);
+  border: 1px solid color-mix(in srgb, var(--accent, #10a37f) 22%, var(--border));
+}
+
+.scheduler-book-reminders-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0d4d3c;
+}
+
+.scheduler-book-reminders-item-due {
+  font-size: 12px;
+  color: #6b7280;
+}
+
 .scheduler-book-routing-patient-check {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 0;
   cursor: pointer;
   user-select: none;
+  flex: 1;
+  min-width: 0;
 }
 
 .scheduler-book-routing-patient-check input {
@@ -3237,6 +3421,116 @@ label.scheduler-go-date-heading {
   margin-top: 8px;
 }
 
+/* Edit visit — compact header (client / patient context above scroll) */
+.scheduler-modal--edit .scheduler-modal-header {
+  padding: 14px 18px 12px 22px;
+  gap: 12px;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-modal-eyebrow {
+  margin: 0 0 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.scheduler-modal--edit .scheduler-modal-header h2 {
+  font-size: 17px;
+  margin: 0 0 4px;
+  line-height: 1.2;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-modal-client-header-alerts {
+  margin: 2px 0 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  border-width: 1px;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-modal-client-header-alerts-title {
+  font-size: 9px;
+  margin-bottom: 2px;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block {
+  margin-top: 6px;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-block-title {
+  font-size: 9px;
+  margin-bottom: 4px;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-patient-line {
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-row {
+  font-size: 11px;
+  line-height: 1.3;
+  margin-bottom: 2px;
+  grid-template-columns: minmax(72px, 88px) 1fr;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-k {
+  font-size: 9px;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-v {
+  font-size: 11px;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-patient-highlight {
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-alerts {
+  margin-top: 4px;
+  font-size: 11px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border-width: 1px;
+  line-height: 1.3;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-alerts-title {
+  font-size: 8px;
+  margin-bottom: 2px;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-tooltip-vh-patient-species-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-tooltip-vh-patient-entry {
+  margin-top: 6px;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-provider-mismatch {
+  margin-top: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-modal-subtitle {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-edit-booked-summary,
+.scheduler-modal--edit .scheduler-modal-header .scheduler-edit-preview-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .scheduler-modal--view {
   max-width: 580px;
   width: min(580px, 96vw);
@@ -3413,6 +3707,82 @@ label.scheduler-go-date-heading {
 
 .scheduler-edit-client-home {
   white-space: pre-line;
+}
+
+.scheduler-edit-alternate-callout {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  padding: 16px 18px;
+  border-radius: 10px;
+  border: 3px solid #ea580c;
+  background: linear-gradient(180deg, #fff7ed 0%, #ffedd5 55%, #fed7aa 100%);
+  color: #7c2d12;
+  box-shadow:
+    0 0 0 1px rgba(234, 88, 12, 0.2),
+    0 4px 14px rgba(234, 88, 12, 0.18);
+}
+
+.scheduler-edit-alternate-callout-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.scheduler-alt-location-badge--callout {
+  margin-right: 0;
+  padding: 4px 10px;
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  border-radius: 6px;
+  box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.35);
+}
+
+.scheduler-edit-alternate-callout-title {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #c2410c;
+}
+
+.scheduler-edit-alternate-callout-lead {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: #9a3412;
+}
+
+.scheduler-edit-alternate-callout-address {
+  margin: 0 0 10px;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.45;
+  color: #431407;
+  word-break: break-word;
+}
+
+.scheduler-edit-alternate-callout-home {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: #78350f;
+}
+
+.scheduler-edit-alternate-callout-home-label {
+  font-weight: 800;
+  color: #64748b;
+}
+
+.scheduler-edit-alternate-callout-hint {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #9a3412;
 }
 
 .scheduler-edit-hint {
