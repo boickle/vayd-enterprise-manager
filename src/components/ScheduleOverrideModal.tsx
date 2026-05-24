@@ -14,6 +14,7 @@ import {
   type Employee,
   type ScheduleOverride,
 } from '../api/appointmentSettings';
+import { DepotLocationField } from './DepotLocationField';
 import '../pages/Settings.css';
 
 function formatEmployeeName(emp: Employee): string {
@@ -473,81 +474,27 @@ export default function ScheduleOverrideModal({
                       </div>
                       <div className="settings-schedule-section">
                         <h4 className="settings-schedule-subtitle">Start depot</h4>
-                        <div className="settings-schedule-row">
-                          <div className="settings-schedule-field">
-                            <label className="settings-label">Latitude</label>
-                            <input
-                              type="text"
-                              className="settings-input"
-                              value={form.startDepotLat ?? ''}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                if (v === '') {
-                                  setForm((f) => (f ? { ...f, startDepotLat: undefined } : null));
-                                  return;
-                                }
-                                const n = parseFloat(v);
-                                if (Number.isFinite(n)) setForm((f) => (f ? { ...f, startDepotLat: n } : null));
-                              }}
-                            />
-                          </div>
-                          <div className="settings-schedule-field">
-                            <label className="settings-label">Longitude</label>
-                            <input
-                              type="text"
-                              className="settings-input"
-                              value={form.startDepotLon ?? ''}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                if (v === '') {
-                                  setForm((f) => (f ? { ...f, startDepotLon: undefined } : null));
-                                  return;
-                                }
-                                const n = parseFloat(v);
-                                if (Number.isFinite(n)) setForm((f) => (f ? { ...f, startDepotLon: n } : null));
-                              }}
-                            />
-                          </div>
-                        </div>
+                        <DepotLocationField
+                          id={`override-start-depot-${form.date}`}
+                          lat={form.startDepotLat}
+                          lon={form.startDepotLon}
+                          onChange={(lat, lon) =>
+                            setForm((f) => (f ? { ...f, startDepotLat: lat, startDepotLon: lon } : null))
+                          }
+                          placeholder="Start typing start depot address"
+                        />
                       </div>
                       <div className="settings-schedule-section">
                         <h4 className="settings-schedule-subtitle">End depot</h4>
-                        <div className="settings-schedule-row">
-                          <div className="settings-schedule-field">
-                            <label className="settings-label">Latitude</label>
-                            <input
-                              type="text"
-                              className="settings-input"
-                              value={form.endDepotLat ?? ''}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                if (v === '') {
-                                  setForm((f) => (f ? { ...f, endDepotLat: undefined } : null));
-                                  return;
-                                }
-                                const n = parseFloat(v);
-                                if (Number.isFinite(n)) setForm((f) => (f ? { ...f, endDepotLat: n } : null));
-                              }}
-                            />
-                          </div>
-                          <div className="settings-schedule-field">
-                            <label className="settings-label">Longitude</label>
-                            <input
-                              type="text"
-                              className="settings-input"
-                              value={form.endDepotLon ?? ''}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                if (v === '') {
-                                  setForm((f) => (f ? { ...f, endDepotLon: undefined } : null));
-                                  return;
-                                }
-                                const n = parseFloat(v);
-                                if (Number.isFinite(n)) setForm((f) => (f ? { ...f, endDepotLon: n } : null));
-                              }}
-                            />
-                          </div>
-                        </div>
+                        <DepotLocationField
+                          id={`override-end-depot-${form.date}`}
+                          lat={form.endDepotLat}
+                          lon={form.endDepotLon}
+                          onChange={(lat, lon) =>
+                            setForm((f) => (f ? { ...f, endDepotLat: lat, endDepotLon: lon } : null))
+                          }
+                          placeholder="Start typing end depot address"
+                        />
                       </div>
                       <div className="settings-action-bar settings-override-save-bar" style={{ marginTop: 16 }}>
                         <button
