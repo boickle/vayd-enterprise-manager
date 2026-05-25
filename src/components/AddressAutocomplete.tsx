@@ -80,6 +80,7 @@ export function AddressAutocomplete({
   const [loadingPlace, setLoadingPlace] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const [placeSelected, setPlaceSelected] = useState(() => isAddressComplete(value, singleLine));
+  const [allowEdit, setAllowEdit] = useState(false);
 
   const sessionTokenRef = useRef<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -152,8 +153,18 @@ export function AddressAutocomplete({
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      fetchSuggestions(text);
+      void fetchSuggestions(text);
     }, 300);
+  };
+
+  const handleFocus = () => {
+    setAllowEdit(true);
+    ensureSessionToken();
+    if (inputValue.trim().length >= 3 && suggestions.length > 0) {
+      setOpen(true);
+    } else if (inputValue.trim().length >= 3) {
+      void fetchSuggestions(inputValue);
+    }
   };
 
   const selectSuggestion = async (suggestion: GeoAutocompleteSuggestion) => {
@@ -190,17 +201,16 @@ export function AddressAutocomplete({
     }
   };
 
-  const handleFocus = () => {
-    ensureSessionToken();
-    if (inputValue.trim().length >= 3 && suggestions.length > 0) {
-      setOpen(true);
-    }
-  };
-
   const handleBlur = (e: React.FocusEvent) => {
     const related = e.relatedTarget as Node | null;
     if (related && containerRef.current?.contains(related)) return;
-    setTimeout(() => setOpen(false), 150);
+    setTimeout(() => {
+      setOpen(false);
+      // Browser autofill can populate the input without selecting a suggestion.
+      if (!placeSelected && inputValue.trim().length >= 3 && !isAddressComplete(value, singleLine)) {
+        void fetchSuggestions(inputValue);
+      }
+    }, 150);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -238,9 +248,19 @@ export function AddressAutocomplete({
         aria-controls={listboxId}
         aria-autocomplete="list"
         autoComplete="off"
+        name={`${inputId}-search`}
+        data-1p-ignore="true"
+        data-lpignore="true"
+        data-bwignore="true"
+        data-form-type="other"
+        readOnly={!allowEdit}
         className={inputClassName}
         value={inputValue}
         onChange={(e) => handleInputChange(e.target.value)}
+        onInput={(e) => {
+          const next = e.currentTarget.value;
+          if (next !== inputValue) handleInputChange(next);
+        }}
         onFocus={handleFocus}
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}
@@ -286,7 +306,7 @@ export function AddressAutocomplete({
           role="listbox"
           style={{
             position: 'absolute',
-            zIndex: 50,
+            zIndex: 9999,
             top: '100%',
             left: 0,
             right: 0,
