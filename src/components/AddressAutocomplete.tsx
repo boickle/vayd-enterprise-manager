@@ -32,6 +32,8 @@ type AddressAutocompleteProps = {
   inputClassName?: string;
   /** Show green "Address confirmed" hint below the field. */
   showConfirmedMessage?: boolean;
+  /** Tighter input padding for dense forms. */
+  compact?: boolean;
 };
 
 function newSessionToken(): string {
@@ -68,6 +70,7 @@ export function AddressAutocomplete({
   singleLine = false,
   inputClassName,
   showConfirmedMessage = true,
+  compact = false,
 }: AddressAutocompleteProps) {
   const autoId = useId();
   const inputId = idProp ?? `address-autocomplete-${autoId}`;
@@ -274,9 +277,9 @@ export function AddressAutocomplete({
               }
             : {
                 width: '100%',
-                padding: '12px',
+                padding: compact ? '8px 10px' : '12px',
                 border: `1px solid ${error ? '#ef4444' : '#d1d5db'}`,
-                borderRadius: '8px',
+                borderRadius: compact ? '6px' : '8px',
                 fontSize: '14px',
               }
         }

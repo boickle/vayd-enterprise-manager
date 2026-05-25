@@ -134,23 +134,48 @@ function pickAddress(inputId: string, query: string, description: string) {
   cy.wait('@geoPlace');
 }
 
-function selectHowSoon(value: string, scope: 'first' | 'last' = 'first') {
-  const label = cy.contains('How soon do you need to be seen?');
-  label.scrollIntoView();
-  const container = label.parent().parent();
-  if (scope === 'last') {
-    container.find(`input[value="${value}"]`).last().check();
-  } else {
-    container.find(`input[value="${value}"]`).first().check();
-  }
+function selectNewClientHowSoon(option: string) {
+  cy.contains('How soon do you need to be seen?').scrollIntoView();
+  cy.get(`[data-how-soon="${option}"]`).click();
 }
 
-function fillNewClientSchedulingPreferences() {
-  cy.get('body').then(($body) => {
-    if ($body.find('input[type="radio"]').length > 0) {
-      cy.get('input[type="radio"]').first().check();
-    }
+function fillNewClientClientInfo(options: {
+  email: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  addressPreset: keyof typeof GEO_ADDRESSES;
+  addressQuery: string;
+  previousVet: string;
+}) {
+  cy.get('input[type="email"]').should('be.visible').type(options.email);
+  cy.get('input[placeholder="First Name"]').type(options.firstName);
+  cy.get('input[placeholder="Last Name"]').type(options.lastName);
+  cy.get('input[type="tel"]').first().type(options.phone);
+  stubGeoAddress(options.addressPreset);
+  pickAddress('physical-address', options.addressQuery, GEO_ADDRESSES[options.addressPreset].suggestion.description);
+  cy.wait('@getPublicVeterinarians');
+  cy.wait('@getAppointmentTypes');
+  cy.contains('Previous Veterinarian').parent().find('textarea').type(options.previousVet);
+}
+
+function fillNewClientPetInfo(options: {
+  petName: string;
+  species: 'Dog' | 'Cat' | 'Other';
+  petAge: string;
+  howSoon: string;
+  breed?: string;
+  visitReason?: 'wellness' | 'not-feeling-well' | 'end-of-life' | 'something-else';
+}) {
+  cy.wait('@getSpecies');
+  fillSimplifiedPetFields({
+    name: options.petName,
+    species: options.species,
+    age: options.petAge,
+    breed: options.breed,
+    visitReason: options.visitReason ?? 'wellness',
   });
+  selectNewClientHowSoon(options.howSoon);
 }
 
 function fillNewClientIntroAndPet(options: {
@@ -162,59 +187,61 @@ function fillNewClientIntroAndPet(options: {
   addressQuery: string;
   previousVet: string;
   petName: string;
-  speciesValue: string;
+  species: 'Dog' | 'Cat' | 'Other';
   petAge: string;
   howSoon: string;
+  breed?: string;
+  visitReason?: string;
 }) {
-  cy.get('input[type="email"]').should('be.visible').type(options.email);
-  cy.get('input[placeholder="First Name"]').type(options.firstName);
-  cy.get('input[placeholder="Last Name"]').type(options.lastName);
-  cy.get('input[type="tel"]').first().type(options.phone);
-  stubGeoAddress(options.addressPreset);
-  pickAddress('physical-address', options.addressQuery, GEO_ADDRESSES[options.addressPreset].suggestion.description);
-  cy.wait('@getPublicVeterinarians');
-  cy.wait('@getAppointmentTypes');
-  cy.contains('What veterinary practice(s) did you use previously').parent().find('textarea').type(options.previousVet);
+  fillNewClientClientInfo(options);
+  cy.contains('button', 'Next').click();
+  cy.contains("Now let's meet your pet").should('be.visible');
+  fillNewClientPetInfo(options);
+}
 
-  cy.wait('@getSpecies');
-  fillSimplifiedPetFields({ name: options.petName, speciesValue: options.speciesValue, age: options.petAge });
-  selectHowSoon(options.howSoon);
-  fillNewClientSchedulingPreferences();
+function petCardRoot(scope: 'first' | 'last' = 'first') {
+  return cy
+    .get('input[placeholder*="Enter pet name"]')
+    .eq(scope === 'last' ? 1 : 0)
+    .parents('div')
+    .filter('[style*="border-radius: 12px"]')
+    .first();
 }
 
 function fillSimplifiedPetFields(options: {
   name: string;
-  speciesValue: string;
+  species: 'Dog' | 'Cat' | 'Other';
   age: string;
+  sex?: 'Female Intact' | 'Female Spayed' | 'Male Intact' | 'Male Neutered' | 'Unknown';
+  breed?: string;
+  visitReason?: 'wellness' | 'not-feeling-well' | 'end-of-life' | 'something-else';
   scope?: 'first' | 'last';
 }) {
-  const { name, speciesValue, age, scope = 'first' } = options;
-  const nameInput = scope === 'last'
-    ? cy.get('input[placeholder*="Enter pet name"]').last()
-    : cy.get('input[placeholder*="Enter pet name"]').first();
-  const speciesSelect = scope === 'last'
-    ? cy.get('label').contains('Species').parent().find('select').last()
-    : cy.get('label').contains('Species').parent().find('select').first();
-  const ageInput = scope === 'last'
-    ? cy.get('input[placeholder="e.g., 5 years"]').last()
-    : cy.get('input[placeholder="e.g., 5 years"]').first();
-  const calmingNo = scope === 'last'
-    ? cy.contains('Calming medications needed').parent().parent().find('input[value="No"]').last()
-    : cy.contains('Calming medications needed').parent().parent().find('input[value="No"]').first();
-  const muzzleNo = scope === 'last'
-    ? cy.contains('Muzzle needed').parent().parent().find('input[value="No"]').last()
-    : cy.contains('Muzzle needed').parent().parent().find('input[value="No"]').first();
+  const {
+    name,
+    species,
+    age,
+    sex = 'Male Neutered',
+    breed,
+    visitReason = 'wellness',
+    scope = 'first',
+  } = options;
 
-  nameInput.type(name);
-  speciesSelect.select(speciesValue);
-  ageInput.type(age);
-  calmingNo.check();
-  muzzleNo.check();
+  petCardRoot(scope).within(() => {
+    cy.get('input[placeholder*="Enter pet name"]').clear().type(name);
+    cy.get(`[data-species-choice="${species}"]`).click();
+    if (breed) {
+      cy.get('input[placeholder="Start typing breed"]').type(breed);
+    }
+    cy.get(`[data-pet-sex-option="${sex}"]`).click();
+    cy.get('input[placeholder="e.g. 5 years, or DOB if you know it"]').type(age);
+    cy.get('[data-handling-need="none"]').click();
+    cy.get(`[data-visit-reason="${visitReason}"]`).click();
+  });
+}
 
-  const needsToday = scope === 'last'
-    ? cy.contains('What does').parent().parent().find('input[type="radio"]').last()
-    : cy.contains('What does').parent().parent().find('input[type="radio"]').first();
-  needsToday.check();
+function submitNewClientAppointmentRequest() {
+  cy.contains('button', 'Submit Appointment Request').click();
 }
 
 function fillExistingClientBasics(options?: {
@@ -231,9 +258,17 @@ function fillExistingClientBasics(options?: {
   }
 }
 
+function selectExistingClientPetVisitReason(
+  visitReason: 'wellness' | 'not-feeling-well' | 'end-of-life',
+  petIndex = 0,
+) {
+  cy.get('input[type="checkbox"]').eq(petIndex).check();
+  cy.get(`[data-visit-reason="${visitReason}"]`).eq(petIndex).click();
+}
+
 function selectHowSoonExisting(value: string) {
   cy.contains('How soon do you need to be seen?').scrollIntoView();
-  cy.contains('How soon do you need to be seen?').parent().parent().find(`input[value="${value}"]`).check();
+  cy.get(`[data-how-soon="${value}"]`).click();
 }
 
 describe('Appointment Request Form - Complete Flow Tests', () => {
@@ -250,6 +285,7 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
     cy.intercept('GET', '**/public/appointment-types*', { fixture: 'appointment-types.json' }).as('getAppointmentTypes');
     cy.intercept('GET', '**/appointment-types*', { fixture: 'appointment-types.json' }).as('getAuthAppointmentTypes');
     cy.intercept('GET', '**/public/appointments/find-zone-by-address*', { statusCode: 200 }).as('checkZone');
+    cy.intercept('GET', '**/public/appointments/check-email*', { statusCode: 200, body: { exists: false } }).as('checkEmail');
     
     // Intercept POST request for availability - use multiple patterns to catch all variations
     // Try both the specific path and a more general pattern
@@ -287,12 +323,12 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
         addressQuery: '24 Orchard',
         previousVet: 'Portland Animal Hospital',
         petName: 'Fluffy',
-        speciesValue: '2',
+        species: 'Cat',
         petAge: '5 years',
         howSoon: 'Flexible',
       });
 
-      cy.contains('button', 'Submit').click();
+      submitNewClientAppointmentRequest();
 
       // Verify the payload
       cy.wait('@submitAppointment').then((interception) => {
@@ -326,7 +362,7 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
         
         // Verify appointment details
         expect(payload.howSoon).to.equal('Flexible');
-        expect(payload.appointmentType).to.equal('regular_visit');
+        expect(payload.appointmentType).to.equal('Wellness exam / check-up');
         expect(payload.preferredDoctor).to.exist; // Should be the first veterinarian (Dr. Abigail Messina based on fixture)
         expect(payload.preferredDoctor).to.not.equal('I have no preference');
         if (payload.selectedDateTimePreferences) {
@@ -358,12 +394,12 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
         addressQuery: '24 Orchard',
         previousVet: 'Portland Animal Hospital',
         petName: 'Fluffy',
-        speciesValue: '2',
+        species: 'Cat',
         petAge: '5 years',
         howSoon: 'Flexible',
       });
 
-      cy.contains('button', 'Submit').click();
+      submitNewClientAppointmentRequest();
 
       // Verify the payload
       cy.wait('@submitAppointment').then((interception) => {
@@ -389,7 +425,7 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
         
         // Verify appointment details
         expect(payload.howSoon).to.equal('Flexible');
-        expect(payload.appointmentType).to.equal('regular_visit');
+        expect(payload.appointmentType).to.equal('Wellness exam / check-up');
         if (payload.selectedDateTimePreferences) {
           expect(payload.selectedDateTimePreferences).to.be.an('array');
           expect(payload.selectedDateTimePreferences.length).to.be.greaterThan(0);
@@ -415,17 +451,18 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       stubGeoAddress('freeport');
       pickAddress('physical-address', '456 Oak', GEO_ADDRESSES.freeport.suggestion.description);
       cy.wait('@getPublicVeterinarians');
-      cy.contains('What veterinary practice(s) did you use previously').parent().find('textarea').type('Freeport Animal Clinic');
+      cy.contains('Previous Veterinarian').parent().find('textarea').type('Freeport Animal Clinic');
+      cy.contains('button', 'Next').click();
+      cy.contains("Now let's meet your pet").should('be.visible');
 
       cy.wait('@getSpecies');
-      fillSimplifiedPetFields({ name: 'Buddy', speciesValue: '1', age: '3 years' });
+      fillSimplifiedPetFields({ name: 'Buddy', species: 'Dog', age: '3 years' });
 
-      cy.contains('button', 'Add Another Pet').click();
-      fillSimplifiedPetFields({ name: 'Max', speciesValue: '1', age: '2 years', scope: 'last' });
+      cy.contains('button', '+ Include another pet for this visit (optional)').click();
+      fillSimplifiedPetFields({ name: 'Max', species: 'Dog', age: '2 years', scope: 'last' });
 
-      selectHowSoon('Soon – sometime this week');
-      fillNewClientSchedulingPreferences();
-      cy.contains('button', 'Submit').click();
+      selectNewClientHowSoon('Soon – sometime this week');
+      submitNewClientAppointmentRequest();
 
       // Verify payload
       cy.wait('@submitAppointment').then((interception) => {
@@ -456,23 +493,23 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       stubGeoAddress('portland');
       pickAddress('physical-address', '789 Emer', GEO_ADDRESSES.portland.suggestion.description);
       cy.wait('@getPublicVeterinarians');
-      cy.contains('What veterinary practice(s) did you use previously').parent().find('textarea').type('Emergency Clinic');
+      cy.contains('Previous Veterinarian').parent().find('textarea').type('Emergency Clinic');
+      cy.contains('button', 'Next').click();
+      cy.contains("Now let's meet your pet").should('be.visible');
 
       cy.wait('@getSpecies');
-      fillSimplifiedPetFields({ name: 'Emergency Pet', speciesValue: '1', age: '8 years' });
+      fillSimplifiedPetFields({ name: 'Emergency Pet', species: 'Dog', age: '8 years' });
 
-      selectHowSoon('Urgent – within 24–48 hours');
-
-      cy.contains('Client Liaison will be in touch').should('be.visible');
-      cy.contains('button', 'Submit').click();
+      selectNewClientHowSoon('Emergent – today');
+      submitNewClientAppointmentRequest();
 
       // Verify payload
       cy.wait('@submitAppointment').then((interception) => {
         const payload = interception.request.body;
         
-        expect(payload.howSoon).to.equal('Urgent – within 24–48 hours');
+        expect(payload.howSoon).to.equal('Emergent – today');
         expect(payload.selectedDateTimePreferences).to.be.null;
-        expect(payload.appointmentType).to.equal('regular_visit');
+        expect(payload.appointmentType).to.equal('Wellness exam / check-up');
       });
     });
   });
@@ -498,11 +535,10 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       fillExistingClientBasics();
 
       cy.wait('@getSpecies');
-      cy.get('input[type="checkbox"]', { timeout: 10000 }).first().check();
-      cy.contains('What does').parent().parent().find('input[value="Wellness exam / check-up"]').check();
+      cy.get('input[type="checkbox"]', { timeout: 10000 });
+      selectExistingClientPetVisitReason('wellness', 0);
       cy.get('textarea').first().type('Annual check-up and vaccinations');
       selectHowSoonExisting('Flexible');
-      cy.contains('Client Liaison will be in touch').should('be.visible');
       cy.contains('button', 'Submit').click();
 
       // Verify payload
@@ -527,7 +563,7 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
         
         // Verify appointment details
         expect(payload.howSoon).to.equal('Flexible');
-        expect(payload.appointmentType).to.equal('regular_visit');
+        expect(payload.appointmentType).to.equal('Wellness exam / check-up');
         if (payload.selectedDateTimePreferences) {
           expect(payload.selectedDateTimePreferences).to.be.an('array');
         }
@@ -551,15 +587,18 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       fillExistingClientBasics();
 
       cy.wait('@getSpecies');
-      cy.get('input[type="checkbox"]', { timeout: 10000 }).first().check();
-      cy.contains('What does').parent().parent().find('input[value="My pet isn\'t feeling well"]').check();
+      cy.get('input[type="checkbox"]', { timeout: 10000 });
+      selectExistingClientPetVisitReason('not-feeling-well', 0);
       cy.get('textarea').first().type('Limping on front leg');
 
-      cy.contains('button', 'Add Pet').click();
-      fillSimplifiedPetFields({ name: 'New Pet', speciesValue: '2', age: '1 year', scope: 'last' });
-      cy.get('input[type="checkbox"]').last().check();
-      cy.contains('What does').parent().parent().find('input[value="Wellness exam / check-up"]').last().check();
-      cy.get('textarea').last().type('First visit wellness exam');
+      cy.contains('button', '+ Add a new pet to this visit').click();
+      fillSimplifiedPetFields({
+        name: 'New Pet',
+        species: 'Dog',
+        age: '1 year',
+        visitReason: 'wellness',
+        scope: 'last',
+      });
       selectHowSoonExisting('Soon – sometime this week');
       cy.contains('button', 'Submit').click();
 
@@ -599,8 +638,8 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       });
 
       cy.wait('@getSpecies');
-      cy.get('input[type="checkbox"]', { timeout: 10000 }).first().check();
-      cy.contains('What does').parent().parent().find('input[value="Wellness exam / check-up"]').check();
+      cy.get('input[type="checkbox"]', { timeout: 10000 });
+      selectExistingClientPetVisitReason('wellness', 0);
       cy.get('textarea').first().type('Regular check-up');
       selectHowSoonExisting('Flexible');
       cy.contains('button', 'Submit').click();
@@ -629,12 +668,11 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       fillExistingClientBasics();
 
       cy.wait('@getSpecies');
-      cy.get('input[type="checkbox"]', { timeout: 10000 }).first().check();
-      cy.contains('What does').parent().parent().find('input[value="End-of-life care / euthanasia"]').check();
+      cy.get('input[type="checkbox"]', { timeout: 10000 });
+      selectExistingClientPetVisitReason('end-of-life', 0);
       cy.get('textarea').first().type('Terminal cancer, in significant pain');
       cy.contains('interested in pursuing other options').parent().parent().find('input[value*="No. While this is very difficult"]').check();
       selectHowSoonExisting('Urgent – within 24–48 hours');
-      cy.contains('Client Liaison will be in touch').should('be.visible');
       cy.contains('button', 'Submit').click();
 
       // Verify payload
