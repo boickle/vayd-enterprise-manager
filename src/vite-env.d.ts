@@ -6,6 +6,7 @@ interface ImportMetaEnv {
   readonly VITE_IS_PROD: string;
   readonly VITE_GA_MEASUREMENT_ID?: string;
   readonly VITE_GOOGLE_ADS_TAG_ID?: string;
+  readonly VITE_ZONE_SEARCH_BUFFER_MILES?: string;
   /** In lower envs: set to 'true' to show "Become a Member" / create-client. In production, create-client is always enabled. */
   readonly VITE_SHOW_CREATE_CLIENT: string;
 }

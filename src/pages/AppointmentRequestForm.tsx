@@ -37,7 +37,7 @@ import {
   type AppointmentType,
 } from '../api/publicAppointments';
 import { trackEvent } from '../utils/analytics';
-import { isProduction } from '../utils/env';
+import { getZoneSearchBufferMiles, isProduction } from '../utils/env';
 import { listMembershipTransactions } from '../api/membershipTransactions';
 import MembershipSignup from './MembershipSignup';
 import MembershipPayment from './MembershipPayment';
@@ -535,6 +535,7 @@ export default function AppointmentRequestForm() {
 
   const [searchParams, setSearchParams] = useSearchParams();
   const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
+  const zoneSearchBufferMiles = getZoneSearchBufferMiles();
 
   const formSessionIdRef = useRef(createAppointmentFormSessionId());
   const formCompletedRef = useRef(false);
@@ -1635,7 +1636,12 @@ export default function AppointmentRequestForm() {
           try {
             // Check zone before fetching veterinarians
             try {
-              await http.get(`/public/appointments/find-zone-by-address?address=${encodeURIComponent(currentAddress)}`);
+              await http.get('/public/appointments/find-zone-by-address', {
+                params: {
+                  address: currentAddress,
+                  buffer: zoneSearchBufferMiles,
+                },
+              });
               // Zone exists, clear any previous error
               if (alive) {
                 setErrors(prev => {
@@ -1733,7 +1739,7 @@ export default function AppointmentRequestForm() {
         clearTimeout(debounceTimeoutId);
       }
     };
-  }, [isLoggedIn, practiceId, formData.physicalAddress?.line1, formData.physicalAddress?.city, formData.physicalAddress?.state, formData.physicalAddress?.zip, formData.physicalAddress?.lat, formData.physicalAddress?.lon]);
+  }, [isLoggedIn, practiceId, formData.physicalAddress?.line1, formData.physicalAddress?.city, formData.physicalAddress?.state, formData.physicalAddress?.zip, formData.physicalAddress?.lat, formData.physicalAddress?.lon, zoneSearchBufferMiles]);
 
   // Load client data if logged in
   useEffect(() => {
@@ -2011,7 +2017,12 @@ export default function AppointmentRequestForm() {
         try {
           // Check zone before fetching veterinarians
           try {
-            await http.get(`/public/appointments/find-zone-by-address?address=${encodeURIComponent(currentAddress)}`);
+            await http.get('/public/appointments/find-zone-by-address', {
+              params: {
+                address: currentAddress,
+                buffer: zoneSearchBufferMiles,
+              },
+            });
             // Zone exists, clear any previous error
             if (alive) {
               setErrors(prev => {
@@ -2097,6 +2108,7 @@ export default function AppointmentRequestForm() {
     formData.newPhysicalAddress?.zip,
     formData.newPhysicalAddress?.lat,
     formData.newPhysicalAddress?.lon,
+    zoneSearchBufferMiles,
   ]);
 
   // Fetch veterinarians for logged-in users when client location becomes available
