@@ -83,7 +83,6 @@ export function AddressAutocomplete({
   const [loadingPlace, setLoadingPlace] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const [placeSelected, setPlaceSelected] = useState(() => isAddressComplete(value, singleLine));
-  const [allowEdit, setAllowEdit] = useState(false);
 
   const sessionTokenRef = useRef<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -161,7 +160,6 @@ export function AddressAutocomplete({
   };
 
   const handleFocus = () => {
-    setAllowEdit(true);
     ensureSessionToken();
     if (inputValue.trim().length >= 3 && suggestions.length > 0) {
       setOpen(true);
@@ -256,7 +254,6 @@ export function AddressAutocomplete({
         data-lpignore="true"
         data-bwignore="true"
         data-form-type="other"
-        readOnly={!allowEdit}
         className={inputClassName}
         value={inputValue}
         onChange={(e) => handleInputChange(e.target.value)}

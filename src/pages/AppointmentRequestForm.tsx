@@ -1633,13 +1633,36 @@ export default function AppointmentRequestForm() {
 
           setLoadingVeterinarians(true);
           try {
-            if (alive) {
-              setErrors(prev => {
-                const next = { ...prev };
-                delete next.zoneNotServiced;
-                return next;
-              });
-              lastCheckedAddressRef.current = currentAddress;
+            // Check zone before fetching veterinarians
+            try {
+              await http.get(`/public/appointments/find-zone-by-address?address=${encodeURIComponent(currentAddress)}`);
+              // Zone exists, clear any previous error
+              if (alive) {
+                setErrors(prev => {
+                  const next = { ...prev };
+                  delete next.zoneNotServiced;
+                  return next;
+                });
+                lastCheckedAddressRef.current = currentAddress;
+              }
+            } catch (zoneError: any) {
+              if (zoneError?.response?.status === 404) {
+                // Zone not serviced - set error and don't fetch veterinarians
+                if (alive) {
+                  setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry—we don't currently serve your area. Please check back periodically at www.vetatyourdoor.com/service-area to see if our coverage has expanded. You can also call or text us at (207) 536-8387, and we'll take a look to see if your location may still be within reach." }));
+                  setPublicProviders([]);
+                  setProviders([]);
+                  setRawPublicVeterinarians([]);
+                  setLoadingVeterinarians(false);
+                  lastCheckedAddressRef.current = currentAddress;
+                }
+                return;
+              }
+              // For other errors, log but continue with veterinarian fetch
+              console.warn('[AppointmentForm] Zone check failed:', zoneError);
+              if (alive) {
+                lastCheckedAddressRef.current = currentAddress;
+              }
             }
 
             if (!alive) return;
@@ -3584,13 +3607,10 @@ export default function AppointmentRequestForm() {
                   gap: newClientCompactForm ? 8 : 12,
                 }}
               >
-                <label style={{ display: 'block', marginBottom: 0, fontWeight: 600, color: '#374151', fontSize: newClientCompactForm ? '13px' : undefined }}>
-                  Email <span style={{ color: '#ef4444' }}>*</span>
-                </label>
-                <label style={{ display: 'block', marginBottom: 0, fontWeight: 600, color: '#374151', fontSize: newClientCompactForm ? '13px' : undefined }}>
-                  Phone Number <span style={{ color: '#ef4444' }}>*</span>
-                </label>
                 <div data-form-field="email">
+                  <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: newClientCompactForm ? '13px' : undefined }}>
+                    Email <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
                   <input
                     type="email"
                     autoComplete="email"
@@ -3654,6 +3674,9 @@ export default function AppointmentRequestForm() {
                   )}
                 </div>
                 <div data-form-field="phoneNumbers">
+                  <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: newClientCompactForm ? '13px' : undefined }}>
+                    Phone Number <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
                   <input
                     type="tel"
                     autoComplete="tel"
