@@ -12,11 +12,12 @@ import { submitRoutingAcceptedFeedbackFromPreview } from '../utils/routingBookFe
 import { searchClientsStaff, fetchClientByIdStaff, type ClientSearchRow } from '../api/clientsStaff';
 import { searchPatients } from '../api/patients';
 import type { Provider } from '../api/employee';
-import type { AppointmentType } from '../api/appointmentSettings';
+import type { AppointmentType, Employee } from '../api/appointmentSettings';
 import type { RescheduleVisitPatch } from '../utils/routingRescheduleIntent';
 import { Field } from '../components/Field';
 import { BookPatientRemindersLink } from '../components/BookPatientRemindersLink';
 import { appendScoutBookedDescription } from '../utils/bookedAppointmentDescription';
+import { formatEmployeeDisplayName } from '../utils/employeeDisplayName';
 import './Scheduler.css';
 
 export type { RescheduleVisitPatch };
@@ -84,6 +85,8 @@ export type SchedulerBookPrefill = {
   /** Routing calendar preview — lock slot/provider; multi-pet book at same time. */
   routingPreviewBook?: boolean;
   defaultInstructions?: string;
+  allDay?: boolean;
+  additionalEmployeeIds?: number[];
 };
 
 type Props = {
@@ -93,6 +96,7 @@ type Props = {
   practiceTz: string;
   appointmentTypes: AppointmentType[];
   providers: Provider[];
+  employees: Employee[];
   defaultProviderId: string | null;
   prefill?: SchedulerBookPrefill | null;
   /** When set, POST /routing/feedback after a successful book/reschedule from routing preview. */
@@ -111,10 +115,24 @@ type PetRow = {
   isDeleted?: boolean;
 };
 
+type EmployeeOption = {
+  id: number;
+  label: string;
+  isActive: boolean;
+};
+
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v).trim();
   return s || null;
+}
+
+function normalizeEmployeeIds(ids: readonly number[] | null | undefined): number[] {
+  return [...new Set((ids ?? []).filter((id) => Number.isFinite(Number(id)) && Number(id) > 0).map(Number))];
+}
+
+function employeeLabel(emp: Pick<Employee, 'firstName' | 'lastName' | 'middleName' | 'middleInitial' | 'email'>) {
+  return formatEmployeeDisplayName(emp) || pickStr(emp.email) || 'Employee';
 }
 
 export function extractPatientsFromClientPayload(payload: unknown): PetRow[] {
@@ -236,6 +254,7 @@ export function SchedulerBookModal({
   practiceTz,
   appointmentTypes,
   providers,
+  employees,
   defaultProviderId,
   prefill,
   routingLinkPreview,
@@ -273,6 +292,9 @@ export function SchedulerBookModal({
   const [typeId, setTypeId] = useState<string>('');
   const [startLocal, setStartLocal] = useState<DateTime | null>(null);
   const [durationMin, setDurationMin] = useState(30);
+  const [isAllDay, setIsAllDay] = useState(false);
+  const [allDayEndDate, setAllDayEndDate] = useState('');
+  const [additionalEmployeeIds, setAdditionalEmployeeIds] = useState<number[]>([]);
 
   const [description, setDescription] = useState('');
   const [instructions, setInstructions] = useState('');
@@ -293,6 +315,21 @@ export function SchedulerBookModal({
     [providers, providerId]
   );
 
+  const employeeOptions = useMemo<EmployeeOption[]>(() => {
+    return employees
+      .filter((emp) => emp.isDeleted !== true)
+      .map((emp) => ({
+        id: Number(emp.id),
+        label: employeeLabel(emp),
+        isActive: emp.isActive !== false,
+      }))
+      .filter((emp) => Number.isFinite(emp.id) && emp.id > 0)
+      .sort((a, b) => {
+        if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+        return a.label.localeCompare(b.label);
+      });
+  }, [employees]);
+
   const isRescheduleBook = prefill?.rescheduleAppointmentId != null;
 
   const isRoutingPreviewBook = Boolean(prefill?.routingPreviewBook && !isRescheduleBook);
@@ -312,10 +349,19 @@ export function SchedulerBookModal({
 
   const perVisitRoutingBook = isRoutingPreviewBook && routingBookVisitEdits.length > 0;
 
+  const showAllDayFields = isAllDay && !isRescheduleBook;
+
+  const showAdditionalEmployeesField = showAllDayFields && !perVisitRoutingBook;
+
   const endLocal = useMemo(() => {
     if (!startLocal?.isValid) return null;
     return startLocal.plus({ minutes: durationMin });
   }, [startLocal, durationMin]);
+
+  const additionalEmployeeOptions = useMemo(
+    () => employeeOptions.filter((emp) => String(emp.id) !== providerId),
+    [employeeOptions, providerId]
+  );
 
   const durationOpts = useMemo(() => {
     const o = [...DURATION_OPTIONS];
@@ -348,6 +394,11 @@ export function SchedulerBookModal({
     [patientAlertsById]
   );
 
+  useEffect(() => {
+    if (!providerId.trim()) return;
+    setAdditionalEmployeeIds((prev) => prev.filter((id) => String(id) !== providerId));
+  }, [providerId]);
+
   const clientHasNoPetsOnFile =
     hasLinkedClient && !loadingClientPets && petChoices.length === 0;
 
@@ -375,6 +426,8 @@ export function SchedulerBookModal({
       String(prefill?.routingPreviewBook ?? false),
       prefill?.defaultInstructions ?? '',
       prefill?.routingAlternateAddress ?? '',
+      String(prefill?.allDay ?? false),
+      prefill?.additionalEmployeeIds?.join(',') ?? '',
       JSON.stringify(prefill?.rescheduleVisitPatches ?? []),
     ].join('\t');
   }, [
@@ -399,6 +452,8 @@ export function SchedulerBookModal({
     prefill?.routingPreviewBook,
     prefill?.defaultInstructions,
     prefill?.routingAlternateAddress,
+    prefill?.allDay,
+    prefill?.additionalEmployeeIds,
     prefill?.rescheduleVisitPatches,
   ]);
 
@@ -444,6 +499,8 @@ export function SchedulerBookModal({
     }
     setInstructions(prefill?.defaultInstructions?.trim() ?? '');
     setAlternateAddressText(prefill?.routingAlternateAddress?.trim() ?? '');
+    setIsAllDay(Boolean(prefill?.allDay));
+    setAdditionalEmployeeIds(normalizeEmployeeIds(prefill?.additionalEmployeeIds));
     setFormError(null);
     setShowClientDd(false);
     setShowPatientDd(false);
@@ -453,6 +510,8 @@ export function SchedulerBookModal({
     setStartLocal(s);
     const rawMins = Math.max(1, Math.round(e.diff(s, 'minutes').minutes));
     setDurationMin(rawMins);
+    const inclusiveAllDayEnd = e.startOf('day') > s.startOf('day') ? e.minus({ days: 1 }) : s;
+    setAllDayEndDate(inclusiveAllDayEnd.toISODate() ?? (s.toISODate() ?? ''));
 
     const prefProv = prefill?.providerId?.trim();
     const match =
@@ -491,7 +550,19 @@ export function SchedulerBookModal({
     if (prefill?.preserveDurationFromSlot) {
       setDurationMin(rawMins);
     }
-  }, [bookSessionKey, providers, appointmentTypes, prefill?.appointmentTypeId, prefill?.defaultDescription, prefill?.defaultInstructions, prefill?.preserveDurationFromSlot, prefill?.providerId, practiceTz]);
+  }, [
+    bookSessionKey,
+    providers,
+    appointmentTypes,
+    prefill?.appointmentTypeId,
+    prefill?.defaultDescription,
+    prefill?.defaultInstructions,
+    prefill?.preserveDurationFromSlot,
+    prefill?.providerId,
+    prefill?.allDay,
+    prefill?.additionalEmployeeIds,
+    practiceTz,
+  ]);
 
   /** When appointment types load after open, set type without wiping the rest of the form. */
   useEffect(() => {
@@ -759,15 +830,37 @@ export function SchedulerBookModal({
       setFormError('Select a provider.');
       return;
     }
-    if (!startLocal?.isValid || !endLocal?.isValid) {
+    if (isAllDay) {
+      const startDate = startLocal?.setZone(practiceTz).startOf('day');
+      const endDate = DateTime.fromISO(allDayEndDate, { zone: practiceTz }).startOf('day');
+      if (!startDate?.isValid || !endDate.isValid) {
+        setFormError('Choose a valid all-day date range.');
+        return;
+      }
+      if (endDate < startDate) {
+        setFormError('End date must be on or after the start date.');
+        return;
+      }
+    } else if (!startLocal?.isValid || !endLocal?.isValid) {
       setFormError('Invalid start time.');
       return;
     }
 
     setSubmitting(true);
     try {
-      const startIso = startLocal.setZone(practiceTz).toUTC().toISO()!;
-      const endIso = endLocal.setZone(practiceTz).toUTC().toISO()!;
+      const startDateLocal = startLocal?.setZone(practiceTz).startOf('day') ?? null;
+      const endDateLocal = DateTime.fromISO(allDayEndDate, { zone: practiceTz }).startOf('day');
+      const startIso = isAllDay
+        ? startDateLocal?.toUTC().toISO()
+        : startLocal?.setZone(practiceTz).toUTC().toISO();
+      const endIso = isAllDay
+        ? endDateLocal.plus({ days: 1 }).toUTC().toISO()
+        : endLocal?.setZone(practiceTz).toUTC().toISO();
+      if (!startIso || !endIso) {
+        setFormError(isAllDay ? 'Choose a valid all-day date range.' : 'Invalid start time.');
+        setSubmitting(false);
+        return;
+      }
       const visitPatches =
         prefill?.rescheduleVisitPatches?.filter(
           (v) => Number.isFinite(Number(v.appointmentId)) && v.patientId?.trim()
@@ -833,11 +926,13 @@ export function SchedulerBookModal({
           const created = await createAppointment({
             practiceId,
             primaryProviderId: Number(providerId),
+            ...(showAdditionalEmployeesField ? { additionalEmployeeIds } : {}),
             clientId: Number(selectedClientId),
             patientId: Number(visit.patientId),
             appointmentTypeId: Number(visit.appointmentTypeId),
             appointmentStart: startIso,
             appointmentEnd: endIso,
+            allDay: isAllDay,
             description: descriptionForNewBook(visit.description) || undefined,
           });
           const idRaw = created?.id;
@@ -851,12 +946,14 @@ export function SchedulerBookModal({
         const created = await createAppointment({
           practiceId,
           primaryProviderId: Number(providerId),
+          ...(showAdditionalEmployeesField ? { additionalEmployeeIds } : {}),
           clientId: Number(selectedClientId),
           ...(selectedPatientId ? { patientId: Number(selectedPatientId) } : {}),
           ...(trimmedAlt ? { alternateAddressText: trimmedAlt } : {}),
           appointmentTypeId: Number(typeId),
           appointmentStart: startIso,
           appointmentEnd: endIso,
+          allDay: isAllDay,
           description: descriptionForNewBook(description) || undefined,
           instructions: instructions.trim() || undefined,
         });
@@ -892,7 +989,18 @@ export function SchedulerBookModal({
 
   const timeInputValue = startLocal.toFormat('HH:mm');
   const dateInputValue = startLocal.toISODate() ?? '';
+  const allDayStartDateValue = startLocal.setZone(practiceTz).startOf('day').toISODate() ?? '';
   const routingBookSelectedCount = routingBookVisitEdits.filter((v) => v.selected).length;
+  const slotSummary = showAllDayFields
+    ? (() => {
+        const start = DateTime.fromISO(allDayStartDateValue, { zone: practiceTz });
+        const end = DateTime.fromISO(allDayEndDate || allDayStartDateValue, { zone: practiceTz });
+        if (!start.isValid || !end.isValid) return 'All day';
+        const startLabel = start.toFormat('EEEE, MMM d, yyyy');
+        const endLabel = end.toFormat('EEEE, MMM d, yyyy');
+        return startLabel === endLabel ? `${startLabel} · All day` : `${startLabel} – ${endLabel} · All day`;
+      })()
+    : `${startLocal.setZone(practiceTz).toFormat('EEEE, MMM d, yyyy')} · ${startLocal.toFormat('h:mm a')} – ${endLocal?.toFormat('h:mm a')}`;
 
   return createPortal(
     <div className="scheduler-modal-backdrop" role="presentation" onMouseDown={onClose}>
@@ -911,12 +1019,16 @@ export function SchedulerBookModal({
                   ? perVisitReschedule && rescheduleVisitEdits.length > 1
                     ? 'Reschedule appointments'
                     : 'Reschedule appointment'
-                  : 'Book appointment')}
+                  : showAllDayFields
+                    ? 'Book all-day appointment'
+                    : 'Book appointment')}
             </h2>
-            <p className="scheduler-book-slot-summary">
-              {startLocal.setZone(practiceTz).toFormat('EEEE, MMM d, yyyy')} · {startLocal.toFormat('h:mm a')} –{' '}
-              {endLocal?.toFormat('h:mm a')}
-            </p>
+            {showAllDayFields ? (
+              <p className="scheduler-book-all-day-badge" role="status">
+                All day
+              </p>
+            ) : null}
+            <p className="scheduler-book-slot-summary">{slotSummary}</p>
           </div>
           <button type="button" className="scheduler-modal-close" aria-label="Close" onClick={onClose}>
             ×
@@ -924,6 +1036,13 @@ export function SchedulerBookModal({
         </div>
 
         <form className="scheduler-book-form" onSubmit={handleSubmit}>
+          {showAllDayFields ? (
+            <p className="scheduler-book-all-day-note" role="note">
+              This appointment will be saved as all day and shown in the all-day row at the top of the
+              calendar. Use start and end date for multi-day blocks (for example, a week out of office).
+            </p>
+          ) : null}
+
           {showRoutingAlternateAddress ? (
             <label className="scheduler-book-field scheduler-book-field--full">
               <span className="scheduler-book-field-label">Alternate address (routing)</span>
@@ -1359,64 +1478,142 @@ export function SchedulerBookModal({
                 </Field>
               </div>
 
-              <div className="scheduler-book-row2">
-                <Field label="Date">
-                  <input
-                    type="date"
-                    className="scheduler-book-input"
-                    value={dateInputValue}
-                    onChange={(e) => {
-                      const iso = e.target.value;
-                      if (!iso) return;
-                      setStartLocal((prev) => {
-                        if (!prev?.isValid) return prev;
-                        const next = DateTime.fromISO(iso, { zone: practiceTz }).set({
-                          hour: prev.hour,
-                          minute: prev.minute,
-                          second: 0,
-                          millisecond: 0,
+              {showAllDayFields ? (
+                <div className="scheduler-book-row2">
+                  <Field label="Start date">
+                    <input
+                      type="date"
+                      className="scheduler-book-input"
+                      value={allDayStartDateValue}
+                      onChange={(e) => {
+                        const iso = e.target.value;
+                        if (!iso) return;
+                        const next = DateTime.fromISO(iso, { zone: practiceTz }).startOf('day');
+                        if (!next.isValid) return;
+                        setStartLocal(next);
+                        setAllDayEndDate((prev) => {
+                          const prevDt = DateTime.fromISO(prev || iso, { zone: practiceTz }).startOf('day');
+                          if (!prevDt.isValid || prevDt < next) return iso;
+                          return prevDt.toISODate() ?? iso;
                         });
-                        return next.isValid ? next : prev;
-                      });
-                    }}
-                    disabled={Boolean(prefill?.lockSlotTimes)}
-                  />
-                </Field>
-                <Field label="Start time">
-                  <input
-                    type="time"
-                    className="scheduler-book-input"
-                    value={timeInputValue}
-                    step={300}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (!v || !startLocal) return;
-                      const [hh, mm] = v.split(':').map((x) => parseInt(x, 10));
-                      if (Number.isNaN(hh) || Number.isNaN(mm)) return;
-                      setStartLocal(
-                        startLocal.set({ hour: hh, minute: mm, second: 0, millisecond: 0 })
-                      );
-                    }}
-                    disabled={Boolean(prefill?.lockSlotTimes)}
-                  />
-                </Field>
-                <Field label="Duration">
-                  <select
-                    className="scheduler-book-input"
-                    value={durationMin}
-                    onChange={(e) => setDurationMin(Number(e.target.value))}
-                    disabled={Boolean(prefill?.lockSlotTimes)}
-                  >
-                    {durationOpts.map((m) => (
-                      <option key={m} value={m}>
-                        {m} min
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
+                      }}
+                    />
+                  </Field>
+                  <Field label="End date">
+                    <input
+                      type="date"
+                      className="scheduler-book-input"
+                      value={allDayEndDate}
+                      min={allDayStartDateValue}
+                      onChange={(e) => setAllDayEndDate(e.target.value)}
+                    />
+                  </Field>
+                </div>
+              ) : (
+                <div className="scheduler-book-row2">
+                  <Field label="Date">
+                    <input
+                      type="date"
+                      className="scheduler-book-input"
+                      value={dateInputValue}
+                      onChange={(e) => {
+                        const iso = e.target.value;
+                        if (!iso) return;
+                        setStartLocal((prev) => {
+                          if (!prev?.isValid) return prev;
+                          const next = DateTime.fromISO(iso, { zone: practiceTz }).set({
+                            hour: prev.hour,
+                            minute: prev.minute,
+                            second: 0,
+                            millisecond: 0,
+                          });
+                          return next.isValid ? next : prev;
+                        });
+                      }}
+                      disabled={Boolean(prefill?.lockSlotTimes)}
+                    />
+                  </Field>
+                  <Field label="Start time">
+                    <input
+                      type="time"
+                      className="scheduler-book-input"
+                      value={timeInputValue}
+                      step={300}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (!v || !startLocal) return;
+                        const [hh, mm] = v.split(':').map((x) => parseInt(x, 10));
+                        if (Number.isNaN(hh) || Number.isNaN(mm)) return;
+                        setStartLocal(
+                          startLocal.set({ hour: hh, minute: mm, second: 0, millisecond: 0 })
+                        );
+                      }}
+                      disabled={Boolean(prefill?.lockSlotTimes)}
+                    />
+                  </Field>
+                  <Field label="Duration">
+                    <select
+                      className="scheduler-book-input"
+                      value={durationMin}
+                      onChange={(e) => setDurationMin(Number(e.target.value))}
+                      disabled={Boolean(prefill?.lockSlotTimes)}
+                    >
+                      {durationOpts.map((m) => (
+                        <option key={m} value={m}>
+                          {m} min
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+              )}
             </>
           )}
+
+          {showAdditionalEmployeesField ? (
+            <Field label="Also show on employee calendars">
+              <div className="scheduler-book-checklist" role="group" aria-label="Additional employees">
+                {additionalEmployeeOptions.length > 0 ? (
+                  additionalEmployeeOptions.map((emp) => {
+                    const checked = additionalEmployeeIds.includes(emp.id);
+                    return (
+                      <label
+                        key={emp.id}
+                        className={[
+                          'scheduler-book-checklist-item',
+                          !emp.isActive ? 'scheduler-book-checklist-item--inactive' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const nextChecked = e.target.checked;
+                            setAdditionalEmployeeIds((prev) =>
+                              nextChecked
+                                ? normalizeEmployeeIds([...prev, emp.id])
+                                : prev.filter((id) => id !== emp.id)
+                            );
+                          }}
+                        />
+                        <span>{emp.label}</span>
+                      </label>
+                    );
+                  })
+                ) : (
+                  <div className="scheduler-book-hint muted">
+                    No other employees are available to assign to this all-day appointment.
+                  </div>
+                )}
+              </div>
+              <p className="scheduler-book-hint muted">
+                The selected provider stays the owner. Checked employees will also see this all-day appointment on
+                their calendars.
+              </p>
+            </Field>
+          ) : null}
 
           {!perVisitReschedule && !perVisitRoutingBook ? (
             <Field label="Description (optional)">

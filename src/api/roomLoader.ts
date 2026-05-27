@@ -265,6 +265,8 @@ export type Appointment = {
   isMember?: boolean;
   membershipName?: string | null;
   primaryProvider?: PrimaryProvider;
+  additionalEmployees?: PrimaryProvider[];
+  additionalEmployeeIds?: number[];
   appointmentType?: AppointmentType;
   treatment?: any | null;
   created?: string;

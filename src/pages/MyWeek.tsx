@@ -224,6 +224,8 @@ export type WeekHousehold = {
   primary: DoctorDayAppt;
   /** Backend effectiveWindow when available (from primary) */
   effectiveWindow?: { startIso: string; endIso: string };
+  /** Every doctor-day appointment id merged into this household (for ETA mapping / cancel). */
+  sourceAppointmentIds?: (string | number)[];
   /** Min index in appts array (for visit-order sort when preview is present) */
   firstApptIndex?: number;
 };

@@ -34,7 +34,12 @@ import {
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { http } from '../api/http';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
-import { fetchAllAppointmentTypes, type AppointmentType } from '../api/appointmentSettings';
+import {
+  fetchAllAppointmentTypes,
+  fetchAllEmployees,
+  type AppointmentType,
+  type Employee,
+} from '../api/appointmentSettings';
 import type { Appointment, Client, Patient } from '../api/roomLoader';
 import {
   computeEditPreviewPopoverPosition,
@@ -1725,6 +1730,9 @@ function SchedulerAppointmentModal({
   const windowLine = visitDetailsWindowLine(appt, driveHint ?? null);
   const actualStartIso = pickStr(appt.appointmentStartActual);
   const actualEndIso = pickStr(appt.appointmentEndActual);
+  const additionalEmployeeLabels = (appt.additionalEmployees ?? [])
+    .map((emp) => providerLabel(emp))
+    .filter((label) => label && label !== '—');
 
   return (
     <div
@@ -1755,9 +1763,22 @@ function SchedulerAppointmentModal({
             <SchedulerVisitPatientContext appt={appt} providers={providers} practiceTz={PRACTICE_TZ} />
             {start.isValid && end.isValid ? (
               <p className="scheduler-modal-subtitle">
-                {start.toFormat('EEEE, MMMM d, yyyy')}
-                <span className="scheduler-modal-subtitle-sep">·</span>
-                {start.toFormat('h:mm a')} – {end.toFormat('h:mm a')}
+                {appt.allDay ? (
+                  (() => {
+                    const endInclusive = allDayLocalStartEndExclusive(appt)?.endExclusive.minus({ days: 1 });
+                    const startLabel = start.startOf('day').toFormat('EEEE, MMMM d, yyyy');
+                    const endLabel = endInclusive?.toFormat('EEEE, MMMM d, yyyy') ?? startLabel;
+                    return startLabel === endLabel
+                      ? `${startLabel} · All day`
+                      : `${startLabel} – ${endLabel} · All day`;
+                  })()
+                ) : (
+                  <>
+                    {start.toFormat('EEEE, MMMM d, yyyy')}
+                    <span className="scheduler-modal-subtitle-sep">·</span>
+                    {start.toFormat('h:mm a')} – {end.toFormat('h:mm a')}
+                  </>
+                )}
               </p>
             ) : null}
           </div>
@@ -1773,6 +1794,11 @@ function SchedulerAppointmentModal({
               <SchedulerModalKvCondensed
                 label="Appointment provider"
                 value={providerLabel(appt.primaryProvider)}
+              />
+              <SchedulerModalKvCondensed label="All day" value={appt.allDay ? 'Yes' : null} />
+              <SchedulerModalKvCondensed
+                label="Additional employees"
+                value={additionalEmployeeLabels.length > 0 ? additionalEmployeeLabels.join(', ') : null}
               />
               <SchedulerModalKvCondensed label="Status" value={pickStr(appt.statusName)} />
               <SchedulerModalKvCondensed label="Confirm status" value={pickStr(appt.confirmStatusName)} />
@@ -2288,6 +2314,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [typeFilter, setTypeFilter] = useState<string>('');
 
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [providersLoadState, setProvidersLoadState] = useState<'pending' | 'resolved'>('pending');
   const [typeList, setTypeList] = useState<AppointmentType[]>([]);
   const [rawAppointments, setRawAppointments] = useState<Appointment[]>([]);
@@ -2877,10 +2904,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
   useEffect(() => {
     let on = true;
-    Promise.all([fetchPrimaryProviders(), fetchAllAppointmentTypes(PRACTICE_ID)])
-      .then(([providerRows, typeRows]) => {
+    Promise.all([fetchPrimaryProviders(), fetchAllAppointmentTypes(PRACTICE_ID), fetchAllEmployees()])
+      .then(([providerRows, typeRows, employeeRows]) => {
         if (!on) return;
         setProviders(Array.isArray(providerRows) ? providerRows : []);
+        setEmployees(
+          Array.isArray(employeeRows)
+            ? employeeRows.filter((emp) => emp.isDeleted !== true && emp.isActive !== false)
+            : []
+        );
         const types = Array.isArray(typeRows)
           ? typeRows.filter((t) => t.isActive !== false && !t.isDeleted)
           : [];
@@ -2889,6 +2921,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       .catch(() => {
         if (!on) return;
         setProviders([]);
+        setEmployees([]);
         setTypeList([]);
       })
       .finally(() => {
@@ -3832,6 +3865,17 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       setBookSlot({ start, end });
     },
     [gridBounds.gridStartMin, gridBounds.gridEndMin, canManualBookOnCalendar]
+  );
+
+  const handleAllDayDoubleClick = useCallback(
+    (dayDt: DateTime) => {
+      if (!canManualBookOnCalendar) return;
+      const start = dayDt.setZone(PRACTICE_TZ).startOf('day');
+      const end = start.plus({ days: 1 });
+      setBookPrefill({ allDay: true });
+      setBookSlot({ start, end });
+    },
+    [canManualBookOnCalendar]
   );
 
   const dismissRoutingPreview = useCallback(() => {
@@ -4907,8 +4951,34 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                   className="scheduler-all-day-unified-inner"
                   style={{ height: allDaySpanLayout.contentHeightPx }}
                 >
+                  {dayColumnDates.map((dayDt, idx) => {
+                    const leftPct = dayTimeColumnLayout.barLeftPct(idx);
+                    const widthPct = dayTimeColumnLayout.barWidthPct(idx, idx);
+                    const key = dayDt.toISODate() ?? String(idx);
+                    return (
+                      <div
+                        key={key}
+                        className={[
+                          'scheduler-all-day-book-cell',
+                          canManualBookOnCalendar ? 'scheduler-all-day-book-cell--interactive' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                        style={{
+                          left: `${leftPct}%`,
+                          width: `${widthPct}%`,
+                          height: allDaySpanLayout.contentHeightPx,
+                        }}
+                        onDoubleClick={() => handleAllDayDoubleClick(dayDt)}
+                        aria-label={
+                          canManualBookOnCalendar
+                            ? `${dayDt.toFormat('cccc, MMMM d')}: double-click to book all-day appointment`
+                            : undefined
+                        }
+                      />
+                    );
+                  })}
                   {allDaySpanLayout.bars.map(({ appt, s, e, lane }) => {
-                    const n = dayColumnDates.length;
                     const leftPct = dayTimeColumnLayout.barLeftPct(s);
                     const widthPct = dayTimeColumnLayout.barWidthPct(s, e);
                     const apptColors = colorsForAppointment(appt, typeList, typeFillMap);
@@ -5821,6 +5891,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         practiceTz={PRACTICE_TZ}
         appointmentTypes={typeList}
         providers={providers}
+        employees={employees}
         defaultProviderId={(() => {
           const id = resolvedPrimaryProviderId.trim();
           if (id) return id;
@@ -5977,6 +6048,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             practiceTz={PRACTICE_TZ}
             appointmentTypes={typeList}
             providers={providers}
+            employees={employees}
             accentColor={colorsForAppointment(editAppt, typeList, typeFillMap).fill}
             inlinePaneMode={editPlacementMode}
             dockInRoutingPane={embedInRoutingWorkspace && !editPlacementMode}

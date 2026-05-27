@@ -87,6 +87,7 @@ export async function fetchAppointmentById(
 export type CreateAppointmentPayload = {
   practiceId: number;
   primaryProviderId: number;
+  additionalEmployeeIds?: number[];
   clientId: number;
   /** Omitted when the client has no patients on file. */
   patientId?: number;

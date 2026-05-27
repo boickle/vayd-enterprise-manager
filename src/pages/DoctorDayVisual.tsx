@@ -418,11 +418,16 @@ type Household = {
   lon: number;
   startIso?: string | null;
   endIso?: string | null;
+  /** Window of arrival from effectiveWindow (startIso/endIso) when present on the appointment */
+  windowStartIso?: string | null;
+  windowEndIso?: string | null;
   isNoLocation?: boolean;
   isPreview?: boolean;
   isPersonalBlock?: boolean;
   patients: PatientBadge[];
   primary: DoctorDayAppt; // Store primary appointment for checking appointment type
+  /** Backend effectiveWindow when available (from primary) */
+  effectiveWindow?: { startIso: string; endIso: string };
   /** Min index in appts array (for visit-order sort when preview is present) */
   firstApptIndex?: number;
 };

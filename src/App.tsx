@@ -316,6 +316,7 @@ export default function App() {
       )}
       {/* Hide navbar on client portal, login page, create-client page, reset password, and public room loader form */}
       {!(isClient && location.pathname.startsWith('/client-portal')) &&
+        !location.pathname.startsWith('/client-portal/request-appointment') &&
         location.pathname !== '/login' &&
         location.pathname !== '/create-client' &&
         location.pathname !== '/reset-password' &&

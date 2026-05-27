@@ -4,10 +4,12 @@ import type { Appointment } from '../api/roomLoader';
 export type EditVisitFormSnapshot = {
   appointmentTypeId: number;
   primaryProviderId: number;
+  additionalEmployeeIds: number[];
   description: string;
   statusName: string;
   confirmStatusName: string;
   isComplete: boolean;
+  allDay: boolean;
   alternateAddressText: string;
   initialAlternateAddressText: string;
 };
@@ -48,10 +50,12 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
     {
       appointmentTypeId: typeId,
       primaryProviderId: input.form.primaryProviderId,
+      additionalEmployeeIds: input.form.additionalEmployeeIds,
       description: input.form.description.trim() || null,
       statusName: input.form.statusName.trim() || null,
       confirmStatusName: input.form.confirmStatusName.trim() || null,
       isComplete: input.form.isComplete,
+      allDay: input.form.allDay,
       appointmentStart: input.appointmentStart,
       appointmentEnd: input.appointmentEnd,
     },

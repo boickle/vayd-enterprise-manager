@@ -666,7 +666,7 @@ export function dropAppointmentFromDriveDayData(dayData: DayData, apptId: string
   for (let i = 0; i < households.length; i++) {
     const h = households[i];
     const ids = h.sourceAppointmentIds ?? [];
-    if (!ids.some((id) => String(id) === idStr)) {
+    if (!ids.some((id: string | number) => String(id) === idStr)) {
       newHouseholds.push(h);
       newTimeline.push(timeline[i] ?? {});
       continue;
@@ -674,7 +674,7 @@ export function dropAppointmentFromDriveDayData(dayData: DayData, apptId: string
     if (ids.length <= 1) continue;
     newHouseholds.push({
       ...h,
-      sourceAppointmentIds: ids.filter((id) => String(id) !== idStr),
+      sourceAppointmentIds: ids.filter((id: string | number) => String(id) !== idStr),
     });
     newTimeline.push(timeline[i] ?? {});
   }

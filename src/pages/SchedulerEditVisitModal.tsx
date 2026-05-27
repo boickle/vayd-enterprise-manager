@@ -16,7 +16,7 @@ import {
   appointmentAlternateAddressText,
   appointmentHasAlternateLocation,
 } from '../api/appointments';
-import type { AppointmentType } from '../api/appointmentSettings';
+import type { AppointmentType, Employee } from '../api/appointmentSettings';
 import type { Provider } from '../api/employee';
 import {
   appointmentPracticeDateKey,
@@ -33,6 +33,7 @@ import {
   SchedulerVisitPatientContext,
 } from '../components/SchedulerVisitPatientContext';
 import { submitEditVisitPreviewAcceptedFeedback } from '../utils/routingBookFeedback';
+import { formatEmployeeDisplayName } from '../utils/employeeDisplayName';
 import { fullClientHouseholdName } from '../utils/schedulerVisitDisplay';
 import './Scheduler.css';
 
@@ -40,6 +41,20 @@ function pickStr(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v).trim();
   return s || null;
+}
+
+function normalizeEmployeeIds(ids: readonly number[] | null | undefined): number[] {
+  return [...new Set((ids ?? []).filter((id) => Number.isFinite(Number(id)) && Number(id) > 0).map(Number))];
+}
+
+function employeeLabel(emp: Pick<Employee, 'firstName' | 'lastName' | 'middleName' | 'middleInitial' | 'email'>) {
+  return formatEmployeeDisplayName(emp) || pickStr(emp.email) || 'Employee';
+}
+
+function allDayInclusiveEndDate(appointmentEnd: string, practiceTz: string): DateTime | null {
+  const endExclusive = DateTime.fromISO(appointmentEnd, { zone: 'utc' }).setZone(practiceTz).startOf('day');
+  if (!endExclusive.isValid) return null;
+  return endExclusive.minus({ days: 1 }).startOf('day');
 }
 
 export type SchedulerEditVisitModalHandle = {
@@ -52,6 +67,7 @@ type Props = {
   practiceTz: string;
   appointmentTypes: AppointmentType[];
   providers: Provider[];
+  employees: Employee[];
   accentColor: string;
   /** Overlay on routing pane before placement preview. */
   dockInRoutingPane?: boolean;
@@ -93,6 +109,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       practiceTz,
       appointmentTypes,
       providers,
+      employees,
       accentColor,
       dockInRoutingPane = false,
       inlinePaneMode = false,
@@ -133,7 +150,13 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       }
       return String(appt.appointmentType?.id ?? '');
     });
-    const primaryProviderId = String(appt.primaryProvider?.id ?? '');
+    const [primaryProviderId, setPrimaryProviderId] = useState(() => String(appt.primaryProvider?.id ?? ''));
+    const [additionalEmployeeIds, setAdditionalEmployeeIds] = useState<number[]>(() =>
+      normalizeEmployeeIds(
+        appt.additionalEmployeeIds ??
+          appt.additionalEmployees?.map((emp) => Number(emp.id)).filter((id) => Number.isFinite(id))
+      )
+    );
     const [description, setDescription] = useState(appt.description ?? '');
     const statusName = appt.statusName ?? '';
     const confirmStatusName = appt.confirmStatusName ?? '';
@@ -142,17 +165,48 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       toTimeLocalValue(appt.appointmentStart, practiceTz)
     );
     const [endTime, setEndTime] = useState(() => toTimeLocalValue(appt.appointmentEnd, practiceTz));
+    const [allDayStartDate, setAllDayStartDate] = useState(() => appointmentDateKey);
+    const [allDayEndDate, setAllDayEndDate] = useState(
+      () => allDayInclusiveEndDate(appt.appointmentEnd, practiceTz)?.toISODate() ?? appointmentDateKey
+    );
     const alternateAddressText = appointmentAlternateAddressText(appt) ?? '';
     const hasAlternateRoutingAddress = appointmentHasAlternateLocation(appt);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const placementPreviewWasActiveRef = useRef(false);
 
+    const employeeOptions = useMemo(
+      () =>
+        employees
+          .filter((emp) => emp.isDeleted !== true)
+          .map((emp) => ({
+            id: Number(emp.id),
+            label: employeeLabel(emp),
+            isActive: emp.isActive !== false,
+          }))
+          .filter((emp) => Number.isFinite(emp.id) && emp.id > 0)
+          .sort((a, b) => {
+            if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+            return a.label.localeCompare(b.label);
+          }),
+      [employees]
+    );
+
+    const additionalEmployeeOptions = useMemo(
+      () => employeeOptions.filter((emp) => String(emp.id) !== primaryProviderId),
+      [employeeOptions, primaryProviderId]
+    );
+
     const visitStartEnd = useMemo(() => {
       const start = DateTime.fromISO(appt.appointmentStart, { zone: practiceTz });
       const end = DateTime.fromISO(appt.appointmentEnd, { zone: practiceTz });
       return { start, end };
     }, [appt.appointmentStart, appt.appointmentEnd, practiceTz]);
+
+    useEffect(() => {
+      if (!primaryProviderId.trim()) return;
+      setAdditionalEmployeeIds((prev) => prev.filter((id) => String(id) !== primaryProviderId));
+    }, [primaryProviderId]);
 
     const clientHomeSummary = useMemo(() => {
       const c = appt.client;
@@ -167,18 +221,34 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
     }, [appt.client]);
 
     const buildStartEndUtc = useCallback(() => {
+      if (appt.allDay) {
+        const start = DateTime.fromISO(allDayStartDate, { zone: practiceTz }).startOf('day');
+        const endInclusive = DateTime.fromISO(allDayEndDate, { zone: practiceTz }).startOf('day');
+        if (!start.isValid || !endInclusive.isValid) {
+          return { startUtc: null, endUtc: null };
+        }
+        return {
+          startUtc: start.toUTC().toISO(),
+          endUtc: endInclusive.plus({ days: 1 }).toUTC().toISO(),
+        };
+      }
       const startUtc = combineDateAndTimeToUtc(appointmentDateKey, startTime, practiceTz);
       const endUtc = combineDateAndTimeToUtc(appointmentDateKey, endTime, practiceTz);
       return { startUtc, endUtc };
-    }, [appointmentDateKey, startTime, endTime, practiceTz]);
+    }, [appt.allDay, allDayStartDate, allDayEndDate, appointmentDateKey, startTime, endTime, practiceTz]);
 
     const initialTypeId = String(appt.appointmentType?.id ?? '');
 
     const timesDirty = useMemo(() => {
+      if (appt.allDay) {
+        const origStart = appointmentPracticeDateKey(appt.appointmentStart, practiceTz) ?? '';
+        const origEnd = allDayInclusiveEndDate(appt.appointmentEnd, practiceTz)?.toISODate() ?? origStart;
+        return allDayStartDate.trim() !== origStart || allDayEndDate.trim() !== origEnd;
+      }
       const origStart = toTimeLocalValue(appt.appointmentStart, practiceTz);
       const origEnd = toTimeLocalValue(appt.appointmentEnd, practiceTz);
       return startTime.trim() !== origStart || endTime.trim() !== origEnd;
-    }, [appt.appointmentStart, appt.appointmentEnd, practiceTz, startTime, endTime]);
+    }, [appt.allDay, appt.appointmentStart, appt.appointmentEnd, practiceTz, allDayStartDate, allDayEndDate, startTime, endTime]);
 
     const typeDirty = appointmentTypeId !== initialTypeId;
 
@@ -218,10 +288,12 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       onFormSnapshotChange({
         appointmentTypeId: tid,
         primaryProviderId: pid,
+        additionalEmployeeIds,
         description,
         statusName,
         confirmStatusName,
         isComplete,
+        allDay: appt.allDay,
         alternateAddressText,
         initialAlternateAddressText: (appt.alternateAddress?.addressText ?? '').trim(),
       });
@@ -229,10 +301,12 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       onFormSnapshotChange,
       effectiveAppointmentTypeId,
       primaryProviderId,
+      additionalEmployeeIds,
       description,
       statusName,
       confirmStatusName,
       isComplete,
+      appt.allDay,
       alternateAddressText,
       appt.alternateAddress?.addressText,
     ]);
@@ -253,7 +327,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
     ]);
 
     useEffect(() => {
-      if (!placementPreviewActive || !onPlacementTimesChange) {
+      if (appt.allDay || !placementPreviewActive || !onPlacementTimesChange) {
         placementPreviewWasActiveRef.current = false;
         return;
       }
@@ -268,6 +342,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       if (!startUtc || !endUtc || !Number.isFinite(tid) || tid <= 0) return;
       onPlacementTimesChange(startUtc, endUtc, tid, previewKind);
     }, [
+      appt.allDay,
       startTime,
       endTime,
       effectiveAppointmentTypeId,
@@ -298,11 +373,11 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       }
       const { startUtc, endUtc } = buildStartEndUtc();
       if (!startUtc || !endUtc) {
-        setError('Start and end times are required.');
+        setError(appt.allDay ? 'Start and end dates are required.' : 'Start and end times are required.');
         return;
       }
       if (DateTime.fromISO(endUtc) <= DateTime.fromISO(startUtc)) {
-        setError('End time must be after start time.');
+        setError(appt.allDay ? 'End date must be on or after the start date.' : 'End time must be after start time.');
         return;
       }
 
@@ -316,10 +391,12 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
           form: {
             appointmentTypeId: tid,
             primaryProviderId: pid,
+            additionalEmployeeIds,
             description,
             statusName,
             confirmStatusName,
             isComplete,
+            allDay: appt.allDay,
             alternateAddressText,
             initialAlternateAddressText: alternateAddressText,
           },
@@ -348,6 +425,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
     }, [
       appointmentTypeId,
       primaryProviderId,
+      additionalEmployeeIds,
       buildStartEndUtc,
       alternateAddressText,
       appt,
@@ -374,11 +452,11 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       setError(null);
       const { startUtc, endUtc } = buildStartEndUtc();
       if (!startUtc || !endUtc) {
-        setError('Enter valid start and end times.');
+        setError(appt.allDay ? 'Enter valid start and end dates.' : 'Enter valid start and end times.');
         return null;
       }
       if (DateTime.fromISO(endUtc) <= DateTime.fromISO(startUtc)) {
-        setError('End time must be after start time.');
+        setError(appt.allDay ? 'End date must be on or after the start date.' : 'End time must be after start time.');
         return null;
       }
       return { startUtc, endUtc };
@@ -401,8 +479,8 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       onPreviewSchedule?.(times.startUtc, times.endUtc, tid);
     }
 
-    const canViewPlacement = Boolean(onViewPlacement && timesDirty && !placementPreviewActive);
-    const canPreviewSchedule = Boolean(onPreviewSchedule && typeDirty && !placementPreviewActive);
+    const canViewPlacement = Boolean(!appt.allDay && onViewPlacement && timesDirty && !placementPreviewActive);
+    const canPreviewSchedule = Boolean(!appt.allDay && onPreviewSchedule && typeDirty && !placementPreviewActive);
 
     const modalPanel = (
       <div
@@ -434,9 +512,22 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
             <SchedulerVisitPatientContext appt={appt} providers={providers} practiceTz={practiceTz} />
             {visitStartEnd.start.isValid && visitStartEnd.end.isValid ? (
               <p className="scheduler-modal-subtitle">
-                {visitStartEnd.start.toFormat('EEEE, MMMM d, yyyy')}
-                <span className="scheduler-modal-subtitle-sep">·</span>
-                {visitStartEnd.start.toFormat('h:mm a')} – {visitStartEnd.end.toFormat('h:mm a')}
+                {appt.allDay ? (
+                  (() => {
+                    const endInclusive = allDayInclusiveEndDate(appt.appointmentEnd, practiceTz);
+                    const startLabel = visitStartEnd.start.startOf('day').toFormat('EEEE, MMMM d, yyyy');
+                    const endLabel = endInclusive?.toFormat('EEEE, MMMM d, yyyy') ?? startLabel;
+                    return startLabel === endLabel
+                      ? `${startLabel} · All day`
+                      : `${startLabel} – ${endLabel} · All day`;
+                  })()
+                ) : (
+                  <>
+                    {visitStartEnd.start.toFormat('EEEE, MMMM d, yyyy')}
+                    <span className="scheduler-modal-subtitle-sep">·</span>
+                    {visitStartEnd.start.toFormat('h:mm a')} – {visitStartEnd.end.toFormat('h:mm a')}
+                  </>
+                )}
               </p>
             ) : (
               <p className="scheduler-modal-subtitle">{appointmentDateLabel}</p>
@@ -521,20 +612,112 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
 
           <section className="scheduler-modal-section">
             <div className="scheduler-edit-grid">
-              <label className="scheduler-edit-field">
-                <span>Type *</span>
-                <select
-                  value={appointmentTypeId}
-                  onChange={(e) => setAppointmentTypeId(e.target.value)}
-                >
-                  <option value="">—</option>
-                  {appointmentTypes.map((t) => (
-                    <option key={t.id} value={String(t.id)}>
-                      {t.name || t.prettyName}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="scheduler-edit-two-col">
+                <label className="scheduler-edit-field">
+                  <span>Type *</span>
+                  <select
+                    value={appointmentTypeId}
+                    onChange={(e) => setAppointmentTypeId(e.target.value)}
+                  >
+                    <option value="">—</option>
+                    {appointmentTypes.map((t) => (
+                      <option key={t.id} value={String(t.id)}>
+                        {t.name || t.prettyName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="scheduler-edit-field">
+                  <span>Primary provider *</span>
+                  <select value={primaryProviderId} onChange={(e) => setPrimaryProviderId(e.target.value)}>
+                    <option value="">—</option>
+                    {providers.map((p) => (
+                      <option key={String(p.id)} value={String(p.id)}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              {appt.allDay ? (
+                <div className="scheduler-edit-two-col">
+                  <label className="scheduler-edit-field">
+                    <span>Start date *</span>
+                    <input
+                      type="date"
+                      value={allDayStartDate}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setAllDayStartDate(next);
+                        setAllDayEndDate((prev) => {
+                          const prevDt = DateTime.fromISO(prev || next, { zone: practiceTz }).startOf('day');
+                          const nextDt = DateTime.fromISO(next, { zone: practiceTz }).startOf('day');
+                          if (!prevDt.isValid || !nextDt.isValid || prevDt < nextDt) return next;
+                          return prevDt.toISODate() ?? next;
+                        });
+                      }}
+                    />
+                  </label>
+
+                  <label className="scheduler-edit-field">
+                    <span>End date *</span>
+                    <input
+                      type="date"
+                      value={allDayEndDate}
+                      min={allDayStartDate}
+                      onChange={(e) => setAllDayEndDate(e.target.value)}
+                    />
+                  </label>
+                </div>
+              ) : null}
+
+              {appt.allDay ? (
+                <label className="scheduler-edit-field scheduler-edit-field--full">
+                  <span>Also show on employee calendars</span>
+                  <div className="scheduler-edit-checklist" role="group" aria-label="Additional employees">
+                    {additionalEmployeeOptions.length > 0 ? (
+                      additionalEmployeeOptions.map((emp) => {
+                        const checked = additionalEmployeeIds.includes(emp.id);
+                        return (
+                          <label
+                            key={emp.id}
+                            className={[
+                              'scheduler-edit-checklist-item',
+                              !emp.isActive ? 'scheduler-edit-checklist-item--inactive' : '',
+                            ]
+                              .filter(Boolean)
+                              .join(' ')}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                const nextChecked = e.target.checked;
+                                setAdditionalEmployeeIds((prev) =>
+                                  nextChecked
+                                    ? normalizeEmployeeIds([...prev, emp.id])
+                                    : prev.filter((id) => id !== emp.id)
+                                );
+                              }}
+                            />
+                            <span>{emp.label}</span>
+                          </label>
+                        );
+                      })
+                    ) : (
+                      <span className="scheduler-edit-checklist-empty">
+                        No other employees are available for this all-day appointment.
+                      </span>
+                    )}
+                  </div>
+                  <p className="scheduler-edit-hint">
+                    The primary provider remains the owner. Checked employees will also see this appointment on
+                    their calendars.
+                  </p>
+                </label>
+              ) : null}
 
               <label className="scheduler-edit-field scheduler-edit-field--full">
                 <span>Description</span>
@@ -564,31 +747,39 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                 </div>
               </div>
 
-              <div className="scheduler-edit-time-block">
-                <div className="scheduler-edit-field scheduler-edit-readonly">
-                  <span>Date</span>
-                  <div className="scheduler-edit-date-value">{appointmentDateLabel}</div>
-                </div>
-                <label className="scheduler-edit-field">
-                  <span>Start time *</span>
-                  <input
-                    type="time"
-                    value={startTime}
-                    onChange={(e) => setStartTime(e.target.value)}
-                  />
-                </label>
-                <label className="scheduler-edit-field">
-                  <span>End time *</span>
-                  <input
-                    type="time"
-                    value={endTime}
-                    onChange={(e) => setEndTime(e.target.value)}
-                  />
-                </label>
-              </div>
-              <p className="scheduler-edit-hint scheduler-edit-hint--time">
-                Date can only be changed by rescheduling. Adjust start and end times only.
-              </p>
+              {appt.allDay ? (
+                <p className="scheduler-edit-hint scheduler-edit-hint--time">
+                  All-day appointments use an inclusive start and end date and are shown on every covered day.
+                </p>
+              ) : (
+                <>
+                  <div className="scheduler-edit-time-block">
+                    <div className="scheduler-edit-field scheduler-edit-readonly">
+                      <span>Date</span>
+                      <div className="scheduler-edit-date-value">{appointmentDateLabel}</div>
+                    </div>
+                    <label className="scheduler-edit-field">
+                      <span>Start time *</span>
+                      <input
+                        type="time"
+                        value={startTime}
+                        onChange={(e) => setStartTime(e.target.value)}
+                      />
+                    </label>
+                    <label className="scheduler-edit-field">
+                      <span>End time *</span>
+                      <input
+                        type="time"
+                        value={endTime}
+                        onChange={(e) => setEndTime(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <p className="scheduler-edit-hint scheduler-edit-hint--time">
+                    Date can only be changed by rescheduling. Adjust start and end times only.
+                  </p>
+                </>
+              )}
 
               {hasAlternateRoutingAddress ? (
                 <div
