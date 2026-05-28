@@ -816,6 +816,22 @@ export type DoctorMonthAppt = {
   effectiveZone?: MiniZone;
 };
 
+/** Booked minutes for doctor-month / appt-length stats; falls back to start/end when serviceMinutes is omitted. */
+export function doctorMonthApptBookedMinutes(
+  a: Pick<DoctorMonthAppt, 'serviceMinutes' | 'startIso' | 'endIso'>
+): number {
+  if (typeof a.serviceMinutes === 'number' && Number.isFinite(a.serviceMinutes) && a.serviceMinutes > 0) {
+    return a.serviceMinutes;
+  }
+  const startRaw = a.startIso?.trim();
+  const endRaw = a.endIso?.trim();
+  if (!startRaw || !endRaw) return 0;
+  const startMs = Date.parse(startRaw);
+  const endMs = Date.parse(endRaw);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return 0;
+  return Math.max(1, Math.round((endMs - startMs) / 60_000));
+}
+
 export type DoctorMonthBlock = {
   id: number | string;
   startIso: string;
@@ -857,24 +873,29 @@ export async function fetchDoctorMonth(
     timezone: d?.timezone,
     workStartLocal: d?.workStartLocal,
     workEndLocal: d?.workEndLocal,
-    appts: (d?.appts ?? []).map((a: any) => ({
-      id: a?.id,
-      startIso: a?.startIso,
-      endIso: a?.endIso,
-      title: a?.title,
-      serviceMinutes: a?.serviceMinutes,
-      appointmentType: a?.appointmentType?.name ?? a?.appointmentType ?? undefined,
-      appointmentTypeId:
-        a?.appointmentType?.id != null
-          ? Number(a.appointmentType.id)
-          : a?.appointmentTypeId != null
-            ? Number(a.appointmentTypeId)
-            : undefined,
-      clientId: a?.clientId ?? a?.client?.id ?? undefined,
-      clientPimsId: a?.clientPimsId ?? a?.client?.pimsId ?? undefined,
-      clientZone: miniZoneFromPayload(a?.clientZone),
-      effectiveZone: miniZoneFromPayload(a?.effectiveZone),
-    })),
+    appts: (d?.appts ?? []).map((a: any) => {
+      const startIso = a?.startIso ?? a?.appointmentStart ?? a?.scheduledStartIso ?? '';
+      const endIso = a?.endIso ?? a?.appointmentEnd ?? a?.scheduledEndIso ?? '';
+      const mapped: DoctorMonthAppt = {
+        id: a?.id,
+        startIso,
+        endIso,
+        title: a?.title,
+        appointmentType: a?.appointmentType?.name ?? a?.appointmentType ?? undefined,
+        appointmentTypeId:
+          a?.appointmentType?.id != null
+            ? Number(a.appointmentType.id)
+            : a?.appointmentTypeId != null
+              ? Number(a.appointmentTypeId)
+              : undefined,
+        clientId: a?.clientId ?? a?.client?.id ?? undefined,
+        clientPimsId: a?.clientPimsId ?? a?.client?.pimsId ?? undefined,
+        clientZone: miniZoneFromPayload(a?.clientZone),
+        effectiveZone: miniZoneFromPayload(a?.effectiveZone),
+      };
+      mapped.serviceMinutes = doctorMonthApptBookedMinutes(mapped);
+      return mapped;
+    }),
     blocks: (d?.blocks ?? []).map((b: any) => ({
       id: b?.id,
       startIso: b?.startIso,

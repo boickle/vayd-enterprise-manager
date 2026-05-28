@@ -92,6 +92,7 @@ import {
 import { buildPhoneDialHref, buildPhoneSmsHref } from '../utils/quoContact';
 import ScheduleOverrideModal from '../components/ScheduleOverrideModal';
 import { EditVisitPreviewPopover } from '../components/EditVisitPreviewPopover';
+import { RoutingPreviewSlotPopover } from '../components/RoutingPreviewSlotPopover';
 import {
   SchedulerVisitClientContext,
   SchedulerVisitClientHeaderAlerts,
@@ -197,6 +198,37 @@ import './Scheduler.css';
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 const PRACTICE_TZ =
   (import.meta.env.VITE_PRACTICE_TIMEZONE as string | undefined)?.trim() || 'America/New_York';
+
+/** Admin double-click on practice calendar — distinct from routing / reschedule book flows. */
+const MANUAL_CALENDAR_BOOK_MODAL_TITLE = 'Book appointment - MANUAL OVERIDE';
+
+/** Scroll the timed grid (embedded routing column or full-page calendar) so a slot is centered. */
+function scrollTimedGridElementIntoView(el: HTMLElement, behavior: ScrollBehavior = 'auto') {
+  const scrollRoot = el.closest('.scheduler-calendar-scroll');
+  if (scrollRoot instanceof HTMLElement) {
+    const rootRect = scrollRoot.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const targetTop =
+      scrollRoot.scrollTop +
+      (elRect.top - rootRect.top) -
+      (rootRect.height - elRect.height) / 2;
+    scrollRoot.scrollTo({ top: Math.max(0, targetTop), behavior });
+    return;
+  }
+  el.scrollIntoView({ block: 'center', behavior, inline: 'nearest' });
+}
+
+function refreshRoutingPreviewAnchorAfterScroll(
+  refresh: () => void,
+  behavior: ScrollBehavior = 'auto'
+) {
+  refresh();
+  requestAnimationFrame(() => {
+    refresh();
+    requestAnimationFrame(refresh);
+  });
+  window.setTimeout(refresh, behavior === 'smooth' ? 400 : 120);
+}
 
 /** Extra line for last drive hatched band (depot return), when not already in segment title from layout. */
 function schedulerDriveHoverExtraLine(
@@ -2864,6 +2896,26 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [editTimePreview, editTimePreviewColumnKey]
   );
 
+  const editVisitColumnKey = useMemo(() => {
+    if (!editAppt || editTimePreview) return null;
+    return appointmentPracticeDateKey(editAppt.appointmentStart, PRACTICE_TZ);
+  }, [editAppt, editTimePreview]);
+
+  const editVisitFocusDim = useMemo(
+    () => Boolean(editAppt && !editTimePreview),
+    [editAppt, editTimePreview]
+  );
+
+  /** Block calendar/toolbar until edit visit is closed (placement preview keeps calendar interactive). */
+  const editVisitCalendarLock = useMemo(
+    () => Boolean(editAppt && !editPlacementMode),
+    [editAppt, editPlacementMode]
+  );
+
+  const notifyEditVisitCalendarLocked = useCallback(() => {
+    setToast('Close Edit visit to use the calendar.');
+  }, []);
+
   const rescheduleSourceHighlightIds = useMemo(
     () => rescheduleSourceHighlightAppointmentIds(embedInRoutingWorkspace, routingPreview),
     [embedInRoutingWorkspace, routingPreview, rescheduleIntentTick]
@@ -2894,7 +2946,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, [rescheduleWorkspaceActive, rescheduleIntentTick]);
 
   const calendarFocusDim =
-    routingPreviewFocusDim || editTimePreviewFocusDim || rescheduleSourceFocusDim;
+    routingPreviewFocusDim ||
+    editTimePreviewFocusDim ||
+    rescheduleSourceFocusDim ||
+    editVisitFocusDim;
 
   const routingPreviewIsReschedule = useMemo(
     () =>
@@ -3567,6 +3622,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       if (doctorDayIsOff(dayData)) return 1;
       if (routingPreview && routingPreviewColumnKey === k) return 2;
       if (editTimePreview && editTimePreviewColumnKey === k) return 2;
+      if (editVisitColumnKey === k) return 2;
       if (rescheduleSourceColumnKey === k) return 2;
       if (schedulerDayIsWorking(k, dayData, appointmentsByDay)) return 2;
       return 1;
@@ -3597,6 +3653,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     routingPreviewColumnKey,
     editTimePreview,
     editTimePreviewColumnKey,
+    editVisitColumnKey,
     rescheduleSourceColumnKey,
   ]);
 
@@ -3746,6 +3803,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [editPreviewAnchorRect, setEditPreviewAnchorRect] = useState<HoverAnchorRect | null>(null);
   const [editPreviewDayColumnRect, setEditPreviewDayColumnRect] =
     useState<HoverAnchorRect | null>(null);
+  const [routingPreviewAnchorRect, setRoutingPreviewAnchorRect] =
+    useState<HoverAnchorRect | null>(null);
+  const [routingPreviewDayColumnRect, setRoutingPreviewDayColumnRect] =
+    useState<HoverAnchorRect | null>(null);
 
   const refreshEditPreviewAnchor = useCallback(() => {
     const el = document.querySelector('[data-edit-time-preview="1"]');
@@ -3753,6 +3814,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const columnEl = slotEl?.closest('.scheduler-day-col');
     setEditPreviewAnchorRect(rectFromElement(slotEl));
     setEditPreviewDayColumnRect(
+      rectFromElement(columnEl instanceof HTMLElement ? columnEl : null)
+    );
+  }, []);
+
+  const refreshRoutingPreviewAnchor = useCallback(() => {
+    const el = document.querySelector('[data-routing-preview-slot="1"]');
+    const slotEl = el instanceof HTMLElement ? el : null;
+    const columnEl = slotEl?.closest('.scheduler-day-col');
+    setRoutingPreviewAnchorRect(rectFromElement(slotEl));
+    setRoutingPreviewDayColumnRect(
       rectFromElement(columnEl instanceof HTMLElement ? columnEl : null)
     );
   }, []);
@@ -3803,31 +3874,100 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     });
   }, [editTimePreview, editPreviewAnchorRect, editPreviewDayColumnRect, editPreviewScoreCompare]);
 
+  useLayoutEffect(() => {
+    if (!routingPreview) {
+      setRoutingPreviewAnchorRect(null);
+      return;
+    }
+    refreshRoutingPreviewAnchor();
+    const onScrollOrResize = () => refreshRoutingPreviewAnchor();
+    window.addEventListener('resize', onScrollOrResize);
+    window.addEventListener('scroll', onScrollOrResize, true);
+    const raf = requestAnimationFrame(refreshRoutingPreviewAnchor);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', onScrollOrResize);
+      window.removeEventListener('scroll', onScrollOrResize, true);
+    };
+  }, [routingPreview, loading, showTimeGrid, refreshRoutingPreviewAnchor]);
+
+  const routingPreviewPopoverPos = useMemo(() => {
+    if (!routingPreview || !routingPreviewAnchorRect) return null;
+    const vwW = typeof window !== 'undefined' ? window.innerWidth : 1200;
+    const vwH = typeof window !== 'undefined' ? window.innerHeight : 800;
+    return computeEditPreviewPopoverPosition({
+      slotAnchor: routingPreviewAnchorRect,
+      dayColumnAnchor: routingPreviewDayColumnRect,
+      vwW,
+      vwH,
+      cardW: 300,
+      cardEstH: 280,
+      padding: 12,
+      gutter: 10,
+    });
+  }, [routingPreview, routingPreviewAnchorRect, routingPreviewDayColumnRect]);
+
   /** Scroll to the proposed slot once per routing preview candidate (after grid paint). */
   const routingPreviewScrollSigRef = useRef<string>('');
+  useEffect(() => {
+    if (loading) routingPreviewScrollSigRef.current = '';
+  }, [loading]);
+
   useLayoutEffect(() => {
     if (!routingPreview?.option?.suggestedStartIso) {
       routingPreviewScrollSigRef.current = '';
       return;
     }
-    if (loading || !showTimeGrid) return;
+    if (!showTimeGrid || loading || driveEtaLoading) return;
+
     const opt = routingPreview.option;
     const sig = [
       String(opt.suggestedStartIso),
       String(opt.date ?? ''),
       String(opt.doctorPimsId ?? ''),
       routingPreviewColumnKey ?? '',
+      anchorDate ?? '',
     ].join('|');
-    if (routingPreviewScrollSigRef.current === sig) return;
-    const el = document.querySelector('[data-routing-preview-slot="1"]');
-    if (!(el instanceof HTMLElement)) return;
-    routingPreviewScrollSigRef.current = sig;
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        el.scrollIntoView({ block: 'center', behavior: 'smooth', inline: 'nearest' });
-      });
-    });
-  }, [routingPreview, loading, showTimeGrid, routingPreviewColumnKey]);
+
+    if (routingPreviewScrollSigRef.current === sig) {
+      refreshRoutingPreviewAnchor();
+      return;
+    }
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 24;
+
+    const tryScroll = () => {
+      if (cancelled) return;
+      attempts += 1;
+      const el = document.querySelector('[data-routing-preview-slot="1"]');
+      if (!(el instanceof HTMLElement)) {
+        if (attempts < maxAttempts) {
+          requestAnimationFrame(tryScroll);
+        }
+        return;
+      }
+
+      scrollTimedGridElementIntoView(el, 'auto');
+      routingPreviewScrollSigRef.current = sig;
+      refreshRoutingPreviewAnchorAfterScroll(refreshRoutingPreviewAnchor, 'auto');
+    };
+
+    tryScroll();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    routingPreview,
+    loading,
+    driveEtaLoading,
+    showTimeGrid,
+    routingPreviewColumnKey,
+    anchorDate,
+    calendarAppointments,
+    refreshRoutingPreviewAnchor,
+  ]);
 
   const editTimePreviewScrollSigRef = useRef<string>('');
   useLayoutEffect(() => {
@@ -3880,6 +4020,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
   const handleDayBodyDoubleClick = useCallback(
     (e: MouseEvent<HTMLDivElement>, dayDt: DateTime) => {
+      if (editVisitCalendarLock) {
+        notifyEditVisitCalendarLocked();
+        return;
+      }
       if (!canManualBookOnCalendar) return;
       const el = e.currentTarget;
       const rect = el.getBoundingClientRect();
@@ -3893,21 +4037,31 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       const dayStart = dayDt.setZone(PRACTICE_TZ).startOf('day');
       const start = dayStart.plus({ minutes: clamped });
       const end = start.plus({ minutes: 30 });
-      setBookPrefill(null);
+      setBookPrefill({ modalTitle: MANUAL_CALENDAR_BOOK_MODAL_TITLE });
       setBookSlot({ start, end });
     },
-    [gridBounds.gridStartMin, gridBounds.gridEndMin, canManualBookOnCalendar]
+    [
+      editVisitCalendarLock,
+      notifyEditVisitCalendarLocked,
+      gridBounds.gridStartMin,
+      gridBounds.gridEndMin,
+      canManualBookOnCalendar,
+    ]
   );
 
   const handleAllDayDoubleClick = useCallback(
     (dayDt: DateTime) => {
+      if (editVisitCalendarLock) {
+        notifyEditVisitCalendarLocked();
+        return;
+      }
       if (!canManualBookOnCalendar) return;
       const start = dayDt.setZone(PRACTICE_TZ).startOf('day');
       const end = start.plus({ days: 1 });
-      setBookPrefill({ allDay: true });
+      setBookPrefill({ allDay: true, modalTitle: MANUAL_CALENDAR_BOOK_MODAL_TITLE });
       setBookSlot({ start, end });
     },
-    [canManualBookOnCalendar]
+    [editVisitCalendarLock, notifyEditVisitCalendarLocked, canManualBookOnCalendar]
   );
 
   const dismissRoutingPreview = useCallback(() => {
@@ -4416,13 +4570,22 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     return () => clearTimeout(id);
   }, [toast]);
 
-  const handleAppointmentContextMenu = useCallback((e: MouseEvent<HTMLDivElement>, appt: Appointment) => {
-    e.preventDefault();
-    e.stopPropagation();
-    cancelScheduledHoverPopover();
-    setHover(null);
-    setContextMenu({ appt, x: e.clientX, y: e.clientY });
-  }, [cancelScheduledHoverPopover]);
+  const handleAppointmentContextMenu = useCallback(
+    (e: MouseEvent<HTMLDivElement>, appt: Appointment) => {
+      if (editVisitCalendarLock) {
+        e.preventDefault();
+        e.stopPropagation();
+        notifyEditVisitCalendarLocked();
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      cancelScheduledHoverPopover();
+      setHover(null);
+      setContextMenu({ appt, x: e.clientX, y: e.clientY });
+    },
+    [editVisitCalendarLock, notifyEditVisitCalendarLocked, cancelScheduledHoverPopover]
+  );
 
   const applyActualVisitTimeUpdate = useCallback(
     async (updated: Appointment, message: string) => {
@@ -4504,6 +4667,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             }
             const intent = buildRoutingRescheduleIntentFromAppointment(appt, {
               sameCalendarDayAppointments: rawAppointments,
+              providers,
             });
             if (!intent) {
               fail('This visit cannot be rescheduled here (needs client and patient, not a block).');
@@ -4677,14 +4841,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       applyActualVisitTimeUpdate,
       applyRescheduleCalendarFocusFromIntent,
       editAppt?.id,
+      providers,
     ]
   );
 
   const contextMenuRescheduleIntent = useMemo(() => {
     if (!contextMenu) return null;
     if (!appointmentIsTodayOrFuture(contextMenu.appt, PRACTICE_TZ)) return null;
-    return buildRoutingRescheduleIntentFromAppointment(contextMenu.appt);
-  }, [contextMenu]);
+    return buildRoutingRescheduleIntentFromAppointment(contextMenu.appt, {
+      sameCalendarDayAppointments: rawAppointments,
+      providers,
+    });
+  }, [contextMenu, rawAppointments, providers]);
 
   const contextMenuRescheduleDisabledTitle = useMemo(() => {
     if (!contextMenu) return undefined;
@@ -5030,6 +5198,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                       rescheduleSourceHighlightIds != null &&
                       typeof appt.id === 'number' &&
                       rescheduleSourceHighlightIds.has(appt.id);
+                    const isEditVisitActiveAllDay =
+                      editAppt != null &&
+                      typeof appt.id === 'number' &&
+                      editAppt.id === appt.id &&
+                      editTimePreview?.appointmentId !== appt.id;
                     return (
                       <div
                         key={appt.id}
@@ -5038,6 +5211,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                         className={[
                           'scheduler-all-day-span-bar',
                           isRescheduleSourceAllDay ? 'scheduler-reschedule-source-slot' : '',
+                          isEditVisitActiveAllDay ? 'scheduler-edit-visit-active-slot' : '',
                         ]
                           .filter(Boolean)
                           .join(' ')}
@@ -5052,9 +5226,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                         }}
                         onDoubleClick={(ev) => {
                           ev.stopPropagation();
+                          if (editVisitCalendarLock) {
+                            notifyEditVisitCalendarLocked();
+                            return;
+                          }
                           setModalAppt(appt);
                         }}
-                        onKeyDown={(ke) => ke.key === 'Enter' && setModalAppt(appt)}
+                        onKeyDown={(ke) => {
+                          if (ke.key !== 'Enter') return;
+                          if (editVisitCalendarLock) {
+                            notifyEditVisitCalendarLocked();
+                            return;
+                          }
+                          setModalAppt(appt);
+                        }}
                         onMouseEnter={(ev) => armHoverPopover(appt, ev)}
                         onMouseMove={(ev) => trackHoverPopoverMove(appt, ev)}
                         onMouseLeave={() => endHoverPopoverForAppt(appt.id)}
@@ -5335,6 +5520,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                 }}
                                 onDoubleClick={(e) => e.stopPropagation()}
                                 onContextMenu={(e) => e.preventDefault()}
+                                onMouseEnter={(e) => armHoverPopover(appt, e)}
+                                onMouseMove={(e) => trackHoverPopoverMove(appt, e)}
+                                onMouseLeave={() => endHoverPopoverForAppt(appt.id)}
                               >
                                 <div className="scheduler-routing-preview-slot-default">
                                   <div className="scheduler-event-time">
@@ -5350,45 +5538,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                     ) : (
                                       <div className="scheduler-event-title">{previewLabel}</div>
                                     )}
-                                  </div>
-                                </div>
-                                <div
-                                  className="scheduler-routing-preview-slot-hover"
-                                  role="group"
-                                  aria-label="Routing preview actions"
-                                >
-                                  <div className="scheduler-routing-preview-slot-hover-actions">
-                                    <button
-                                      type="button"
-                                      className="btn scheduler-routing-preview-slot-hover-book"
-                                      disabled={bookSlot != null}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        openRoutingBookForm();
-                                      }}
-                                    >
-                                      {routingPreviewIsReschedule ? 'Reschedule' : 'Book'}
-                                    </button>
-                                    <span
-                                      role="button"
-                                      tabIndex={0}
-                                      className="scheduler-routing-preview-slot-hover-dismiss"
-                                      aria-label="Dismiss routing preview"
-                                      title="Dismiss"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        dismissRoutingPreview();
-                                      }}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter' || e.key === ' ') {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          dismissRoutingPreview();
-                                        }
-                                      }}
-                                    >
-                                      <X size={14} strokeWidth={2.5} aria-hidden />
-                                    </span>
                                   </div>
                                 </div>
                               </div>
@@ -5434,16 +5583,24 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             editVisitBookedSummary != null &&
                             editAppt?.id === appt.id &&
                             !isEditTimePreviewVisit;
+                          const isEditVisitActiveSlot =
+                            editAppt != null &&
+                            typeof appt.id === 'number' &&
+                            editAppt.id === appt.id &&
+                            !isEditTimePreviewVisit &&
+                            !isEditVisitJustBooked;
                           return (
                             <div
                               key={appt.id}
                               data-appt-id={appt.id != null ? String(appt.id) : undefined}
                               data-edit-time-preview={isEditTimePreviewVisit ? '1' : undefined}
+                              data-edit-visit-active={isEditVisitActiveSlot ? '1' : undefined}
                               data-reschedule-source={isRescheduleSourceVisit ? '1' : undefined}
                               className={[
                                 'scheduler-event',
                                 isEditTimePreviewVisit ? 'scheduler-edit-time-preview-slot' : '',
                                 isRescheduleSourceVisit ? 'scheduler-reschedule-source-slot' : '',
+                                isEditVisitActiveSlot ? 'scheduler-edit-visit-active-slot' : '',
                                 isEditVisitJustBooked ? 'scheduler-edit-visit-booked-slot' : '',
                               ]
                                 .filter(Boolean)
@@ -5461,11 +5618,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                               tabIndex={0}
                               onDoubleClick={(e) => {
                                 e.stopPropagation();
+                                if (editVisitCalendarLock) {
+                                  notifyEditVisitCalendarLocked();
+                                  return;
+                                }
                                 if (!isEditTimePreviewVisit) setModalAppt(appt);
                               }}
-                              onKeyDown={(e) =>
-                                e.key === 'Enter' && !isEditTimePreviewVisit && setModalAppt(appt)
-                              }
+                              onKeyDown={(e) => {
+                                if (e.key !== 'Enter' || isEditTimePreviewVisit) return;
+                                if (editVisitCalendarLock) {
+                                  notifyEditVisitCalendarLocked();
+                                  return;
+                                }
+                                setModalAppt(appt);
+                              }}
                               onMouseEnter={(e) => armHoverPopover(appt, e)}
                               onMouseMove={(e) => trackHoverPopoverMove(appt, e)}
                               onMouseLeave={() => endHoverPopoverForAppt(appt.id)}
@@ -5522,6 +5688,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         routingPreview ? 'scheduler-page--routing-preview' : '',
         rescheduleWorkspaceActive ? 'scheduler-page--reschedule-focus' : '',
         calendarFocusDim ? 'scheduler-page--routing-preview-focus' : '',
+        editVisitFocusDim ? 'scheduler-page--edit-visit-focus' : '',
       ]
         .filter(Boolean)
         .join(' ')}
@@ -5574,14 +5741,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             >
               Back to routing results
             </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => openRoutingBookForm()}
-              disabled={bookSlot != null}
-            >
-              Book now
-            </button>
           </div>
         </div>
       ) : null}
@@ -5605,6 +5764,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             : '',
           rescheduleWorkspaceActive ? 'scheduler-toolbar-calendar-merge--reschedule-halo' : '',
           editPlacementMode && !embedInRoutingWorkspace ? 'scheduler-edit-placement-main' : '',
+          editVisitCalendarLock ? 'scheduler-toolbar-calendar-merge--edit-visit-locked' : '',
         ]
           .filter(Boolean)
           .join(' ')}
@@ -5623,7 +5783,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           <div className="scheduler-embedded-preview-bar" role="status" aria-live="polite">
             <span className="scheduler-embedded-preview-bar-badge">Preview</span>
             <span className="scheduler-embedded-preview-bar-msg">
-              Hover the proposed slot to book, or return to the visit on the schedule.
+              Use the panel beside the purple slot to book. Hover any visit for full details.
             </span>
             {readRoutingRescheduleIntent() ? (
               <button
@@ -5767,6 +5927,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                   type="button"
                   className={`scheduler-month-cell ${cell.inMonth ? '' : 'muted'}`}
                   onClick={() => {
+                    if (editVisitCalendarLock) {
+                      notifyEditVisitCalendarLocked();
+                      return;
+                    }
                     setAnchorDate(cell.date.toISODate()!);
                     setView('day');
                   }}
@@ -5798,6 +5962,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           )}
         </div>
       )}
+      {editVisitCalendarLock ? (
+        <button
+          type="button"
+          className="scheduler-edit-visit-calendar-blocker"
+          aria-label="Close Edit visit to use the calendar"
+          onClick={notifyEditVisitCalendarLocked}
+        />
+      ) : null}
       </div>
       </div>
 
@@ -5811,7 +5983,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             style={{
               left: tooltipPos.left,
               width: tooltipPos.width,
-              zIndex: editTimePreview ? 2200 : 2000,
+              zIndex: editTimePreview || routingPreview ? 2200 : 2000,
               ...(tooltipPos.bottom != null
                 ? { top: 'auto', bottom: tooltipPos.bottom }
                 : { top: tooltipPos.top }),
@@ -5824,11 +5996,40 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           document.body
         )}
 
+      {routingPreview &&
+        routingPreviewPopoverPos &&
+        createPortal(
+          <div
+            className="scheduler-edit-preview-popover-shell"
+            data-schedule-preview-allow
+            style={{
+              position: 'fixed',
+              left: routingPreviewPopoverPos.left,
+              width: routingPreviewPopoverPos.width,
+              zIndex: 2050,
+              ...(routingPreviewPopoverPos.bottom != null
+                ? { top: 'auto', bottom: routingPreviewPopoverPos.bottom }
+                : { top: routingPreviewPopoverPos.top }),
+            }}
+          >
+            <RoutingPreviewSlotPopover
+              preview={routingPreview}
+              practiceTz={PRACTICE_TZ}
+              isReschedule={routingPreviewIsReschedule}
+              bookDisabled={bookSlot != null}
+              onBook={() => openRoutingBookForm()}
+              onDismiss={dismissRoutingPreview}
+            />
+          </div>,
+          document.body
+        )}
+
       {editTimePreview &&
         editPreviewPopoverPos &&
         createPortal(
           <div
             className="scheduler-edit-preview-popover-shell"
+            data-schedule-preview-allow
             style={{
               position: 'fixed',
               left: editPreviewPopoverPos.left,

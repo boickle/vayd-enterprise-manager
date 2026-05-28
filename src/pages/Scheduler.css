@@ -229,7 +229,7 @@
   border-top: 1px solid #e2e8f0;
 }
 
-/** Routing proposal: purple chip; hover shows Book (green) + Cancel (slate). */
+/** Routing proposal: purple chip; Book / dismiss live in the side popover (edit-visit parity). */
 .scheduler-routing-preview-slot {
   container-type: size;
   container-name: scheduler-slot-actions;
@@ -264,136 +264,6 @@
   flex: 1;
 }
 
-.scheduler-routing-preview-slot-hover {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 2px 3px;
-  box-sizing: border-box;
-  border-radius: 4px;
-  background: linear-gradient(180deg, rgba(91, 33, 182, 0.94) 0%, rgba(76, 29, 149, 0.97) 100%);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.14s ease-out;
-}
-
-.scheduler-routing-preview-slot:hover .scheduler-routing-preview-slot-hover,
-.scheduler-routing-preview-slot:focus-within .scheduler-routing-preview-slot-hover,
-.scheduler-edit-time-preview-slot:hover .scheduler-routing-preview-slot-hover,
-.scheduler-edit-time-preview-slot:focus-within .scheduler-routing-preview-slot-hover {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.scheduler-routing-preview-slot-hover-actions {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: nowrap;
-  align-items: stretch;
-  justify-content: center;
-  gap: 4px;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.scheduler-routing-preview-slot-hover-book {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 9px;
-  font-weight: 700;
-  padding: 2px 6px;
-  line-height: 1.15;
-  border-radius: 4px;
-  border: none;
-  background: #16a34a;
-  color: #fff;
-  white-space: nowrap;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-}
-
-.scheduler-routing-preview-slot-hover-book:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.scheduler-routing-preview-slot-hover-dismiss {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0;
-  padding: 2px 6px;
-  line-height: 0;
-  cursor: pointer;
-  color: rgba(255, 255, 255, 0.95);
-  background: rgba(255, 255, 255, 0.14);
-  border: none;
-  border-radius: 4px;
-  outline: none;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-}
-
-.scheduler-routing-preview-slot-hover-dismiss svg {
-  width: 14px;
-  height: 14px;
-  stroke-width: 2.5;
-}
-
-/** Short slots (e.g. 10–25 min): float a compact toolbar centered on the chip. */
-@container scheduler-slot-actions (max-height: 36px) {
-  .scheduler-routing-preview-slot:hover .scheduler-routing-preview-slot-default,
-  .scheduler-edit-time-preview-slot:hover .scheduler-event-time,
-  .scheduler-edit-time-preview-slot:hover .scheduler-event-title-row,
-  .scheduler-edit-time-preview-slot:hover .scheduler-event-notes {
-    opacity: 0;
-  }
-
-  .scheduler-routing-preview-slot-hover {
-    inset: auto;
-    left: 50%;
-    top: 50%;
-    width: max-content;
-    max-width: calc(100% + 12px);
-    transform: translate(-50%, -50%);
-    padding: 2px 4px;
-    border-radius: 5px;
-    box-shadow: 0 2px 10px rgba(43, 17, 90, 0.45);
-  }
-
-  .scheduler-routing-preview-slot-hover-book {
-    flex: 0 0 auto;
-    font-size: 8px;
-    padding: 1px 5px;
-  }
-
-  .scheduler-routing-preview-slot-hover-dismiss {
-    padding: 1px 5px;
-  }
-
-  .scheduler-routing-preview-slot-hover-dismiss svg {
-    width: 12px;
-    height: 12px;
-  }
-}
-
-.scheduler-routing-preview-slot-hover-dismiss:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.14);
-}
-
-.scheduler-routing-preview-slot-hover-dismiss:focus-visible {
-  color: #fff;
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.65);
-}
-
 .scheduler-page--routing-preview-focus .scheduler-routing-preview-slot {
   outline-width: 3px;
   outline-color: rgba(196, 181, 253, 0.98);
@@ -415,13 +285,15 @@
 .scheduler-day-body--routing-preview-focus
   .scheduler-event:not(.scheduler-routing-preview-slot):not(.scheduler-edit-time-preview-slot):not(
     .scheduler-reschedule-source-slot
-  ) {
+  ):not(.scheduler-edit-visit-active-slot):not(.scheduler-edit-visit-booked-slot) {
   opacity: 0.72;
   filter: grayscale(0.28);
 }
 
 .scheduler-all-day-unified-outer--routing-preview-focus
-  .scheduler-all-day-span-bar:not(.scheduler-reschedule-source-slot) {
+  .scheduler-all-day-span-bar:not(.scheduler-reschedule-source-slot):not(
+    .scheduler-edit-visit-active-slot
+  ):not(.scheduler-edit-visit-booked-slot) {
   opacity: 0.58;
   filter: grayscale(0.32);
 }
@@ -442,6 +314,28 @@
     0 4px 20px rgba(124, 58, 237, 0.45);
 }
 
+/** Visit open in Edit visit (modal, no placement preview): blue ring. */
+.scheduler-event.scheduler-edit-visit-active-slot,
+.scheduler-all-day-span-bar.scheduler-edit-visit-active-slot {
+  z-index: 101;
+  overflow: visible;
+  outline: 2px solid rgba(37, 99, 235, 0.95);
+  outline-offset: 2px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.5),
+    0 4px 20px rgba(37, 99, 235, 0.42);
+}
+
+.scheduler-page--routing-preview-focus .scheduler-edit-visit-active-slot,
+.scheduler-page--edit-visit-focus .scheduler-edit-visit-active-slot {
+  outline-width: 3px;
+  outline-color: rgba(96, 165, 250, 0.98);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.65),
+    0 0 24px 6px rgba(59, 130, 246, 0.55),
+    0 10px 32px rgba(30, 64, 175, 0.32);
+}
+
 /** Reschedule source visit (before a purple preview slot): green ring. */
 .scheduler-event.scheduler-reschedule-source-slot,
 .scheduler-all-day-span-bar.scheduler-reschedule-source-slot {
@@ -452,10 +346,6 @@
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.45),
     0 4px 20px rgba(5, 150, 105, 0.42);
-}
-
-.scheduler-edit-time-preview-slot .scheduler-routing-preview-slot-hover {
-  border-radius: 4px;
 }
 
 .scheduler-page--routing-preview-focus .scheduler-edit-time-preview-slot {
@@ -4202,12 +4092,28 @@ label.scheduler-go-date-heading {
 }
 
 .scheduler-edit-visit-booked-slot {
-  z-index: 20;
+  z-index: 101;
   outline: 2px solid rgba(34, 197, 94, 0.9);
   outline-offset: 2px;
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.45),
     0 4px 18px rgba(22, 163, 74, 0.35);
+}
+
+.scheduler-toolbar-calendar-merge--edit-visit-locked {
+  position: relative;
+}
+
+.scheduler-edit-visit-calendar-blocker {
+  position: absolute;
+  inset: 0;
+  z-index: 90;
+  margin: 0;
+  padding: 0;
+  border: none;
+  cursor: not-allowed;
+  background: rgba(248, 250, 252, 0.42);
+  backdrop-filter: blur(1px);
 }
 
 .scheduler-edit-type-score-panel {

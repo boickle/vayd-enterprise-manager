@@ -281,6 +281,8 @@ export type Appointment = {
     designation?: string | null;
     title?: string | null;
   } | null;
+  createdByEmployeeId?: number | null;
+  modifiedByEmployeeId?: number | null;
   /** Display string when `createdByEmployee` was loaded in the query. */
   createdByName?: string | null;
   /** Display string when `modifiedByEmployee` was loaded (PIMS "modified", not "updated"). */

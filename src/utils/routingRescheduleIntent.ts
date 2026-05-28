@@ -363,7 +363,126 @@ export function rescheduleScopeTargets(intent: RoutingRescheduleIntentV1): {
 export type BuildRoutingRescheduleIntentOpts = {
   sameCalendarDayAppointments?: Appointment[];
   practiceTz?: string;
+  /** Practice calendar providers (`/employees/providers`) — resolves routing `doctorId` when visit row omits `primaryProvider.pimsId`. */
+  providers?: ReadonlyArray<{
+    id: number | string;
+    pimsId?: string | number | null;
+    name?: string;
+    firstName?: string | null;
+    lastName?: string | null;
+  }>;
 };
+
+export type RescheduleIntentDoctorPims = {
+  pimsId: string;
+  displayName?: string;
+};
+
+function findRescheduleProviderRow(
+  providers: ReadonlyArray<{
+    id: number | string;
+    pimsId?: string | number | null;
+    name?: string;
+    firstName?: string | null;
+    lastName?: string | null;
+  }>,
+  internalId: string | undefined,
+  pimsHint: string | undefined
+) {
+  const internal = internalId?.trim();
+  if (internal) {
+    const byInternal = providers.find((p) => String(p.id).trim() === internal);
+    if (byInternal) return byInternal;
+  }
+  const pims = pimsHint?.trim();
+  if (pims) {
+    const byPims = providers.find((p) => String(p.pimsId ?? '').trim() === pims);
+    if (byPims) return byPims;
+    const byIdAsPims = providers.find((p) => String(p.id).trim() === pims);
+    if (byIdAsPims) return byIdAsPims;
+  }
+  return null;
+}
+
+function displayNameFromProviderRow(
+  intentDisplayName: string | undefined,
+  match: {
+    name?: string;
+    firstName?: string | null;
+    lastName?: string | null;
+  }
+): string | undefined {
+  return (
+    intentDisplayName?.trim() ||
+    pickStr(match.name) ||
+    [pickStr(match.firstName), pickStr(match.lastName)].filter(Boolean).join(' ').trim() ||
+    undefined
+  );
+}
+
+/**
+ * Routing form `doctorId` (PIMS id) for the visit assignee.
+ * Prefer practice-calendar provider row by internal assignee id — appointment `primaryProvider.pimsId` is often wrong.
+ */
+export function resolveRescheduleIntentDoctorPimsId(
+  intent: Pick<
+    RoutingRescheduleIntentV1,
+    'primaryDoctorPimsId' | 'primaryProviderInternalId' | 'primaryDoctorDisplayName'
+  >,
+  providers: ReadonlyArray<{
+    id: number | string;
+    pimsId?: string | number | null;
+    name?: string;
+    firstName?: string | null;
+    lastName?: string | null;
+  }>
+): RescheduleIntentDoctorPims | null {
+  const intentDisplayName = intent.primaryDoctorDisplayName?.trim() || undefined;
+  if (providers.length > 0) {
+    const match = findRescheduleProviderRow(
+      providers,
+      intent.primaryProviderInternalId,
+      intent.primaryDoctorPimsId
+    );
+    if (match) {
+      const pimsId = pickStr(match.pimsId) ?? pickStr(match.id);
+      if (pimsId) {
+        return {
+          pimsId,
+          displayName: displayNameFromProviderRow(intentDisplayName, match),
+        };
+      }
+    }
+  }
+  const direct = intent.primaryDoctorPimsId?.trim();
+  if (direct) {
+    return { pimsId: direct, displayName: intentDisplayName };
+  }
+  return null;
+}
+
+/** After resolving assignee doctor, persist corrected PIMS id on the intent row. */
+export function patchRescheduleIntentDoctorPims(
+  pimsId: string,
+  displayName?: string,
+  opts?: { notify?: boolean }
+): void {
+  const cur = readRoutingRescheduleIntent();
+  if (!cur) return;
+  const next: RoutingRescheduleIntentV1 = {
+    ...cur,
+    primaryDoctorPimsId: pimsId.trim(),
+    ...(displayName?.trim() ? { primaryDoctorDisplayName: displayName.trim() } : {}),
+  };
+  try {
+    sessionStorage.setItem(ROUTING_RESCHEDULE_INTENT_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    /* quota */
+  }
+  if (opts?.notify !== false && typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT));
+  }
+}
 
 export type RescheduleCalendarFocus = {
   anchorDate: string;
@@ -432,9 +551,23 @@ export function buildRoutingRescheduleIntentFromAppointment(
   const pi = pp?.id;
   const primaryProviderInternalId =
     pi != null && Number.isFinite(Number(pi)) ? String(pi) : undefined;
-  const primaryDoctorPimsId = pickStr(pp?.pimsId) ?? undefined;
-  const primaryDoctorDisplayName =
+  let primaryDoctorDisplayName =
     [pickStr(pp?.firstName), pickStr(pp?.lastName)].filter(Boolean).join(' ').trim() || undefined;
+  let primaryDoctorPimsId = pickStr(pp?.pimsId) ?? undefined;
+  if (opts?.providers?.length) {
+    const resolved = resolveRescheduleIntentDoctorPimsId(
+      {
+        primaryDoctorPimsId,
+        primaryProviderInternalId,
+        primaryDoctorDisplayName,
+      },
+      opts.providers
+    );
+    if (resolved) {
+      primaryDoctorPimsId = resolved.pimsId;
+      primaryDoctorDisplayName = resolved.displayName ?? primaryDoctorDisplayName;
+    }
+  }
 
   const addressParts = [pickStr(c.address1), pickStr(c.city), pickStr(c.state), pickStr(c.zipcode)].filter(
     Boolean,
