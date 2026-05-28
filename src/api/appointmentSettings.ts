@@ -27,6 +27,18 @@ export type AppointmentType = {
   windowBeforeMinutes?: number | null;
   /** Minutes after scheduled time the client may arrive; null = legacy default */
   windowAfterMinutes?: number | null;
+  /** User may set allDay on appointments of this type */
+  allowAllDay?: boolean;
+  /** User may link a client on create/update */
+  allowClient?: boolean;
+  /** User may set alternate visit address */
+  allowAlternateAddress?: boolean;
+  /** Omitted from drive routing / doctor-day routable stops (server-side) */
+  excludeFromRouting?: boolean;
+  /** Ops analytics doctor-day points; null = legacy name-based rules on server */
+  points?: number | null;
+  /** Frontend only: show scheduling-override UI for this type (not enforced on appointment APIs) */
+  allowSchedulingOverride?: boolean;
   practice?: {
     id: number;
     name: string;
@@ -209,6 +221,12 @@ export type AppointmentTypeUpdate = {
   showInApptRequestForm?: boolean;
   newPatientAllowed?: boolean;
   formListOrder?: number | null;
+  allowAllDay?: boolean;
+  allowClient?: boolean;
+  allowAlternateAddress?: boolean;
+  excludeFromRouting?: boolean;
+  points?: number | null;
+  allowSchedulingOverride?: boolean;
 };
 
 /**
@@ -292,6 +310,67 @@ export async function fetchEmployeeRoles(): Promise<EmployeeRole[]> {
 export async function fetchEmployeesByRole(roleId: number): Promise<Employee[]> {
   const { data } = await http.get(`/employees/by-role/${roleId}`);
   return Array.isArray(data) ? data : (data?.items ?? []);
+}
+
+/** GET /employees/roles/:roleId/appointment-types — manual booking types for a role */
+export type RoleManualBookingAppointmentType = {
+  appointmentTypeId: number;
+  appointmentTypeName?: string | null;
+  appointmentTypePrettyName?: string | null;
+  practiceId?: number | null;
+};
+
+export async function fetchRoleManualBookingAppointmentTypes(
+  roleId: number
+): Promise<RoleManualBookingAppointmentType[]> {
+  const { data } = await http.get(`/employees/roles/${roleId}/appointment-types`);
+  return Array.isArray(data) ? data : [];
+}
+
+/** PUT /employees/roles/:roleId/appointment-types — replace role manual booking types */
+export async function updateRoleManualBookingAppointmentTypes(
+  roleId: number,
+  appointmentTypeIds: number[]
+): Promise<RoleManualBookingAppointmentType[]> {
+  const { data } = await http.put(`/employees/roles/${roleId}/appointment-types`, {
+    appointmentTypeIds,
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+/** GET /employees/manual-bookable-appointment-types — types current user may book manually */
+export type ManualBookableAppointmentTypesResponse = {
+  appointmentTypeIds: number[];
+};
+
+export async function fetchManualBookableAppointmentTypes(
+  practiceId: number
+): Promise<ManualBookableAppointmentTypesResponse> {
+  const { data } = await http.get<ManualBookableAppointmentTypesResponse>(
+    '/employees/manual-bookable-appointment-types',
+    { params: { practiceId } }
+  );
+  const ids = data?.appointmentTypeIds;
+  return {
+    appointmentTypeIds: Array.isArray(ids)
+      ? ids.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+      : [],
+  };
+}
+
+/** PUT /employees/:id/roles — replace employee role assignments */
+export type UpdateEmployeeRolesRequest = {
+  roleIds?: number[];
+  roleAssignments?: Array<{ roleId: number; branchId?: number | null }>;
+};
+
+export async function updateEmployeeRoles(
+  employeeId: number,
+  body: UpdateEmployeeRolesRequest
+): Promise<Employee> {
+  const { data } = await http.put(`/employees/${employeeId}/roles`, body);
+  if (Array.isArray(data)) return data[0];
+  return data;
 }
 
 /**

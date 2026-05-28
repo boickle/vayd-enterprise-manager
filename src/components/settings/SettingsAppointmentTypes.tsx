@@ -4,6 +4,7 @@ import {
   updateAppointmentType,
   type AppointmentType,
 } from '../../api/appointmentSettings';
+import { formatPointsSummary } from '../../utils/appointmentTypeSettings';
 
 function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string } }; message?: string };
@@ -62,6 +63,13 @@ type EditDraft = {
   showInApptRequestForm: boolean;
   newPatientAllowed: boolean;
   formListOrder: string;
+  allowAllDay: boolean;
+  allowClient: boolean;
+  allowAlternateAddress: boolean;
+  excludeFromRouting: boolean;
+  allowSchedulingOverride: boolean;
+  useLegacyPoints: boolean;
+  points: string;
 };
 
 function draftFromType(type: AppointmentType): EditDraft {
@@ -79,6 +87,13 @@ function draftFromType(type: AppointmentType): EditDraft {
     showInApptRequestForm: type.showInApptRequestForm === true,
     newPatientAllowed: type.newPatientAllowed === true,
     formListOrder: type.formListOrder != null ? String(type.formListOrder) : '',
+    allowAllDay: type.allowAllDay === true,
+    allowClient: type.allowClient !== false,
+    allowAlternateAddress: type.allowAlternateAddress === true,
+    excludeFromRouting: type.excludeFromRouting === true,
+    allowSchedulingOverride: type.allowSchedulingOverride === true,
+    useLegacyPoints: type.points == null,
+    points: type.points != null ? String(type.points) : '',
   };
 }
 
@@ -194,6 +209,21 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
         throw new Error('Form list order must be a positive number or empty');
       }
 
+      let points: number | null;
+      if (draft.useLegacyPoints) {
+        points = null;
+      } else {
+        const raw = draft.points.trim();
+        if (raw === '') {
+          throw new Error('Enter points (0–100) or check “Use legacy points rules”.');
+        }
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n < 0 || n > 100) {
+          throw new Error('Points must be a number from 0 to 100');
+        }
+        points = n;
+      }
+
       const updated = await updateAppointmentType(editingId, {
         prettyName: draft.prettyName.trim() || undefined,
         color: colorHex,
@@ -203,6 +233,12 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
         showInApptRequestForm: draft.showInApptRequestForm,
         newPatientAllowed: draft.newPatientAllowed,
         formListOrder,
+        allowAllDay: draft.allowAllDay,
+        allowClient: draft.allowClient,
+        allowAlternateAddress: draft.allowAlternateAddress,
+        excludeFromRouting: draft.excludeFromRouting,
+        allowSchedulingOverride: draft.allowSchedulingOverride,
+        points,
       });
 
       onTypesChange(types.map((t) => (t.id === updated.id ? updated : t)));
@@ -230,6 +266,8 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
               <th>Request form</th>
               <th>New patients</th>
               <th>Order</th>
+              <th>Booking</th>
+              <th>Points</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -254,6 +292,18 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
                 <td>{type.showInApptRequestForm ? 'Yes' : 'No'}</td>
                 <td>{type.newPatientAllowed ? 'Yes' : 'No'}</td>
                 <td>{type.formListOrder ?? '—'}</td>
+                <td className="settings-appt-type-flags-cell">
+                  {[
+                    type.allowAllDay ? 'All-day' : null,
+                    type.allowClient === false ? 'No client' : null,
+                    type.allowAlternateAddress ? 'Alt addr' : null,
+                    type.excludeFromRouting ? 'No route' : null,
+                    type.allowSchedulingOverride ? 'Sched override' : null,
+                  ]
+                    .filter(Boolean)
+                    .join(', ') || '—'}
+                </td>
+                <td>{formatPointsSummary(type)}</td>
                 <td>
                   <button type="button" className="btn secondary" onClick={() => void openEdit(type)}>
                     Edit
@@ -510,6 +560,96 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
                         onChange={(e) => setDraft({ ...draft, formListOrder: e.target.value })}
                       />
                     </div>
+
+                    <fieldset className="settings-appt-type-window-fieldset settings-form-group--full">
+                      <legend className="settings-label">Booking &amp; routing</legend>
+                      <div className="settings-appt-type-booking-flags">
+                        <label className="settings-checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={draft.allowAllDay}
+                            onChange={(e) => setDraft({ ...draft, allowAllDay: e.target.checked })}
+                          />
+                          Allow all-day booking
+                        </label>
+                        <label className="settings-checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={draft.allowClient}
+                            onChange={(e) => setDraft({ ...draft, allowClient: e.target.checked })}
+                          />
+                          Allow client on appointment
+                        </label>
+                        <label className="settings-checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={draft.allowAlternateAddress}
+                            onChange={(e) =>
+                              setDraft({ ...draft, allowAlternateAddress: e.target.checked })
+                            }
+                          />
+                          Allow alternate address
+                        </label>
+                        <label className="settings-checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={draft.excludeFromRouting}
+                            onChange={(e) =>
+                              setDraft({ ...draft, excludeFromRouting: e.target.checked })
+                            }
+                          />
+                          Exclude from routing
+                        </label>
+                        <label className="settings-checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={draft.allowSchedulingOverride}
+                            onChange={(e) =>
+                              setDraft({ ...draft, allowSchedulingOverride: e.target.checked })
+                            }
+                          />
+                          Allow scheduling override
+                        </label>
+                      </div>
+                      <p className="settings-muted settings-appt-type-window-hint">
+                        Scheduling override is shown in the scheduler UI only; appointment create/update
+                        APIs do not validate this flag.
+                      </p>
+                    </fieldset>
+
+                    <fieldset className="settings-appt-type-window-fieldset settings-form-group--full">
+                      <legend className="settings-label">Ops points (per patient)</legend>
+                      <label className="settings-checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={draft.useLegacyPoints}
+                          onChange={(e) => setDraft({ ...draft, useLegacyPoints: e.target.checked })}
+                        />
+                        Use legacy points rules (e.g. euthanasia = 2, tech = 0.5)
+                      </label>
+                      {!draft.useLegacyPoints ? (
+                        <div className="settings-form-group" style={{ marginTop: 8 }}>
+                          <label className="settings-label" htmlFor="appt-type-points">
+                            Points (0–100)
+                          </label>
+                          <input
+                            id="appt-type-points"
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={0.5}
+                            className="settings-input settings-input--narrow"
+                            value={draft.points}
+                            onChange={(e) => setDraft({ ...draft, points: e.target.value })}
+                            placeholder="1"
+                          />
+                        </div>
+                      ) : (
+                        <p className="settings-muted settings-appt-type-window-hint">
+                          Leave unset to match server name-based defaults for this type.
+                        </p>
+                      )}
+                    </fieldset>
                   </div>
 
                   <div className="settings-modal-actions">

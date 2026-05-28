@@ -3,6 +3,7 @@ import {
   fetchAllEmployees,
   fetchEmployee,
   fetchEmployeeRoles,
+  updateEmployeeRoles,
   type Employee,
   type EmployeeRole,
 } from '../../api/appointmentSettings';
@@ -50,7 +51,39 @@ function blankToNull(s: string): string | null {
   return t === '' ? null : t;
 }
 
-type ModalMode = 'add' | 'edit' | null;
+type ModalMode = 'add' | 'edit' | 'roles' | null;
+
+function employeeRoleIds(e: Employee): number[] {
+  const r = e as Record<string, unknown>;
+  if (Array.isArray(r.roleIds)) {
+    return r.roleIds
+      .map((x) => Number(x))
+      .filter((n) => Number.isFinite(n) && n > 0);
+  }
+  const assignments = r.roleAssignments;
+  if (Array.isArray(assignments)) {
+    return assignments
+      .map((row) => {
+        if (!row || typeof row !== 'object') return NaN;
+        return Number((row as { roleId?: unknown }).roleId);
+      })
+      .filter((n) => Number.isFinite(n) && n > 0);
+  }
+  return [];
+}
+
+function employeeDisplayName(emp: Employee): string {
+  const r = emp as Record<string, unknown>;
+  const mid = str(r.middleName);
+  const parts = [emp.title, emp.firstName, mid, emp.lastName].filter(Boolean);
+  return parts.length ? parts.join(' ') : `${emp.firstName} ${emp.lastName}`.trim();
+}
+
+function roleLabelsForEmployee(emp: Employee, catalog: EmployeeRole[]): string[] {
+  const ids = new Set(employeeRoleIds(emp));
+  if (ids.size === 0) return [];
+  return catalog.filter((role) => ids.has(role.id)).map((role) => role.name);
+}
 
 type Props = {
   onMessage?: (msg: string, kind: 'success' | 'error') => void;
@@ -87,6 +120,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   const [phone2, setPhone2] = useState('');
   const [roleIdsSelected, setRoleIdsSelected] = useState<number[]>([]);
   const [rolesCatalog, setRolesCatalog] = useState<EmployeeRole[]>([]);
+  const [rolesEditEmployee, setRolesEditEmployee] = useState<Employee | null>(null);
 
   const practice = useMemo(() => ({ id: DEFAULT_PRACTICE_ID }), []);
 
@@ -177,13 +211,20 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
     setCountry(str(r.country));
     setPhone1(str(r.phone1));
     setPhone2(str(r.phone2));
-    const rid = r.roleIds;
-    if (Array.isArray(rid)) {
-      setRoleIdsSelected(
-        rid.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0)
-      );
-    } else {
-      setRoleIdsSelected([]);
+    setRoleIdsSelected(employeeRoleIds(full));
+  };
+
+  const openEditRoles = async (id: number) => {
+    setSaving(false);
+    setModalMode(null);
+    try {
+      const full = await fetchEmployee(id);
+      setEditingId(id);
+      setRolesEditEmployee(full);
+      setRoleIdsSelected(employeeRoleIds(full));
+      setModalMode('roles');
+    } catch (e) {
+      onMessage?.(extractErr(e), 'error');
     }
   };
 
@@ -208,7 +249,29 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const closeModal = () => {
-    if (!saving) setModalMode(null);
+    if (!saving) {
+      setModalMode(null);
+      setRolesEditEmployee(null);
+    }
+  };
+
+  const submitRolesModal = async (e: FormEvent) => {
+    e.preventDefault();
+    if (editingId == null) return;
+    setSaving(true);
+    try {
+      await updateEmployeeRoles(editingId, {
+        roleIds: roleIdsSelected.length ? [...roleIdsSelected] : [],
+      });
+      onMessage?.('Employee roles updated.', 'success');
+      setModalMode(null);
+      setRolesEditEmployee(null);
+      await load();
+    } catch (err) {
+      onMessage?.(extractErr(err), 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const buildPayloadFromForm = (): Record<string, unknown> => {
@@ -279,6 +342,9 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
           isDeleted: prev.isDeleted === true,
         } as EmployeeDto;
         await saveEmployees(merged);
+        await updateEmployeeRoles(editingId, {
+          roleIds: roleIdsSelected.length ? [...roleIdsSelected] : [],
+        });
         onMessage?.('Employee updated.', 'success');
       }
       setModalMode(null);
@@ -360,13 +426,15 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
           <>
             Add or edit staff using <code>POST /employees/upsert</code> (when PIMS ID is set on add) or{' '}
             <code>POST /employees</code> (save). The editor loads the same fields returned by <code>GET /employees/:id</code>{' '}
-            (name, PIMS ids, address, phones, <code>roleIds</code>, etc.). Deactivate via <code>isActive: false</code>; delete
-            via <code>DELETE /employees?ids=…</code>.
+            (name, PIMS ids, address, phones, etc.). Deactivate via <code>isActive: false</code>; delete via{' '}
+            <code>DELETE /employees?ids=…</code>. Click an employee name (or <strong>Edit roles</strong>) to assign
+            employee roles for manual booking permissions.
           </>
         ) : (
           <>
-            Employee directory is <strong>read-only</strong>. To enable add, edit, deactivate, and delete, set{' '}
-            <code>VITE_ENABLE_PIMS_ENTITY_EDIT=true</code> in <code>.env</code> and rebuild.
+            Employee PIMS fields are <strong>read-only</strong>. Click an employee name to edit which{' '}
+            <strong>employee roles</strong> are assigned (<code>PUT /employees/:id/roles</code>). To enable full add/edit,
+            set <code>VITE_ENABLE_PIMS_ENTITY_EDIT=true</code> in <code>.env</code> and rebuild.
           </>
         )}
       </p>
@@ -401,69 +469,163 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
                 <th>PIMS ID</th>
                 <th>PIMS user</th>
                 <th>Provider</th>
+                <th>Roles</th>
                 <th>Status</th>
-                {PIMS_ENTITY_EDIT_ENABLED ? <th>Actions</th> : null}
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sorted.map((emp) => (
-                <tr key={emp.id}>
-                  <td>{emp.id}</td>
-                  <td>
-                    {(() => {
-                      const r = emp as Record<string, unknown>;
-                      const mid = str(r.middleName);
-                      const parts = [emp.title, emp.firstName, mid, emp.lastName].filter(Boolean);
-                      return parts.length ? parts.join(' ') : `${emp.firstName} ${emp.lastName}`;
-                    })()}
-                  </td>
-                  <td>{emp.email || '—'}</td>
-                  <td>{empPimsId(emp)}</td>
-                  <td>{empPimsUserId(emp)}</td>
-                  <td>{emp.isProvider ? 'Yes' : 'No'}</td>
-                  <td>{empActive(emp) ? 'Active' : 'Inactive'}</td>
-                  {PIMS_ENTITY_EDIT_ENABLED ? (
+              {sorted.map((emp) => {
+                const roleLabels = roleLabelsForEmployee(emp, rolesCatalog);
+                return (
+                  <tr key={emp.id}>
+                    <td>{emp.id}</td>
                     <td>
-                      <button type="button" className="btn secondary" onClick={() => void openEdit(emp.id)}>
-                        Edit
+                      <button
+                        type="button"
+                        className="settings-employee-directory__name-btn"
+                        onClick={() => void openEditRoles(emp.id)}
+                      >
+                        {employeeDisplayName(emp)}
                       </button>
-                      {empActive(emp) ? (
-                        <button
-                          type="button"
-                          className="btn secondary"
-                          style={{ marginLeft: 6 }}
-                          onClick={() => void deactivate(emp)}
-                        >
-                          Deactivate
-                        </button>
+                    </td>
+                    <td>{emp.email || '—'}</td>
+                    <td>{empPimsId(emp)}</td>
+                    <td>{empPimsUserId(emp)}</td>
+                    <td>{emp.isProvider ? 'Yes' : 'No'}</td>
+                    <td>
+                      {roleLabels.length > 0 ? (
+                        <div className="settings-employee-directory__role-tags">
+                          {roleLabels.map((label) => (
+                            <span key={label} className="settings-employee-directory__role-tag">
+                              {label}
+                            </span>
+                          ))}
+                        </div>
                       ) : (
-                        <button
-                          type="button"
-                          className="btn secondary"
-                          style={{ marginLeft: 6 }}
-                          onClick={() => void reactivate(emp)}
-                        >
-                          Reactivate
-                        </button>
+                        <span className="muted">None</span>
                       )}
+                    </td>
+                    <td>{empActive(emp) ? 'Active' : 'Inactive'}</td>
+                    <td>
                       <button
                         type="button"
                         className="btn secondary"
-                        style={{ marginLeft: 6, color: '#b91c1c' }}
-                        onClick={() => void removeRow(emp)}
+                        onClick={() => void openEditRoles(emp.id)}
                       >
-                        Delete
+                        Edit roles
                       </button>
+                      {PIMS_ENTITY_EDIT_ENABLED ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            style={{ marginLeft: 6 }}
+                            onClick={() => void openEdit(emp.id)}
+                          >
+                            Edit
+                          </button>
+                          {empActive(emp) ? (
+                            <button
+                              type="button"
+                              className="btn secondary"
+                              style={{ marginLeft: 6 }}
+                              onClick={() => void deactivate(emp)}
+                            >
+                              Deactivate
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn secondary"
+                              style={{ marginLeft: 6 }}
+                              onClick={() => void reactivate(emp)}
+                            >
+                              Reactivate
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            style={{ marginLeft: 6, color: '#b91c1c' }}
+                            onClick={() => void removeRow(emp)}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      ) : null}
                     </td>
-                  ) : null}
-                </tr>
-              ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
-      {PIMS_ENTITY_EDIT_ENABLED && modalMode && (
+      {modalMode === 'roles' && rolesEditEmployee ? (
+        <div className="settings-employee-modal-root" role="presentation">
+          <button type="button" className="settings-employee-modal-backdrop" aria-label="Close" onClick={closeModal} />
+          <div className="settings-employee-modal" role="dialog" aria-modal="true" aria-labelledby="employee-roles-title">
+            <div className="settings-employee-modal__head">
+              <h3 id="employee-roles-title">Employee roles</h3>
+              <button type="button" className="settings-close" onClick={closeModal} aria-label="Close">
+                ×
+              </button>
+            </div>
+            <form onSubmit={submitRolesModal} className="settings-employee-modal__form">
+              <p className="muted" style={{ margin: '0 0 12px' }}>
+                <strong>{employeeDisplayName(rolesEditEmployee)}</strong>
+                <span className="muted"> · ID {rolesEditEmployee.id}</span>
+              </p>
+              <p className="muted" style={{ margin: '0 0 16px', fontSize: 13 }}>
+                Roles control which appointment types this employee may book manually on the calendar. Configure
+                types per role under <strong>Role Manual Booking</strong>.
+              </p>
+              <fieldset className="settings-employee-modal__fieldset">
+                <legend className="settings-employee-modal__legend">Assigned roles</legend>
+                {rolesCatalog.length === 0 ? (
+                  <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+                    No roles loaded. Check <code>GET /employees/roles</code>.
+                  </p>
+                ) : (
+                  <div className="settings-employee-modal__roles" role="group" aria-label="Employee roles">
+                    {rolesCatalog.map((role) => (
+                      <label
+                        key={role.id}
+                        style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer' }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={roleIdsSelected.includes(role.id)}
+                          onChange={() => toggleRoleId(role.id)}
+                        />
+                        <span>
+                          {role.name}
+                          <span className="muted" style={{ fontSize: 12 }}>
+                            {' '}
+                            ({role.roleValue})
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </fieldset>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+                <button type="button" className="btn secondary" onClick={closeModal} disabled={saving}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn" disabled={saving}>
+                  {saving ? 'Saving…' : 'Save roles'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {PIMS_ENTITY_EDIT_ENABLED && (modalMode === 'add' || modalMode === 'edit') ? (
         <div className="settings-employee-modal-root" role="presentation">
           <button type="button" className="settings-employee-modal-backdrop" aria-label="Close" onClick={closeModal} />
           <div className="settings-employee-modal settings-employee-modal--wide" role="dialog" aria-modal="true">
@@ -629,7 +791,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
             </form>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

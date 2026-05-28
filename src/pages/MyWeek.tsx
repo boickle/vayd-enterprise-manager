@@ -26,6 +26,10 @@ import {
   computeDriveTimeWindowWarning,
 } from '../utils/windowWarning';
 import {
+  type AppointmentTypeCatalog,
+  sumHouseholdPoints,
+} from '../utils/appointmentTypeSettings';
+import {
   computeHoverPopoverPosition,
   rectFromElement,
   type HoverAnchorRect,
@@ -520,17 +524,9 @@ function zoneKeyFrom(z: MiniZone | null): string {
   return `${z.id}|${z.name ?? ''}`;
 }
 
-/** Points for one day (exclude personal blocks and "Note To Staff"). Per patient: 1 standard, 0.5 tech, 2 euthanasia. */
-export function dayPoints(households: WeekHousehold[]): number {
-  return households.reduce((total, h) => {
-    if (h.isPersonalBlock) return total;
-    const type = (str(h.primary, 'appointmentType') || '').toLowerCase();
-    if (type.includes('note to staff')) return total;
-    const n = Math.max(1, h.patients?.length ?? 1);
-    if (type === 'euthanasia') return total + 2 * n;
-    if (type.includes('tech appointment')) return total + 0.5 * n;
-    return total + 1 * n;
-  }, 0);
+/** Points for one day; uses appointment type catalog when provided (configured points or legacy name rules). */
+export function dayPoints(households: WeekHousehold[], typeCatalog?: AppointmentTypeCatalog): number {
+  return sumHouseholdPoints(households, typeCatalog);
 }
 
 /** Total driving time in seconds for the day (driveSeconds + backToDepot when separate). */

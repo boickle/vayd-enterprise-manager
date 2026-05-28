@@ -19,6 +19,12 @@ import { useAuth } from '../auth/useAuth';
 import './DoctorDay.css';
 import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
+import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
+import {
+  buildAppointmentTypeCatalog,
+  sumHouseholdPoints,
+  type AppointmentTypeCatalog,
+} from '../utils/appointmentTypeSettings';
 import { reverseGeocode } from '../api/geo';
 import { formatHM, colorForWhitespace, colorForHDRatio, colorForDrive } from '../utils/statsFormat';
 import {
@@ -27,6 +33,8 @@ import {
   formatIsoInPracticeZone,
 } from '../utils/practiceTimezone';
 import { Heart } from 'lucide-react';
+
+const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
 /* =========================================================================
    Public props
@@ -309,6 +317,7 @@ export default function DoctorDay({
   const didInitDoctor = useRef(false);
   const [providersLoading, setProvidersLoading] = useState(false);
   const [providersErr, setProvidersErr] = useState<string | null>(null);
+  const [typeCatalog, setTypeCatalog] = useState<AppointmentTypeCatalog | undefined>();
 
   // schedule bounds (optional)
   const [schedStartIso, setSchedStartIso] = useState<string | null>(null);
@@ -365,6 +374,20 @@ export default function DoctorDay({
       on = false;
     };
   }, [userEmail]);
+
+  useEffect(() => {
+    let on = true;
+    void fetchAllAppointmentTypes(PRACTICE_ID)
+      .then((rows) => {
+        if (on) setTypeCatalog(buildAppointmentTypeCatalog(Array.isArray(rows) ? rows : []));
+      })
+      .catch(() => {
+        if (on) setTypeCatalog(undefined);
+      });
+    return () => {
+      on = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (didInitDoctor.current || !providers.length || initialDoctorId) return;
@@ -1124,16 +1147,7 @@ export default function DoctorDay({
       return sum + durSec(h.startIso, h.endIso);
     }, 0);
 
-    // Points per patient (exclude personal blocks and "Note To Staff"): 1 standard, 0.5 tech, 2 euthanasia
-    const points = displayHouseholds.reduce((total, h) => {
-      if ((h as any)?.isPersonalBlock) return total;
-      const type = (h.primary?.appointmentType || '').toLowerCase();
-      if (type.includes('note to staff')) return total;
-      const n = Math.max(1, h.patients?.length ?? 1);
-      if (type === 'euthanasia') return total + 2 * n;
-      if (type.includes('tech appointment')) return total + 0.5 * n;
-      return total + 1 * n;
-    }, 0);
+    const points = sumHouseholdPoints(displayHouseholds, typeCatalog);
 
     // ---------- Prefer authoritative fields from Routing winner ----------
     const winnerDriveSec = Number.isFinite(virtualAppt?.projectedDriveSeconds as number)
@@ -1341,6 +1355,7 @@ export default function DoctorDay({
     schedEndIso,
     virtualAppt, // <-- important for winner fields
     date,
+    typeCatalog,
   ]);
 
   /* ---------- UI helpers ---------- */
@@ -1384,16 +1399,7 @@ export default function DoctorDay({
 
   const whitePctText = Number.isFinite(whitePct) ? `${whitePct.toFixed(0)}%` : '—';
 
-  // Points per patient: 1 standard, 0.5 tech, 2 euthanasia
-  const points = displayHouseholds.reduce((total, h) => {
-    if ((h as any)?.isPersonalBlock) return total;
-    const type = (h.primary?.appointmentType || '').toLowerCase();
-    if (type.includes('note to staff')) return total;
-    const n = Math.max(1, h.patients?.length ?? 1);
-    if (type === 'euthanasia') return total + 2 * n;
-    if (type.includes('tech appointment')) return total + 0.5 * n;
-    return total + 1 * n;
-  }, 0);
+  const points = sumHouseholdPoints(displayHouseholds, typeCatalog);
 
   /* ---------- Render ---------- */
   return (

@@ -48,9 +48,11 @@ import { DepotLocationField } from '../components/DepotLocationField';
 import './Settings.css';
 import SettingsEmployeeDirectory from '../components/settings/SettingsEmployeeDirectory';
 import SettingsAppointmentTypes from '../components/settings/SettingsAppointmentTypes';
+import SettingsRoleManualBooking from '../components/settings/SettingsRoleManualBooking';
 
 const SETTINGS_TAB_IDS = [
   'appointment-types',
+  'role-manual-booking',
   'employee-types',
   'employee-zones',
   'employee-schedule',
@@ -989,6 +991,12 @@ export default function Settings() {
             Appointment Types
           </button>
           <button
+            className={`settings-tab ${activeTab === 'role-manual-booking' ? 'active' : ''}`}
+            onClick={() => goToTab('role-manual-booking')}
+          >
+            Role Manual Booking
+          </button>
+          <button
             className={`settings-tab ${activeTab === 'employee-types' ? 'active' : ''}`}
             onClick={() => goToTab('employee-types')}
           >
@@ -1070,6 +1078,29 @@ export default function Settings() {
             <SettingsAppointmentTypes
               types={appointmentTypes}
               onTypesChange={setAppointmentTypes}
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'role-manual-booking' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Role manual booking</h2>
+            <p className="settings-section-description">
+              Configure which appointment types each employee role may book manually from the
+              scheduler calendar. Routing booking is not restricted by these settings.
+            </p>
+            <SettingsRoleManualBooking
+              appointmentTypes={appointmentTypes}
               onMessage={(msg, kind) => {
                 if (kind === 'success') {
                   setSuccess(msg);
@@ -2343,8 +2374,9 @@ export default function Settings() {
           <div className="settings-section">
             <h2 className="settings-section-title">Employees</h2>
             <p className="settings-section-description">
-              View staff for your practice. When editing is enabled (<code>VITE_ENABLE_PIMS_ENTITY_EDIT=true</code>), you
-              can add, edit, deactivate, or remove employees via the same save and upsert paths as EVet import.
+              View staff and assign employee roles (for manual booking permissions). Click an employee name to edit roles
+              only. When PIMS editing is enabled (<code>VITE_ENABLE_PIMS_ENTITY_EDIT=true</code>), you can also add, edit,
+              deactivate, or remove employee records.
             </p>
             <SettingsEmployeeDirectory
               onMessage={(msg, kind) => {

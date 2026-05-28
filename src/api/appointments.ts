@@ -88,7 +88,8 @@ export type CreateAppointmentPayload = {
   practiceId: number;
   primaryProviderId: number;
   additionalEmployeeIds?: number[];
-  clientId: number;
+  /** Required when the appointment type allows a client (`allowClient`); omit for block types. */
+  clientId?: number;
   /** Omitted when the client has no patients on file. */
   patientId?: number;
   /** Optional routing stop address (e.g. address-only Get Best Route). */
@@ -102,6 +103,12 @@ export type CreateAppointmentPayload = {
   medications?: string;
   treatmentId?: number;
   allDay?: boolean;
+  /** When true, skip manual booking permission checks (routing commit). */
+  bookedViaRouting?: boolean;
+};
+
+export type UpdateAppointmentPayload = Record<string, unknown> & {
+  bookedViaRouting?: boolean;
 };
 
 export async function createAppointment(body: CreateAppointmentPayload): Promise<Appointment> {
@@ -796,8 +803,9 @@ export type DoctorMonthAppt = {
   endIso: string;
   title?: string;
   serviceMinutes?: number;
-  /** Required for points calculation (per patient: 1 standard, 0.5 tech, 2 euthanasia). Backend should include in month response. */
+  /** Type name for points when id is unavailable. */
   appointmentType?: string;
+  appointmentTypeId?: number;
 
   /** Client id for multi-pet detection (same client + same time = one block, divide time by N). */
   clientId?: number | string | null;
@@ -856,6 +864,12 @@ export async function fetchDoctorMonth(
       title: a?.title,
       serviceMinutes: a?.serviceMinutes,
       appointmentType: a?.appointmentType?.name ?? a?.appointmentType ?? undefined,
+      appointmentTypeId:
+        a?.appointmentType?.id != null
+          ? Number(a.appointmentType.id)
+          : a?.appointmentTypeId != null
+            ? Number(a.appointmentTypeId)
+            : undefined,
       clientId: a?.clientId ?? a?.client?.id ?? undefined,
       clientPimsId: a?.clientPimsId ?? a?.client?.pimsId ?? undefined,
       clientZone: miniZoneFromPayload(a?.clientZone),

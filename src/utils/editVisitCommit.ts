@@ -22,6 +22,8 @@ export type CommitEditVisitInput = {
   form: EditVisitFormSnapshot;
   /** When set (type preview on calendar), overrides `form.appointmentTypeId`. */
   previewAppointmentTypeId?: number | null;
+  /** Routing-driven type change — bypass manual booking permission check. */
+  bookedViaRouting?: boolean;
 };
 
 export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appointment> {
@@ -58,6 +60,7 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
       allDay: input.form.allDay,
       appointmentStart: input.appointmentStart,
       appointmentEnd: input.appointmentEnd,
+      ...(input.bookedViaRouting ? { bookedViaRouting: true } : {}),
     },
     { practiceId: input.practiceId }
   );

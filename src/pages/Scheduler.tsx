@@ -36,10 +36,14 @@ import { http } from '../api/http';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import {
   fetchAllAppointmentTypes,
-  fetchAllEmployees,
+  fetchManualBookableAppointmentTypes,
   type AppointmentType,
-  type Employee,
 } from '../api/appointmentSettings';
+import {
+  filterAppointmentTypesByIds,
+  rolesIncludeAdminBypass,
+} from '../utils/manualBookingPermissions';
+import { buildAppointmentTypeCatalog } from '../utils/appointmentTypeSettings';
 import type { Appointment, Client, Patient } from '../api/roomLoader';
 import {
   computeEditPreviewPopoverPosition,
@@ -121,6 +125,7 @@ import { appointmentPracticeDateKey } from '../utils/editVisitTimeFields';
 import { submitEditVisitPreviewAcceptedFeedback } from '../utils/routingBookFeedback';
 import {
   SchedulerBookModal,
+  isSchedulerRoutingBookPrefill,
   type SchedulerBookPrefill,
   type SchedulerBookSlot,
 } from './SchedulerBookModal';
@@ -1797,7 +1802,7 @@ function SchedulerAppointmentModal({
               />
               <SchedulerModalKvCondensed label="All day" value={appt.allDay ? 'Yes' : null} />
               <SchedulerModalKvCondensed
-                label="Additional employees"
+                label={appt.allDay ? 'Additional providers' : 'Additional employees'}
                 value={additionalEmployeeLabels.length > 0 ? additionalEmployeeLabels.join(', ') : null}
               />
               <SchedulerModalKvCondensed label="Status" value={pickStr(appt.statusName)} />
@@ -2314,9 +2319,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [typeFilter, setTypeFilter] = useState<string>('');
 
   const [providers, setProviders] = useState<Provider[]>([]);
-  const [employees, setEmployees] = useState<Employee[]>([]);
   const [providersLoadState, setProvidersLoadState] = useState<'pending' | 'resolved'>('pending');
   const [typeList, setTypeList] = useState<AppointmentType[]>([]);
+  const typeCatalog = useMemo(() => buildAppointmentTypeCatalog(typeList), [typeList]);
+  const [manualBookableTypeIds, setManualBookableTypeIds] = useState<number[] | null>(null);
   const [rawAppointments, setRawAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   /** After the first in-flight range fetch, keep the calendar mounted so outlet scroll is not reset on prev/next week. */
@@ -2564,10 +2570,24 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const arr = Array.isArray(role) ? role : role != null ? [role] : [];
     return arr.map((r) => String(r).toLowerCase().trim()).filter(Boolean);
   }, [role]);
-  const canManualBookOnCalendar = useMemo(
-    () => rolesLower.includes('admin') || rolesLower.includes('superadmin'),
-    [rolesLower]
-  );
+  const isAdminOrSuper = useMemo(() => rolesIncludeAdminBypass(rolesLower), [rolesLower]);
+  const canManualBookOnCalendar = useMemo(() => {
+    if (isAdminOrSuper) return true;
+    return rolesLower.includes('employee');
+  }, [rolesLower, isAdminOrSuper]);
+  const manualBookingAppointmentTypes = useMemo(() => {
+    if (isAdminOrSuper) return typeList;
+    if (manualBookableTypeIds === null) return [];
+    return filterAppointmentTypesByIds(typeList, manualBookableTypeIds);
+  }, [isAdminOrSuper, typeList, manualBookableTypeIds]);
+  const bookModalAppointmentTypes = useMemo(() => {
+    if (isSchedulerRoutingBookPrefill(bookPrefill)) return typeList;
+    return manualBookingAppointmentTypes;
+  }, [bookPrefill, typeList, manualBookingAppointmentTypes]);
+  const editModalAppointmentTypes = useMemo(() => {
+    if (embedInRoutingWorkspace && editTimePreview != null) return typeList;
+    return manualBookingAppointmentTypes;
+  }, [embedInRoutingWorkspace, editTimePreview, typeList, manualBookingAppointmentTypes]);
   const showEmployeeAddCoVisitPet = useMemo(
     () =>
       rolesLower.includes('employee') ||
@@ -2904,15 +2924,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
   useEffect(() => {
     let on = true;
-    Promise.all([fetchPrimaryProviders(), fetchAllAppointmentTypes(PRACTICE_ID), fetchAllEmployees()])
-      .then(([providerRows, typeRows, employeeRows]) => {
+    Promise.all([fetchPrimaryProviders(), fetchAllAppointmentTypes(PRACTICE_ID)])
+      .then(([providerRows, typeRows]) => {
         if (!on) return;
         setProviders(Array.isArray(providerRows) ? providerRows : []);
-        setEmployees(
-          Array.isArray(employeeRows)
-            ? employeeRows.filter((emp) => emp.isDeleted !== true && emp.isActive !== false)
-            : []
-        );
         const types = Array.isArray(typeRows)
           ? typeRows.filter((t) => t.isActive !== false && !t.isDeleted)
           : [];
@@ -2921,7 +2936,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       .catch(() => {
         if (!on) return;
         setProviders([]);
-        setEmployees([]);
         setTypeList([]);
       })
       .finally(() => {
@@ -2931,6 +2945,24 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       on = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (isAdminOrSuper) {
+      setManualBookableTypeIds([]);
+      return;
+    }
+    let on = true;
+    void fetchManualBookableAppointmentTypes(PRACTICE_ID)
+      .then(({ appointmentTypeIds }) => {
+        if (on) setManualBookableTypeIds(appointmentTypeIds);
+      })
+      .catch(() => {
+        if (on) setManualBookableTypeIds([]);
+      });
+    return () => {
+      on = false;
+    };
+  }, [isAdminOrSuper]);
 
   const loadRange = useCallback(
     async (opts?: { refreshDrive?: boolean; silent?: boolean; refreshDriveSoft?: boolean }) => {
@@ -4046,7 +4078,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, []);
 
   const handleSchedulerBooked = useCallback(
-    (detail?: { routingFeedbackWarning?: string }) => {
+    (detail?: {
+      routingFeedbackWarning?: string;
+      schedulingOverrideWarning?: string;
+      schedulingOverridesApplied?: boolean;
+    }) => {
       const wasReschedule = bookPrefill?.rescheduleAppointmentId != null;
       void loadRange({ refreshDrive: true });
       if (embedInRoutingWorkspace) {
@@ -4058,8 +4094,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         setRoutingPreview(null);
       }
       clearRoutingRescheduleIntent();
-      if (detail?.routingFeedbackWarning) {
-        setToast(detail.routingFeedbackWarning);
+      const warning = detail?.schedulingOverrideWarning ?? detail?.routingFeedbackWarning;
+      if (warning) {
+        setToast(warning);
+      } else if (detail?.schedulingOverridesApplied && !wasReschedule) {
+        setToast(
+          'All-day appointment saved. Schedule overrides applied so those days are excluded from routing.'
+        );
       } else {
         setToast(wasReschedule ? 'Appointment rescheduled.' : 'Appointment saved to the schedule.');
       }
@@ -4217,6 +4258,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           form: snapshot,
           previewAppointmentTypeId:
             preview.kind === 'type' ? preview.appointmentTypeId ?? null : null,
+          bookedViaRouting: Boolean(embedInRoutingWorkspace && editTimePreview != null),
         });
         if (updated?.id != null) {
           setRawAppointments((prev) => {
@@ -4774,7 +4816,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                   const isDoctorDayOff = doctorDayIsOff(dayData);
                   const isWorkingDay = schedulerDayIsWorking(key, dayData, appointmentsByDay);
                   const hasStops = (dayData?.households?.length ?? 0) > 0;
-                  const pts = dayData ? dayPoints(dayData.households) : 0;
+                  const pts = dayData ? dayPoints(dayData.households, typeCatalog) : 0;
                   const driveSec = dayData ? dayTotalDriveSeconds(dayData) : 0;
                   const driveMin = Math.round(driveSec / 60);
                   const driveColor = colorForDrive(driveMin);
@@ -5112,7 +5154,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                           isDoctorDayOff
                             ? `${dayDt.toFormat('cccc, MMMM d')}: not scheduled`
                             : canManualBookOnCalendar
-                              ? 'Day column: double-click to book (admin)'
+                              ? 'Day column: double-click to book an appointment'
                               : 'Day column: use Routing, My Week to book new appointments'
                         }
                       >
@@ -5889,9 +5931,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         slot={bookSlot}
         practiceId={PRACTICE_ID}
         practiceTz={PRACTICE_TZ}
-        appointmentTypes={typeList}
+        appointmentTypes={bookModalAppointmentTypes}
         providers={providers}
-        employees={employees}
         defaultProviderId={(() => {
           const id = resolvedPrimaryProviderId.trim();
           if (id) return id;
@@ -6046,12 +6087,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             appt={editAppt}
             practiceId={PRACTICE_ID}
             practiceTz={PRACTICE_TZ}
-            appointmentTypes={typeList}
+            appointmentTypes={editModalAppointmentTypes}
             providers={providers}
-            employees={employees}
             accentColor={colorsForAppointment(editAppt, typeList, typeFillMap).fill}
             inlinePaneMode={editPlacementMode}
             dockInRoutingPane={embedInRoutingWorkspace && !editPlacementMode}
+            bookedViaRouting={Boolean(embedInRoutingWorkspace && editTimePreview != null)}
             placementPreviewActive={editTimePreview != null}
             placementPreviewKind={editTimePreview?.kind ?? null}
             draftPreviewAppointmentTypeId={

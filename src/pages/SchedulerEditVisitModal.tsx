@@ -16,7 +16,7 @@ import {
   appointmentAlternateAddressText,
   appointmentHasAlternateLocation,
 } from '../api/appointments';
-import type { AppointmentType, Employee } from '../api/appointmentSettings';
+import type { AppointmentType } from '../api/appointmentSettings';
 import type { Provider } from '../api/employee';
 import {
   appointmentPracticeDateKey,
@@ -33,8 +33,9 @@ import {
   SchedulerVisitPatientContext,
 } from '../components/SchedulerVisitPatientContext';
 import { submitEditVisitPreviewAcceptedFeedback } from '../utils/routingBookFeedback';
-import { formatEmployeeDisplayName } from '../utils/employeeDisplayName';
 import { fullClientHouseholdName } from '../utils/schedulerVisitDisplay';
+import { formatSchedulerBookingApiError } from '../utils/manualBookingPermissions';
+import { appointmentFormFlags } from '../utils/appointmentTypeSettings';
 import './Scheduler.css';
 
 function pickStr(v: unknown): string | null {
@@ -45,10 +46,6 @@ function pickStr(v: unknown): string | null {
 
 function normalizeEmployeeIds(ids: readonly number[] | null | undefined): number[] {
   return [...new Set((ids ?? []).filter((id) => Number.isFinite(Number(id)) && Number(id) > 0).map(Number))];
-}
-
-function employeeLabel(emp: Pick<Employee, 'firstName' | 'lastName' | 'middleName' | 'middleInitial' | 'email'>) {
-  return formatEmployeeDisplayName(emp) || pickStr(emp.email) || 'Employee';
 }
 
 function allDayInclusiveEndDate(appointmentEnd: string, practiceTz: string): DateTime | null {
@@ -67,7 +64,6 @@ type Props = {
   practiceTz: string;
   appointmentTypes: AppointmentType[];
   providers: Provider[];
-  employees: Employee[];
   accentColor: string;
   /** Overlay on routing pane before placement preview. */
   dockInRoutingPane?: boolean;
@@ -99,6 +95,8 @@ type Props = {
   typeScoreError?: string | null;
   /** Shown after Book from type preview (split view stays open). */
   bookedSummary?: string | null;
+  /** Routing workspace placement preview — bypass manual type permission on PATCH. */
+  bookedViaRouting?: boolean;
 };
 
 export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle, Props>(
@@ -109,7 +107,6 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       practiceTz,
       appointmentTypes,
       providers,
-      employees,
       accentColor,
       dockInRoutingPane = false,
       inlinePaneMode = false,
@@ -128,6 +125,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       typeScoreLoading = false,
       typeScoreError = null,
       bookedSummary = null,
+      bookedViaRouting = false,
     },
     ref
   ) {
@@ -169,32 +167,31 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
     const [allDayEndDate, setAllDayEndDate] = useState(
       () => allDayInclusiveEndDate(appt.appointmentEnd, practiceTz)?.toISODate() ?? appointmentDateKey
     );
-    const alternateAddressText = appointmentAlternateAddressText(appt) ?? '';
+    const [alternateAddressText, setAlternateAddressText] = useState(
+      () => appointmentAlternateAddressText(appt) ?? ''
+    );
+    const initialAlternateAddressText = (appt.alternateAddress?.addressText ?? '').trim();
     const hasAlternateRoutingAddress = appointmentHasAlternateLocation(appt);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const placementPreviewWasActiveRef = useRef(false);
 
-    const employeeOptions = useMemo(
-      () =>
-        employees
-          .filter((emp) => emp.isDeleted !== true)
-          .map((emp) => ({
-            id: Number(emp.id),
-            label: employeeLabel(emp),
-            isActive: emp.isActive !== false,
-          }))
-          .filter((emp) => Number.isFinite(emp.id) && emp.id > 0)
-          .sort((a, b) => {
-            if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
-            return a.label.localeCompare(b.label);
-          }),
-      [employees]
-    );
+    const additionalEmployeeOptions = useMemo(() => {
+      return providers
+        .map((p) => {
+          const id = Number(p.id);
+          if (!Number.isFinite(id) || id <= 0) return null;
+          const label = p.name?.trim() || `Provider ${id}`;
+          return { id, label };
+        })
+        .filter((row): row is { id: number; label: string } => row != null)
+        .filter((row) => String(row.id) !== primaryProviderId)
+        .sort((a, b) => a.label.localeCompare(b.label));
+    }, [providers, primaryProviderId]);
 
-    const additionalEmployeeOptions = useMemo(
-      () => employeeOptions.filter((emp) => String(emp.id) !== primaryProviderId),
-      [employeeOptions, primaryProviderId]
+    const additionalProviderIdSet = useMemo(
+      () => new Set(additionalEmployeeOptions.map((row) => row.id)),
+      [additionalEmployeeOptions]
     );
 
     const visitStartEnd = useMemo(() => {
@@ -205,8 +202,10 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
 
     useEffect(() => {
       if (!primaryProviderId.trim()) return;
-      setAdditionalEmployeeIds((prev) => prev.filter((id) => String(id) !== primaryProviderId));
-    }, [primaryProviderId]);
+      setAdditionalEmployeeIds((prev) =>
+        prev.filter((id) => String(id) !== primaryProviderId && additionalProviderIdSet.has(id))
+      );
+    }, [primaryProviderId, additionalProviderIdSet]);
 
     const clientHomeSummary = useMemo(() => {
       const c = appt.client;
@@ -254,6 +253,16 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
 
     const previewKind: EditVisitPreviewKind = timesDirty ? 'time' : 'type';
 
+    const selectedEditType = useMemo(
+      () => appointmentTypes.find((t) => String(t.id) === appointmentTypeId),
+      [appointmentTypes, appointmentTypeId]
+    );
+    const editTypeFormFlags = useMemo(
+      () => appointmentFormFlags(selectedEditType),
+      [selectedEditType]
+    );
+    const canEditAlternateAddress = editTypeFormFlags.showAlternateAddress;
+
     const effectiveAppointmentTypeId = useMemo(() => {
       if (
         placementPreviewKind === 'type' &&
@@ -295,7 +304,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         isComplete,
         allDay: appt.allDay,
         alternateAddressText,
-        initialAlternateAddressText: (appt.alternateAddress?.addressText ?? '').trim(),
+        initialAlternateAddressText,
       });
     }, [
       onFormSnapshotChange,
@@ -308,7 +317,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       isComplete,
       appt.allDay,
       alternateAddressText,
-      appt.alternateAddress?.addressText,
+      initialAlternateAddressText,
     ]);
 
     useLayoutEffect(() => {
@@ -398,9 +407,10 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
             isComplete,
             allDay: appt.allDay,
             alternateAddressText,
-            initialAlternateAddressText: alternateAddressText,
+            initialAlternateAddressText,
           },
           previewAppointmentTypeId: tidFromPreview,
+          bookedViaRouting: bookedViaRouting || undefined,
         });
         let routingFeedbackWarning: string | undefined;
         if (placementPreviewActive && typeScoreCompare?.feedbackHandoff) {
@@ -413,12 +423,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         onSaved(updated, routingFeedbackWarning ? { routingFeedbackWarning } : undefined);
         onClose();
       } catch (e: unknown) {
-        const ax = e as { response?: { data?: { message?: string | string[] } }; message?: string };
-        const m = ax?.response?.data?.message;
-        if (Array.isArray(m)) setError(m.join(', '));
-        else if (typeof m === 'string' && m.trim()) setError(m);
-        else if (ax?.message) setError(ax.message);
-        else setError('Could not save changes.');
+        setError(formatSchedulerBookingApiError(e));
       } finally {
         setSaving(false);
       }
@@ -437,6 +442,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       placementPreviewActive,
       placementPreviewKind,
       draftPreviewAppointmentTypeId,
+      bookedViaRouting,
       typeScoreCompare,
       onSaved,
       onClose,
@@ -626,6 +632,9 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                       </option>
                     ))}
                   </select>
+                  {editTypeFormFlags.showNotRoutedHint ? (
+                    <p className="scheduler-edit-hint">Not routed — excluded from drive routing.</p>
+                  ) : null}
                 </label>
 
                 <label className="scheduler-edit-field">
@@ -675,21 +684,13 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
 
               {appt.allDay ? (
                 <label className="scheduler-edit-field scheduler-edit-field--full">
-                  <span>Also show on employee calendars</span>
-                  <div className="scheduler-edit-checklist" role="group" aria-label="Additional employees">
+                  <span>Also show on provider calendars</span>
+                  <div className="scheduler-edit-checklist" role="group" aria-label="Additional providers">
                     {additionalEmployeeOptions.length > 0 ? (
                       additionalEmployeeOptions.map((emp) => {
                         const checked = additionalEmployeeIds.includes(emp.id);
                         return (
-                          <label
-                            key={emp.id}
-                            className={[
-                              'scheduler-edit-checklist-item',
-                              !emp.isActive ? 'scheduler-edit-checklist-item--inactive' : '',
-                            ]
-                              .filter(Boolean)
-                              .join(' ')}
-                          >
+                          <label key={emp.id} className="scheduler-edit-checklist-item">
                             <input
                               type="checkbox"
                               checked={checked}
@@ -708,12 +709,12 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                       })
                     ) : (
                       <span className="scheduler-edit-checklist-empty">
-                        No other employees are available for this all-day appointment.
+                        No other primary providers are available for this all-day appointment.
                       </span>
                     )}
                   </div>
                   <p className="scheduler-edit-hint">
-                    The primary provider remains the owner. Checked employees will also see this appointment on
+                    The primary provider remains the owner. Checked providers will also see this appointment on
                     their calendars.
                   </p>
                 </label>
@@ -781,7 +782,28 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                 </>
               )}
 
-              {hasAlternateRoutingAddress ? (
+              {canEditAlternateAddress ? (
+                <label className="scheduler-edit-field scheduler-edit-field--full">
+                  <span>Alternate address</span>
+                  <textarea
+                    rows={2}
+                    maxLength={4000}
+                    value={alternateAddressText}
+                    onChange={(e) => setAlternateAddressText(e.target.value)}
+                    placeholder="Visit location when different from the client's home address."
+                  />
+                  {hasAlternateRoutingAddress ? (
+                    <p className="scheduler-edit-hint">
+                      Drive time and ETA use this address instead of the client home when set.
+                    </p>
+                  ) : null}
+                  {clientHomeSummary ? (
+                    <p className="scheduler-edit-hint">
+                      Client home: {clientHomeSummary.replace(/\n/g, ', ')}
+                    </p>
+                  ) : null}
+                </label>
+              ) : hasAlternateRoutingAddress ? (
                 <div
                   className="scheduler-edit-alternate-callout"
                   role="alert"
@@ -800,39 +822,17 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                     </span>
                   </div>
                   <p className="scheduler-edit-alternate-callout-lead">
-                    This visit routes to a different stop than the client&apos;s home address.
+                    This visit has an alternate address, but the current appointment type does not allow
+                    editing it here.
                   </p>
-                  <p className="scheduler-edit-alternate-callout-address">
-                    {alternateAddressText || 'Alternate address on file (loading…)'}
-                  </p>
-                  {clientHomeSummary ? (
-                    <p className="scheduler-edit-alternate-callout-home">
-                      <span className="scheduler-edit-alternate-callout-home-label">Client home: </span>
-                      {clientHomeSummary.replace(/\n/g, ', ')}
-                    </p>
-                  ) : null}
-                  <p className="scheduler-edit-alternate-callout-hint">
-                    Drive time and ETA use the alternate address above. To change it, reschedule this visit.
-                  </p>
+                  <p className="scheduler-edit-alternate-callout-address">{alternateAddressText}</p>
                 </div>
-              ) : (
-                <>
-                  {clientHomeSummary ? (
-                    <div className="scheduler-edit-field scheduler-edit-readonly">
-                      <span>Client home address</span>
-                      <div className="scheduler-edit-client-home">{clientHomeSummary}</div>
-                    </div>
-                  ) : null}
-
-                  <div className="scheduler-edit-field scheduler-edit-readonly scheduler-edit-field--full">
-                    <span>Alternate address (routing)</span>
-                    <div className="scheduler-edit-client-home">Uses client home address for routing.</div>
-                    <p className="scheduler-edit-hint">
-                      Alternate stop location can only be set when rescheduling.
-                    </p>
-                  </div>
-                </>
-              )}
+              ) : clientHomeSummary ? (
+                <div className="scheduler-edit-field scheduler-edit-readonly">
+                  <span>Client home address</span>
+                  <div className="scheduler-edit-client-home">{clientHomeSummary}</div>
+                </div>
+              ) : null}
             </div>
           </section>
         </div>
