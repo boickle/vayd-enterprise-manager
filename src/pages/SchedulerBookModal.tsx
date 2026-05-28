@@ -9,6 +9,7 @@ import {
 } from '../api/appointments';
 import type { RoutingCalendarPreviewPayloadV1 } from '../utils/routingCalendarPreviewStorage';
 import { submitRoutingAcceptedFeedbackFromPreview } from '../utils/routingBookFeedback';
+import { completeForwardBookingFromBook } from '../utils/forwardBookingBookComplete';
 import { searchClientsStaff, fetchClientByIdStaff, type ClientSearchRow } from '../api/clientsStaff';
 import { searchPatients } from '../api/patients';
 import type { Provider } from '../api/employee';
@@ -97,6 +98,9 @@ export type SchedulerBookPrefill = {
   defaultInstructions?: string;
   allDay?: boolean;
   additionalEmployeeIds?: number[];
+  /** Forward booking list → routing book — server + POST …/complete attribution. */
+  forwardBookingTrackingToken?: string;
+  forwardBookingEntryId?: number;
 };
 
 /** True when the book modal was opened from routing (not empty-slot / co-visit manual book). */
@@ -123,6 +127,7 @@ type Props = {
   onClose: () => void;
   onBooked: (detail?: {
     routingFeedbackWarning?: string;
+    forwardBookingWarning?: string;
     schedulingOverrideWarning?: string;
     schedulingOverridesApplied?: boolean;
   }) => void;
@@ -984,6 +989,11 @@ export function SchedulerBookModal({
       const descriptionForNewBook = (raw: string) =>
         appendScoutBookedDescription(raw, practiceTz);
 
+      const forwardBookingToken = prefill?.forwardBookingTrackingToken?.trim();
+      const forwardBookingCreateExtras = forwardBookingToken
+        ? { forwardBookingTrackingToken: forwardBookingToken }
+        : {};
+
       let savedAppointmentId: number | undefined;
       if (rescheduleIds.length > 0) {
         const patchBody = {
@@ -1028,6 +1038,7 @@ export function SchedulerBookModal({
             ...(bookAllDay ? { allDay: true } : {}),
             description: descriptionForNewBook(visit.description) || undefined,
             ...(bookedViaRouting ? { bookedViaRouting: true } : {}),
+            ...forwardBookingCreateExtras,
           });
           const idRaw = created?.id;
           if (idRaw != null && Number.isFinite(Number(idRaw))) {
@@ -1051,6 +1062,7 @@ export function SchedulerBookModal({
           description: descriptionForNewBook(description) || undefined,
           instructions: instructions.trim() || undefined,
           ...(bookedViaRouting ? { bookedViaRouting: true } : {}),
+          ...forwardBookingCreateExtras,
         });
         const idRaw = created?.id;
         if (idRaw != null && Number.isFinite(Number(idRaw))) {
@@ -1068,6 +1080,16 @@ export function SchedulerBookModal({
         if (!fb.submitted && fb.error) {
           routingFeedbackWarning =
             'Appointment saved, but routing could not be linked to this suggestion. ' + fb.error;
+        }
+      }
+
+      let forwardBookingWarning: string | undefined;
+      if (savedAppointmentId != null) {
+        const fbComplete = await completeForwardBookingFromBook(savedAppointmentId, prefill);
+        if (!fbComplete.completed && fbComplete.error) {
+          forwardBookingWarning =
+            'Appointment saved, but the forward booking could not be marked complete. ' +
+            fbComplete.error;
         }
       }
 
@@ -1103,8 +1125,16 @@ export function SchedulerBookModal({
       }
 
       const bookedDetail =
-        routingFeedbackWarning || schedulingOverrideWarning || schedulingOverridesApplied
-          ? { routingFeedbackWarning, schedulingOverrideWarning, schedulingOverridesApplied }
+        routingFeedbackWarning ||
+        forwardBookingWarning ||
+        schedulingOverrideWarning ||
+        schedulingOverridesApplied
+          ? {
+              routingFeedbackWarning,
+              forwardBookingWarning,
+              schedulingOverrideWarning,
+              schedulingOverridesApplied,
+            }
           : undefined;
       onBooked(bookedDetail);
       onClose();

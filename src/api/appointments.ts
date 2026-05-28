@@ -105,6 +105,8 @@ export type CreateAppointmentPayload = {
   allDay?: boolean;
   /** When true, skip manual booking permission checks (routing commit). */
   bookedViaRouting?: boolean;
+  /** Forward booking tracking token — server marks the forward booking complete when present. */
+  forwardBookingTrackingToken?: string;
 };
 
 export type UpdateAppointmentPayload = Record<string, unknown> & {
