@@ -1,7 +1,10 @@
 import { http } from './http';
 
+export type AppointmentRequestSubmissionKind = 'submission' | 'abandoned';
+
 /** GET /appointments/request-submissions item shape */
 export type AppointmentRequestSubmissionItem = {
+  kind?: AppointmentRequestSubmissionKind;
   id: number;
   practiceId: number | null;
   submittedAt: string;
@@ -9,6 +12,10 @@ export type AppointmentRequestSubmissionItem = {
   requestData: Record<string, unknown>;
   created: string;
   updated: string;
+  formSessionId?: string;
+  currentStep?: string;
+  currentStepName?: string;
+  abandonReason?: string;
 };
 
 export type AppointmentRequestSubmissionsListResponse = {
