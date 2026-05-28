@@ -63,6 +63,11 @@ import {
   type RoutingRescheduleScope,
 } from '../utils/routingRescheduleIntent';
 import {
+  markForwardBookingIntentAppliedToRoutingForm,
+  readRoutingForwardBookingIntent,
+  ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT,
+} from '../utils/routingForwardBookingIntent';
+import {
   clearRoutingUiSnapshot,
   createDefaultRoutingForm,
   readRoutingUiBootstrap,
@@ -1766,6 +1771,88 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     return () => {
       cancelled = true;
       window.removeEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, onIntentUpdated);
+    };
+  }, [triggerRoutingPrefillFlash]);
+
+  /** Forward booking list → hydrate Routing form once per intent row. */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function mergeForwardBookingIntentFromList() {
+      const intent = readRoutingForwardBookingIntent();
+      if (!intent || intent.appliedToRoutingForm) return;
+      if (readRoutingRescheduleIntent()) return;
+
+      let resolvedDoctor = resolveRescheduleIntentDoctorPimsId(intent, []);
+      if (!resolvedDoctor) {
+        try {
+          const providerRows = await fetchPrimaryProviders();
+          if (cancelled) return;
+          resolvedDoctor = resolveRescheduleIntentDoctorPimsId(intent, providerRows);
+        } catch {
+          /* optional */
+        }
+      }
+
+      const pimsDoc = resolvedDoctor?.pimsId ?? intent.primaryDoctorPimsId?.trim() ?? '';
+      const doctorDisplayName =
+        resolvedDoctor?.displayName?.trim() || intent.primaryDoctorDisplayName?.trim() || '';
+
+      setForm((f) => ({
+        ...f,
+        ...(pimsDoc ? { doctorId: pimsDoc } : {}),
+        newAppt: {
+          ...f.newAppt,
+          clientId: intent.clientId,
+          address: intent.address?.trim() || f.newAppt.address,
+          lat: intent.lat ?? f.newAppt.lat,
+          lon: intent.lon ?? f.newAppt.lon,
+          serviceMinutes:
+            intent.serviceMinutes > 0 ? intent.serviceMinutes : Math.max(15, f.newAppt.serviceMinutes || 45),
+        },
+      }));
+
+      const label = intent.clientDisplayLabel?.trim();
+      if (label) setClientQuery(label);
+
+      const tid = intent.appointmentTypeId;
+      if (tid != null && Number.isFinite(Number(tid))) setScheduleBookTypeId(Number(tid));
+
+      const typeName = intent.appointmentTypeName?.trim();
+      if (typeName) setRoutingApptStatsTypeKey(typeName);
+
+      const alerts = intent.clientAlerts;
+      if (alerts !== undefined && alerts !== null) setSelectedClientAlerts(alerts);
+
+      if (pimsDoc) {
+        setDoctorQuery(doctorDisplayName || `Doctor ${pimsDoc}`);
+      }
+
+      const flashFields: RoutingPrefillFlashField[] = [];
+      if (pimsDoc) flashFields.push('doctor');
+      if (label) flashFields.push('client');
+      if (intent.address?.trim()) flashFields.push('address');
+      if (intent.serviceMinutes > 0) flashFields.push('minutes');
+      if (typeName || (tid != null && Number.isFinite(Number(tid)))) flashFields.push('apptType');
+      if (flashFields.length > 0) triggerRoutingPrefillFlash(flashFields);
+
+      setResult(null);
+      setFeedbackError(null);
+      const dueHint = intent.targetDueDate
+        ? ` Target around ${intent.targetDueDate.slice(0, 10)} (${intent.monthsOut} mo out).`
+        : ` Book about ${intent.monthsOut} months out.`;
+      setFeedbackToast(`Forward booking: client loaded.${dueHint} Run routing and book the next visit.`);
+      markForwardBookingIntentAppliedToRoutingForm();
+    }
+
+    void mergeForwardBookingIntentFromList();
+    const onIntentUpdated = () => {
+      void mergeForwardBookingIntentFromList();
+    };
+    window.addEventListener(ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT, onIntentUpdated);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT, onIntentUpdated);
     };
   }, [triggerRoutingPrefillFlash]);
 

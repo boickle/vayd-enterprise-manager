@@ -185,6 +185,10 @@ import {
   type RescheduleSameDayVisit,
 } from '../utils/routingRescheduleIntent';
 import {
+  clearRoutingForwardBookingIntent,
+  readRoutingForwardBookingIntent,
+} from '../utils/routingForwardBookingIntent';
+import {
   subscribePracticeCalendar,
   type AppointmentCalendarPayload,
 } from '../utils/calendarRealtime';
@@ -4204,6 +4208,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const end = start.plus({ minutes: mins });
     const isAdminOrSuper = rolesLower.includes('admin') || rolesLower.includes('superadmin');
     const ri = readRoutingRescheduleIntent();
+    const fbi = readRoutingForwardBookingIntent();
     const rescheduleTargets = ri ? rescheduleScopeTargets(ri) : null;
     const rescheduleIds =
       routingPreview.rescheduleAppointmentIds?.filter((id) => Number.isFinite(Number(id))) ??
@@ -4244,21 +4249,36 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       appointmentTypeId: routingPreview.appointmentTypeId,
       preserveDurationFromSlot: true,
       defaultDescription:
-        isReschedule && (rescheduleVisitPatches?.length ?? 0) <= 1
-          ? rescheduleVisitPatches?.[0]?.description?.trim() || ri?.description?.trim() || undefined
-          : undefined,
+        (isReschedule && (rescheduleVisitPatches?.length ?? 0) <= 1
+          ? rescheduleVisitPatches?.[0]?.description?.trim() || ri?.description?.trim()
+          : undefined) ??
+        fbi?.description?.trim() ??
+        undefined,
       rescheduleAppointmentId: isReschedule ? Number(rescheduleId) : undefined,
       rescheduleAppointmentIds: isReschedule && rescheduleIds.length > 0 ? rescheduleIds : undefined,
       rescheduleVisitPatches:
         isReschedule && rescheduleVisitPatches?.length ? rescheduleVisitPatches : undefined,
-      preferredPatientId: routingPreview.reschedulePatientId?.trim() || ri?.patientId,
+      preferredPatientId:
+        routingPreview.reschedulePatientId?.trim() || ri?.patientId || fbi?.patientId,
       routingPreviewBook: !isReschedule,
       lockProvider: !isReschedule,
       lockSlotTimes: !isReschedule,
       providerId: isReschedule
         ? ri?.primaryProviderInternalId?.trim()
         : String(opt.doctorPimsId ?? '').trim() || undefined,
-      modalTitle: isReschedule ? 'Reschedule appointment' : undefined,
+      modalTitle: isReschedule
+        ? 'Reschedule appointment'
+        : fbi
+          ? 'Forward booking'
+          : undefined,
+      defaultInstructions:
+        fbi?.bookingNotes?.trim() || fbi?.instructions?.trim() || undefined,
+      ...(fbi && !isReschedule
+        ? {
+            forwardBookingTrackingToken: fbi.trackingToken,
+            forwardBookingEntryId: fbi.forwardBookingId,
+          }
+        : {}),
     });
     setBookSlot({ start, end });
   }, [routingPreview, rolesLower, rawAppointments]);
@@ -4271,10 +4291,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const handleSchedulerBooked = useCallback(
     (detail?: {
       routingFeedbackWarning?: string;
+      forwardBookingWarning?: string;
       schedulingOverrideWarning?: string;
       schedulingOverridesApplied?: boolean;
     }) => {
       const wasReschedule = bookPrefill?.rescheduleAppointmentId != null;
+      const wasForwardBooking = bookPrefill?.forwardBookingTrackingToken != null;
       void loadRange({ refreshDrive: true });
       if (embedInRoutingWorkspace) {
         clearRoutingPersistenceAfterSchedulerBook();
@@ -4285,7 +4307,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         setRoutingPreview(null);
       }
       clearRoutingRescheduleIntent();
-      const warning = detail?.schedulingOverrideWarning ?? detail?.routingFeedbackWarning;
+      clearRoutingForwardBookingIntent();
+      const warning =
+        detail?.schedulingOverrideWarning ??
+        detail?.forwardBookingWarning ??
+        detail?.routingFeedbackWarning;
       if (warning) {
         setToast(warning);
       } else if (detail?.schedulingOverridesApplied && !wasReschedule) {
@@ -4293,10 +4319,22 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           'All-day appointment saved. Schedule overrides applied so those days are excluded from routing.'
         );
       } else {
-        setToast(wasReschedule ? 'Appointment rescheduled.' : 'Appointment saved to the schedule.');
+        setToast(
+          wasReschedule
+            ? 'Appointment rescheduled.'
+            : wasForwardBooking
+              ? 'Forward booking appointment saved.'
+              : 'Appointment saved to the schedule.'
+        );
       }
     },
-    [loadRange, routingPreview, bookPrefill?.rescheduleAppointmentId, embedInRoutingWorkspace]
+    [
+      loadRange,
+      routingPreview,
+      bookPrefill?.rescheduleAppointmentId,
+      bookPrefill?.forwardBookingTrackingToken,
+      embedInRoutingWorkspace,
+    ]
   );
 
   const showToast = useCallback((msg: string) => {
@@ -6270,6 +6308,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           key={actualVisitModal.id}
           appt={actualVisitModal}
           field="both"
+          practiceId={PRACTICE_ID}
           practiceTz={PRACTICE_TZ}
           accentColor={colorsForAppointment(actualVisitModal, typeList, typeFillMap).fill}
           onClose={() => setActualVisitModal(null)}

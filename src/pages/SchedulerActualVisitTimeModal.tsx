@@ -6,7 +6,12 @@ import {
   postAppointmentActualEnd,
   postAppointmentActualStart,
 } from '../api/appointments';
+import { createForwardBooking } from '../api/forwardBooking';
 import type { Appointment } from '../api/roomLoader';
+import {
+  buildCreateForwardBookingPayloadFromAppointment,
+  FORWARD_BOOKING_MONTHS_OPTIONS,
+} from '../utils/forwardBookingFromAppointment';
 import {
   appointmentPracticeDateKey,
   combineDateAndTimeToUtc,
@@ -21,6 +26,7 @@ type Props = {
   appt: Appointment;
   /** `both` — combined Start / End Visit screen (default from context menu). */
   field?: ActualVisitTimeField;
+  practiceId: number;
   practiceTz: string;
   accentColor: string;
   onClose: () => void;
@@ -67,6 +73,7 @@ function defaultEndTimeLocal(
 export function SchedulerActualVisitTimeModal({
   appt,
   field = 'both',
+  practiceId,
   practiceTz,
   accentColor,
   onClose,
@@ -94,8 +101,12 @@ export function SchedulerActualVisitTimeModal({
   const [endTimeLocal, setEndTimeLocal] = useState(() =>
     isStartOnly ? '' : defaultEndTimeLocal(existingEndIso, existingStartIso, practiceTz)
   );
+  const [monthsOut, setMonthsOut] = useState<string>('');
+  const [bookingNotes, setBookingNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const requiresForwardBooking = !isStartOnly;
 
   const title = isBoth ? 'Start / End Visit' : isStartOnly ? 'Start visit' : 'End visit';
 
@@ -109,6 +120,24 @@ export function SchedulerActualVisitTimeModal({
     [appt.id]
   );
 
+  const saveForwardBookingIfNeeded = useCallback(
+    async (savingEnd: boolean) => {
+      if (!savingEnd || isStartOnly) return;
+      const months = Number(monthsOut);
+      if (!Number.isFinite(months) || months <= 0) {
+        throw new Error('Select how many months out to forward book.');
+      }
+      const payload = buildCreateForwardBookingPayloadFromAppointment(appt, months, practiceId, {
+        bookingNotes: bookingNotes.trim() || null,
+      });
+      if (!payload) {
+        throw new Error('This visit cannot create a forward booking (needs client and patient).');
+      }
+      await createForwardBooking(payload);
+    },
+    [appt, bookingNotes, isStartOnly, monthsOut, practiceId]
+  );
+
   const postBoth = useCallback(
     async (opts: {
       start?: { at?: string; clear?: boolean };
@@ -117,9 +146,12 @@ export function SchedulerActualVisitTimeModal({
       setSaving(true);
       setError(null);
       try {
+        const savingEnd = Boolean(opts.end && !opts.end.clear);
+
         let updated = appt;
         if (opts.start) updated = await saveStart(opts.start);
         if (opts.end) updated = await saveEnd(opts.end);
+        await saveForwardBookingIfNeeded(savingEnd);
         onSaved(updated);
         onClose();
       } catch (e: unknown) {
@@ -133,8 +165,18 @@ export function SchedulerActualVisitTimeModal({
         setSaving(false);
       }
     },
-    [appt, onClose, onSaved, saveEnd, saveStart]
+    [appt, onClose, onSaved, saveEnd, saveStart, saveForwardBookingIfNeeded]
   );
+
+  const validateForwardBookingMonths = (savingEnd: boolean): boolean => {
+    if (!requiresForwardBooking || !savingEnd) return true;
+    const months = Number(monthsOut);
+    if (!Number.isFinite(months) || months <= 0) {
+      setError('Select how many months out to forward book before saving.');
+      return false;
+    }
+    return true;
+  };
 
   const handleSave = () => {
     if (!dateKey) {
@@ -156,6 +198,7 @@ export function SchedulerActualVisitTimeModal({
         setError('Enter a valid end time.');
         return;
       }
+      if (!validateForwardBookingMonths(true)) return;
       void postBoth({ end: { at } });
       return;
     }
@@ -177,6 +220,8 @@ export function SchedulerActualVisitTimeModal({
       setError('Enter a valid end time.');
       return;
     }
+    const savingEnd = Boolean(endAt);
+    if (!validateForwardBookingMonths(savingEnd)) return;
     void postBoth({
       ...(startAt ? { start: { at: startAt } } : {}),
       ...(endAt ? { end: { at: endAt } } : {}),
@@ -281,8 +326,56 @@ export function SchedulerActualVisitTimeModal({
                   />
                 </label>
               ) : null}
+
+              {requiresForwardBooking ? (
+                <label className="scheduler-edit-field">
+                  <span>Forward book (months out) *</span>
+                  <select
+                    value={monthsOut}
+                    onChange={(e) => setMonthsOut(e.target.value)}
+                    disabled={saving}
+                    required
+                  >
+                    <option value="">Select months…</option>
+                    {FORWARD_BOOKING_MONTHS_OPTIONS.map((m) => (
+                      <option key={m} value={String(m)}>
+                        {m} {m === 1 ? 'month' : 'months'}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
             </div>
           </section>
+
+          {requiresForwardBooking ? (
+            <section className="scheduler-modal-section" style={{ marginTop: 4 }}>
+              <p className="scheduler-modal-eyebrow" style={{ marginBottom: 8 }}>
+                Forward booking note
+              </p>
+              <p className="settings-muted" style={{ fontSize: 13, margin: '0 0 8px' }}>
+                Optional — shown on the forward booking list and prefilled when booking the follow-up
+                visit.
+              </p>
+              <label className="scheduler-edit-field" style={{ display: 'block' }}>
+                <textarea
+                  className="settings-input"
+                  rows={2}
+                  value={bookingNotes}
+                  onChange={(e) => setBookingNotes(e.target.value)}
+                  disabled={saving}
+                  placeholder="e.g. Prefers AM slots, same provider"
+                  aria-label="Forward booking note"
+                  style={{
+                    width: '100%',
+                    resize: 'vertical',
+                    fontFamily: 'inherit',
+                    fontSize: 14,
+                  }}
+                />
+              </label>
+            </section>
+          ) : null}
         </div>
 
         <div className="scheduler-edit-footer scheduler-actual-visit-footer">
