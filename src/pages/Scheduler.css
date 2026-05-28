@@ -2745,6 +2745,35 @@ label.scheduler-go-date-heading {
   color: #94a3b8;
 }
 
+.scheduler-book-override-panel {
+  margin-top: 4px;
+  padding: 12px 14px;
+  border: 1px solid #d1e7dd;
+  border-radius: 10px;
+  background: #f8faf9;
+}
+
+.scheduler-book-override-heading {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1e3a2f;
+}
+
+.scheduler-book-override-form.settings-override-form {
+  margin-top: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.scheduler-book-override-form .settings-override-times-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .scheduler-book-dropdown {
   position: absolute;
   left: 0;

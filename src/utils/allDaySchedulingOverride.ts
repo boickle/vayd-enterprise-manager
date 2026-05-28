@@ -1,8 +1,9 @@
 import { DateTime } from 'luxon';
 import {
-  buildScheduleOverridePayload,
+  buildScheduleOverrideDayOffPayload,
   createScheduleOverride,
   fetchScheduleOverrideByDate,
+  formatScheduleOverrideApiError,
   updateScheduleOverride,
 } from '../api/appointmentSettings';
 
@@ -22,11 +23,8 @@ export function datesFromInclusiveRange(startDate: string, endDateInclusive: str
 }
 
 async function upsertRoutingDayOffOverride(employeeId: number, date: string): Promise<void> {
-  const existing = await fetchScheduleOverrideByDate(employeeId, date);
-  const payload = buildScheduleOverridePayload({
-    workStartLocal: ROUTING_DAY_OFF_OVERRIDE_LOCAL_TIME,
-    workEndLocal: ROUTING_DAY_OFF_OVERRIDE_LOCAL_TIME,
-  });
+  const existing = await fetchScheduleOverrideByDate(employeeId, date).catch(() => null);
+  const payload = buildScheduleOverrideDayOffPayload();
   if (existing?.id) {
     await updateScheduleOverride(employeeId, existing.id, payload);
   } else {
@@ -61,7 +59,7 @@ export async function applyAllDaySchedulingOverrides(input: {
           failed.push({
             employeeId,
             date,
-            error: err instanceof Error ? err.message : 'Request failed',
+            error: formatScheduleOverrideApiError(err),
           });
         }
       })

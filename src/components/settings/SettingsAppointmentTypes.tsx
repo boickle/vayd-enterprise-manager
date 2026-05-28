@@ -4,7 +4,11 @@ import {
   updateAppointmentType,
   type AppointmentType,
 } from '../../api/appointmentSettings';
-import { formatPointsSummary } from '../../utils/appointmentTypeSettings';
+import {
+  appointmentTypeAllowsAllDay,
+  formatPointsSummary,
+  normalizeAppointmentTypeFromApi,
+} from '../../utils/appointmentTypeSettings';
 
 function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string } }; message?: string };
@@ -73,27 +77,27 @@ type EditDraft = {
 };
 
 function draftFromType(type: AppointmentType): EditDraft {
-  const legacy =
-    type.windowBeforeMinutes == null && type.windowAfterMinutes == null;
+  const t = normalizeAppointmentTypeFromApi(type);
+  const legacy = t.windowBeforeMinutes == null && t.windowAfterMinutes == null;
   return {
-    prettyName: type.prettyName ?? type.name ?? '',
-    color: displayColor(type),
-    textColor: displayTextColor(type),
+    prettyName: t.prettyName ?? t.name ?? '',
+    color: displayColor(t),
+    textColor: displayTextColor(t),
     windowBeforeMinutes:
-      type.windowBeforeMinutes != null ? String(type.windowBeforeMinutes) : '',
+      t.windowBeforeMinutes != null ? String(t.windowBeforeMinutes) : '',
     windowAfterMinutes:
-      type.windowAfterMinutes != null ? String(type.windowAfterMinutes) : '',
+      t.windowAfterMinutes != null ? String(t.windowAfterMinutes) : '',
     useLegacyWindow: legacy,
-    showInApptRequestForm: type.showInApptRequestForm === true,
-    newPatientAllowed: type.newPatientAllowed === true,
-    formListOrder: type.formListOrder != null ? String(type.formListOrder) : '',
-    allowAllDay: type.allowAllDay === true,
-    allowClient: type.allowClient !== false,
-    allowAlternateAddress: type.allowAlternateAddress === true,
-    excludeFromRouting: type.excludeFromRouting === true,
-    allowSchedulingOverride: type.allowSchedulingOverride === true,
-    useLegacyPoints: type.points == null,
-    points: type.points != null ? String(type.points) : '',
+    showInApptRequestForm: t.showInApptRequestForm === true,
+    newPatientAllowed: t.newPatientAllowed === true,
+    formListOrder: t.formListOrder != null ? String(t.formListOrder) : '',
+    allowAllDay: appointmentTypeAllowsAllDay(t),
+    allowClient: t.allowClient !== false,
+    allowAlternateAddress: t.allowAlternateAddress === true,
+    excludeFromRouting: t.excludeFromRouting === true,
+    allowSchedulingOverride: t.allowSchedulingOverride === true,
+    useLegacyPoints: t.points == null,
+    points: t.points != null ? String(t.points) : '',
   };
 }
 
@@ -241,7 +245,9 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
         points,
       });
 
-      onTypesChange(types.map((t) => (t.id === updated.id ? updated : t)));
+      onTypesChange(
+        types.map((t) => (t.id === updated.id ? normalizeAppointmentTypeFromApi(updated) : t))
+      );
       onMessage?.('Appointment type updated successfully', 'success');
       closeModal();
     } catch (e) {
@@ -272,7 +278,9 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
             </tr>
           </thead>
           <tbody>
-            {sortedTypes.map((type) => (
+            {sortedTypes.map((raw) => {
+              const type = normalizeAppointmentTypeFromApi(raw);
+              return (
               <tr key={type.id}>
                 <td>{type.name}</td>
                 <td>{type.prettyName || type.name}</td>
@@ -294,7 +302,7 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
                 <td>{type.formListOrder ?? '—'}</td>
                 <td className="settings-appt-type-flags-cell">
                   {[
-                    type.allowAllDay ? 'All-day' : null,
+                    appointmentTypeAllowsAllDay(type) ? 'All-day' : null,
                     type.allowClient === false ? 'No client' : null,
                     type.allowAlternateAddress ? 'Alt addr' : null,
                     type.excludeFromRouting ? 'No route' : null,
@@ -310,7 +318,8 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
                   </button>
                 </td>
               </tr>
-            ))}
+            );
+            })}
           </tbody>
         </table>
       </div>

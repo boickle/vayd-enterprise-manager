@@ -1,5 +1,6 @@
 // src/api/appointmentSettings.ts
 import { http } from './http';
+import { normalizeAppointmentTypeFromApi } from '../utils/appointmentTypeSettings';
 
 export type AppointmentType = {
   id: number;
@@ -157,6 +158,23 @@ export function buildScheduleOverridePayload(form: {
   };
 }
 
+/** Day off for routing — same payload shape as Settings → Mark as day off → Save. */
+export function buildScheduleOverrideDayOffPayload(): ReturnType<typeof buildScheduleOverridePayload> {
+  return buildScheduleOverridePayload({ workStartLocal: '', workEndLocal: '' });
+}
+
+export function formatScheduleOverrideApiError(err: unknown): string {
+  const ax = err as {
+    response?: { data?: { message?: string | string[] } };
+    message?: string;
+  };
+  const m = ax?.response?.data?.message;
+  if (Array.isArray(m)) return m.join(', ');
+  if (typeof m === 'string' && m.trim()) return m;
+  if (ax?.message) return ax.message;
+  return 'Request failed';
+}
+
 export type Zone = {
   id: number;
   name: string;
@@ -235,7 +253,7 @@ export type AppointmentTypeUpdate = {
  */
 export async function fetchAppointmentType(appointmentTypeId: number): Promise<AppointmentType> {
   const { data } = await http.get(`/appointment-types/${appointmentTypeId}`);
-  return data;
+  return normalizeAppointmentTypeFromApi(data);
 }
 
 /**
@@ -247,7 +265,7 @@ export async function updateAppointmentType(
   updates: AppointmentTypeUpdate
 ): Promise<AppointmentType> {
   const { data } = await http.put(`/appointment-types/${appointmentTypeId}`, updates);
-  return data;
+  return normalizeAppointmentTypeFromApi(data);
 }
 
 /**
@@ -255,12 +273,15 @@ export async function updateAppointmentType(
  * GET /appointment-types
  */
 export async function fetchAllAppointmentTypes(practiceId?: number): Promise<AppointmentType[]> {
-  const params: any = {};
+  const params: Record<string, number> = {};
   if (practiceId) {
     params.practiceId = practiceId;
   }
   const { data } = await http.get('/appointment-types', { params });
-  return Array.isArray(data) ? data : (data?.items ?? data?.appointmentTypes ?? []);
+  const rows: AppointmentType[] = Array.isArray(data)
+    ? data
+    : (data?.items ?? data?.appointmentTypes ?? []);
+  return rows.map((row) => normalizeAppointmentTypeFromApi(row));
 }
 
 /**

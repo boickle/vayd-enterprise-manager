@@ -9,7 +9,7 @@ export function bookedAppointmentDefaultDescription(practiceTz: string): string 
   return `(Scout ${dateLabel})`;
 }
 
-/** Append `(Scout MM/dd/yyyy)` when saving a new appointment (skip if already present). */
+/** Append `(Scout MM/dd/yyyy)` when saving a routing-booked appointment (skip if already present). */
 export function appendScoutBookedDescription(
   existing: string | undefined | null,
   practiceTz: string

@@ -20,6 +20,31 @@ export function normalizeAppointmentTypeName(name: string | null | undefined): s
     .replace(/-/g, ' ');
 }
 
+function truthyFlag(v: unknown): boolean {
+  if (v === true || v === 1) return true;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    return s === 'true' || s === '1' || s === 'yes';
+  }
+  return false;
+}
+
+/** Coerce list rows from GET /appointment-types (camelCase or snake_case flags). */
+export function normalizeAppointmentTypeFromApi(row: AppointmentType): AppointmentType {
+  const r = row as AppointmentType & Record<string, unknown>;
+  return {
+    ...row,
+    allowAllDay: row.allowAllDay === true || truthyFlag(r.allow_all_day),
+    allowSchedulingOverride:
+      row.allowSchedulingOverride === true || truthyFlag(r.allow_scheduling_override),
+  };
+}
+
+export function appointmentTypeAllowsAllDay(type: AppointmentType | undefined): boolean {
+  if (!type) return false;
+  return normalizeAppointmentTypeFromApi(type).allowAllDay === true;
+}
+
 export function buildAppointmentTypeCatalog(types: AppointmentType[]): AppointmentTypeCatalog {
   const byId = new Map<number, AppointmentType>();
   const byName = new Map<string, AppointmentType>();
@@ -36,12 +61,13 @@ export function buildAppointmentTypeCatalog(types: AppointmentType[]): Appointme
 }
 
 export function appointmentFormFlags(type: AppointmentType | undefined) {
+  const t = type ? normalizeAppointmentTypeFromApi(type) : undefined;
   return {
-    showAllDay: type?.allowAllDay === true,
-    requireClient: type?.allowClient !== false,
-    showAlternateAddress: type?.allowAlternateAddress === true,
-    showNotRoutedHint: type?.excludeFromRouting === true,
-    showSchedulingOverride: type?.allowSchedulingOverride === true,
+    showAllDay: appointmentTypeAllowsAllDay(t),
+    requireClient: t?.allowClient !== false,
+    showAlternateAddress: t?.allowAlternateAddress === true,
+    showNotRoutedHint: t?.excludeFromRouting === true,
+    showSchedulingOverride: t?.allowSchedulingOverride === true,
   };
 }
 

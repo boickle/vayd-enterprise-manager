@@ -24,6 +24,7 @@ import {
   appointmentHasAlternateLocation,
   fetchAppointmentsRange,
   isAppointmentCancelledOnPracticeCalendar,
+  isAppointmentNoLocation,
   isFlexBlockItem,
   isPracticeCalendarBlockAppointment,
   patchAppointment,
@@ -279,14 +280,19 @@ const DEFAULT_GRID_END = 17 * 60;
 const SCHEDULER_GRID_EDGE_BUFFER_MIN = 30;
 
 function practiceAppointmentHasLocation(a: Appointment): boolean {
-  const lat = a.client?.lat;
-  const lon = a.client?.lon;
-  return (
-    typeof lat === 'number' &&
-    typeof lon === 'number' &&
-    Math.abs(lat) > 1e-6 &&
-    Math.abs(lon) > 1e-6
-  );
+  return !isAppointmentNoLocation(a);
+}
+
+/**
+ * Practice calendar "off" day: no depot shift from doctor-day/override AND no timed range visits.
+ * Schedule overrides from all-day OFF bookings clear depot times but visits should still display.
+ */
+function schedulerPracticeCalendarDayOff(
+  dayData: DayData | null | undefined,
+  dayAppointments: Appointment[]
+): boolean {
+  if (!doctorDayIsOff(dayData)) return false;
+  return !dayAppointments.some((a) => !a.allDay);
 }
 
 /** Scheduled shift or calendar activity — not an off day (may have zero located stops). */
@@ -295,9 +301,10 @@ function schedulerDayIsWorking(
   dayData: DayData | null | undefined,
   appointmentsByDay: Map<string, Appointment[]>
 ): boolean {
-  if (doctorDayIsOff(dayData)) return false;
+  const dayAppts = appointmentsByDay.get(dayKey) ?? [];
+  if (schedulerPracticeCalendarDayOff(dayData, dayAppts)) return false;
   if (dayData) return true;
-  return (appointmentsByDay.get(dayKey) ?? []).length > 0;
+  return dayAppts.length > 0;
 }
 
 /** Stronger divider when two consecutive off days would otherwise read as one gray block. */
@@ -305,12 +312,16 @@ function schedulerOffDayAdjoinsNext(
   dayIdx: number,
   dayColumnDates: DateTime[],
   driveDayByDate: Map<string, DayData> | null | undefined,
+  appointmentsByDay: Map<string, Appointment[]>,
   isCurrentOff: boolean
 ): boolean {
   if (!isCurrentOff || dayIdx >= dayColumnDates.length - 1) return false;
   const nextKey = dayColumnDates[dayIdx + 1]?.toISODate();
   if (!nextKey) return false;
-  return doctorDayIsOff(driveDayByDate?.get(nextKey));
+  return schedulerPracticeCalendarDayOff(
+    driveDayByDate?.get(nextKey),
+    appointmentsByDay.get(nextKey) ?? []
+  );
 }
 
 /** Unified all-day strip: row height, vertical padding, max visible rows (then scroll inside strip). */
@@ -951,7 +962,20 @@ function userLikeLabel(v: unknown): string | null {
   return pickStr(o.name) ?? pickStr(o.displayName) ?? (combined || null);
 }
 
-function appointmentCreatedByPerson(appt: Appointment): string | null {
+function employeeIdProviderLabel(
+  employeeId: number | null | undefined,
+  providers?: readonly Provider[] | null
+): string | null {
+  if (employeeId == null || !Number.isFinite(Number(employeeId)) || !providers?.length) return null;
+  const id = Number(employeeId);
+  const match = providers.find((p) => Number(p.id) === id);
+  return match?.name?.trim() || null;
+}
+
+function appointmentCreatedByPerson(
+  appt: Appointment,
+  providers?: readonly Provider[] | null
+): string | null {
   const o = appt as unknown as Record<string, unknown>;
   return (
     pickStr(appt.createdByName) ??
@@ -961,7 +985,8 @@ function appointmentCreatedByPerson(appt: Appointment): string | null {
     pickStr(o.createdByUserName) ??
     pickStr(o.createdByUsername) ??
     userLikeLabel(o.createdByUser) ??
-    userLikeLabel(o.createdByEmployee)
+    userLikeLabel(o.createdByEmployee) ??
+    employeeIdProviderLabel(appt.createdByEmployeeId, providers)
   );
 }
 
@@ -970,7 +995,10 @@ function appointmentModifiedAtIso(appt: Appointment): string | undefined {
   return pickStr(appt.modified) ?? pickStr(appt.updated) ?? undefined;
 }
 
-function appointmentModifiedByPerson(appt: Appointment): string | null {
+function appointmentModifiedByPerson(
+  appt: Appointment,
+  providers?: readonly Provider[] | null
+): string | null {
   const o = appt as unknown as Record<string, unknown>;
   return (
     pickStr(appt.modifiedByName) ??
@@ -986,16 +1014,21 @@ function appointmentModifiedByPerson(appt: Appointment): string | null {
     userLikeLabel(o.modifiedByUser) ??
     userLikeLabel(o.updatedByUser) ??
     userLikeLabel(o.modifiedByEmployee) ??
-    userLikeLabel(o.updatedByEmployee)
+    userLikeLabel(o.updatedByEmployee) ??
+    employeeIdProviderLabel(appt.modifiedByEmployeeId, providers)
   );
 }
 
-function formatAppointmentAuditDisplay(iso: string | undefined, byPerson: string | null): string | null {
+function formatAppointmentWhenDisplay(iso: string | undefined): string | null {
   if (!iso) return null;
   const dt = DateTime.fromISO(iso);
   if (!dt.isValid) return null;
-  const when = dt.toLocaleString(DateTime.DATETIME_MED);
-  return byPerson ? `${when} by ${byPerson}` : when;
+  return dt.toLocaleString(DateTime.DATETIME_MED);
+}
+
+function formatAppointmentAuditWhenByLine(when: string | null, byPerson: string | null): string | null {
+  if (when && byPerson) return `${when} by ${byPerson}`;
+  return when ?? byPerson;
 }
 
 /** Resolve chart patient's PIMS primary provider from flexible range/detail payloads. */
@@ -1509,14 +1542,12 @@ function SchedulerHoverContent({
   const appointmentVsChartProviderMismatch =
     !!chartPrimaryProviderLabel &&
     appointmentChartPrimaryProviderDiffersFromAssignee(appt, chartPrimaryProviderLabel);
-  const createdLine = formatAppointmentAuditDisplay(
-    pickStr(appt.created) ?? undefined,
-    appointmentCreatedByPerson(appt)
-  );
-  const modifiedLine = formatAppointmentAuditDisplay(
-    appointmentModifiedAtIso(appt),
-    appointmentModifiedByPerson(appt)
-  );
+  const createdBy = appointmentCreatedByPerson(appt, providers);
+  const modifiedBy = appointmentModifiedByPerson(appt, providers);
+  const createdWhen = formatAppointmentWhenDisplay(pickStr(appt.created) ?? undefined);
+  const modifiedWhen = formatAppointmentWhenDisplay(appointmentModifiedAtIso(appt));
+  const createdLine = formatAppointmentAuditWhenByLine(createdWhen, createdBy);
+  const modifiedLine = formatAppointmentAuditWhenByLine(modifiedWhen, modifiedBy);
   const showAuditFooter = !!(createdLine || modifiedLine);
 
   return (
@@ -1737,8 +1768,12 @@ function SchedulerHoverContent({
         {showAuditFooter ? (
           <>
             <hr className="scheduler-tooltip-vh-divider" />
-            <VisitHighlightsRow label="Date created">{createdLine}</VisitHighlightsRow>
-            <VisitHighlightsRow label="Date modified">{modifiedLine}</VisitHighlightsRow>
+            {createdLine ? (
+              <VisitHighlightsRow label="Created:">{createdLine}</VisitHighlightsRow>
+            ) : null}
+            {modifiedLine ? (
+              <VisitHighlightsRow label="Last Modified by:">{modifiedLine}</VisitHighlightsRow>
+            ) : null}
           </>
         ) : null}
       </div>
@@ -1883,17 +1918,19 @@ function SchedulerAppointmentModal({
                 value={appt.externallyCreated ? 'Yes' : null}
               />
               <SchedulerModalKvCondensed
-                label="Date created"
-                value={formatAppointmentAuditDisplay(
-                  pickStr(appt.created) ?? undefined,
-                  appointmentCreatedByPerson(appt)
+                label="Created"
+                fullWidth
+                value={formatAppointmentAuditWhenByLine(
+                  formatAppointmentWhenDisplay(pickStr(appt.created) ?? undefined),
+                  appointmentCreatedByPerson(appt, providers)
                 )}
               />
               <SchedulerModalKvCondensed
-                label="Date modified"
-                value={formatAppointmentAuditDisplay(
-                  appointmentModifiedAtIso(appt),
-                  appointmentModifiedByPerson(appt)
+                label="Last Modified by"
+                fullWidth
+                value={formatAppointmentAuditWhenByLine(
+                  formatAppointmentWhenDisplay(appointmentModifiedAtIso(appt)),
+                  appointmentModifiedByPerson(appt, providers)
                 )}
               />
             </div>
@@ -3619,7 +3656,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     }
     const flexGrow = keys.map((k) => {
       const dayData = driveDayByDate?.get(k);
-      if (doctorDayIsOff(dayData)) return 1;
+      if (schedulerPracticeCalendarDayOff(dayData, appointmentsByDay.get(k) ?? [])) return 1;
       if (routingPreview && routingPreviewColumnKey === k) return 2;
       if (editTimePreview && editTimePreviewColumnKey === k) return 2;
       if (editVisitColumnKey === k) return 2;
@@ -4981,7 +5018,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 {dayColumnDates.map((dayDt, dayIdx) => {
                   const key = dayDt.toISODate()!;
                   const dayData = driveDayByDate?.get(key);
-                  const isDoctorDayOff = doctorDayIsOff(dayData);
+                  const dayApptsHeader = appointmentsByDay.get(key) ?? [];
+                  const isDoctorDayOff = schedulerPracticeCalendarDayOff(dayData, dayApptsHeader);
                   const isWorkingDay = schedulerDayIsWorking(key, dayData, appointmentsByDay);
                   const hasStops = (dayData?.households?.length ?? 0) > 0;
                   const pts = dayData ? dayPoints(dayData.households, typeCatalog) : 0;
@@ -5031,6 +5069,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                     dayIdx,
                     dayColumnDates,
                     driveDayByDate,
+                    appointmentsByDay,
                     isDoctorDayOff
                   );
                   return (
@@ -5297,7 +5336,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                     buildRoutingPreviewSyntheticAppointment(routingPreview, typeList);
                   const timed = previewSyn ? [...timedBase, previewSyn] : timedBase;
                   const placed = assignColumnsForDay(timed, displayRangeForAppt);
-                  const isDoctorDayOff = doctorDayIsOff(dayDataCol);
+                  const isDoctorDayOff = schedulerPracticeCalendarDayOff(dayDataCol, dayAppts);
                   const currentTimeLineTop =
                     key === practiceTodayIso
                       ? (nowWallMinutes - gridBounds.gridStartMin) * PPM
@@ -5310,6 +5349,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                     dayIdx,
                     dayColumnDates,
                     driveDayByDate,
+                    appointmentsByDay,
                     isDoctorDayOff
                   );
 
@@ -6132,7 +6172,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         slot={bookSlot}
         practiceId={PRACTICE_ID}
         practiceTz={PRACTICE_TZ}
-        appointmentTypes={bookModalAppointmentTypes}
+        appointmentTypes={typeList}
         providers={providers}
         defaultProviderId={(() => {
           const id = resolvedPrimaryProviderId.trim();

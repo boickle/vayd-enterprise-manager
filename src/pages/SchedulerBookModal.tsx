@@ -26,8 +26,17 @@ import {
   formatSchedulerBookingApiError,
   rolesIncludeAdminBypass,
 } from '../utils/manualBookingPermissions';
-import { applyAllDaySchedulingOverrides } from '../utils/allDaySchedulingOverride';
-import { appointmentFormFlags } from '../utils/appointmentTypeSettings';
+import { ScheduleOverrideDayFields } from '../components/ScheduleOverrideDayFields';
+import {
+  applyScheduleOverridesForBook,
+  loadScheduleOverrideDraftForBook,
+  type ScheduleOverrideDraft,
+} from '../utils/scheduleOverrideBook';
+import {
+  appointmentFormFlags,
+  appointmentTypeAllowsAllDay,
+  normalizeAppointmentTypeFromApi,
+} from '../utils/appointmentTypeSettings';
 import './Scheduler.css';
 
 export type { RescheduleVisitPatch };
@@ -350,13 +359,27 @@ export function SchedulerBookModal({
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const [scheduleOverrideDraft, setScheduleOverrideDraft] = useState<ScheduleOverrideDraft | null>(
+    null
+  );
+  const [scheduleOverrideDayOff, setScheduleOverrideDayOff] = useState(false);
+  const [scheduleOverrideLoading, setScheduleOverrideLoading] = useState(false);
+  const scheduleOverrideUserTouchedRef = useRef(false);
+  const scheduleOverrideBaselineRef = useRef<ScheduleOverrideDraft | null>(null);
+  const scheduleOverrideDayOffRef = useRef(false);
+
   const allDayBookSession = Boolean(prefill?.allDay) || isAllDay;
 
-  /** All-day book flow only lists types with `allowAllDay`. */
+  /**
+   * All-day manual book: any practice type flagged Allow all-day (not limited to timed
+   * manual-booking role list). Timed slots still use `typesForPicker` permissions.
+   */
   const typesForActivePicker = useMemo(() => {
     if (!allDayBookSession) return typesForPicker;
-    return typesForPicker.filter((t) => t.allowAllDay === true);
-  }, [typesForPicker, allDayBookSession]);
+    return appointmentTypes
+      .map((t) => normalizeAppointmentTypeFromApi(t))
+      .filter((t) => appointmentTypeAllowsAllDay(t));
+  }, [typesForPicker, allDayBookSession, appointmentTypes]);
 
   const selectedType = useMemo(
     () => typesForActivePicker.find((t) => String(t.id) === typeId),
@@ -367,6 +390,11 @@ export function SchedulerBookModal({
   const requireClient = typeFormFlags.requireClient;
   const canBookAllDay = typeFormFlags.showAllDay;
   const canUseAlternateAddress = typeFormFlags.showAlternateAddress;
+
+  const bookOverrideAnchorDate = useMemo(() => {
+    if (!startLocal?.isValid) return null;
+    return startLocal.setZone(practiceTz).startOf('day').toISODate();
+  }, [startLocal, practiceTz]);
 
   const selectedProvider = useMemo(
     () => providers.find((p) => String(p.id) === providerId),
@@ -396,6 +424,17 @@ export function SchedulerBookModal({
   const showAllDayFields = allDayBookSession && !isRescheduleBook;
   const showAllDayToggle = !prefill?.allDay && !isRescheduleBook;
 
+  /** Routing time-off overrides apply only to all-day bookings (vacation / OOO), not timed slots. */
+  const showBookScheduleOverride =
+    showAllDayFields && typeFormFlags.showSchedulingOverride;
+
+  const bookOverrideEndDate = useMemo(() => {
+    if (showAllDayFields && allDayEndDate.trim()) {
+      return DateTime.fromISO(allDayEndDate, { zone: practiceTz }).startOf('day').toISODate();
+    }
+    return bookOverrideAnchorDate;
+  }, [showAllDayFields, allDayEndDate, bookOverrideAnchorDate, practiceTz]);
+
   /** Manual book: alternate stop when type allows (routing preview uses its own field). */
   const showManualAlternateAddress = Boolean(
     canUseAlternateAddress && !showRoutingAlternateAddress && !hasLinkedClient
@@ -412,6 +451,44 @@ export function SchedulerBookModal({
     if (!startLocal?.isValid) return null;
     return startLocal.plus({ minutes: durationMin });
   }, [startLocal, durationMin]);
+
+  useEffect(() => {
+    if (!showBookScheduleOverride || !providerId.trim() || !bookOverrideAnchorDate) {
+      setScheduleOverrideDraft(null);
+      scheduleOverrideDayOffRef.current = false;
+      setScheduleOverrideDayOff(false);
+      setScheduleOverrideLoading(false);
+      return;
+    }
+    if (scheduleOverrideUserTouchedRef.current) return;
+
+    const empId = Number(providerId);
+    if (!Number.isFinite(empId) || empId <= 0) return;
+
+    let cancelled = false;
+    setScheduleOverrideLoading(true);
+    void loadScheduleOverrideDraftForBook(empId, bookOverrideAnchorDate, { allDay: true })
+      .then(({ draft, dayOff }) => {
+        if (cancelled || scheduleOverrideUserTouchedRef.current) return;
+        scheduleOverrideBaselineRef.current = draft;
+        setScheduleOverrideDraft(draft);
+        scheduleOverrideDayOffRef.current = dayOff;
+        setScheduleOverrideDayOff(dayOff);
+      })
+      .catch(() => {
+        if (cancelled || scheduleOverrideUserTouchedRef.current) return;
+        setScheduleOverrideDraft({ workStartLocal: '', workEndLocal: '' });
+        scheduleOverrideDayOffRef.current = false;
+        setScheduleOverrideDayOff(false);
+      })
+      .finally(() => {
+        if (!cancelled) setScheduleOverrideLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showBookScheduleOverride, providerId, bookOverrideAnchorDate]);
 
   const additionalEmployeeOptions = useMemo<ProviderAssigneeOption[]>(() => {
     return providers
@@ -468,6 +545,11 @@ export function SchedulerBookModal({
       prev.filter((id) => String(id) !== providerId && additionalProviderIdSet.has(id))
     );
   }, [providerId, additionalProviderIdSet]);
+
+
+  useEffect(() => {
+    scheduleOverrideUserTouchedRef.current = false;
+  }, [allDayBookSession, showBookScheduleOverride, typeId, providerId, bookOverrideAnchorDate]);
 
   useEffect(() => {
     if (!allDayBookSession) return;
@@ -584,6 +666,10 @@ export function SchedulerBookModal({
     setAlternateAddressText(prefill?.routingAlternateAddress?.trim() ?? '');
     setIsAllDay(Boolean(prefill?.allDay));
     setAdditionalEmployeeIds(normalizeEmployeeIds(prefill?.additionalEmployeeIds));
+    setScheduleOverrideDraft(null);
+    setScheduleOverrideDayOff(false);
+    setScheduleOverrideLoading(false);
+    scheduleOverrideUserTouchedRef.current = false;
     setFormError(null);
     setShowClientDd(false);
     setShowPatientDd(false);
@@ -610,7 +696,9 @@ export function SchedulerBookModal({
     );
 
     const pickerTypes = prefill?.allDay
-      ? typesForPicker.filter((t) => t.allowAllDay === true)
+      ? appointmentTypes
+          .map((t) => normalizeAppointmentTypeFromApi(t))
+          .filter((t) => appointmentTypeAllowsAllDay(t))
       : typesForPicker;
     if (pickerTypes.length > 0) {
       const preT = prefill?.appointmentTypeId;
@@ -920,6 +1008,18 @@ export function SchedulerBookModal({
       setFormError('Select a provider.');
       return;
     }
+    if (
+      showBookScheduleOverride &&
+      scheduleOverrideDraft &&
+      !scheduleOverrideDayOff &&
+      (!scheduleOverrideDraft.workStartLocal?.trim() || !scheduleOverrideDraft.workEndLocal?.trim())
+    ) {
+      // Book modal uses day-off-only override; settings-style time overrides are not shown there.
+      if (!allDayBookSession) {
+        setFormError('Set start and end times for the schedule override, or use Mark as day off.');
+        return;
+      }
+    }
     if (allDayBookSession) {
       const startDate = startLocal?.setZone(practiceTz).startOf('day');
       const endDate = DateTime.fromISO(allDayEndDate, { zone: practiceTz }).startOf('day');
@@ -940,7 +1040,7 @@ export function SchedulerBookModal({
     try {
       const startDateLocal = startLocal?.setZone(practiceTz).startOf('day') ?? null;
       const endDateLocal = DateTime.fromISO(allDayEndDate, { zone: practiceTz }).startOf('day');
-      const bookAllDay = allDayBookSession && selectedType?.allowAllDay === true;
+      const bookAllDay = allDayBookSession && appointmentTypeAllowsAllDay(selectedType);
       const startIso = bookAllDay
         ? startDateLocal?.toUTC().toISO()
         : startLocal?.setZone(practiceTz).toUTC().toISO();
@@ -981,8 +1081,11 @@ export function SchedulerBookModal({
         await putAppointmentAlternateAddress(apptId, { addressText: trimmedAlt });
       }
 
-      const descriptionForNewBook = (raw: string) =>
-        appendScoutBookedDescription(raw, practiceTz);
+      const descriptionForNewBook = (raw: string) => {
+        const trimmed = raw.trim();
+        if (!bookedViaRouting) return trimmed;
+        return appendScoutBookedDescription(trimmed, practiceTz);
+      };
 
       let savedAppointmentId: number | undefined;
       if (rescheduleIds.length > 0) {
@@ -1073,32 +1176,40 @@ export function SchedulerBookModal({
 
       let schedulingOverrideWarning: string | undefined;
       let schedulingOverridesApplied = false;
-      if (bookAllDay && typeFormFlags.showSchedulingOverride) {
-        const startDateStr = startDateLocal?.toISODate();
-        const endDateStr = endDateLocal.toISODate();
-        if (startDateStr && endDateStr) {
-          const employeeIds = normalizeEmployeeIds([
-            Number(providerId),
-            ...(showAdditionalEmployeesField ? additionalEmployeeIds : []),
-          ]);
-          try {
-            const { applied, failed } = await applyAllDaySchedulingOverrides({
-              employeeIds,
-              startDate: startDateStr,
-              endDateInclusive: endDateStr,
-            });
-            if (failed.length === 0 && applied > 0) {
-              schedulingOverridesApplied = true;
-            } else if (failed.length > 0) {
-              schedulingOverrideWarning =
-                applied > 0
-                  ? `Appointment saved. Schedule overrides were applied for ${applied} provider-day(s), but ${failed.length} override(s) could not be saved.`
-                  : 'Appointment saved, but schedule overrides could not be applied for routing.';
-            }
-          } catch {
+      const markRoutingDayOff = scheduleOverrideDayOffRef.current || scheduleOverrideDayOff;
+      if (
+        showBookScheduleOverride &&
+        allDayBookSession &&
+        markRoutingDayOff &&
+        scheduleOverrideDraft &&
+        bookOverrideAnchorDate &&
+        bookOverrideEndDate
+      ) {
+        const employeeIds = normalizeEmployeeIds([Number(providerId)]);
+        try {
+          const { applied, failed } = await applyScheduleOverridesForBook({
+            employeeIds,
+            startDate: bookOverrideAnchorDate,
+            endDateInclusive: bookOverrideEndDate,
+            draft: scheduleOverrideDraft,
+            dayOff: true,
+          });
+          if (failed.length === 0 && applied > 0) {
+            schedulingOverridesApplied = true;
+          } else if (failed.length > 0) {
+            const firstError = failed[0]?.error?.trim();
+            const errorSuffix = firstError ? ` ${firstError}` : '';
+            schedulingOverrideWarning =
+              applied > 0
+                ? `Appointment saved. Schedule overrides were applied for ${applied} provider-day(s), but ${failed.length} override(s) could not be saved.${errorSuffix}`
+                : `Appointment saved, but schedule overrides could not be applied for routing.${errorSuffix}`;
+          } else {
             schedulingOverrideWarning =
               'Appointment saved, but schedule overrides could not be applied for routing.';
           }
+        } catch {
+          schedulingOverrideWarning =
+            'Appointment saved, but schedule overrides could not be applied for routing.';
         }
       }
 
@@ -1641,10 +1752,13 @@ export function SchedulerBookModal({
                     checked={isAllDay}
                     onChange={(e) => {
                       const next = e.target.checked;
+                      scheduleOverrideUserTouchedRef.current = false;
                       setIsAllDay(next);
                       if (!next) return;
                       setTypeId((prev) => {
-                        const allowed = typesForPicker.filter((t) => t.allowAllDay === true);
+                        const allowed = appointmentTypes
+                          .map((t) => normalizeAppointmentTypeFromApi(t))
+                          .filter((t) => appointmentTypeAllowsAllDay(t));
                         if (prev && allowed.some((t) => String(t.id) === prev)) return prev;
                         return allowed[0] ? String(allowed[0].id) : '';
                       });
@@ -1745,6 +1859,39 @@ export function SchedulerBookModal({
               )}
             </>
           )}
+
+          {showBookScheduleOverride && bookOverrideAnchorDate && scheduleOverrideDraft ? (
+            <div className="scheduler-book-override-panel">
+              <h3 className="scheduler-book-override-heading">
+                Schedule override - Create time off for routing
+              </h3>
+              <ScheduleOverrideDayFields
+                anchorDate={bookOverrideAnchorDate}
+                endDateInclusive={bookOverrideEndDate}
+                values={scheduleOverrideDraft}
+                dayOffMode={scheduleOverrideDayOff}
+                onValuesChange={(v) => {
+                  scheduleOverrideUserTouchedRef.current = true;
+                  setScheduleOverrideDraft(v);
+                }}
+                onDayOffModeChange={(off) => {
+                  scheduleOverrideUserTouchedRef.current = true;
+                  scheduleOverrideDayOffRef.current = off;
+                  setScheduleOverrideDayOff(off);
+                  if (!off && scheduleOverrideBaselineRef.current) {
+                    setScheduleOverrideDraft({ ...scheduleOverrideBaselineRef.current });
+                  }
+                }}
+                disabled={submitting}
+                loading={scheduleOverrideLoading}
+                idPrefix="scheduler-book-override"
+                showDepotLocations={false}
+                providerName={selectedProvider?.name}
+              />
+            </div>
+          ) : showBookScheduleOverride && scheduleOverrideLoading ? (
+            <p className="scheduler-book-hint muted">Loading schedule override…</p>
+          ) : null}
 
           {showAdditionalEmployeesField ? (
             <Field label="Also show on provider calendars">
