@@ -12,10 +12,11 @@ import {
 } from 'react';
 import { useAuth } from '../auth/AuthProvider';
 import { fetchDoctorMonth, type MiniZone } from '../api/appointments';
-import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
+import { fetchAllAppointmentTypes, type AppointmentType } from '../api/appointmentSettings';
 import { http } from '../api/http';
 import {
   monthsCoveringRange,
+  normalizeAppointmentType,
   summarizeAvgMinutesByAppointmentType,
   type AvgMinutesByTypeRow,
 } from '../analytics/appointmentTypeTimeStats';
@@ -23,7 +24,7 @@ import { Field } from '../components/Field';
 import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
 import { validateAddress } from '../api/geo';
-import { fetchVeterinarians } from '../api/employee';
+import { fetchPrimaryProviders, fetchVeterinarians } from '../api/employee';
 import {
   normalizeRoutingV2SlotSearchResponse,
   type RoutingSlotSearchOptionalFlags,
@@ -54,6 +55,8 @@ import {
   readRoutingRescheduleIntent,
   rescheduleIntentIsActive,
   rescheduleRequiresScopeChoice,
+  patchRescheduleIntentDoctorPims,
+  resolveRescheduleIntentDoctorPimsId,
   rescheduleScopeTargets,
   ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
   writeRoutingRescheduleScope,
@@ -1524,6 +1527,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const [scheduleBookTypeId, setScheduleBookTypeId] = useState<number | null>(
     () => bootstrap.scheduleBookTypeId
   );
+  const [routingAppointmentTypes, setRoutingAppointmentTypes] = useState<AppointmentType[]>([]);
   /** Option keys for which POST /appointments succeeded (calendar book flow). */
   const [scheduleBookedKeys, setScheduleBookedKeys] = useState<Record<string, true>>(
     () => ({ ...bootstrap.scheduleBookedKeys })
@@ -1678,12 +1682,34 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
   /** Calendar “Reschedule…” → hydrate Routing form once per intent row. */
   useEffect(() => {
-    function mergeRescheduleIntentFromCalendar() {
+    let cancelled = false;
+
+    async function mergeRescheduleIntentFromCalendar() {
       const intent = readRoutingRescheduleIntent();
       if (!intent || intent.appliedToRoutingForm) return;
 
+      let resolvedDoctor = resolveRescheduleIntentDoctorPimsId(intent, []);
+      if (!resolvedDoctor) {
+        try {
+          const providerRows = await fetchPrimaryProviders();
+          if (cancelled) return;
+          resolvedDoctor = resolveRescheduleIntentDoctorPimsId(intent, providerRows);
+        } catch {
+          /* routing form can still be filled without doctor */
+        }
+      }
+
+      const pimsDoc = resolvedDoctor?.pimsId ?? intent.primaryDoctorPimsId?.trim() ?? '';
+      const doctorDisplayName =
+        resolvedDoctor?.displayName?.trim() || intent.primaryDoctorDisplayName?.trim() || '';
+
+      if (pimsDoc) {
+        patchRescheduleIntentDoctorPims(pimsDoc, doctorDisplayName, { notify: false });
+      }
+
       setForm((f) => ({
         ...f,
+        ...(pimsDoc ? { doctorId: pimsDoc } : {}),
         newAppt: {
           ...f.newAppt,
           clientId: intent.clientId,
@@ -1707,14 +1733,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       const alerts = intent.clientAlerts;
       if (alerts !== undefined && alerts !== null) setSelectedClientAlerts(alerts);
 
-      const pimsDoc = intent.primaryDoctorPimsId?.trim();
       if (pimsDoc) {
-        setForm((f) => ({ ...f, doctorId: pimsDoc }));
-        setDoctorQuery((q) => {
-          if (q.trim()) return q;
-          const dn = intent.primaryDoctorDisplayName?.trim();
-          return dn || `Doctor ${pimsDoc}`;
-        });
+        setDoctorQuery(doctorDisplayName || `Doctor ${pimsDoc}`);
       }
 
       const flashFields: RoutingPrefillFlashField[] = [];
@@ -1738,10 +1758,15 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       markRescheduleIntentAppliedToRoutingForm();
     }
 
-    mergeRescheduleIntentFromCalendar();
-    window.addEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, mergeRescheduleIntentFromCalendar);
-    return () =>
-      window.removeEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, mergeRescheduleIntentFromCalendar);
+    void mergeRescheduleIntentFromCalendar();
+    const onIntentUpdated = () => {
+      void mergeRescheduleIntentFromCalendar();
+    };
+    window.addEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, onIntentUpdated);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, onIntentUpdated);
+    };
   }, [triggerRoutingPrefillFlash]);
 
   useEffect(() => {
@@ -1804,6 +1829,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
   useEffect(() => {
     if (!authToken || !authDoctorInternalId?.trim()) return;
+    const pendingReschedule = readRoutingRescheduleIntent();
+    if (pendingReschedule && !pendingReschedule.appliedToRoutingForm) return;
     const internal = authDoctorInternalId.trim();
     const cacheUserId = authUserId?.trim() || null;
     let cancelled = false;
@@ -1917,10 +1944,16 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       );
       return;
     }
-    if (scheduleBookTypeId == null) {
-      setFeedbackError('Appointment types are still loading. Try again in a moment.');
+    const appointmentTypeId = resolveScheduleBookTypeId();
+    if (appointmentTypeId == null) {
+      setFeedbackError(
+        routingAppointmentTypes.length === 0
+          ? 'Appointment types are still loading. Try again in a moment.'
+          : 'Could not determine an appointment type for calendar preview.'
+      );
       return;
     }
+    setScheduleBookTypeId((cur) => (cur != null ? cur : appointmentTypeId));
     if (!opt.suggestedStartIso) {
       setFeedbackError('This option has no suggested start time.');
       return;
@@ -1947,7 +1980,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         lat: form.newAppt.lat,
         lon: form.newAppt.lon,
       },
-      appointmentTypeId: scheduleBookTypeId,
+      appointmentTypeId,
       clientDisplayLabel: form.newAppt.clientId?.trim() ? clientQuery.trim() || undefined : undefined,
       routingRequestId,
       candidateIndex,
@@ -2102,6 +2135,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       .then((rows) => {
         if (cancelled) return;
         const active = rows.filter((t) => t.isActive !== false && !t.isDeleted);
+        setRoutingAppointmentTypes(active);
         const prefer =
           active.find((t) =>
             /wellness|standard|check-up|checkup|office/i.test(String(t.prettyName || t.name || ''))
@@ -2233,6 +2267,49 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     void loadApptLengthStats();
   }, [form.doctorId, loadApptLengthStats]);
 
+  function routingAppointmentTypeForStatsKey(typeKey: string): AppointmentType | undefined {
+    const key = typeKey.trim();
+    if (!key) return undefined;
+    const norm = normalizeAppointmentType(key);
+    const lower = key.toLowerCase();
+    return routingAppointmentTypes.find((t) => {
+      const name = String(t.name ?? '').trim();
+      const pretty = String(t.prettyName ?? '').trim();
+      return (
+        normalizeAppointmentType(name) === norm ||
+        normalizeAppointmentType(pretty) === norm ||
+        name.toLowerCase() === lower ||
+        pretty.toLowerCase() === lower
+      );
+    });
+  }
+
+  function defaultDurationMinutesForRoutingType(typeKey: string, pets: number): number | null {
+    const type = routingAppointmentTypeForStatsKey(typeKey);
+    const base = type?.defaultDuration;
+    if (base == null || !Number.isFinite(base) || base <= 0) return null;
+    const petCount = Math.max(1, Math.floor(pets) || 1);
+    return Math.round(base * petCount);
+  }
+
+  /** Calendar preview book type — explicit pick, Calculate Time row, or practice default. */
+  function resolveScheduleBookTypeId(): number | null {
+    if (scheduleBookTypeId != null && Number.isFinite(scheduleBookTypeId) && scheduleBookTypeId > 0) {
+      return scheduleBookTypeId;
+    }
+    const fromStatsKey = routingApptStatsTypeKey.trim();
+    if (fromStatsKey) {
+      const fromStats = routingAppointmentTypeForStatsKey(fromStatsKey);
+      if (fromStats?.id != null) return Number(fromStats.id);
+    }
+    const prefer =
+      routingAppointmentTypes.find((t) =>
+        /wellness|standard|check-up|checkup|office/i.test(String(t.prettyName || t.name || ''))
+      ) ?? routingAppointmentTypes[0];
+    if (prefer?.id != null) return Number(prefer.id);
+    return null;
+  }
+
   useEffect(() => {
     if (hasActiveRescheduleIntent) return;
     if (!routingApptStatsTypeKey.trim()) {
@@ -2240,8 +2317,10 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       return;
     }
     const row = apptLengthsRows.find((r) => r.typeName === routingApptStatsTypeKey);
-    if (!row) return;
-    const mins = estimatedServiceMinutesFromStatsRow(row, routingPetCount);
+    let mins = row ? estimatedServiceMinutesFromStatsRow(row, routingPetCount) : null;
+    if (mins == null || mins < 1) {
+      mins = defaultDurationMinutesForRoutingType(routingApptStatsTypeKey, routingPetCount);
+    }
     if (mins == null || mins < 1) return;
 
     const comboKey = `${routingApptStatsTypeKey}|${routingPetCount}`;
@@ -2267,6 +2346,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     routingApptStatsTypeKey,
     routingPetCount,
     apptLengthsRows,
+    routingAppointmentTypes,
     triggerRoutingMinutesPulse,
   ]);
 
@@ -3063,7 +3143,14 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                       }
                       const next = e.target.value;
                       setRoutingApptStatsTypeKey(next);
-                      if (!next.trim()) setRoutingPetCount(1);
+                      if (!next.trim()) {
+                        setRoutingPetCount(1);
+                      } else {
+                        const matched = routingAppointmentTypes.find(
+                          (t) => normalizeAppointmentType(t.name) === next
+                        );
+                        if (matched?.id != null) setScheduleBookTypeId(Number(matched.id));
+                      }
                     }}
                   >
                     <option value="">Select type…</option>
@@ -3749,13 +3836,15 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                   (Number.isFinite(form.newAppt.lat as number) &&
                     Number.isFinite(form.newAppt.lon as number)) ||
                   Boolean(form.newAppt.clientId?.trim());
+                const appointmentTypesReady =
+                  routingAppointmentTypes.length > 0 || scheduleBookTypeId != null;
                 const viewPlacementDisabled =
                   !hasRoutingPlacementTarget ||
-                  scheduleBookTypeId == null ||
+                  !appointmentTypesReady ||
                   (showRescheduleScopeField && !rescheduleScope);
                 const viewPlacementTitle = !hasRoutingPlacementTarget
                   ? 'Enter and verify an address, or select a client'
-                  : scheduleBookTypeId == null
+                  : !appointmentTypesReady
                     ? 'Loading appointment types…'
                     : showRescheduleScopeField && !rescheduleScope
                       ? 'Choose which pets to reschedule'
