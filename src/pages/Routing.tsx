@@ -13,6 +13,10 @@ import {
 import { useAuth } from '../auth/AuthProvider';
 import { fetchDoctorMonth, type MiniZone } from '../api/appointments';
 import { fetchAllAppointmentTypes, type AppointmentType } from '../api/appointmentSettings';
+import {
+  appointmentTypeIncludedInRouting,
+  normalizeAppointmentTypeFromApi,
+} from '../utils/appointmentTypeSettings';
 import { http } from '../api/http';
 import {
   monthsCoveringRange,
@@ -47,7 +51,7 @@ import {
   writeRoutingCalendarPreview,
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
-import { alertAndBlockRoutingCalendarPreviewLeave } from '../utils/routingCalendarPreviewGuard';
+import { hasActiveRoutingCalendarPreview } from '../utils/routingCalendarPreviewGuard';
 import {
   buildRoutingRescheduleContextForSlotSearch,
   clearRoutingRescheduleIntent,
@@ -1357,6 +1361,19 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const [reserveOption, setReserveOption] = useState<'reserve-only' | 'reserve-overflow' | null>(
     () => bootstrap.reserveOption
   );
+  /** Last committed client — prefs reset when routing for a different household. */
+  const lastRoutingClientIdRef = useRef<string | null>(
+    bootstrap.form.newAppt.clientId?.trim() || null
+  );
+
+  const resetRoutingSchedulePrefs = useCallback(() => {
+    setPreferredWeekday([]);
+    setPreferredTimeOfDay(null);
+    setPreferEarliestFeasibleStart(false);
+    setEdgeFirst(false);
+    setEdgeLast(false);
+    setMultiDoctor(false);
+  }, []);
 
   // -------- UX state --------
   const [loading, setLoading] = useState(false);
@@ -2040,7 +2057,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       );
       return;
     }
-    setScheduleBookTypeId((cur) => (cur != null ? cur : appointmentTypeId));
+    setScheduleBookTypeId(appointmentTypeId);
     if (!opt.suggestedStartIso) {
       setFeedbackError('This option has no suggested start time.');
       return;
@@ -2068,6 +2085,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         lon: form.newAppt.lon,
       },
       appointmentTypeId,
+      appointmentTypeChosenInRouting: Boolean(routingApptStatsTypeKey.trim()),
       clientDisplayLabel: form.newAppt.clientId?.trim() ? clientQuery.trim() || undefined : undefined,
       routingRequestId,
       candidateIndex,
@@ -2218,10 +2236,12 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
   useEffect(() => {
     let cancelled = false;
-    fetchAllAppointmentTypes(ROUTING_PRACTICE_ID)
+    fetchAllAppointmentTypes(ROUTING_PRACTICE_ID, { activeOnly: true })
       .then((rows) => {
         if (cancelled) return;
-        const active = rows.filter((t) => t.isActive !== false && !t.isDeleted);
+        const active = rows
+          .map((t) => normalizeAppointmentTypeFromApi(t))
+          .filter((t) => appointmentTypeIncludedInRouting(t));
         setRoutingAppointmentTypes(active);
         const prefer =
           active.find((t) =>
@@ -2249,6 +2269,17 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       return { ...f, newAppt: { ...f.newAppt, clientId: undefined } };
     });
   }, []);
+
+  /** New client → clear scheduling prefs (not reserve handling); doctor, dates, and calculate-time stay. */
+  useEffect(() => {
+    const nextId = form.newAppt.clientId?.trim() || null;
+    if (!nextId) return;
+    const prevId = lastRoutingClientIdRef.current;
+    if (prevId && prevId !== nextId) {
+      resetRoutingSchedulePrefs();
+    }
+    lastRoutingClientIdRef.current = nextId;
+  }, [form.newAppt.clientId, resetRoutingSchedulePrefs]);
 
   // Client search
   useEffect(() => {
@@ -2371,6 +2402,40 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     });
   }
 
+  const routingApptTypePickerOptions = useMemo(() => {
+    const statsByNorm = new Map<string, AvgMinutesByTypeRow>();
+    for (const row of apptLengthsRows) {
+      const norm = normalizeAppointmentType(row.typeName);
+      if (norm) statsByNorm.set(norm, row);
+    }
+    return routingAppointmentTypes
+      .map((t) => {
+        const typeName = String(t.name ?? '').trim();
+        if (!typeName) return null;
+        const norm = normalizeAppointmentType(typeName);
+        const prettyNorm = normalizeAppointmentType(t.prettyName);
+        const statsRow =
+          statsByNorm.get(norm) ??
+          (prettyNorm ? statsByNorm.get(prettyNorm) : undefined) ??
+          apptLengthsRows.find((row) => {
+            const rowNorm = normalizeAppointmentType(row.typeName);
+            return rowNorm === norm || rowNorm === prettyNorm;
+          });
+        return { typeName, statsRow: statsRow ?? null };
+      })
+      .filter((o): o is { typeName: string; statsRow: AvgMinutesByTypeRow | null } => o != null)
+      .sort((a, b) => a.typeName.localeCompare(b.typeName, undefined, { sensitivity: 'base' }));
+  }, [apptLengthsRows, routingAppointmentTypes]);
+
+  useEffect(() => {
+    if (!routingApptStatsTypeKey.trim()) return;
+    const stillValid = routingApptTypePickerOptions.some((o) => o.typeName === routingApptStatsTypeKey);
+    if (!stillValid) {
+      setRoutingApptStatsTypeKey('');
+      setRoutingPetCount(1);
+    }
+  }, [routingApptStatsTypeKey, routingApptTypePickerOptions]);
+
   function defaultDurationMinutesForRoutingType(typeKey: string, pets: number): number | null {
     const type = routingAppointmentTypeForStatsKey(typeKey);
     const base = type?.defaultDuration;
@@ -2379,15 +2444,15 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     return Math.round(base * petCount);
   }
 
-  /** Calendar preview book type — explicit pick, Calculate Time row, or practice default. */
+  /** Calendar preview book type — explicit Calculate Time pick, then stored id, then practice default. */
   function resolveScheduleBookTypeId(): number | null {
-    if (scheduleBookTypeId != null && Number.isFinite(scheduleBookTypeId) && scheduleBookTypeId > 0) {
-      return scheduleBookTypeId;
-    }
     const fromStatsKey = routingApptStatsTypeKey.trim();
     if (fromStatsKey) {
       const fromStats = routingAppointmentTypeForStatsKey(fromStatsKey);
       if (fromStats?.id != null) return Number(fromStats.id);
+    }
+    if (scheduleBookTypeId != null && Number.isFinite(scheduleBookTypeId) && scheduleBookTypeId > 0) {
+      return scheduleBookTypeId;
     }
     const prefer =
       routingAppointmentTypes.find((t) =>
@@ -2757,7 +2822,10 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
 
-    if (alertAndBlockRoutingCalendarPreviewLeave()) return;
+    if (hasActiveRoutingCalendarPreview()) {
+      clearRoutingCalendarPreview();
+      window.dispatchEvent(new Event(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT));
+    }
 
     // Validate form first
     const validation = validateForm();
@@ -3010,6 +3078,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       className={[
         'routing-page-root',
         stackFormAndResults ? 'routing-page-root--stack-columns' : '',
+        calendarWorkspaceMode ? 'routing-page-root--calendar-workspace' : '',
       ]
         .filter(Boolean)
         .join(' ')}
@@ -3027,7 +3096,24 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
             {rescheduleModeSummary}
           </p>
         ) : null}
-        <form onSubmit={onSubmit} className="routing-form-stack routing-route-form-stack">
+        <form
+          onSubmit={onSubmit}
+          className={[
+            'routing-form-stack',
+            'routing-route-form-stack',
+            calendarWorkspaceMode ? 'routing-route-form-stack--workspace' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+        >
+          <div
+            className={[
+              'routing-form-body',
+              calendarWorkspaceMode ? '' : 'routing-form-body--inline',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+          >
           {/* Doctor picker */}
           <div className="routing-doctor-row">
             <Field label="Doctor">
@@ -3232,18 +3318,17 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                       setRoutingApptStatsTypeKey(next);
                       if (!next.trim()) {
                         setRoutingPetCount(1);
+                        setScheduleBookTypeId(null);
                       } else {
-                        const matched = routingAppointmentTypes.find(
-                          (t) => normalizeAppointmentType(t.name) === next
-                        );
+                        const matched = routingAppointmentTypeForStatsKey(next);
                         if (matched?.id != null) setScheduleBookTypeId(Number(matched.id));
                       }
                     }}
                   >
                     <option value="">Select type…</option>
-                    {apptLengthsRows.map((row) => (
-                      <option key={row.typeName} value={row.typeName}>
-                        {row.typeName}
+                    {routingApptTypePickerOptions.map((opt) => (
+                      <option key={opt.typeName} value={opt.typeName}>
+                        {opt.typeName}
                       </option>
                     ))}
                   </select>
@@ -3360,12 +3445,13 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                 Choose whether to reschedule only this pet or all pets at this household today.
               </div>
             ) : null}
-            {form.doctorId.trim() && apptLengthsLoading && apptLengthsRows.length === 0 ? (
-              <div className="muted routing-route-hint">Loading appointment types…</div>
-            ) : form.doctorId.trim() && apptLengthsRows.length === 0 && !apptLengthsError ? (
+            {form.doctorId.trim() && routingAppointmentTypes.length === 0 ? (
               <div className="muted routing-route-hint">
-                No appointment types in the last 30 days for this doctor.
+                No routable appointment types are configured (client or alternate address allowed, not
+                excluded from routing).
               </div>
+            ) : form.doctorId.trim() && apptLengthsLoading && routingApptTypePickerOptions.length === 0 ? (
+              <div className="muted routing-route-hint">Loading appointment types…</div>
             ) : form.doctorId.trim() && apptLengthsError ? (
               <div className="danger routing-route-hint">{apptLengthsError}</div>
             ) : null}
@@ -3715,6 +3801,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                 </div>
               </div>
             </div>
+          </div>
           </div>
 
           {error && <div className="danger">{error}</div>}

@@ -15,6 +15,10 @@ export type AppointmentType = {
   defaultStartTime: string;
   isActive: boolean;
   isDeleted: boolean;
+  /** When the type was archived (ISO instant), if the API provides it. */
+  archivedOn?: string | null;
+  modified?: string | null;
+  updated?: string | null;
   pimsId: string;
   pimsType: string;
   /** When set by the API, scheduler uses this for event fill color */
@@ -34,8 +38,12 @@ export type AppointmentType = {
   allowClient?: boolean;
   /** User may set alternate visit address */
   allowAlternateAddress?: boolean;
+  /** Visit must have a client home address or an alternate address (when allowed). */
+  addressRequired?: boolean;
   /** Omitted from drive routing / doctor-day routable stops (server-side) */
   excludeFromRouting?: boolean;
+  /** Use legacy routing rules for this type (server-side) */
+  usesLegacyRouting?: boolean;
   /** Ops analytics doctor-day points; null = legacy name-based rules on server */
   points?: number | null;
   /** Frontend only: show scheduling-override UI for this type (not enforced on appointment APIs) */
@@ -242,9 +250,18 @@ export type AppointmentTypeUpdate = {
   allowAllDay?: boolean;
   allowClient?: boolean;
   allowAlternateAddress?: boolean;
+  addressRequired?: boolean;
   excludeFromRouting?: boolean;
+  usesLegacyRouting?: boolean;
   points?: number | null;
   allowSchedulingOverride?: boolean;
+  /** Archive (true) or restore (false) — hide from new booking pickers when archived. */
+  isDeleted?: boolean;
+};
+
+export type FetchAppointmentTypesOptions = {
+  /** When true (default), only active non-archived types. When false, includes archived. */
+  activeOnly?: boolean;
 };
 
 /**
@@ -253,6 +270,20 @@ export type AppointmentTypeUpdate = {
  */
 export async function fetchAppointmentType(appointmentTypeId: number): Promise<AppointmentType> {
   const { data } = await http.get(`/appointment-types/${appointmentTypeId}`);
+  return normalizeAppointmentTypeFromApi(data);
+}
+
+export type AppointmentTypeCreate = AppointmentTypeUpdate & {
+  name: string;
+  practiceId: number;
+};
+
+/**
+ * Create a new appointment type.
+ * POST /appointment-types
+ */
+export async function createAppointmentType(body: AppointmentTypeCreate): Promise<AppointmentType> {
+  const { data } = await http.post('/appointment-types', body);
   return normalizeAppointmentTypeFromApi(data);
 }
 
@@ -269,19 +300,33 @@ export async function updateAppointmentType(
 }
 
 /**
- * Get all appointment types
- * GET /appointment-types
+ * List appointment types for a practice.
+ * GET /appointment-types?practiceId=&activeOnly=
+ * Default activeOnly=true when omitted (booking pickers). Use activeOnly=false for settings archived list.
  */
-export async function fetchAllAppointmentTypes(practiceId?: number): Promise<AppointmentType[]> {
-  const params: Record<string, number> = {};
-  if (practiceId) {
+export async function fetchAllAppointmentTypes(
+  practiceId?: number,
+  options?: FetchAppointmentTypesOptions
+): Promise<AppointmentType[]> {
+  const params: Record<string, string | number> = {};
+  if (practiceId != null && Number.isFinite(practiceId)) {
     params.practiceId = practiceId;
   }
+  // Query booleans as strings — some servers treat the literal "false" as truthy.
+  params.activeOnly = options?.activeOnly === false ? 'false' : 'true';
   const { data } = await http.get('/appointment-types', { params });
   const rows: AppointmentType[] = Array.isArray(data)
     ? data
     : (data?.items ?? data?.appointmentTypes ?? []);
   return rows.map((row) => normalizeAppointmentTypeFromApi(row));
+}
+
+/** Archive or restore an appointment type (partial PUT). */
+export async function setAppointmentTypeArchived(
+  appointmentTypeId: number,
+  archived: boolean
+): Promise<AppointmentType> {
+  return updateAppointmentType(appointmentTypeId, { isDeleted: archived });
 }
 
 /**

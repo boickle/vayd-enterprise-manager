@@ -52,15 +52,31 @@ export function fixedTimeRouteEtaMeaningfullyAfterScheduledStart(
 /**
  * True when projected ETA is less than WINDOW_WARNING_MINUTES_FROM_END minutes before window end,
  * or at/after window end (minutes remaining less than threshold).
+ *
+ * Zero-width windows (fixed time: windowBefore=0 and windowAfter=0) only warn when ETA is
+ * meaningfully after the window end — not when arrival is on time at the scheduled instant.
  */
 export function shouldShowEtaWindowWarning(
   etaIso: string | null | undefined,
-  windowEndIso: string | null | undefined
+  windowEndIso: string | null | undefined,
+  windowStartIso?: string | null | undefined
 ): boolean {
   if (!etaIso?.trim() || !windowEndIso?.trim()) return false;
   const eta = DateTime.fromISO(etaIso);
   const wEnd = DateTime.fromISO(windowEndIso);
   if (!eta.isValid || !wEnd.isValid) return false;
+
+  const windowStart = windowStartIso?.trim();
+  if (windowStart) {
+    const wStart = DateTime.fromISO(windowStart);
+    if (wStart.isValid) {
+      const windowMinutes = wEnd.diff(wStart, 'minutes').minutes;
+      if (windowMinutes <= 0) {
+        return fixedTimeRouteEtaMeaningfullyAfterScheduledStart(windowEndIso, etaIso);
+      }
+    }
+  }
+
   const minutesRemaining = wEnd.diff(eta, 'minutes').minutes;
   return minutesRemaining < WINDOW_WARNING_MINUTES_FROM_END;
 }
@@ -73,6 +89,7 @@ export function shouldShowEtaWindowWarning(
 export function computeDriveTimeWindowWarning(opts: {
   etaIso: string | null | undefined;
   windowEndIso: string | null | undefined;
+  windowStartIso?: string | null | undefined;
   isClientFixedTime: boolean;
   scheduledStartIso?: string | null | undefined;
 }): boolean {
@@ -81,7 +98,7 @@ export function computeDriveTimeWindowWarning(opts: {
 
   const windowEnd = opts.windowEndIso?.trim();
   if (windowEnd) {
-    return shouldShowEtaWindowWarning(eta, windowEnd);
+    return shouldShowEtaWindowWarning(eta, windowEnd, opts.windowStartIso);
   }
 
   if (opts.isClientFixedTime && opts.scheduledStartIso?.trim()) {

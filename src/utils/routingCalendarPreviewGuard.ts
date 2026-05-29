@@ -9,7 +9,14 @@ import {
 } from './routingCalendarPreviewStorage';
 
 export const ROUTING_CALENDAR_PREVIEW_BLOCKED_MESSAGE =
-  'An appointment slot is previewed on the calendar. Book it from the proposed slot, or click Dismiss on the preview bar, before continuing.';
+  'A routing preview is on the calendar. Book from the purple slot or click Dismiss on the preview bar before using the calendar.';
+
+/** Fired when a click on the calendar pane is blocked during routing preview (Scheduler shows a toast). */
+export const ROUTING_PREVIEW_CALENDAR_BLOCKED_EVENT = 'vayd:routing-preview-calendar-blocked';
+
+export function notifyRoutingPreviewCalendarBlocked(): void {
+  window.dispatchEvent(new Event(ROUTING_PREVIEW_CALENDAR_BLOCKED_EVENT));
+}
 
 export const EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE =
   'An appointment preview is on the calendar. Save changes from the highlighted visit, or dismiss (×), before continuing.';
@@ -80,24 +87,27 @@ function isExternalAppHref(href: string): boolean {
 
 function isAllowedPreviewInteractionTarget(target: Element): boolean {
   if (target.closest('[data-schedule-preview-allow]')) return true;
+  /** Entire routing pane (form, results, Get Best Route) stays interactive during preview. */
+  if (target.closest('.schedule-routing-workspace__routing')) return true;
   /** Switch which Get Best Route option is previewed on the calendar. */
   if (target.closest('.routing-result-option-card')) return true;
   if (target.closest('[data-routing-calendar-preview-card]')) return true;
-  if (target.closest('.schedule-routing-workspace__calendar')) return true;
-  if (target.closest('.scheduler-page')) return true;
+  if (target.closest('.scheduler-embedded-preview-bar')) return true;
+  if (target.closest('.scheduler-routing-preview-slot')) return true;
   if (target.closest('.scheduler-modal-backdrop--routing-dock')) return true;
   if (target.closest('.scheduler-edit-inline-pane')) return true;
   if (target.closest('.scheduler-edit-placement-sidebar')) return true;
   return false;
 }
 
-function shouldBlockRoutingPaneClick(target: Element): boolean {
+function shouldBlockCalendarPaneClick(target: Element): boolean {
+  if (!target.closest('.schedule-routing-workspace__calendar')) return false;
   if (isAllowedPreviewInteractionTarget(target)) return false;
-  return Boolean(target.closest('.schedule-routing-workspace__routing'));
+  return true;
 }
 
 /**
- * Captures link clicks and routing form submits while a calendar preview is active.
+ * Captures link clicks and calendar-pane clicks while a calendar preview is active.
  * Mount under `/schedule` (e.g. ScheduleLayout).
  */
 export function useRoutingCalendarPreviewNavigationGuard(previewActive: boolean): void {
@@ -108,10 +118,13 @@ export function useRoutingCalendarPreviewNavigationGuard(previewActive: boolean)
       const target = e.target;
       if (!(target instanceof Element)) return;
 
-      if (shouldBlockRoutingPaneClick(target)) {
-        if (alertAndBlockRoutingCalendarPreviewLeave()) {
-          e.preventDefault();
-          e.stopPropagation();
+      if (shouldBlockCalendarPaneClick(target)) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (hasActiveEditVisitTimePreview()) {
+          window.alert(EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE);
+        } else if (hasActiveRoutingCalendarPreview()) {
+          notifyRoutingPreviewCalendarBlocked();
         }
         return;
       }
@@ -131,21 +144,9 @@ export function useRoutingCalendarPreviewNavigationGuard(previewActive: boolean)
       }
     };
 
-    const onSubmitCapture = (e: Event) => {
-      const form = e.target;
-      if (!(form instanceof HTMLFormElement)) return;
-      if (!form.classList.contains('routing-route-form-stack')) return;
-      if (alertAndBlockRoutingCalendarPreviewLeave()) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-    };
-
     document.addEventListener('click', onClickCapture, true);
-    document.addEventListener('submit', onSubmitCapture, true);
     return () => {
       document.removeEventListener('click', onClickCapture, true);
-      document.removeEventListener('submit', onSubmitCapture, true);
     };
   }, [previewActive]);
 }

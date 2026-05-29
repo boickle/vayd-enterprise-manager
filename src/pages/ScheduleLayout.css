@@ -368,12 +368,16 @@
 .schedule-app__outlet--routing-split {
   display: flex;
   flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  height: 100%;
 }
 
 .schedule-app__outlet--routing-split > * {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
   min-width: 0;
+  height: 100%;
 }
 
 @media (max-width: 900px) {

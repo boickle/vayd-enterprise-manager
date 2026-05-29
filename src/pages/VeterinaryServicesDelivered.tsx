@@ -486,7 +486,7 @@ export default function VeterinaryServicesDeliveredPage() {
 
   useEffect(() => {
     let alive = true;
-    void fetchAllAppointmentTypes(VSD_PRACTICE_ID)
+    void fetchAllAppointmentTypes(VSD_PRACTICE_ID, { activeOnly: false })
       .then((rows) => {
         if (alive) setTypeCatalog(buildAppointmentTypeCatalog(Array.isArray(rows) ? rows : []));
       })

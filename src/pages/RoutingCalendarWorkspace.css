@@ -1,6 +1,7 @@
 .schedule-routing-workspace {
   display: flex;
-  flex: 1;
+  flex: 1 1 0;
+  height: 100%;
   min-height: 0;
   width: 100%;
   align-items: stretch;
@@ -95,14 +96,19 @@
 
 .schedule-routing-workspace__routing-inner {
   position: relative;
-  flex: 1;
+  flex: 1 1 0;
+  height: 0;
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-  padding: 12px 14px 24px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 12px 14px 16px;
   box-sizing: border-box;
+}
+
+.schedule-routing-workspace__routing-inner > .routing-page-root {
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 .schedule-routing-workspace__calendar-scroll {

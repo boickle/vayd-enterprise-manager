@@ -82,12 +82,12 @@ export function computeEditVisitTypePreviewWindowWarning(args: {
 
   const typeName = (args.draftType?.name || args.draftType?.prettyName || args.preview.appointmentTypeName || '').trim();
   if (isFixedTimeTypeName(typeName) && window.endIso) {
-    return shouldShowEtaWindowWarning(eta, window.endIso);
+    return shouldShowEtaWindowWarning(eta, window.endIso, window.startIso);
   }
   if (isFixedTimeTypeName(typeName)) {
     return fixedTimeRouteEtaMeaningfullyAfterScheduledStart(args.preview.appointmentStart, eta);
   }
-  return shouldShowEtaWindowWarning(eta, window.endIso);
+  return shouldShowEtaWindowWarning(eta, window.endIso, window.startIso);
 }
 
 export function editVisitTimePreviewPracticeDateKey(

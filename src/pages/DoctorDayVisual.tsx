@@ -736,7 +736,7 @@ export default function DoctorDayVisual({
 
   useEffect(() => {
     let on = true;
-    void fetchAllAppointmentTypes(PRACTICE_ID)
+    void fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false })
       .then((rows) => {
         if (on) setTypeCatalog(buildAppointmentTypeCatalog(Array.isArray(rows) ? rows : []));
       })
@@ -2559,12 +2559,18 @@ export default function DoctorDayVisual({
         ew?.endIso ??
         (h as { windowEndIso?: string | null }).windowEndIso ??
         null;
+      const windowStartForWarn =
+        (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
+        ew?.startIso ??
+        (h as { windowStartIso?: string | null }).windowStartIso ??
+        null;
       const windowWarning =
         showByDriveTime &&
         !h.isPersonalBlock &&
         computeDriveTimeWindowWarning({
           etaIso,
           windowEndIso: windowEndForWarn,
+          windowStartIso: windowStartForWarn,
           isClientFixedTime: visualHouseholdIsClientFixedTime(h),
           scheduledStartIso: h.startIso,
         });
@@ -3095,12 +3101,20 @@ export default function DoctorDayVisual({
               ew?.endIso ??
               (h as { windowEndIso?: string | null }).windowEndIso ??
               null;
+            const windowStartForWarn =
+              (slotWindow?.windowStartIso != null && slotWindow?.windowEndIso != null
+                ? slotWindow.windowStartIso
+                : null) ??
+              ew?.startIso ??
+              (h as { windowStartIso?: string | null }).windowStartIso ??
+              null;
             const windowWarning =
               showByDriveTime &&
               !h.isPersonalBlock &&
               computeDriveTimeWindowWarning({
                 etaIso,
                 windowEndIso: windowEndForWarn,
+                windowStartIso: windowStartForWarn,
                 isClientFixedTime: visualHouseholdIsClientFixedTime(h),
                 scheduledStartIso: h.startIso,
               });

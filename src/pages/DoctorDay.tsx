@@ -377,7 +377,7 @@ export default function DoctorDay({
 
   useEffect(() => {
     let on = true;
-    void fetchAllAppointmentTypes(PRACTICE_ID)
+    void fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false })
       .then((rows) => {
         if (on) setTypeCatalog(buildAppointmentTypeCatalog(Array.isArray(rows) ? rows : []));
       })

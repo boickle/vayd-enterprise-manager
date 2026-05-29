@@ -33,7 +33,10 @@ export type RoutingCalendarPreviewPayloadV1 = {
     state?: string;
     zip?: string;
   };
+  /** Used for calendar preview chip; may be a fallback when the user did not pick a type in Routing. */
   appointmentTypeId: number;
+  /** True when the user picked a type in Routing → Calculate Time before opening the calendar preview. */
+  appointmentTypeChosenInRouting?: boolean;
   clientDisplayLabel?: string;
   /** PATCH target when confirming from routing calendar preview (reschedule flow). */
   rescheduleAppointmentId?: number;

@@ -36,6 +36,7 @@ import {
 import {
   appointmentFormFlags,
   appointmentTypeAllowsAllDay,
+  appointmentTypeIncludedInRouting,
   normalizeAppointmentTypeFromApi,
 } from '../utils/appointmentTypeSettings';
 import './Scheduler.css';
@@ -224,6 +225,43 @@ function BookPatientAlerts({ alerts }: { alerts: string | null | undefined }) {
   );
 }
 
+function BookSelectedClientCard({
+  name,
+  address,
+  alerts,
+  onClear,
+  hint,
+  style,
+}: {
+  name: string;
+  address: string | null;
+  alerts: string | null;
+  onClear?: () => void;
+  hint?: React.ReactNode;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <div className="scheduler-book-selected scheduler-book-selected-client" style={style}>
+      {onClear ? (
+        <button
+          type="button"
+          className="scheduler-book-selected-clear"
+          onClick={onClear}
+          aria-label="Remove client"
+          title="Remove client"
+        >
+          ×
+        </button>
+      ) : null}
+      <span className="scheduler-book-selected-label">Client</span>
+      <span className="scheduler-book-selected-value">{name}</span>
+      {address ? <span className="scheduler-book-selected-address">{address}</span> : null}
+      <BookClientAlerts alerts={alerts} />
+      {hint}
+    </div>
+  );
+}
+
 function clientDisplayName(c: ClientSearchRow): string {
   const fn = pickStr(c.firstName) ?? '';
   const ln = pickStr(c.lastName) ?? '';
@@ -231,7 +269,7 @@ function clientDisplayName(c: ClientSearchRow): string {
   return both || `Client #${c.id}`;
 }
 
-function clientAddressLine(c: ClientSearchRow): string | null {
+function clientAddressFromRecord(c: Record<string, unknown>): string | null {
   const zip = pickStr(c.zip) ?? pickStr(c.zipcode);
   const parts = [pickStr(c.address1), [pickStr(c.city), pickStr(c.state)].filter(Boolean).join(', '), zip].filter(
     Boolean
@@ -239,11 +277,21 @@ function clientAddressLine(c: ClientSearchRow): string | null {
   return parts.length ? parts.join(', ') : null;
 }
 
+function clientAddressLine(c: ClientSearchRow): string | null {
+  return clientAddressFromRecord(c);
+}
+
+function extractClientAddressFromPayload(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  return clientAddressFromRecord(payload as Record<string, unknown>);
+}
+
 function normalizePatientSearchRow(row: unknown): {
   id: number | string;
   name: string;
   clientId: number | string | null;
   clientLabel: string | null;
+  clientAddress: string | null;
 } | null {
   if (!row || typeof row !== 'object') return null;
   const o = row as Record<string, unknown>;
@@ -258,11 +306,13 @@ function normalizePatientSearchRow(row: unknown): {
     (client?.id as number | string | undefined) ??
     null;
   let clientLabel: string | null = null;
+  let clientAddress: string | null = null;
   if (client) {
     clientLabel =
       [pickStr(client.firstName), pickStr(client.lastName)].filter(Boolean).join(' ').trim() || null;
+    clientAddress = clientAddressFromRecord(client);
   }
-  return { id, name, clientId, clientLabel };
+  return { id, name, clientId, clientLabel, clientAddress };
 }
 
 const DURATION_OPTIONS = [15, 20, 30, 45, 60, 90, 120];
@@ -291,7 +341,13 @@ export function SchedulerBookModal({
 
   const [patientQuery, setPatientQuery] = useState('');
   const [patientResults, setPatientResults] = useState<
-    { id: number | string; name: string; clientId: number | string | null; clientLabel: string | null }[]
+    {
+      id: number | string;
+      name: string;
+      clientId: number | string | null;
+      clientLabel: string | null;
+      clientAddress: string | null;
+    }[]
   >([]);
   const [patientSearching, setPatientSearching] = useState(false);
   const [showPatientDd, setShowPatientDd] = useState(false);
@@ -300,6 +356,7 @@ export function SchedulerBookModal({
 
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [selectedClientLabel, setSelectedClientLabel] = useState('');
+  const [selectedClientAddress, setSelectedClientAddress] = useState<string | null>(null);
   const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(null);
   const [clientPets, setClientPets] = useState<PetRow[]>([]);
   const [loadingClientPets, setLoadingClientPets] = useState(false);
@@ -386,15 +443,29 @@ export function SchedulerBookModal({
       .filter((t) => appointmentTypeAllowsAllDay(t));
   }, [typesForPicker, allDayBookSession, appointmentTypes]);
 
-  const selectedType = useMemo(
-    () => typesForActivePicker.find((t) => String(t.id) === typeId),
-    [typesForActivePicker, typeId]
-  );
+  const selectedType = useMemo(() => {
+    if (!typeId) return undefined;
+    const raw =
+      appointmentTypes.find((t) => String(t.id) === typeId) ??
+      typesForActivePicker.find((t) => String(t.id) === typeId);
+    return raw ? normalizeAppointmentTypeFromApi(raw) : undefined;
+  }, [appointmentTypes, typesForActivePicker, typeId]);
 
   const typeFormFlags = useMemo(() => appointmentFormFlags(selectedType), [selectedType]);
-  const requireClient = typeFormFlags.requireClient;
+  const showClient = typeFormFlags.showClient;
   const canBookAllDay = typeFormFlags.showAllDay;
   const canUseAlternateAddress = typeFormFlags.showAlternateAddress;
+
+  const routingBookAppointmentTypes = useMemo(
+    () =>
+      appointmentTypes
+        .map((t) => normalizeAppointmentTypeFromApi(t))
+        .filter((t) => appointmentTypeIncludedInRouting(t))
+        .sort((a, b) =>
+          String(a.name ?? '').localeCompare(String(b.name ?? ''), undefined, { sensitivity: 'base' })
+        ),
+    [appointmentTypes]
+  );
 
   const bookOverrideAnchorDate = useMemo(() => {
     if (!startLocal?.isValid) return null;
@@ -427,7 +498,7 @@ export function SchedulerBookModal({
   const perVisitRoutingBook = isRoutingPreviewBook && routingBookVisitEdits.length > 0;
 
   const showAllDayFields = allDayBookSession && !isRescheduleBook;
-  const showAllDayToggle = !prefill?.allDay && !isRescheduleBook;
+  const showAllDayToggle = !prefill?.allDay && !isRescheduleBook && canBookAllDay;
 
   /** Routing time-off overrides apply only to all-day bookings (vacation / OOO), not timed slots. */
   const showBookScheduleOverride =
@@ -446,11 +517,13 @@ export function SchedulerBookModal({
   );
 
   const showClientSection =
-    requireClient ||
     Boolean(prefill?.lockClient && prefill?.clientId?.trim()) ||
-    (isRoutingPreviewBook && routingBookHasPrefilledClient);
+    (isRoutingPreviewBook && routingBookHasPrefilledClient) ||
+    (showClient && Boolean(selectedType));
 
   const showAdditionalEmployeesField = showAllDayFields && !perVisitRoutingBook;
+
+  const showManualBookTypeFields = !lockedRoutingBookFields;
 
   const endLocal = useMemo(() => {
     if (!startLocal?.isValid) return null;
@@ -569,6 +642,27 @@ export function SchedulerBookModal({
     if (isAllDay && !canBookAllDay) setIsAllDay(false);
   }, [prefill?.allDay, isAllDay, canBookAllDay]);
 
+  useEffect(() => {
+    if (prefill?.lockClient) return;
+    if (showClient) return;
+    setSelectedClientId(null);
+    setSelectedClientLabel('');
+    setSelectedClientAddress(null);
+    setSelectedClientAlerts(null);
+    setClientPets([]);
+    setSelectedPatientId(null);
+    setSelectedPatientLabel('');
+    setClientQuery('');
+    setPatientQuery('');
+    setClientResults([]);
+    setPatientResults([]);
+  }, [showClient, typeId, prefill?.lockClient]);
+
+  useEffect(() => {
+    if (canUseAlternateAddress || prefill?.routingAlternateAddress?.trim()) return;
+    setAlternateAddressText('');
+  }, [canUseAlternateAddress, typeId, prefill?.routingAlternateAddress]);
+
   const clientHasNoPetsOnFile =
     hasLinkedClient && !loadingClientPets && petChoices.length === 0;
 
@@ -636,6 +730,7 @@ export function SchedulerBookModal({
     setPatientResults([]);
     setSelectedClientId(null);
     setSelectedClientLabel('');
+    setSelectedClientAddress(null);
     setSelectedClientAlerts(null);
     setClientPets([]);
     setSelectedPatientId(null);
@@ -769,6 +864,7 @@ export function SchedulerBookModal({
         if (cancelled) return;
         setSelectedClientId(cid);
         setSelectedClientLabel(prefill?.clientLabel?.trim() || `Client #${cid}`);
+        setSelectedClientAddress(extractClientAddressFromPayload(payload));
         setClientPets(extractPatientsFromClientPayload(payload));
         setSelectedClientAlerts(extractClientAlertsFromPayload(payload));
         setSelectedPatientId(null);
@@ -777,6 +873,7 @@ export function SchedulerBookModal({
         if (cancelled) return;
         setSelectedClientId(cid);
         setSelectedClientLabel(prefill?.clientLabel?.trim() || `Client #${cid}`);
+        setSelectedClientAddress(null);
         setClientPets([]);
         setSelectedClientAlerts(null);
         setSelectedPatientId(null);
@@ -810,11 +907,9 @@ export function SchedulerBookModal({
     }
     const defaultType =
       prefill.appointmentTypeId != null &&
-      typesForPicker.some((t) => String(t.id) === String(prefill.appointmentTypeId))
+      routingBookAppointmentTypes.some((t) => String(t.id) === String(prefill.appointmentTypeId))
         ? String(prefill.appointmentTypeId)
-        : typesForPicker[0]
-          ? String(typesForPicker[0].id)
-          : '';
+        : '';
     const defaultDesc = prefill.defaultDescription?.trim() ?? '';
     const autoSelectOnlyPet = petChoices.length === 1;
     setRoutingBookVisitEdits(
@@ -832,7 +927,7 @@ export function SchedulerBookModal({
     prefill?.appointmentTypeId,
     prefill?.defaultDescription,
     petChoices,
-    typesForPicker,
+    routingBookAppointmentTypes,
   ]);
 
   useEffect(() => {
@@ -921,6 +1016,7 @@ export function SchedulerBookModal({
     const id = String(c.id);
     setSelectedClientId(id);
     setSelectedClientLabel(clientDisplayName(c));
+    setSelectedClientAddress(clientAddressLine(c));
     setClientQuery('');
     setClientResults([]);
     setShowClientDd(false);
@@ -931,6 +1027,7 @@ export function SchedulerBookModal({
     setLoadingClientPets(true);
     try {
       const payload = await fetchClientByIdStaff(id);
+      setSelectedClientAddress(extractClientAddressFromPayload(payload) ?? clientAddressLine(c));
       setClientPets(extractPatientsFromClientPayload(payload));
       setSelectedClientAlerts(extractClientAlertsFromPayload(payload));
     } catch {
@@ -950,9 +1047,11 @@ export function SchedulerBookModal({
     if (p.clientId != null) {
       setSelectedClientId(String(p.clientId));
       setSelectedClientLabel(p.clientLabel ?? `Client #${p.clientId}`);
+      setSelectedClientAddress(p.clientAddress);
       setLoadingClientPets(true);
       fetchClientByIdStaff(p.clientId)
         .then((payload) => {
+          setSelectedClientAddress(extractClientAddressFromPayload(payload) ?? p.clientAddress);
           setClientPets(extractPatientsFromClientPayload(payload));
           setSelectedClientAlerts(extractClientAlertsFromPayload(payload));
         })
@@ -964,18 +1063,31 @@ export function SchedulerBookModal({
     } else {
       setSelectedClientId(null);
       setSelectedClientLabel('');
+      setSelectedClientAddress(null);
       setSelectedClientAlerts(null);
       setClientPets([]);
     }
   }, []);
 
+  const clearSelectedClient = useCallback(() => {
+    setSelectedClientId(null);
+    setSelectedClientLabel('');
+    setSelectedClientAddress(null);
+    setSelectedClientAlerts(null);
+    setClientPets([]);
+    setSelectedPatientId(null);
+    setSelectedPatientLabel('');
+    setClientQuery('');
+    setPatientQuery('');
+    setClientResults([]);
+    setPatientResults([]);
+    setShowClientDd(false);
+    setShowPatientDd(false);
+  }, []);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
-    if (requireClient && !selectedClientId) {
-      setFormError('Select a client (search by client or patient).');
-      return;
-    }
     if (perVisitReschedule) {
       if (
         rescheduleVisitEdits.some(
@@ -996,10 +1108,6 @@ export function SchedulerBookModal({
         return;
       }
     } else {
-      if (requireClient && !clientHasNoPetsOnFile && !selectedPatientId) {
-        setFormError('Select a patient.');
-        return;
-      }
       if (!typeId) {
         setFormError('Select an appointment type.');
         return;
@@ -1345,33 +1453,141 @@ export function SchedulerBookModal({
             </label>
           ) : null}
 
-          {showClientSection &&
-          (prefill?.lockClient || (prefill?.disableClientSearch && routingBookHasPrefilledClient)) ? (
-            <div className="scheduler-book-selected" style={{ marginBottom: 12 }}>
-              <span className="scheduler-book-selected-label">Client</span>
-              <span className="scheduler-book-selected-value">
-                {selectedClientLabel ||
-                  prefill?.clientLabel?.trim() ||
-                  (prefill?.clientId ? `Client #${prefill.clientId}` : '…')}
-              </span>
-              <BookClientAlerts alerts={selectedClientAlerts} />
-              {prefill?.coVisitAddPet ? (
-                <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
-                  This adds another appointment at the same time for a different pet. Pets already scheduled in
-                  this visit block (same time or back-to-back with this appointment) are not listed below.
-                </p>
-              ) : prefill?.routingPreviewBook ? (
-                <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
-                  {routingBookHasPrefilledClient
-                    ? 'Choose one or more patients for this slot. Each patient gets their own appointment at the same time with its own type and description.'
-                    : 'Optionally search for a client below, then choose patients. The alternate address above is used for routing regardless of client home address.'}
-                </p>
-              ) : prefill?.lockClient ? (
-                <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
-                  Select which patient is being booked for this visit.
-                </p>
+          {showManualBookTypeFields ? (
+            <>
+              <div className="scheduler-book-row2">
+                <Field label="Provider">
+                  <select
+                    className="scheduler-book-input"
+                    value={providerId}
+                    onChange={(e) => setProviderId(e.target.value)}
+                    disabled={Boolean(prefill?.lockProvider)}
+                    required
+                  >
+                    <option value="">Select…</option>
+                    {providers.map((p) => (
+                      <option key={String(p.id)} value={String(p.id)}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Appointment type">
+                  <select
+                    className="scheduler-book-input"
+                    value={typeId}
+                    onChange={(e) => setTypeId(e.target.value)}
+                    required
+                  >
+                    <option value="">Select…</option>
+                    {typesForActivePicker.map((t) => (
+                      <option key={t.id} value={String(t.id)}>
+                        {t.name || t.prettyName}
+                      </option>
+                    ))}
+                  </select>
+                  {allDayBookSession && typesForActivePicker.length === 0 ? (
+                    <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
+                      No appointment types are configured for all-day booking. Enable &quot;Allow all-day
+                      booking&quot; on a type in Settings → Appointment types.
+                    </p>
+                  ) : null}
+                  {typeFormFlags.showNotRoutedHint ? (
+                    <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
+                      This type is excluded from drive routing.
+                    </p>
+                  ) : null}
+                </Field>
+              </div>
+
+              {showAllDayToggle ? (
+                <label className="scheduler-book-field scheduler-book-field--full scheduler-book-all-day-toggle">
+                  <input
+                    type="checkbox"
+                    checked={isAllDay}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      scheduleOverrideUserTouchedRef.current = false;
+                      setIsAllDay(next);
+                      if (!next) return;
+                      setTypeId((prev) => {
+                        const allowed = appointmentTypes
+                          .map((t) => normalizeAppointmentTypeFromApi(t))
+                          .filter((t) => appointmentTypeAllowsAllDay(t));
+                        if (prev && allowed.some((t) => String(t.id) === prev)) return prev;
+                        return allowed[0] ? String(allowed[0].id) : '';
+                      });
+                    }}
+                  />
+                  <span>All day</span>
+                </label>
               ) : null}
-            </div>
+
+              {showAllDayFields ? (
+                <div className="scheduler-book-row2">
+                  <Field label="Start date">
+                    <input
+                      type="date"
+                      className="scheduler-book-input"
+                      value={allDayStartDateValue}
+                      onChange={(e) => {
+                        const iso = e.target.value;
+                        if (!iso) return;
+                        const next = DateTime.fromISO(iso, { zone: practiceTz }).startOf('day');
+                        if (!next.isValid) return;
+                        setStartLocal(next);
+                        setAllDayEndDate((prev) => {
+                          const prevDt = DateTime.fromISO(prev || iso, { zone: practiceTz }).startOf('day');
+                          if (!prevDt.isValid || prevDt < next) return iso;
+                          return prevDt.toISODate() ?? iso;
+                        });
+                      }}
+                    />
+                  </Field>
+                  <Field label="End date">
+                    <input
+                      type="date"
+                      className="scheduler-book-input"
+                      value={allDayEndDate}
+                      min={allDayStartDateValue}
+                      onChange={(e) => setAllDayEndDate(e.target.value)}
+                    />
+                  </Field>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+
+          {showClientSection ? (
+            prefill?.lockClient || (prefill?.disableClientSearch && routingBookHasPrefilledClient) ? (
+            <BookSelectedClientCard
+              style={{ marginBottom: 12 }}
+              name={
+                selectedClientLabel ||
+                prefill?.clientLabel?.trim() ||
+                (prefill?.clientId ? `Client #${prefill.clientId}` : '…')
+              }
+              address={selectedClientAddress}
+              alerts={selectedClientAlerts}
+              hint={
+                prefill?.coVisitAddPet ? (
+                  <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
+                    This adds another appointment at the same time for a different pet. Pets already scheduled in
+                    this visit block (same time or back-to-back with this appointment) are not listed below.
+                  </p>
+                ) : prefill?.routingPreviewBook ? (
+                  <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
+                    {routingBookHasPrefilledClient
+                      ? 'Choose one or more patients for this slot. Each patient gets their own appointment at the same time with its own type and description.'
+                      : 'Optionally search for a client below, then choose patients. The alternate address above is used for routing regardless of client home address.'}
+                  </p>
+                ) : prefill?.lockClient ? (
+                  <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
+                    Select which patient is being booked for this visit.
+                  </p>
+                ) : null
+              }
+            />
           ) : (
             <>
               <div className="scheduler-book-mode-toggle" role="group" aria-label="Search mode">
@@ -1462,14 +1678,16 @@ export function SchedulerBookModal({
               )}
 
               {selectedClientId ? (
-                <div className="scheduler-book-selected">
-                  <span className="scheduler-book-selected-label">Client</span>
-                  <span className="scheduler-book-selected-value">{selectedClientLabel}</span>
-                  <BookClientAlerts alerts={selectedClientAlerts} />
-                </div>
+                <BookSelectedClientCard
+                  name={selectedClientLabel}
+                  address={selectedClientAddress}
+                  alerts={selectedClientAlerts}
+                  onClear={clearSelectedClient}
+                />
               ) : null}
             </>
-          )}
+          )
+          ) : null}
 
           {!perVisitReschedule && !perVisitRoutingBook && showClientSection ? (
           <Field label="Patient">
@@ -1683,10 +1901,10 @@ export function SchedulerBookModal({
                           required={visit.selected}
                           disabled={!visit.selected}
                         >
-                          <option value="">Select…</option>
-                          {appointmentTypes.map((t) => (
+                          <option value="">Select type…</option>
+                          {routingBookAppointmentTypes.map((t) => (
                             <option key={t.id} value={String(t.id)}>
-                              {t.name || t.prettyName}
+                              {t.name}
                             </option>
                           ))}
                         </select>
@@ -1730,106 +1948,7 @@ export function SchedulerBookModal({
             </>
           ) : (
             <>
-              <div className="scheduler-book-row2">
-                <Field label="Provider">
-                  <select
-                    className="scheduler-book-input"
-                    value={providerId}
-                    onChange={(e) => setProviderId(e.target.value)}
-                    disabled={Boolean(prefill?.lockProvider)}
-                    required
-                  >
-                    <option value="">Select…</option>
-                    {providers.map((p) => (
-                      <option key={String(p.id)} value={String(p.id)}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Appointment type">
-                  <select
-                    className="scheduler-book-input"
-                    value={typeId}
-                    onChange={(e) => setTypeId(e.target.value)}
-                    required
-                  >
-                    <option value="">Select…</option>
-                    {typesForActivePicker.map((t) => (
-                      <option key={t.id} value={String(t.id)}>
-                        {t.name || t.prettyName}
-                      </option>
-                    ))}
-                  </select>
-                  {allDayBookSession && typesForActivePicker.length === 0 ? (
-                    <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
-                      No appointment types are configured for all-day booking. Enable &quot;Allow all-day
-                      booking&quot; on a type in Settings → Appointment types.
-                    </p>
-                  ) : null}
-                  {typeFormFlags.showNotRoutedHint ? (
-                    <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
-                      This type is excluded from drive routing.
-                    </p>
-                  ) : null}
-                </Field>
-              </div>
-
-              {showAllDayToggle ? (
-                <label className="scheduler-book-field scheduler-book-field--full scheduler-book-all-day-toggle">
-                  <input
-                    type="checkbox"
-                    checked={isAllDay}
-                    onChange={(e) => {
-                      const next = e.target.checked;
-                      scheduleOverrideUserTouchedRef.current = false;
-                      setIsAllDay(next);
-                      if (!next) return;
-                      setTypeId((prev) => {
-                        const allowed = appointmentTypes
-                          .map((t) => normalizeAppointmentTypeFromApi(t))
-                          .filter((t) => appointmentTypeAllowsAllDay(t));
-                        if (prev && allowed.some((t) => String(t.id) === prev)) return prev;
-                        return allowed[0] ? String(allowed[0].id) : '';
-                      });
-                    }}
-                  />
-                  <span>All day</span>
-                </label>
-              ) : null}
-
-              {showAllDayFields ? (
-                <div className="scheduler-book-row2">
-                  <Field label="Start date">
-                    <input
-                      type="date"
-                      className="scheduler-book-input"
-                      value={allDayStartDateValue}
-                      onChange={(e) => {
-                        const iso = e.target.value;
-                        if (!iso) return;
-                        const next = DateTime.fromISO(iso, { zone: practiceTz }).startOf('day');
-                        if (!next.isValid) return;
-                        setStartLocal(next);
-                        setAllDayEndDate((prev) => {
-                          const prevDt = DateTime.fromISO(prev || iso, { zone: practiceTz }).startOf('day');
-                          if (!prevDt.isValid || prevDt < next) return iso;
-                          return prevDt.toISODate() ?? iso;
-                        });
-                      }}
-                    />
-                  </Field>
-                  <Field label="End date">
-                    <input
-                      type="date"
-                      className="scheduler-book-input"
-                      value={allDayEndDate}
-                      min={allDayStartDateValue}
-                      onChange={(e) => setAllDayEndDate(e.target.value)}
-                    />
-                  </Field>
-                </div>
-              ) : (
+              {!showAllDayFields ? (
                 <div className="scheduler-book-row2">
                   <Field label="Date">
                     <input
@@ -1886,7 +2005,7 @@ export function SchedulerBookModal({
                     </select>
                   </Field>
                 </div>
-              )}
+              ) : null}
             </>
           )}
 

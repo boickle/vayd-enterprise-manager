@@ -179,10 +179,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
     const [allDayEndDate, setAllDayEndDate] = useState(
       () => allDayInclusiveEndDate(appt.appointmentEnd, practiceTz)?.toISODate() ?? appointmentDateKey
     );
-    const [alternateAddressText, setAlternateAddressText] = useState(
-      () => appointmentAlternateAddressText(appt) ?? ''
-    );
-    const initialAlternateAddressText = (appt.alternateAddress?.addressText ?? '').trim();
+    const alternateAddressDisplay = appointmentAlternateAddressText(appt) ?? '';
     const hasAlternateRoutingAddress = appointmentHasAlternateLocation(appt);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -282,7 +279,6 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       () => appointmentFormFlags(selectedEditType),
       [selectedEditType]
     );
-    const canEditAlternateAddress = editTypeFormFlags.showAlternateAddress;
 
     const effectiveAppointmentTypeId = useMemo(() => {
       if (
@@ -324,8 +320,6 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         confirmStatusName,
         isComplete,
         allDay: appt.allDay,
-        alternateAddressText,
-        initialAlternateAddressText,
       });
     }, [
       onFormSnapshotChange,
@@ -337,8 +331,6 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       confirmStatusName,
       isComplete,
       appt.allDay,
-      alternateAddressText,
-      initialAlternateAddressText,
     ]);
 
     useLayoutEffect(() => {
@@ -427,8 +419,6 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
             confirmStatusName,
             isComplete,
             allDay: appt.allDay,
-            alternateAddressText,
-            initialAlternateAddressText,
           },
           previewAppointmentTypeId: tidFromPreview,
           bookedViaRouting: bookedViaRouting || undefined,
@@ -453,7 +443,6 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       primaryProviderId,
       additionalEmployeeIds,
       buildStartEndUtc,
-      alternateAddressText,
       appt,
       description,
       statusName,
@@ -797,31 +786,10 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                 </>
               )}
 
-              {canEditAlternateAddress ? (
-                <label className="scheduler-edit-field scheduler-edit-field--full">
-                  <span>Alternate address</span>
-                  <textarea
-                    rows={2}
-                    maxLength={4000}
-                    value={alternateAddressText}
-                    onChange={(e) => setAlternateAddressText(e.target.value)}
-                    placeholder="Visit location when different from the client's home address."
-                  />
-                  {hasAlternateRoutingAddress ? (
-                    <p className="scheduler-edit-hint">
-                      Drive time and ETA use this address instead of the client home when set.
-                    </p>
-                  ) : null}
-                  {clientHomeSummary ? (
-                    <p className="scheduler-edit-hint">
-                      Client home: {clientHomeSummary.replace(/\n/g, ', ')}
-                    </p>
-                  ) : null}
-                </label>
-              ) : hasAlternateRoutingAddress ? (
+              {hasAlternateRoutingAddress ? (
                 <div
                   className="scheduler-edit-alternate-callout"
-                  role="alert"
+                  role="status"
                   aria-label="Alternate routing address"
                 >
                   <div className="scheduler-edit-alternate-callout-head">
@@ -837,15 +805,22 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                     </span>
                   </div>
                   <p className="scheduler-edit-alternate-callout-lead">
-                    This visit has an alternate address, but the current appointment type does not allow
-                    editing it here.
+                    The visit address cannot be changed here. Reschedule the visit to change it.
                   </p>
-                  <p className="scheduler-edit-alternate-callout-address">{alternateAddressText}</p>
+                  <p className="scheduler-edit-alternate-callout-address">{alternateAddressDisplay}</p>
+                  {clientHomeSummary ? (
+                    <p className="scheduler-edit-hint">
+                      Client home: {clientHomeSummary.replace(/\n/g, ', ')}
+                    </p>
+                  ) : null}
                 </div>
               ) : clientHomeSummary ? (
                 <div className="scheduler-edit-field scheduler-edit-readonly">
-                  <span>Client home address</span>
+                  <span>Visit address</span>
                   <div className="scheduler-edit-client-home">{clientHomeSummary}</div>
+                  <p className="scheduler-edit-hint">
+                    The visit address cannot be changed here. Reschedule the visit to change it.
+                  </p>
                 </div>
               ) : null}
             </div>

@@ -88,7 +88,7 @@ export type CreateAppointmentPayload = {
   practiceId: number;
   primaryProviderId: number;
   additionalEmployeeIds?: number[];
-  /** Required when the appointment type allows a client (`allowClient`); omit for block types. */
+  /** Optional when the appointment type allows a client (`allowClient`); omit otherwise. */
   clientId?: number;
   /** Omitted when the client has no patients on file. */
   patientId?: number;
@@ -286,10 +286,22 @@ export function appointmentWithCancelledFields(
   return out;
 }
 
+function cancelAppointmentApiErrorMessage(e: unknown): string {
+  const ax = e as { response?: { data?: { message?: string | string[] } }; message?: string };
+  const m = ax?.response?.data?.message;
+  if (Array.isArray(m)) return m.join(', ');
+  if (typeof m === 'string') return m.trim();
+  return ax?.message?.trim() ?? '';
+}
+
+function appointmentCancelBlockedByClientRequirement(message: string): boolean {
+  return /requires a client/i.test(message);
+}
+
 export async function cancelAppointment(
   id: number | string,
   body: CancelAppointmentPatch,
-  opts?: { practiceId?: number | string }
+  opts?: { practiceId?: number | string; appt?: Appointment | null }
 ): Promise<Appointment> {
   const trimmedReason = body.cancellationReason?.trim();
   const payload: Record<string, unknown> = {
@@ -297,11 +309,25 @@ export async function cancelAppointment(
     confirmStatusName: PRACTICE_CALENDAR_CANCEL_CONFIRM_STATUS,
     ...(trimmedReason ? { cancellationReason: trimmedReason } : {}),
   };
-  const data = await patchAppointment(id, payload, opts);
-  return appointmentWithCancelledFields(
-    data,
-    trimmedReason ?? body.cancellationReason ?? null
-  );
+  const appt = opts?.appt ?? null;
+  const patchOpts = opts?.practiceId != null ? { practiceId: opts.practiceId } : undefined;
+  try {
+    const data = await patchAppointment(id, payload, patchOpts);
+    return appointmentWithCancelledFields(data, trimmedReason ?? body.cancellationReason ?? null);
+  } catch (e: unknown) {
+    const message = cancelAppointmentApiErrorMessage(e);
+    const noClientOnRow = appt != null && !appt.client;
+    if (
+      message &&
+      appointmentCancelBlockedByClientRequirement(message) &&
+      appt != null &&
+      (isPracticeCalendarBlockAppointment(appt) || noClientOnRow)
+    ) {
+      await deleteAppointment(id);
+      return appointmentWithCancelledFields(appt, trimmedReason ?? body.cancellationReason ?? null);
+    }
+    throw e;
+  }
 }
 
 /** PUT /appointments/:id/alternate-address — upsert or clear stored alternate (max 4000 chars). */

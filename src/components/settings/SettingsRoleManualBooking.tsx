@@ -6,6 +6,7 @@ import {
   type AppointmentType,
   type EmployeeRole,
 } from '../../api/appointmentSettings';
+import { appointmentTypeIsArchived } from '../../utils/appointmentTypeSettings';
 
 function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string } }; message?: string };
@@ -13,11 +14,18 @@ function extractErr(err: unknown): string {
 }
 
 type Props = {
+  /** Active types for new assignment checkboxes. */
   appointmentTypes: AppointmentType[];
+  /** Full catalog — used to show legacy archived assignments. */
+  allAppointmentTypes?: AppointmentType[];
   onMessage?: (msg: string, kind: 'success' | 'error') => void;
 };
 
-export default function SettingsRoleManualBooking({ appointmentTypes, onMessage }: Props) {
+export default function SettingsRoleManualBooking({
+  appointmentTypes,
+  allAppointmentTypes,
+  onMessage,
+}: Props) {
   const [roles, setRoles] = useState<EmployeeRole[]>([]);
   const [rolesLoading, setRolesLoading] = useState(true);
   const [rolesError, setRolesError] = useState<string | null>(null);
@@ -27,9 +35,17 @@ export default function SettingsRoleManualBooking({ appointmentTypes, onMessage 
   const [saving, setSaving] = useState(false);
 
   const activeTypes = useMemo(
-    () => appointmentTypes.filter((t) => t.isActive !== false && !t.isDeleted),
+    () => appointmentTypes.filter((t) => t.isActive !== false && !appointmentTypeIsArchived(t)),
     [appointmentTypes]
   );
+
+  const archivedSelectedTypes = useMemo(() => {
+    const catalog = allAppointmentTypes ?? appointmentTypes;
+    const activeIds = new Set(activeTypes.map((t) => t.id));
+    return catalog.filter(
+      (t) => appointmentTypeIsArchived(t) && selectedTypeIds.includes(t.id) && !activeIds.has(t.id)
+    );
+  }, [allAppointmentTypes, appointmentTypes, activeTypes, selectedTypeIds]);
 
   const loadRoles = useCallback(async () => {
     setRolesLoading(true);
@@ -155,6 +171,16 @@ export default function SettingsRoleManualBooking({ appointmentTypes, onMessage 
                     onChange={() => toggleType(type.id)}
                   />
                   <span>{type.prettyName || type.name}</span>
+                </label>
+              ))}
+              {archivedSelectedTypes.map((type) => (
+                <label key={type.id} className="settings-checkbox-item settings-checkbox-item--disabled">
+                  <input type="checkbox" checked disabled readOnly />
+                  <span>
+                    {type.prettyName || type.name}
+                    <span className="settings-appt-type-archived-badge">Archived</span>
+                    <span className="settings-muted"> — saved but no longer assignable</span>
+                  </span>
                 </label>
               ))}
             </div>

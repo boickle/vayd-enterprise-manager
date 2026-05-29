@@ -1,4 +1,4 @@
-import { patchAppointment, putAppointmentAlternateAddress } from '../api/appointments';
+import { patchAppointment } from '../api/appointments';
 import type { Appointment } from '../api/roomLoader';
 
 export type EditVisitFormSnapshot = {
@@ -10,8 +10,6 @@ export type EditVisitFormSnapshot = {
   confirmStatusName: string;
   isComplete: boolean;
   allDay: boolean;
-  alternateAddressText: string;
-  initialAlternateAddressText: string;
 };
 
 export type CommitEditVisitInput = {
@@ -40,14 +38,7 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
     throw new Error('Choose a primary provider.');
   }
 
-  const trimmedAlt = input.form.alternateAddressText.trim();
-  if (trimmedAlt.length > 4000) {
-    throw new Error('Alternate address must be 4000 characters or fewer.');
-  }
-
-  const alternateDirty = input.form.initialAlternateAddressText !== trimmedAlt;
-
-  const updated = await patchAppointment(
+  return patchAppointment(
     input.appointmentId,
     {
       appointmentTypeId: typeId,
@@ -64,12 +55,4 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
     },
     { practiceId: input.practiceId }
   );
-
-  if (alternateDirty) {
-    await putAppointmentAlternateAddress(input.appointmentId, {
-      addressText: trimmedAlt === '' ? null : trimmedAlt,
-    });
-  }
-
-  return updated;
 }

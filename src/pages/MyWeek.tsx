@@ -2998,12 +2998,20 @@ export default function MyWeek(props: MyWeekProps = {}) {
                             h.windowEndIso ??
                             h.effectiveWindow?.endIso ??
                             null;
+                          const windowStartForWarn =
+                            (slot?.windowStartIso != null && slot?.windowEndIso != null
+                              ? slot.windowStartIso
+                              : null) ??
+                            h.windowStartIso ??
+                            h.effectiveWindow?.startIso ??
+                            null;
                           const windowWarning =
                             showByDriveTime &&
                             !h.isPersonalBlock &&
                             computeDriveTimeWindowWarning({
                               etaIso,
                               windowEndIso: windowEndForWarn,
+                              windowStartIso: windowStartForWarn,
                               isClientFixedTime: weekHouseholdIsClientFixedTime(h),
                               scheduledStartIso: h.startIso,
                             });

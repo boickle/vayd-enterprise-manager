@@ -1,4 +1,5 @@
 import type { AppointmentType } from '../api/appointmentSettings';
+import { DateTime } from 'luxon';
 
 /** Minimal household shape for points (My Week, My Day, scheduler). */
 export type PointsHousehold = {
@@ -29,15 +30,121 @@ function truthyFlag(v: unknown): boolean {
   return false;
 }
 
+function falseyFlag(v: unknown): boolean {
+  if (v === false || v === 0) return true;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    return s === 'false' || s === '0' || s === 'no';
+  }
+  return false;
+}
+
+function pickIso(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s || null;
+}
+
+function normalizeIsDeleted(row: AppointmentType & Record<string, unknown>): boolean {
+  const raw: unknown = row.isDeleted ?? row.is_deleted;
+  if (raw === true || raw === 1) return true;
+  if (raw === false || raw === 0) return false;
+  if (typeof raw === 'string') {
+    const s = raw.trim().toLowerCase();
+    if (s === 'true' || s === '1' || s === 'yes') return true;
+    if (s === 'false' || s === '0' || s === 'no') return false;
+  }
+  return false;
+}
+
+/** True when the type is archived (hidden from new booking pickers). */
+export function appointmentTypeIsArchived(type: AppointmentType | undefined | null): boolean {
+  if (!type) return false;
+  return normalizeAppointmentTypeFromApi(type).isDeleted === true;
+}
+
+function appointmentTypeNameDisallowsClientByName(
+  name: string | null | undefined,
+  prettyName?: string | null
+): boolean {
+  for (const raw of [name, prettyName]) {
+    const s = normalizeAppointmentTypeName(raw);
+    if (!s) continue;
+    if (s === 'block' || s === 'personal block' || s.startsWith('block')) return true;
+    if (s === 'note to staff' || s === 'vacation' || s === 'sick time') return true;
+  }
+  return false;
+}
+
 /** Coerce list rows from GET /appointment-types (camelCase or snake_case flags). */
 export function normalizeAppointmentTypeFromApi(row: AppointmentType): AppointmentType {
   const r = row as AppointmentType & Record<string, unknown>;
+  const archivedOn =
+    pickIso(row.archivedOn) ??
+    pickIso(r.archived_on) ??
+    pickIso(r.deletedAt) ??
+    pickIso(r.deleted_at);
+  const allowClient = (() => {
+    if (falseyFlag(row.allowClient) || falseyFlag(r.allow_client)) return false;
+    if (row.allowClient === true || truthyFlag(r.allow_client)) return true;
+    if (appointmentTypeNameDisallowsClientByName(row.name, row.prettyName)) return false;
+    return row.allowClient !== false;
+  })();
+  const allowAlternateAddress =
+    row.allowAlternateAddress === true ||
+    truthyFlag(r.allow_alternate_address) ||
+    truthyFlag(row.allowAlternateAddress);
+  const addressRequired =
+    row.addressRequired === true ||
+    truthyFlag(r.address_required) ||
+    truthyFlag(row.addressRequired);
+  const excludeFromRouting =
+    row.excludeFromRouting === true ||
+    truthyFlag(r.exclude_from_routing) ||
+    truthyFlag(row.excludeFromRouting);
+  const usesLegacyRouting =
+    row.usesLegacyRouting === true ||
+    truthyFlag(r.uses_legacy_routing) ||
+    truthyFlag(row.usesLegacyRouting);
+
   return {
     ...row,
+    isDeleted: normalizeIsDeleted(r),
+    archivedOn: archivedOn ?? row.archivedOn ?? null,
     allowAllDay: row.allowAllDay === true || truthyFlag(r.allow_all_day),
+    allowClient,
+    allowAlternateAddress,
+    addressRequired,
+    excludeFromRouting,
+    usesLegacyRouting,
     allowSchedulingOverride:
       row.allowSchedulingOverride === true || truthyFlag(r.allow_scheduling_override),
   };
+}
+
+/** ISO instant when a type was archived, if known. */
+export function appointmentTypeArchivedOnIso(type: AppointmentType): string | null {
+  const t = normalizeAppointmentTypeFromApi(type);
+  if (!t.isDeleted) return null;
+  const r = t as AppointmentType & Record<string, unknown>;
+  return (
+    pickIso(t.archivedOn) ??
+    pickIso(r.archived_on) ??
+    pickIso(r.deletedAt) ??
+    pickIso(r.deleted_at) ??
+    pickIso(t.modified) ??
+    pickIso(t.updated) ??
+    pickIso(r.modifiedAt) ??
+    pickIso(r.updatedAt)
+  );
+}
+
+export function formatAppointmentTypeArchivedOn(type: AppointmentType): string {
+  const iso = appointmentTypeArchivedOnIso(type);
+  if (!iso) return '—';
+  const dt = DateTime.fromISO(iso);
+  if (!dt.isValid) return '—';
+  return dt.toLocaleString(DateTime.DATETIME_MED);
 }
 
 export function appointmentTypeAllowsAllDay(type: AppointmentType | undefined): boolean {
@@ -60,11 +167,40 @@ export function buildAppointmentTypeCatalog(types: AppointmentType[]): Appointme
   return { byId, byName };
 }
 
+/** Block / staff types that must not require a client (legacy name rules when API flag is missing). */
+export function appointmentTypeNameDisallowsClient(type: AppointmentType | undefined): boolean {
+  if (!type) return false;
+  return appointmentTypeNameDisallowsClientByName(type.name, type.prettyName);
+}
+
+export function appointmentTypeAllowsClient(type: AppointmentType | undefined): boolean {
+  if (!type) return false;
+  return normalizeAppointmentTypeFromApi(type).allowClient === true;
+}
+
+export function appointmentTypeAddressRequired(type: AppointmentType | undefined): boolean {
+  if (!type) return false;
+  return normalizeAppointmentTypeFromApi(type).addressRequired === true;
+}
+
+/** Types that may appear on Get Best Route / routing book pickers. */
+export function appointmentTypeIncludedInRouting(type: AppointmentType | undefined): boolean {
+  if (!type) return false;
+  const t = normalizeAppointmentTypeFromApi(type);
+  if (t.excludeFromRouting === true) return false;
+  return t.allowClient === true || t.allowAlternateAddress === true;
+}
+
 export function appointmentFormFlags(type: AppointmentType | undefined) {
   const t = type ? normalizeAppointmentTypeFromApi(type) : undefined;
+  const allowsClient = appointmentTypeAllowsClient(t);
   return {
     showAllDay: appointmentTypeAllowsAllDay(t),
-    requireClient: t?.allowClient !== false,
+    /** Client/patient may be attached when the type allows it. */
+    showClient: allowsClient,
+    /** allowClient means optional — not “client required”. */
+    requireClient: false,
+    addressRequired: appointmentTypeAddressRequired(t),
     showAlternateAddress: t?.allowAlternateAddress === true,
     showNotRoutedHint: t?.excludeFromRouting === true,
     showSchedulingOverride: t?.allowSchedulingOverride === true,

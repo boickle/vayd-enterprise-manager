@@ -16,8 +16,8 @@
   margin: 4px 0 0;
   font-size: 11px;
   line-height: 1.3;
-  font-weight: 500;
-  color: #dc2626;
+  font-weight: 400;
+  color: var(--muted, #64748b);
   white-space: nowrap;
   pointer-events: none;
 }

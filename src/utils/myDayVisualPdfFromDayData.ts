@@ -313,12 +313,18 @@ function buildAppointmentPayload(
     ew?.endIso ??
     (h as { windowEndIso?: string | null }).windowEndIso ??
     null;
+  const windowStartForWarn =
+    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
+    ew?.startIso ??
+    (h as { windowStartIso?: string | null }).windowStartIso ??
+    null;
   const windowWarning =
     showByDriveTime &&
     !h.isPersonalBlock &&
     computeDriveTimeWindowWarning({
       etaIso,
       windowEndIso: windowEndForWarn,
+      windowStartIso: windowStartForWarn,
       isClientFixedTime: weekHouseholdIsClientFixedTime(h),
       scheduledStartIso: h.startIso,
     });

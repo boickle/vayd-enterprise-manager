@@ -1578,6 +1578,23 @@ label.scheduler-go-date-heading {
   flex-shrink: 0;
 }
 
+.scheduler-type-archived-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #57534e;
+  border: 1px solid #d6d3d1;
+  border-radius: 4px;
+  padding: 2px 7px;
+  background: rgba(255, 255, 255, 0.98);
+  line-height: 1.2;
+  flex-shrink: 0;
+}
+
 .scheduler-tooltip-vh-desc {
   margin-top: 4px;
   font-size: 11px;
@@ -2842,6 +2859,42 @@ label.scheduler-go-date-heading {
   color: #14532d;
 }
 
+.scheduler-book-selected-address {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.35;
+  color: #166534;
+}
+
+.scheduler-book-selected-client {
+  position: relative;
+  padding-right: 36px;
+}
+
+.scheduler-book-selected-clear {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: rgba(22, 101, 52, 0.1);
+  color: #166534;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.scheduler-book-selected-clear:hover {
+  background: rgba(22, 101, 52, 0.18);
+  color: #14532d;
+}
+
 .scheduler-book-row2 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -3418,6 +3471,7 @@ label.scheduler-go-date-heading {
 .scheduler-modal--edit .scheduler-modal-header {
   padding: 14px 18px 12px 22px;
   gap: 12px;
+  flex-shrink: 0;
 }
 
 .scheduler-modal--edit .scheduler-modal-header .scheduler-modal-eyebrow {
@@ -3846,6 +3900,8 @@ label.scheduler-go-date-heading {
   gap: 10px;
   padding: 14px 18px 18px;
   border-top: 1px solid #e2e8f0;
+  flex-shrink: 0;
+  background: #fafbfc;
 }
 
 .scheduler-edit-preview-hint {
@@ -4127,6 +4183,21 @@ label.scheduler-go-date-heading {
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.45),
     0 4px 18px rgba(22, 163, 74, 0.35);
+  animation: scheduler-edit-visit-booked-pulse 2.5s ease-out forwards;
+}
+
+@keyframes scheduler-edit-visit-booked-pulse {
+  0%,
+  20% {
+    outline-color: rgba(34, 197, 94, 0.95);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.45),
+      0 4px 18px rgba(22, 163, 74, 0.4);
+  }
+  100% {
+    outline-color: rgba(34, 197, 94, 0);
+    box-shadow: none;
+  }
 }
 
 .scheduler-toolbar-calendar-merge--edit-visit-locked {
@@ -4206,14 +4277,17 @@ label.scheduler-go-date-heading {
   width: 100%;
   max-height: none;
   height: 100%;
+  min-height: 0;
   border-radius: 0;
   box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
 }
 
 .scheduler-modal-body--edit {
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+  -webkit-overflow-scrolling: touch;
 }
 
 .scheduler-modal--edit-inline {
@@ -4221,15 +4295,32 @@ label.scheduler-go-date-heading {
   width: 100%;
   max-height: none;
   height: 100%;
+  min-height: 0;
   border-radius: 0;
   box-shadow: none;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+.scheduler-modal--edit-inline .scheduler-modal-header,
+.scheduler-modal--edit-docked .scheduler-modal-header {
+  max-height: min(38vh, 260px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.scheduler-modal--edit:not(.scheduler-modal--edit-inline):not(.scheduler-modal--edit-docked)
+  .scheduler-modal-header {
+  max-height: min(36vh, 240px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .scheduler-edit-inline-pane {
   flex: 1;
   min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -4262,6 +4353,8 @@ label.scheduler-go-date-heading {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  height: 100%;
 }
 
 .scheduler-edit-placement-main {

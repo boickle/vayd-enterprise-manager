@@ -49,6 +49,7 @@ import './Settings.css';
 import SettingsEmployeeDirectory from '../components/settings/SettingsEmployeeDirectory';
 import SettingsAppointmentTypes from '../components/settings/SettingsAppointmentTypes';
 import SettingsRoleManualBooking from '../components/settings/SettingsRoleManualBooking';
+import { appointmentTypeIsArchived } from '../utils/appointmentTypeSettings';
 
 const SETTINGS_TAB_IDS = [
   'appointment-types',
@@ -122,6 +123,12 @@ export default function Settings() {
 
   // Appointment Types state (shared with employee-types tab)
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
+
+  /** Types available for new bookings / admin pickers (excludes archived). */
+  const activeAppointmentTypes = useMemo(
+    () => appointmentTypes.filter((t) => t.isActive !== false && !appointmentTypeIsArchived(t)),
+    [appointmentTypes]
+  );
 
   // Employee Appointment Types state
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -243,7 +250,7 @@ export default function Settings() {
     setError(null);
     try {
       const [types, emps, zones] = await Promise.all([
-        fetchAllAppointmentTypes(),
+        fetchAllAppointmentTypes(practiceId, { activeOnly: false }),
         fetchAllEmployees(),
         fetchAllZones(),
       ]);
@@ -653,6 +660,16 @@ export default function Settings() {
     setSelectedAppointmentTypeIds((prev) =>
       prev.includes(typeId) ? prev.filter((id) => id !== typeId) : [...prev, typeId]
     );
+  };
+
+  const selectAllEmployeeAppointmentTypes = () => {
+    const activeIds = activeAppointmentTypes.map((t) => t.id);
+    const archivedKept = selectedAppointmentTypeIds.filter((id) => !activeIds.includes(id));
+    setSelectedAppointmentTypeIds([...activeIds, ...archivedKept]);
+  };
+
+  const unselectAllEmployeeAppointmentTypes = () => {
+    setSelectedAppointmentTypeIds([]);
   };
 
   const toggleZoneAssignment = (zoneId: number, isAssigned: boolean) => {
@@ -1073,10 +1090,11 @@ export default function Settings() {
             <h2 className="settings-section-title">Appointment Types</h2>
             <p className="settings-section-description">
               Manage display names, scheduler colors, arrival windows, and appointment request form options for each
-              appointment type.
+              appointment type. Add new types or archive existing ones to hide them from new bookings.
             </p>
             <SettingsAppointmentTypes
               types={appointmentTypes}
+              practiceId={practiceId}
               onTypesChange={setAppointmentTypes}
               onMessage={(msg, kind) => {
                 if (kind === 'success') {
@@ -1100,7 +1118,8 @@ export default function Settings() {
               scheduler calendar. Routing booking is not restricted by these settings.
             </p>
             <SettingsRoleManualBooking
-              appointmentTypes={appointmentTypes}
+              appointmentTypes={activeAppointmentTypes}
+              allAppointmentTypes={appointmentTypes}
               onMessage={(msg, kind) => {
                 if (kind === 'success') {
                   setSuccess(msg);
@@ -1154,8 +1173,30 @@ export default function Settings() {
                 </h3>
                 <p className="settings-card-subtitle">Select appointment types this employee can handle:</p>
 
+                {activeAppointmentTypes.length > 0 ? (
+                  <div className="settings-checkbox-bulk-actions">
+                    <button
+                      type="button"
+                      className="settings-checkbox-bulk-action"
+                      onClick={selectAllEmployeeAppointmentTypes}
+                    >
+                      Select all
+                    </button>
+                    <span className="settings-checkbox-bulk-sep" aria-hidden>
+                      ·
+                    </span>
+                    <button
+                      type="button"
+                      className="settings-checkbox-bulk-action"
+                      onClick={unselectAllEmployeeAppointmentTypes}
+                    >
+                      Unselect all
+                    </button>
+                  </div>
+                ) : null}
+
                 <div className="settings-checkbox-list">
-                  {appointmentTypes.map((type) => (
+                  {activeAppointmentTypes.map((type) => (
                     <label key={type.id} className="settings-checkbox-item">
                       <input
                         type="checkbox"
@@ -1170,6 +1211,18 @@ export default function Settings() {
                       </span>
                     </label>
                   ))}
+                  {appointmentTypes
+                    .filter((t) => appointmentTypeIsArchived(t) && selectedAppointmentTypeIds.includes(t.id))
+                    .map((type) => (
+                      <label key={type.id} className="settings-checkbox-item settings-checkbox-item--disabled">
+                        <input type="checkbox" checked disabled readOnly />
+                        <span>
+                          {type.prettyName || type.name}
+                          <span className="settings-appt-type-archived-badge">Archived</span>
+                          <span className="settings-muted"> — remove from employee or restore the type</span>
+                        </span>
+                      </label>
+                    ))}
                 </div>
 
                 <div className="settings-action-bar">

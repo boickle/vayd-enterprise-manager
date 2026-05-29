@@ -88,6 +88,18 @@ export function windowEndIsoForSchedulerWarning(
   );
 }
 
+export function windowStartIsoForSchedulerWarning(
+  h: HouseholdLike,
+  slot: TimelineSlot | undefined
+): string | null {
+  return (
+    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
+    (h as { windowStartIso?: string | null }).windowStartIso ??
+    (h as { effectiveWindow?: { startIso?: string } }).effectiveWindow?.startIso ??
+    null
+  );
+}
+
 /** Same rules as My Week grid `windowWarning` flag. */
 export function computeSchedulerTimelineWindowWarning(
   h: HouseholdLike,
@@ -100,6 +112,7 @@ export function computeSchedulerTimelineWindowWarning(
   return computeDriveTimeWindowWarning({
     etaIso: slot?.eta ?? null,
     windowEndIso: windowEndIsoForSchedulerWarning(h, slot),
+    windowStartIso: windowStartIsoForSchedulerWarning(h, slot),
     isClientFixedTime: schedulerHouseholdIsClientFixedTime(h),
     scheduledStartIso: h.startIso,
   });

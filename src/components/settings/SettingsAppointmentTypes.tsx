@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  createAppointmentType,
   fetchAppointmentType,
+  setAppointmentTypeArchived,
   updateAppointmentType,
   type AppointmentType,
+  type AppointmentTypeUpdate,
 } from '../../api/appointmentSettings';
 import {
   appointmentTypeAllowsAllDay,
+  appointmentTypeIsArchived,
+  formatAppointmentTypeArchivedOn,
   formatPointsSummary,
   normalizeAppointmentTypeFromApi,
 } from '../../utils/appointmentTypeSettings';
@@ -58,6 +63,7 @@ export function formatArrivalWindow(
 }
 
 type EditDraft = {
+  name: string;
   prettyName: string;
   color: string;
   textColor: string;
@@ -70,7 +76,9 @@ type EditDraft = {
   allowAllDay: boolean;
   allowClient: boolean;
   allowAlternateAddress: boolean;
+  addressRequired: boolean;
   excludeFromRouting: boolean;
+  usesLegacyRouting: boolean;
   allowSchedulingOverride: boolean;
   useLegacyPoints: boolean;
   points: string;
@@ -80,6 +88,7 @@ function draftFromType(type: AppointmentType): EditDraft {
   const t = normalizeAppointmentTypeFromApi(type);
   const legacy = t.windowBeforeMinutes == null && t.windowAfterMinutes == null;
   return {
+    name: t.name ?? '',
     prettyName: t.prettyName ?? t.name ?? '',
     color: displayColor(t),
     textColor: displayTextColor(t),
@@ -94,7 +103,9 @@ function draftFromType(type: AppointmentType): EditDraft {
     allowAllDay: appointmentTypeAllowsAllDay(t),
     allowClient: t.allowClient !== false,
     allowAlternateAddress: t.allowAlternateAddress === true,
+    addressRequired: t.addressRequired === true,
     excludeFromRouting: t.excludeFromRouting === true,
+    usesLegacyRouting: t.usesLegacyRouting === true,
     allowSchedulingOverride: t.allowSchedulingOverride === true,
     useLegacyPoints: t.points == null,
     points: t.points != null ? String(t.points) : '',
@@ -111,57 +122,191 @@ function parseWindowField(raw: string): number {
   return n;
 }
 
+function emptyDraft(): EditDraft {
+  return {
+    name: '',
+    prettyName: '',
+    color: '#4A90D9',
+    textColor: '#FFFFFF',
+    windowBeforeMinutes: '',
+    windowAfterMinutes: '',
+    useLegacyWindow: true,
+    showInApptRequestForm: false,
+    newPatientAllowed: true,
+    formListOrder: '',
+    allowAllDay: false,
+    allowClient: true,
+    allowAlternateAddress: false,
+    addressRequired: false,
+    excludeFromRouting: false,
+    usesLegacyRouting: false,
+    allowSchedulingOverride: false,
+    useLegacyPoints: true,
+    points: '',
+  };
+}
+
+function buildUpdatePayloadFromDraft(draft: EditDraft): AppointmentTypeUpdate {
+  const name = draft.name.trim();
+  if (!name) {
+    throw new Error('Name is required.');
+  }
+
+  const colorHex = normalizeHex(draft.color);
+  if (!colorHex) {
+    throw new Error('Background color must be a valid hex value (e.g. #4A90D9)');
+  }
+  const textHex = normalizeHex(draft.textColor);
+  if (!textHex) {
+    throw new Error('Text color must be a valid hex value (e.g. #FFFFFF)');
+  }
+
+  let windowBeforeMinutes: number | null;
+  let windowAfterMinutes: number | null;
+  if (draft.useLegacyWindow) {
+    windowBeforeMinutes = null;
+    windowAfterMinutes = null;
+  } else {
+    windowBeforeMinutes = parseWindowField(draft.windowBeforeMinutes);
+    windowAfterMinutes = parseWindowField(draft.windowAfterMinutes);
+  }
+
+  const formListOrder = draft.formListOrder.trim() === '' ? null : Number(draft.formListOrder);
+  if (formListOrder != null && (!Number.isFinite(formListOrder) || formListOrder < 1)) {
+    throw new Error('Form list order must be a positive number or empty');
+  }
+
+  let points: number | null;
+  if (draft.useLegacyPoints) {
+    points = null;
+  } else {
+    const raw = draft.points.trim();
+    if (raw === '') {
+      throw new Error('Enter points (0–100) or check “Use legacy points rules”.');
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0 || n > 100) {
+      throw new Error('Points must be a number from 0 to 100');
+    }
+    points = n;
+  }
+
+  return {
+    name,
+    prettyName: draft.prettyName.trim() || undefined,
+    color: colorHex,
+    textColor: textHex,
+    windowBeforeMinutes,
+    windowAfterMinutes,
+    showInApptRequestForm: draft.showInApptRequestForm,
+    newPatientAllowed: draft.newPatientAllowed,
+    formListOrder,
+    allowAllDay: draft.allowAllDay,
+    allowClient: draft.allowClient,
+    allowAlternateAddress: draft.allowAlternateAddress,
+    addressRequired: draft.addressRequired,
+    excludeFromRouting: draft.excludeFromRouting,
+    usesLegacyRouting: draft.usesLegacyRouting,
+    allowSchedulingOverride: draft.allowSchedulingOverride,
+    points,
+  };
+}
+
 type Props = {
   types: AppointmentType[];
+  practiceId?: number;
   onTypesChange: (types: AppointmentType[]) => void;
   onMessage?: (msg: string, kind: 'success' | 'error') => void;
 };
 
-export default function SettingsAppointmentTypes({ types, onTypesChange, onMessage }: Props) {
+type ListView = 'active' | 'archived';
+
+export default function SettingsAppointmentTypes({
+  types,
+  practiceId: practiceIdProp,
+  onTypesChange,
+  onMessage,
+}: Props) {
+  const [listView, setListView] = useState<ListView>('active');
+  const [archivedSearch, setArchivedSearch] = useState('');
+  const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editingName, setEditingName] = useState('');
   const [draft, setDraft] = useState<EditDraft | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [archiveConfirm, setArchiveConfirm] = useState<{ id: number; name: string } | null>(null);
+  const [archiveBusy, setArchiveBusy] = useState(false);
 
-  const sortedTypes = useMemo(() => {
-    return [...types].sort((a, b) => {
-      const aShow = a.showInApptRequestForm === true ? 0 : 1;
-      const bShow = b.showInApptRequestForm === true ? 0 : 1;
-      if (aShow !== bShow) return aShow - bShow;
-      const aOrder = a.formListOrder ?? Number.MAX_SAFE_INTEGER;
-      const bOrder = b.formListOrder ?? Number.MAX_SAFE_INTEGER;
-      return aOrder - bOrder;
+  const sortTypes = useCallback((rows: AppointmentType[]) => {
+    return [...rows].sort((a, b) => {
+      const aName = String(a.name ?? a.prettyName ?? '').trim();
+      const bName = String(b.name ?? b.prettyName ?? '').trim();
+      return aName.localeCompare(bName, undefined, { sensitivity: 'base' });
     });
-  }, [types]);
+  }, []);
+
+  const activeTypes = useMemo(
+    () => sortTypes(types.filter((t) => !appointmentTypeIsArchived(t))),
+    [types, sortTypes]
+  );
+  const archivedTypes = useMemo(
+    () => sortTypes(types.filter((t) => appointmentTypeIsArchived(t))),
+    [types, sortTypes]
+  );
+
+  const archivedTypesFiltered = useMemo(() => {
+    const q = archivedSearch.trim().toLowerCase();
+    if (!q) return archivedTypes;
+    return archivedTypes.filter((t) => {
+      const name = String(t.name ?? '').toLowerCase();
+      const pretty = String(t.prettyName ?? '').toLowerCase();
+      return name.includes(q) || pretty.includes(q);
+    });
+  }, [archivedTypes, archivedSearch]);
+
+  const practiceId = useMemo(() => {
+    if (practiceIdProp != null && Number.isFinite(practiceIdProp) && practiceIdProp > 0) {
+      return practiceIdProp;
+    }
+    const fromType = types.find((t) => t.practice?.id)?.practice?.id;
+    if (fromType != null && Number.isFinite(fromType)) return fromType;
+    return 1;
+  }, [practiceIdProp, types]);
 
   const closeModal = useCallback(() => {
+    setModalMode(null);
     setEditingId(null);
-    setEditingName('');
     setDraft(null);
     setFormError(null);
     setModalLoading(false);
   }, []);
 
   useEffect(() => {
-    if (editingId == null) return;
+    if (modalMode == null) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !saving) closeModal();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [editingId, saving, closeModal]);
+  }, [modalMode, saving, closeModal]);
+
+  const openCreate = () => {
+    setModalMode('create');
+    setEditingId(null);
+    setDraft(emptyDraft());
+    setFormError(null);
+    setModalLoading(false);
+  };
 
   const openEdit = async (type: AppointmentType) => {
+    setModalMode('edit');
     setEditingId(type.id);
-    setEditingName(type.name);
     setDraft(draftFromType(type));
     setFormError(null);
     setModalLoading(true);
     try {
       const fresh = await fetchAppointmentType(type.id);
-      setEditingName(fresh.name);
       setDraft(draftFromType(fresh));
     } catch (e) {
       setFormError(extractErr(e));
@@ -184,66 +329,30 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
   };
 
   const handleSave = async () => {
-    if (editingId == null || !draft) return;
+    if (modalMode == null || !draft) return;
     setFormError(null);
     setSaving(true);
     try {
-      const colorHex = normalizeHex(draft.color);
-      if (!colorHex) {
-        throw new Error('Background color must be a valid hex value (e.g. #4A90D9)');
-      }
-      const textHex = normalizeHex(draft.textColor);
-      if (!textHex) {
-        throw new Error('Text color must be a valid hex value (e.g. #FFFFFF)');
+      const payload = buildUpdatePayloadFromDraft(draft);
+
+      if (modalMode === 'create') {
+        const created = await createAppointmentType({
+          ...payload,
+          name: payload.name!,
+          practiceId,
+        });
+        const normalized = normalizeAppointmentTypeFromApi(created);
+        onTypesChange([...types, normalized]);
+        onMessage?.('Appointment type created successfully', 'success');
+        closeModal();
+        return;
       }
 
-      let windowBeforeMinutes: number | null;
-      let windowAfterMinutes: number | null;
-      if (draft.useLegacyWindow) {
-        windowBeforeMinutes = null;
-        windowAfterMinutes = null;
-      } else {
-        windowBeforeMinutes = parseWindowField(draft.windowBeforeMinutes);
-        windowAfterMinutes = parseWindowField(draft.windowAfterMinutes);
+      if (editingId == null) {
+        throw new Error('Missing appointment type id.');
       }
 
-      const formListOrder =
-        draft.formListOrder.trim() === '' ? null : Number(draft.formListOrder);
-      if (formListOrder != null && (!Number.isFinite(formListOrder) || formListOrder < 1)) {
-        throw new Error('Form list order must be a positive number or empty');
-      }
-
-      let points: number | null;
-      if (draft.useLegacyPoints) {
-        points = null;
-      } else {
-        const raw = draft.points.trim();
-        if (raw === '') {
-          throw new Error('Enter points (0–100) or check “Use legacy points rules”.');
-        }
-        const n = Number(raw);
-        if (!Number.isFinite(n) || n < 0 || n > 100) {
-          throw new Error('Points must be a number from 0 to 100');
-        }
-        points = n;
-      }
-
-      const updated = await updateAppointmentType(editingId, {
-        prettyName: draft.prettyName.trim() || undefined,
-        color: colorHex,
-        textColor: textHex,
-        windowBeforeMinutes,
-        windowAfterMinutes,
-        showInApptRequestForm: draft.showInApptRequestForm,
-        newPatientAllowed: draft.newPatientAllowed,
-        formListOrder,
-        allowAllDay: draft.allowAllDay,
-        allowClient: draft.allowClient,
-        allowAlternateAddress: draft.allowAlternateAddress,
-        excludeFromRouting: draft.excludeFromRouting,
-        allowSchedulingOverride: draft.allowSchedulingOverride,
-        points,
-      });
+      const updated = await updateAppointmentType(editingId, payload);
 
       onTypesChange(
         types.map((t) => (t.id === updated.id ? normalizeAppointmentTypeFromApi(updated) : t))
@@ -259,72 +368,227 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
     }
   };
 
+  const applyTypeUpdate = (updated: AppointmentType, archived?: boolean) => {
+    const normalized = normalizeAppointmentTypeFromApi(updated);
+    const merged =
+      archived === undefined
+        ? normalized
+        : { ...normalized, isDeleted: archived };
+    onTypesChange(types.map((t) => (t.id === merged.id ? merged : t)));
+  };
+
+  const handleArchiveConfirm = async () => {
+    if (!archiveConfirm) return;
+    setArchiveBusy(true);
+    try {
+      const updated = await setAppointmentTypeArchived(archiveConfirm.id, true);
+      applyTypeUpdate(updated, true);
+      onMessage?.(`"${archiveConfirm.name}" archived — it will not appear for new bookings.`, 'success');
+      setArchiveConfirm(null);
+      setListView('archived');
+      setArchivedSearch('');
+    } catch (e) {
+      onMessage?.(extractErr(e), 'error');
+    } finally {
+      setArchiveBusy(false);
+    }
+  };
+
+  const handleRestore = async (type: AppointmentType) => {
+    const label = type.prettyName || type.name;
+    setArchiveBusy(true);
+    try {
+      const updated = await setAppointmentTypeArchived(type.id, false);
+      applyTypeUpdate(updated, false);
+      onMessage?.(`"${label}" restored — it is available for new bookings again.`, 'success');
+      setListView('active');
+    } catch (e) {
+      onMessage?.(extractErr(e), 'error');
+    } finally {
+      setArchiveBusy(false);
+    }
+  };
+
+  const renderTypeRow = (raw: AppointmentType, mode: 'active' | 'archived') => {
+    const type = normalizeAppointmentTypeFromApi(raw);
+    return (
+      <tr key={type.id} className={mode === 'archived' ? 'settings-appt-type-row--archived' : undefined}>
+        <td>{type.name}</td>
+        <td>
+          {type.prettyName || type.name}
+        </td>
+        {mode === 'archived' ? (
+          <td className="settings-appt-type-archived-on-cell">
+            {formatAppointmentTypeArchivedOn(type)}
+          </td>
+        ) : null}
+        <td>
+          <span
+            className="settings-appt-type-swatch"
+            style={{
+              background: displayColor(type),
+              color: displayTextColor(type),
+            }}
+            title={`${displayColor(type)} on ${displayTextColor(type)}`}
+          >
+            Aa
+          </span>
+        </td>
+        <td>{formatArrivalWindow(type.windowBeforeMinutes, type.windowAfterMinutes)}</td>
+        <td>{type.showInApptRequestForm ? 'Yes' : 'No'}</td>
+        <td>{type.newPatientAllowed ? 'Yes' : 'No'}</td>
+        <td>{type.formListOrder ?? '—'}</td>
+        <td className="settings-appt-type-flags-cell">
+          {[
+            appointmentTypeAllowsAllDay(type) ? 'All-day' : null,
+            type.allowClient === false ? 'No client' : null,
+            type.allowAlternateAddress ? 'Alt addr' : null,
+            type.addressRequired ? 'Addr required' : null,
+            type.excludeFromRouting ? 'No route' : null,
+            type.usesLegacyRouting ? 'Legacy routing' : null,
+            type.allowSchedulingOverride ? 'Sched override' : null,
+          ]
+            .filter(Boolean)
+            .join(', ') || '—'}
+        </td>
+        <td>{formatPointsSummary(type)}</td>
+        <td className="settings-appt-type-actions-cell">
+          <button type="button" className="btn secondary" onClick={() => void openEdit(type)}>
+            Edit
+          </button>
+          {mode === 'active' ? (
+            <button
+              type="button"
+              className="btn secondary settings-appt-type-archive-btn"
+              disabled={archiveBusy}
+              onClick={() =>
+                setArchiveConfirm({ id: type.id, name: type.prettyName || type.name })
+              }
+            >
+              Archive
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={archiveBusy}
+              onClick={() => void handleRestore(type)}
+            >
+              Restore
+            </button>
+          )}
+        </td>
+      </tr>
+    );
+  };
+
+  const tableHead = (mode: 'active' | 'archived') => (
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Display name</th>
+        {mode === 'archived' ? <th>Archived on</th> : null}
+        <th>Colors</th>
+        <th>Arrival window</th>
+        <th>Request form</th>
+        <th>New patients</th>
+        <th>Order</th>
+        <th>Booking</th>
+        <th>Points</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+  );
+
+  const colSpan = listView === 'archived' ? 11 : 10;
+  const visibleTypes = listView === 'active' ? activeTypes : archivedTypesFiltered;
+
   return (
     <>
-      <div className="settings-table-container">
+      <div className="settings-appt-type-list-header">
+        <div
+          className="settings-appt-type-subtabs"
+          role="tablist"
+          aria-label="Appointment type list"
+        >
+          <button
+            type="button"
+            role="tab"
+            id="settings-appt-types-tab-active"
+            aria-selected={listView === 'active'}
+            aria-controls="settings-appt-types-panel"
+            className={`settings-appt-type-subtab${listView === 'active' ? ' settings-appt-type-subtab--active' : ''}`}
+            onClick={() => setListView('active')}
+          >
+            Active
+            <span className="settings-appt-type-subtab-count">{activeTypes.length}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="settings-appt-types-tab-archived"
+            aria-selected={listView === 'archived'}
+            aria-controls="settings-appt-types-panel"
+            className={`settings-appt-type-subtab${listView === 'archived' ? ' settings-appt-type-subtab--active' : ''}`}
+            onClick={() => setListView('archived')}
+          >
+            Archived
+            <span className="settings-appt-type-subtab-count">{archivedTypes.length}</span>
+          </button>
+        </div>
+        {listView === 'active' ? (
+          <button type="button" className="btn" onClick={openCreate}>
+            Add appointment type
+          </button>
+        ) : null}
+      </div>
+
+      <div
+        id="settings-appt-types-panel"
+        role="tabpanel"
+        aria-labelledby={listView === 'active' ? 'settings-appt-types-tab-active' : 'settings-appt-types-tab-archived'}
+        className="settings-table-container"
+      >
+        {listView === 'archived' ? (
+          <>
+            <p className="settings-muted settings-appt-types-archived-note">
+              Archived types are hidden from new booking pickers. Existing appointments still display
+              the type name and colors.
+            </p>
+            <label className="settings-appt-types-archived-search">
+              <span className="settings-label">Search archived types</span>
+              <input
+                type="search"
+                className="settings-input"
+                value={archivedSearch}
+                onChange={(e) => setArchivedSearch(e.target.value)}
+                placeholder="Filter by name…"
+                aria-label="Search archived appointment types"
+              />
+            </label>
+          </>
+        ) : null}
         <table className="settings-table settings-appt-types-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Display name</th>
-              <th>Colors</th>
-              <th>Arrival window</th>
-              <th>Request form</th>
-              <th>New patients</th>
-              <th>Order</th>
-              <th>Booking</th>
-              <th>Points</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
+          {tableHead(listView)}
           <tbody>
-            {sortedTypes.map((raw) => {
-              const type = normalizeAppointmentTypeFromApi(raw);
-              return (
-              <tr key={type.id}>
-                <td>{type.name}</td>
-                <td>{type.prettyName || type.name}</td>
-                <td>
-                  <span
-                    className="settings-appt-type-swatch"
-                    style={{
-                      background: displayColor(type),
-                      color: displayTextColor(type),
-                    }}
-                    title={`${displayColor(type)} on ${displayTextColor(type)}`}
-                  >
-                    Aa
-                  </span>
-                </td>
-                <td>{formatArrivalWindow(type.windowBeforeMinutes, type.windowAfterMinutes)}</td>
-                <td>{type.showInApptRequestForm ? 'Yes' : 'No'}</td>
-                <td>{type.newPatientAllowed ? 'Yes' : 'No'}</td>
-                <td>{type.formListOrder ?? '—'}</td>
-                <td className="settings-appt-type-flags-cell">
-                  {[
-                    appointmentTypeAllowsAllDay(type) ? 'All-day' : null,
-                    type.allowClient === false ? 'No client' : null,
-                    type.allowAlternateAddress ? 'Alt addr' : null,
-                    type.excludeFromRouting ? 'No route' : null,
-                    type.allowSchedulingOverride ? 'Sched override' : null,
-                  ]
-                    .filter(Boolean)
-                    .join(', ') || '—'}
-                </td>
-                <td>{formatPointsSummary(type)}</td>
-                <td>
-                  <button type="button" className="btn secondary" onClick={() => void openEdit(type)}>
-                    Edit
-                  </button>
+            {visibleTypes.length > 0 ? (
+              visibleTypes.map((type) => renderTypeRow(type, listView))
+            ) : (
+              <tr>
+                <td colSpan={colSpan} className="settings-muted">
+                  {listView === 'active'
+                    ? 'No active appointment types.'
+                    : archivedTypes.length === 0
+                      ? 'No archived appointment types.'
+                      : 'No archived types match your search.'}
                 </td>
               </tr>
-            );
-            })}
+            )}
           </tbody>
         </table>
       </div>
 
-      {editingId != null && draft && (
+      {modalMode != null && draft && (
         <div
           className="settings-modal-overlay"
           role="presentation"
@@ -340,7 +604,9 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
             onClick={(e) => e.stopPropagation()}
           >
             <div className="settings-modal-header">
-              <h3 id="settings-appt-type-modal-title">Edit appointment type</h3>
+              <h3 id="settings-appt-type-modal-title">
+                {modalMode === 'create' ? 'Add appointment type' : 'Edit appointment type'}
+              </h3>
               <button
                 type="button"
                 className="settings-modal-close"
@@ -360,8 +626,8 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
               ) : (
                 <>
                   <p className="settings-muted settings-appt-type-modal-intro">
-                    <strong>{editingName}</strong> — PIMS name is read-only. Arrival window controls how
-                    early or late a client may arrive relative to the scheduled time.
+                    Arrival window controls how early or late a client may arrive relative to the
+                    scheduled time.
                   </p>
 
                   {formError && (
@@ -371,6 +637,18 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
                   )}
 
                   <div className="settings-form-grid settings-appt-type-form-grid">
+                    <div className="settings-form-group settings-form-group--full">
+                      <label className="settings-label" htmlFor="appt-type-name">
+                        Name
+                      </label>
+                      <input
+                        id="appt-type-name"
+                        type="text"
+                        className="settings-input"
+                        value={draft.name}
+                        onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                      />
+                    </div>
                     <div className="settings-form-group settings-form-group--full">
                       <label className="settings-label" htmlFor="appt-type-pretty-name">
                         Display name (pretty name)
@@ -437,7 +715,7 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
                           color: normalizeHex(draft.textColor) ?? '#fff',
                         }}
                       >
-                        {draft.prettyName.trim() || editingName}
+                        {draft.prettyName.trim() || draft.name.trim() || 'Type'}
                       </span>
                     </div>
 
@@ -602,12 +880,32 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
                         <label className="settings-checkbox-label">
                           <input
                             type="checkbox"
+                            checked={draft.addressRequired}
+                            onChange={(e) =>
+                              setDraft({ ...draft, addressRequired: e.target.checked })
+                            }
+                          />
+                          Address required
+                        </label>
+                        <label className="settings-checkbox-label">
+                          <input
+                            type="checkbox"
                             checked={draft.excludeFromRouting}
                             onChange={(e) =>
                               setDraft({ ...draft, excludeFromRouting: e.target.checked })
                             }
                           />
                           Exclude from routing
+                        </label>
+                        <label className="settings-checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={draft.usesLegacyRouting}
+                            onChange={(e) =>
+                              setDraft({ ...draft, usesLegacyRouting: e.target.checked })
+                            }
+                          />
+                          Legacy routing
                         </label>
                         <label className="settings-checkbox-label">
                           <input
@@ -620,6 +918,10 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
                           Allow scheduling override
                         </label>
                       </div>
+                      <p className="settings-muted settings-appt-type-window-hint">
+                        Address required means the visit must have a linked client with an address, or an
+                        alternate address when alternate address is allowed.
+                      </p>
                       <p className="settings-muted settings-appt-type-window-hint">
                         Scheduling override is shown in the scheduler UI only; appointment create/update
                         APIs do not validate this flag.
@@ -643,10 +945,8 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
                           </label>
                           <input
                             id="appt-type-points"
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={0.5}
+                            type="text"
+                            inputMode="decimal"
                             className="settings-input settings-input--narrow"
                             value={draft.points}
                             onChange={(e) => setDraft({ ...draft, points: e.target.value })}
@@ -663,7 +963,13 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
 
                   <div className="settings-modal-actions">
                     <button type="button" className="btn" onClick={() => void handleSave()} disabled={saving}>
-                      {saving ? 'Saving…' : 'Save changes'}
+                      {saving
+                        ? modalMode === 'create'
+                          ? 'Creating…'
+                          : 'Saving…'
+                        : modalMode === 'create'
+                          ? 'Create appointment type'
+                          : 'Save changes'}
                     </button>
                     <button
                       type="button"
@@ -680,6 +986,53 @@ export default function SettingsAppointmentTypes({ types, onTypesChange, onMessa
           </div>
         </div>
       )}
+
+      {archiveConfirm ? (
+        <div
+          className="settings-modal-overlay"
+          role="presentation"
+          onClick={() => {
+            if (!archiveBusy) setArchiveConfirm(null);
+          }}
+        >
+          <div
+            className="settings-modal settings-appt-type-archive-modal"
+            role="alertdialog"
+            aria-labelledby="settings-appt-type-archive-title"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="settings-modal-header">
+              <h3 id="settings-appt-type-archive-title">Archive appointment type?</h3>
+            </div>
+            <div className="settings-modal-body">
+              <p>
+                Archive <strong>{archiveConfirm.name}</strong>? It will not appear in scheduler or
+                manual booking pickers for new appointments. Existing appointments on the calendar
+                are not affected.
+              </p>
+              <div className="settings-modal-actions">
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={archiveBusy}
+                  onClick={() => void handleArchiveConfirm()}
+                >
+                  {archiveBusy ? 'Archiving…' : 'Archive'}
+                </button>
+                <button
+                  type="button"
+                  className="btn secondary"
+                  disabled={archiveBusy}
+                  onClick={() => setArchiveConfirm(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

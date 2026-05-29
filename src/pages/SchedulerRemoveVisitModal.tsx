@@ -66,7 +66,7 @@ export function SchedulerRemoveVisitModal({
       const updated = await cancelAppointment(
         appt.id,
         { cancellationFlag: true, cancellationReason: trimmed ?? null },
-        { practiceId }
+        { practiceId, appt }
       );
       onRemoved(updated);
       onClose();
