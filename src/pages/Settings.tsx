@@ -1,5 +1,5 @@
 // src/pages/Settings.tsx
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../auth/useAuth';
 import {
   fetchAllAppointmentTypes,
@@ -49,6 +49,13 @@ import {
   type EmployeeGoalsResponseDto,
   type DailyGoalOverride,
 } from '../api/employeeGoals';
+import {
+  fetchStaffDoctorAssignments,
+  fetchDoctorAssignmentDoctors,
+  saveUserDoctorAssignments,
+  type StaffDoctorAssignments,
+  type DoctorAssignmentPerson,
+} from '../api/doctorAssignments';
 import { DepotLocationField } from '../components/DepotLocationField';
 import './Settings.css';
 
@@ -75,18 +82,47 @@ function formatEmployeeName(emp: Employee): string {
     : `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || `Employee ${emp.id}`;
 }
 
+type SettingsTab =
+  | 'appointment-types'
+  | 'employee-types'
+  | 'employee-zones'
+  | 'employee-schedule'
+  | 'inventory'
+  | 'employee-images'
+  | 'employee-goals'
+  | 'doctor-settings'
+  | 'reminders';
+
+const EMPLOYEE_SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
+  { id: 'employee-types', label: 'Employee Appointment Types' },
+  { id: 'employee-zones', label: 'Employee Zones' },
+  { id: 'employee-schedule', label: 'Employee Schedule' },
+  { id: 'employee-images', label: 'Employee Images' },
+  { id: 'employee-goals', label: 'Employee Goals' },
+  { id: 'doctor-settings', label: 'Doctor Settings' },
+];
+
+function isEmployeeSettingsTab(tab: SettingsTab): boolean {
+  return EMPLOYEE_SETTINGS_TABS.some((t) => t.id === tab);
+}
+
+function formatDoctorAssignmentName(doc: DoctorAssignmentPerson): string {
+  return (
+    doc.fullName?.trim() ||
+    `${doc.firstName ?? ''} ${doc.lastName ?? ''}`.trim() ||
+    `Doctor ${doc.id}`
+  );
+}
+
+function formatStaffDoctorAssignmentLabel(row: StaffDoctorAssignments): string {
+  return row.employeeName?.trim() || row.email?.trim() || `User ${row.userId}`;
+}
+
 export default function Settings() {
   const { role } = useAuth() as any;
-  const [activeTab, setActiveTab] = useState<
-    | 'appointment-types'
-    | 'employee-types'
-    | 'employee-zones'
-    | 'employee-schedule'
-    | 'inventory'
-    | 'employee-images'
-    | 'employee-goals'
-    | 'reminders'
-  >('appointment-types');
+  const [activeTab, setActiveTab] = useState<SettingsTab>('appointment-types');
+  const [employeeMenuOpen, setEmployeeMenuOpen] = useState(false);
+  const employeeMenuRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -152,6 +188,15 @@ export default function Settings() {
   const [goalsSaving, setGoalsSaving] = useState(false);
   const [goalsLoadError, setGoalsLoadError] = useState<string | null>(null);
 
+  // Doctor settings tab state
+  const [doctorAssignmentStaff, setDoctorAssignmentStaff] = useState<StaffDoctorAssignments[]>([]);
+  const [doctorAssignmentDoctors, setDoctorAssignmentDoctors] = useState<DoctorAssignmentPerson[]>([]);
+  const [selectedStaffUserId, setSelectedStaffUserId] = useState<number | null>(null);
+  const [draftDoctorIds, setDraftDoctorIds] = useState<number[]>([]);
+  const [doctorAssignmentsLoading, setDoctorAssignmentsLoading] = useState(false);
+  const [doctorAssignmentsSaving, setDoctorAssignmentsSaving] = useState(false);
+  const [doctorAssignmentsLoadError, setDoctorAssignmentsLoadError] = useState<string | null>(null);
+
   // Reminders tab state
   const [reminderForm, setReminderForm] = useState<ReminderSettingsForm>({
     enableEmail: true,
@@ -173,6 +218,22 @@ export default function Settings() {
   const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
   const isAdmin = roles.some((r) => ['admin', 'superadmin'].includes(String(r).toLowerCase()));
 
+  useEffect(() => {
+    if (!employeeMenuOpen) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (employeeMenuRef.current && !employeeMenuRef.current.contains(event.target as Node)) {
+        setEmployeeMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [employeeMenuOpen]);
+
+  const selectSettingsTab = (tab: SettingsTab) => {
+    setActiveTab(tab);
+    setEmployeeMenuOpen(false);
+  };
+
   // Sort employees: providers first, then by name
   const sortedEmployees = useMemo(() => {
     return [...employees].sort((a, b) => {
@@ -186,6 +247,26 @@ export default function Settings() {
       return formatEmployeeName(a).localeCompare(formatEmployeeName(b));
     });
   }, [employees]);
+
+  const sortedDoctorAssignmentStaff = useMemo(() => {
+    return [...doctorAssignmentStaff].sort((a, b) =>
+      formatStaffDoctorAssignmentLabel(a).localeCompare(formatStaffDoctorAssignmentLabel(b))
+    );
+  }, [doctorAssignmentStaff]);
+
+  const doctorAssignmentDoctorsById = useMemo(() => {
+    return new Map(doctorAssignmentDoctors.map((doc) => [doc.id, doc]));
+  }, [doctorAssignmentDoctors]);
+
+  const availableDoctorsToAdd = useMemo(() => {
+    const assigned = new Set(draftDoctorIds);
+    return doctorAssignmentDoctors.filter((doc) => !assigned.has(doc.id));
+  }, [doctorAssignmentDoctors, draftDoctorIds]);
+
+  const selectedStaffDoctorAssignment = useMemo(
+    () => doctorAssignmentStaff.find((row) => row.userId === selectedStaffUserId) ?? null,
+    [doctorAssignmentStaff, selectedStaffUserId]
+  );
 
   // Sort appointment types: first by showInApptRequestForm (true first), then by formListOrder
   const sortedAppointmentTypes = useMemo(() => {
@@ -225,6 +306,33 @@ export default function Settings() {
       })
       .finally(() => {
         if (!cancelled) setReminderLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, activeTab]);
+
+  useEffect(() => {
+    if (!isAdmin || activeTab !== 'doctor-settings') return;
+    let cancelled = false;
+    setDoctorAssignmentsLoadError(null);
+    setDoctorAssignmentsLoading(true);
+    Promise.all([fetchStaffDoctorAssignments(), fetchDoctorAssignmentDoctors()])
+      .then(([staff, doctors]) => {
+        if (cancelled) return;
+        setDoctorAssignmentStaff(staff);
+        setDoctorAssignmentDoctors(doctors);
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setDoctorAssignmentsLoadError(
+          err?.response?.data?.message || err?.message || 'Failed to load doctor assignments'
+        );
+        setDoctorAssignmentStaff([]);
+        setDoctorAssignmentDoctors([]);
+      })
+      .finally(() => {
+        if (!cancelled) setDoctorAssignmentsLoading(false);
       });
     return () => {
       cancelled = true;
@@ -366,6 +474,50 @@ export default function Settings() {
       setError(err?.response?.data?.message || err?.message || 'Failed to update goals');
     } finally {
       setGoalsSaving(false);
+    }
+  };
+
+  const handleSelectStaffForDoctorSettings = (userId: number) => {
+    setSelectedStaffUserId(userId);
+    const row = doctorAssignmentStaff.find((s) => s.userId === userId);
+    setDraftDoctorIds(row ? [...row.doctorIds] : []);
+  };
+
+  const handleAddDoctorAssignment = (doctorId: number) => {
+    setDraftDoctorIds((ids) => (ids.includes(doctorId) ? ids : [...ids, doctorId]));
+  };
+
+  const handleRemoveDoctorAssignment = (doctorId: number) => {
+    setDraftDoctorIds((ids) => ids.filter((id) => id !== doctorId));
+  };
+
+  const moveDoctorAssignment = (index: number, direction: -1 | 1) => {
+    setDraftDoctorIds((ids) => {
+      const next = [...ids];
+      const target = index + direction;
+      if (target < 0 || target >= next.length) return ids;
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
+  const handleSaveDoctorAssignments = async () => {
+    if (selectedStaffUserId == null) return;
+    setDoctorAssignmentsSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await saveUserDoctorAssignments(selectedStaffUserId, { doctorIds: draftDoctorIds });
+      const staff = await fetchStaffDoctorAssignments();
+      setDoctorAssignmentStaff(staff);
+      const updated = staff.find((s) => s.userId === selectedStaffUserId);
+      if (updated) setDraftDoctorIds([...updated.doctorIds]);
+      setSuccess('Doctor assignments saved successfully');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to save doctor assignments');
+    } finally {
+      setDoctorAssignmentsSaving(false);
     }
   };
 
@@ -1093,49 +1245,50 @@ export default function Settings() {
         <div className="settings-tabs">
           <button
             className={`settings-tab ${activeTab === 'appointment-types' ? 'active' : ''}`}
-            onClick={() => setActiveTab('appointment-types')}
+            onClick={() => selectSettingsTab('appointment-types')}
           >
             Appointment Types
           </button>
-          <button
-            className={`settings-tab ${activeTab === 'employee-types' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-types')}
-          >
-            Employee Appointment Types
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'employee-zones' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-zones')}
-          >
-            Employee Zones
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'employee-schedule' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-schedule')}
-          >
-            Employee Schedule
-          </button>
+          <div className="settings-tab-dropdown" ref={employeeMenuRef}>
+            <button
+              type="button"
+              className={`settings-tab settings-tab-dropdown-trigger ${
+                isEmployeeSettingsTab(activeTab) ? 'active' : ''
+              }`}
+              onClick={() => setEmployeeMenuOpen((open) => !open)}
+              aria-expanded={employeeMenuOpen}
+              aria-haspopup="true"
+            >
+              Employees
+              <span className={`settings-tab-chevron ${employeeMenuOpen ? 'open' : ''}`} aria-hidden>
+                ▾
+              </span>
+            </button>
+            {employeeMenuOpen && (
+              <div className="settings-tab-dropdown-menu" role="menu">
+                {EMPLOYEE_SETTINGS_TABS.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="menuitem"
+                    className={`settings-tab-dropdown-item ${activeTab === tab.id ? 'active' : ''}`}
+                    onClick={() => selectSettingsTab(tab.id)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button
             className={`settings-tab ${activeTab === 'inventory' ? 'active' : ''}`}
-            onClick={() => setActiveTab('inventory')}
+            onClick={() => selectSettingsTab('inventory')}
           >
             Inventory
           </button>
           <button
-            className={`settings-tab ${activeTab === 'employee-images' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-images')}
-          >
-            Employee Images
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'employee-goals' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-goals')}
-          >
-            Employee Goals
-          </button>
-          <button
             className={`settings-tab ${activeTab === 'reminders' ? 'active' : ''}`}
-            onClick={() => setActiveTab('reminders')}
+            onClick={() => selectSettingsTab('reminders')}
           >
             Reminders
           </button>
@@ -1828,6 +1981,169 @@ export default function Settings() {
                         disabled={goalsSaving}
                       >
                         {goalsSaving ? 'Saving...' : 'Save Goals'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Doctor Settings Tab */}
+        {activeTab === 'doctor-settings' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Doctor Settings</h2>
+            <p className="settings-section-description">
+              Assign staff users to one or more doctors. The first doctor is the primary contact for client
+              emails and SMS; all assigned doctors receive internal notifications for that staff member.
+            </p>
+
+            {doctorAssignmentsLoadError && (
+              <div className="settings-message settings-error-message">
+                {doctorAssignmentsLoadError}
+                <button onClick={() => setDoctorAssignmentsLoadError(null)} className="settings-close">
+                  ×
+                </button>
+              </div>
+            )}
+
+            {doctorAssignmentsLoading ? (
+              <div className="settings-loading">
+                <div className="settings-spinner"></div>
+                <span>Loading staff and doctors...</span>
+              </div>
+            ) : (
+              <>
+                <div className="settings-form-group">
+                  <label className="settings-label">Select staff member</label>
+                  <select
+                    className="settings-select"
+                    value={selectedStaffUserId ?? ''}
+                    onChange={(e) => {
+                      const userId = Number(e.target.value);
+                      if (userId) {
+                        handleSelectStaffForDoctorSettings(userId);
+                      } else {
+                        setSelectedStaffUserId(null);
+                        setDraftDoctorIds([]);
+                      }
+                    }}
+                  >
+                    <option value="">-- Select a staff member --</option>
+                    {sortedDoctorAssignmentStaff.map((row) => (
+                      <option key={row.userId} value={row.userId}>
+                        {formatStaffDoctorAssignmentLabel(row)}
+                        {row.email && row.employeeName ? ` (${row.email})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {selectedStaffDoctorAssignment && (
+                  <div className="settings-card">
+                    <h3 className="settings-card-title">
+                      {formatStaffDoctorAssignmentLabel(selectedStaffDoctorAssignment)}
+                    </h3>
+                    {selectedStaffDoctorAssignment.email && (
+                      <p className="settings-card-subtitle">{selectedStaffDoctorAssignment.email}</p>
+                    )}
+
+                    <h4 className="settings-card-title" style={{ marginTop: '16px', fontSize: '16px' }}>
+                      Assigned doctors
+                    </h4>
+                    <p className="settings-muted" style={{ marginBottom: '12px' }}>
+                      Order matters: the first doctor is the primary contact for client emails and SMS.
+                    </p>
+
+                    {draftDoctorIds.length === 0 ? (
+                      <p className="settings-muted" style={{ marginBottom: '16px' }}>
+                        No doctors assigned. Add a doctor below.
+                      </p>
+                    ) : (
+                      <div className="settings-doctor-assignment-list">
+                        {draftDoctorIds.map((doctorId, index) => {
+                          const doctor = doctorAssignmentDoctorsById.get(doctorId);
+                          const label = doctor
+                            ? formatDoctorAssignmentName(doctor)
+                            : `Doctor ${doctorId}`;
+                          return (
+                            <div key={doctorId} className="settings-doctor-assignment-row">
+                              <div className="settings-doctor-assignment-info">
+                                <strong>{label}</strong>
+                                {index === 0 && (
+                                  <span className="settings-doctor-assignment-badge">Primary</span>
+                                )}
+                              </div>
+                              <div className="settings-action-buttons">
+                                <button
+                                  type="button"
+                                  className="btn secondary"
+                                  onClick={() => moveDoctorAssignment(index, -1)}
+                                  disabled={index === 0}
+                                  aria-label={`Move ${label} up`}
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn secondary"
+                                  onClick={() => moveDoctorAssignment(index, 1)}
+                                  disabled={index === draftDoctorIds.length - 1}
+                                  aria-label={`Move ${label} down`}
+                                >
+                                  ↓
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn secondary"
+                                  onClick={() => handleRemoveDoctorAssignment(doctorId)}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div className="settings-form-group" style={{ marginTop: '20px' }}>
+                      <label className="settings-label">Add doctor</label>
+                      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                        <select
+                          className="settings-select"
+                          style={{ flex: '1 1 280px', maxWidth: '100%' }}
+                          defaultValue=""
+                          key={draftDoctorIds.join(',')}
+                          onChange={(e) => {
+                            const doctorId = Number(e.target.value);
+                            if (doctorId) handleAddDoctorAssignment(doctorId);
+                            e.target.value = '';
+                          }}
+                          disabled={availableDoctorsToAdd.length === 0}
+                        >
+                          <option value="">
+                            {availableDoctorsToAdd.length === 0
+                              ? 'All doctors assigned'
+                              : '-- Select a doctor to add --'}
+                          </option>
+                          {availableDoctorsToAdd.map((doc) => (
+                            <option key={doc.id} value={doc.id}>
+                              {formatDoctorAssignmentName(doc)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="settings-action-bar">
+                      <button
+                        className="btn"
+                        onClick={handleSaveDoctorAssignments}
+                        disabled={doctorAssignmentsSaving}
+                      >
+                        {doctorAssignmentsSaving ? 'Saving...' : 'Save Assignments'}
                       </button>
                     </div>
                   </div>
