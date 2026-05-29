@@ -21,6 +21,7 @@ const MembershipPurchasesAnalyticsPage = React.lazy(
 );
 const CancellationsAnalyticsPage = React.lazy(() => import('./pages/CancellationsAnalytics'));
 const PatientDormancyAnalyticsPage = React.lazy(() => import('./pages/PatientDormancyAnalytics'));
+const AppointmentFormDraftsPage = React.lazy(() => import('./pages/AppointmentFormDraftsPage'));
 
 export type AnalyticsTabPage = {
   path: string;
@@ -34,6 +35,12 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
   { path: 'vsd', label: 'Veterinary Services Delivered', element: <VeterinaryServicesDeliveredPage />, role: ['employee', 'admin', 'superadmin'] },
   { path: 'time-spent', label: 'Time Spent', element: <TimeSpentAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
   { path: 'appointments', label: 'Appointments', element: <RoutingAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
+  {
+    path: 'appointment-drafts',
+    label: 'Appt form drafts',
+    element: <AppointmentFormDraftsPage />,
+    role: ['employee', 'admin', 'superadmin'],
+  },
   { path: 'cancellations', label: 'Cancellations', element: <CancellationsAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
   { path: 'square-reconciliation', label: 'Square Reconciliation', element: <SquareReconciliationPage />, role: ['superadmin'] },
   { path: 'openphone-calls', label: 'OpenPhone Calls', element: <OpenPhoneCallsAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },

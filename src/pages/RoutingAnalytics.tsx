@@ -142,13 +142,35 @@ function isEuthanasiaRequestSubmission(requestData: Record<string, unknown>): bo
   );
 }
 
+function isCompletedSubmission(item: AppointmentRequestSubmissionItem): boolean {
+  return item.kind == null || item.kind === 'submission';
+}
+
+function isAbandonedSubmission(item: AppointmentRequestSubmissionItem): boolean {
+  return item.kind === 'abandoned';
+}
+
+function classifyClientType(requestData: Record<string, unknown>): 'new' | 'existing' | 'unknown' {
+  const ct = requestData.clientType;
+  if (ct === 'new' || ct === 'existing') return ct;
+  const formFlow = requestData.formFlow;
+  if (formFlow && typeof formFlow === 'object') {
+    const startedAsExisting = (formFlow as Record<string, unknown>).startedAsExistingClient;
+    if (startedAsExisting === true) return 'existing';
+    if (startedAsExisting === false) return 'new';
+  }
+  return 'unknown';
+}
+
 function classifySubmission(item: AppointmentRequestSubmissionItem): {
   isEuth: boolean;
+  clientType: 'new' | 'existing' | 'unknown';
   localDay: string;
 } {
   const rd = item.requestData ?? {};
   return {
     isEuth: isEuthanasiaRequestSubmission(rd),
+    clientType: classifyClientType(rd),
     localDay: dayjs(item.submittedAt).format('YYYY-MM-DD'),
   };
 }
@@ -505,15 +527,24 @@ export default function RoutingAnalyticsPage() {
 
   const requestSubmissionStats = useMemo(() => {
     const items = requestSubmissions ?? [];
-    const dateSet = new Set(dates);
     const byDay = new Map<string, { total: number; euth: number; nonEuth: number }>();
     for (const d of dates) byDay.set(d, { total: 0, euth: 0, nonEuth: 0 });
     let total = 0;
     let euth = 0;
+    let newClient = 0;
+    let existingClient = 0;
+    let abandoned = 0;
     for (const item of items) {
-      const { isEuth, localDay } = classifySubmission(item);
+      const { isEuth, clientType, localDay } = classifySubmission(item);
+      if (isAbandonedSubmission(item)) {
+        abandoned += 1;
+        continue;
+      }
+      if (!isCompletedSubmission(item)) continue;
       total += 1;
       if (isEuth) euth += 1;
+      if (clientType === 'new') newClient += 1;
+      else if (clientType === 'existing') existingClient += 1;
       const row = byDay.get(localDay);
       if (row) {
         row.total += 1;
@@ -522,11 +553,23 @@ export default function RoutingAnalyticsPage() {
       }
     }
     const nonEuth = total - euth;
+    const attempted = total + abandoned;
+    const completionRate = attempted > 0 ? (total / attempted) * 100 : null;
     const chartRows = dates.map((date) => {
       const r = byDay.get(date) ?? { total: 0, euth: 0, nonEuth: 0 };
       return { date, totalBookedRequests: r.total, euthRequests: r.euth, nonEuthRequests: r.nonEuth };
     });
-    return { total, euth, nonEuth, chartRows };
+    return {
+      total,
+      euth,
+      nonEuth,
+      newClient,
+      existingClient,
+      abandoned,
+      attempted,
+      completionRate,
+      chartRows,
+    };
   }, [requestSubmissions, dates]);
 
   const overviewChartData = useMemo(() => {
@@ -1785,9 +1828,10 @@ export default function RoutingAnalyticsPage() {
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           GET /appointments/request-submissions (practiceId={APPOINTMENT_REQUEST_PRACTICE_ID}, from / to in
-          ISO UTC derived from the selected local dates). Each row is one persisted public booking request;
-          euthanasia-related vs other is inferred from <code>appointmentType</code> and{' '}
-          <code>petSpecificData</code> text fields.
+          ISO UTC derived from the selected local dates). Completed submissions (<code>kind: submission</code>)
+          are counted for totals, client type, and euthanasia breakdown; abandoned form sessions (
+          <code>kind: abandoned</code>) are counted separately. Attempted = completed + abandoned; completion
+          rate = completed ÷ attempted.
         </Typography>
 
         {requestSubmissionsError && (
@@ -1805,104 +1849,133 @@ export default function RoutingAnalyticsPage() {
             {isSingleDay && (
               <Typography variant="body1" sx={{ mb: 2 }}>
                 Submissions for this day:{' '}
-                <strong>{requestSubmissionStats.total}</strong> total booked requests —{' '}
+                <strong>{requestSubmissionStats.attempted}</strong> attempted —{' '}
+                <strong>{requestSubmissionStats.total}</strong> completed (
+                {requestSubmissionStats.completionRate != null
+                  ? `${requestSubmissionStats.completionRate.toFixed(1)}%`
+                  : '—'}
+                ), <strong>{requestSubmissionStats.abandoned}</strong> abandoned.{' '}
+                <strong>{requestSubmissionStats.newClient}</strong> new client,{' '}
+                <strong>{requestSubmissionStats.existingClient}</strong> existing client —{' '}
                 <strong>{requestSubmissionStats.nonEuth}</strong> non-euthanasia,{' '}
                 <strong>{requestSubmissionStats.euth}</strong> euthanasia-related.
               </Typography>
             )}
 
             {!isSingleDay && (
-              <>
-                <Card sx={{ mb: 3 }}>
-                  <CardHeader
-                    title="Public appointment requests by day"
-                    subheader="Total submissions vs euthanasia-related vs other (local calendar day of submittedAt)."
-                  />
-                  <CardContent>
-                    <Box sx={{ width: '100%', height: 360 }}>
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart
-                          data={requestSubmissionStats.chartRows}
-                          margin={{ top: 8, right: 24, left: 8, bottom: 8 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                          <YAxis
-                            label={{ value: 'Submissions', angle: -90, position: 'insideLeft' }}
-                            tick={{ fontSize: 11 }}
-                            allowDecimals={false}
-                          />
-                          <Tooltip
-                            formatter={(value: unknown) =>
-                              value != null ? `${Number(value)}` : '0'
-                            }
-                            labelFormatter={(label) => String(label)}
-                          />
-                          <Legend />
-                          <Line
-                            type="monotone"
-                            dataKey="totalBookedRequests"
-                            name="Total"
-                            stroke="#1565c0"
-                            strokeWidth={2}
-                            dot={{ r: 3 }}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="nonEuthRequests"
-                            name="Non-euthanasia"
-                            stroke="#2e7d32"
-                            strokeWidth={2}
-                            dot={{ r: 3 }}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="euthRequests"
-                            name="Euthanasia-related"
-                            stroke="#c62828"
-                            strokeWidth={2}
-                            dot={{ r: 3 }}
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </Box>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader
-                    title="Submissions for selected range"
-                    subheader="Totals across all pages returned for the selected date range."
-                  />
-                  <CardContent>
-                    <TableContainer component={Paper} variant="outlined">
-                      <Table size="small">
-                        <TableHead>
-                          <TableRow>
-                            <TableCell>Category</TableCell>
-                            <TableCell align="right">Count</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          <TableRow>
-                            <TableCell>Total submissions</TableCell>
-                            <TableCell align="right">{requestSubmissionStats.total}</TableCell>
-                          </TableRow>
-                          <TableRow>
-                            <TableCell>Non-euthanasia-related</TableCell>
-                            <TableCell align="right">{requestSubmissionStats.nonEuth}</TableCell>
-                          </TableRow>
-                          <TableRow>
-                            <TableCell>Euthanasia-related</TableCell>
-                            <TableCell align="right">{requestSubmissionStats.euth}</TableCell>
-                          </TableRow>
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
-                  </CardContent>
-                </Card>
-              </>
+              <Card sx={{ mb: 3 }}>
+                <CardHeader
+                  title="Public appointment requests by day"
+                  subheader="Completed submissions vs euthanasia-related vs other (local calendar day of submittedAt)."
+                />
+                <CardContent>
+                  <Box sx={{ width: '100%', height: 360 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart
+                        data={requestSubmissionStats.chartRows}
+                        margin={{ top: 8, right: 24, left: 8, bottom: 8 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                        <YAxis
+                          label={{ value: 'Submissions', angle: -90, position: 'insideLeft' }}
+                          tick={{ fontSize: 11 }}
+                          allowDecimals={false}
+                        />
+                        <Tooltip
+                          formatter={(value: unknown) =>
+                            value != null ? `${Number(value)}` : '0'
+                          }
+                          labelFormatter={(label) => String(label)}
+                        />
+                        <Legend />
+                        <Line
+                          type="monotone"
+                          dataKey="totalBookedRequests"
+                          name="Total"
+                          stroke="#1565c0"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="nonEuthRequests"
+                          name="Non-euthanasia"
+                          stroke="#2e7d32"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="euthRequests"
+                          name="Euthanasia-related"
+                          stroke="#c62828"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </Box>
+                </CardContent>
+              </Card>
             )}
+
+            <Card>
+              <CardHeader
+                title={isSingleDay ? 'Submissions for this day' : 'Submissions for selected range'}
+                subheader="Completed submissions and abandoned sessions for the selected date range."
+              />
+              <CardContent>
+                <TableContainer component={Paper} variant="outlined">
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Category</TableCell>
+                        <TableCell align="right">Count</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      <TableRow>
+                        <TableCell>Total attempted requests</TableCell>
+                        <TableCell align="right">{requestSubmissionStats.attempted}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell>Total completed submissions</TableCell>
+                        <TableCell align="right">{requestSubmissionStats.total}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell>Completion rate</TableCell>
+                        <TableCell align="right">
+                          {requestSubmissionStats.completionRate != null
+                            ? `${requestSubmissionStats.completionRate.toFixed(1)}%`
+                            : '—'}
+                        </TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell>Abandoned submissions</TableCell>
+                        <TableCell align="right">{requestSubmissionStats.abandoned}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell>New client requests</TableCell>
+                        <TableCell align="right">{requestSubmissionStats.newClient}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell>Existing client requests</TableCell>
+                        <TableCell align="right">{requestSubmissionStats.existingClient}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell>Non-euthanasia-related</TableCell>
+                        <TableCell align="right">{requestSubmissionStats.nonEuth}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell>Euthanasia-related</TableCell>
+                        <TableCell align="right">{requestSubmissionStats.euth}</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </CardContent>
+            </Card>
           </>
         )}
     </Box>

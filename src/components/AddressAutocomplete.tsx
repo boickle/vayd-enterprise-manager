@@ -34,6 +34,8 @@ type AddressAutocompleteProps = {
   showConfirmedMessage?: boolean;
   /** Tighter input padding for dense forms. */
   compact?: boolean;
+  /** When true, closes the suggestion list and blocks reopen (e.g. while a modal is open). */
+  suppressDropdown?: boolean;
 };
 
 function newSessionToken(): string {
@@ -71,6 +73,7 @@ export function AddressAutocomplete({
   inputClassName,
   showConfirmedMessage = true,
   compact = false,
+  suppressDropdown = false,
 }: AddressAutocompleteProps) {
   const autoId = useId();
   const inputId = idProp ?? `address-autocomplete-${autoId}`;
@@ -88,6 +91,8 @@ export function AddressAutocomplete({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const skipSyncRef = useRef(false);
+  const suppressDropdownRef = useRef(suppressDropdown);
+  suppressDropdownRef.current = suppressDropdown;
 
   useEffect(() => {
     if (skipSyncRef.current) {
@@ -114,8 +119,19 @@ export function AddressAutocomplete({
     setHighlightIndex(-1);
   }, []);
 
+  useEffect(() => {
+    if (suppressDropdown) {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      clearSuggestions();
+    }
+  }, [suppressDropdown, clearSuggestions]);
+
   const fetchSuggestions = useCallback(
     async (query: string) => {
+      if (suppressDropdownRef.current) {
+        clearSuggestions();
+        return;
+      }
       if (query.trim().length < 3) {
         clearSuggestions();
         return;
@@ -124,6 +140,10 @@ export function AddressAutocomplete({
       try {
         const token = ensureSessionToken();
         const results = await publicGeoAutocomplete(query.trim(), token, { country: 'US' });
+        if (suppressDropdownRef.current) {
+          clearSuggestions();
+          return;
+        }
         setSuggestions(results);
         setOpen(results.length > 0);
         setHighlightIndex(-1);
@@ -160,6 +180,7 @@ export function AddressAutocomplete({
   };
 
   const handleFocus = () => {
+    if (suppressDropdownRef.current) return;
     ensureSessionToken();
     if (inputValue.trim().length >= 3 && suggestions.length > 0) {
       setOpen(true);
@@ -206,6 +227,10 @@ export function AddressAutocomplete({
     const related = e.relatedTarget as Node | null;
     if (related && containerRef.current?.contains(related)) return;
     setTimeout(() => {
+      if (suppressDropdownRef.current) {
+        clearSuggestions();
+        return;
+      }
       setOpen(false);
       // Browser autofill can populate the input without selecting a suggestion.
       if (!placeSelected && inputValue.trim().length >= 3 && !isAddressComplete(value, singleLine)) {
@@ -300,7 +325,7 @@ export function AddressAutocomplete({
           Type at least 3 characters to search
         </div>
       )}
-      {open && suggestions.length > 0 && (
+      {open && !suppressDropdown && suggestions.length > 0 && (
         <ul
           id={listboxId}
           role="listbox"

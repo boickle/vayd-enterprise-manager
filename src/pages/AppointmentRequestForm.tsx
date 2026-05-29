@@ -37,7 +37,10 @@ import {
   type AppointmentType,
 } from '../api/publicAppointments';
 import { trackEvent } from '../utils/analytics';
-import { getZoneSearchBufferMiles, isProduction } from '../utils/env';
+import { useAppointmentFormDraftPersistence } from '../hooks/useAppointmentFormDraftPersistence';
+import type { AppointmentFormDraftSnapshotInput } from '../utils/appointmentFormDraftSnapshot';
+import { ClientLoginForm } from '../components/ClientLoginForm';
+import { getZoneSearchBufferMiles, isCreateClientEnabled, isProduction } from '../utils/env';
 import { listMembershipTransactions } from '../api/membershipTransactions';
 import MembershipSignup from './MembershipSignup';
 import MembershipPayment from './MembershipPayment';
@@ -319,13 +322,6 @@ function getAppointmentFormStepName(page: Page): string {
   }
 }
 
-function createAppointmentFormSessionId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return `appt-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
 const ZONE_NOT_SERVICED_SERVICE_URL = 'www.vetatyourdoor.com/service-area';
 const ZONE_NOT_SERVICED_CALL_TEXT = 'call or text us at ';
 const ZONE_NOT_SERVICED_PHONE = '(207) 536-8387';
@@ -510,11 +506,41 @@ export default function AppointmentRequestForm() {
   const [serviceMinutesUsed, setServiceMinutesUsed] = useState<number | null>(null); // Service minutes used for routing request
   const [showExistingClientModal, setShowExistingClientModal] = useState(false); // Modal for existing client notification
   const [emailCheckForModal, setEmailCheckForModal] = useState<{ exists: boolean; hasAccount: boolean } | null>(null); // Store email check result for modal
+  const [existingClientModalView, setExistingClientModalView] = useState<'message' | 'login'>('message');
   const lastCheckedAddressRef = useRef<string>(''); // Track last checked address to avoid duplicate zone checks
   const clientLocationRef = useRef<{ lat?: number; lon?: number; address?: string }>({}); // Store client location for veterinarian lookup
   const [speciesList, setSpeciesList] = useState<Array<{ id: number; name: string; prettyName?: string; showInUi?: boolean }>>([]); // List of available species
   const [loadingSpecies, setLoadingSpecies] = useState(false);
   const [clientLocationReady, setClientLocationReady] = useState(false); // Track when client location is available for veterinarian fetch
+  const openExistingClientModal = (
+    result: { exists: boolean; hasAccount: boolean },
+    view: 'message' | 'login' = 'message',
+  ) => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    setEmailCheckForModal(result);
+    setExistingClientModalView(result.hasAccount ? 'login' : view);
+    setShowExistingClientModal(true);
+  };
+
+  const closeExistingClientModal = () => {
+    setShowExistingClientModal(false);
+    setEmailCheckForModal(null);
+    setExistingClientModalView('message');
+  };
+
+  const handleExistingClientLoginSuccess = () => {
+    closeExistingClientModal();
+    setEmailCheckResult(null);
+  };
+
+  const navigateToCreateClient = () => {
+    const email = formData.email.trim();
+    closeExistingClientModal();
+    navigate('/create-client', { state: email ? { email } : undefined });
+  };
+
   const [showMembershipModal, setShowMembershipModal] = useState(false);
   const [selectedMembershipPetId, setSelectedMembershipPetId] = useState<string | null>(null);
   type MembershipModalStep = 'choose-pet' | 'signup' | 'payment' | 'success';
@@ -537,15 +563,18 @@ export default function AppointmentRequestForm() {
   const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
   const zoneSearchBufferMiles = getZoneSearchBufferMiles();
 
-  const formSessionIdRef = useRef(createAppointmentFormSessionId());
-  const formCompletedRef = useRef(false);
-  const abandonReportedRef = useRef(false);
   const currentPageRef = useRef<Page>(currentPage);
   const isLoggedInRef = useRef(isLoggedIn);
   const haveUsedServicesBeforeRef = useRef(formData.haveUsedServicesBefore);
+  const formDataRef = useRef(formData);
+  const userEmailRef = useRef(userEmail);
+  const userIdRef = useRef(userId);
   currentPageRef.current = currentPage;
   isLoggedInRef.current = isLoggedIn;
   haveUsedServicesBeforeRef.current = formData.haveUsedServicesBefore;
+  formDataRef.current = formData;
+  userEmailRef.current = userEmail;
+  userIdRef.current = userId;
 
   const getFormAnalyticsContext = useCallback(() => {
     const page = currentPageRef.current;
@@ -567,16 +596,63 @@ export default function AppointmentRequestForm() {
     [getFormAnalyticsContext]
   );
 
-  const trackFormAbandoned = useCallback(
+  const gaAbandonTrackedRef = useRef(false);
+
+  const getDraftSnapshotInput = useCallback((): AppointmentFormDraftSnapshotInput => {
+    const fd = formDataRef.current;
+    return {
+      email: fd.email,
+      userEmail: userEmailRef.current,
+      fullName: fd.fullName,
+      haveUsedServicesBefore: fd.haveUsedServicesBefore,
+      phoneNumbers: fd.phoneNumbers,
+      bestPhoneNumber: fd.bestPhoneNumber,
+      canWeText: fd.canWeText,
+      physicalAddress: fd.physicalAddress,
+      newPhysicalAddress: fd.newPhysicalAddress,
+      isThisTheAddressWhereWeWillCome: fd.isThisTheAddressWhereWeWillCome,
+      selectedPetIds: fd.selectedPetIds,
+      newClientPets: fd.newClientPets,
+      existingClientNewPets: fd.existingClientNewPets,
+      petSpecificData: fd.petSpecificData as Record<string, unknown> | undefined,
+      howSoon: fd.howSoon,
+      serviceArea: fd.serviceArea,
+      serviceAreaVisit: fd.serviceAreaVisit,
+      lookingForEuthanasia: fd.lookingForEuthanasia,
+      lookingForEuthanasiaExisting: fd.lookingForEuthanasiaExisting,
+      preferredDoctor: fd.preferredDoctor,
+      preferredDoctorExisting: fd.preferredDoctorExisting,
+      visitDetails: fd.visitDetails,
+      needsUrgentScheduling: fd.needsUrgentScheduling,
+      preferredDateTime: fd.preferredDateTime,
+      preferredDateTimeVisit: fd.preferredDateTime,
+      selectedDateTimeSlots: fd.selectedDateTimeSlots,
+      selectedDateTimeSlotsVisit: fd.selectedDateTimeSlotsVisit,
+      membershipInterest: fd.membershipInterest,
+      anythingElse: fd.schedulingNotes,
+      isLoggedIn: isLoggedInRef.current,
+    };
+  }, []);
+
+  const trackGaAbandon = useCallback(
     (reason: string) => {
-      if (formCompletedRef.current || abandonReportedRef.current) return;
+      if (gaAbandonTrackedRef.current) return;
       const page = currentPageRef.current;
       if (page === 'success') return;
-      abandonReportedRef.current = true;
+      gaAbandonTrackedRef.current = true;
       trackFormEvent('appointment_form_abandoned', { abandon_reason: reason });
     },
     [trackFormEvent]
   );
+
+  const { formSessionIdRef, markFormCompleted, sendAbandon, shouldPersistDraft } =
+    useAppointmentFormDraftPersistence({
+      practiceId,
+      currentPage,
+      getSnapshotInput: getDraftSnapshotInput,
+      getStepName: (step) => getAppointmentFormStepName(step as Page),
+      trackGaAbandon,
+    });
 
   useEffect(() => {
     trackFormEvent('appointment_form_started', {
@@ -586,14 +662,24 @@ export default function AppointmentRequestForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Intro: browser back leaves the route (e.g. after in-form Previous from new-client).
   useEffect(() => {
-    const onPageHide = () => trackFormAbandoned('page_hide');
-    window.addEventListener('pagehide', onPageHide);
-    return () => {
-      window.removeEventListener('pagehide', onPageHide);
-      trackFormAbandoned('component_unmount');
+    if (currentPage !== 'intro') return;
+
+    if (shouldPersistDraft()) {
+      const state = window.history.state;
+      if (!state?.formPage || state.formPage !== 'intro') {
+        window.history.pushState({ formPage: 'intro', preventBack: true }, '', window.location.href);
+      }
+    }
+
+    const handleIntroPopState = () => {
+      void sendAbandon('browser_back', { awaitPutThenPost: true });
     };
-  }, [trackFormAbandoned]);
+
+    window.addEventListener('popstate', handleIntroPopState);
+    return () => window.removeEventListener('popstate', handleIntroPopState);
+  }, [currentPage, shouldPersistDraft, sendAbandon]);
 
   useEffect(() => {
     if (!appointmentTypeChangeModal) return;
@@ -1551,10 +1637,12 @@ export default function AppointmentRequestForm() {
           // This effectively cancels the back button press
           window.history.pushState({ formPage: currentPage, preventBack: true }, '', window.location.href);
         } else {
-          trackFormAbandoned('browser_back');
-          // User confirmed - navigate back one more step since the browser already navigated
-          // to our pushed state (same URL), we need to go back further to the actual previous route
-          window.history.back();
+          void (async () => {
+            await sendAbandon('browser_back', { awaitPutThenPost: true });
+            // User confirmed - navigate back one more step since the browser already navigated
+            // to our pushed state (same URL), we need to go back further to the actual previous route
+            window.history.back();
+          })();
         }
         
         setTimeout(() => {
@@ -1569,7 +1657,7 @@ export default function AppointmentRequestForm() {
       clearTimeout(timeoutId);
       window.removeEventListener('popstate', handlePopState);
     };
-  }, [currentPage, trackFormAbandoned]);
+  }, [currentPage, sendAbandon]);
 
   // Load veterinarians for new clients (using public veterinarians endpoint)
   // Only fetch when address is valid (has line1, city, state, zip)
@@ -2660,9 +2748,7 @@ export default function AppointmentRequestForm() {
               setCheckingEmail(true);
               const result = await checkEmail(formData.email.trim(), practiceId);
               if (result.exists) {
-                // Email exists (with or without account) - show modal
-                setEmailCheckForModal(result);
-                setShowExistingClientModal(true);
+                openExistingClientModal(result);
                 setCheckingEmail(false);
                 return;
               }
@@ -2890,8 +2976,11 @@ export default function AppointmentRequestForm() {
     const userWantsToLeave = window.confirm(message);
     
     if (userWantsToLeave) {
-      trackFormAbandoned('exit_to_portal');
-      navigate('/client-portal');
+      void (async () => {
+        trackGaAbandon('exit_to_portal');
+        await sendAbandon('exit_to_portal', { awaitPutThenPost: true });
+        navigate('/client-portal');
+      })();
     }
   };
 
@@ -2922,7 +3011,7 @@ export default function AppointmentRequestForm() {
     try {
       const isExistingClient = isLoggedIn || formData.haveUsedServicesBefore === 'Yes';
       
-      // Build selected date/time preferences from slots
+      // Build selected date/time preferences from slots or free-text scheduling notes
       const buildDateTimePreferences = (slots: Record<string, number>) => {
         if (!slots || Object.keys(slots).length === 0) {
           console.log('[AppointmentForm] No slots selected');
@@ -2956,6 +3045,16 @@ export default function AppointmentRequestForm() {
         preferences.sort((a, b) => a.preference - b.preference);
         console.log('[AppointmentForm] Built preferences:', preferences);
         return preferences.length > 0 ? preferences : null;
+      };
+
+      const resolveSelectedDateTimePreferences = (slots: Record<string, number>) => {
+        const slotPrefs = buildDateTimePreferences(slots);
+        if (slotPrefs) return slotPrefs;
+
+        const notes = formData.schedulingNotes?.trim();
+        if (!notes) return null;
+
+        return [{ preference: 1, dateTime: notes, display: notes }];
       };
 
       // Prepare comprehensive submission payload
@@ -3272,7 +3371,7 @@ export default function AppointmentRequestForm() {
             return trimmed && trimmed.length > 0 ? trimmed : undefined;
           })(),
           selectedDateTimePreferences: (() => {
-            const prefs = buildDateTimePreferences(formData.selectedDateTimeSlots || {});
+            const prefs = resolveSelectedDateTimePreferences(formData.selectedDateTimeSlots || {});
             console.log('[AppointmentForm] Euthanasia selectedDateTimePreferences:', prefs);
             return prefs;
           })(),
@@ -3294,7 +3393,7 @@ export default function AppointmentRequestForm() {
             return trimmed && trimmed.length > 0 ? trimmed : undefined;
           })(),
           selectedDateTimePreferences: (() => {
-            const prefs = buildDateTimePreferences(formData.selectedDateTimeSlotsVisit || {});
+            const prefs = resolveSelectedDateTimePreferences(formData.selectedDateTimeSlotsVisit || {});
             console.log('[AppointmentForm] Regular visit selectedDateTimePreferences:', prefs);
             return prefs;
           })(),
@@ -3311,6 +3410,7 @@ export default function AppointmentRequestForm() {
         membershipInterest: formData.membershipInterest || undefined,
         
         // Metadata
+        formSessionId: formSessionIdRef.current,
         submittedAt: new Date().toISOString(),
         formFlow: {
           startedAsLoggedIn: isLoggedIn,
@@ -3345,7 +3445,7 @@ export default function AppointmentRequestForm() {
         ? (formData.selectedPetIds?.length || 0)
         : (formData.newClientPets?.length || 0);
       
-      formCompletedRef.current = true;
+      markFormCompleted();
       trackFormEvent('appointment_form_submitted', {
         appointment_type: appointmentType,
         pet_count: petCount,
@@ -3642,7 +3742,7 @@ export default function AppointmentRequestForm() {
                       Checking email...
                     </div>
                   )}
-                  {emailCheckResult?.exists && emailCheckResult?.hasAccount && !checkingEmail && (
+                  {emailCheckResult?.exists && !checkingEmail && (
                     <div style={{
                       marginTop: '8px',
                       padding: '10px',
@@ -3652,33 +3752,68 @@ export default function AppointmentRequestForm() {
                       fontSize: '14px',
                       color: '#92400e',
                     }}>
-                      <strong>Looks like you're already one of our clients!</strong> Please{' '}
-                      <a
-                        href="/login"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          navigate('/login');
-                        }}
-                        style={{ color: '#d97706', textDecoration: 'underline', fontWeight: 600 }}
-                      >
-                        log in
-                      </a>
-                      {isProduction() && (
+                      <strong>Looks like you&apos;re already one of our clients!</strong>{' '}
+                      {emailCheckResult.hasAccount ? (
                         <>
-                          {' '}or quickly{' '}
+                          Please{' '}
                           <a
-                            href="/create-client"
+                            href="#login"
                             onClick={(e) => {
                               e.preventDefault();
-                              navigate('/create-client');
+                              openExistingClientModal(emailCheckResult, 'login');
                             }}
                             style={{ color: '#d97706', textDecoration: 'underline', fontWeight: 600 }}
                           >
-                            create an account
+                            log in
                           </a>
+                          {isCreateClientEnabled() && (
+                            <>
+                              {' '}or{' '}
+                              <a
+                                href="#create-account"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  navigateToCreateClient();
+                                }}
+                                style={{ color: '#d97706', textDecoration: 'underline', fontWeight: 600 }}
+                              >
+                                create an account
+                              </a>
+                            </>
+                          )}
+                          {' '}using this email to request an appointment.
+                        </>
+                      ) : (
+                        <>
+                          We have <strong>{formData.email}</strong> on file.{' '}
+                          {isCreateClientEnabled() ? (
+                            <>
+                              <a
+                                href="#create-account"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  navigateToCreateClient();
+                                }}
+                                style={{ color: '#d97706', textDecoration: 'underline', fontWeight: 600 }}
+                              >
+                                Create a portal account
+                              </a>
+                              {' '}with this email to request an appointment, or{' '}
+                            </>
+                          ) : null}
+                          <a
+                            href="#existing-client-help"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              openExistingClientModal(emailCheckResult);
+                            }}
+                            style={{ color: '#d97706', textDecoration: 'underline', fontWeight: 600 }}
+                          >
+                            see your options
+                          </a>
+                          .
                         </>
                       )}
-                      {' '}using this email to access our Client Portal and request appointments.
                     </div>
                   )}
                   {errors.email && (
@@ -3763,6 +3898,7 @@ export default function AppointmentRequestForm() {
                 placeholder="Start typing your address"
                 compact={newClientCompactForm}
                 showConfirmedMessage={!newClientCompactForm}
+                suppressDropdown={showExistingClientModal || showMembershipModal || !!appointmentTypeChangeModal}
               />
               {errors.zoneNotServiced && (
                 <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
@@ -4791,6 +4927,7 @@ export default function AppointmentRequestForm() {
                     onChange={(address) => setAddressFields('newPhysicalAddress', address)}
                     error={errors['newPhysicalAddress.line1']}
                     placeholder="Start typing your address"
+                    suppressDropdown={showExistingClientModal || showMembershipModal || !!appointmentTypeChangeModal}
                   />
                   {errors.zoneNotServiced && (
                     <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
@@ -6847,7 +6984,7 @@ export default function AppointmentRequestForm() {
         </div>
       )}
 
-      {/* Existing Client Modal */}
+      {/* Existing Client Modal — login in-place so users stay on the appointment form */}
       {showExistingClientModal && (
         <div
           style={{
@@ -6860,95 +6997,217 @@ export default function AppointmentRequestForm() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            zIndex: 1000,
+            zIndex: 10050,
           }}
-          onClick={() => setShowExistingClientModal(false)}
+          onClick={closeExistingClientModal}
         >
           <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="existing-client-modal-title"
             style={{
               backgroundColor: '#fff',
               borderRadius: '12px',
               padding: '32px',
-              maxWidth: '500px',
+              maxWidth: existingClientModalView === 'login' ? '440px' : '500px',
               width: '90%',
               maxHeight: '90vh',
               overflow: 'auto',
               boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+              position: 'relative',
+              zIndex: 10051,
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 style={{ fontSize: '24px', fontWeight: 700, color: '#111827', marginBottom: '16px' }}>
-              {emailCheckForModal?.hasAccount ? 'Account Already Exists' : 'Email Already on File'}
+            <h2
+              id="existing-client-modal-title"
+              style={{ fontSize: '24px', fontWeight: 700, color: '#111827', marginBottom: '16px' }}
+            >
+              {existingClientModalView === 'login'
+                ? 'Log in to continue'
+                : emailCheckForModal?.hasAccount
+                  ? 'Account Already Exists'
+                  : 'Email Already on File'}
             </h2>
-            <p style={{ fontSize: '16px', color: '#374151', marginBottom: '24px', lineHeight: '1.5' }}>
-              {emailCheckForModal?.hasAccount ? (
-                <>
-                  We found an account associated with <strong>{formData.email}</strong>. Please log in to your account to request an appointment.
-                </>
-              ) : (
-                <>
-                  We found <strong>{formData.email}</strong> in our system. Please log in to your account or create an account to request an appointment.
-                </>
-              )}
-            </p>
-            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowExistingClientModal(false);
-                  setEmailCheckForModal(null);
-                }}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: '#f3f4f6',
-                  color: '#374151',
-                  border: 'none',
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                Cancel
-              </button>
-              {emailCheckForModal?.hasAccount || !isProduction() ? (
-                <a
-                  href="/login"
-                  style={{
-                    padding: '10px 20px',
-                    backgroundColor: '#10b981',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    textDecoration: 'none',
-                    display: 'inline-block',
-                  }}
-                >
-                  Go to Login
-                </a>
-              ) : (
-                <a
-                  href="/create-client"
-                  style={{
-                    padding: '10px 20px',
-                    backgroundColor: '#10b981',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    textDecoration: 'none',
-                    display: 'inline-block',
-                  }}
-                >
-                  Create Account
-                </a>
-              )}
-            </div>
+            {existingClientModalView === 'login' ? (
+              <>
+                <p style={{ fontSize: '15px', color: '#374151', marginBottom: '20px', lineHeight: 1.5 }}>
+                  {emailCheckForModal?.hasAccount ? (
+                    <>
+                      Log in with <strong>{formData.email}</strong> to request an appointment as an existing client.
+                      Your pets and contact info will load automatically.
+                    </>
+                  ) : (
+                    <>
+                      If you already created a portal account for <strong>{formData.email}</strong>, log in below.
+                      Otherwise, create an account first — we&apos;ll send a secure link to the email we have on file.
+                    </>
+                  )}
+                </p>
+                <ClientLoginForm
+                  initialEmail={formData.email.trim()}
+                  emailReadOnly={!!formData.email.trim()}
+                  onSuccess={handleExistingClientLoginSuccess}
+                />
+                {!emailCheckForModal?.hasAccount && isCreateClientEnabled() && (
+                  <div
+                    style={{
+                      marginTop: '20px',
+                      paddingTop: '20px',
+                      borderTop: '1px solid #e5e7eb',
+                    }}
+                  >
+                    <p style={{ fontSize: '14px', color: '#374151', marginBottom: '12px', lineHeight: 1.5 }}>
+                      No portal account yet? Create one with the email we have on file.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={navigateToCreateClient}
+                      style={{
+                        width: '100%',
+                        padding: '12px 20px',
+                        backgroundColor: '#fff',
+                        color: '#059669',
+                        border: '2px solid #10b981',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Create Account
+                    </button>
+                  </div>
+                )}
+                <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                  {!emailCheckForModal?.hasAccount && (
+                    <button
+                      type="button"
+                      onClick={() => setExistingClientModalView('message')}
+                      style={{
+                        padding: 0,
+                        background: 'none',
+                        border: 'none',
+                        color: '#059669',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        textDecoration: 'underline',
+                      }}
+                    >
+                      Back
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={closeExistingClientModal}
+                    style={{
+                      marginLeft: 'auto',
+                      padding: '10px 20px',
+                      backgroundColor: '#f3f4f6',
+                      color: '#374151',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p style={{ fontSize: '16px', color: '#374151', marginBottom: '24px', lineHeight: '1.5' }}>
+                  {emailCheckForModal?.hasAccount ? (
+                    <>
+                      We found an account associated with <strong>{formData.email}</strong>. Log in to request an
+                      appointment without leaving this form.
+                    </>
+                  ) : (
+                    <>
+                      We found <strong>{formData.email}</strong> in our system. Log in if you already have a portal
+                      account, or create one to continue.
+                    </>
+                  )}
+                </p>
+                <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={closeExistingClientModal}
+                    style={{
+                      padding: '10px 20px',
+                      backgroundColor: '#f3f4f6',
+                      color: '#374151',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  {emailCheckForModal?.hasAccount && (
+                    <button
+                      type="button"
+                      onClick={() => setExistingClientModalView('login')}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: '#10b981',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Log in
+                    </button>
+                  )}
+                  {!emailCheckForModal?.hasAccount && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setExistingClientModalView('login')}
+                        style={{
+                          padding: '10px 20px',
+                          backgroundColor: '#fff',
+                          color: '#059669',
+                          border: '2px solid #10b981',
+                          borderRadius: '8px',
+                          fontSize: '14px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Log in
+                      </button>
+                      {isCreateClientEnabled() && (
+                        <button
+                          type="button"
+                          onClick={navigateToCreateClient}
+                          style={{
+                            padding: '10px 20px',
+                            backgroundColor: '#10b981',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: '8px',
+                            fontSize: '14px',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Create Account
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

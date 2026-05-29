@@ -1,6 +1,6 @@
 // src/pages/CreateClientUser.tsx
 import { FormEvent, useEffect, useState, type CSSProperties } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { http } from '../api/http';
 
 const REQUEST_APPOINTMENT_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
@@ -8,7 +8,8 @@ const REQUEST_APPOINTMENT_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || 
 type Screen = 'form' | 'status';
 
 export default function CreateClientUser() {
-  const [email, setEmail] = useState('');
+  const location = useLocation() as { state?: { email?: string } };
+  const [email, setEmail] = useState(() => location.state?.email?.trim() ?? '');
   const [screen, setScreen] = useState<Screen>('form');
   const [pending, setPending] = useState(false);
 
