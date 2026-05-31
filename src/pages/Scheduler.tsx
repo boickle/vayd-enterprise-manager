@@ -92,6 +92,7 @@ import {
 } from '../utils/evet';
 import { buildPhoneDialHref, buildPhoneSmsHref } from '../utils/quoContact';
 import ScheduleOverrideModal from '../components/ScheduleOverrideModal';
+import { SchedulerReconcileModal } from '../components/SchedulerReconcileModal';
 import { EditVisitPreviewPopover } from '../components/EditVisitPreviewPopover';
 import { RoutingPreviewSlotPopover } from '../components/RoutingPreviewSlotPopover';
 import {
@@ -2537,6 +2538,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   /** Bump after mutations that change route order so drive/ETA refetches (avoids tying drive load to every `rawAppointments` refresh). */
   const [driveRefreshNonce, setDriveRefreshNonce] = useState(0);
   const [scheduleOverrideModal, setScheduleOverrideModal] = useState<{
+    open: boolean;
+    date?: string;
+  }>({ open: false });
+  const [reconcileModal, setReconcileModal] = useState<{
     open: boolean;
     date?: string;
   }>({ open: false });
@@ -5251,6 +5256,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             <span className="scheduler-day-off-badge" title="No shift scheduled">
                               Off
                             </span>
+                            {resolvedPrimaryProviderId.trim() ? (
+                              <button
+                                type="button"
+                                className="scheduler-day-header-btn scheduler-day-header-adjust"
+                                title={`Reconcile predicted vs actual for ${dayDt.toFormat('cccc, MMMM d')}`}
+                                onClick={() => setReconcileModal({ open: true, date: key })}
+                              >
+                                Reconcile
+                              </button>
+                            ) : null}
                             {canManualBookOnCalendar && resolvedPrimaryProviderId.trim() ? (
                               <button
                                 type="button"
@@ -5324,6 +5339,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             ) : null}
                             {officeTown ? (
                               <div className="scheduler-day-header-office">Office: {officeTown}</div>
+                            ) : null}
+                            {resolvedPrimaryProviderId.trim() ? (
+                              <button
+                                type="button"
+                                className="scheduler-day-header-btn scheduler-day-header-adjust"
+                                title={`Reconcile predicted vs actual for ${dayDt.toFormat('cccc, MMMM d')}`}
+                                onClick={() => setReconcileModal({ open: true, date: key })}
+                              >
+                                Reconcile
+                              </button>
                             ) : null}
                             {canManualBookOnCalendar && resolvedPrimaryProviderId.trim() ? (
                               <button
@@ -6545,6 +6570,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           void loadRange({ refreshDrive: true });
         }}
       />
+
+      {reconcileModal.open && reconcileModal.date && resolvedPrimaryProviderId.trim() ? (
+        <SchedulerReconcileModal
+          open={reconcileModal.open}
+          onClose={() => setReconcileModal({ open: false })}
+          date={reconcileModal.date}
+          employeeId={resolvedPrimaryProviderId.trim()}
+          practiceTz={PRACTICE_TZ}
+          predictedDayData={driveDayByDate?.get(reconcileModal.date) ?? null}
+          appointments={appointmentsByDay.get(reconcileModal.date) ?? []}
+        />
+      ) : null}
     </div>
   );
 }
