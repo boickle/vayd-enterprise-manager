@@ -341,6 +341,15 @@ export default function PimsTasksPage() {
 
   const watchingTabCount = visibleWatchingTasks.length;
 
+  const [sentListTotal, setSentListTotal] = useState(0);
+
+  const showListCapAlert = useMemo(() => {
+    if (isBucketTab(tab)) return taskSummary.assigned.total > CLIENT_FILTER_CAP;
+    if (tab === 'watching') return taskSummary.watching.total > CLIENT_FILTER_CAP;
+    if (tab === 'sent') return sentListTotal > CLIENT_FILTER_CAP;
+    return false;
+  }, [tab, taskSummary, sentListTotal]);
+
   const [items, setItems] = useState<TaskListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -525,7 +534,8 @@ export default function PimsTasksPage() {
           });
           if (cancelled) return;
           setItems(res.items);
-          setTotal(res.items.length);
+          setSentListTotal(res.total);
+          setTotal(res.total);
           setOffset(res.items.length);
         } else if (tab === 'completed') {
           const res = await listTasks({
@@ -828,13 +838,9 @@ export default function PimsTasksPage() {
         </label>
       </div>
 
-      {(isBucketTab(tab) || tab === 'watching' || tab === 'sent') && (
-        <p className="pims-tasks__count">
-          {isBucketTab(tab)
-            ? `Showing up to ${CLIENT_FILTER_CAP} open tasks assigned to you.`
-            : tab === 'watching'
-              ? `Showing open tasks you are watching that are due today or earlier (up to ${CLIENT_FILTER_CAP}).`
-              : 'Tasks you created.'}
+      {showListCapAlert && (
+        <p className="pims-tasks__count pims-tasks__count--warn" role="alert">
+          Only the most recent {CLIENT_FILTER_CAP} tasks are shown.
         </p>
       )}
       {(isBucketTab(tab) || tab === 'watching' || tab === 'sent') && myEmployeeIds.length === 0 && (

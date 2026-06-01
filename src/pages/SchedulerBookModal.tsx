@@ -21,7 +21,11 @@ import { useAuth } from '../auth/useAuth';
 import type { RescheduleVisitPatch } from '../utils/routingRescheduleIntent';
 import { Field } from '../components/Field';
 import { BookPatientRemindersLink } from '../components/BookPatientRemindersLink';
-import { appendScoutBookedDescription } from '../utils/bookedAppointmentDescription';
+import { appendBookedStaffNote } from '../utils/bookedAppointmentDescription';
+import {
+  appendRescheduledByStaffNote,
+  resolveAppointmentChangeActorFromAuth,
+} from '../utils/appointmentChangeAuditNote';
 import {
   filterAppointmentTypesByIds,
   formatSchedulerBookingApiError,
@@ -50,7 +54,9 @@ type RescheduleVisitEdit = {
   appointmentTypeId?: number;
   appointmentTypeLabel: string;
   scheduledTimeLabel: string;
+  originalAppointmentStartIso?: string;
   description: string;
+  instructions: string;
 };
 
 type RoutingBookVisitEdit = {
@@ -59,6 +65,7 @@ type RoutingBookVisitEdit = {
   selected: boolean;
   appointmentTypeId: string;
   description: string;
+  instructions: string;
 };
 
 export type SchedulerBookSlot = {
@@ -140,6 +147,7 @@ type Props = {
     forwardBookingWarning?: string;
     schedulingOverrideWarning?: string;
     schedulingOverridesApplied?: boolean;
+    savedAppointmentId?: number;
   }) => void;
 };
 
@@ -368,7 +376,12 @@ export function SchedulerBookModal({
   const [typeId, setTypeId] = useState<string>('');
   const [manualBookableTypeIds, setManualBookableTypeIds] = useState<number[] | null>(null);
 
-  const { role } = useAuth() as { role?: string | string[] };
+  const { role, token, userEmail, doctorId } = useAuth() as {
+    role?: string | string[];
+    token?: string | null;
+    userEmail?: string | null;
+    doctorId?: string | null;
+  };
   const rolesLower = useMemo(() => {
     const arr = Array.isArray(role) ? role : role != null ? [role] : [];
     return arr.map((r) => String(r).toLowerCase().trim()).filter(Boolean);
@@ -739,6 +752,15 @@ export function SchedulerBookModal({
       (v) => Number.isFinite(Number(v.appointmentId)) && v.patientId?.trim()
     );
     if (patches?.length) {
+      const routingTypeId =
+        prefill?.appointmentTypeId != null && Number.isFinite(Number(prefill.appointmentTypeId))
+          ? Number(prefill.appointmentTypeId)
+          : undefined;
+      const routingTypeRow = routingTypeId
+        ? appointmentTypes.find((t) => Number(t.id) === routingTypeId)
+        : undefined;
+      const routingTypeLabel =
+        routingTypeRow?.prettyName?.trim() || routingTypeRow?.name?.trim() || null;
       setRescheduleVisitEdits(
         patches.map((p) => {
           const tid =
@@ -749,10 +771,13 @@ export function SchedulerBookModal({
             appointmentId: Number(p.appointmentId),
             patientId: String(p.patientId).trim(),
             patientName: p.patientName?.trim() || `Pet ${p.patientId}`,
-            appointmentTypeId: tid,
-            appointmentTypeLabel: p.appointmentTypeLabel?.trim() || '—',
+            appointmentTypeId: routingTypeId ?? tid,
+            appointmentTypeLabel:
+              (routingTypeLabel ?? p.appointmentTypeLabel?.trim()) || '—',
             scheduledTimeLabel: p.scheduledTimeLabel?.trim() || '—',
+            originalAppointmentStartIso: p.originalAppointmentStartIso?.trim() || undefined,
             description: p.description?.trim() ?? '',
+            instructions: p.instructions?.trim() ?? '',
           };
         })
       );
@@ -828,6 +853,7 @@ export function SchedulerBookModal({
     bookSessionKey,
     providers,
     typesForPicker,
+    appointmentTypes,
     prefill?.appointmentTypeId,
     prefill?.defaultDescription,
     prefill?.defaultInstructions,
@@ -911,6 +937,7 @@ export function SchedulerBookModal({
         ? String(prefill.appointmentTypeId)
         : '';
     const defaultDesc = prefill.defaultDescription?.trim() ?? '';
+    const defaultStaffNotes = prefill.defaultInstructions?.trim() ?? '';
     const autoSelectOnlyPet = petChoices.length === 1;
     setRoutingBookVisitEdits(
       petChoices.map((p) => ({
@@ -919,6 +946,7 @@ export function SchedulerBookModal({
         selected: autoSelectOnlyPet,
         appointmentTypeId: defaultType,
         description: defaultDesc,
+        instructions: defaultStaffNotes,
       }))
     );
   }, [
@@ -926,6 +954,7 @@ export function SchedulerBookModal({
     prefill?.routingPreviewBook,
     prefill?.appointmentTypeId,
     prefill?.defaultDescription,
+    prefill?.defaultInstructions,
     petChoices,
     routingBookAppointmentTypes,
   ]);
@@ -1194,10 +1223,18 @@ export function SchedulerBookModal({
         await putAppointmentAlternateAddress(apptId, { addressText: trimmedAlt });
       }
 
-      const descriptionForNewBook = (raw: string) => {
+      const descriptionForNewBook = (raw: string) => raw.trim();
+
+      const bookActor = resolveAppointmentChangeActorFromAuth({
+        token,
+        userEmail,
+        doctorId,
+        providers,
+      });
+
+      const staffNotesForNewBook = (raw: string) => {
         const trimmed = raw.trim();
-        if (!bookedViaRouting) return trimmed;
-        return appendScoutBookedDescription(trimmed, practiceTz);
+        return appendBookedStaffNote(trimmed || null, bookActor, practiceTz).trim();
       };
 
       const forwardBookingToken = prefill?.forwardBookingTrackingToken?.trim();
@@ -1220,10 +1257,26 @@ export function SchedulerBookModal({
             : undefined;
           const visitPatch = visitPatches.find((v) => Number(v.appointmentId) === rescheduleId);
           const patientForPatch = edit?.patientId ?? visitPatch?.patientId ?? selectedPatientId;
+          const rawDescription = (edit?.description ?? description).trim();
+          const rawInstructions = (edit?.instructions ?? instructions).trim();
+          const originalStartIso =
+            visitPatch?.originalAppointmentStartIso?.trim() ||
+            edit?.originalAppointmentStartIso?.trim() ||
+            undefined;
           await patchAppointment(rescheduleId, {
             ...patchBody,
-            appointmentTypeId: Number(edit?.appointmentTypeId ?? typeId),
-            description: (edit?.description ?? description).trim() || null,
+            appointmentTypeId: Number(
+              (typeId && Number.isFinite(Number(typeId)) ? Number(typeId) : undefined) ??
+                edit?.appointmentTypeId
+            ),
+            description: rawDescription || null,
+            instructions:
+              appendRescheduledByStaffNote(
+                rawInstructions || null,
+                bookActor,
+                practiceTz,
+                originalStartIso
+              ).trim() || null,
             patientId: Number(patientForPatch),
             ...(bookedViaRouting ? { bookedViaRouting: true } : {}),
           });
@@ -1248,6 +1301,7 @@ export function SchedulerBookModal({
             appointmentEnd: endIso,
             ...(bookAllDay ? { allDay: true } : {}),
             description: descriptionForNewBook(visit.description) || undefined,
+            instructions: staffNotesForNewBook(visit.instructions) || undefined,
             ...(bookedViaRouting ? { bookedViaRouting: true } : {}),
             ...forwardBookingCreateExtras,
           });
@@ -1271,7 +1325,7 @@ export function SchedulerBookModal({
           appointmentEnd: endIso,
           ...(bookAllDay ? { allDay: true } : {}),
           description: descriptionForNewBook(description) || undefined,
-          instructions: instructions.trim() || undefined,
+          instructions: staffNotesForNewBook(instructions) || undefined,
           ...(bookedViaRouting ? { bookedViaRouting: true } : {}),
           ...forwardBookingCreateExtras,
         });
@@ -1355,7 +1409,11 @@ export function SchedulerBookModal({
               schedulingOverridesApplied,
             }
           : undefined;
-      onBooked(bookedDetail);
+      onBooked(
+        savedAppointmentId != null
+          ? { ...(bookedDetail ?? {}), savedAppointmentId }
+          : bookedDetail
+      );
       onClose();
     } catch (err) {
       setFormError(formatSchedulerBookingApiError(err));
@@ -1779,11 +1837,11 @@ export function SchedulerBookModal({
                     </span>
                   </div>
                 </Field>
-                {isRescheduleBook && !perVisitReschedule ? (
+                {isRescheduleBook ? (
                   <Field label="Appointment type">
                     <div className="scheduler-book-selected">
                       <span className="scheduler-book-selected-value">
-                        {selectedType?.name || selectedType?.prettyName || '…'}
+                        {selectedType?.prettyName || selectedType?.name || '…'}
                       </span>
                     </div>
                   </Field>
@@ -1852,6 +1910,25 @@ export function SchedulerBookModal({
                           }}
                           rows={3}
                           placeholder="Notes for this visit…"
+                        />
+                      </label>
+                      <label className="scheduler-book-reschedule-visit-desc">
+                        <span className="scheduler-book-reschedule-visit-desc-label muted">
+                          Staff notes
+                        </span>
+                        <textarea
+                          className="scheduler-book-textarea scheduler-book-textarea--compact"
+                          value={visit.instructions}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            setRescheduleVisitEdits((rows) =>
+                              rows.map((row, i) =>
+                                i === idx ? { ...row, instructions: next } : row
+                              )
+                            );
+                          }}
+                          rows={3}
+                          placeholder="Internal notes, Scout routing history…"
                         />
                       </label>
                     </div>
@@ -1926,6 +2003,26 @@ export function SchedulerBookModal({
                           }}
                           rows={2}
                           placeholder="Notes for this visit…"
+                          disabled={!visit.selected}
+                        />
+                      </label>
+                      <label className="scheduler-book-reschedule-visit-desc">
+                        <span className="scheduler-book-reschedule-visit-desc-label muted">
+                          Staff notes (optional)
+                        </span>
+                        <textarea
+                          className="scheduler-book-textarea scheduler-book-textarea--compact"
+                          value={visit.instructions}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            setRoutingBookVisitEdits((rows) =>
+                              rows.map((row, i) =>
+                                i === idx ? { ...row, instructions: next } : row
+                              )
+                            );
+                          }}
+                          rows={3}
+                          placeholder="Internal notes — Scout adds routing history on book…"
                           disabled={!visit.selected}
                         />
                       </label>
@@ -2080,15 +2177,26 @@ export function SchedulerBookModal({
           ) : null}
 
           {!perVisitReschedule && !perVisitRoutingBook ? (
-            <Field label="Description (optional)">
-              <textarea
-                className="scheduler-book-textarea"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={2}
-                placeholder="Reason for visit, internal notes…"
-              />
-            </Field>
+            <>
+              <Field label="Description (optional)">
+                <textarea
+                  className="scheduler-book-textarea"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={2}
+                  placeholder="Reason for visit…"
+                />
+              </Field>
+              <Field label="Staff notes (optional)">
+                <textarea
+                  className="scheduler-book-textarea"
+                  value={instructions}
+                  onChange={(e) => setInstructions(e.target.value)}
+                  rows={3}
+                  placeholder="Internal notes, Scout routing history…"
+                />
+              </Field>
+            </>
           ) : null}
 
           {formError ? <div className="scheduler-book-error">{formError}</div> : null}

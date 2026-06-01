@@ -12,8 +12,9 @@ import {
 } from 'react';
 import { useAuth } from '../auth/AuthProvider';
 import { fetchDoctorMonth, type MiniZone } from '../api/appointments';
-import { fetchAllAppointmentTypes, type AppointmentType } from '../api/appointmentSettings';
+import { fetchAllAppointmentTypes, fetchEmployee, type AppointmentType } from '../api/appointmentSettings';
 import {
+  appointmentTypeAllowsClient,
   appointmentTypeIncludedInRouting,
   normalizeAppointmentTypeFromApi,
 } from '../utils/appointmentTypeSettings';
@@ -38,7 +39,8 @@ import {
 import {
   rescheduleOriginalScoreSummary,
   rescheduleScoreHeaderSuffix,
-  resolveOriginalVisitForScoreCompare,
+  fetchAndCacheRescheduleSourcePlacementSnapshot,
+  resolveRescheduleOriginalVisitForCompare,
 } from '../utils/routingRescheduleScoreCompare';
 import { WINDOW_WARNING_MINUTES_FROM_END } from '../utils/windowWarning';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -63,6 +65,7 @@ import {
   resolveRescheduleIntentDoctorPimsId,
   rescheduleScopeTargets,
   ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
+  ROUTING_RESCHEDULE_SOURCE_SCORE_UPDATED_EVENT,
   writeRoutingRescheduleScope,
   type RoutingRescheduleScope,
 } from '../utils/routingRescheduleIntent';
@@ -92,6 +95,11 @@ import {
 } from '../utils/routingCandidates';
 import { submitRoutingFeedback } from '../api/routingFeedback';
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
+import {
+  clearSchedulerHandoffPreferRoutingDoctor,
+  readSchedulerCalendarHandoff,
+  SCHEDULER_HANDOFF_ROUTING_DOCTOR_EVENT,
+} from '../utils/schedulerCalendarHandoff';
 import './Routing.css';
 
 /** Yellow wrap when an optional routing preference is on—makes checked state obvious at a glance. */
@@ -128,6 +136,8 @@ type RouteRequest = {
     lon?: number;
     address?: string;
     clientId?: string;
+    /** Sent to POST /routing/v2 when Calculate Time type is selected; omit for default ±60 window. */
+    appointmentTypeId?: number;
   };
 };
 
@@ -136,6 +146,46 @@ type RouteRequest = {
  * 1 pet → regular average; 2+ pets → multipet average × pet count when multipet data exists,
  * otherwise scales the regular average by pet count.
  */
+/** When Calculate Time has no stats row and no type default duration. */
+const ROUTING_FALLBACK_SERVICE_MINUTES = 45;
+/** Minimum doctor-day visits of a type in the last 30 days before using historical averages. */
+const ROUTING_MIN_APPT_TYPE_INSTANCES_FOR_STATS = 5;
+
+/** Picker `<option value>` uses appointment type `name`, not `prettyName`. */
+function routingPickerTypeNameForAppointmentType(
+  types: readonly AppointmentType[],
+  typeId: number | undefined | null,
+  fallbackLabel?: string | null
+): string | null {
+  if (typeId != null && Number.isFinite(Number(typeId))) {
+    const row = types.find((t) => Number(t.id) === Number(typeId));
+    const name = String(row?.name ?? '').trim();
+    if (name) return name;
+  }
+  const fb = (fallbackLabel ?? '').trim();
+  if (!fb || types.length === 0) return null;
+  const norm = normalizeAppointmentType(fb);
+  const lower = fb.toLowerCase();
+  const byLabel = types.find((t) => {
+    const name = String(t.name ?? '').trim();
+    const pretty = String(t.prettyName ?? '').trim();
+    return (
+      normalizeAppointmentType(name) === norm ||
+      normalizeAppointmentType(pretty) === norm ||
+      name.toLowerCase() === lower ||
+      pretty.toLowerCase() === lower
+    );
+  });
+  return byLabel ? String(byLabel.name ?? '').trim() || null : null;
+}
+
+function routingApptTypeStatsMeetMinInstances(
+  row: AvgMinutesByTypeRow,
+  minInstances = ROUTING_MIN_APPT_TYPE_INSTANCES_FOR_STATS
+): boolean {
+  return row.count + row.multipetCount >= minInstances;
+}
+
 function estimatedServiceMinutesFromStatsRow(row: AvgMinutesByTypeRow, pets: number): number | null {
   const n = Math.floor(Number(pets));
   const petCount = Number.isFinite(n) && n >= 1 ? n : 1;
@@ -151,6 +201,66 @@ function estimatedServiceMinutesFromStatsRow(row: AvgMinutesByTypeRow, pets: num
   if (hasMp) return Math.round(mp * petCount);
   if (hasSingle) return Math.round(row.avgMinutes * petCount);
   return null;
+}
+
+function resolveRoutingApptStatsRow(
+  typeKey: string,
+  apptLengthsRows: AvgMinutesByTypeRow[],
+  matchedType?: AppointmentType
+): AvgMinutesByTypeRow | undefined {
+  const key = typeKey.trim();
+  if (!key) return undefined;
+  const statsByNorm = new Map<string, AvgMinutesByTypeRow>();
+  for (const row of apptLengthsRows) {
+    const norm = normalizeAppointmentType(row.typeName);
+    if (norm) statsByNorm.set(norm, row);
+  }
+  const norm = normalizeAppointmentType(key);
+  const prettyNorm = matchedType?.prettyName
+    ? normalizeAppointmentType(String(matchedType.prettyName))
+    : '';
+  return (
+    statsByNorm.get(norm) ??
+    (prettyNorm ? statsByNorm.get(prettyNorm) : undefined) ??
+    apptLengthsRows.find((row) => {
+      const rowNorm = normalizeAppointmentType(row.typeName);
+      return rowNorm === norm || (prettyNorm !== '' && rowNorm === prettyNorm);
+    })
+  );
+}
+
+function defaultDurationMinutesForRoutingTypeSelection(
+  matchedType: AppointmentType | undefined,
+  pets: number
+): number | null {
+  const dur = matchedType?.defaultDuration != null ? Number(matchedType.defaultDuration) : NaN;
+  if (!Number.isFinite(dur) || dur <= 0) return null;
+  const petCount = Math.max(1, Math.floor(pets) || 1);
+  return Math.round(dur * petCount);
+}
+
+/** 30-day doctor stats (≥5 visits), then type default duration, then {@link ROUTING_FALLBACK_SERVICE_MINUTES}. */
+function estimateRoutingServiceMinutesForSelection(
+  typeKey: string,
+  pets: number,
+  apptLengthsRows: AvgMinutesByTypeRow[],
+  resolveType: (key: string) => AppointmentType | undefined
+): number | null {
+  const key = typeKey.trim();
+  if (!key) return null;
+  const matched = resolveType(key);
+  const row = resolveRoutingApptStatsRow(key, apptLengthsRows, matched);
+  let mins: number | null = null;
+  if (row && routingApptTypeStatsMeetMinInstances(row)) {
+    mins = estimatedServiceMinutesFromStatsRow(row, pets);
+  }
+  if (mins == null || mins < 1) {
+    mins = defaultDurationMinutesForRoutingTypeSelection(matched, pets);
+  }
+  if (mins == null || mins < 1) {
+    mins = ROUTING_FALLBACK_SERVICE_MINUTES;
+  }
+  return mins;
 }
 
 type Slot = 'early' | 'mid' | 'late';
@@ -477,6 +587,53 @@ function isoToTime(iso?: string): string {
   const roundedIso = roundIsoToStep(iso) ?? iso;
   const dt = DateTime.fromISO(roundedIso);
   return dt.isValid ? dt.toLocaleString(DateTime.TIME_SIMPLE) : '-';
+}
+
+const ROUTING_DEFAULT_ARRIVAL_WINDOW_MINUTES = 60;
+const ROUTING_ARRIVAL_WINDOW_TOLERANCE_MINUTES = 2;
+
+/** True when backend window is not symmetric ±60 (standard 2-hour arrival window). */
+function routingVisitWindowDiffersFromDefault60(opt: {
+  suggestedStartIso?: string;
+  arrivalWindow?: { windowStartIso?: string; windowEndIso?: string };
+}): boolean {
+  const startIso = opt.arrivalWindow?.windowStartIso;
+  const endIso = opt.arrivalWindow?.windowEndIso;
+  if (!startIso || !endIso) return false;
+
+  const winStart = DateTime.fromISO(startIso);
+  const winEnd = DateTime.fromISO(endIso);
+  if (!winStart.isValid || !winEnd.isValid) return false;
+
+  const tol = ROUTING_ARRIVAL_WINDOW_TOLERANCE_MINUTES;
+  const def = ROUTING_DEFAULT_ARRIVAL_WINDOW_MINUTES;
+
+  const matchesDefaultSymmetric60 = (beforeMin: number, afterMin: number) =>
+    Math.abs(beforeMin - def) <= tol && Math.abs(afterMin - def) <= tol;
+
+  const apptIso = opt.suggestedStartIso;
+  if (apptIso) {
+    const appt = DateTime.fromISO(apptIso);
+    if (appt.isValid) {
+      const beforeMin = Math.round(appt.diff(winStart, 'minutes').minutes);
+      const afterMin = Math.round(winEnd.diff(appt, 'minutes').minutes);
+      if (matchesDefaultSymmetric60(beforeMin, afterMin)) return false;
+    }
+  }
+
+  /** ±60 is a 2-hour window; routed start may sit early/late while the window stays symmetric. */
+  const totalMin = Math.round(winEnd.diff(winStart, 'minutes').minutes);
+  if (Math.abs(totalMin - def * 2) <= tol * 2) {
+    const mid = DateTime.fromMillis((winStart.toMillis() + winEnd.toMillis()) / 2, {
+      zone: winStart.zoneName,
+    });
+    const halfBefore = Math.round(mid.diff(winStart, 'minutes').minutes);
+    const halfAfter = Math.round(winEnd.diff(mid, 'minutes').minutes);
+    if (matchesDefaultSymmetric60(halfBefore, halfAfter)) return false;
+  }
+
+  if (!apptIso) return false;
+  return true;
 }
 
 function colorForAddedDrive(seconds?: number): string {
@@ -1271,7 +1428,14 @@ function endOfDayOverrunSeconds(
 const NONE_SELECTION_KEY = '__routing-none__';
 const SELECTED_DOCTORS_STORAGE_KEY = 'routing:selected-doctors';
 
-type RoutingDoctorPick = { id: string | number; name: string; email: string; pimsId: string };
+type RoutingDoctorPick = {
+  id: string | number;
+  name: string;
+  email: string;
+  pimsId: string;
+  seeingClients?: boolean;
+  acceptingNewPatients?: boolean;
+};
 
 function deriveRoutingRequestId(res: Result | null | undefined): string | undefined {
   if (!res) return undefined;
@@ -1315,6 +1479,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const routingPageRootRef = useRef<HTMLDivElement>(null);
   const [stackFormAndResults, setStackFormAndResults] = useState(false);
   const [calendarPreviewTick, setCalendarPreviewTick] = useState(0);
+  const [sourceScoreTick, setSourceScoreTick] = useState(0);
 
   useEffect(() => {
     const el = routingPageRootRef.current;
@@ -1416,6 +1581,52 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       }, 1200);
     });
   }, []);
+
+  const applyCalendarHandoffDoctor = useCallback(async () => {
+    const handoff = readSchedulerCalendarHandoff();
+    if (!handoff?.preferRoutingDoctor) return;
+    if (readRoutingRescheduleIntent()) {
+      clearSchedulerHandoffPreferRoutingDoctor();
+      return;
+    }
+
+    let pimsId = handoff.routingDoctorPimsId?.trim() ?? '';
+    let label = handoff.routingDoctorLabel?.trim() ?? '';
+
+    if (!pimsId && handoff.providerFilter) {
+      const internalId = Number(handoff.providerFilter);
+      if (Number.isFinite(internalId)) {
+        try {
+          const emp = await fetchEmployee(internalId);
+          pimsId =
+            emp?.pimsId != null ? String(emp.pimsId).trim() : '';
+          if (!label) label = buildDoctorName(emp, pimsId ? `Doctor ${pimsId}` : 'Doctor');
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    clearSchedulerHandoffPreferRoutingDoctor();
+    if (!pimsId) return;
+
+    setDoctorRequiredBeforeApptType(false);
+    setForm((f) => ({ ...f, doctorId: pimsId }));
+    setDoctorQuery(label || `Doctor ${pimsId}`);
+    triggerRoutingPrefillFlash(['doctor']);
+  }, [triggerRoutingPrefillFlash]);
+
+  useEffect(() => {
+    void applyCalendarHandoffDoctor();
+  }, [applyCalendarHandoffDoctor]);
+
+  useEffect(() => {
+    const onHandoffDoctor = () => {
+      void applyCalendarHandoffDoctor();
+    };
+    window.addEventListener(SCHEDULER_HANDOFF_ROUTING_DOCTOR_EVENT, onHandoffDoctor);
+    return () => window.removeEventListener(SCHEDULER_HANDOFF_ROUTING_DOCTOR_EVENT, onHandoffDoctor);
+  }, [applyCalendarHandoffDoctor]);
 
   const triggerRoutingMinutesPulse = useCallback(() => {
     if (routingMinutesPulseClearRef.current) {
@@ -1550,6 +1761,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     () => bootstrap.scheduleBookTypeId
   );
   const [routingAppointmentTypes, setRoutingAppointmentTypes] = useState<AppointmentType[]>([]);
+  const rescheduleTypeSyncedForApptRef = useRef<number | null>(null);
   /** Option keys for which POST /appointments succeeded (calendar book flow). */
   const [scheduleBookedKeys, setScheduleBookedKeys] = useState<Record<string, true>>(
     () => ({ ...bootstrap.scheduleBookedKeys })
@@ -1569,7 +1781,10 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   });
   const [rescheduleScopeError, setRescheduleScopeError] = useState(false);
 
-  const activeRescheduleIntent = useMemo(() => readRoutingRescheduleIntent(), [hasActiveRescheduleIntent, rescheduleScope]);
+  const activeRescheduleIntent = useMemo(
+    () => readRoutingRescheduleIntent(),
+    [hasActiveRescheduleIntent, rescheduleScope, sourceScoreTick]
+  );
   const showRescheduleScopeField = useMemo(
     () => hasActiveRescheduleIntent && rescheduleRequiresScopeChoice(activeRescheduleIntent),
     [hasActiveRescheduleIntent, activeRescheduleIntent]
@@ -1645,12 +1860,18 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   }, []);
 
   const rescheduleOriginalVisitForCompare = useMemo(() => {
-    if (!hasActiveRescheduleIntent || !result?.rescheduleOriginalBooking) return null;
-    return resolveOriginalVisitForScoreCompare(
-      result.rescheduleOriginalBooking,
-      activeRescheduleIntent?.appointmentId
+    if (!hasActiveRescheduleIntent) return null;
+    return resolveRescheduleOriginalVisitForCompare(
+      result?.rescheduleOriginalBooking,
+      activeRescheduleIntent?.appointmentId,
+      activeRescheduleIntent
     );
-  }, [hasActiveRescheduleIntent, result?.rescheduleOriginalBooking, activeRescheduleIntent?.appointmentId]);
+  }, [
+    hasActiveRescheduleIntent,
+    result?.rescheduleOriginalBooking,
+    activeRescheduleIntent,
+    sourceScoreTick,
+  ]);
 
   const rescheduleOriginalScoreSummaryLine = useMemo(
     () =>
@@ -1702,6 +1923,13 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       window.removeEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, syncRescheduleIntentFlag);
   }, []);
 
+  useEffect(() => {
+    const onSourceScore = () => setSourceScoreTick((n) => n + 1);
+    window.addEventListener(ROUTING_RESCHEDULE_SOURCE_SCORE_UPDATED_EVENT, onSourceScore);
+    return () =>
+      window.removeEventListener(ROUTING_RESCHEDULE_SOURCE_SCORE_UPDATED_EVENT, onSourceScore);
+  }, []);
+
   /** Calendar “Reschedule…” → hydrate Routing form once per intent row. */
   useEffect(() => {
     let cancelled = false;
@@ -1749,8 +1977,19 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       const tid = intent.appointmentTypeId;
       if (tid != null && Number.isFinite(Number(tid))) setScheduleBookTypeId(Number(tid));
 
-      const typeName = intent.appointmentTypeName?.trim();
-      if (typeName) setRoutingApptStatsTypeKey(typeName);
+      const pickerTypeName = routingPickerTypeNameForAppointmentType(
+        routingAppointmentTypes,
+        tid,
+        intent.appointmentTypeName
+      );
+      if (pickerTypeName) {
+        setRoutingApptStatsTypeKey(pickerTypeName);
+        rescheduleTypeSyncedForApptRef.current = intent.appointmentId;
+      } else if (intent.appointmentTypeName?.trim()) {
+        setRoutingApptStatsTypeKey(intent.appointmentTypeName.trim());
+      }
+
+      const typeName = pickerTypeName ?? intent.appointmentTypeName?.trim();
 
       const alerts = intent.clientAlerts;
       if (alerts !== undefined && alerts !== null) setSelectedClientAlerts(alerts);
@@ -1778,6 +2017,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       setFeedbackError(null);
       setFeedbackToast('Reschedule: client loaded. Run routing, open My Week, then confirm the new time.');
       markRescheduleIntentAppliedToRoutingForm();
+      void fetchAndCacheRescheduleSourcePlacementSnapshot(intent).then(() => {
+        if (!cancelled) setSourceScoreTick((n) => n + 1);
+      });
     }
 
     void mergeRescheduleIntentFromCalendar();
@@ -1789,7 +2031,43 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       cancelled = true;
       window.removeEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, onIntentUpdated);
     };
-  }, [triggerRoutingPrefillFlash]);
+  }, [triggerRoutingPrefillFlash, routingAppointmentTypes]);
+
+  /** Reschedule: hydrate Calculate Time type once doctor types load (picker uses `name`, not prettyName). */
+  useEffect(() => {
+    if (!hasActiveRescheduleIntent) {
+      rescheduleTypeSyncedForApptRef.current = null;
+      return;
+    }
+    const ri = readRoutingRescheduleIntent();
+    if (!ri?.appointmentTypeId && !ri?.appointmentTypeName?.trim()) return;
+    if (!form.doctorId.trim() || routingAppointmentTypes.length === 0) return;
+
+    const needsSync =
+      !routingApptStatsTypeKey.trim() ||
+      rescheduleTypeSyncedForApptRef.current !== ri.appointmentId;
+    if (!needsSync) return;
+
+    const pickerTypeName = routingPickerTypeNameForAppointmentType(
+      routingAppointmentTypes,
+      ri.appointmentTypeId ?? scheduleBookTypeId,
+      ri.appointmentTypeName
+    );
+    if (!pickerTypeName) return;
+
+    setRoutingApptStatsTypeKey(pickerTypeName);
+    const matched = routingAppointmentTypes.find(
+      (t) => String(t.name ?? '').trim() === pickerTypeName
+    );
+    if (matched?.id != null) setScheduleBookTypeId(Number(matched.id));
+    rescheduleTypeSyncedForApptRef.current = ri.appointmentId;
+  }, [
+    hasActiveRescheduleIntent,
+    form.doctorId,
+    routingAppointmentTypes,
+    routingApptStatsTypeKey,
+    scheduleBookTypeId,
+  ]);
 
   /** Forward booking list → hydrate Routing form once per intent row. */
   useEffect(() => {
@@ -1883,24 +2161,34 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     return () => window.removeEventListener(ROUTING_DISMISS_RESCHEDULE_EVENT, onDismissReschedule);
   }, [calendarWorkspaceMode, resetRoutingFormAfterRescheduleDismiss]);
 
-  /** Leave reschedule mode when doctor or client changes on the routing form (not when dismissing a preview slot). */
+  /** Clear stale routing results when the search doctor changes; calendar stays on the source visit. */
+  const prevRescheduleSearchDoctorRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!hasActiveRescheduleIntent) {
+      prevRescheduleSearchDoctorRef.current = null;
+      return;
+    }
+    const doc = form.doctorId.trim();
+    const prev = prevRescheduleSearchDoctorRef.current;
+    prevRescheduleSearchDoctorRef.current = doc;
+    if (prev == null || prev === doc) return;
+    setResult(null);
+    setFeedbackError(null);
+    setFeedbackToast(null);
+    setScheduleBookedKeys({});
+  }, [form.doctorId, hasActiveRescheduleIntent]);
+
+  /** Leave reschedule mode when client changes on the routing form (not when dismissing a preview slot). */
   useEffect(() => {
     const ri = readRoutingRescheduleIntent();
     if (!ri?.appliedToRoutingForm) return;
-
-    const anchorDoc = ri.primaryDoctorPimsId?.trim();
-    const currentDoc = form.doctorId.trim();
-    if (anchorDoc && currentDoc && currentDoc !== anchorDoc) {
-      exitRescheduleMode();
-      return;
-    }
 
     const anchorClient = ri.clientId?.trim();
     const currentClient = form.newAppt.clientId?.trim();
     if (anchorClient && currentClient && currentClient !== anchorClient) {
       exitRescheduleMode();
     }
-  }, [form.doctorId, form.newAppt.clientId, exitRescheduleMode]);
+  }, [form.newAppt.clientId, exitRescheduleMode]);
 
   useEffect(() => {
     if (!authToken) clearRoutingUiSnapshot();
@@ -2114,6 +2402,17 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           id: v.patientId,
           name: v.patientName?.trim() || `Pet ${v.patientId}`,
         }));
+      }
+      let sourceSnapshot = resolveRescheduleOriginalVisitForCompare(
+        result?.rescheduleOriginalBooking,
+        rescheduleRow.appointmentId,
+        rescheduleRow
+      );
+      if (!sourceSnapshot?.found) {
+        sourceSnapshot = await fetchAndCacheRescheduleSourcePlacementSnapshot(rescheduleRow);
+      }
+      if (sourceSnapshot) {
+        payload.rescheduleSourceVisitSnapshot = sourceSnapshot;
       }
     }
     writeRoutingCalendarPreview(payload);
@@ -2430,19 +2729,77 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   useEffect(() => {
     if (!routingApptStatsTypeKey.trim()) return;
     const stillValid = routingApptTypePickerOptions.some((o) => o.typeName === routingApptStatsTypeKey);
-    if (!stillValid) {
-      setRoutingApptStatsTypeKey('');
-      setRoutingPetCount(1);
+    if (stillValid) return;
+
+    const remapFromId = (typeId: number | null | undefined) => {
+      if (typeId == null || !Number.isFinite(Number(typeId))) return false;
+      const key = routingPickerTypeNameForAppointmentType(routingAppointmentTypes, typeId);
+      if (!key || !routingApptTypePickerOptions.some((o) => o.typeName === key)) return false;
+      setRoutingApptStatsTypeKey(key);
+      return true;
+    };
+
+    if (remapFromId(scheduleBookTypeId)) return;
+
+    if (hasActiveRescheduleIntent) {
+      const ri = readRoutingRescheduleIntent();
+      if (remapFromId(ri?.appointmentTypeId)) return;
     }
-  }, [routingApptStatsTypeKey, routingApptTypePickerOptions]);
+
+    if (form.doctorId.trim() && (apptLengthsLoading || routingAppointmentTypes.length === 0)) return;
+
+    setRoutingApptStatsTypeKey('');
+    setRoutingPetCount(1);
+  }, [
+    routingApptStatsTypeKey,
+    routingApptTypePickerOptions,
+    routingAppointmentTypes,
+    scheduleBookTypeId,
+    hasActiveRescheduleIntent,
+    form.doctorId,
+    apptLengthsLoading,
+  ]);
 
   function defaultDurationMinutesForRoutingType(typeKey: string, pets: number): number | null {
-    const type = routingAppointmentTypeForStatsKey(typeKey);
-    const base = type?.defaultDuration;
-    if (base == null || !Number.isFinite(base) || base <= 0) return null;
-    const petCount = Math.max(1, Math.floor(pets) || 1);
-    return Math.round(base * petCount);
+    return defaultDurationMinutesForRoutingTypeSelection(
+      routingAppointmentTypeForStatsKey(typeKey),
+      pets
+    );
   }
+
+  const applyRoutingServiceMinutes = useCallback(
+    (typeKey: string, pets: number, opts?: { pulse?: boolean }) => {
+      if (hasActiveRescheduleIntent) return;
+      const mins = estimateRoutingServiceMinutesForSelection(
+        typeKey,
+        pets,
+        apptLengthsRows,
+        routingAppointmentTypeForStatsKey
+      );
+      if (mins == null) return;
+
+      const comboKey = `${typeKey.trim()}|${pets}`;
+      const comboChanged = routingCalcComboKeyRef.current !== comboKey;
+      routingCalcComboKeyRef.current = comboKey;
+
+      let didUpdateMinutes = false;
+      setForm((f) => {
+        if (f.newAppt.serviceMinutes === mins) return f;
+        didUpdateMinutes = true;
+        return { ...f, newAppt: { ...f.newAppt, serviceMinutes: mins } };
+      });
+
+      if (opts?.pulse !== false && (didUpdateMinutes || comboChanged)) {
+        triggerRoutingMinutesPulse();
+      }
+    },
+    [
+      hasActiveRescheduleIntent,
+      apptLengthsRows,
+      routingAppointmentTypes,
+      triggerRoutingMinutesPulse,
+    ]
+  );
 
   /** Calendar preview book type — explicit Calculate Time pick, then stored id, then practice default. */
   function resolveScheduleBookTypeId(): number | null {
@@ -2462,44 +2819,49 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     return null;
   }
 
+  /** POST /routing/v2 `newAppt.appointmentTypeId` — when Calculate Time type is selected (or reschedule prefill). */
+  function routingRequestAppointmentTypeId(): number | undefined {
+    const typeKey = routingApptStatsTypeKey.trim();
+    if (typeKey) {
+      const matched = routingAppointmentTypeForStatsKey(typeKey);
+      const id = matched?.id != null ? Number(matched.id) : NaN;
+      if (Number.isFinite(id) && id > 0) return id;
+    }
+    if (
+      hasActiveRescheduleIntent &&
+      scheduleBookTypeId != null &&
+      Number.isFinite(scheduleBookTypeId) &&
+      scheduleBookTypeId > 0
+    ) {
+      return scheduleBookTypeId;
+    }
+    return undefined;
+  }
+
+  /** Selected Calculate Time type forbids a client but the form still has one attached. */
+  function getRoutingClientTypeConflictMessage(): string | null {
+    if (!form.newAppt.clientId?.trim()) return null;
+    const typeKey = routingApptStatsTypeKey.trim();
+    if (!typeKey) return null;
+    const matched = routingAppointmentTypeForStatsKey(typeKey);
+    if (!matched || appointmentTypeAllowsClient(matched)) return null;
+    const label = String(matched.prettyName || matched.name || 'This appointment type').trim();
+    return `${label} does not allow a client. Clear the client field or choose a different appointment type.`;
+  }
+
   useEffect(() => {
     if (hasActiveRescheduleIntent) return;
     if (!routingApptStatsTypeKey.trim()) {
       routingCalcComboKeyRef.current = null;
       return;
     }
-    const row = apptLengthsRows.find((r) => r.typeName === routingApptStatsTypeKey);
-    let mins = row ? estimatedServiceMinutesFromStatsRow(row, routingPetCount) : null;
-    if (mins == null || mins < 1) {
-      mins = defaultDurationMinutesForRoutingType(routingApptStatsTypeKey, routingPetCount);
-    }
-    if (mins == null || mins < 1) return;
-
-    const comboKey = `${routingApptStatsTypeKey}|${routingPetCount}`;
-    const comboChanged = routingCalcComboKeyRef.current !== comboKey;
-    routingCalcComboKeyRef.current = comboKey;
-
-    let didUpdateMinutes = false;
-    setForm((f) => {
-      if (f.newAppt.serviceMinutes === mins) return f;
-      didUpdateMinutes = true;
-      return { ...f, newAppt: { ...f.newAppt, serviceMinutes: mins } };
-    });
-
-    if (didUpdateMinutes || comboChanged) {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          triggerRoutingMinutesPulse();
-        });
-      });
-    }
+    applyRoutingServiceMinutes(routingApptStatsTypeKey, routingPetCount, { pulse: false });
   }, [
     hasActiveRescheduleIntent,
     routingApptStatsTypeKey,
     routingPetCount,
     apptLengthsRows,
-    routingAppointmentTypes,
-    triggerRoutingMinutesPulse,
+    applyRoutingServiceMinutes,
   ]);
 
   // Fetch doctor name if missing
@@ -2616,6 +2978,12 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     setFeedbackError(null);
     setScheduleBookedKeys({});
 
+    const clientTypeConflict = getRoutingClientTypeConflictMessage();
+    if (clientTypeConflict) {
+      setError(clientTypeConflict);
+      return;
+    }
+
     if (routingCalendarDatePart(form.endDate) < routingCalendarDatePart(form.startDate)) {
       setError('End date must be on or after the start date.');
       return;
@@ -2658,6 +3026,11 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         setAddressError(msg);
         return;
       }
+    }
+
+    const routingTypeId = routingRequestAppointmentTypeId();
+    if (routingTypeId != null) {
+      newApptPayload = { ...newApptPayload, appointmentTypeId: routingTypeId };
     }
 
     const isV2 = endpoint.includes('/v2');
@@ -2767,6 +3140,19 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       setFeedbackToast(null);
       const rid = deriveRoutingRequestId(normalized);
       if (rid) rememberRoutingRequestId(rid);
+      const ri = readRoutingRescheduleIntent();
+      if (ri) {
+        const baseline = resolveRescheduleOriginalVisitForCompare(
+          normalized.rescheduleOriginalBooking,
+          ri.appointmentId,
+          ri
+        );
+        if (!baseline?.found) {
+          void fetchAndCacheRescheduleSourcePlacementSnapshot(ri).then(() => {
+            setSourceScoreTick((n) => n + 1);
+          });
+        }
+      }
     } catch (err: unknown) {
       setError(extractErrorMessage(err));
     } finally {
@@ -2816,6 +3202,11 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       };
     }
 
+    const clientTypeConflict = getRoutingClientTypeConflictMessage();
+    if (clientTypeConflict) {
+      return { valid: false, error: clientTypeConflict };
+    }
+
     return { valid: true };
   }
 
@@ -2851,7 +3242,14 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     void (async () => {
       setProvidersLoading(true);
       try {
-        const veterinarians = await fetchVeterinarians();
+        const lat = form.newAppt.lat;
+        const lon = form.newAppt.lon;
+        const address = (form.newAppt.address ?? '').trim();
+        const veterinarians = await fetchVeterinarians(
+          address || undefined,
+          typeof lat === 'number' && Number.isFinite(lat) ? lat : undefined,
+          typeof lon === 'number' && Number.isFinite(lon) ? lon : undefined
+        );
         if (!alive) return;
 
         const providersWithPims: RoutingDoctorPick[] = veterinarians.map((v) => {
@@ -2861,6 +3259,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
             name: v.name?.trim() || buildDoctorName(v, `Veterinarian ${v.id ?? ''}`),
             email: v.email || '',
             pimsId,
+            seeingClients: v.seeingClientsInClientZone === true,
+            acceptingNewPatients: v.acceptingNewPatientsInClientZone === true,
           };
         });
 
@@ -2916,6 +3316,14 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   async function handleConfirmDoctorSelection() {
     if (selectedDoctorIds.length === 0) {
       setError('Please select at least one doctor.');
+      return;
+    }
+
+    const validation = validateForm();
+    if (!validation.valid) {
+      setError(validation.error || 'Please fill in all required fields.');
+      setShowDoctorSelectionModal(false);
+      setPendingEndpoint(null);
       return;
     }
 
@@ -3071,6 +3479,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   // =========================
   // Render
   // =========================
+
+  const routingClientTypeConflictMessage = getRoutingClientTypeConflictMessage();
 
   return (
     <div
@@ -3297,8 +3707,11 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                   <span className="routing-visit-stack-label muted">Appointment Type</span>
                   <select
                     id="routing-visit-type-select"
-                    className={`input routing-input-compact routing-visit-type-select${routingPrefillFlashClass('apptType')}${routingRescheduleHighlightClass('apptType')}`}
+                    className={`input routing-input-compact routing-visit-type-select${routingPrefillFlashClass('apptType')}${routingRescheduleHighlightClass('apptType')}${
+                      routingClientTypeConflictMessage ? ' routing-input--error' : ''
+                    }`}
                     disabled={apptLengthsLoading}
+                    aria-invalid={Boolean(routingClientTypeConflictMessage)}
                     value={routingApptStatsTypeKey}
                     onMouseDown={(e) => {
                       if (!form.doctorId.trim()) {
@@ -3319,9 +3732,11 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                       if (!next.trim()) {
                         setRoutingPetCount(1);
                         setScheduleBookTypeId(null);
+                        routingCalcComboKeyRef.current = null;
                       } else {
                         const matched = routingAppointmentTypeForStatsKey(next);
                         if (matched?.id != null) setScheduleBookTypeId(Number(matched.id));
+                        applyRoutingServiceMinutes(next, routingPetCount, { pulse: true });
                       }
                     }}
                   >
@@ -3372,10 +3787,13 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                       const raw = e.target.value;
                       if (raw === '') {
                         setRoutingPetCount(1);
+                        applyRoutingServiceMinutes(routingApptStatsTypeKey, 1, { pulse: true });
                         return;
                       }
                       const v = Math.floor(Number(raw));
-                      setRoutingPetCount(Number.isFinite(v) && v >= 1 ? v : 1);
+                      const nextPets = Number.isFinite(v) && v >= 1 ? v : 1;
+                      setRoutingPetCount(nextPets);
+                      applyRoutingServiceMinutes(routingApptStatsTypeKey, nextPets, { pulse: true });
                     }}
                   />
                 </label>
@@ -3461,8 +3879,11 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           <Field label="Client">
               <div ref={clientBoxRef} style={{ position: 'relative' }}>
                 <input
-                  className={`input${routingPrefillFlashClass('client')}${routingRescheduleHighlightClass('client')}`}
+                  className={`input${routingPrefillFlashClass('client')}${routingRescheduleHighlightClass('client')}${
+                    routingClientTypeConflictMessage ? ' routing-input--error' : ''
+                  }`}
                   value={clientQuery}
+                  aria-invalid={Boolean(routingClientTypeConflictMessage)}
                   onChange={(e) => {
                     const next = e.target.value;
                     setClientQuery(next);
@@ -3582,6 +4003,11 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                 )}
               </div>
             </Field>
+            {routingClientTypeConflictMessage ? (
+              <div className="danger routing-route-hint routing-span-full" role="alert">
+                {routingClientTypeConflictMessage}
+              </div>
+            ) : null}
 
           <Field label="Address">
             <div className="routing-address-row">
@@ -3806,7 +4232,16 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
           {error && <div className="danger">{error}</div>}
           <div className="routing-submit-row">
-            <button className="btn routing-submit-btn" type="submit" disabled={loading}>
+            <button
+              className="btn routing-submit-btn"
+              type="submit"
+              disabled={loading || Boolean(routingClientTypeConflictMessage)}
+              title={
+                routingClientTypeConflictMessage
+                  ? routingClientTypeConflictMessage
+                  : undefined
+              }
+            >
               {loading ? 'Calculating…' : 'Get Best Route'}
             </button>
           </div>
@@ -4000,6 +4435,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                   opt.arrivalWindow?.windowStartIso && opt.arrivalWindow?.windowEndIso
                     ? `${isoToTime(opt.arrivalWindow.windowStartIso)} – ${isoToTime(opt.arrivalWindow.windowEndIso)}`
                     : isoToTime(opt.suggestedStartIso);
+                const visitWindowNonDefault = routingVisitWindowDiffersFromDefault60(opt);
 
                 const isCalendarPreviewCard =
                   calendarWorkspaceMode &&
@@ -4039,7 +4475,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                       .filter(Boolean)
                       .join(' ')}
                     disabled={viewPlacementDisabled}
-                    title={viewPlacementTitle}
+                    title={viewPlacementDisabled ? viewPlacementTitle : undefined}
                     aria-label={viewPlacementTitle}
                     onClick={() => {
                       void openMyWeek(opt);
@@ -4264,8 +4700,18 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                         v={String((opt as any).positionInDay ?? (opt as any).displayInsertionIndex ?? opt.insertionIndex + 1)}
                       />
                       <KeyValue
-                        k="Visit Window"
-                        v={<strong>{visitWindowTime}</strong>}
+                        k="Arrival Window"
+                        v={
+                          <strong
+                            className={
+                              visitWindowNonDefault
+                                ? 'routing-visit-window--non-default'
+                                : undefined
+                            }
+                          >
+                            {visitWindowTime}
+                          </strong>
+                        }
                       />
                       <KeyValue
                         k="Added Drive"
@@ -4367,7 +4813,19 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                         checked={isSelected}
                         onChange={() => toggleDoctorSelection(doctorId)}
                       />
-                      <span>{provider.name}</span>
+                      <span className="routing-doctor-select-row-main">
+                        <span className="routing-doctor-select-row-name">{provider.name}</span>
+                        {provider.seeingClients ? (
+                          <span className="routing-doctor-select-badge routing-doctor-select-badge--seeing">
+                            Seeing clients
+                          </span>
+                        ) : null}
+                        {provider.acceptingNewPatients ? (
+                          <span className="routing-doctor-select-badge routing-doctor-select-badge--accepting">
+                            Accepting new patients
+                          </span>
+                        ) : null}
+                      </span>
                     </label>
                   );
                 })}

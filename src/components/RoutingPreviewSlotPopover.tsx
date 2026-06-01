@@ -1,11 +1,14 @@
 import { DateTime } from 'luxon';
 import { X } from 'lucide-react';
+import type { RescheduleOriginalVisitSnapshot } from '../api/routing';
+import { formatReschedulePreviewScoreLine } from '../utils/routingRescheduleScoreCompare';
 import type { RoutingCalendarPreviewPayloadV1 } from '../utils/routingCalendarPreviewStorage';
 
 type Props = {
   preview: RoutingCalendarPreviewPayloadV1;
   practiceTz: string;
   isReschedule: boolean;
+  sourceVisitForCompare?: RescheduleOriginalVisitSnapshot | null;
   bookDisabled?: boolean;
   onBook: () => void;
   onDismiss: () => void;
@@ -26,6 +29,7 @@ export function RoutingPreviewSlotPopover({
   preview,
   practiceTz,
   isReschedule,
+  sourceVisitForCompare,
   bookDisabled,
   onBook,
   onDismiss,
@@ -40,6 +44,16 @@ export function RoutingPreviewSlotPopover({
   const doctorName = String(opt.doctorName ?? 'Provider').trim();
   const score = typeof opt.score === 'number' ? opt.score : null;
   const clientLabel = preview.clientDisplayLabel?.trim();
+  const compareVisit =
+    sourceVisitForCompare ?? preview.rescheduleSourceVisitSnapshot ?? null;
+  const scoreLine =
+    score != null && isReschedule
+      ? formatReschedulePreviewScoreLine(score, compareVisit)
+      : score != null
+        ? `Routing score: ${Number.isInteger(score) ? String(score) : score.toFixed(2)}`
+        : null;
+  const scoreLineIsUnavailable =
+    scoreLine === 'No previous routing score available for this visit.';
 
   return (
     <div className="scheduler-edit-preview-popover" role="dialog" aria-label={title}>
@@ -69,10 +83,18 @@ export function RoutingPreviewSlotPopover({
         </div>
       ) : null}
 
-      <div className="scheduler-edit-preview-popover-body">
-        {score != null ? (
-          <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--muted">
-            Routing score: {Number.isInteger(score) ? String(score) : score.toFixed(2)}
+      <div className="scheduler-edit-preview-popover-body" role="status" aria-live="polite">
+        {scoreLine ? (
+          <p
+            className={`scheduler-edit-preview-popover-line${
+              scoreLineIsUnavailable
+                ? ' scheduler-edit-preview-popover-line--warn'
+                : isReschedule
+                  ? ' scheduler-edit-preview-popover-line--strong'
+                  : ' scheduler-edit-preview-popover-line--muted'
+            }`}
+          >
+            {scoreLine}
           </p>
         ) : (
           <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--muted">

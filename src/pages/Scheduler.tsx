@@ -36,9 +36,19 @@ import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { http } from '../api/http';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import {
+  fetchEmployeeGoals,
+  formatPointsAgainstGoal,
+  getGoalForDay,
+  goalDayOfWeekFromLuxonWeekday,
+  schedulerPointsGoalClassName,
+  type EmployeeGoalsResponseDto,
+} from '../api/employeeGoals';
+import {
   fetchAllAppointmentTypes,
+  fetchEmployee,
   fetchManualBookableAppointmentTypes,
   type AppointmentType,
+  type EmployeeWeeklySchedule,
 } from '../api/appointmentSettings';
 import {
   filterAppointmentTypesByIds,
@@ -50,6 +60,7 @@ import {
   computeEditPreviewPopoverPosition,
   computeHoverPopoverPosition,
   rectFromElement,
+  type HoverPopoverPositionResult,
 } from '../utils/hoverPopoverPosition';
 import { useAuth } from '../auth/useAuth';
 import {
@@ -101,7 +112,10 @@ import {
   SchedulerVisitPatientContext,
 } from '../components/SchedulerVisitPatientContext';
 import type { HoverAnchorRect } from '../utils/hoverPopoverPosition';
-import type { ScheduleOverride } from '../api/appointmentSettings';
+import {
+  scheduleOverrideIsOff,
+  type ScheduleOverride,
+} from '../api/appointmentSettings';
 import {
   applyScheduleOverrideToDayBundle,
   fetchScheduleOverridesByDate,
@@ -117,12 +131,17 @@ import {
   readEditVisitTimePreview,
   writeEditVisitTimePreview,
 } from '../utils/editVisitTimePreviewStorage';
+import {
+  resolveAppointmentChangeActorFromAuth,
+  detectEditVisitChanges,
+} from '../utils/appointmentChangeAuditNote';
 import { commitEditVisit, type EditVisitFormSnapshot } from '../utils/editVisitCommit';
 import {
   fetchEditVisitTypeScoreCompare,
   type EditVisitPreviewScoreCompare,
 } from '../utils/editVisitTypeScoreCompare';
 import { fetchEditVisitTimeScoreCompare } from '../utils/editVisitTimeScoreCompare';
+import { extractHttpErrorMessage } from '../utils/httpErrorMessage';
 import { appointmentPracticeDateKey } from '../utils/editVisitTimeFields';
 import { submitEditVisitPreviewAcceptedFeedback } from '../utils/routingBookFeedback';
 import {
@@ -185,9 +204,13 @@ import {
   rescheduleCalendarFocusFromIntent,
   rescheduleScopeTargets,
   ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
+  ROUTING_RESCHEDULE_SOURCE_SCORE_UPDATED_EVENT,
   writeRoutingRescheduleIntent,
   type RescheduleSameDayVisit,
 } from '../utils/routingRescheduleIntent';
+import {
+  fetchAndCacheRescheduleSourcePlacementSnapshot,
+} from '../utils/routingRescheduleScoreCompare';
 import {
   clearRoutingForwardBookingIntent,
   readRoutingForwardBookingIntent,
@@ -281,6 +304,8 @@ type SchedulerProps = {
 
 /** Delay before the visit hover card appears (avoids popover noise on quick passes). */
 const SCHEDULER_HOVER_POPOVER_DELAY_MS = 750;
+/** Grace period to move pointer from appointment block onto the Visit Highlights card (scroll). */
+const SCHEDULER_HOVER_DISMISS_MS = 150;
 /** Match My Week column layout / drive segment math (`MyWeek.tsx` PPM). */
 const PPM = 1.1;
 /** Spacer under nav + height of `.scheduler-day-header` (must stay in sync with CSS). */
@@ -291,18 +316,34 @@ const DEFAULT_GRID_END = 17 * 60;
 /** Minutes of grid past depot and past first/last timed item (same as My Week depot lead-in). */
 const SCHEDULER_GRID_EDGE_BUFFER_MIN = 30;
 
-function practiceAppointmentHasLocation(a: Appointment): boolean {
-  return !isAppointmentNoLocation(a);
-}
-
 /**
- * Practice calendar "off" day: no depot shift from doctor-day/override AND no timed range visits.
- * Schedule overrides from all-day OFF bookings clear depot times but visits should still display.
+ * Practice calendar "off" day: explicit schedule override (Settings → Override), not a weekly
+ * workday (unless override adds a shift), or no depot shift and no timed range visits.
+ * OFF overrides still show timed visits on top of the Off marking.
  */
 function schedulerPracticeCalendarDayOff(
   dayData: DayData | null | undefined,
-  dayAppointments: Appointment[]
+  dayAppointments: Appointment[],
+  weeklySchedules?: EmployeeWeeklySchedule[] | null,
+  dayKey?: string,
+  scheduleOverride?: ScheduleOverride | null
 ): boolean {
+  if (scheduleOverride) {
+    return scheduleOverrideIsOff(scheduleOverride);
+  }
+
+  if (weeklySchedules && dayKey) {
+    const dow = goalDayOfWeekFromLuxonWeekday(
+      DateTime.fromISO(dayKey, { zone: PRACTICE_TZ }).weekday
+    );
+    const schedule = weeklySchedules.find((s) => s.dayOfWeek === dow);
+    if (schedule && !schedule.isWorkday) {
+      if (!dayData || doctorDayIsOff(dayData)) {
+        return true;
+      }
+    }
+  }
+
   if (!doctorDayIsOff(dayData)) return false;
   return !dayAppointments.some((a) => !a.allDay);
 }
@@ -311,12 +352,67 @@ function schedulerPracticeCalendarDayOff(
 function schedulerDayIsWorking(
   dayKey: string,
   dayData: DayData | null | undefined,
-  appointmentsByDay: Map<string, Appointment[]>
+  appointmentsByDay: Map<string, Appointment[]>,
+  weeklySchedules?: EmployeeWeeklySchedule[] | null,
+  scheduleOverridesByDate?: Map<string, ScheduleOverride> | null
 ): boolean {
   const dayAppts = appointmentsByDay.get(dayKey) ?? [];
-  if (schedulerPracticeCalendarDayOff(dayData, dayAppts)) return false;
+  const scheduleOverride = scheduleOverridesByDate?.get(dayKey) ?? null;
+  if (
+    schedulerPracticeCalendarDayOff(
+      dayData,
+      dayAppts,
+      weeklySchedules,
+      dayKey,
+      scheduleOverride
+    )
+  ) {
+    return false;
+  }
   if (dayData) return true;
   return dayAppts.length > 0;
+}
+
+/**
+ * Count toward daily/weekly point goals when the day is a normal scheduled shift — not an off day.
+ * Uses schedule override when present, otherwise weekly isWorkday (historical doctor-day rows
+ * often omit depot shift times even for days that had routed visits).
+ */
+function schedulerDayCountsForPointGoal(
+  dayData: DayData | null | undefined,
+  dayAppointments: Appointment[],
+  weeklySchedules?: EmployeeWeeklySchedule[] | null,
+  dayKey?: string,
+  scheduleOverride?: ScheduleOverride | null
+): boolean {
+  if (
+    schedulerPracticeCalendarDayOff(
+      dayData,
+      dayAppointments,
+      weeklySchedules,
+      dayKey,
+      scheduleOverride
+    )
+  ) {
+    return false;
+  }
+  if (!dayData) return false;
+
+  if (scheduleOverride) {
+    return !scheduleOverrideIsOff(scheduleOverride);
+  }
+
+  if (weeklySchedules && dayKey) {
+    const dow = goalDayOfWeekFromLuxonWeekday(
+      DateTime.fromISO(dayKey, { zone: PRACTICE_TZ }).weekday
+    );
+    const schedule = weeklySchedules.find((s) => s.dayOfWeek === dow);
+    if (schedule) {
+      return schedule.isWorkday;
+    }
+  }
+
+  return !doctorDayIsOff(dayData);
 }
 
 /** Stronger divider when two consecutive off days would otherwise read as one gray block. */
@@ -325,14 +421,19 @@ function schedulerOffDayAdjoinsNext(
   dayColumnDates: DateTime[],
   driveDayByDate: Map<string, DayData> | null | undefined,
   appointmentsByDay: Map<string, Appointment[]>,
-  isCurrentOff: boolean
+  isCurrentOff: boolean,
+  weeklySchedules?: EmployeeWeeklySchedule[] | null,
+  scheduleOverridesByDate?: Map<string, ScheduleOverride> | null
 ): boolean {
   if (!isCurrentOff || dayIdx >= dayColumnDates.length - 1) return false;
   const nextKey = dayColumnDates[dayIdx + 1]?.toISODate();
   if (!nextKey) return false;
   return schedulerPracticeCalendarDayOff(
     driveDayByDate?.get(nextKey),
-    appointmentsByDay.get(nextKey) ?? []
+    appointmentsByDay.get(nextKey) ?? [],
+    weeklySchedules,
+    nextKey,
+    scheduleOverridesByDate?.get(nextKey) ?? null
   );
 }
 
@@ -1177,6 +1278,18 @@ function providerLabelFormalFromProviderRow(p: Provider): string | null {
   return suffix ? `${name}, ${suffix}` : name;
 }
 
+/** Embedded routing calendar bar, e.g. `Brian Quinn, DVM's Schedule`. */
+function embeddedCalendarProviderScheduleLabel(
+  providerRow: Provider | null | undefined,
+  fallbackName?: string | null
+): string {
+  const formal = providerRow ? providerLabelFormalFromProviderRow(providerRow) : null;
+  if (formal) return `${formal}'s Schedule`;
+  const name = fallbackName?.trim();
+  if (name) return `${name}'s Schedule`;
+  return "Provider's Schedule";
+}
+
 function chartPrimaryProviderLabelFromRefAndProviders(
   ref: Appointment['patientPrimaryProvider'] | null | undefined,
   providers: readonly Provider[] | undefined
@@ -1566,7 +1679,6 @@ function SchedulerHoverContent({
     null;
   const desc = appt.description?.trim() || null;
   const instr = appt.instructions?.trim() || null;
-  const descCombined = [desc, instr].filter(Boolean).join(' · ') || null;
   const clientAlerts = c?.alerts?.trim() || null;
   const hasAlternateLocation = appointmentHasAlternateLocation(appt);
   const alternateAddress = appointmentAlternateAddressText(appt);
@@ -1597,7 +1709,13 @@ function SchedulerHoverContent({
               {appt.isComplete ? <SchedulerTypeCompletePill /> : null}
             </div>
           ) : null}
-          {descCombined ? <div className="scheduler-tooltip-vh-desc">{descCombined}</div> : null}
+          {desc ? <div className="scheduler-tooltip-vh-desc">{desc}</div> : null}
+          {instr ? (
+            <div className="scheduler-tooltip-vh-staff-notes">
+              <span className="scheduler-tooltip-vh-staff-notes-k">Staff notes</span>
+              {instr}
+            </div>
+          ) : null}
           <div className="scheduler-tooltip-vh-provider-row">
             <span className="scheduler-tooltip-vh-provider">{providerLine}</span>
             {appointmentVsChartProviderMismatch ? (
@@ -1935,11 +2053,8 @@ function SchedulerAppointmentModal({
                 fullWidth
                 value={appt.description?.trim() || null}
               />
-              {appt.description?.trim() ? (
-                <hr className="scheduler-modal-kv-grid-divider" aria-hidden />
-              ) : null}
               <SchedulerModalKvCondensed
-                label="Instructions"
+                label="Staff notes"
                 fullWidth
                 value={appt.instructions?.trim() || null}
               />
@@ -2432,10 +2547,14 @@ function initialSchedulerCalendarState(embedInRoutingWorkspace: boolean): {
     }
     const intent = readRoutingRescheduleIntent();
     if (intent?.practiceDateKey?.trim()) {
+      const handoff = readSchedulerCalendarHandoff();
+      const providerFromIntent =
+        intent.sourceProviderInternalId?.trim() || intent.primaryProviderInternalId?.trim();
+      const providerFromHandoff = handoff?.providerFilter?.trim();
       return {
         anchorDate: intent.practiceDateKey.trim(),
         view: 'week',
-        providerFilter: '',
+        providerFilter: providerFromIntent || providerFromHandoff || '',
       };
     }
   }
@@ -2463,6 +2582,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
   const [providers, setProviders] = useState<Provider[]>([]);
   const [providersLoadState, setProvidersLoadState] = useState<'pending' | 'resolved'>('pending');
+  const [providerGoals, setProviderGoals] = useState<EmployeeGoalsResponseDto | null>(null);
+  const [providerWeeklySchedules, setProviderWeeklySchedules] = useState<
+    EmployeeWeeklySchedule[] | null
+  >(null);
   const [typeList, setTypeList] = useState<AppointmentType[]>([]);
   const typeCatalog = useMemo(() => buildAppointmentTypeCatalog(typeList), [typeList]);
   const [manualBookableTypeIds, setManualBookableTypeIds] = useState<number[] | null>(null);
@@ -2534,6 +2657,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [doctorDayPatientPcpByApptId, setDoctorDayPatientPcpByApptId] = useState<
     Map<string, DoctorDayPatientPrimaryProvider | null>
   >(() => new Map());
+  const [scheduleOverridesByDate, setScheduleOverridesByDate] = useState<
+    Map<string, ScheduleOverride>
+  >(() => new Map());
   /** Bump after mutations that change route order so drive/ETA refetches (avoids tying drive load to every `rawAppointments` refresh). */
   const [driveRefreshNonce, setDriveRefreshNonce] = useState(0);
   const [scheduleOverrideModal, setScheduleOverrideModal] = useState<{
@@ -2548,6 +2674,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [routingPreview, setRoutingPreview] = useState<RoutingCalendarPreviewPayloadV1 | null>(null);
   /** Bumped when session reschedule intent changes (scope, clear, new visit). */
   const [rescheduleIntentTick, setRescheduleIntentTick] = useState(0);
+  /** Bumped when source-doctor placement score is cached for cross-provider compare. */
+  const [rescheduleSourceScoreTick, setRescheduleSourceScoreTick] = useState(0);
   const [hover, setHover] = useState<{
     appt: Appointment;
     x: number;
@@ -2565,12 +2693,48 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   } | null>(null);
 
   const hoverRevealTimerRef = useRef<number | null>(null);
+  const hoverDismissTimerRef = useRef<number | null>(null);
+  const hoverPinnedRef = useRef(false);
   const hoverRevealPendingRef = useRef<{
     appt: Appointment;
     el: HTMLElement;
     x: number;
     y: number;
   } | null>(null);
+  const hoverTooltipRef = useRef<HTMLDivElement>(null);
+  const suppressHoverScrollDismissRef = useRef(false);
+  const [hoverTooltipLayout, setHoverTooltipLayout] = useState<{
+    pos: HoverPopoverPositionResult;
+    ready: boolean;
+  } | null>(null);
+
+  const computeVisitHighlightsPopoverPosition = useCallback(
+    (args: { anchorEl: HTMLElement | null; x: number; y: number; cardEstH?: number }) => {
+      const vwW = window.innerWidth;
+      const vwH = window.innerHeight;
+      const fallbackEstH = Math.min(520, Math.max(400, Math.floor(vwH * 0.42)));
+      return computeHoverPopoverPosition({
+        anchor: rectFromElement(args.anchorEl),
+        x: args.x,
+        y: args.y,
+        vwW,
+        vwH,
+        cardMaxW: 380,
+        cardMinW: 280,
+        padding: 8,
+        offset: 8,
+        cardEstH: args.cardEstH ?? fallbackEstH,
+      });
+    },
+    []
+  );
+
+  const cancelHoverDismiss = useCallback(() => {
+    if (hoverDismissTimerRef.current != null) {
+      clearTimeout(hoverDismissTimerRef.current);
+      hoverDismissTimerRef.current = null;
+    }
+  }, []);
 
   const cancelScheduledHoverPopover = useCallback(() => {
     if (hoverRevealTimerRef.current != null) {
@@ -2580,9 +2744,35 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     hoverRevealPendingRef.current = null;
   }, []);
 
+  const dismissHoverPopover = useCallback(() => {
+    cancelScheduledHoverPopover();
+    cancelHoverDismiss();
+    hoverPinnedRef.current = false;
+    setHover(null);
+    setHoverTooltipLayout(null);
+  }, [cancelScheduledHoverPopover, cancelHoverDismiss]);
+
+  const scheduleHoverDismiss = useCallback(
+    (apptId?: string | number) => {
+      cancelHoverDismiss();
+      hoverDismissTimerRef.current = window.setTimeout(() => {
+        hoverDismissTimerRef.current = null;
+        if (hoverPinnedRef.current) return;
+        setHover((prev) => {
+          if (apptId == null) return null;
+          return prev?.appt.id === apptId ? null : prev;
+        });
+        setHoverTooltipLayout((prev) => (prev ? null : prev));
+      }, SCHEDULER_HOVER_DISMISS_MS);
+    },
+    [cancelHoverDismiss]
+  );
+
   const armHoverPopover = useCallback(
     (appt: Appointment, ev: MouseEvent<HTMLElement>) => {
       cancelScheduledHoverPopover();
+      cancelHoverDismiss();
+      hoverPinnedRef.current = false;
       const el = ev.currentTarget;
       hoverRevealPendingRef.current = {
         appt,
@@ -2603,7 +2793,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         });
       }, SCHEDULER_HOVER_POPOVER_DELAY_MS);
     },
-    [cancelScheduledHoverPopover]
+    [cancelScheduledHoverPopover, cancelHoverDismiss]
   );
 
   const trackHoverPopoverMove = useCallback((appt: Appointment, ev: MouseEvent<HTMLElement>) => {
@@ -2624,12 +2814,50 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const endHoverPopoverForAppt = useCallback(
     (apptId: string | number) => {
       cancelScheduledHoverPopover();
-      setHover((prev) => (prev?.appt.id === apptId ? null : prev));
+      scheduleHoverDismiss(apptId);
     },
-    [cancelScheduledHoverPopover]
+    [cancelScheduledHoverPopover, scheduleHoverDismiss]
   );
 
-  useEffect(() => () => cancelScheduledHoverPopover(), [cancelScheduledHoverPopover]);
+  useEffect(
+    () => () => {
+      cancelScheduledHoverPopover();
+      cancelHoverDismiss();
+    },
+    [cancelScheduledHoverPopover, cancelHoverDismiss]
+  );
+
+  /** Close Visit Highlights when clicking elsewhere, scrolling, or pressing Escape. */
+  useEffect(() => {
+    if (!hover) return;
+
+    const onPointerDown = (ev: PointerEvent) => {
+      const target = ev.target;
+      if (!(target instanceof Node)) return;
+      if (hoverTooltipRef.current?.contains(target)) return;
+      const anchorEl = hover.el instanceof HTMLElement ? hover.el : null;
+      if (anchorEl?.contains(target)) return;
+      dismissHoverPopover();
+    };
+
+    const onScroll = () => {
+      if (suppressHoverScrollDismissRef.current) return;
+      dismissHoverPopover();
+    };
+
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') dismissHoverPopover();
+    };
+
+    document.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('scroll', onScroll, true);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('scroll', onScroll, true);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [hover, dismissHoverPopover]);
 
   /** Range rows may omit alternate text while `isAlternateStop` is set — hydrate from GET /appointments/:id on hover. */
   useEffect(() => {
@@ -2704,11 +2932,23 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   /** Practice-local "now" for the current-time indicator on the grid (updates on an interval). */
   const [practiceClock, setPracticeClock] = useState(() => DateTime.now().setZone(PRACTICE_TZ));
 
-  const { token: authToken, doctorId: authDoctorId, role } = useAuth() as {
+  const { token: authToken, doctorId: authDoctorId, userEmail: authUserEmail, role } = useAuth() as {
     token: string | null;
     doctorId: string | null;
+    userEmail?: string | null;
     role?: string | string[];
   };
+
+  const appointmentChangeActor = useMemo(
+    () =>
+      resolveAppointmentChangeActorFromAuth({
+        token: authToken,
+        userEmail: authUserEmail,
+        doctorId: authDoctorId,
+        providers,
+      }),
+    [authToken, authUserEmail, authDoctorId, providers]
+  );
 
   const rolesLower = useMemo(() => {
     const arr = Array.isArray(role) ? role : role != null ? [role] : [];
@@ -2805,14 +3045,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     }
   }, [embedInRoutingWorkspace, applyRoutingCalendarPreviewFromStorage]);
 
-  useEffect(() => {
-    writeSchedulerCalendarHandoff({
-      anchorDate: anchorDate ?? '',
-      view,
-      providerFilter,
-    });
-  }, [anchorDate, view, providerFilter]);
-
   const applyRescheduleCalendarFocusFromIntent = useCallback(() => {
     const intent = readRoutingRescheduleIntent();
     if (!intent) return;
@@ -2824,11 +3056,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setShowByDriveTime(true);
   }, [providers]);
 
-  /** Reschedule from calendar → keep that visit's week, day, and doctor in the routing pane calendar. */
+  /** Reschedule from calendar → keep source visit week/doctor until a placement preview opens. */
   useEffect(() => {
     if (!embedInRoutingWorkspace) return;
     const onRescheduleIntent = () => {
-      applyRescheduleCalendarFocusFromIntent();
+      if (!readRoutingCalendarPreview()) {
+        applyRescheduleCalendarFocusFromIntent();
+      }
       setRescheduleIntentTick((n) => n + 1);
     };
     onRescheduleIntent();
@@ -2838,7 +3072,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, [embedInRoutingWorkspace, applyRescheduleCalendarFocusFromIntent]);
 
   useEffect(() => {
+    const onSourceScore = () => setRescheduleSourceScoreTick((n) => n + 1);
+    window.addEventListener(ROUTING_RESCHEDULE_SOURCE_SCORE_UPDATED_EVENT, onSourceScore);
+    return () =>
+      window.removeEventListener(ROUTING_RESCHEDULE_SOURCE_SCORE_UPDATED_EVENT, onSourceScore);
+  }, []);
+
+  useEffect(() => {
     if (!embedInRoutingWorkspace || providersLoadState !== 'resolved') return;
+    if (readRoutingCalendarPreview()) return;
     applyRescheduleCalendarFocusFromIntent();
   }, [embedInRoutingWorkspace, providersLoadState, applyRescheduleCalendarFocusFromIntent]);
 
@@ -2875,25 +3117,155 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     if (providers.length === 0) return;
     setProviderFilter((current) => {
       const t = current.trim();
+      if (routingPreview && t && providers.some((p) => String(p.id) === t)) return current;
+
+      const ri = readRoutingRescheduleIntent();
+      if (ri && embedInRoutingWorkspace && !routingPreview) {
+        const focus = rescheduleCalendarFocusFromIntent(ri, providers);
+        if (
+          focus?.providerFilter &&
+          providers.some((p) => String(p.id) === focus.providerFilter)
+        ) {
+          return focus.providerFilter;
+        }
+      }
+
       if (t && providers.some((p) => String(p.id) === t)) return current;
-      if (routingPreview && t) return current;
-      if (readRoutingRescheduleIntent() && t) return current;
+
       const raw = authDoctorId?.trim();
       if (raw && providers.some((p) => String(p.id) === String(raw))) return String(raw);
       return String(providers[0].id);
     });
-  }, [providers, authDoctorId, routingPreview]);
+  }, [providers, authDoctorId, routingPreview, embedInRoutingWorkspace]);
 
   /** Stable provider id for range + drive APIs so we do not double-fetch when `providerFilter` syncs from "" to the same doctor. */
   const resolvedPrimaryProviderId = useMemo(() => {
     if (providers.length === 0) return '';
+    if (routingPreview) {
+      const previewProv = providerFilter.trim();
+      if (previewProv && providers.some((p) => String(p.id) === previewProv)) {
+        return previewProv;
+      }
+    }
+    if (embedInRoutingWorkspace && !routingPreview) {
+      const ri = readRoutingRescheduleIntent();
+      if (ri) {
+        const focus = rescheduleCalendarFocusFromIntent(ri, providers);
+        if (
+          focus?.providerFilter &&
+          providers.some((p) => String(p.id) === focus.providerFilter)
+        ) {
+          return focus.providerFilter;
+        }
+      }
+    }
     const t = providerFilter.trim();
     if (t && providers.some((p) => String(p.id) === t)) return t;
-    if (routingPreview && t) return t;
     const raw = authDoctorId?.trim();
     if (raw && providers.some((p) => String(p.id) === String(raw))) return String(raw);
     return String(providers[0].id);
-  }, [providers, providerFilter, authDoctorId, routingPreview]);
+  }, [providers, providerFilter, authDoctorId, routingPreview, embedInRoutingWorkspace]);
+
+  const selectedPrimaryProvider = useMemo(
+    () => providers.find((p) => String(p.id) === resolvedPrimaryProviderId.trim()) ?? null,
+    [providers, resolvedPrimaryProviderId]
+  );
+
+  /** Provider shown on the embedded routing calendar bar (preview or reschedule source). */
+  const embeddedCalendarProviderLabel = useMemo(() => {
+    if (!embedInRoutingWorkspace) return null;
+
+    let providerRow = selectedPrimaryProvider;
+    if (!providerRow && routingPreview) {
+      const previewId = String(routingPreview.option.doctorPimsId ?? '').trim();
+      if (previewId) {
+        providerRow = providers.find((p) => String(p.id) === previewId) ?? null;
+      }
+    }
+    if (!providerRow) {
+      const ri = readRoutingRescheduleIntent();
+      const sourceId =
+        ri?.sourceProviderInternalId?.trim() || ri?.primaryProviderInternalId?.trim() || '';
+      if (sourceId) {
+        providerRow = providers.find((p) => String(p.id) === sourceId) ?? null;
+      }
+    }
+
+    const fallbackName = routingPreview
+      ? String(routingPreview.option.doctorName ?? '').trim()
+      : readRoutingRescheduleIntent()?.sourceDoctorDisplayName?.trim() ||
+        readRoutingRescheduleIntent()?.primaryDoctorDisplayName?.trim() ||
+        selectedPrimaryProvider?.name?.trim() ||
+        '';
+
+    return embeddedCalendarProviderScheduleLabel(providerRow, fallbackName);
+  }, [
+    embedInRoutingWorkspace,
+    routingPreview,
+    rescheduleIntentTick,
+    selectedPrimaryProvider,
+    providers,
+  ]);
+
+  useEffect(() => {
+    const id = resolvedPrimaryProviderId.trim();
+    if (!id) {
+      setProviderGoals(null);
+      setProviderWeeklySchedules(null);
+      return;
+    }
+    const empId = Number(id);
+    if (!Number.isFinite(empId)) {
+      setProviderGoals(null);
+      setProviderWeeklySchedules(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchEmployeeGoals(empId)
+      .then((goals) => {
+        if (!cancelled) setProviderGoals(goals);
+      })
+      .catch(() => {
+        if (!cancelled) setProviderGoals(null);
+      });
+    void fetchEmployee(empId)
+      .then((emp) => {
+        if (!cancelled) setProviderWeeklySchedules(emp?.weeklySchedules ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setProviderWeeklySchedules(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedPrimaryProviderId]);
+
+  const pointGoalForDay = useCallback(
+    (dayDt: DateTime): number => {
+      const dow = goalDayOfWeekFromLuxonWeekday(dayDt.weekday);
+      if (providerGoals) {
+        return getGoalForDay(providerGoals, dow).pointGoal;
+      }
+      const fallback = selectedPrimaryProvider?.dailyPointGoal;
+      if (fallback != null && Number.isFinite(Number(fallback)) && Number(fallback) > 0) {
+        return Number(fallback);
+      }
+      return 0;
+    },
+    [providerGoals, selectedPrimaryProvider]
+  );
+
+  useEffect(() => {
+    const provider = selectedPrimaryProvider;
+    const pimsRaw = provider?.pimsId != null ? String(provider.pimsId).trim() : '';
+    writeSchedulerCalendarHandoff({
+      anchorDate: anchorDate ?? '',
+      view,
+      providerFilter,
+      routingDoctorPimsId: pimsRaw || undefined,
+      routingDoctorLabel: provider?.name?.trim() || undefined,
+    });
+  }, [anchorDate, view, providerFilter, selectedPrimaryProvider]);
 
   /** Match routing preview doctor to provider list (internal id or PIMS); fall back to employee APIs. */
   useEffect(() => {
@@ -3075,11 +3447,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [embedInRoutingWorkspace, routingPreview, rescheduleSourceHighlightIds]
   );
 
-  const rescheduleWorkspaceClientLabel = useMemo(() => {
-    if (!rescheduleWorkspaceActive) return null;
-    const ri = readRoutingRescheduleIntent();
-    return ri?.clientDisplayLabel?.trim() || null;
-  }, [rescheduleWorkspaceActive, rescheduleIntentTick]);
+  const embeddedRoutingCalendarLocked = Boolean(
+    embedInRoutingWorkspace && (routingPreview || rescheduleWorkspaceActive)
+  );
 
   const calendarFocusDim =
     routingPreviewFocusDim ||
@@ -3093,6 +3463,33 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       Number.isFinite(Number(routingPreview.rescheduleAppointmentId)),
     [routingPreview?.rescheduleAppointmentId]
   );
+
+  const reschedulePreviewSourceVisit = useMemo(() => {
+    if (!routingPreviewIsReschedule) return null;
+    const fromPreview = routingPreview?.rescheduleSourceVisitSnapshot;
+    if (fromPreview?.found && typeof fromPreview.score === 'number') return fromPreview;
+    const intent = readRoutingRescheduleIntent();
+    const cached = intent?.sourcePlacementVisitSnapshot;
+    if (cached?.found && typeof cached.score === 'number') return cached;
+    return fromPreview ?? cached ?? null;
+  }, [routingPreview, routingPreviewIsReschedule, rescheduleIntentTick, rescheduleSourceScoreTick]);
+
+  useEffect(() => {
+    if (!routingPreviewIsReschedule) return;
+    const fromPreview = routingPreview?.rescheduleSourceVisitSnapshot;
+    if (fromPreview?.found && typeof fromPreview.score === 'number') return;
+    const intent = readRoutingRescheduleIntent();
+    if (!intent) return;
+    const cached = intent.sourcePlacementVisitSnapshot;
+    if (cached?.found && typeof cached.score === 'number') return;
+    let cancelled = false;
+    void fetchAndCacheRescheduleSourcePlacementSnapshot(intent).then(() => {
+      if (!cancelled) setRescheduleSourceScoreTick((n) => n + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [routingPreview, routingPreviewIsReschedule]);
 
   const reschedulePreviewHiddenApptIds = useMemo(() => {
     if (!routingPreview) return null;
@@ -3299,6 +3696,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       setDoctorDayMembershipByApptId(new Map());
       setDoctorDayZonesByApptId(new Map());
       setDoctorDayPatientPcpByApptId(new Map());
+      setScheduleOverridesByDate(new Map());
       setDriveEtaLoading(false);
       return;
     }
@@ -3309,6 +3707,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       setDoctorDayMembershipByApptId(new Map());
       setDoctorDayZonesByApptId(new Map());
       setDoctorDayPatientPcpByApptId(new Map());
+      setScheduleOverridesByDate(new Map());
       setDriveEtaLoading(false);
       return;
     }
@@ -3373,6 +3772,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           : new Map<string, ScheduleOverride>();
 
       if (cancelled) return;
+      setScheduleOverridesByDate(overridesByDate);
 
       await Promise.all(
         dates.map(async (date) => {
@@ -3752,12 +4152,34 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     }
     const flexGrow = keys.map((k) => {
       const dayData = driveDayByDate?.get(k);
-      if (schedulerPracticeCalendarDayOff(dayData, appointmentsByDay.get(k) ?? [])) return 1;
+      const dayAppts = appointmentsByDay.get(k) ?? [];
+      const scheduleOverride = scheduleOverridesByDate.get(k) ?? null;
+      if (
+        schedulerPracticeCalendarDayOff(
+          dayData,
+          dayAppts,
+          providerWeeklySchedules,
+          k,
+          scheduleOverride
+        )
+      ) {
+        return 1;
+      }
       if (routingPreview && routingPreviewColumnKey === k) return 2;
       if (editTimePreview && editTimePreviewColumnKey === k) return 2;
       if (editVisitColumnKey === k) return 2;
       if (rescheduleSourceColumnKey === k) return 2;
-      if (schedulerDayIsWorking(k, dayData, appointmentsByDay)) return 2;
+      if (
+        schedulerDayIsWorking(
+          k,
+          dayData,
+          appointmentsByDay,
+          providerWeeklySchedules,
+          scheduleOverridesByDate
+        )
+      ) {
+        return 2;
+      }
       return 1;
     });
     const total = flexGrow.reduce((a, b) => a + b, 0);
@@ -3782,6 +4204,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     view,
     appointmentsByDay,
     driveDayByDate,
+    providerWeeklySchedules,
+    scheduleOverridesByDate,
     routingPreview,
     routingPreviewColumnKey,
     editTimePreview,
@@ -3913,23 +4337,79 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     );
   }, [modalAppt, showByDriveTime, resolvedPrimaryProviderId, driveDayByDate]);
 
-  const tooltipPos = useMemo(() => {
-    if (!hover) return { left: 0, top: 0, width: 300, maxCardH: 0 };
-    const vwW = typeof window !== 'undefined' ? window.innerWidth : 1200;
-    const vwH = typeof window !== 'undefined' ? window.innerHeight : 800;
-    return computeHoverPopoverPosition({
-      anchor: rectFromElement(hover.el),
+  useLayoutEffect(() => {
+    if (!hover) {
+      setHoverTooltipLayout(null);
+      return;
+    }
+    const anchorEl = hover.el instanceof HTMLElement ? hover.el : null;
+    if (anchorEl) {
+      suppressHoverScrollDismissRef.current = true;
+      scrollTimedGridElementIntoView(anchorEl, 'auto');
+      requestAnimationFrame(() => {
+        suppressHoverScrollDismissRef.current = false;
+      });
+    }
+    setHoverTooltipLayout({
+      pos: computeVisitHighlightsPopoverPosition({
+        anchorEl,
+        x: hover.x,
+        y: hover.y,
+      }),
+      ready: false,
+    });
+  }, [
+    hover?.appt.id,
+    hover?.x,
+    hover?.y,
+    hover?.el,
+    computeVisitHighlightsPopoverPosition,
+  ]);
+
+  useLayoutEffect(() => {
+    if (!hover || !hoverTooltipLayout || hoverTooltipLayout.ready) return;
+    const anchorEl = hover.el instanceof HTMLElement ? hover.el : null;
+    const el = hoverTooltipRef.current;
+    const measuredH = el ? Math.max(el.scrollHeight, el.getBoundingClientRect().height) : 0;
+    const vwH = window.innerHeight;
+    const fallbackEstH = Math.min(520, Math.max(400, Math.floor(vwH * 0.42)));
+    const pos = computeVisitHighlightsPopoverPosition({
+      anchorEl,
       x: hover.x,
       y: hover.y,
-      vwW,
-      vwH,
-      cardMaxW: 380,
-      cardMinW: 280,
-      padding: 8,
-      offset: 8,
-      cardEstH: Math.min(520, Math.max(400, Math.floor(vwH * 0.42))),
+      cardEstH: measuredH > 120 ? measuredH : fallbackEstH,
     });
-  }, [hover]);
+    setHoverTooltipLayout({ pos, ready: true });
+  }, [hover, hoverAppt, hoverTooltipLayout, computeVisitHighlightsPopoverPosition]);
+
+  useLayoutEffect(() => {
+    if (!hover || !hoverTooltipLayout?.ready) return;
+    const anchorEl = hover.el instanceof HTMLElement ? hover.el : null;
+    const el = hoverTooltipRef.current;
+    const measuredH = el ? Math.max(el.scrollHeight, el.getBoundingClientRect().height) : 0;
+    if (measuredH <= 120) return;
+    const vwH = window.innerHeight;
+    const fallbackEstH = Math.min(520, Math.max(400, Math.floor(vwH * 0.42)));
+    const pos = computeVisitHighlightsPopoverPosition({
+      anchorEl,
+      x: hover.x,
+      y: hover.y,
+      cardEstH: Math.max(measuredH, fallbackEstH),
+    });
+    setHoverTooltipLayout((prev) => {
+      if (!prev?.ready) return prev;
+      if (
+        prev.pos.left === pos.left &&
+        prev.pos.top === pos.top &&
+        prev.pos.bottom === pos.bottom &&
+        prev.pos.maxCardH === pos.maxCardH &&
+        prev.pos.width === pos.width
+      ) {
+        return prev;
+      }
+      return { pos, ready: true };
+    });
+  }, [hover?.appt.id, hoverAppt, hoverTooltipLayout?.ready, computeVisitHighlightsPopoverPosition]);
 
   const showTimeGrid = view === 'week' || view === 'day';
 
@@ -4206,23 +4686,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [routingPreviewCalendarLock, editVisitCalendarLock, notifyEditVisitCalendarLocked, canManualBookOnCalendar]
   );
 
-  const dismissRoutingPreview = useCallback(() => {
-    clearRoutingCalendarPreview();
-    setRoutingPreview(null);
-    setBookSlot(null);
-    setBookPrefill(null);
-    if (!embedInRoutingWorkspace) {
-      navigate('/schedule/routing');
-    }
-  }, [navigate, embedInRoutingWorkspace]);
-
-  const dismissRescheduleWorkspace = useCallback(() => {
-    dismissRoutingRescheduleWorkspace();
-    setRescheduleIntentTick((n) => n + 1);
-    setBookSlot(null);
-    setBookPrefill(null);
-  }, []);
-
   const focusRescheduleSourceOnCalendar = useCallback(() => {
     clearRoutingCalendarPreview();
     setRoutingPreview(null);
@@ -4234,6 +4697,38 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     driveSoftRefreshRef.current = true;
     setDriveRefreshNonce((n) => n + 1);
   }, [applyRescheduleCalendarFocusFromIntent]);
+
+  const dismissRoutingPreview = useCallback(() => {
+    const returnToRescheduleSource = embedInRoutingWorkspace && readRoutingRescheduleIntent() != null;
+    clearRoutingCalendarPreview();
+    setRoutingPreview(null);
+    setBookSlot(null);
+    setBookPrefill(null);
+    if (returnToRescheduleSource) {
+      focusRescheduleSourceOnCalendar();
+      return;
+    }
+    if (!embedInRoutingWorkspace) {
+      navigate('/schedule/routing');
+    }
+  }, [navigate, embedInRoutingWorkspace, focusRescheduleSourceOnCalendar]);
+
+  const dismissRescheduleWorkspace = useCallback(() => {
+    const intent = readRoutingRescheduleIntent();
+    if (intent) {
+      const focus = rescheduleCalendarFocusFromIntent(intent, providers);
+      if (focus?.anchorDate) setAnchorDate(focus.anchorDate);
+      if (focus?.providerFilter) setProviderFilter(focus.providerFilter);
+      setView('week');
+      setShowByDriveTime(true);
+    }
+    dismissRoutingRescheduleWorkspace();
+    setRescheduleIntentTick((n) => n + 1);
+    setBookSlot(null);
+    setBookPrefill(null);
+    driveSoftRefreshRef.current = true;
+    setDriveRefreshNonce((n) => n + 1);
+  }, [providers]);
 
   useEffect(() => {
     if (!embedInRoutingWorkspace) return;
@@ -4319,10 +4814,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         : rescheduleTargets?.appointmentIds ?? []);
     const rescheduleVisitPatches =
       rescheduleTargets && rescheduleTargets.visits.length > 0
-        ? buildRescheduleVisitPatches(rescheduleTargets.visits, rawAppointments, PRACTICE_TZ)
+        ? buildRescheduleVisitPatches(
+            rescheduleTargets.visits,
+            rawAppointments,
+            PRACTICE_TZ,
+            routingPreview.appointmentTypeChosenInRouting
+              ? routingPreview.appointmentTypeId
+              : undefined
+          )
         : undefined;
     const rescheduleId = rescheduleIds[0];
     const isReschedule = rescheduleId != null && Number.isFinite(Number(rescheduleId));
+    const rescheduleSourceAppt = isReschedule
+      ? rawAppointments.find((a) => a.id === Number(rescheduleId))
+      : undefined;
     const slotExclude = hasLinkedClient
       ? excludePatientIdsAtSlot(
           clientIdRaw!,
@@ -4375,7 +4880,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           ? 'Forward booking'
           : undefined,
       defaultInstructions:
-        fbi?.bookingNotes?.trim() || fbi?.instructions?.trim() || undefined,
+        (isReschedule
+          ? rescheduleSourceAppt?.instructions?.trim()
+          : undefined) ||
+        fbi?.bookingNotes?.trim() ||
+        fbi?.instructions?.trim() ||
+        undefined,
       ...(fbi && !isReschedule
         ? {
             forwardBookingTrackingToken: fbi.trackingToken,
@@ -4391,16 +4901,31 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setBookPrefill(null);
   }, []);
 
+  const pulseEditVisitHighlight = useCallback((appointmentId: number, durationMs = 2600) => {
+    if (!Number.isFinite(appointmentId) || appointmentId <= 0) return;
+    if (editVisitHighlightTimerRef.current != null) {
+      window.clearTimeout(editVisitHighlightTimerRef.current);
+    }
+    setEditVisitHighlightId(appointmentId);
+    editVisitPostBookScrollSigRef.current = '';
+    editVisitHighlightTimerRef.current = window.setTimeout(() => {
+      setEditVisitHighlightId(null);
+      editVisitHighlightTimerRef.current = null;
+    }, durationMs);
+  }, []);
+
   const handleSchedulerBooked = useCallback(
-    (detail?: {
+    async (detail?: {
       routingFeedbackWarning?: string;
       forwardBookingWarning?: string;
       schedulingOverrideWarning?: string;
       schedulingOverridesApplied?: boolean;
+      savedAppointmentId?: number;
     }) => {
       const wasReschedule = bookPrefill?.rescheduleAppointmentId != null;
       const wasForwardBooking = bookPrefill?.forwardBookingTrackingToken != null;
-      void loadRange({ refreshDrive: true });
+      const savedId = detail?.savedAppointmentId;
+      closeBookModal();
       if (embedInRoutingWorkspace) {
         clearRoutingPersistenceAfterSchedulerBook();
         setRoutingPreview(null);
@@ -4411,6 +4936,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       }
       clearRoutingRescheduleIntent();
       clearRoutingForwardBookingIntent();
+      await loadRange({ refreshDrive: true });
+      if (savedId != null && Number.isFinite(savedId) && savedId > 0) {
+        pulseEditVisitHighlight(savedId, 5000);
+      }
       const warning =
         detail?.schedulingOverrideWarning ??
         detail?.forwardBookingWarning ??
@@ -4437,6 +4966,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       bookPrefill?.rescheduleAppointmentId,
       bookPrefill?.forwardBookingTrackingToken,
       embedInRoutingWorkspace,
+      closeBookModal,
+      pulseEditVisitHighlight,
     ]
   );
 
@@ -4465,19 +4996,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       originalAppointmentEnd: appt.appointmentEnd,
       ...(typeName ? { originalAppointmentTypeName: typeName } : {}),
     };
-  }, []);
-
-  const pulseEditVisitHighlight = useCallback((appointmentId: number) => {
-    if (!Number.isFinite(appointmentId) || appointmentId <= 0) return;
-    if (editVisitHighlightTimerRef.current != null) {
-      window.clearTimeout(editVisitHighlightTimerRef.current);
-    }
-    setEditVisitHighlightId(appointmentId);
-    editVisitPostBookScrollSigRef.current = '';
-    editVisitHighlightTimerRef.current = window.setTimeout(() => {
-      setEditVisitHighlightId(null);
-      editVisitHighlightTimerRef.current = null;
-    }, 2600);
   }, []);
 
   useEffect(() => {
@@ -4601,6 +5119,26 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       if (!preview || !snapshot || !editAppt) return;
       const scoreLine = editPreviewScoreCompare?.summaryLine;
       try {
+        const typeId =
+          preview.kind === 'type' && preview.appointmentTypeId != null
+            ? Number(preview.appointmentTypeId)
+            : snapshot.appointmentTypeId;
+        const editChanges = detectEditVisitChanges(
+          {
+            description: editAppt.description,
+            instructions: editAppt.instructions,
+            appointmentTypeId: editAppt.appointmentType?.id,
+            appointmentStart: editAppt.appointmentStart,
+            appointmentEnd: editAppt.appointmentEnd,
+          },
+          {
+            description: snapshot.description,
+            instructions: snapshot.instructions,
+            appointmentTypeId: typeId,
+            appointmentStart: preview.appointmentStart,
+            appointmentEnd: preview.appointmentEnd,
+          }
+        );
         const updated = await commitEditVisit({
           appointmentId: Number(editAppt.id),
           practiceId: PRACTICE_ID,
@@ -4610,6 +5148,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           previewAppointmentTypeId:
             preview.kind === 'type' ? preview.appointmentTypeId ?? null : null,
           bookedViaRouting: Boolean(embedInRoutingWorkspace && editTimePreview != null),
+          editedByAudit: {
+            actor: appointmentChangeActor,
+            practiceTz: PRACTICE_TZ,
+            changes: editChanges,
+          },
         });
         if (updated?.id != null) {
           setRawAppointments((prev) => {
@@ -4667,6 +5210,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     editPreviewScoreCompare,
     typeList,
     pulseEditVisitHighlight,
+    appointmentChangeActor,
+    embedInRoutingWorkspace,
   ]);
 
   useEffect(() => {
@@ -4704,6 +5249,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             practiceTz: PRACTICE_TZ,
             providers,
             appointmentTypes: typeList,
+            calendarProvider: selectedPrimaryProvider,
           })
         : fetchEditVisitTimeScoreCompare({
             appt: editAppt,
@@ -4711,6 +5257,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             newAppointmentEndIso: editTimePreview.appointmentEnd,
             practiceDateKey,
             providers,
+            calendarProvider: selectedPrimaryProvider,
           });
 
     void scorePromise
@@ -4721,11 +5268,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       .catch((e: unknown) => {
         if (cancelled) return;
         setEditPreviewScoreCompare(null);
-        setEditPreviewScoreError(
-          e instanceof Error && e.message.trim()
-            ? e.message
-            : 'Could not compare routing scores.'
-        );
+        setEditPreviewScoreError(extractHttpErrorMessage(e, 'Could not compare routing scores.'));
       })
       .finally(() => {
         if (!cancelled) setEditPreviewScoreLoading(false);
@@ -4742,6 +5285,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     editAppt,
     providers,
     typeList,
+    selectedPrimaryProvider,
   ]);
 
   useLayoutEffect(() => {
@@ -4776,10 +5320,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       e.preventDefault();
       e.stopPropagation();
       cancelScheduledHoverPopover();
-      setHover(null);
+      dismissHoverPopover();
       setContextMenu({ appt, x: e.clientX, y: e.clientY });
     },
-    [editVisitCalendarLock, notifyEditVisitCalendarLocked, cancelScheduledHoverPopover]
+    [editVisitCalendarLock, notifyEditVisitCalendarLocked, cancelScheduledHoverPopover, dismissHoverPopover]
   );
 
   const applyActualVisitTimeUpdate = useCallback(
@@ -4860,19 +5404,52 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               fail('Visits before today cannot be rescheduled here.');
               return;
             }
-            const intent = buildRoutingRescheduleIntentFromAppointment(appt, {
+            let intent = buildRoutingRescheduleIntentFromAppointment(appt, {
               sameCalendarDayAppointments: rawAppointments,
               providers,
+              practiceTz: PRACTICE_TZ,
             });
             if (!intent) {
               fail('This visit cannot be rescheduled here (needs client and patient, not a block).');
               return;
             }
+            const calendarProviderId = resolvedPrimaryProviderId.trim();
+            const calendarProvider = calendarProviderId
+              ? providers.find((p) => String(p.id) === calendarProviderId)
+              : undefined;
+            if (calendarProviderId) {
+              const pims =
+                calendarProvider?.pimsId != null && String(calendarProvider.pimsId).trim()
+                  ? String(calendarProvider.pimsId).trim()
+                  : undefined;
+              const displayName = calendarProvider?.name?.trim();
+              intent = {
+                ...intent,
+                primaryProviderInternalId: calendarProviderId,
+                sourceProviderInternalId: calendarProviderId,
+                ...(pims ? { primaryDoctorPimsId: pims, sourceDoctorPimsId: pims } : {}),
+                ...(displayName
+                  ? { primaryDoctorDisplayName: displayName, sourceDoctorDisplayName: displayName }
+                  : {}),
+              };
+            }
             writeRoutingRescheduleIntent(intent);
+            void fetchAndCacheRescheduleSourcePlacementSnapshot(intent);
             if (embedInRoutingWorkspace) {
               applyRescheduleCalendarFocusFromIntent();
+              setRescheduleIntentTick((n) => n + 1);
               showToast('Reschedule: visit loaded in routing — calendar shows that week and doctor.');
             } else {
+              const pimsRaw =
+                calendarProvider?.pimsId != null ? String(calendarProvider.pimsId).trim() : '';
+              writeSchedulerCalendarHandoff({
+                anchorDate: intent.practiceDateKey?.trim() || anchorDate || '',
+                view,
+                providerFilter: calendarProviderId || intent.primaryProviderInternalId?.trim() || '',
+                routingDoctorPimsId: pimsRaw || intent.primaryDoctorPimsId,
+                routingDoctorLabel:
+                  calendarProvider?.name?.trim() || intent.primaryDoctorDisplayName,
+              });
               navigate('/schedule/routing');
             }
             return;
@@ -5037,6 +5614,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       applyRescheduleCalendarFocusFromIntent,
       editAppt?.id,
       providers,
+      resolvedPrimaryProviderId,
+      anchorDate,
+      view,
     ]
   );
 
@@ -5077,6 +5657,45 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
   const practiceCalendarStickyWeekChrome = showTimeGrid && !embedInRoutingWorkspace;
 
+  const weekPointsSummary = useMemo(() => {
+    if (view !== 'week' || !showByDriveTime || !resolvedPrimaryProviderId.trim()) {
+      return null;
+    }
+    let totalPoints = 0;
+    let totalGoal = 0;
+    for (const dayDt of weekDays) {
+      const key = dayDt.toISODate()!;
+      const dayData = driveDayByDate?.get(key);
+      const dayAppts = appointmentsByDay.get(key) ?? [];
+      const scheduleOverride = scheduleOverridesByDate.get(key) ?? null;
+      if (
+        !schedulerDayCountsForPointGoal(
+          dayData,
+          dayAppts,
+          providerWeeklySchedules,
+          key,
+          scheduleOverride
+        )
+      ) {
+        continue;
+      }
+      totalGoal += pointGoalForDay(dayDt);
+      totalPoints += dayPoints(dayData!.households, typeCatalog);
+    }
+    return { totalPoints, totalGoal };
+  }, [
+    view,
+    showByDriveTime,
+    resolvedPrimaryProviderId,
+    weekDays,
+    driveDayByDate,
+    appointmentsByDay,
+    typeCatalog,
+    pointGoalForDay,
+    providerWeeklySchedules,
+    scheduleOverridesByDate,
+  ]);
+
   const practiceRangeNav = (
           <div className="scheduler-range-above-grid-container">
           <div className="scheduler-range-above-grid">
@@ -5115,9 +5734,31 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               >
                 ←
               </button>
-              <p className="scheduler-range-above-grid-title" role="status" aria-live="polite">
-                {rangeTitle}
-              </p>
+              <div className="scheduler-range-above-grid-nav-center">
+                <p className="scheduler-range-above-grid-title" role="status" aria-live="polite">
+                  {rangeTitle}
+                </p>
+                {weekPointsSummary && weekPointsSummary.totalGoal > 0 ? (
+                  <p
+                    className={[
+                      'scheduler-week-points-summary',
+                      schedulerPointsGoalClassName(
+                        weekPointsSummary.totalPoints,
+                        weekPointsSummary.totalGoal,
+                        'week-summary'
+                      ),
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                  >
+                    <strong>Points:</strong>{' '}
+                    {formatPointsAgainstGoal(
+                      weekPointsSummary.totalPoints,
+                      weekPointsSummary.totalGoal
+                    )}
+                  </p>
+                ) : null}
+              </div>
               <button
                 type="button"
                 className="scheduler-range-nav-btn"
@@ -5177,10 +5818,32 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                   const key = dayDt.toISODate()!;
                   const dayData = driveDayByDate?.get(key);
                   const dayApptsHeader = appointmentsByDay.get(key) ?? [];
-                  const isDoctorDayOff = schedulerPracticeCalendarDayOff(dayData, dayApptsHeader);
-                  const isWorkingDay = schedulerDayIsWorking(key, dayData, appointmentsByDay);
+                  const scheduleOverride = scheduleOverridesByDate.get(key) ?? null;
+                  const isDoctorDayOff = schedulerPracticeCalendarDayOff(
+                    dayData,
+                    dayApptsHeader,
+                    providerWeeklySchedules,
+                    key,
+                    scheduleOverride
+                  );
+                  const isWorkingDay = schedulerDayIsWorking(
+                    key,
+                    dayData,
+                    appointmentsByDay,
+                    providerWeeklySchedules,
+                    scheduleOverridesByDate
+                  );
                   const hasStops = (dayData?.households?.length ?? 0) > 0;
                   const pts = dayData ? dayPoints(dayData.households, typeCatalog) : 0;
+                  const pointGoal = pointGoalForDay(dayDt);
+                  const countsForPointGoal = schedulerDayCountsForPointGoal(
+                    dayData,
+                    dayApptsHeader,
+                    providerWeeklySchedules,
+                    key,
+                    scheduleOverride
+                  );
+                  const pointGoalDisplay = countsForPointGoal ? pointGoal : null;
                   const driveSec = dayData ? dayTotalDriveSeconds(dayData) : 0;
                   const driveMin = Math.round(driveSec / 60);
                   const driveColor = colorForDrive(driveMin);
@@ -5228,7 +5891,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                     dayColumnDates,
                     driveDayByDate,
                     appointmentsByDay,
-                    isDoctorDayOff
+                    isDoctorDayOff,
+                    providerWeeklySchedules,
+                    scheduleOverridesByDate
                   );
                   return (
                     <div
@@ -5269,8 +5934,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             <div className="scheduler-day-header-metrics-row">
                               {showByDriveTime && resolvedPrimaryProviderId.trim() ? (
                                 <>
-                                  <span>
-                                    <strong>Points:</strong> {pts}
+                                  <span
+                                    className={schedulerPointsGoalClassName(
+                                      pts,
+                                      pointGoalDisplay,
+                                      'day-header'
+                                    )}
+                                  >
+                                    <strong>Points:</strong>{' '}
+                                    {formatPointsAgainstGoal(pts, pointGoalDisplay)}
                                   </span>
                                   <span style={driveColor ? { color: driveColor } : undefined}>
                                     <strong>Drive:</strong> {driveMin} min
@@ -5487,6 +6159,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                   const key = dayDt.toISODate()!;
                   const dayDataCol = driveDayByDate?.get(key);
                   const dayAppts = appointmentsByDay.get(key) ?? [];
+                  const scheduleOverride = scheduleOverridesByDate.get(key) ?? null;
                   const timedBase = dayAppts.filter((a) => !a.allDay);
                   const previewSyn =
                     routingPreview &&
@@ -5494,7 +6167,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                     buildRoutingPreviewSyntheticAppointment(routingPreview, typeList);
                   const timed = previewSyn ? [...timedBase, previewSyn] : timedBase;
                   const placed = assignColumnsForDay(timed, displayRangeForAppt);
-                  const isDoctorDayOff = schedulerPracticeCalendarDayOff(dayDataCol, dayAppts);
+                  const isDoctorDayOff = schedulerPracticeCalendarDayOff(
+                    dayDataCol,
+                    dayAppts,
+                    providerWeeklySchedules,
+                    key,
+                    scheduleOverride
+                  );
                   const currentTimeLineTop =
                     key === practiceTodayIso
                       ? (nowWallMinutes - gridBounds.gridStartMin) * PPM
@@ -5508,7 +6187,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                     dayColumnDates,
                     driveDayByDate,
                     appointmentsByDay,
-                    isDoctorDayOff
+                    isDoctorDayOff,
+                    providerWeeklySchedules,
+                    scheduleOverridesByDate
                   );
 
                   return (
@@ -5660,14 +6341,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             );
                           });
                         })()}
-                        {(isDoctorDayOff
-                          ? placed.filter(
-                              ({ appt }) =>
-                                appt.id === SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID ||
-                                !practiceAppointmentHasLocation(appt)
-                            )
-                          : placed
-                        ).map(({ appt, col, colCount }) => {
+                        {placed.map(({ appt, col, colCount }) => {
                           const isRoutingPreviewSlot = appt.id === SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID;
                           const { startIso, endIso } = displayRangeForAppt(appt);
                           const sm = wallMinutes(startIso);
@@ -5952,9 +6626,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         }
         aria-label={
           embedInRoutingWorkspace && routingPreview
-            ? `Routing preview: ${String(routingPreview.option.doctorName ?? 'Provider')} · ${DateTime.fromISO(String(routingPreview.option.date), { zone: PRACTICE_TZ }).toFormat('cccc LLL d, yyyy')} @ ${DateTime.fromISO(String(routingPreview.option.suggestedStartIso)).toFormat('t')}`
+            ? `Routing preview: ${embeddedCalendarProviderLabel}`
             : embedInRoutingWorkspace && rescheduleWorkspaceActive
-              ? `Rescheduling${rescheduleWorkspaceClientLabel ? `: ${rescheduleWorkspaceClientLabel}` : ''}`
+              ? `Rescheduling: ${embeddedCalendarProviderLabel}`
               : undefined
         }
       >
@@ -5962,7 +6636,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           <div className="scheduler-embedded-preview-bar" role="status" aria-live="polite">
             <span className="scheduler-embedded-preview-bar-badge">Preview</span>
             <span className="scheduler-embedded-preview-bar-msg">
-              Use the panel beside the purple slot to book. Hover any visit for full details.
+              {embeddedCalendarProviderLabel}
             </span>
             {readRoutingRescheduleIntent() ? (
               <button
@@ -5989,9 +6663,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           <div className="scheduler-embedded-reschedule-bar" role="status" aria-live="polite">
             <span className="scheduler-embedded-reschedule-bar-badge">Rescheduling</span>
             <span className="scheduler-embedded-reschedule-bar-msg">
-              {rescheduleWorkspaceClientLabel
-                ? `Moving ${rescheduleWorkspaceClientLabel} — run routing.`
-                : 'Run routing.'}
+              {embeddedCalendarProviderLabel}
             </span>
             <button
               type="button"
@@ -6003,7 +6675,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             </button>
           </div>
         ) : null}
-      {!routingPreview ? (
+      {!routingPreview && !embeddedRoutingCalendarLocked ? (
       <div className="scheduler-toolbar">
         <div className="scheduler-toolbar-row scheduler-toolbar-row--combined">
           <div className="scheduler-toolbar-cluster scheduler-toolbar-cluster--left">
@@ -6156,18 +6828,30 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       {error && <p className="scheduler-status error">{error}</p>}
 
       {hover &&
+        hoverTooltipLayout &&
         createPortal(
           <div
+            ref={hoverTooltipRef}
             className="scheduler-tooltip scheduler-tooltip--visit-highlights"
             style={{
-              left: tooltipPos.left,
-              width: tooltipPos.width,
+              left: hoverTooltipLayout.pos.left,
+              width: hoverTooltipLayout.pos.width,
               zIndex: editTimePreview || routingPreview ? 2200 : 2000,
-              ...(tooltipPos.bottom != null
-                ? { top: 'auto', bottom: tooltipPos.bottom }
-                : { top: tooltipPos.top }),
-              maxWidth: tooltipPos.width,
-              maxHeight: tooltipPos.maxCardH,
+              visibility: hoverTooltipLayout.ready ? 'visible' : 'hidden',
+              pointerEvents: hoverTooltipLayout.ready ? 'auto' : 'none',
+              ...(hoverTooltipLayout.pos.bottom != null
+                ? { top: 'auto', bottom: hoverTooltipLayout.pos.bottom }
+                : { top: hoverTooltipLayout.pos.top }),
+              maxWidth: hoverTooltipLayout.pos.width,
+              maxHeight: hoverTooltipLayout.pos.maxCardH,
+            }}
+            onMouseEnter={() => {
+              cancelHoverDismiss();
+              hoverPinnedRef.current = true;
+            }}
+            onMouseLeave={() => {
+              hoverPinnedRef.current = false;
+              scheduleHoverDismiss(hoverAppt?.id);
             }}
           >
             <SchedulerHoverContent appt={hoverAppt!} driveHint={hoverDriveHint} providers={providers} />
@@ -6195,6 +6879,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               preview={routingPreview}
               practiceTz={PRACTICE_TZ}
               isReschedule={routingPreviewIsReschedule}
+              sourceVisitForCompare={reschedulePreviewSourceVisit}
               bookDisabled={bookSlot != null}
               onBook={() => openRoutingBookForm()}
               onDismiss={dismissRoutingPreview}
@@ -6338,6 +7023,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           showAddPet={addAnotherPetMenuOpts.show}
           addPetDisabled={addAnotherPetMenuOpts.disabled}
           addPetTitle={addAnotherPetMenuOpts.title}
+          showSendForms={showPreApptRoomLoaderIcon(contextMenu.appt)}
           roomLoaderMenuLabel={schedulerRoomLoaderMenuLabel(contextMenu.appt.confirmStatusName)}
           rescheduleDisabled={!contextMenuRescheduleIntent}
           rescheduleDisabledTitle={contextMenuRescheduleDisabledTitle}
@@ -6471,8 +7157,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             appointmentTypes={editModalAppointmentTypes}
             providers={providers}
             accentColor={colorsForAppointment(editAppt, typeList, typeFillMap).fill}
-            inlinePaneMode={editPlacementMode}
-            dockInRoutingPane={embedInRoutingWorkspace && !editPlacementMode}
+            inlinePaneMode={editPlacementMode && !embedInRoutingWorkspace}
+            dockInRoutingPane={embedInRoutingWorkspace}
             bookedViaRouting={Boolean(embedInRoutingWorkspace && editTimePreview != null)}
             placementPreviewActive={editTimePreview != null}
             placementPreviewKind={editTimePreview?.kind ?? null}

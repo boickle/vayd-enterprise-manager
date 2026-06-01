@@ -28,7 +28,7 @@ export type SnapshotRouteRequest = {
     lon?: number;
     address?: string;
     clientId?: string;
-    addressZoneShort?: string;
+    appointmentTypeId?: number;
   };
 };
 

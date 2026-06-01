@@ -255,6 +255,8 @@ export type AppointmentTypeUpdate = {
   usesLegacyRouting?: boolean;
   points?: number | null;
   allowSchedulingOverride?: boolean;
+  /** Default booked service length in minutes (routing, manual book, etc.). */
+  defaultDuration?: number;
   /** Archive (true) or restore (false) — hide from new booking pickers when archived. */
   isDeleted?: boolean;
 };

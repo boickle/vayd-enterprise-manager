@@ -785,6 +785,15 @@
   opacity: 0.88;
 }
 
+.routing-visit-window--non-default {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid #ca8a04;
+  border-radius: 4px;
+  background: #fef9c3;
+  box-decoration-break: clone;
+}
+
 .routing-result-option-card-placement-row {
   margin-top: 16px;
   display: flex;
@@ -895,6 +904,40 @@
   height: 18px;
   flex-shrink: 0;
   cursor: pointer;
+}
+
+.routing-doctor-select-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.routing-doctor-select-row-name {
+  font-weight: 500;
+  color: #0f172a;
+}
+
+.routing-doctor-select-badge {
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.routing-doctor-select-badge--seeing {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+  background: #fef9c3;
+  border: 1px solid #ca8a04;
+  color: #854d0e;
+}
+
+.routing-doctor-select-badge--accepting {
+  color: #64748b;
 }
 
 .routing-doctor-select-actions {

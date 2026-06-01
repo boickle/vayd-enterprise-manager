@@ -61,6 +61,22 @@ export function formatPreviewScore(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
+/** Compact label for score delta vs baseline, e.g. `+99.5% worse` (lower score is better). */
+export function formatInPlaceScoreDeltaPercentLabel(
+  originalScore: number,
+  delta: number
+): string {
+  if (Math.abs(delta) < 0.05) return 'unchanged';
+  const base = Math.abs(originalScore);
+  if (!Number.isFinite(base) || base < 0.05) {
+    return delta > 0 ? 'worse' : 'better';
+  }
+  const pct = (Math.abs(delta) / base) * 100;
+  const pctLabel = pct >= 10 ? String(Math.round(pct)) : pct.toFixed(1);
+  if (delta > 0) return `+${pctLabel}% worse`;
+  return `−${pctLabel}% better`;
+}
+
 /** Prefer API `delta`; else new − original (lower is better; positive = worse). */
 export function resolveInPlacePreviewDelta(
   originalScore: number | null,
@@ -76,19 +92,17 @@ export function formatInPlacePreviewScoreChangePercent(
   originalScore: number,
   delta: number
 ): string {
-  if (Math.abs(delta) < 0.05) {
+  const label = formatInPlaceScoreDeltaPercentLabel(originalScore, delta);
+  if (label === 'unchanged') {
     return 'This makes the scheduling score of this visit unchanged.';
   }
-  const base = Math.abs(originalScore);
-  if (!Number.isFinite(base) || base < 0.05) {
-    return delta > 0
-      ? 'This makes the scheduling score of this visit worse.'
-      : 'This makes the scheduling score of this visit better.';
+  if (label === 'worse') {
+    return 'This makes the scheduling score of this visit worse.';
   }
-  const pct = (Math.abs(delta) / base) * 100;
-  const pctLabel = pct >= 10 ? String(Math.round(pct)) : pct.toFixed(1);
-  if (delta > 0) return `This makes the scheduling score of this visit ${pctLabel}% worse.`;
-  return `This makes the scheduling score of this visit ${pctLabel}% better.`;
+  if (label === 'better') {
+    return 'This makes the scheduling score of this visit better.';
+  }
+  return `This makes the scheduling score of this visit ${label.slice(1)}.`;
 }
 
 /** Primary score line — percent change vs in-place baseline (lower score is better). */

@@ -14,7 +14,42 @@ export type Provider = {
   bonusRevenueGoal?: number | null;
   dailyPointGoal?: number | null;
   weeklyPointGoal?: number | null;
+  /** Set when lat/lon or address filters `/employees/veterinarians` to the client's zone. */
+  seeingClientsInClientZone?: boolean;
+  acceptingNewPatientsInClientZone?: boolean;
 };
+
+type VeterinarianWeeklyScheduleZone = {
+  acceptingNewPatients?: boolean;
+};
+
+type VeterinarianWeeklySchedule = {
+  zones?: VeterinarianWeeklyScheduleZone[] | null;
+};
+
+/** Zone flags from `/employees/veterinarians` when the request includes client location. */
+export function deriveVeterinarianClientZoneFlags(v: {
+  weeklySchedules?: VeterinarianWeeklySchedule[] | null;
+}): { seeingClients: boolean; acceptingNewPatients: boolean } {
+  const schedules = v?.weeklySchedules;
+  if (!Array.isArray(schedules) || schedules.length === 0) {
+    return { seeingClients: false, acceptingNewPatients: false };
+  }
+
+  let seeingClients = false;
+  let acceptingNewPatients = false;
+  for (const schedule of schedules) {
+    const zones = schedule?.zones;
+    if (!Array.isArray(zones) || zones.length === 0) continue;
+    for (const zone of zones) {
+      seeingClients = true;
+      if (zone.acceptingNewPatients === true) {
+        acceptingNewPatients = true;
+      }
+    }
+  }
+  return { seeingClients, acceptingNewPatients };
+}
 
 function buildProviderName(r: any): string {
   const parts: string[] = [];
@@ -68,14 +103,16 @@ export async function fetchPrimaryProviders(): Promise<Provider[]> {
  * @param lon Optional longitude to filter veterinarians by service area
  */
 export async function fetchVeterinarians(address?: string, lat?: number, lon?: number): Promise<Provider[]> {
-  const params: any = {};
-  if (lat != null && lon != null && Number.isFinite(lat) && Number.isFinite(lon)) {
+  const params: Record<string, string | number> = {};
+  const hasCoords = lat != null && lon != null && Number.isFinite(lat) && Number.isFinite(lon);
+  if (hasCoords) {
     params.lat = lat;
     params.lon = lon;
-  } else if (address) {
-    params.address = address;
+  } else if (address?.trim()) {
+    params.address = address.trim();
   }
-  
+  const hasLocationFilter = hasCoords || Boolean(params.address);
+
   const { data } = await http.get('/employees/veterinarians', { params });
   const veterinarians: any[] = Array.isArray(data) ? data : [];
 
@@ -84,7 +121,8 @@ export async function fetchVeterinarians(address?: string, lat?: number, lon?: n
     .map((v) => {
       const pimsId = v.pimsId ? String(v.pimsId) : null;
       const id = v.id ?? v.pimsId;
-      
+      const zoneFlags = hasLocationFilter ? deriveVeterinarianClientZoneFlags(v) : null;
+
       return {
         id: id,
         pimsId: pimsId || String(id), // Use pimsId if available, otherwise use id
@@ -94,6 +132,8 @@ export async function fetchVeterinarians(address?: string, lat?: number, lon?: n
         bonusRevenueGoal: v?.bonusRevenueGoal ?? null,
         dailyPointGoal: v?.dailyPointGoal ?? null,
         weeklyPointGoal: v?.weeklyPointGoal ?? null,
+        seeingClientsInClientZone: zoneFlags?.seeingClients,
+        acceptingNewPatientsInClientZone: zoneFlags?.acceptingNewPatients,
       };
     });
 }

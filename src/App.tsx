@@ -45,6 +45,7 @@ import ErrorPage from './pages/ErrorPage';
 import { usePageTracking } from './hooks/usePageTracking';
 import { isCreateClientEnabled, isProduction } from './utils/env';
 import { blockRoutingCalendarPreviewNavigation } from './utils/routingCalendarPreviewGuard';
+import { markSchedulerHandoffPreferRoutingDoctor } from './utils/schedulerCalendarHandoff';
 
 /** + Appointment in global navbar when viewing /schedule/* */
 function NavbarScheduleAddAppointment() {
@@ -59,6 +60,7 @@ function NavbarScheduleAddAppointment() {
       className="navbar-appointment-btn"
       onClick={() => {
         if (blockRoutingCalendarPreviewNavigation()) return;
+        markSchedulerHandoffPreferRoutingDoctor();
         navigate(toRouting ? '/schedule/routing' : '/schedule/home');
       }}
     >

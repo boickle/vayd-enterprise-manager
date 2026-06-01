@@ -36,6 +36,8 @@ import { submitEditVisitPreviewAcceptedFeedback } from '../utils/routingBookFeed
 import { fullClientHouseholdName } from '../utils/schedulerVisitDisplay';
 import { formatSchedulerBookingApiError } from '../utils/manualBookingPermissions';
 import { appointmentFormFlags } from '../utils/appointmentTypeSettings';
+import { useAuth } from '../auth/useAuth';
+import { resolveAppointmentChangeActorFromAuth, detectEditVisitChanges } from '../utils/appointmentChangeAuditNote';
 import './Scheduler.css';
 
 function pickStr(v: unknown): string | null {
@@ -137,6 +139,22 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
     },
     ref
   ) {
+    const { token, userEmail, doctorId } = useAuth() as {
+      token: string | null;
+      userEmail?: string | null;
+      doctorId?: string | null;
+    };
+    const editedByActor = useMemo(
+      () =>
+        resolveAppointmentChangeActorFromAuth({
+          token,
+          userEmail,
+          doctorId,
+          providers,
+        }),
+      [token, userEmail, doctorId, providers]
+    );
+
     const appointmentDateKey = useMemo(
       () => appointmentPracticeDateKey(appt.appointmentStart, practiceTz) ?? '',
       [appt.appointmentStart, practiceTz]
@@ -168,6 +186,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       )
     );
     const [description, setDescription] = useState(appt.description ?? '');
+    const [instructions, setInstructions] = useState(appt.instructions ?? '');
     const statusName = appt.statusName ?? '';
     const confirmStatusName = appt.confirmStatusName ?? '';
     const isComplete = appt.isComplete;
@@ -316,6 +335,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         primaryProviderId: pid,
         additionalEmployeeIds,
         description,
+        instructions,
         statusName,
         confirmStatusName,
         isComplete,
@@ -327,6 +347,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       primaryProviderId,
       additionalEmployeeIds,
       description,
+      instructions,
       statusName,
       confirmStatusName,
       isComplete,
@@ -405,6 +426,22 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
 
       setSaving(true);
       try {
+        const editChanges = detectEditVisitChanges(
+          {
+            description: appt.description,
+            instructions: appt.instructions,
+            appointmentTypeId: appt.appointmentType?.id,
+            appointmentStart: appt.appointmentStart,
+            appointmentEnd: appt.appointmentEnd,
+          },
+          {
+            description,
+            instructions,
+            appointmentTypeId: tid,
+            appointmentStart: startUtc,
+            appointmentEnd: endUtc,
+          }
+        );
         const updated = await commitEditVisit({
           appointmentId: Number(appt.id),
           practiceId,
@@ -415,6 +452,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
             primaryProviderId: pid,
             additionalEmployeeIds,
             description,
+            instructions,
             statusName,
             confirmStatusName,
             isComplete,
@@ -422,6 +460,11 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
           },
           previewAppointmentTypeId: tidFromPreview,
           bookedViaRouting: bookedViaRouting || undefined,
+          editedByAudit: {
+            actor: editedByActor,
+            practiceTz,
+            changes: editChanges,
+          },
         });
         let routingFeedbackWarning: string | undefined;
         if (placementPreviewActive && typeScoreCompare?.feedbackHandoff) {
@@ -445,6 +488,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       buildStartEndUtc,
       appt,
       description,
+      instructions,
       statusName,
       confirmStatusName,
       isComplete,
@@ -453,6 +497,8 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       placementPreviewKind,
       draftPreviewAppointmentTypeId,
       bookedViaRouting,
+      editedByActor,
+      practiceTz,
       typeScoreCompare,
       onSaved,
       onClose,
@@ -823,6 +869,16 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                   </p>
                 </div>
               ) : null}
+
+              <label className="scheduler-edit-field scheduler-edit-field--full scheduler-edit-field--staff-notes">
+                <span>Staff notes</span>
+                <textarea
+                  rows={4}
+                  value={instructions}
+                  onChange={(e) => setInstructions(e.target.value)}
+                  placeholder="Internal notes — Scout routing, rescheduled/edited by…"
+                />
+              </label>
             </div>
           </section>
         </div>

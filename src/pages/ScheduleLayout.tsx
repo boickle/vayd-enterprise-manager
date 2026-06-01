@@ -30,6 +30,7 @@ import {
   useRoutingCalendarPreviewActive,
   useRoutingCalendarPreviewNavigationGuard,
 } from '../utils/routingCalendarPreviewGuard';
+import { markSchedulerHandoffPreferRoutingDoctor } from '../utils/schedulerCalendarHandoff';
 import { evetCreateClientLink } from '../utils/evet';
 import './ScheduleLayout.css';
 
@@ -197,6 +198,9 @@ export default function ScheduleLayout() {
               to={appointmentHref}
               className="schedule-app__quick-link schedule-app__quick-link--primary"
               title={railCollapsedEffective ? 'New appointment' : undefined}
+              onClick={() => {
+                markSchedulerHandoffPreferRoutingDoctor();
+              }}
             >
               <span className="schedule-app__quick-link-icon" aria-hidden>
                 <CalendarPlus size={18} strokeWidth={1.75} />

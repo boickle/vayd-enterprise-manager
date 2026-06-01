@@ -107,10 +107,18 @@ export function normalizeAppointmentTypeFromApi(row: AppointmentType): Appointme
     truthyFlag(r.uses_legacy_routing) ||
     truthyFlag(row.usesLegacyRouting);
 
+  const defaultDurationRaw = row.defaultDuration ?? r.default_duration;
+  const defaultDurationN = defaultDurationRaw != null ? Number(defaultDurationRaw) : NaN;
+  const defaultDuration =
+    Number.isFinite(defaultDurationN) && defaultDurationN > 0
+      ? Math.round(defaultDurationN)
+      : 0;
+
   return {
     ...row,
     isDeleted: normalizeIsDeleted(r),
     archivedOn: archivedOn ?? row.archivedOn ?? null,
+    defaultDuration,
     allowAllDay: row.allowAllDay === true || truthyFlag(r.allow_all_day),
     allowClient,
     allowAlternateAddress,

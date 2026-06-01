@@ -2,6 +2,7 @@
  * Session payload when Routing → "My Week" opens the practice calendar with a proposed slot.
  * Read by Scheduler; written by Routing.
  */
+import type { RescheduleOriginalVisitSnapshot } from '../api/routing';
 /** Same id on practice `Appointment` rows and doctor-day synthetic visits so drive ETA maps line up. */
 export const SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID = -0x7eedf00d;
 
@@ -47,6 +48,8 @@ export type RoutingCalendarPreviewPayloadV1 = {
   previewPatients?: { id: number | string; name: string }[];
   /** From POST /routing/v2 — required for POST /routing/feedback after book. */
   routingRequestId?: string;
+  /** Source doctor score at the visit's current slot (cross-doctor reschedule compare). */
+  rescheduleSourceVisitSnapshot?: RescheduleOriginalVisitSnapshot;
   /** Index in routing `top` (0 = winner); required for accepted feedback. */
   candidateIndex?: number;
   candidateId?: string;

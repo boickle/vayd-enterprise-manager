@@ -2,9 +2,13 @@ import { DateTime } from 'luxon';
 import type { AppointmentType } from '../api/appointmentSettings';
 import type { Provider } from '../api/employee';
 import { fetchTypeChangePreview, type TypeChangePreviewResponse } from '../api/routing';
-import type { TypeChangeFeedbackHandoff } from '../api/routing';
 import type { Appointment } from '../api/roomLoader';
 import { buildEditVisitPreviewScoreCompare } from './editVisitInPlaceScoreCompare';
+import {
+  editVisitPreviewErrorSummaryLine,
+  isEditVisitPreviewUnavailableError,
+  resolveEditVisitRoutingDoctorId,
+} from './editVisitPreviewApi';
 
 export type EditVisitTypeScoreCompare = import('./editVisitInPlaceScoreCompare').EditVisitPreviewScoreCompare;
 
@@ -12,20 +16,6 @@ export type EditVisitTypeScoreCompare = import('./editVisitInPlaceScoreCompare')
 export type EditVisitPreviewScoreCompare = EditVisitTypeScoreCompare;
 
 export { humanizeInPlaceReason, inPlacePreviewNewScore } from './editVisitInPlaceScoreCompare';
-
-function resolveDoctorPimsId(appt: Appointment, providers: readonly Provider[]): string | null {
-  const pp = appt.primaryProvider;
-  if (!pp) return null;
-  const internal = pp.id != null ? String(pp.id) : '';
-  const byInternal = internal
-    ? providers.find((p) => String(p.id) === internal)
-    : undefined;
-  if (byInternal?.pimsId != null && String(byInternal.pimsId).trim()) {
-    return String(byInternal.pimsId).trim();
-  }
-  if (pp.pimsId != null && String(pp.pimsId).trim()) return String(pp.pimsId).trim();
-  return internal.trim() || null;
-}
 
 function isFixedTimeTypeName(name: string): boolean {
   const lower = name.trim().toLowerCase();
@@ -88,9 +78,14 @@ export async function fetchEditVisitTypeScoreCompare(args: {
   practiceTz: string;
   providers: readonly Provider[];
   appointmentTypes: readonly AppointmentType[];
+  calendarProvider?: Provider | null;
 }): Promise<EditVisitTypeScoreCompare> {
   const { appt, newAppointmentTypeId, practiceDateKey, practiceTz } = args;
-  const doctorPimsId = resolveDoctorPimsId(appt, args.providers);
+  const doctorPimsId = resolveEditVisitRoutingDoctorId(
+    appt,
+    args.providers,
+    args.calendarProvider
+  );
   const originalType = appt.appointmentType as AppointmentType | undefined;
   const newType = args.appointmentTypes.find((t) => t.id === newAppointmentTypeId);
 
@@ -121,35 +116,42 @@ export async function fetchEditVisitTypeScoreCompare(args: {
     return empty('Invalid appointment — score comparison unavailable.');
   }
 
-  const preview = await fetchTypeChangePreview({
-    doctorId: doctorPimsId,
-    date: practiceDateKey,
-    appointmentId: apptId,
-    newAppointmentTypeId,
-    useTraffic: true,
-  });
+  try {
+    const preview = await fetchTypeChangePreview({
+      doctorId: doctorPimsId,
+      date: practiceDateKey,
+      appointmentId: apptId,
+      newAppointmentTypeId,
+      useTraffic: true,
+    });
 
-  const arrivalWindowAfter =
-    preview.arrivalWindow?.after?.startIso && preview.arrivalWindow?.after?.endIso
-      ? preview.arrivalWindow.after
-      : null;
+    const arrivalWindowAfter =
+      preview.arrivalWindow?.after?.startIso && preview.arrivalWindow?.after?.endIso
+        ? preview.arrivalWindow.after
+        : null;
 
-  const windowLine = windowLineFromPreview(preview, originalType, newType, practiceTz);
-  const windowWarningMayChange = Boolean(
-    windowLine &&
-      (isFixedTimeTypeName(newType?.name || newType?.prettyName || '') ||
-        isFixedTimeTypeName(originalType?.name || originalType?.prettyName || ''))
-  );
+    const windowLine = windowLineFromPreview(preview, originalType, newType, practiceTz);
+    const windowWarningMayChange = Boolean(
+      windowLine &&
+        (isFixedTimeTypeName(newType?.name || newType?.prettyName || '') ||
+          isFixedTimeTypeName(originalType?.name || originalType?.prettyName || ''))
+    );
 
-  return buildEditVisitPreviewScoreCompare({
-    original: preview.original,
-    withNew: preview.withNewType,
-    apiDelta: preview.delta,
-    context: 'type',
-    apptId,
-    feedbackHandoffRaw: preview.feedbackHandoff,
-    windowLine,
-    windowWarningMayChange,
-    arrivalWindowAfter,
-  });
+    return buildEditVisitPreviewScoreCompare({
+      original: preview.original,
+      withNew: preview.withNewType,
+      apiDelta: preview.delta,
+      context: 'type',
+      apptId,
+      feedbackHandoffRaw: preview.feedbackHandoff,
+      windowLine,
+      windowWarningMayChange,
+      arrivalWindowAfter,
+    });
+  } catch (err: unknown) {
+    if (isEditVisitPreviewUnavailableError(err)) {
+      return empty(editVisitPreviewErrorSummaryLine(err));
+    }
+    throw err;
+  }
 }

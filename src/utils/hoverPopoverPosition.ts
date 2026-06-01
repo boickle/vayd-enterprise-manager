@@ -156,7 +156,7 @@ export function computeHoverPopoverPosition(args: {
       return { left: best.p.left, top, maxCardH, width };
     }
     let maxCardH = vwH - pad - top;
-    const minReadable = 280;
+    const minReadable = 420;
     if (maxCardH < minReadable) {
       top = vwH - pad - minReadable;
       maxCardH = minReadable;

@@ -2,6 +2,7 @@ import { DateTime } from 'luxon';
 import { X } from 'lucide-react';
 import type { EditVisitTimePreview } from '../utils/editVisitTimePreview';
 import type { EditVisitPreviewScoreCompare } from '../utils/editVisitTypeScoreCompare';
+import { EDIT_VISIT_PREVIEW_UNAVAILABLE_LINE } from '../utils/editVisitPreviewApi';
 import { EditVisitOverflowTag } from './EditVisitOverflowTag';
 
 type EditVisitPreviewPopoverProps = {
@@ -127,7 +128,13 @@ export function EditVisitPreviewPopover({
         ) : (
           <>
             {scoreCompare?.summaryLine ? (
-              <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--strong">
+              <p
+                className={`scheduler-edit-preview-popover-line${
+                  scoreCompare.summaryLine === EDIT_VISIT_PREVIEW_UNAVAILABLE_LINE
+                    ? ' scheduler-edit-preview-popover-line--warn'
+                    : ' scheduler-edit-preview-popover-line--strong'
+                }`}
+              >
                 {scoreCompare.summaryLine}
               </p>
             ) : null}

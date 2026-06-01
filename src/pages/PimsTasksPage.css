@@ -31,7 +31,11 @@
 }
 
 .pims-tasks__count--warn {
-  color: #b45309;
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  padding: 10px 12px;
   margin-bottom: 12px;
 }
 

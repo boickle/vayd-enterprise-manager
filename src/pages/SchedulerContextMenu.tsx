@@ -34,7 +34,7 @@ export type SchedulerContextMenuAction =
   | { kind: 'roomLoader' }
   | { kind: 'checkout' };
 
-type OpenGroup = 'scheduling' | 'visit' | 'patient' | 'client';
+type OpenGroup = 'scheduling' | 'forms' | 'visit' | 'patient' | 'client';
 
 type Props = {
   appt: Appointment;
@@ -49,6 +49,8 @@ type Props = {
   rescheduleDisabledTitle?: string;
   removeDisabled?: boolean;
   removeTitle?: string;
+  /** Patient visit with room-loader workflow — shows Send forms submenu */
+  showSendForms?: boolean;
   roomLoaderMenuLabel: string;
   /** Admins/superadmins only — shows "Edit Appointment" under Scheduling */
   showEditAppointment?: boolean;
@@ -71,6 +73,7 @@ export function SchedulerAppointmentContextMenu({
   rescheduleDisabledTitle,
   removeDisabled,
   removeTitle,
+  showSendForms,
   roomLoaderMenuLabel,
   showEditAppointment,
   visitTimesDisabled,
@@ -123,6 +126,7 @@ export function SchedulerAppointmentContextMenu({
     (appt.isComplete ? 'This visit is already complete.' : undefined);
 
   const closeScheduling = () => setOpenGroup(null);
+  const closeForms = () => setOpenGroup(null);
 
   const menu = (
     <div
@@ -164,6 +168,18 @@ export function SchedulerAppointmentContextMenu({
           onPick={() => onAction({ kind: 'remove' })}
         />
       </CtxParentRow>
+
+      {showSendForms ? (
+        <CtxParentRow
+          label="Send forms"
+          menuRootRef={rootRef}
+          open={openGroup === 'forms'}
+          onOpen={() => setOpenGroup('forms')}
+          onCloseSub={closeForms}
+        >
+          <CtxSubRow label={roomLoaderMenuLabel} onPick={() => onAction({ kind: 'roomLoader' })} />
+        </CtxParentRow>
+      ) : null}
 
       <CtxParentRow
         label="On Visit Day"
@@ -222,7 +238,6 @@ export function SchedulerAppointmentContextMenu({
           <CtxSubRow label={`Text ${phone2}`} onPick={() => onAction({ kind: 'text', phone: 'phone2' })} />
         ) : null}
         <CtxSubRow label="View Client Info" onPick={() => onAction({ kind: 'viewClientInfo' })} />
-        <CtxSubRow label={roomLoaderMenuLabel} onPick={() => onAction({ kind: 'roomLoader' })} />
         <CtxSubRow label="Checkout" onPick={() => onAction({ kind: 'checkout' })} />
       </CtxParentRow>
     </div>

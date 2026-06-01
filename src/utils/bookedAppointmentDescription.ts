@@ -1,22 +1,65 @@
 import { DateTime } from 'luxon';
+import {
+  appendStaffNoteLine,
+  formatEmployeeFirstNameLastInitial,
+  type AppointmentChangeActor,
+} from './appointmentChangeAuditNote';
 
-/** Default appointment description when booking from routing preview. */
-export function bookedAppointmentDefaultDescription(practiceTz: string): string {
-  const today = DateTime.now().setZone(practiceTz);
-  const dateLabel = today.isValid
-    ? today.toFormat('MM/dd/yyyy')
-    : DateTime.now().toFormat('MM/dd/yyyy');
-  return `(Scout ${dateLabel})`;
+function bookedAtLabels(practiceTz: string): { dateLabel: string; timeLabel: string } {
+  const now = DateTime.now().setZone(practiceTz);
+  const fallback = DateTime.now();
+  const dt = now.isValid ? now : fallback;
+  return {
+    dateLabel: dt.toFormat('MM/dd/yyyy'),
+    timeLabel: dt.toFormat('h:mm a'),
+  };
 }
 
-/** Append `(Scout MM/dd/yyyy)` when saving a routing-booked appointment (skip if already present). */
+/** Staff note line appended when an appointment is booked. */
+export function formatBookedStaffNoteLine(
+  actor: AppointmentChangeActor,
+  practiceTz: string
+): string {
+  const { dateLabel, timeLabel } = bookedAtLabels(practiceTz);
+  const name = formatEmployeeFirstNameLastInitial(actor);
+  return `Booked on ${dateLabel} at ${timeLabel} by ${name}`;
+}
+
+/** Append booking audit line to staff notes when saving a new appointment. */
+export function appendBookedStaffNote(
+  existing: string | undefined | null,
+  actor: AppointmentChangeActor,
+  practiceTz: string
+): string {
+  const line = formatBookedStaffNoteLine(actor, practiceTz);
+  const base = (existing ?? '').trim();
+  if (!base) return line;
+  if (base.includes('Booked on ') || base.includes('(Scout')) return base;
+  return appendStaffNoteLine(base, line);
+}
+
+/** @deprecated Use {@link formatBookedStaffNoteLine}. */
+export function bookedAppointmentScoutStaffNote(practiceTz: string): string {
+  return formatBookedStaffNoteLine({ fallbackLabel: 'Staff' }, practiceTz);
+}
+
+/** @deprecated Use {@link appendBookedStaffNote}. */
+export function appendScoutBookedStaffNote(
+  existing: string | undefined | null,
+  practiceTz: string
+): string {
+  return appendBookedStaffNote(existing, { fallbackLabel: 'Staff' }, practiceTz);
+}
+
+/** @deprecated Use {@link appendBookedStaffNote}. */
+export function bookedAppointmentDefaultDescription(practiceTz: string): string {
+  return bookedAppointmentScoutStaffNote(practiceTz);
+}
+
+/** @deprecated Use {@link appendBookedStaffNote}. */
 export function appendScoutBookedDescription(
   existing: string | undefined | null,
   practiceTz: string
 ): string {
-  const suffix = bookedAppointmentDefaultDescription(practiceTz);
-  const base = (existing ?? '').trim();
-  if (!base) return suffix;
-  if (base.includes('(Scout')) return base;
-  return `${base} ${suffix}`;
+  return appendScoutBookedStaffNote(existing, practiceTz);
 }

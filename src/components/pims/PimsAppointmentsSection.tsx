@@ -149,7 +149,7 @@ function PimsAppointmentDetailModal({
     { label: 'Client', value: clientLine(appt) },
     { label: 'Patient', value: patientLine(appt) },
     { label: 'Description', value: pickStr(appt.description) ?? '—' },
-    { label: 'Instructions', value: pickStr(appt.instructions) ?? '—' },
+    { label: 'Staff notes', value: pickStr(appt.instructions) ?? '—' },
   ];
   if (equip) rows.push({ label: 'Equipment', value: equip });
   if (meds) rows.push({ label: 'Medications', value: meds });

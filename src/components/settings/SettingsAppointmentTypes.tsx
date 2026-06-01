@@ -62,9 +62,15 @@ export function formatArrivalWindow(
   return `−${b} / +${a} min`;
 }
 
+export function formatDefaultDurationMinutes(type: AppointmentType): string {
+  const n = normalizeAppointmentTypeFromApi(type).defaultDuration;
+  return n > 0 ? `${n} min` : '—';
+}
+
 type EditDraft = {
   name: string;
   prettyName: string;
+  defaultDuration: string;
   color: string;
   textColor: string;
   windowBeforeMinutes: string;
@@ -90,6 +96,10 @@ function draftFromType(type: AppointmentType): EditDraft {
   return {
     name: t.name ?? '',
     prettyName: t.prettyName ?? t.name ?? '',
+    defaultDuration:
+      t.defaultDuration != null && Number(t.defaultDuration) > 0
+        ? String(Math.round(Number(t.defaultDuration)))
+        : '',
     color: displayColor(t),
     textColor: displayTextColor(t),
     windowBeforeMinutes:
@@ -122,10 +132,23 @@ function parseWindowField(raw: string): number {
   return n;
 }
 
+function parseDefaultDurationField(raw: string): number {
+  const t = raw.trim();
+  if (t === '') {
+    throw new Error('Default duration (minutes) is required.');
+  }
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 1 || !Number.isInteger(n)) {
+    throw new Error('Default duration must be a whole number ≥ 1');
+  }
+  return n;
+}
+
 function emptyDraft(): EditDraft {
   return {
     name: '',
     prettyName: '',
+    defaultDuration: '45',
     color: '#4A90D9',
     textColor: '#FFFFFF',
     windowBeforeMinutes: '',
@@ -194,6 +217,7 @@ function buildUpdatePayloadFromDraft(draft: EditDraft): AppointmentTypeUpdate {
   return {
     name,
     prettyName: draft.prettyName.trim() || undefined,
+    defaultDuration: parseDefaultDurationField(draft.defaultDuration),
     color: colorHex,
     textColor: textHex,
     windowBeforeMinutes,
@@ -435,6 +459,7 @@ export default function SettingsAppointmentTypes({
           </span>
         </td>
         <td>{formatArrivalWindow(type.windowBeforeMinutes, type.windowAfterMinutes)}</td>
+        <td>{formatDefaultDurationMinutes(type)}</td>
         <td>{type.showInApptRequestForm ? 'Yes' : 'No'}</td>
         <td>{type.newPatientAllowed ? 'Yes' : 'No'}</td>
         <td>{type.formListOrder ?? '—'}</td>
@@ -490,6 +515,7 @@ export default function SettingsAppointmentTypes({
         {mode === 'archived' ? <th>Archived on</th> : null}
         <th>Colors</th>
         <th>Arrival window</th>
+        <th>Duration</th>
         <th>Request form</th>
         <th>New patients</th>
         <th>Order</th>
@@ -500,7 +526,7 @@ export default function SettingsAppointmentTypes({
     </thead>
   );
 
-  const colSpan = listView === 'archived' ? 11 : 10;
+  const colSpan = listView === 'archived' ? 12 : 11;
   const visibleTypes = listView === 'active' ? activeTypes : archivedTypesFiltered;
 
   return (
@@ -660,6 +686,28 @@ export default function SettingsAppointmentTypes({
                         value={draft.prettyName}
                         onChange={(e) => setDraft({ ...draft, prettyName: e.target.value })}
                       />
+                    </div>
+
+                    <div className="settings-form-group">
+                      <label className="settings-label" htmlFor="appt-type-default-duration">
+                        Default duration (minutes)
+                      </label>
+                      <input
+                        id="appt-type-default-duration"
+                        type="number"
+                        min={1}
+                        step={1}
+                        required
+                        className="settings-input"
+                        placeholder="45"
+                        value={draft.defaultDuration}
+                        onChange={(e) =>
+                          setDraft({ ...draft, defaultDuration: e.target.value })
+                        }
+                      />
+                      <p className="settings-muted settings-appt-type-window-hint">
+                        Used when booking or routing this type (unless the doctor had 5+ of this type in the last 30 days).
+                      </p>
                     </div>
 
                     <div className="settings-form-group">

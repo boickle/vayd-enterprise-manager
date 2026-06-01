@@ -3,6 +3,7 @@
  * metadata here so Routing can pre-fill the form and `/appointments/:id` is PATCHed after a new slot is chosen.
  */
 import { DateTime } from 'luxon';
+import type { RescheduleOriginalVisitSnapshot } from '../api/routing';
 import type { Appointment, Client, Patient } from '../api/roomLoader';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
 import { ROUTING_DISMISS_RESCHEDULE_EVENT } from './routingUiSnapshot';
@@ -21,6 +22,10 @@ export const ROUTING_RESCHEDULE_INTENT_STORAGE_KEY = 'vayd:routing-reschedule-in
 
 /** Same-tab notification (sessionStorage does not fire `storage`). */
 export const ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT = 'vayd:routing-reschedule-intent-updated';
+
+/** Source placement score cached on intent — does not refocus the calendar. */
+export const ROUTING_RESCHEDULE_SOURCE_SCORE_UPDATED_EVENT =
+  'vayd:routing-reschedule-source-score-updated';
 
 export type RoutingRescheduleScope = 'selected_pet' | 'household_day';
 
@@ -43,7 +48,10 @@ export type RescheduleVisitPatch = {
   appointmentTypeLabel?: string;
   /** Original scheduled slot on the practice calendar (date + time range, no "Was" prefix). */
   scheduledTimeLabel?: string;
+  /** Original visit start (ISO) for staff-note audit on reschedule. */
+  originalAppointmentStartIso?: string;
   description?: string | null;
+  instructions?: string | null;
 };
 
 function appointmentTypeLabelFromRow(
@@ -87,11 +95,19 @@ export type RoutingRescheduleIntentV1 = {
   practiceDateKey?: string;
   /** Anchor visit start in practice TZ (e.g. `2026-05-22T10:45:00.000-04:00`) for rescheduleContext. */
   originalStartIso?: string;
-  /** Practice calendar provider dropdown (`Provider.id`). */
+  /** Anchor visit end in practice TZ — used to score the visit at its current slot on the source doctor. */
+  originalEndIso?: string;
+  /** Score at the visit's current slot on the source doctor (for cross-doctor reschedule compare). */
+  sourcePlacementVisitSnapshot?: RescheduleOriginalVisitSnapshot;
+  /** Practice calendar provider dropdown (`Provider.id`) — routing search target; may differ from source while rescheduling. */
   primaryProviderInternalId?: string;
-  /** Routing `form.doctorId` (doctor PIMS id). */
+  /** Routing `form.doctorId` (doctor PIMS id) — search target while rescheduling. */
   primaryDoctorPimsId?: string;
   primaryDoctorDisplayName?: string;
+  /** Original visit assignee — calendar stays here until a placement preview is opened. */
+  sourceProviderInternalId?: string;
+  sourceDoctorPimsId?: string;
+  sourceDoctorDisplayName?: string;
   description?: string | null;
   instructions?: string | null;
   clientDisplayLabel?: string;
@@ -151,6 +167,23 @@ export function writeRoutingRescheduleIntent(
 }
 
 /** Mark Routing form hydration done (intent row kept until successful PATCH). */
+/** Cache source-doctor placement score without refocusing the practice calendar. */
+export function patchRescheduleIntentSourcePlacementSnapshot(
+  snapshot: RescheduleOriginalVisitSnapshot
+): void {
+  const cur = readRoutingRescheduleIntent();
+  if (!cur) return;
+  const next: RoutingRescheduleIntentV1 = { ...cur, sourcePlacementVisitSnapshot: snapshot };
+  try {
+    sessionStorage.setItem(ROUTING_RESCHEDULE_INTENT_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(ROUTING_RESCHEDULE_SOURCE_SCORE_UPDATED_EVENT));
+  }
+}
+
 export function markRescheduleIntentAppliedToRoutingForm(): void {
   const cur = readRoutingRescheduleIntent();
   if (!cur) return;
@@ -274,12 +307,17 @@ export function collectSameDayHouseholdVisits(
 export function buildRescheduleVisitPatches(
   visits: RescheduleSameDayVisit[],
   rawAppointments: ReadonlyArray<Appointment>,
-  practiceTz: string
+  practiceTz: string,
+  overrideAppointmentTypeId?: number
 ): RescheduleVisitPatch[] {
+  const overrideTypeId =
+    overrideAppointmentTypeId != null && Number.isFinite(Number(overrideAppointmentTypeId))
+      ? Number(overrideAppointmentTypeId)
+      : undefined;
   return visits.map((v) => {
     const appt = rawAppointments.find((a) => a.id === v.appointmentId);
     const fromAppt = appt?.appointmentType?.id;
-    const typeRaw = fromAppt ?? v.appointmentTypeId;
+    const typeRaw = overrideTypeId ?? fromAppt ?? v.appointmentTypeId;
     const appointmentTypeId =
       typeRaw != null && (typeof typeRaw === 'number' || typeof typeRaw === 'string')
         ? Number(typeRaw)
@@ -291,7 +329,9 @@ export function buildRescheduleVisitPatches(
       appointmentTypeId: Number.isFinite(appointmentTypeId) ? appointmentTypeId : undefined,
       appointmentTypeLabel: appointmentTypeLabelFromRow(appt, v.appointmentTypeName),
       scheduledTimeLabel: scheduledTimeLabelFromAppt(appt, practiceTz),
+      originalAppointmentStartIso: appt?.appointmentStart ?? undefined,
       description: appt?.description ?? v.description ?? null,
+      instructions: appt?.instructions ?? null,
     };
   });
 }
@@ -490,7 +530,7 @@ export type RescheduleCalendarFocus = {
   viewMode: 'week';
 };
 
-/** Align embedded practice calendar with the visit being rescheduled. */
+/** Align embedded practice calendar with the visit being rescheduled (source doctor, not routing search target). */
 export function rescheduleCalendarFocusFromIntent(
   intent: RoutingRescheduleIntentV1,
   providers: ReadonlyArray<{ id: number | string; pimsId?: string | number | null | undefined }>
@@ -499,11 +539,12 @@ export function rescheduleCalendarFocusFromIntent(
   if (!anchorDate) return null;
 
   let providerFilter = '';
-  const internal = intent.primaryProviderInternalId?.trim();
+  const internal =
+    intent.sourceProviderInternalId?.trim() ?? intent.primaryProviderInternalId?.trim();
   if (internal && providers.some((p) => String(p.id) === internal)) {
     providerFilter = internal;
   } else {
-    const pims = intent.primaryDoctorPimsId?.trim();
+    const pims = intent.sourceDoctorPimsId?.trim() ?? intent.primaryDoctorPimsId?.trim();
     if (pims) {
       const match = providers.find((p) => String(p.pimsId ?? '').trim() === pims);
       if (match) providerFilter = String(match.id);
@@ -579,9 +620,12 @@ export function buildRoutingRescheduleIntentFromAppointment(
 
   const practiceTz = opts?.practiceTz ?? practiceTimeZoneOrDefault(undefined);
   const startLocal = DateTime.fromISO(appt.appointmentStart, { zone: 'utc' }).setZone(practiceTz);
+  const endLocal = DateTime.fromISO(appt.appointmentEnd, { zone: 'utc' }).setZone(practiceTz);
   const practiceDateKey = startLocal.isValid ? startLocal.toISODate() ?? undefined : undefined;
   const originalStartIso =
     startLocal.isValid ? startLocal.toISO({ includeOffset: true }) ?? undefined : undefined;
+  const originalEndIso =
+    endLocal.isValid ? endLocal.toISO({ includeOffset: true }) ?? undefined : undefined;
   const sameDayVisits = collectSameDayHouseholdVisits(
     appt,
     opts?.sameCalendarDayAppointments ?? [],
@@ -593,6 +637,7 @@ export function buildRoutingRescheduleIntentFromAppointment(
     appointmentId: appt.id,
     practiceDateKey,
     originalStartIso,
+    originalEndIso,
     clientId: String(c.id),
     patientId: String(p0.id),
     appointmentTypeId: Number.isFinite(appointmentTypeId) ? appointmentTypeId : undefined,
@@ -600,6 +645,9 @@ export function buildRoutingRescheduleIntentFromAppointment(
     primaryProviderInternalId,
     primaryDoctorPimsId,
     primaryDoctorDisplayName,
+    sourceProviderInternalId: primaryProviderInternalId,
+    sourceDoctorPimsId: primaryDoctorPimsId,
+    sourceDoctorDisplayName: primaryDoctorDisplayName,
     description: appt.description ?? null,
     instructions: appt.instructions ?? null,
     clientDisplayLabel,

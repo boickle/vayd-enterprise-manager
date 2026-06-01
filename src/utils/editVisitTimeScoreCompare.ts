@@ -2,30 +2,13 @@ import type { Provider } from '../api/employee';
 import { fetchTimeChangePreview } from '../api/routing';
 import type { Appointment } from '../api/roomLoader';
 import { buildEditVisitPreviewScoreCompare, type EditVisitPreviewScoreCompare } from './editVisitInPlaceScoreCompare';
+import {
+  editVisitPreviewErrorSummaryLine,
+  isEditVisitPreviewUnavailableError,
+  resolveEditVisitRoutingDoctorId,
+} from './editVisitPreviewApi';
 
 export type { EditVisitPreviewScoreCompare };
-
-function resolveDoctorPimsId(appt: Appointment, providers: readonly Provider[]): string | null {
-  const pp = appt.primaryProvider;
-  if (!pp) return null;
-  const internal = pp.id != null ? String(pp.id) : '';
-  const byInternal = internal
-    ? providers.find((p) => String(p.id) === internal)
-    : undefined;
-  if (byInternal?.pimsId != null && String(byInternal.pimsId).trim()) {
-    return String(byInternal.pimsId).trim();
-  }
-  if (pp.pimsId != null && String(pp.pimsId).trim()) return String(pp.pimsId).trim();
-  return internal.trim() || null;
-}
-
-function isTimeChangePreviewNotFound(err: unknown): boolean {
-  const ax = err as {
-    response?: { status?: number; data?: { statusCode?: number } };
-  };
-  const status = ax.response?.status ?? ax.response?.data?.statusCode;
-  return status === 404;
-}
 
 export async function fetchEditVisitTimeScoreCompare(args: {
   appt: Appointment;
@@ -33,9 +16,14 @@ export async function fetchEditVisitTimeScoreCompare(args: {
   newAppointmentEndIso: string;
   practiceDateKey: string;
   providers: readonly Provider[];
+  calendarProvider?: Provider | null;
 }): Promise<EditVisitPreviewScoreCompare> {
   const { appt, newAppointmentStartIso, newAppointmentEndIso, practiceDateKey } = args;
-  const doctorPimsId = resolveDoctorPimsId(appt, args.providers);
+  const doctorPimsId = resolveEditVisitRoutingDoctorId(
+    appt,
+    args.providers,
+    args.calendarProvider
+  );
 
   const empty = (summaryLine: string): EditVisitPreviewScoreCompare => ({
     originalScore: null,
@@ -64,30 +52,28 @@ export async function fetchEditVisitTimeScoreCompare(args: {
     return empty('Invalid appointment — score comparison unavailable.');
   }
 
-  const preview = await fetchTimeChangePreview({
-    doctorId: doctorPimsId,
-    date: practiceDateKey,
-    appointmentId: apptId,
-    newAppointmentStartIso,
-    newAppointmentEndIso,
-    useTraffic: true,
-  }).catch((err: unknown) => {
-    if (isTimeChangePreviewNotFound(err)) {
-      return null;
+  try {
+    const preview = await fetchTimeChangePreview({
+      doctorId: doctorPimsId,
+      date: practiceDateKey,
+      appointmentId: apptId,
+      newAppointmentStartIso,
+      newAppointmentEndIso,
+      useTraffic: true,
+    });
+
+    return buildEditVisitPreviewScoreCompare({
+      original: preview.original,
+      withNew: preview.withNewTime,
+      apiDelta: preview.delta,
+      context: 'time',
+      apptId,
+      feedbackHandoffRaw: preview.feedbackHandoff,
+    });
+  } catch (err: unknown) {
+    if (isEditVisitPreviewUnavailableError(err)) {
+      return empty(editVisitPreviewErrorSummaryLine(err));
     }
     throw err;
-  });
-
-  if (!preview) {
-    return empty('Could not load time-change score preview.');
   }
-
-  return buildEditVisitPreviewScoreCompare({
-    original: preview.original,
-    withNew: preview.withNewTime,
-    apiDelta: preview.delta,
-    context: 'time',
-    apptId,
-    feedbackHandoffRaw: preview.feedbackHandoff,
-  });
 }
