@@ -4472,3 +4472,300 @@ label.scheduler-go-date-heading {
   min-height: 0;
   max-height: none;
 }
+
+/* Reconcile modal — predicted vs actual day columns */
+.scheduler-reconcile-backdrop {
+  z-index: 10001;
+}
+
+.scheduler-reconcile-modal {
+  max-width: min(96vw, 1120px);
+  width: 100%;
+  max-height: min(92vh, 900px);
+  display: flex;
+  flex-direction: column;
+}
+
+.scheduler-reconcile-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 20px 20px;
+}
+
+.scheduler-reconcile-status,
+.scheduler-reconcile-error {
+  margin: 24px 0;
+  text-align: center;
+  color: #64748b;
+}
+
+.scheduler-reconcile-error {
+  color: #b91c1c;
+}
+
+.scheduler-reconcile-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.scheduler-reconcile-board {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+}
+
+.scheduler-reconcile-board-headers,
+.scheduler-reconcile-board-timeline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.scheduler-reconcile-column-header {
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.scheduler-reconcile-board-scroll {
+  overflow: auto;
+  max-height: min(68vh, 640px);
+  margin-top: 12px;
+}
+
+.scheduler-reconcile-board-timeline {
+  align-items: start;
+  min-width: min-content;
+}
+
+.scheduler-reconcile-connector-spacer {
+  width: 44px;
+  flex-shrink: 0;
+}
+
+.scheduler-reconcile-connectors {
+  display: block;
+  overflow: visible;
+  flex-shrink: 0;
+}
+
+.scheduler-reconcile-connector-group {
+  pointer-events: none;
+}
+
+.scheduler-reconcile-connector-line {
+  fill: none;
+  stroke: #dc2626;
+  stroke-width: 2;
+  stroke-linecap: round;
+  opacity: 0.88;
+}
+
+.scheduler-reconcile-connector-arrowhead {
+  fill: #dc2626;
+}
+
+.scheduler-reconcile-connector-dot {
+  fill: #dc2626;
+  opacity: 0.95;
+}
+
+@media (max-width: 860px) {
+  .scheduler-reconcile-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .scheduler-reconcile-board-headers,
+  .scheduler-reconcile-board-timeline {
+    grid-template-columns: 1fr;
+  }
+
+  .scheduler-reconcile-connector-spacer,
+  .scheduler-reconcile-connectors {
+    display: none;
+  }
+}
+
+.scheduler-reconcile-column {
+  min-width: 0;
+}
+
+.scheduler-reconcile-column--grid {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  padding: 4px;
+  overflow: hidden;
+}
+
+.scheduler-reconcile-column-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.scheduler-reconcile-day-bounds {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.scheduler-reconcile-time-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.scheduler-reconcile-time-field > span {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.scheduler-reconcile-time-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  background: #fff;
+}
+
+.scheduler-reconcile-time-input:disabled {
+  background: #f1f5f9;
+  color: #475569;
+  cursor: default;
+}
+
+.scheduler-reconcile-time-delta {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.scheduler-reconcile-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.scheduler-reconcile-save-btn {
+  font-size: 13px !important;
+  padding: 8px 14px !important;
+}
+
+.scheduler-reconcile-success {
+  margin: 0;
+  font-size: 13px;
+  color: #15803d;
+  font-weight: 600;
+}
+
+.scheduler-reconcile-column-scroll {
+  overflow: auto;
+  max-height: min(68vh, 640px);
+}
+
+.scheduler-reconcile-day-grid {
+  position: relative;
+  background: #fff;
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.scheduler-reconcile-grid-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: #f1f5f9;
+  pointer-events: none;
+}
+
+.scheduler-reconcile-depot-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 5px;
+  border-top: 5px solid #64748b;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.scheduler-reconcile-drive-segment {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  z-index: 0;
+}
+
+.scheduler-reconcile-visit {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  box-sizing: border-box;
+  border-radius: 6px;
+  background: #dbeafe;
+  border: 1px solid #93c5fd;
+  padding: 4px 6px;
+  overflow: hidden;
+  z-index: 2;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.scheduler-reconcile-visit--block {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.scheduler-reconcile-visit--flex {
+  background: #fef3c7;
+  border-color: #fcd34d;
+}
+
+.scheduler-reconcile-visit-time {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.scheduler-reconcile-visit-label {
+  color: #334155;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scheduler-reconcile-visit-delta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 2px;
+  font-size: 10px;
+}
+
+.scheduler-day-header-adjust + .scheduler-day-header-adjust {
+  margin-top: 4px;
+}
