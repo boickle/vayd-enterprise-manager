@@ -3,6 +3,7 @@ import { Link, NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import { getVisibleScoutTabs } from '../scout-tabs';
+import { getSchedulingToolsTabPages } from '../scheduling-tools-tabs';
 import TasksNavLabel from './TasksNavLabel';
 import { useTaskNavBadges } from '../hooks/useTaskNavBadges';
 import '../pages/ScheduleLayout.css';
@@ -14,17 +15,62 @@ const SCHED_NAV_GAP_PX = 6;
 /** Reserve width for “More” summary (tab padding + label + chevron) */
 const SCHED_NAV_MORE_RESERVE_PX = 96;
 
-type SchedNavItemKey = 'home' | 'clients' | 'patients' | 'inventory' | 'tasks' | 'settings' | 'admin';
+type SchedNavItemKey =
+  | 'home'
+  | 'clients'
+  | 'patients'
+  | 'scheduling-tools'
+  | 'inventory'
+  | 'tasks'
+  | 'settings'
+  | 'admin';
 
 const MEASURE_LABEL: Record<SchedNavItemKey, string> = {
   home: 'Home',
   clients: 'Clients',
   patients: 'Patients',
+  'scheduling-tools': 'Scheduling Tools',
   inventory: 'Inventory',
   tasks: 'Tasks',
   settings: 'Settings',
   admin: 'Admin',
 };
+
+function isSchedulingToolsTabActive(pathname: string, tabPath: string): boolean {
+  const base = `/schedule/scheduling-tools/${tabPath}`;
+  if (pathname === base || pathname.startsWith(`${base}/`)) return true;
+  if (
+    tabPath === 'schedule-loader' &&
+    (pathname === '/schedule/scheduling-tools' || pathname === '/schedule/scheduling-tools/')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function SchedulingToolsSubmenuLinks({ onNavigate }: { onNavigate: () => void }) {
+  const location = useLocation();
+  const tabs = getSchedulingToolsTabPages();
+  return (
+    <>
+      {tabs.map((tab) => (
+        <Link
+          key={tab.path}
+          to={`/schedule/scheduling-tools/${tab.path}`}
+          className={`schedule-app__settings-link${
+            isSchedulingToolsTabActive(location.pathname, tab.path)
+              ? ' schedule-app__settings-link--active'
+              : ''
+          }`}
+          role="menuitem"
+          onClick={onNavigate}
+        >
+          {tab.label}
+        </Link>
+      ))}
+    </>
+  );
+}
 
 function SettingsSubmenuLinks({
   onNavigate,
@@ -126,7 +172,7 @@ export default function NavbarScheduleHorizontalNav() {
   const itemKeys = useMemo((): SchedNavItemKey[] => {
     const keys: SchedNavItemKey[] = [];
     if (homeTab) keys.push('home');
-    keys.push('clients', 'patients');
+    keys.push('clients', 'patients', 'scheduling-tools');
     if (SHOW_NAV_INVENTORY) keys.push('inventory');
     keys.push('tasks');
     if (showAdminTab) keys.push('settings', 'admin');
@@ -134,12 +180,18 @@ export default function NavbarScheduleHorizontalNav() {
   }, [homeTab, showAdminTab]);
 
   const settingsMenuRef = useRef<HTMLDetailsElement>(null);
+  const schedulingToolsMenuRef = useRef<HTMLDetailsElement>(null);
   const moreMenuRef = useRef<HTMLDetailsElement>(null);
   const navRef = useRef<HTMLElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
 
   const closeSettingsMenu = useCallback(() => {
     const el = settingsMenuRef.current;
+    if (el) el.open = false;
+  }, []);
+
+  const closeSchedulingToolsMenu = useCallback(() => {
+    const el = schedulingToolsMenuRef.current;
     if (el) el.open = false;
   }, []);
 
@@ -156,6 +208,10 @@ export default function NavbarScheduleHorizontalNav() {
       if (settingsEl?.open && !settingsEl.contains(target)) {
         settingsEl.open = false;
       }
+      const schedulingEl = schedulingToolsMenuRef.current;
+      if (schedulingEl?.open && !schedulingEl.contains(target)) {
+        schedulingEl.open = false;
+      }
       const moreEl = moreMenuRef.current;
       if (moreEl?.open && !moreEl.contains(target)) {
         moreEl.open = false;
@@ -167,8 +223,9 @@ export default function NavbarScheduleHorizontalNav() {
 
   useEffect(() => {
     closeSettingsMenu();
+    closeSchedulingToolsMenu();
     closeMoreMenu();
-  }, [location.pathname, location.search, closeSettingsMenu, closeMoreMenu]);
+  }, [location.pathname, location.search, closeSettingsMenu, closeSchedulingToolsMenu, closeMoreMenu]);
 
   const settingsTabFromLocation = useMemo(() => {
     if (!location.pathname.startsWith('/schedule/settings')) return null;
@@ -227,6 +284,8 @@ export default function NavbarScheduleHorizontalNav() {
   const needsMore = overflowKeys.length > 0;
 
   const moreSummaryActive =
+    (overflowKeys.includes('scheduling-tools') &&
+      location.pathname.startsWith('/schedule/scheduling-tools')) ||
     (overflowKeys.includes('settings') && location.pathname.startsWith('/schedule/settings')) ||
     (overflowKeys.includes('admin') && location.pathname.startsWith('/schedule/admin'));
 
@@ -288,6 +347,24 @@ export default function NavbarScheduleHorizontalNav() {
           >
             <TasksNavLabel assignedCount={assignedCount} watchingCount={watchingCount} />
           </NavLink>
+        );
+      case 'scheduling-tools':
+        return (
+          <details key="scheduling-tools" ref={schedulingToolsMenuRef} className="schedule-app__settings-menu">
+            <summary
+              className={`schedule-app__tab schedule-app__settings-summary${
+                location.pathname.startsWith('/schedule/scheduling-tools')
+                  ? ' schedule-app__tab--active'
+                  : ''
+              }`}
+              aria-haspopup="menu"
+            >
+              Scheduling Tools
+            </summary>
+            <div className="schedule-app__settings-dropdown" role="menu" aria-label="Scheduling tools">
+              <SchedulingToolsSubmenuLinks onNavigate={closeSchedulingToolsMenu} />
+            </div>
+          </details>
         );
       case 'settings':
         return (
@@ -351,6 +428,12 @@ export default function NavbarScheduleHorizontalNav() {
               <ChevronDown className="navbar-schedule-more-chevron" size={16} strokeWidth={2} aria-hidden />
             </summary>
             <div className="navbar-schedule-more-panel" role="menu" aria-label="More schedule sections">
+              {overflowKeys.includes('scheduling-tools') ? (
+                <div className="navbar-schedule-more-section">
+                  <p className="navbar-schedule-more-section-title">Scheduling Tools</p>
+                  <SchedulingToolsSubmenuLinks onNavigate={closeMoreMenu} />
+                </div>
+              ) : null}
               {overflowKeys.includes('settings') ? (
                 <div className="navbar-schedule-more-section">
                   <p className="navbar-schedule-more-section-title">Settings</p>

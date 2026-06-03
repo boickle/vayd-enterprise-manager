@@ -74,7 +74,7 @@ export function formatInPlaceScoreDeltaPercentLabel(
   const pct = (Math.abs(delta) / base) * 100;
   const pctLabel = pct >= 10 ? String(Math.round(pct)) : pct.toFixed(1);
   if (delta > 0) return `+${pctLabel}% worse`;
-  return `−${pctLabel}% better`;
+  return `${pctLabel}% better`;
 }
 
 /** Prefer API `delta`; else new − original (lower is better; positive = worse). */
@@ -102,7 +102,11 @@ export function formatInPlacePreviewScoreChangePercent(
   if (label === 'better') {
     return 'This makes the scheduling score of this visit better.';
   }
-  return `This makes the scheduling score of this visit ${label.slice(1)}.`;
+  const detail =
+    label.startsWith('+') || label.startsWith('−') || label.startsWith('-')
+      ? label.slice(1)
+      : label;
+  return `This makes the scheduling score of this visit ${detail}.`;
 }
 
 /** Primary score line — percent change vs in-place baseline (lower score is better). */

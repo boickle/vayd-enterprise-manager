@@ -289,6 +289,20 @@
   line-height: 1.35;
 }
 
+.routing-forward-booking-mode-summary {
+  margin: 0 0 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.routing-forward-booking-mode-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 /* Persistent highlight on fields auto-filled from calendar “Reschedule”. */
 .routing-page-root .input.routing-reschedule-prefill-highlight,
 .routing-page-root select.input.routing-reschedule-prefill-highlight,

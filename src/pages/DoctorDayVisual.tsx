@@ -6,7 +6,10 @@ import { DateTime } from 'luxon';
 import type { DoctorDayProps } from './DoctorDay';
 import {
   fetchDoctorDay,
+  fetchAppointmentsRangeForLocalDay,
+  mergeRangeClientContactOntoDoctorDayAppts,
   clientDisplayName,
+  clientPhoneLineFromDoctorDayPayload,
   previewRoutingAppointmentLabel,
   isBlockEntry,
   blockDisplayLabel,
@@ -26,6 +29,18 @@ import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
 import { AlertTriangle, Heart } from 'lucide-react';
+import { MyDayVisualPatientDetail } from '../components/MyDayVisualPatientDetail';
+import {
+  aggregateRoomLoaderPreApptStatus,
+  roomLoaderPreApptDisplayColor,
+  roomLoaderPreApptDisplayLabel,
+} from '../utils/roomLoaderPreApptDisplay';
+import {
+  appointmentNotesFromDoctorDayRow,
+  petAlertsFromDoctorDayRow,
+  sexFromDoctorDayRow,
+  staffNotesFromDoctorDayRow,
+} from '../utils/myDayVisualPatientDetails';
 import {
   clientFixedTimeUsesDoctorDayClockForDriveLayout,
   computeDriveTimeWindowWarning,
@@ -352,7 +367,12 @@ type PatientBadge = {
   /** statusName — records status (PIMS) */
   recordStatus?: string | null;
   type?: string | null;
+  /** @deprecated use appointmentNotes */
   desc?: string | null;
+  appointmentNotes?: string | null;
+  staffNotes?: string | null;
+  sex?: string | null;
+  petAlerts?: string | null;
   startIso?: string | null;
   endIso?: string | null;
   alerts?: string | null;
@@ -368,7 +388,10 @@ function makePatientBadge(a: any): PatientBadge {
     'Patient';
   const type =
     str(a, 'appointmentType') || str(a, 'appointmentTypeName') || str(a, 'serviceName') || null;
-  const desc = str(a, 'description') || str(a, 'visitReason') || null;
+  const appointmentNotes = appointmentNotesFromDoctorDayRow(a);
+  const staffNotes = staffNotesFromDoctorDayRow(a);
+  const petAlerts = petAlertsFromDoctorDayRow(a);
+  const sex = sexFromDoctorDayRow(a);
   const status = str(a, 'confirmStatusName') ?? null;
   const recordStatus = str(a, 'statusName') ?? null;
   const pat = a?.patient;
@@ -383,13 +406,17 @@ function makePatientBadge(a: any): PatientBadge {
   return {
     name,
     type,
-    desc,
+    desc: appointmentNotes,
+    appointmentNotes,
+    staffNotes,
+    sex,
+    petAlerts,
     status,
     recordStatus,
     pimsId: str(a, 'patientPimsId') ?? null,
     startIso: getStartISO(a) ?? null,
     endIso: getEndISO(a) ?? null,
-    alerts: str(a, 'alerts') ?? null,
+    alerts: petAlerts,
     isMember,
     membershipName,
   };
@@ -440,7 +467,28 @@ type Household = {
   firstApptIndex?: number;
 };
 
-/** Client appointment (not personal block) with Fixed Time — same rules as My Week `weekHouseholdIsClientFixedTime`. */
+function householdClientPhone(h: Household): string | undefined {
+  if (h.isPersonalBlock) return undefined;
+  return (
+    clientPhoneLineFromDoctorDayPayload(h.primary) ??
+    (h.primary.client ? clientPhoneLineFromDoctorDayPayload({ client: h.primary.client }) : undefined) ??
+    str(h.primary, 'clientPhone') ??
+    undefined
+  );
+}
+
+function householdRoomLoaderStatus(h: Household): { label: string; color: string } | null {
+  if (h.isPersonalBlock) return null;
+  const ui = aggregateRoomLoaderPreApptStatus([
+    str(h.primary, 'confirmStatusName'),
+    ...h.patients.map((p) => p.status),
+  ]);
+  return {
+    label: roomLoaderPreApptDisplayLabel(ui),
+    color: roomLoaderPreApptDisplayColor(ui),
+  };
+}
+
 function visualHouseholdIsClientFixedTime(h: Household): boolean {
   if (h.isPersonalBlock) return false;
   const at = (h.primary as any)?.appointmentType;
@@ -663,6 +711,9 @@ export default function DoctorDayVisual({
     x: number;
     y: number;
     client: string;
+    clientPhone?: string;
+    roomLoaderStatus?: string;
+    roomLoaderStatusColor?: string;
     clientAlert?: string;
     isFixedTime?: boolean;
     isPersonalBlock?: boolean;
@@ -840,7 +891,21 @@ export default function DoctorDayVisual({
           return [...inVisitOrder.slice(0, idx), prev, ...inVisitOrder.slice(idx)];
         })();
 
-        setAppts(final);
+        let enriched = final;
+        if (selectedDoctorId?.trim()) {
+          try {
+            const range = await fetchAppointmentsRangeForLocalDay({
+              dateIso: date,
+              practiceTimeZone: resp.timezone ?? practiceTimeZone,
+              primaryProviderId: selectedDoctorId,
+            });
+            enriched = mergeRangeClientContactOntoDoctorDayAppts(enriched, range);
+          } catch {
+            /* range enrichment is optional */
+          }
+        }
+
+        setAppts(enriched);
         setStartDepot(resp.startDepot ?? null);
         setEndDepot(resp.endDepot ?? null);
         setStartDepotAddr(str(resp, 'startDepotTown')?.trim() || null);
@@ -2590,13 +2655,15 @@ export default function DoctorDayVisual({
       const showBackToDepotInBlock =
         !!stats.backToDepotIso && hoveredBlockBottomPx >= maxDayVisualBottomPx - 2;
 
+      const roomLoader = householdRoomLoaderStatus(h);
+
       return {
         key: h.key,
         client: blockTitleText,
         address: h.address,
-        clientPhone: h.isPersonalBlock
-          ? undefined
-          : str(h.primary, 'clientPhone') ?? undefined,
+        clientPhone: householdClientPhone(h),
+        roomLoaderStatus: roomLoader?.label,
+        roomLoaderStatusColor: roomLoader?.color,
         durMin,
         etaIso:
           showByDriveTime && doctorDayClock
@@ -3510,11 +3577,29 @@ export default function DoctorDayVisual({
                     </span>
                   )}
                 </div>
+                {hoverCard.clientPhone ? (
+                  <div style={{ marginBottom: 4, fontSize: 12, color: '#0f172a' }}>
+                    <b>Phone:</b> {hoverCard.clientPhone}
+                  </div>
+                ) : null}
                 {hoverCard?.clientAlert && (
                   <div style={{ marginBottom: 4, color: '#dc2626', fontSize: 12, lineHeight: 1.35 }}>
                     Alert: {hoverCard.clientAlert}
                   </div>
                 )}
+                {!hoverCard.isPersonalBlock ? (
+                  <div
+                    style={{
+                      marginBottom: 4,
+                      fontSize: 12,
+                      lineHeight: 1.35,
+                      color: hoverCard.roomLoaderStatusColor ?? '#dc2626',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <b>Room loader:</b> {hoverCard.roomLoaderStatus ?? 'Not sent'}
+                  </div>
+                ) : null}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'baseline', marginBottom: 4, fontSize: 13, color: '#334155' }}>
                   <span>
                     <b>Scheduled:</b>{' '}
@@ -3588,61 +3673,12 @@ export default function DoctorDayVisual({
                     <div style={{ fontWeight: 700, marginBottom: 4, color: '#14532d' }}>Patients</div>
                     <ul style={{ margin: 0, paddingLeft: 16 }}>
                       {hoverCard.patients.map((p, i) => (
-                        <li key={i} style={{ marginBottom: 6 }}>
-                          <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                              {p.isMember && (
-                                <Heart size={14} fill="#dc2626" color="#dc2626" strokeWidth={1.5} aria-hidden />
-                              )}
-                              <span>{p.name}</span>
-                            </span>
-                            {p.isMember && p.membershipName?.trim() ? (
-                              <span style={{ color: '#991b1b', fontWeight: 600, fontSize: 13 }}>
-                                {p.membershipName.trim()}
-                              </span>
-                            ) : null}
-                            {p?.alerts ? (
-                              <>
-                                {' '}
-                                — <strong>Alert</strong>:{' '}
-                                <span style={{ color: '#dc2626' }}>{p.alerts}</span>
-                              </>
-                            ) : null}
-                          </div>
-
-                          <div style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>
-                            {p.type ? (
-                              <>
-                                <b>{p.type}</b>
-                                {p.desc ? ` — ${p.desc}` : ''}
-                              </>
-                            ) : (
-                              p.desc || '—'
-                            )}
-                          </div>
-                          {(p.status || p.recordStatus) && (
-                            <div
-                              style={{
-                                display: 'flex',
-                                flexWrap: 'wrap',
-                                alignItems: 'center',
-                                gap: 6,
-                                marginTop: 4,
-                              }}
-                            >
-                              {p.status ? (
-                                <span style={statusPillStyle(p.status)} title="Status">
-                                  {p.status}
-                                </span>
-                              ) : null}
-                              {p.recordStatus ? (
-                                <span style={statusPillStyle(p.recordStatus)} title="Records status">
-                                  {p.recordStatus}
-                                </span>
-                              ) : null}
-                            </div>
-                          )}
-                        </li>
+                        <MyDayVisualPatientDetail
+                          key={i}
+                          patient={p}
+                          variant="hover"
+                          statusPillStyle={statusPillStyle}
+                        />
                       ))}
                     </ul>
                   </div>

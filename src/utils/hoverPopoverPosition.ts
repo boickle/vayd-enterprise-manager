@@ -256,3 +256,37 @@ export function computeEditPreviewPopoverPosition(args: {
     width: Math.min(width, vwW - 2 * pad),
   };
 }
+
+/** Visit Highlights popover placement (scheduler calendar + Progress modal). */
+export function computeVisitHighlightsPopoverPosition(args: {
+  anchorEl?: HTMLElement | null;
+  anchorRect?: HoverAnchorRect | null;
+  x: number;
+  y: number;
+  cardEstH?: number;
+  measuredCardH?: number;
+  /** Keep popover beside the anchor (left/right) — avoids flip above/below while hovering. */
+  horizontalOnly?: boolean;
+  preferSide?: 'left' | 'right';
+}): HoverPopoverPositionResult {
+  const vwW = window.innerWidth;
+  const vwH = window.innerHeight;
+  const fallbackEstH = Math.min(520, Math.max(400, Math.floor(vwH * 0.42)));
+  const anchor = args.anchorRect ?? rectFromElement(args.anchorEl ?? null);
+  const rawH = args.measuredCardH ?? args.cardEstH ?? fallbackEstH;
+  const cardEstH = rawH > 120 ? rawH : fallbackEstH;
+  return computeHoverPopoverPosition({
+    anchor,
+    x: args.x,
+    y: args.y,
+    vwW,
+    vwH,
+    cardMaxW: 380,
+    cardMinW: 280,
+    padding: 8,
+    offset: 8,
+    cardEstH,
+    horizontalOnly: args.horizontalOnly ?? false,
+    preferSide: args.preferSide,
+  });
+}

@@ -118,13 +118,22 @@ export function sexSourceStringsFromRecord(o: Record<string, unknown>): string[]
     }
     const nested = nestedRecord(v);
     if (nested) {
-      const name = pickStr(nested.name) ?? pickStr(nested.description) ?? pickStr(nested.label);
+      const name =
+        pickStr(nested.name) ??
+        pickStr(nested.description) ??
+        pickStr(nested.label) ??
+        pickStr(nested.value) ??
+        pickStr(nested.code);
       if (name) out.push(name);
     }
   };
 
   for (const k of PATIENT_SEX_SOURCE_KEYS) push(o[k]);
-  for (const k of ['sexEntity', 'sex_entity', 'patientSex', 'sexName'] as const) {
+  for (const k of ['sexEntity', 'sex_entity', 'patientSex', 'sexName', 'sexAndNeuterStatus'] as const) {
+    push(o[k]);
+  }
+
+  for (const k of ['sexValue', 'sexType', 'sexLabel'] as const) {
     push(o[k]);
   }
 
@@ -198,6 +207,58 @@ export function patientSexAbbrevDisplay(p: Patient): string | null {
     if (abbr) return abbr;
   }
   return null;
+}
+
+/** Full sex label for lists and profiles (handles nested sexEntity / patientSex shapes). */
+export function patientSexListDisplayFromRecord(o: Record<string, unknown>): string | null {
+  const sources = sexSourceStringsFromRecord(o);
+  if (!sources.length) return null;
+  const unique = [...new Set(sources.map((s) => s.trim()).filter(Boolean))];
+  unique.sort((a, b) => b.length - a.length);
+  for (const candidate of unique) {
+    if (!/^(m|f|mn|mi|fs|fi|cm)$/i.test(candidate.trim())) return candidate;
+  }
+  return unique[0] ?? null;
+}
+
+export function patientSexListDisplay(p: Patient): string | null {
+  return patientSexListDisplayFromRecord(patientRecordFields(p));
+}
+
+const PATIENT_SEX_MERGE_KEYS = [
+  'sex',
+  'gender',
+  'sexDescription',
+  'sexAndNeuter',
+  'sexAndNeuterStatus',
+  'sexEntity',
+  'sex_entity',
+  'patientSex',
+  'sexName',
+  'sexValue',
+  'sexType',
+  'sexLabel',
+  'neuterStatus',
+  'spayNeuterStatus',
+  'alteredStatus',
+  'altered',
+  'sexStatus',
+] as const;
+
+/** Sex-related fields to merge from a full patient chart onto a search row. */
+export function sexFieldsFromProfile(profile: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of PATIENT_SEX_MERGE_KEYS) {
+    if (profile[key] != null) out[key] = profile[key];
+  }
+  return out;
+}
+
+/** Preferred list/detail label — full eVet text when available, otherwise MN/FS/etc. */
+export function patientSexDisplayFromRecord(o: Record<string, unknown>): string | null {
+  const listLabel = patientSexListDisplayFromRecord(o);
+  if (listLabel) return listLabel;
+  return patientSexAbbrevDisplay(o as Patient);
 }
 
 export function patientAgeYearsMonthsDisplay(p: Patient, practiceTz: string): string | null {

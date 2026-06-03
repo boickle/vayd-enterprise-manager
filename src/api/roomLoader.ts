@@ -317,6 +317,8 @@ export type Appointment = {
   zoneName?: string | null;
   /** When set, routing uses this address instead of the client’s home (PUT /appointments/:id/alternate-address). */
   alternateAddress?: { addressText: string } | null;
+  /** End Visit follow-up choice — draft until visit is ended (see PATCH …/forward-booking-disposition). */
+  forwardBookingDisposition?: import('./forwardBookingDisposition').ForwardBookingDisposition | null;
 };
 
 export type DeclinedInventoryItem = {

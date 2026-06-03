@@ -48,3 +48,15 @@ export function evetMedicalNoteLink(appointmentPimsId: string, clientPimsId: str
   });
   return `${EVET_HOST}/Practice/Notes/AddNote/${appointmentPimsId}?${q.toString()}`;
 }
+
+/**
+ * Add a client communication entry in eVet.
+ * e.g. …/Practice/Clients/EditCommunicationEntry/0?clientId=1044781&patientId=2144284
+ */
+export function evetAddCommunicationLink(clientPimsId: string, patientPimsId: string) {
+  const q = new URLSearchParams({
+    clientId: clientPimsId,
+    patientId: patientPimsId,
+  });
+  return `${EVET_HOST}/Practice/Clients/EditCommunicationEntry/0?${q.toString()}`;
+}

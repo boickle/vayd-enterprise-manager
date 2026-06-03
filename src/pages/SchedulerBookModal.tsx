@@ -7,11 +7,21 @@ import {
   patchAppointment,
   putAppointmentAlternateAddress,
 } from '../api/appointments';
-import type { RoutingCalendarPreviewPayloadV1 } from '../utils/routingCalendarPreviewStorage';
+import type {
+  ManualBookPreviewDraft,
+  RoutingCalendarPreviewPayloadV1,
+} from '../utils/routingCalendarPreviewStorage';
+import {
+  clientAddressPartsFromPayload,
+  coordsFromClientPayload,
+} from '../utils/manualBookCalendarPreview';
 import { submitRoutingAcceptedFeedbackFromPreview } from '../utils/routingBookFeedback';
 import { completeForwardBookingFromBook } from '../utils/forwardBookingBookComplete';
-import { searchClientsStaff, fetchClientByIdStaff, type ClientSearchRow } from '../api/clientsStaff';
-import { searchPatients } from '../api/patients';
+import { fetchClientByIdStaff, type ClientSearchRow } from '../api/clientsStaff';
+import {
+  searchPimsClientsAndPatients,
+  type PimsPatientSearchHit,
+} from '../api/pimsSearch';
 import type { Provider } from '../api/employee';
 import {
   fetchManualBookableAppointmentTypes,
@@ -19,6 +29,10 @@ import {
 } from '../api/appointmentSettings';
 import { useAuth } from '../auth/useAuth';
 import type { RescheduleVisitPatch } from '../utils/routingRescheduleIntent';
+import {
+  appointmentTypeForRoutingStatsKey,
+  resolveRoutingChosenAppointmentTypeId,
+} from '../utils/routingCalculateTimeType';
 import { Field } from '../components/Field';
 import { BookPatientRemindersLink } from '../components/BookPatientRemindersLink';
 import { appendBookedStaffNote } from '../utils/bookedAppointmentDescription';
@@ -44,6 +58,12 @@ import {
   normalizeAppointmentTypeFromApi,
 } from '../utils/appointmentTypeSettings';
 import './Scheduler.css';
+
+function allDayBookableTypesFromCatalog(types: AppointmentType[]): AppointmentType[] {
+  return types
+    .map((t) => normalizeAppointmentTypeFromApi(t))
+    .filter((t) => appointmentTypeAllowsAllDay(t));
+}
 
 export type { RescheduleVisitPatch };
 
@@ -118,6 +138,8 @@ export type SchedulerBookPrefill = {
   /** Forward booking list → routing book — server + POST …/complete attribution. */
   forwardBookingTrackingToken?: string;
   forwardBookingEntryId?: number;
+  /** Calculate Time type name from routing (for reschedule book type resolution). */
+  routingStatsTypeKey?: string;
 };
 
 /** True when the book modal was opened from routing (not empty-slot / co-visit manual book). */
@@ -126,6 +148,7 @@ export function isSchedulerRoutingBookPrefill(
 ): boolean {
   if (!prefill) return false;
   if (prefill.routingPreviewBook) return true;
+  if (prefill.rescheduleAppointmentId != null && prefill.preserveDurationFromSlot) return true;
   if (prefill.routingAlternateAddress?.trim()) return true;
   return false;
 }
@@ -141,6 +164,8 @@ type Props = {
   prefill?: SchedulerBookPrefill | null;
   /** When set, POST /routing/feedback after a successful book/reschedule from routing preview. */
   routingLinkPreview?: RoutingCalendarPreviewPayloadV1 | null;
+  /** Timed manual book — preview on calendar before saving (all-day books save directly). */
+  onPreviewOnCalendar?: (draft: ManualBookPreviewDraft) => void;
   onClose: () => void;
   onBooked: (detail?: {
     routingFeedbackWarning?: string;
@@ -150,8 +175,6 @@ type Props = {
     savedAppointmentId?: number;
   }) => void;
 };
-
-type SearchMode = 'client' | 'patient';
 
 type PetRow = {
   id: number | string;
@@ -294,35 +317,6 @@ function extractClientAddressFromPayload(payload: unknown): string | null {
   return clientAddressFromRecord(payload as Record<string, unknown>);
 }
 
-function normalizePatientSearchRow(row: unknown): {
-  id: number | string;
-  name: string;
-  clientId: number | string | null;
-  clientLabel: string | null;
-  clientAddress: string | null;
-} | null {
-  if (!row || typeof row !== 'object') return null;
-  const o = row as Record<string, unknown>;
-  const idRaw = o.id ?? o.patientId;
-  if (idRaw == null || (typeof idRaw !== 'string' && typeof idRaw !== 'number')) return null;
-  const id = idRaw;
-  const joined = [pickStr(o.firstName), pickStr(o.lastName)].filter(Boolean).join(' ').trim();
-  const name = pickStr(o.name) ?? (joined || 'Patient');
-  const client = o.client as Record<string, unknown> | undefined;
-  const clientId =
-    (o.clientId as number | string | undefined) ??
-    (client?.id as number | string | undefined) ??
-    null;
-  let clientLabel: string | null = null;
-  let clientAddress: string | null = null;
-  if (client) {
-    clientLabel =
-      [pickStr(client.firstName), pickStr(client.lastName)].filter(Boolean).join(' ').trim() || null;
-    clientAddress = clientAddressFromRecord(client);
-  }
-  return { id, name, clientId, clientLabel, clientAddress };
-}
-
 const DURATION_OPTIONS = [15, 20, 30, 45, 60, 90, 120];
 
 export function SchedulerBookModal({
@@ -335,36 +329,26 @@ export function SchedulerBookModal({
   defaultProviderId,
   prefill,
   routingLinkPreview,
+  onPreviewOnCalendar,
   onClose,
   onBooked,
 }: Props) {
-  const [searchMode, setSearchMode] = useState<SearchMode>('client');
-
-  const [clientQuery, setClientQuery] = useState('');
-  const [clientResults, setClientResults] = useState<ClientSearchRow[]>([]);
-  const [clientSearching, setClientSearching] = useState(false);
-  const [showClientDd, setShowClientDd] = useState(false);
-  const clientDdRef = useRef<HTMLDivElement>(null);
-  const latestClientQ = useRef('');
-
-  const [patientQuery, setPatientQuery] = useState('');
-  const [patientResults, setPatientResults] = useState<
-    {
-      id: number | string;
-      name: string;
-      clientId: number | string | null;
-      clientLabel: string | null;
-      clientAddress: string | null;
-    }[]
-  >([]);
-  const [patientSearching, setPatientSearching] = useState(false);
-  const [showPatientDd, setShowPatientDd] = useState(false);
-  const patientDdRef = useRef<HTMLDivElement>(null);
-  const latestPatientQ = useRef('');
+  const [combinedQuery, setCombinedQuery] = useState('');
+  const [combinedClientResults, setCombinedClientResults] = useState<ClientSearchRow[]>([]);
+  const [combinedPatientResults, setCombinedPatientResults] = useState<PimsPatientSearchHit[]>([]);
+  const [combinedSearching, setCombinedSearching] = useState(false);
+  const [showCombinedDd, setShowCombinedDd] = useState(false);
+  const combinedDdRef = useRef<HTMLDivElement>(null);
+  const latestCombinedQ = useRef('');
 
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [selectedClientLabel, setSelectedClientLabel] = useState('');
   const [selectedClientAddress, setSelectedClientAddress] = useState<string | null>(null);
+  const [selectedClientLat, setSelectedClientLat] = useState<number | undefined>(undefined);
+  const [selectedClientLon, setSelectedClientLon] = useState<number | undefined>(undefined);
+  const [selectedClientCity, setSelectedClientCity] = useState<string | undefined>(undefined);
+  const [selectedClientState, setSelectedClientState] = useState<string | undefined>(undefined);
+  const [selectedClientZip, setSelectedClientZip] = useState<string | undefined>(undefined);
   const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(null);
   const [clientPets, setClientPets] = useState<PetRow[]>([]);
   const [loadingClientPets, setLoadingClientPets] = useState(false);
@@ -446,15 +430,13 @@ export function SchedulerBookModal({
   const allDayBookSession = Boolean(prefill?.allDay) || isAllDay;
 
   /**
-   * All-day manual book: any practice type flagged Allow all-day (not limited to timed
-   * manual-booking role list). Timed slots still use `typesForPicker` permissions.
+   * All-day manual book: types the user may book that also allow all-day.
+   * Uses the same role permissions as timed manual book (`typesForPicker`).
    */
   const typesForActivePicker = useMemo(() => {
     if (!allDayBookSession) return typesForPicker;
-    return appointmentTypes
-      .map((t) => normalizeAppointmentTypeFromApi(t))
-      .filter((t) => appointmentTypeAllowsAllDay(t));
-  }, [typesForPicker, allDayBookSession, appointmentTypes]);
+    return allDayBookableTypesFromCatalog(typesForPicker);
+  }, [typesForPicker, allDayBookSession]);
 
   const selectedType = useMemo(() => {
     if (!typeId) return undefined;
@@ -494,6 +476,9 @@ export function SchedulerBookModal({
 
   const isRoutingPreviewBook = Boolean(prefill?.routingPreviewBook && !isRescheduleBook);
   const bookedViaRouting = isSchedulerRoutingBookPrefill(prefill);
+
+  /** Full catalog for routing/reschedule — not limited to manual-book role permissions. */
+  const usesRoutingTypeCatalog = isRoutingBook || isRescheduleBook;
 
   const routingBookHasPrefilledClient = Boolean(prefill?.clientId?.trim());
 
@@ -537,6 +522,14 @@ export function SchedulerBookModal({
   const showAdditionalEmployeesField = showAllDayFields && !perVisitRoutingBook;
 
   const showManualBookTypeFields = !lockedRoutingBookFields;
+
+  const canPreviewOnCalendar = Boolean(
+    onPreviewOnCalendar &&
+      !lockedRoutingBookFields &&
+      !perVisitReschedule &&
+      !perVisitRoutingBook &&
+      !allDayBookSession
+  );
 
   const endLocal = useMemo(() => {
     if (!startLocal?.isValid) return null;
@@ -665,10 +658,9 @@ export function SchedulerBookModal({
     setClientPets([]);
     setSelectedPatientId(null);
     setSelectedPatientLabel('');
-    setClientQuery('');
-    setPatientQuery('');
-    setClientResults([]);
-    setPatientResults([]);
+    setCombinedQuery('');
+    setCombinedClientResults([]);
+    setCombinedPatientResults([]);
   }, [showClient, typeId, prefill?.lockClient]);
 
   useEffect(() => {
@@ -678,6 +670,24 @@ export function SchedulerBookModal({
 
   const clientHasNoPetsOnFile =
     hasLinkedClient && !loadingClientPets && petChoices.length === 0;
+
+  const resolvePrefillAppointmentTypeId = useCallback((): number | undefined => {
+    return resolveRoutingChosenAppointmentTypeId({
+      statsTypeKey: prefill?.routingStatsTypeKey,
+      scheduleBookTypeId: prefill?.appointmentTypeId,
+      types: appointmentTypes,
+      previewTypeId: prefill?.appointmentTypeId,
+      previewTypeChosenInRouting: Boolean(
+        prefill?.routingStatsTypeKey?.trim() ||
+          (prefill?.appointmentTypeId != null && usesRoutingTypeCatalog)
+      ),
+    });
+  }, [
+    appointmentTypes,
+    prefill?.appointmentTypeId,
+    prefill?.routingStatsTypeKey,
+    usesRoutingTypeCatalog,
+  ]);
 
   const bookSessionKey = useMemo(() => {
     if (!open || !slot) return '';
@@ -703,6 +713,8 @@ export function SchedulerBookModal({
       String(prefill?.routingPreviewBook ?? false),
       prefill?.defaultInstructions ?? '',
       prefill?.routingAlternateAddress ?? '',
+      prefill?.routingStatsTypeKey ?? '',
+      String(prefill?.appointmentTypeId ?? ''),
       String(prefill?.allDay ?? false),
       prefill?.additionalEmployeeIds?.join(',') ?? '',
       JSON.stringify(prefill?.rescheduleVisitPatches ?? []),
@@ -729,6 +741,8 @@ export function SchedulerBookModal({
     prefill?.routingPreviewBook,
     prefill?.defaultInstructions,
     prefill?.routingAlternateAddress,
+    prefill?.routingStatsTypeKey,
+    prefill?.appointmentTypeId,
     prefill?.allDay,
     prefill?.additionalEmployeeIds,
     prefill?.rescheduleVisitPatches,
@@ -736,11 +750,9 @@ export function SchedulerBookModal({
 
   useEffect(() => {
     if (!bookSessionKey) return;
-    setSearchMode('client');
-    setClientQuery('');
-    setClientResults([]);
-    setPatientQuery('');
-    setPatientResults([]);
+    setCombinedQuery('');
+    setCombinedClientResults([]);
+    setCombinedPatientResults([]);
     setSelectedClientId(null);
     setSelectedClientLabel('');
     setSelectedClientAddress(null);
@@ -752,15 +764,12 @@ export function SchedulerBookModal({
       (v) => Number.isFinite(Number(v.appointmentId)) && v.patientId?.trim()
     );
     if (patches?.length) {
-      const routingTypeId =
-        prefill?.appointmentTypeId != null && Number.isFinite(Number(prefill.appointmentTypeId))
-          ? Number(prefill.appointmentTypeId)
-          : undefined;
+      const routingTypeId = resolvePrefillAppointmentTypeId();
       const routingTypeRow = routingTypeId
         ? appointmentTypes.find((t) => Number(t.id) === routingTypeId)
         : undefined;
       const routingTypeLabel =
-        routingTypeRow?.prettyName?.trim() || routingTypeRow?.name?.trim() || null;
+        routingTypeRow?.name?.trim() || routingTypeRow?.prettyName?.trim() || null;
       setRescheduleVisitEdits(
         patches.map((p) => {
           const tid =
@@ -796,8 +805,7 @@ export function SchedulerBookModal({
     setScheduleOverrideLoading(false);
     scheduleOverrideUserTouchedRef.current = false;
     setFormError(null);
-    setShowClientDd(false);
-    setShowPatientDd(false);
+    setShowCombinedDd(false);
 
     const s = slot!.start.setZone(practiceTz);
     const e = slot!.end.setZone(practiceTz);
@@ -820,13 +828,15 @@ export function SchedulerBookModal({
       match ? String(match.id) : providers[0] ? String(providers[0].id) : ''
     );
 
-    const pickerTypes = prefill?.allDay
-      ? appointmentTypes
-          .map((t) => normalizeAppointmentTypeFromApi(t))
-          .filter((t) => appointmentTypeAllowsAllDay(t))
+    const manualBookTypes = usesRoutingTypeCatalog
+      ? appointmentTypes.map((t) => normalizeAppointmentTypeFromApi(t))
       : typesForPicker;
+    const pickerTypes = prefill?.allDay
+      ? allDayBookableTypesFromCatalog(manualBookTypes)
+      : manualBookTypes;
+    const resolvedPrefillTypeId = resolvePrefillAppointmentTypeId();
     if (pickerTypes.length > 0) {
-      const preT = prefill?.appointmentTypeId;
+      const preT = resolvedPrefillTypeId ?? prefill?.appointmentTypeId;
       if (preT != null && pickerTypes.some((t) => String(t.id) === String(preT))) {
         const t = pickerTypes.find((x) => String(x.id) === String(preT))!;
         setTypeId(String(t.id));
@@ -834,13 +844,15 @@ export function SchedulerBookModal({
           const d = Math.round(t.defaultDuration);
           if (d >= 5) setDurationMin(DURATION_OPTIONS.includes(d) ? d : Math.min(120, Math.max(15, d)));
         }
-      } else {
+      } else if (!usesRoutingTypeCatalog) {
         const firstType = pickerTypes[0];
         setTypeId(firstType ? String(firstType.id) : '');
         if (!prefill?.preserveDurationFromSlot && firstType?.defaultDuration && firstType.defaultDuration > 0) {
           const d = Math.round(firstType.defaultDuration);
           if (d >= 5) setDurationMin(DURATION_OPTIONS.includes(d) ? d : Math.min(120, Math.max(15, d)));
         }
+      } else {
+        setTypeId('');
       }
     } else {
       setTypeId('');
@@ -854,6 +866,8 @@ export function SchedulerBookModal({
     providers,
     typesForPicker,
     appointmentTypes,
+    usesRoutingTypeCatalog,
+    resolvePrefillAppointmentTypeId,
     prefill?.appointmentTypeId,
     prefill?.defaultDescription,
     prefill?.defaultInstructions,
@@ -866,18 +880,38 @@ export function SchedulerBookModal({
 
   /** When appointment types load after open, set type without wiping the rest of the form. */
   useEffect(() => {
-    if (!open || !slot || !typesForActivePicker.length) return;
+    if (!open || !slot) return;
+    const catalog = usesRoutingTypeCatalog
+      ? appointmentTypes.map((t) => normalizeAppointmentTypeFromApi(t))
+      : typesForActivePicker;
+    if (!catalog.length) return;
     setTypeId((prev) => {
-      const validPrev = prev && typesForActivePicker.some((t) => String(t.id) === prev);
+      const validPrev = prev && catalog.some((t) => String(t.id) === prev);
       if (validPrev) return prev;
-      const preT = prefill?.appointmentTypeId;
+      const resolved = resolvePrefillAppointmentTypeId();
+      const preT = resolved ?? prefill?.appointmentTypeId;
       if (preT != null) {
         const tid = String(preT);
-        if (typesForActivePicker.some((t) => String(t.id) === tid)) return tid;
+        if (catalog.some((t) => String(t.id) === tid)) return tid;
       }
+      const statsKey = prefill?.routingStatsTypeKey?.trim();
+      if (statsKey) {
+        const matched = appointmentTypeForRoutingStatsKey(statsKey, appointmentTypes);
+        if (matched?.id != null) return String(matched.id);
+      }
+      if (usesRoutingTypeCatalog) return prev || '';
       return typesForActivePicker[0] ? String(typesForActivePicker[0].id) : '';
     });
-  }, [open, slot, typesForActivePicker, prefill?.appointmentTypeId]);
+  }, [
+    open,
+    slot,
+    typesForActivePicker,
+    appointmentTypes,
+    usesRoutingTypeCatalog,
+    resolvePrefillAppointmentTypeId,
+    prefill?.appointmentTypeId,
+    prefill?.routingStatsTypeKey,
+  ]);
 
   useEffect(() => {
     const cid = prefill?.clientId?.trim();
@@ -890,9 +924,7 @@ export function SchedulerBookModal({
         if (cancelled) return;
         setSelectedClientId(cid);
         setSelectedClientLabel(prefill?.clientLabel?.trim() || `Client #${cid}`);
-        setSelectedClientAddress(extractClientAddressFromPayload(payload));
-        setClientPets(extractPatientsFromClientPayload(payload));
-        setSelectedClientAlerts(extractClientAlertsFromPayload(payload));
+        applyClientPayloadDetails(payload);
         setSelectedPatientId(null);
         setSelectedPatientLabel('');
       } catch {
@@ -938,16 +970,32 @@ export function SchedulerBookModal({
         : '';
     const defaultDesc = prefill.defaultDescription?.trim() ?? '';
     const defaultStaffNotes = prefill.defaultInstructions?.trim() ?? '';
-    const autoSelectOnlyPet = petChoices.length === 1;
+    const preferredPatientId = prefill.preferredPatientId?.trim() ?? '';
+    const preferredPatientIdSet = new Set(
+      [
+        ...(prefill.preferredPatientIds ?? []).map((id) => String(id).trim()),
+        ...(preferredPatientId ? [preferredPatientId] : []),
+      ].filter(Boolean)
+    );
+    const autoSelectPatient = (patientId: string): boolean => {
+      if (petChoices.length === 1) return true;
+      if (preferredPatientIdSet.size > 0) {
+        return preferredPatientIdSet.has(patientId);
+      }
+      return false;
+    };
     setRoutingBookVisitEdits(
-      petChoices.map((p) => ({
-        patientId: String(p.id),
-        patientName: p.name,
-        selected: autoSelectOnlyPet,
-        appointmentTypeId: defaultType,
-        description: defaultDesc,
-        instructions: defaultStaffNotes,
-      }))
+      petChoices.map((p) => {
+        const patientId = String(p.id);
+        return {
+          patientId,
+          patientName: p.name,
+          selected: autoSelectPatient(patientId),
+          appointmentTypeId: defaultType,
+          description: defaultDesc,
+          instructions: defaultStaffNotes,
+        };
+      })
     );
   }, [
     open,
@@ -955,6 +1003,8 @@ export function SchedulerBookModal({
     prefill?.appointmentTypeId,
     prefill?.defaultDescription,
     prefill?.defaultInstructions,
+    prefill?.preferredPatientId,
+    prefill?.preferredPatientIds,
     petChoices,
     routingBookAppointmentTypes,
   ]);
@@ -967,75 +1017,42 @@ export function SchedulerBookModal({
   }, [selectedType?.id, selectedType?.defaultDuration, prefill?.preserveDurationFromSlot]);
 
   useEffect(() => {
-    const q = clientQuery.trim();
-    latestClientQ.current = q;
+    const q = combinedQuery.trim();
+    latestCombinedQ.current = q;
     if (!q) {
-      setClientResults([]);
-      setShowClientDd(false);
+      setCombinedClientResults([]);
+      setCombinedPatientResults([]);
+      setShowCombinedDd(false);
       return;
     }
     const t = window.setTimeout(async () => {
-      setClientSearching(true);
+      setCombinedSearching(true);
       try {
-        const rows = await searchClientsStaff(q);
-        if (latestClientQ.current === q) {
-          setClientResults(rows);
-          setShowClientDd(true);
-        }
-      } catch {
-        if (latestClientQ.current === q) setClientResults([]);
-      } finally {
-        setClientSearching(false);
-      }
-    }, 280);
-    return () => window.clearTimeout(t);
-  }, [clientQuery]);
-
-  useEffect(() => {
-    const q = patientQuery.trim();
-    latestPatientQ.current = q;
-    if (!q) {
-      setPatientResults([]);
-      setShowPatientDd(false);
-      return;
-    }
-    const t = window.setTimeout(async () => {
-      setPatientSearching(true);
-      try {
-        const res = await searchPatients({
-          name: q,
+        const { clients, patients } = await searchPimsClientsAndPatients(q, {
           practiceId,
           activeOnly: true,
         });
-        const data = res.data as unknown;
-        const list = Array.isArray(data)
-          ? data
-          : Array.isArray((data as { items?: unknown[] })?.items)
-            ? (data as { items: unknown[] }).items
-            : Array.isArray((data as { patients?: unknown[] })?.patients)
-              ? (data as { patients: unknown[] }).patients
-              : [];
-        const norm = list.map(normalizePatientSearchRow).filter(Boolean) as NonNullable<
-          ReturnType<typeof normalizePatientSearchRow>
-        >[];
-        if (latestPatientQ.current === q) {
-          setPatientResults(norm);
-          setShowPatientDd(true);
+        if (latestCombinedQ.current === q) {
+          setCombinedClientResults(clients);
+          setCombinedPatientResults(patients);
+          setShowCombinedDd(clients.length > 0 || patients.length > 0);
         }
       } catch {
-        if (latestPatientQ.current === q) setPatientResults([]);
+        if (latestCombinedQ.current === q) {
+          setCombinedClientResults([]);
+          setCombinedPatientResults([]);
+        }
       } finally {
-        setPatientSearching(false);
+        setCombinedSearching(false);
       }
     }, 280);
     return () => window.clearTimeout(t);
-  }, [patientQuery, practiceId]);
+  }, [combinedQuery, practiceId]);
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
       const t = e.target as Node;
-      if (clientDdRef.current && !clientDdRef.current.contains(t)) setShowClientDd(false);
-      if (patientDdRef.current && !patientDdRef.current.contains(t)) setShowPatientDd(false);
+      if (combinedDdRef.current && !combinedDdRef.current.contains(t)) setShowCombinedDd(false);
     }
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
@@ -1046,9 +1063,10 @@ export function SchedulerBookModal({
     setSelectedClientId(id);
     setSelectedClientLabel(clientDisplayName(c));
     setSelectedClientAddress(clientAddressLine(c));
-    setClientQuery('');
-    setClientResults([]);
-    setShowClientDd(false);
+    setCombinedQuery('');
+    setCombinedClientResults([]);
+    setCombinedPatientResults([]);
+    setShowCombinedDd(false);
     setSelectedPatientId(null);
     setSelectedPatientLabel('');
     setClientPets([]);
@@ -1056,9 +1074,7 @@ export function SchedulerBookModal({
     setLoadingClientPets(true);
     try {
       const payload = await fetchClientByIdStaff(id);
-      setSelectedClientAddress(extractClientAddressFromPayload(payload) ?? clientAddressLine(c));
-      setClientPets(extractPatientsFromClientPayload(payload));
-      setSelectedClientAlerts(extractClientAlertsFromPayload(payload));
+      applyClientPayloadDetails(payload, clientAddressLine(c));
     } catch {
       setClientPets([]);
       setSelectedClientAlerts(null);
@@ -1067,20 +1083,21 @@ export function SchedulerBookModal({
     }
   }, []);
 
-  const pickPatientFromSearch = useCallback((p: (typeof patientResults)[0]) => {
+  const pickPatientFromSearch = useCallback((p: PimsPatientSearchHit) => {
     setSelectedPatientId(String(p.id));
     setSelectedPatientLabel(p.name);
-    setPatientQuery('');
-    setPatientResults([]);
-    setShowPatientDd(false);
+    setCombinedQuery('');
+    setCombinedClientResults([]);
+    setCombinedPatientResults([]);
+    setShowCombinedDd(false);
     if (p.clientId != null) {
       setSelectedClientId(String(p.clientId));
       setSelectedClientLabel(p.clientLabel ?? `Client #${p.clientId}`);
-      setSelectedClientAddress(p.clientAddress);
+      setSelectedClientAddress(null);
       setLoadingClientPets(true);
       fetchClientByIdStaff(p.clientId)
         .then((payload) => {
-          setSelectedClientAddress(extractClientAddressFromPayload(payload) ?? p.clientAddress);
+          setSelectedClientAddress(extractClientAddressFromPayload(payload));
           setClientPets(extractPatientsFromClientPayload(payload));
           setSelectedClientAlerts(extractClientAlertsFromPayload(payload));
         })
@@ -1102,20 +1119,98 @@ export function SchedulerBookModal({
     setSelectedClientId(null);
     setSelectedClientLabel('');
     setSelectedClientAddress(null);
+    setSelectedClientLat(undefined);
+    setSelectedClientLon(undefined);
+    setSelectedClientCity(undefined);
+    setSelectedClientState(undefined);
+    setSelectedClientZip(undefined);
     setSelectedClientAlerts(null);
     setClientPets([]);
     setSelectedPatientId(null);
     setSelectedPatientLabel('');
-    setClientQuery('');
-    setPatientQuery('');
-    setClientResults([]);
-    setPatientResults([]);
-    setShowClientDd(false);
-    setShowPatientDd(false);
+    setCombinedQuery('');
+    setCombinedClientResults([]);
+    setCombinedPatientResults([]);
+    setShowCombinedDd(false);
   }, []);
+
+  function applyClientPayloadDetails(payload: unknown, fallbackAddress?: string | null) {
+    setSelectedClientAddress(extractClientAddressFromPayload(payload) ?? fallbackAddress ?? null);
+    setClientPets(extractPatientsFromClientPayload(payload));
+    setSelectedClientAlerts(extractClientAlertsFromPayload(payload));
+    const coords = coordsFromClientPayload(payload);
+    setSelectedClientLat(coords.lat);
+    setSelectedClientLon(coords.lon);
+    const parts = clientAddressPartsFromPayload(payload);
+    setSelectedClientCity(parts.city);
+    setSelectedClientState(parts.state);
+    setSelectedClientZip(parts.zip);
+  }
+
+  function tryPreviewOnCalendar(): boolean {
+    setFormError(null);
+    if (!canPreviewOnCalendar || !onPreviewOnCalendar) return false;
+    if (!typeId) {
+      setFormError('Select an appointment type.');
+      return true;
+    }
+    if (!providerId) {
+      setFormError('Select a provider.');
+      return true;
+    }
+    if (!startLocal?.isValid || !endLocal?.isValid) {
+      setFormError('Invalid start time.');
+      return true;
+    }
+    const startIso = startLocal.setZone(practiceTz).toUTC().toISO();
+    const endIso = endLocal.setZone(practiceTz).toUTC().toISO();
+    if (!startIso || !endIso) {
+      setFormError('Invalid start time.');
+      return true;
+    }
+    const trimmedAlt =
+      canUseAlternateAddress && !hasLinkedClient ? alternateAddressText.trim() : '';
+    if (trimmedAlt.length > 4000) {
+      setFormError('Alternate address must be 4000 characters or fewer.');
+      return true;
+    }
+    onPreviewOnCalendar({
+      practiceId,
+      primaryProviderId: Number(providerId),
+      appointmentTypeId: Number(typeId),
+      ...(selectedClientId ? { clientId: selectedClientId, clientLabel: selectedClientLabel || undefined } : {}),
+      ...(selectedPatientId
+        ? { patientId: selectedPatientId, patientLabel: selectedPatientLabel || undefined }
+        : {}),
+      description: description.trim() || undefined,
+      instructions: instructions.trim() || undefined,
+      ...(trimmedAlt ? { alternateAddressText: trimmedAlt } : {}),
+      ...(showAdditionalEmployeesField && additionalEmployeeIds.length
+        ? { additionalEmployeeIds }
+        : {}),
+      appointmentStartIso: startIso,
+      appointmentEndIso: endIso,
+      modalTitle: prefill?.modalTitle,
+      ...(selectedClientAddress ? { clientAddress: selectedClientAddress } : {}),
+      ...(selectedClientCity ? { clientCity: selectedClientCity } : {}),
+      ...(selectedClientState ? { clientState: selectedClientState } : {}),
+      ...(selectedClientZip ? { clientZip: selectedClientZip } : {}),
+      ...(selectedClientLat != null && Number.isFinite(selectedClientLat)
+        ? { clientLat: selectedClientLat }
+        : {}),
+      ...(selectedClientLon != null && Number.isFinite(selectedClientLon)
+        ? { clientLon: selectedClientLon }
+        : {}),
+    });
+    return true;
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (canPreviewOnCalendar) {
+      tryPreviewOnCalendar();
+      return;
+    }
     setFormError(null);
     if (perVisitReschedule) {
       if (
@@ -1238,9 +1333,12 @@ export function SchedulerBookModal({
       };
 
       const forwardBookingToken = prefill?.forwardBookingTrackingToken?.trim();
-      const forwardBookingCreateExtras = forwardBookingToken
-        ? { forwardBookingTrackingToken: forwardBookingToken }
-        : {};
+      const forwardBookingEntryId = prefill?.forwardBookingEntryId;
+      /** Stay on forward booking list until Mark complete — do not auto-close via tracking token. */
+      const forwardBookingCreateExtras =
+        forwardBookingToken && forwardBookingEntryId == null
+          ? { forwardBookingTrackingToken: forwardBookingToken }
+          : {};
 
       let savedAppointmentId: number | undefined;
       if (rescheduleIds.length > 0) {
@@ -1349,7 +1447,7 @@ export function SchedulerBookModal({
       }
 
       let forwardBookingWarning: string | undefined;
-      if (savedAppointmentId != null) {
+      if (savedAppointmentId != null && forwardBookingEntryId != null) {
         const fbComplete = await completeForwardBookingFromBook(savedAppointmentId, prefill);
         if (!fbComplete.completed && fbComplete.error) {
           forwardBookingWarning =
@@ -1425,6 +1523,7 @@ export function SchedulerBookModal({
   if (!open || !slot || !startLocal) return null;
 
   const timeInputValue = startLocal.toFormat('HH:mm');
+  const endTimeInputValue = endLocal?.isValid ? endLocal.toFormat('HH:mm') : '';
   const dateInputValue = startLocal.toISODate() ?? '';
   const allDayStartDateValue = startLocal.setZone(practiceTz).startOf('day').toISODate() ?? '';
   const routingBookSelectedCount = routingBookVisitEdits.filter((v) => v.selected).length;
@@ -1546,8 +1645,9 @@ export function SchedulerBookModal({
                   </select>
                   {allDayBookSession && typesForActivePicker.length === 0 ? (
                     <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
-                      No appointment types are configured for all-day booking. Enable &quot;Allow all-day
-                      booking&quot; on a type in Settings → Appointment types.
+                      No all-day appointment types are available for your role. Enable &quot;Allow
+                      all-day booking&quot; on a type in Settings → Appointment types, or ask an admin
+                      to grant your role access under Settings → Role manual booking.
                     </p>
                   ) : null}
                   {typeFormFlags.showNotRoutedHint ? (
@@ -1569,9 +1669,7 @@ export function SchedulerBookModal({
                       setIsAllDay(next);
                       if (!next) return;
                       setTypeId((prev) => {
-                        const allowed = appointmentTypes
-                          .map((t) => normalizeAppointmentTypeFromApi(t))
-                          .filter((t) => appointmentTypeAllowsAllDay(t));
+                        const allowed = allDayBookableTypesFromCatalog(typesForPicker);
                         if (prev && allowed.some((t) => String(t.id) === prev)) return prev;
                         return allowed[0] ? String(allowed[0].id) : '';
                       });
@@ -1648,92 +1746,72 @@ export function SchedulerBookModal({
             />
           ) : (
             <>
-              <div className="scheduler-book-mode-toggle" role="group" aria-label="Search mode">
-                <button
-                  type="button"
-                  className={searchMode === 'client' ? 'active' : ''}
-                  onClick={() => setSearchMode('client')}
-                >
-                  Find by client
-                </button>
-                <button
-                  type="button"
-                  className={searchMode === 'patient' ? 'active' : ''}
-                  onClick={() => setSearchMode('patient')}
-                >
-                  Find by patient
-                </button>
-              </div>
-
-              {searchMode === 'client' ? (
-                <Field label="Search client">
-                  <div ref={clientDdRef} style={{ position: 'relative' }}>
-                    <input
-                      className="scheduler-book-input"
-                      value={clientQuery}
-                      onChange={(e) => setClientQuery(e.target.value)}
-                      onFocus={() => clientResults.length > 0 && setShowClientDd(true)}
-                      placeholder="Name, phone, or address…"
-                      autoComplete="off"
-                    />
-                    {clientSearching && <div className="scheduler-book-hint">Searching…</div>}
-                    {showClientDd && clientResults.length > 0 && (
-                      <ul className="scheduler-book-dropdown">
-                        {clientResults.map((c) => (
-                          <li key={String(c.id)}>
-                            <button
-                              type="button"
-                              className="scheduler-book-dd-item"
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                pickClient(c);
-                              }}
-                            >
-                              <span className="scheduler-book-dd-primary">{clientDisplayName(c)}</span>
-                              <span className="scheduler-book-dd-secondary">{clientAddressLine(c) ?? '—'}</span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </Field>
-              ) : (
-                <Field label="Search patient">
-                  <div ref={patientDdRef} style={{ position: 'relative' }}>
-                    <input
-                      className="scheduler-book-input"
-                      value={patientQuery}
-                      onChange={(e) => setPatientQuery(e.target.value)}
-                      onFocus={() => patientResults.length > 0 && setShowPatientDd(true)}
-                      placeholder="Pet name…"
-                      autoComplete="off"
-                    />
-                    {patientSearching && <div className="scheduler-book-hint">Searching…</div>}
-                    {showPatientDd && patientResults.length > 0 && (
-                      <ul className="scheduler-book-dropdown">
-                        {patientResults.map((p) => (
-                          <li key={String(p.id)}>
-                            <button
-                              type="button"
-                              className="scheduler-book-dd-item"
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                pickPatientFromSearch(p);
-                              }}
-                            >
-                              <span className="scheduler-book-dd-primary">{p.name}</span>
-                              <span className="scheduler-book-dd-secondary">
-                                {p.clientLabel ?? (p.clientId != null ? `Client #${p.clientId}` : '—')}
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </Field>
-              )}
+              <Field label="Search client or patient">
+                <div ref={combinedDdRef} style={{ position: 'relative' }}>
+                  <input
+                    className="scheduler-book-input"
+                    value={combinedQuery}
+                    onChange={(e) => setCombinedQuery(e.target.value)}
+                    onFocus={() =>
+                      (combinedClientResults.length > 0 || combinedPatientResults.length > 0) &&
+                      setShowCombinedDd(true)
+                    }
+                    placeholder="Pet name, client name (e.g. Nala Wilson), phone, or address…"
+                    autoComplete="off"
+                  />
+                  {combinedSearching && <div className="scheduler-book-hint">Searching…</div>}
+                  {showCombinedDd &&
+                  (combinedClientResults.length > 0 || combinedPatientResults.length > 0) ? (
+                    <ul className="scheduler-book-dropdown">
+                      {combinedClientResults.length > 0 ? (
+                        <>
+                          <li className="scheduler-book-dropdown-section">Clients</li>
+                          {combinedClientResults.map((c) => (
+                            <li key={`client-${String(c.id)}`}>
+                              <button
+                                type="button"
+                                className="scheduler-book-dd-item"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  void pickClient(c);
+                                }}
+                              >
+                                <span className="scheduler-book-dd-primary">{clientDisplayName(c)}</span>
+                                <span className="scheduler-book-dd-secondary">
+                                  {clientAddressLine(c) ?? 'Client'}
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                        </>
+                      ) : null}
+                      {combinedPatientResults.length > 0 ? (
+                        <>
+                          <li className="scheduler-book-dropdown-section">Patients</li>
+                          {combinedPatientResults.map((p) => (
+                            <li key={`patient-${String(p.id)}`}>
+                              <button
+                                type="button"
+                                className="scheduler-book-dd-item"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  pickPatientFromSearch(p);
+                                }}
+                              >
+                                <span className="scheduler-book-dd-primary">{p.name}</span>
+                                <span className="scheduler-book-dd-secondary">
+                                  {p.clientLabel ??
+                                    (p.clientId != null ? `Client #${p.clientId}` : 'No client on file')}
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                        </>
+                      ) : null}
+                    </ul>
+                  ) : null}
+                </div>
+              </Field>
 
               {selectedClientId ? (
                 <BookSelectedClientCard
@@ -1841,7 +1919,7 @@ export function SchedulerBookModal({
                   <Field label="Appointment type">
                     <div className="scheduler-book-selected">
                       <span className="scheduler-book-selected-value">
-                        {selectedType?.prettyName || selectedType?.name || '…'}
+                        {selectedType?.name || selectedType?.prettyName || '…'}
                       </span>
                     </div>
                   </Field>
@@ -1855,6 +1933,13 @@ export function SchedulerBookModal({
                     </span>
                   </div>
                 </Field>
+                <Field label="Duration">
+                  <div className="scheduler-book-selected">
+                    <span className="scheduler-book-selected-value">{durationMin} min</span>
+                  </div>
+                </Field>
+              </div>
+              <div className="scheduler-book-row2">
                 <Field label="Start time">
                   <div className="scheduler-book-selected">
                     <span className="scheduler-book-selected-value">
@@ -1862,9 +1947,11 @@ export function SchedulerBookModal({
                     </span>
                   </div>
                 </Field>
-                <Field label="Duration">
+                <Field label="End time">
                   <div className="scheduler-book-selected">
-                    <span className="scheduler-book-selected-value">{durationMin} min</span>
+                    <span className="scheduler-book-selected-value">
+                      {endLocal?.isValid ? endLocal.toFormat('h:mm a') : '…'}
+                    </span>
                   </div>
                 </Field>
               </div>
@@ -2046,62 +2133,97 @@ export function SchedulerBookModal({
           ) : (
             <>
               {!showAllDayFields ? (
-                <div className="scheduler-book-row2">
-                  <Field label="Date">
-                    <input
-                      type="date"
-                      className="scheduler-book-input"
-                      value={dateInputValue}
-                      onChange={(e) => {
-                        const iso = e.target.value;
-                        if (!iso) return;
-                        setStartLocal((prev) => {
-                          if (!prev?.isValid) return prev;
-                          const next = DateTime.fromISO(iso, { zone: practiceTz }).set({
-                            hour: prev.hour,
-                            minute: prev.minute,
+                <>
+                  <div className="scheduler-book-row2">
+                    <Field label="Date">
+                      <input
+                        type="date"
+                        className="scheduler-book-input"
+                        value={dateInputValue}
+                        onChange={(e) => {
+                          const iso = e.target.value;
+                          if (!iso) return;
+                          setStartLocal((prev) => {
+                            if (!prev?.isValid) return prev;
+                            const next = DateTime.fromISO(iso, { zone: practiceTz }).set({
+                              hour: prev.hour,
+                              minute: prev.minute,
+                              second: 0,
+                              millisecond: 0,
+                            });
+                            return next.isValid ? next : prev;
+                          });
+                        }}
+                        disabled={Boolean(prefill?.lockSlotTimes)}
+                      />
+                    </Field>
+                    <Field label="Duration">
+                      <select
+                        className="scheduler-book-input"
+                        value={durationMin}
+                        onChange={(e) => {
+                          setFormError(null);
+                          setDurationMin(Number(e.target.value));
+                        }}
+                        disabled={Boolean(prefill?.lockSlotTimes)}
+                      >
+                        {durationOpts.map((m) => (
+                          <option key={m} value={m}>
+                            {m} min
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
+                  <div className="scheduler-book-row2">
+                    <Field label="Start time">
+                      <input
+                        type="time"
+                        className="scheduler-book-input"
+                        value={timeInputValue}
+                        step={300}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (!v || !startLocal) return;
+                          const [hh, mm] = v.split(':').map((x) => parseInt(x, 10));
+                          if (Number.isNaN(hh) || Number.isNaN(mm)) return;
+                          setStartLocal(
+                            startLocal.set({ hour: hh, minute: mm, second: 0, millisecond: 0 })
+                          );
+                        }}
+                        disabled={Boolean(prefill?.lockSlotTimes)}
+                      />
+                    </Field>
+                    <Field label="End time">
+                      <input
+                        type="time"
+                        className="scheduler-book-input"
+                        value={endTimeInputValue}
+                        step={300}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (!v || !startLocal?.isValid) return;
+                          const [hh, mm] = v.split(':').map((x) => parseInt(x, 10));
+                          if (Number.isNaN(hh) || Number.isNaN(mm)) return;
+                          const endCandidate = startLocal.set({
+                            hour: hh,
+                            minute: mm,
                             second: 0,
                             millisecond: 0,
                           });
-                          return next.isValid ? next : prev;
-                        });
-                      }}
-                      disabled={Boolean(prefill?.lockSlotTimes)}
-                    />
-                  </Field>
-                  <Field label="Start time">
-                    <input
-                      type="time"
-                      className="scheduler-book-input"
-                      value={timeInputValue}
-                      step={300}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (!v || !startLocal) return;
-                        const [hh, mm] = v.split(':').map((x) => parseInt(x, 10));
-                        if (Number.isNaN(hh) || Number.isNaN(mm)) return;
-                        setStartLocal(
-                          startLocal.set({ hour: hh, minute: mm, second: 0, millisecond: 0 })
-                        );
-                      }}
-                      disabled={Boolean(prefill?.lockSlotTimes)}
-                    />
-                  </Field>
-                  <Field label="Duration">
-                    <select
-                      className="scheduler-book-input"
-                      value={durationMin}
-                      onChange={(e) => setDurationMin(Number(e.target.value))}
-                      disabled={Boolean(prefill?.lockSlotTimes)}
-                    >
-                      {durationOpts.map((m) => (
-                        <option key={m} value={m}>
-                          {m} min
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                </div>
+                          const mins = Math.round(endCandidate.diff(startLocal, 'minutes').minutes);
+                          if (mins <= 0) {
+                            setFormError('End time must be after start time.');
+                            return;
+                          }
+                          setFormError(null);
+                          setDurationMin(mins);
+                        }}
+                        disabled={Boolean(prefill?.lockSlotTimes)}
+                      />
+                    </Field>
+                  </div>
+                </>
               ) : null}
             </>
           )}
@@ -2200,6 +2322,12 @@ export function SchedulerBookModal({
           ) : null}
 
           {formError ? <div className="scheduler-book-error">{formError}</div> : null}
+          {canPreviewOnCalendar ? (
+            <p className="scheduler-book-hint muted">
+              Review placement on the calendar first — the visit is not saved until you click Book on the red
+              preview slot.
+            </p>
+          ) : null}
 
           <div className="scheduler-book-actions">
             <button type="button" className="scheduler-book-btn secondary" onClick={onClose} disabled={submitting}>
@@ -2212,9 +2340,11 @@ export function SchedulerBookModal({
                   : 'Booking…'
                 : isRescheduleBook
                   ? 'Reschedule appointment'
-                  : isRoutingPreviewBook && routingBookSelectedCount > 1
-                    ? `Book ${routingBookSelectedCount} appointments`
-                    : 'Book appointment'}
+                  : canPreviewOnCalendar
+                    ? 'Preview on calendar'
+                    : isRoutingPreviewBook && routingBookSelectedCount > 1
+                      ? `Book ${routingBookSelectedCount} appointments`
+                      : 'Book appointment'}
             </button>
           </div>
         </form>

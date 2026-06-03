@@ -14,6 +14,12 @@ import {
   type EmployeeDto,
 } from '../../api/employeesMutations';
 import { PIMS_ENTITY_EDIT_ENABLED } from '../../utils/pimsEntityEditing';
+import {
+  assignEmployeeRoleNameGroup,
+  groupEmployeeRolesByName,
+  humanizeEmployeeRoleName,
+  isEmployeeRoleNameGroupSelected,
+} from '../../utils/employeeRoleDisplay';
 
 const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
@@ -82,7 +88,11 @@ function employeeDisplayName(emp: Employee): string {
 function roleLabelsForEmployee(emp: Employee, catalog: EmployeeRole[]): string[] {
   const ids = new Set(employeeRoleIds(emp));
   if (ids.size === 0) return [];
-  return catalog.filter((role) => ids.has(role.id)).map((role) => role.name);
+  const names = catalog
+    .filter((role) => ids.has(role.id))
+    .map((role) => humanizeEmployeeRoleName(role.name))
+    .filter(Boolean);
+  return [...new Set(names)];
 }
 
 type Props = {
@@ -123,6 +133,8 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   const [rolesEditEmployee, setRolesEditEmployee] = useState<Employee | null>(null);
 
   const practice = useMemo(() => ({ id: DEFAULT_PRACTICE_ID }), []);
+
+  const roleGroups = useMemo(() => groupEmployeeRolesByName(rolesCatalog), [rolesCatalog]);
 
   useEffect(() => {
     let cancelled = false;
@@ -242,10 +254,10 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
     }
   };
 
-  const toggleRoleId = (roleId: number) => {
-    setRoleIdsSelected((cur) =>
-      cur.includes(roleId) ? cur.filter((x) => x !== roleId) : [...cur, roleId].sort((a, b) => a - b)
-    );
+  const toggleRoleGroup = (nameKey: string, checked: boolean) => {
+    const group = roleGroups.find((g) => g.nameKey === nameKey);
+    if (!group) return;
+    setRoleIdsSelected((cur) => assignEmployeeRoleNameGroup(group, cur, checked));
   };
 
   const closeModal = () => {
@@ -584,29 +596,23 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
               </p>
               <fieldset className="settings-employee-modal__fieldset">
                 <legend className="settings-employee-modal__legend">Assigned roles</legend>
-                {rolesCatalog.length === 0 ? (
+                {roleGroups.length === 0 ? (
                   <p className="muted" style={{ fontSize: 13, margin: 0 }}>
                     No roles loaded. Check <code>GET /employees/roles</code>.
                   </p>
                 ) : (
                   <div className="settings-employee-modal__roles" role="group" aria-label="Employee roles">
-                    {rolesCatalog.map((role) => (
+                    {roleGroups.map((group) => (
                       <label
-                        key={role.id}
+                        key={group.nameKey}
                         style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer' }}
                       >
                         <input
                           type="checkbox"
-                          checked={roleIdsSelected.includes(role.id)}
-                          onChange={() => toggleRoleId(role.id)}
+                          checked={isEmployeeRoleNameGroupSelected(group, roleIdsSelected)}
+                          onChange={(e) => toggleRoleGroup(group.nameKey, e.target.checked)}
                         />
-                        <span>
-                          {role.name}
-                          <span className="muted" style={{ fontSize: 12 }}>
-                            {' '}
-                            ({role.roleValue})
-                          </span>
-                        </span>
+                        <span>{group.displayName}</span>
                       </label>
                     ))}
                   </div>
@@ -750,30 +756,24 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
               </fieldset>
 
               <fieldset className="settings-employee-modal__fieldset">
-                <legend className="settings-employee-modal__legend">Roles (roleIds)</legend>
-                {rolesCatalog.length === 0 ? (
+                <legend className="settings-employee-modal__legend">Roles</legend>
+                {roleGroups.length === 0 ? (
                   <p className="muted" style={{ fontSize: 13, margin: 0 }}>
                     No roles loaded. Check <code>GET /employees/roles</code>.
                   </p>
                 ) : (
                   <div className="settings-employee-modal__roles" role="group" aria-label="Employee roles">
-                    {rolesCatalog.map((role) => (
+                    {roleGroups.map((group) => (
                       <label
-                        key={role.id}
+                        key={group.nameKey}
                         style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer' }}
                       >
                         <input
                           type="checkbox"
-                          checked={roleIdsSelected.includes(role.id)}
-                          onChange={() => toggleRoleId(role.id)}
+                          checked={isEmployeeRoleNameGroupSelected(group, roleIdsSelected)}
+                          onChange={(e) => toggleRoleGroup(group.nameKey, e.target.checked)}
                         />
-                        <span>
-                          {role.name}
-                          <span className="muted" style={{ fontSize: 12 }}>
-                            {' '}
-                            ({role.roleValue})
-                          </span>
-                        </span>
+                        <span>{group.displayName}</span>
                       </label>
                     ))}
                   </div>

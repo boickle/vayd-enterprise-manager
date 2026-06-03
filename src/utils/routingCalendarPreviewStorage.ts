@@ -38,6 +38,8 @@ export type RoutingCalendarPreviewPayloadV1 = {
   appointmentTypeId: number;
   /** True when the user picked a type in Routing → Calculate Time before opening the calendar preview. */
   appointmentTypeChosenInRouting?: boolean;
+  /** Calculate Time dropdown value (`AppointmentType.name`) at preview time. */
+  routingStatsTypeKey?: string;
   clientDisplayLabel?: string;
   /** PATCH target when confirming from routing calendar preview (reschedule flow). */
   rescheduleAppointmentId?: number;
@@ -58,7 +60,58 @@ export type RoutingCalendarPreviewPayloadV1 = {
    * list’s PIMS doctor id — not the internal id stored on `option.doctorPimsId` for the calendar.
    */
   listOptionKey?: string;
+  /** Preview opened from Schedule Loader (Fill Day) rather than Get Best Route. */
+  previewSource?: 'routing' | 'schedule-loader' | 'manual-book';
+  /** Return navigation when dismissing preview from Schedule Loader. */
+  scheduleLoaderReturn?: {
+    clientId: number;
+    returnHref: string;
+  };
+  /** Stored manual book form — Book from preview or Back to form restores this. */
+  manualBookDraft?: ManualBookPreviewDraft;
 };
+
+export type ManualBookPreviewDraft = {
+  practiceId: number;
+  primaryProviderId: number;
+  appointmentTypeId: number;
+  clientId?: string;
+  clientLabel?: string;
+  patientId?: string;
+  patientLabel?: string;
+  description?: string;
+  instructions?: string;
+  alternateAddressText?: string;
+  additionalEmployeeIds?: number[];
+  appointmentStartIso: string;
+  appointmentEndIso: string;
+  modalTitle?: string;
+  clientLat?: number;
+  clientLon?: number;
+  clientAddress?: string;
+  clientCity?: string;
+  clientState?: string;
+  clientZip?: string;
+};
+
+export function isScheduleLoaderCalendarPreview(
+  preview: RoutingCalendarPreviewPayloadV1 | null | undefined,
+): boolean {
+  return preview?.previewSource === 'schedule-loader';
+}
+
+export function isManualBookCalendarPreview(
+  preview: RoutingCalendarPreviewPayloadV1 | null | undefined,
+): boolean {
+  return preview?.previewSource === 'manual-book';
+}
+
+export function scheduleLoaderReturnHref(
+  preview: RoutingCalendarPreviewPayloadV1 | null | undefined,
+): string | null {
+  const href = preview?.scheduleLoaderReturn?.returnHref?.trim();
+  return href || null;
+}
 
 export function routingCalendarOptionKey(opt: {
   doctorPimsId?: string;

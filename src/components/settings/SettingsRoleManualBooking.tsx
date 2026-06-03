@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchEmployeeRoles,
   fetchRoleManualBookingAppointmentTypes,
@@ -7,6 +7,10 @@ import {
   type EmployeeRole,
 } from '../../api/appointmentSettings';
 import { appointmentTypeIsArchived } from '../../utils/appointmentTypeSettings';
+import {
+  groupEmployeeRolesByName,
+  type EmployeeRoleNameGroup,
+} from '../../utils/employeeRoleDisplay';
 
 function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string } }; message?: string };
@@ -26,24 +30,45 @@ export default function SettingsRoleManualBooking({
   allAppointmentTypes,
   onMessage,
 }: Props) {
-  const [roles, setRoles] = useState<EmployeeRole[]>([]);
+  const [rolesCatalog, setRolesCatalog] = useState<EmployeeRole[]>([]);
   const [rolesLoading, setRolesLoading] = useState(true);
   const [rolesError, setRolesError] = useState<string | null>(null);
-  const [selectedRoleId, setSelectedRoleId] = useState<number | ''>('');
+  const [selectedRoleNameKey, setSelectedRoleNameKey] = useState<string | null>(null);
   const [selectedTypeIds, setSelectedTypeIds] = useState<number[]>([]);
   const [permissionsLoading, setPermissionsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  const roleGroups = useMemo(() => groupEmployeeRolesByName(rolesCatalog), [rolesCatalog]);
+
+  const selectedGroup = useMemo(
+    () => roleGroups.find((group) => group.nameKey === selectedRoleNameKey) ?? null,
+    [roleGroups, selectedRoleNameKey],
+  );
+
   const activeTypes = useMemo(
     () => appointmentTypes.filter((t) => t.isActive !== false && !appointmentTypeIsArchived(t)),
-    [appointmentTypes]
+    [appointmentTypes],
   );
+
+  const activeTypeIds = useMemo(() => activeTypes.map((t) => t.id), [activeTypes]);
+
+  const allActiveSelected =
+    activeTypeIds.length > 0 && activeTypeIds.every((id) => selectedTypeIds.includes(id));
+  const someActiveSelected = activeTypeIds.some((id) => selectedTypeIds.includes(id));
+
+  const selectAllRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someActiveSelected && !allActiveSelected;
+    }
+  }, [someActiveSelected, allActiveSelected]);
 
   const archivedSelectedTypes = useMemo(() => {
     const catalog = allAppointmentTypes ?? appointmentTypes;
     const activeIds = new Set(activeTypes.map((t) => t.id));
     return catalog.filter(
-      (t) => appointmentTypeIsArchived(t) && selectedTypeIds.includes(t.id) && !activeIds.has(t.id)
+      (t) => appointmentTypeIsArchived(t) && selectedTypeIds.includes(t.id) && !activeIds.has(t.id),
     );
   }, [allAppointmentTypes, appointmentTypes, activeTypes, selectedTypeIds]);
 
@@ -52,10 +77,10 @@ export default function SettingsRoleManualBooking({
     setRolesError(null);
     try {
       const list = await fetchEmployeeRoles();
-      setRoles(Array.isArray(list) ? list : []);
+      setRolesCatalog(Array.isArray(list) ? list : []);
     } catch (e) {
       setRolesError(extractErr(e));
-      setRoles([]);
+      setRolesCatalog([]);
     } finally {
       setRolesLoading(false);
     }
@@ -66,50 +91,79 @@ export default function SettingsRoleManualBooking({
   }, [loadRoles]);
 
   useEffect(() => {
-    if (!selectedRoleId) {
+    if (roleGroups.length === 0) {
+      setSelectedRoleNameKey(null);
+      return;
+    }
+    setSelectedRoleNameKey((current) => {
+      if (current && roleGroups.some((group) => group.nameKey === current)) return current;
+      return roleGroups[0]?.nameKey ?? null;
+    });
+  }, [roleGroups]);
+
+  const loadPermissionsForGroup = useCallback(
+    async (group: EmployeeRoleNameGroup) => {
+      setPermissionsLoading(true);
+      try {
+        const results = await Promise.all(
+          group.roleIds.map((roleId) => fetchRoleManualBookingAppointmentTypes(roleId)),
+        );
+        const union = new Set<number>();
+        for (const rows of results) {
+          for (const row of rows) {
+            const id = Number(row.appointmentTypeId);
+            if (Number.isFinite(id) && id > 0) union.add(id);
+          }
+        }
+        setSelectedTypeIds(Array.from(union).sort((a, b) => a - b));
+      } catch (e) {
+        setSelectedTypeIds([]);
+        onMessage?.(extractErr(e), 'error');
+      } finally {
+        setPermissionsLoading(false);
+      }
+    },
+    [onMessage],
+  );
+
+  useEffect(() => {
+    if (!selectedGroup) {
       setSelectedTypeIds([]);
       return;
     }
-    let cancelled = false;
-    setPermissionsLoading(true);
-    void fetchRoleManualBookingAppointmentTypes(selectedRoleId)
-      .then((rows) => {
-        if (cancelled) return;
-        setSelectedTypeIds(
-          rows
-            .map((r) => Number(r.appointmentTypeId))
-            .filter((id) => Number.isFinite(id) && id > 0)
-        );
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setSelectedTypeIds([]);
-          onMessage?.(extractErr(e), 'error');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setPermissionsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedRoleId, onMessage]);
+    void loadPermissionsForGroup(selectedGroup);
+  }, [selectedGroup, loadPermissionsForGroup]);
 
   const toggleType = (typeId: number) => {
     setSelectedTypeIds((cur) =>
-      cur.includes(typeId) ? cur.filter((id) => id !== typeId) : [...cur, typeId].sort((a, b) => a - b)
+      cur.includes(typeId) ? cur.filter((id) => id !== typeId) : [...cur, typeId].sort((a, b) => a - b),
     );
   };
 
+  const toggleSelectAllActive = () => {
+    setSelectedTypeIds((cur) => {
+      const activeIdSet = new Set(activeTypeIds);
+      const preserved = cur.filter((id) => !activeIdSet.has(id));
+      if (allActiveSelected) {
+        return preserved.sort((a, b) => a - b);
+      }
+      return Array.from(new Set([...preserved, ...activeTypeIds])).sort((a, b) => a - b);
+    });
+  };
+
   const handleSave = async () => {
-    if (!selectedRoleId) {
+    if (!selectedGroup) {
       onMessage?.('Select a role first.', 'error');
       return;
     }
     setSaving(true);
     try {
-      await updateRoleManualBookingAppointmentTypes(selectedRoleId, selectedTypeIds);
-      onMessage?.('Manual booking types saved.', 'success');
+      await Promise.all(
+        selectedGroup.roleIds.map((roleId) =>
+          updateRoleManualBookingAppointmentTypes(roleId, selectedTypeIds),
+        ),
+      );
+      onMessage?.(`Manual booking types saved for ${selectedGroup.displayName}.`, 'success');
     } catch (e) {
       onMessage?.(extractErr(e), 'error');
     } finally {
@@ -117,14 +171,14 @@ export default function SettingsRoleManualBooking({
     }
   };
 
-  const selectedRole = roles.find((r) => r.id === selectedRoleId);
-
   return (
     <div>
       {rolesLoading ? (
         <p className="settings-muted">Loading roles…</p>
       ) : rolesError ? (
         <p className="settings-error-message">{rolesError}</p>
+      ) : roleGroups.length === 0 ? (
+        <p className="settings-muted">No employee roles found.</p>
       ) : (
         <div className="settings-form-group">
           <label className="settings-label" htmlFor="role-manual-booking-role">
@@ -133,36 +187,43 @@ export default function SettingsRoleManualBooking({
           <select
             id="role-manual-booking-role"
             className="settings-select"
-            value={selectedRoleId}
-            onChange={(e) => {
-              const v = e.target.value;
-              setSelectedRoleId(v ? Number(v) : '');
-            }}
+            value={selectedRoleNameKey ?? ''}
+            onChange={(e) => setSelectedRoleNameKey(e.target.value || null)}
           >
-            <option value="">— Select a role —</option>
-            {roles.map((role) => (
-              <option key={role.id} value={role.id}>
-                {role.name}
-                {role.roleValue != null && role.roleValue !== '' ? ` (${role.roleValue})` : ''}
+            {roleGroups.map((group) => (
+              <option key={group.nameKey} value={group.nameKey}>
+                {group.displayName}
               </option>
             ))}
           </select>
         </div>
       )}
 
-      {selectedRoleId ? (
+      {selectedGroup ? (
         <div className="settings-card">
-          <h3 className="settings-card-title">
-            {selectedRole?.name ?? `Role ${selectedRoleId}`}
-          </h3>
+          <h3 className="settings-card-title">{selectedGroup.displayName}</h3>
           <p className="settings-card-subtitle">
             Appointment types staff with this role may book manually from the calendar (not via
             routing).
+            {selectedGroup.roleIds.length > 1
+              ? ' Settings apply to every permission variant of this role in your PIMS.'
+              : null}
           </p>
           {permissionsLoading ? (
             <p className="settings-muted">Loading permissions…</p>
           ) : (
             <div className="settings-checkbox-list">
+              {activeTypes.length > 0 ? (
+                <label className="settings-checkbox-item settings-checkbox-item--select-all">
+                  <input
+                    ref={selectAllRef}
+                    type="checkbox"
+                    checked={allActiveSelected}
+                    onChange={toggleSelectAllActive}
+                  />
+                  <span>Select all</span>
+                </label>
+              ) : null}
               {activeTypes.map((type) => (
                 <label key={type.id} className="settings-checkbox-item">
                   <input

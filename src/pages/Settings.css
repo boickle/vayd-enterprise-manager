@@ -286,6 +286,13 @@
   cursor: pointer;
 }
 
+.settings-checkbox-item--select-all {
+  font-weight: 600;
+  margin-bottom: 4px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+
 .settings-muted {
   color: var(--muted);
   font-size: 13px;

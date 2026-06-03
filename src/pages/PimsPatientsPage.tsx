@@ -9,6 +9,8 @@ import {
   writePimsPatientsSession,
 } from '../utils/pimsSession';
 import PimsPatientDetailView from '../components/pims/PimsPatientDetailView';
+import { enrichPatientSearchRowsSex } from '../utils/enrichPatientSearchRowsSex';
+import { patientSexDisplayFromRecord } from '../utils/schedulerVisitDisplay';
 import './PimsClientsPage.css';
 
 function pickStr(v: unknown): string | null {
@@ -64,19 +66,7 @@ function clientsForPatientRow(row: PatientSearchRow): { id: string | number; nam
 }
 
 function sexDisplay(row: PatientSearchRow): string {
-  const r = row as Record<string, unknown>;
-  const combined = pickStr(r.sexDescription) ?? pickStr(r.sexAndNeuter);
-  if (combined) return combined;
-  const sex = pickStr(r.sex) ?? pickStr(r.gender) ?? '';
-  const nn =
-    pickStr(r.neuterStatus) ??
-    pickStr(r.spayNeuterStatus) ??
-    pickStr(r.alteredStatus) ??
-    pickStr(r.altered);
-  if (sex && nn) return `${sex} ${nn}`;
-  if (sex) return sex;
-  if (nn) return nn;
-  return '—';
+  return patientSexDisplayFromRecord(row as Record<string, unknown>) ?? '—';
 }
 
 function patientListStatus(row: PatientSearchRow): { active: boolean; text: string } {
@@ -147,6 +137,10 @@ export default function PimsPatientsPage() {
         });
         if (seq.current !== id) return;
         setRows(list);
+        void enrichPatientSearchRowsSex(list).then((enriched) => {
+          if (seq.current !== id) return;
+          setRows(enriched);
+        });
       } catch (e: unknown) {
         if (seq.current !== id) return;
         setRows([]);
@@ -161,7 +155,7 @@ export default function PimsPatientsPage() {
   useEffect(() => {
     const t = window.setTimeout(() => {
       void runSearch(query);
-    }, 280);
+    }, 400);
     return () => window.clearTimeout(t);
   }, [query, runSearch]);
 
@@ -222,7 +216,7 @@ export default function PimsPatientsPage() {
           <input
             type="search"
             className="pims-clients__search-input"
-            placeholder="Search patients…"
+            placeholder="Pet or client name (e.g. Elise Smith, Nala Wilson)…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onBlur={() => syncQueryToUrl()}

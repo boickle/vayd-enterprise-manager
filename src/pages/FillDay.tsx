@@ -15,13 +15,22 @@ import {
 import { patchReminder } from '../api/careOutreach';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { useAuth } from '../auth/useAuth';
-import { PreviewMyDayModal, type PreviewMyDayOption } from '../components/PreviewMyDayModal';
+import { fetchAllAppointmentTypes, type AppointmentType } from '../api/appointmentSettings';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
+import {
+  appointmentTypeIncludedInRouting,
+  normalizeAppointmentTypeFromApi,
+} from '../utils/appointmentTypeSettings';
+import {
+  writeRoutingCalendarPreview,
+  type RoutingCalendarPreviewPayloadV1,
+} from '../utils/routingCalendarPreviewStorage';
 import { fetchClientMessages, type ClientMessagesResponse } from '../api/clientPortal';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
 const FILL_DAY_OUTREACH_NOTES_DEBOUNCE_MS = 750;
+const FILL_DAY_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
 /** JSON often sends reminder ids as strings; normalize for state keys and PATCH. */
 function fillDayReminderNumericId(r: FillDayReminder | Record<string, unknown>): number | null {
@@ -111,10 +120,71 @@ function findFillDayReminderInCandidates(
   return undefined;
 }
 
+function hasFillDayDeepLinkParams(searchParams: URLSearchParams): boolean {
+  return Boolean(searchParams.get('doctorId')?.trim() && searchParams.get('targetDate')?.trim());
+}
+
+function findProviderForFillDoctorId(
+  providers: Provider[],
+  doctorId: string,
+): Provider | undefined {
+  const raw = doctorId.trim();
+  if (!raw) return undefined;
+  return providers.find((p) => String(p.id) === raw || String(p.pimsId ?? '') === raw);
+}
+
+function fillDoctorIdForProvider(provider: Provider): string {
+  return provider.pimsId ? String(provider.pimsId) : String(provider.id);
+}
+
+function resolveFillDayPreviewAppointmentTypeId(
+  types: AppointmentType[],
+  candidate: FillDayCandidate,
+): number | null {
+  const lastSeen =
+    candidate.patients?.find((p) => p.lastSeenAppointmentType?.trim())?.lastSeenAppointmentType?.trim() ??
+    '';
+  if (lastSeen) {
+    const key = lastSeen.toLowerCase();
+    const matched = types.find((t) => {
+      const pretty = String(t.prettyName || t.name || '').toLowerCase();
+      const name = String(t.name || '').toLowerCase();
+      return pretty === key || name === key || pretty.includes(key) || key.includes(pretty);
+    });
+    if (matched?.id != null) return Number(matched.id);
+  }
+  const prefer =
+    types.find((t) =>
+      /wellness|standard|check-up|checkup|office/i.test(String(t.prettyName || t.name || '')),
+    ) ?? types[0];
+  return prefer?.id != null ? Number(prefer.id) : null;
+}
+
+function fillDayPreviewPatients(candidate: FillDayCandidate): { id: number; name: string }[] {
+  if (candidate.patientIds.length > 0) {
+    return candidate.patientIds.map((id, i) => ({
+      id,
+      name:
+        candidate.patientNames[i]?.trim() ||
+        candidate.patients?.find((p) => p.id === id)?.name?.trim() ||
+        `Pet ${id}`,
+    }));
+  }
+  if (candidate.patientId != null) {
+    return [
+      {
+        id: candidate.patientId,
+        name: candidate.patientName?.trim() || `Pet ${candidate.patientId}`,
+      },
+    ];
+  }
+  return [];
+}
+
 export default function FillDayPage() {
   const { userEmail, doctorId: userDoctorId } = useAuth() as { userEmail?: string; doctorId?: string | null };
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Doctor selection
   const [doctorQuery, setDoctorQuery] = useState('');
@@ -193,13 +263,10 @@ export default function FillDayPage() {
     finalIsProd: isProd,
   });
 
-  // Preview My Day Modal
-  const [fillSchedulePreview, setFillSchedulePreview] = useState<null | {
-    scope: 'day' | 'week';
-    option: PreviewMyDayOption & { clientName?: string; currentDriveSeconds?: number };
-    candidate: FillDayCandidate;
-  }>(null);
   const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({});
+  const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
+  const [viewPlacementClientId, setViewPlacementClientId] = useState<number | null>(null);
+  const [highlightClientId, setHighlightClientId] = useState<number | null>(null);
 
 
   // Messages History Modal
@@ -238,6 +305,23 @@ export default function FillDayPage() {
       alive = false;
     };
   }, [userEmail]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchAllAppointmentTypes(FILL_DAY_PRACTICE_ID, { activeOnly: true })
+      .then((rows) => {
+        if (cancelled) return;
+        setAppointmentTypes(
+          rows
+            .map((t) => normalizeAppointmentTypeFromApi(t))
+            .filter((t) => appointmentTypeIncludedInRouting(t)),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const flushOutreachNotesSave = useCallback(async (reminderId: number, value: string) => {
     setOutreachNoteSaving((s) => ({ ...s, [reminderId]: true }));
@@ -358,10 +442,9 @@ export default function FillDayPage() {
 
   // Handle URL parameters: doctorId and targetDate, and auto-fetch
   useEffect(() => {
-    const urlDoctorId = searchParams.get('doctorId');
-    const urlTargetDate = searchParams.get('targetDate');
+    const urlDoctorId = searchParams.get('doctorId')?.trim() ?? '';
+    const urlTargetDate = searchParams.get('targetDate')?.trim() ?? '';
 
-    // Only process URL params if they exist and we haven't processed them yet
     if (!urlDoctorId || !urlTargetDate || hasProcessedUrlParamsRef.current) {
       return;
     }
@@ -371,28 +454,17 @@ export default function FillDayPage() {
       return;
     }
 
-    // Find matching doctor by pimsId or id
-    const matchingDoctor = allProviders.find((provider) => {
-      const providerPimsId = provider.pimsId ? String(provider.pimsId) : null;
-      const providerId = String(provider.id);
-      return providerPimsId === urlDoctorId || providerId === urlDoctorId;
-    });
+    const matchingDoctor = findProviderForFillDoctorId(allProviders, urlDoctorId);
 
     if (matchingDoctor) {
-      // Set the selected doctor
-      const doctorId = matchingDoctor.pimsId ? String(matchingDoctor.pimsId) : String(matchingDoctor.id);
+      const doctorId = fillDoctorIdForProvider(matchingDoctor);
       setSelectedDoctorId(doctorId);
       setSelectedDoctorName(matchingDoctor.name);
       setDoctorQuery(matchingDoctor.name);
-
-      // Set the target date
       setTargetDate(urlTargetDate);
-
-      // Mark that we've processed the URL params
+      didDefaultDoctorFromAuth.current = true;
       hasProcessedUrlParamsRef.current = true;
 
-      // Auto-fetch candidates directly with the values we have
-      // Create an inline async function to fetch with the URL param values
       (async () => {
         setLoading(true);
         setError(null);
@@ -402,7 +474,7 @@ export default function FillDayPage() {
 
         try {
           const request: FillDayRequest = {
-            doctorId: doctorId,
+            doctorId,
             targetDate: urlTargetDate,
             ignoreEmergencyBlocks,
             returnToDepot: 'optional' as const,
@@ -421,17 +493,42 @@ export default function FillDayPage() {
           setLoading(false);
         }
       })();
-    } else {
-      // Doctor not found - show error
-      setError(`Doctor with ID "${urlDoctorId}" not found`);
-      hasProcessedUrlParamsRef.current = true;
+      return;
     }
+
+    setError(`Doctor with ID "${urlDoctorId}" not found`);
+    hasProcessedUrlParamsRef.current = true;
   }, [searchParams, allProviders, ignoreEmergencyBlocks]);
+
+  // After returning from calendar preview, scroll to the client card.
+  useEffect(() => {
+    const scrollClientRaw = searchParams.get('scrollClientId')?.trim() ?? '';
+    if (!scrollClientRaw || loading || candidates.length === 0) return;
+
+    const clientId = Number(scrollClientRaw);
+    if (!Number.isFinite(clientId)) return;
+
+    const raf = window.requestAnimationFrame(() => {
+      const el = document.getElementById(`fill-day-client-${clientId}`);
+      if (!el) return;
+
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightClientId(clientId);
+      window.setTimeout(() => setHighlightClientId((cur) => (cur === clientId ? null : cur)), 2400);
+
+      const next = new URLSearchParams(searchParams);
+      next.delete('scrollClientId');
+      setSearchParams(next, { replace: true });
+    });
+
+    return () => window.cancelAnimationFrame(raf);
+  }, [searchParams, loading, candidates.length, setSearchParams]);
 
   // Default Doctor / One Team to the logged-in user's assigned employee when providers have loaded (no URL params)
   useEffect(() => {
     if (didDefaultDoctorFromAuth.current || allProviders.length === 0) return;
-    if (selectedDoctorId !== '') return; // already set (e.g. by URL params or user)
+    if (selectedDoctorId !== '') return;
+    if (hasFillDayDeepLinkParams(searchParams) || hasProcessedUrlParamsRef.current) return;
 
     const uid = userDoctorId != null ? String(userDoctorId).trim() : '';
     const matchByAuth =
@@ -443,7 +540,7 @@ export default function FillDayPage() {
         : null;
 
     if (matchByAuth) {
-      const id = matchByAuth.pimsId ? String(matchByAuth.pimsId) : String(matchByAuth.id);
+      const id = fillDoctorIdForProvider(matchByAuth);
       setSelectedDoctorId(id);
       setSelectedDoctorName(matchByAuth.name);
       setDoctorQuery(matchByAuth.name);
@@ -462,14 +559,14 @@ export default function FillDayPage() {
             emp?.id != null ? String(emp.id) : emp?.employee?.id != null ? String(emp.employee.id) : null;
           const resolvedPims =
             emp?.pimsId != null ? String(emp.pimsId) : emp?.employee?.pimsId != null ? String(emp.employee.pimsId) : null;
-          if (cancelled) return;
+          if (cancelled || hasFillDayDeepLinkParams(searchParams) || hasProcessedUrlParamsRef.current) return;
           const match = allProviders.find(
             (p) =>
               (resolvedId != null && String(p.id) === resolvedId) ||
               (resolvedPims != null && String(p.pimsId ?? '') === resolvedPims)
           );
           if (match && !didDefaultDoctorFromAuth.current) {
-            const id = match.pimsId ? String(match.pimsId) : String(match.id);
+            const id = fillDoctorIdForProvider(match);
             setSelectedDoctorId(id);
             setSelectedDoctorName(match.name);
             setDoctorQuery(match.name);
@@ -482,14 +579,14 @@ export default function FillDayPage() {
             const emp = (byId.data as any)?.employee ?? byId.data;
             const resolvedId = emp?.id != null ? String(emp.id) : null;
             const resolvedPims = emp?.pimsId != null ? String(emp.pimsId) : null;
-            if (cancelled) return;
+            if (cancelled || hasFillDayDeepLinkParams(searchParams) || hasProcessedUrlParamsRef.current) return;
             const match = allProviders.find(
               (p) =>
                 (resolvedId != null && String(p.id) === resolvedId) ||
                 (resolvedPims != null && String(p.pimsId ?? '') === resolvedPims)
             );
             if (match && !didDefaultDoctorFromAuth.current) {
-              const id = match.pimsId ? String(match.pimsId) : String(match.id);
+              const id = fillDoctorIdForProvider(match);
               setSelectedDoctorId(id);
               setSelectedDoctorName(match.name);
               setDoctorQuery(match.name);
@@ -511,14 +608,14 @@ export default function FillDayPage() {
         (p) => (p?.email || '').toLowerCase() === userEmail.toLowerCase()
       );
       if (me) {
-        const id = me.pimsId ? String(me.pimsId) : String(me.id);
+        const id = fillDoctorIdForProvider(me);
         setSelectedDoctorId(id);
         setSelectedDoctorName(me.name);
         setDoctorQuery(me.name);
         didDefaultDoctorFromAuth.current = true;
       }
     }
-  }, [allProviders, userDoctorId, selectedDoctorId, userEmail]);
+  }, [allProviders, userDoctorId, selectedDoctorId, userEmail, searchParams]);
 
   // Filter doctors based on query
   useEffect(() => {
@@ -780,8 +877,7 @@ This spot is also being offered to other clients. If you'd like to book it for $
     }
   }
 
-  // Handle Preview My Day or Preview My Week - open modal
-  async function handlePreviewMyDay(candidate: FillDayCandidate, openWeek?: boolean) {
+  async function handleViewPlacement(candidate: FillDayCandidate) {
     // Extract date from proposedStartIso (more reliable than parsing URL)
     const proposedDate = DateTime.fromISO(candidate.proposedStartIso);
     if (!proposedDate.isValid) {
@@ -836,78 +932,109 @@ This spot is also being offered to other clients. If you'd like to book it for $
       return pimsId === doctorPimsId;
     });
     const doctorName = doctor?.name || selectedDoctorName || 'Doctor';
-
-    // Calculate service minutes from requiredDuration
-    const serviceMinutes = Math.round(candidate.requiredDuration / 60);
-
-    // Set up preview option - match EXACTLY how Routing.tsx does it
-    // holeIndex is 1-based from backend (first hole = 1), convert to 0-based for array insertion
+    const serviceMinutes = Math.max(1, Math.round(candidate.requiredDuration / 60));
     const insertionIndex = candidate.holeIndex != null ? Math.max(0, candidate.holeIndex - 1) : 0;
-    
-    // Ensure date is in YYYY-MM-DD format (no time component)
-    // Use toISODate() to ensure proper format that DoctorDay expects
     const normalizedDate = proposedDate.toISODate() || dateStr.split('T')[0];
-    
-    // Verify the date is exactly YYYY-MM-DD format
+
     if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
       setError('Invalid date format: ' + normalizedDate);
       return;
     }
-    
-    // Create option EXACTLY like Routing.tsx does - match the Winner/UnifiedOption structure
-    // Routing spreads the entire Winner object, so we need to include all available fields
-    const option: PreviewMyDayOption & { clientName?: string; currentDriveSeconds?: number } = {
+
+    const lat =
+      candidate.client?.lat != null && Number.isFinite(candidate.client.lat)
+        ? candidate.client.lat
+        : candidate.address?.lat;
+    const lon =
+      candidate.client?.lon != null && Number.isFinite(candidate.client.lon)
+        ? candidate.client.lon
+        : candidate.address?.lon;
+    const address =
+      candidate.address?.fullAddress ||
+      [
+        candidate.address?.address1,
+        candidate.address?.city,
+        candidate.address?.state,
+        candidate.address?.zipcode,
+      ]
+        .filter(Boolean)
+        .join(', ');
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      setError(
+        address.trim()
+          ? 'This client address is missing coordinates needed for calendar preview.'
+          : 'Missing address for calendar preview.',
+      );
+      return;
+    }
+
+    let types = appointmentTypes;
+    if (types.length === 0) {
+      try {
+        const rows = await fetchAllAppointmentTypes(FILL_DAY_PRACTICE_ID, { activeOnly: true });
+        types = rows
+          .map((t) => normalizeAppointmentTypeFromApi(t))
+          .filter((t) => appointmentTypeIncludedInRouting(t));
+        setAppointmentTypes(types);
+      } catch {
+        setError('Appointment types are still loading. Try again in a moment.');
+        return;
+      }
+    }
+    const appointmentTypeId = resolveFillDayPreviewAppointmentTypeId(types, candidate);
+    if (appointmentTypeId == null) {
+      setError('Could not determine an appointment type for calendar preview.');
+      return;
+    }
+
+    const previewPatients = fillDayPreviewPatients(candidate);
+    const option = {
       date: normalizedDate,
-      insertionIndex: insertionIndex,
+      insertionIndex,
       suggestedStartIso: candidate.proposedStartIso,
-      doctorPimsId: internalId, // INTERNAL id (already resolved, like Routing does)
-      doctorName: doctorName,
+      doctorPimsId: internalId,
+      doctorName,
       projectedDriveSeconds: candidate.addedDriveSeconds,
-      currentDriveSeconds: candidate.addedDriveSeconds, // FillDay uses addedDriveSeconds for both
-      clientName: candidate.clientName, // Pass client name so virtual appointment shows correct name
-      // Convert FillDayCandidate arrivalWindow format to PreviewMyDayOption format
+      currentDriveSeconds: candidate.addedDriveSeconds,
+      clientName: candidate.clientName,
       arrivalWindow: candidate.arrivalWindow
         ? {
             windowStartIso: candidate.arrivalWindow.start,
             windowEndIso: candidate.arrivalWindow.end,
           }
         : undefined,
-      // Note: Optional fields like workStartLocal, effectiveEndLocal, bookedServiceSeconds
-      // are not available from FillDayCandidate, but DoctorDay will work without them
     };
 
-    // Debug logging - compare with Routing.tsx structure
-    if (import.meta.env.DEV) {
-      console.log('Fill Day Preview Options (matching Routing.tsx structure):', {
-        date: normalizedDate,
-        insertionIndex,
-        suggestedStartIso: candidate.proposedStartIso,
-        doctorPimsId: internalId, // INTERNAL id
-        doctorName: doctorName,
-        projectedDriveSeconds: candidate.addedDriveSeconds,
-        currentDriveSeconds: candidate.addedDriveSeconds,
-        clientName: candidate.clientName,
+    const returnHref =
+      `/schedule/scheduling-tools/schedule-loader?targetDate=${encodeURIComponent(targetDate)}` +
+      `&doctorId=${encodeURIComponent(internalId)}` +
+      `&scrollClientId=${encodeURIComponent(String(candidate.clientId))}`;
+
+    const payload: RoutingCalendarPreviewPayloadV1 = {
+      version: 1,
+      previewSource: 'schedule-loader',
+      scheduleLoaderReturn: {
         clientId: candidate.clientId,
-        address: candidate.address?.fullAddress || 
-          [candidate.address?.address1, candidate.address?.city, candidate.address?.state, candidate.address?.zipcode]
-            .filter(Boolean)
-            .join(', '),
-      });
-    }
-
-    setFillSchedulePreview({
-      scope: openWeek ? 'week' : 'day',
+        returnHref,
+      },
       option,
-      candidate,
-    });
-  }
+      serviceMinutes,
+      newApptMeta: {
+        clientId: String(candidate.clientId),
+        address,
+        city: candidate.address?.city,
+        state: candidate.address?.state,
+        zip: candidate.address?.zipcode,
+        lat,
+        lon,
+      },
+      appointmentTypeId,
+      clientDisplayLabel: candidate.clientName?.trim() || undefined,
+      ...(previewPatients.length > 0 ? { previewPatients } : {}),
+    };
 
-  function handlePreviewMyWeek(candidate: FillDayCandidate) {
-    handlePreviewMyDay(candidate, true);
-  }
-
-  function closeFillSchedulePreview() {
-    setFillSchedulePreview(null);
+    writeRoutingCalendarPreview(payload);
+    navigate('/schedule/scheduler?routingPreview=1');
   }
 
   // Handle opening Messages History modal
@@ -1283,13 +1410,21 @@ This spot is also being offered to other clients. If you'd like to book it for $
             const canSendScheduleLoaderSms = fillDayCandidateHasVisibleReminderForSms(candidate);
             return (
             <div
+              id={`fill-day-client-${candidate.clientId}`}
               key={`${candidate.clientId}-${candidate.holeIndex}-${idx}`}
               style={{
-                background: '#fff',
-                border: '1px solid #e5e7eb',
+                background: highlightClientId === candidate.clientId ? '#f0fdf4' : '#fff',
+                border:
+                  highlightClientId === candidate.clientId
+                    ? '2px solid #4FB128'
+                    : '1px solid #e5e7eb',
                 borderRadius: '12px',
                 padding: '24px',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                boxShadow:
+                  highlightClientId === candidate.clientId
+                    ? '0 0 0 3px rgba(79, 177, 40, 0.2)'
+                    : '0 1px 3px rgba(0,0,0,0.1)',
+                transition: 'background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease',
               }}
             >
               {/* Client Header */}
@@ -1788,7 +1923,12 @@ This spot is also being offered to other clients. If you'd like to book it for $
                   </button>
                 )}
                 <button
-                  onClick={() => handlePreviewMyDay(candidate)}
+                  type="button"
+                  onClick={() => {
+                    setViewPlacementClientId(candidate.clientId);
+                    void handleViewPlacement(candidate).finally(() => setViewPlacementClientId(null));
+                  }}
+                  disabled={viewPlacementClientId === candidate.clientId}
                   style={{
                     padding: '10px 20px',
                     background: '#fff',
@@ -1797,25 +1937,11 @@ This spot is also being offered to other clients. If you'd like to book it for $
                     borderRadius: '8px',
                     fontSize: '14px',
                     fontWeight: 600,
-                    cursor: 'pointer',
+                    cursor: viewPlacementClientId === candidate.clientId ? 'wait' : 'pointer',
+                    opacity: viewPlacementClientId === candidate.clientId ? 0.7 : 1,
                   }}
                 >
-                  Preview My Day
-                </button>
-                <button
-                  onClick={() => handlePreviewMyWeek(candidate)}
-                  style={{
-                    padding: '10px 20px',
-                    background: '#fff',
-                    color: '#4FB128',
-                    border: '2px solid #4FB128',
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  Preview My Week
+                  {viewPlacementClientId === candidate.clientId ? 'Opening…' : 'View Placement'}
                 </button>
               </div>
             </div>
@@ -1937,45 +2063,6 @@ This spot is also being offered to other clients. If you'd like to book it for $
           </div>
         </div>,
         document.body
-      )}
-
-      {fillSchedulePreview && (
-        <PreviewMyDayModal
-          key={`fill-day-preview-${fillSchedulePreview.option.date}-${fillSchedulePreview.option.doctorPimsId}-${fillSchedulePreview.option.suggestedStartIso}`}
-          option={fillSchedulePreview.option}
-          scheduleScope={fillSchedulePreview.scope}
-          onScheduleScopeChange={(scope) =>
-            setFillSchedulePreview((p) => (p ? { ...p, scope } : null))
-          }
-          onClose={closeFillSchedulePreview}
-          serviceMinutes={Math.max(1, Math.round(fillSchedulePreview.candidate.requiredDuration / 60))}
-          newApptMeta={{
-            clientId: String(fillSchedulePreview.candidate.clientId),
-            address:
-              fillSchedulePreview.candidate.address?.fullAddress ||
-              [
-                fillSchedulePreview.candidate.address?.address1,
-                fillSchedulePreview.candidate.address?.city,
-                fillSchedulePreview.candidate.address?.state,
-                fillSchedulePreview.candidate.address?.zipcode,
-              ]
-                .filter(Boolean)
-                .join(', '),
-            city: fillSchedulePreview.candidate.address?.city,
-            state: fillSchedulePreview.candidate.address?.state,
-            zip: fillSchedulePreview.candidate.address?.zipcode,
-            lat:
-              fillSchedulePreview.candidate.client?.lat != null &&
-              Number.isFinite(fillSchedulePreview.candidate.client.lat)
-                ? fillSchedulePreview.candidate.client.lat
-                : fillSchedulePreview.candidate.address?.lat,
-            lon:
-              fillSchedulePreview.candidate.client?.lon != null &&
-              Number.isFinite(fillSchedulePreview.candidate.client.lon)
-                ? fillSchedulePreview.candidate.client.lon
-                : fillSchedulePreview.candidate.address?.lon,
-          }}
-        />
       )}
 
       {/* Messages History Modal */}

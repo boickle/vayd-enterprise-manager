@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, Loader2 } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Loader2, Pencil } from 'lucide-react';
 import {
   completeTask,
   getTask,
@@ -20,6 +20,14 @@ import {
 } from '../../utils/taskDateTime';
 import { priorityApiLabel } from '../../utils/taskPriority';
 import { taskLinkDisplayLabel, useTaskLinkLabels } from '../../utils/taskLinkDisplay';
+import { buildSchedulerFocusAppointmentUrl } from '../../utils/schedulerFocusAppointment';
+import {
+  getForwardBookingPrefillFromTaskLinks,
+  taskDescriptionDisplayBody,
+} from '../../utils/forwardBookingCreateLink';
+import { TaskBodyContent } from './TaskBodyContent';
+import { ForwardBookingFromTaskLink } from './ForwardBookingFromTaskLink';
+import TaskReassignModal from './TaskReassignModal';
 import './PimsTaskDetailView.css';
 
 function isTaskLinkEntityType(s: string): s is TaskLinkEntityType {
@@ -72,6 +80,8 @@ function linkHref(entityType: string, entityId: number): string | null {
       return `/pims/patients?patientId=${encodeURIComponent(String(entityId))}`;
     case 'client':
       return `/pims/clients?clientId=${encodeURIComponent(String(entityId))}`;
+    case 'appointment':
+      return buildSchedulerFocusAppointmentUrl(entityId);
     default:
       return null;
   }
@@ -117,6 +127,8 @@ export default function PimsTaskDetailView({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [reassignOpen, setReassignOpen] = useState(false);
 
   const employeeMap = useMemo(() => {
     const m = new Map<number, string>();
@@ -153,6 +165,11 @@ export default function PimsTaskDetailView({
   }, [load]);
 
   useEffect(() => {
+    setEditing(false);
+    setReassignOpen(false);
+  }, [taskId]);
+
+  useEffect(() => {
     if (!task || task.status === 'done') return;
     const t = window.setInterval(() => {
       void load();
@@ -177,6 +194,14 @@ export default function PimsTaskDetailView({
 
   const latestEscalation = task?.events?.[0]?.eventType === 'escalation_sent';
   const linkLabels = useTaskLinkLabels(task?.links);
+  const taskDescriptionBody = useMemo(
+    () => taskDescriptionDisplayBody(task?.body),
+    [task?.body]
+  );
+  const forwardBookingPrefill = useMemo(
+    () => getForwardBookingPrefillFromTaskLinks(task?.links),
+    [task?.links]
+  );
 
   const eventsChronological = useMemo(() => {
     if (!task?.events?.length) return [];
@@ -247,31 +272,96 @@ export default function PimsTaskDetailView({
           Back to list
         </button>
         <div className="pims-task-detail__actions">
-          {latestEscalation && task.status !== 'done' && (
+          {latestEscalation && task.status !== 'done' && !editing && (
             <span className="pims-task-detail__badge" title="Latest history event is an escalation reminder">
               Escalation
             </span>
           )}
-          {showClaim && (
-            <button type="button" className="pims-task-detail__btn pims-task-detail__btn--secondary" disabled={busy} onClick={() => void handleClaim()}>
-              Assign to me
+          {editing ? (
+            <button
+              type="button"
+              className="pims-task-detail__btn pims-task-detail__btn--secondary"
+              disabled={busy}
+              onClick={() => {
+                setActionError(null);
+                setEditing(false);
+              }}
+            >
+              Cancel
             </button>
-          )}
-          {canMutate && task.status !== 'done' && (
-            <button type="button" className="pims-task-detail__btn pims-task-detail__btn--primary" disabled={busy} onClick={() => void handleComplete()}>
-              <CheckCircle2 size={18} />
-              Mark complete
-            </button>
+          ) : (
+            <>
+              {showClaim && (
+                <button type="button" className="pims-task-detail__btn pims-task-detail__btn--secondary" disabled={busy} onClick={() => void handleClaim()}>
+                  Assign to me
+                </button>
+              )}
+              {canMutate && task.status !== 'done' && (
+                <button
+                  type="button"
+                  className="pims-task-detail__btn pims-task-detail__btn--secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    setActionError(null);
+                    setEditing(true);
+                  }}
+                >
+                  <Pencil size={18} />
+                  Edit
+                </button>
+              )}
+              {canMutate && task.status !== 'done' && (
+                <button
+                  type="button"
+                  className="pims-task-detail__btn pims-task-detail__btn--secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    setActionError(null);
+                    setReassignOpen(true);
+                  }}
+                >
+                  Reassign
+                </button>
+              )}
+              {canMutate && task.status !== 'done' && (
+                <button type="button" className="pims-task-detail__btn pims-task-detail__btn--primary" disabled={busy} onClick={() => void handleComplete()}>
+                  <CheckCircle2 size={18} />
+                  Mark complete
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
 
-      {isWatcherOnly && (
+      {isWatcherOnly && !editing && (
         <p className="pims-task-detail__hint">You are watching this task. Only the assignee, creator, or an admin can edit or complete it.</p>
       )}
 
       {actionError && <p className="pims-task-detail__error">{actionError}</p>}
 
+      {editing ? (
+        <TaskEditForm
+          key={`${task.id}-${task.updated}`}
+          task={task}
+          branches={branches}
+          employees={employees}
+          isPracticeAdmin={isPracticeAdmin}
+          busy={busy}
+          setBusy={setBusy}
+          setActionError={setActionError}
+          onSaved={(d) => {
+            setTask(d);
+            setEditing(false);
+            onUpdated();
+          }}
+          onCancel={() => {
+            setActionError(null);
+            setEditing(false);
+          }}
+        />
+      ) : (
+        <>
       <header className="pims-task-detail__head">
         <h1 className="pims-task-detail__title">{task.title}</h1>
         <div className="pims-task-detail__meta">
@@ -290,7 +380,15 @@ export default function PimsTaskDetailView({
         <dl className="pims-task-detail__dl">
           <div>
             <dt>Description</dt>
-            <dd>{task.body?.trim() ? task.body : '—'}</dd>
+            <dd>
+              {taskDescriptionBody ? <TaskBodyContent body={taskDescriptionBody} /> : null}
+              {forwardBookingPrefill ? (
+                <p className="pims-task-detail__forward-booking-link">
+                  <ForwardBookingFromTaskLink links={task.links} taskId={task.id} />
+                </p>
+              ) : null}
+              {!taskDescriptionBody && !forwardBookingPrefill ? <>—</> : null}
+            </dd>
           </div>
           <div>
             <dt>Start</dt>
@@ -411,19 +509,17 @@ export default function PimsTaskDetailView({
           ))}
         </ul>
       </section>
+        </>
+      )}
 
-      {canMutate && task.status !== 'done' && (
-        <TaskEditForm
-          key={`${task.id}-${task.updated}`}
+      {reassignOpen && (
+        <TaskReassignModal
           task={task}
-          branches={branches}
           employees={employees}
-          isPracticeAdmin={isPracticeAdmin}
-          busy={busy}
-          setBusy={setBusy}
-          setActionError={setActionError}
-          onSaved={(d) => {
-            setTask(d);
+          onClose={() => setReassignOpen(false)}
+          onSaved={(updated) => {
+            setTask(updated);
+            setReassignOpen(false);
             onUpdated();
           }}
         />
@@ -451,6 +547,7 @@ type EditProps = {
   setBusy: (v: boolean) => void;
   setActionError: (v: string | null) => void;
   onSaved: (d: TaskDetail) => void;
+  onCancel: () => void;
 };
 
 function TaskEditForm({
@@ -462,6 +559,7 @@ function TaskEditForm({
   setBusy,
   setActionError,
   onSaved,
+  onCancel,
 }: EditProps) {
   const [title, setTitle] = useState(task.title);
   const [body, setBody] = useState(task.body ?? '');
@@ -558,7 +656,7 @@ function TaskEditForm({
 
   return (
     <section className="pims-task-detail__section pims-task-detail__section--edit">
-      <h2 className="pims-task-detail__h2">Edit</h2>
+      <h2 className="pims-task-detail__h2">Edit task</h2>
       <div className="pims-task-detail__form">
         <label className="pims-task-detail__field">
           <span>Title</span>
@@ -694,9 +792,14 @@ function TaskEditForm({
           />
         </label>
 
-        <button type="button" className="pims-task-detail__btn pims-task-detail__btn--primary" disabled={busy} onClick={() => void submit()}>
-          Save changes
-        </button>
+        <div className="pims-task-detail__form-actions">
+          <button type="button" className="pims-task-detail__btn pims-task-detail__btn--secondary" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="pims-task-detail__btn pims-task-detail__btn--primary" disabled={busy} onClick={() => void submit()}>
+            Save changes
+          </button>
+        </div>
       </div>
     </section>
   );

@@ -1,7 +1,10 @@
 /**
  * Forward booking list → Routing prefill (same sessionStorage + event pattern as reschedule intent).
  */
-import type { ForwardBookingEntry } from '../api/forwardBooking';
+import type { ForwardBookingEntry, ForwardBookingIntervalUnit } from '../api/forwardBooking';
+import { resolveForwardBookingIntervalFromEntry } from './forwardBookingFromAppointment';
+import { clearRoutingCalendarPreview } from './routingCalendarPreviewStorage';
+import { ROUTING_DISMISS_FORWARD_BOOKING_EVENT } from './routingUiSnapshot';
 
 export const ROUTING_FORWARD_BOOKING_INTENT_STORAGE_KEY = 'vayd:routing-forward-booking-intent-v1';
 export const ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT =
@@ -28,9 +31,14 @@ export type RoutingForwardBookingIntentV1 = {
   description?: string | null;
   instructions?: string | null;
   bookingNotes?: string | null;
-  monthsOut: number;
+  intervalAmount: number;
+  intervalUnit: ForwardBookingIntervalUnit;
+  /** Legacy echo only — do not use for due-date math. */
+  monthsOut?: number;
   targetDueDate?: string | null;
   sourceAppointmentId: number;
+  /** When true, successful book navigates back to the forward booking list. */
+  returnToListAfterBook?: boolean;
 };
 
 function pickStr(v: unknown): string | null {
@@ -108,24 +116,27 @@ export function clearRoutingForwardBookingIntent(): void {
   }
 }
 
+/** Exit forward-booking mode (routing form + calendar workspace). */
+export function dismissRoutingForwardBookingWorkspace(): void {
+  clearRoutingForwardBookingIntent();
+  clearRoutingCalendarPreview();
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(ROUTING_DISMISS_FORWARD_BOOKING_EVENT));
+  }
+}
+
 export function buildRoutingForwardBookingIntentFromEntry(
   entry: ForwardBookingEntry
 ): RoutingForwardBookingIntentV1 | null {
   if (!entry?.id || !entry.trackingToken?.trim()) return null;
+  const interval = resolveForwardBookingIntervalFromEntry(entry);
+  if (!interval) return null;
   const c = entry.client;
   if (!c?.id || entry.patientId == null) return null;
 
   const fn = pickStr(c.firstName) ?? '';
   const ln = pickStr(c.lastName) ?? '';
   const clientDisplayLabel = [fn, ln].filter(Boolean).join(' ').trim() || undefined;
-
-  const addressParts = [pickStr(c.address1), pickStr(c.city), pickStr(c.state), pickStr(c.zipcode)].filter(
-    Boolean
-  );
-  const address = addressParts.length ? addressParts.join(', ') : '';
-
-  const lat = typeof c.lat === 'number' && Number.isFinite(c.lat) ? c.lat : null;
-  const lon = typeof c.lon === 'number' && Number.isFinite(c.lon) ? c.lon : null;
 
   const pp = entry.primaryProvider;
   const pi = pp?.id;
@@ -158,14 +169,13 @@ export function buildRoutingForwardBookingIntentFromEntry(
     primaryDoctorDisplayName,
     clientDisplayLabel,
     serviceMinutes: mins,
-    address: address || undefined,
-    lat,
-    lon,
     clientAlerts: pickStr(c.alerts),
     description: entry.description ?? null,
     instructions: entry.instructions ?? null,
     bookingNotes: entry.bookingNotes ?? null,
-    monthsOut: entry.monthsOut,
+    intervalAmount: interval.amount,
+    intervalUnit: interval.unit,
+    ...(entry.monthsOut != null ? { monthsOut: entry.monthsOut } : {}),
     targetDueDate: entry.targetDueDate ?? null,
     sourceAppointmentId: entry.sourceAppointmentId,
   };

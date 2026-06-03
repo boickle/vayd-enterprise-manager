@@ -28,6 +28,7 @@ export type SchedulerContextMenuAction =
   | { kind: 'remove' }
   | { kind: 'viewChart' }
   | { kind: 'writeMedicalNote' }
+  | { kind: 'addCommunication' }
   | { kind: 'call'; phone: 'phone1' | 'phone2' }
   | { kind: 'text'; phone: 'phone1' | 'phone2' }
   | { kind: 'viewClientInfo' }
@@ -58,6 +59,8 @@ type Props = {
   visitTimesDisabledTitle?: string;
   completeDisabled?: boolean;
   completeDisabledTitle?: string;
+  /** Progress modal: only "View Chart" (patient EMR in eVet). */
+  patientChartOnly?: boolean;
 };
 
 export function SchedulerAppointmentContextMenu({
@@ -80,6 +83,7 @@ export function SchedulerAppointmentContextMenu({
   visitTimesDisabledTitle,
   completeDisabled: completeDisabledProp,
   completeDisabledTitle: completeDisabledTitleProp,
+  patientChartOnly = false,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [placed, setPlaced] = useState<{ left: number; top: number } | null>(null);
@@ -127,6 +131,21 @@ export function SchedulerAppointmentContextMenu({
 
   const closeScheduling = () => setOpenGroup(null);
   const closeForms = () => setOpenGroup(null);
+
+  if (patientChartOnly) {
+    const chartMenu = (
+      <div
+        ref={rootRef}
+        className="scheduler-ctx-menu"
+        role="menu"
+        style={placed ? { left: placed.left, top: placed.top } : { left: -9999, top: -9999 }}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        <CtxSubRow label="View Chart in eVet" onPick={() => onAction({ kind: 'viewChart' })} />
+      </div>
+    );
+    return createPortal(chartMenu, document.body);
+  }
 
   const menu = (
     <div
@@ -212,6 +231,7 @@ export function SchedulerAppointmentContextMenu({
       >
         <CtxSubRow label="View Chart" onPick={() => onAction({ kind: 'viewChart' })} />
         <CtxSubRow label="Write Medical Note" onPick={() => onAction({ kind: 'writeMedicalNote' })} />
+        <CtxSubRow label="Add Communication" onPick={() => onAction({ kind: 'addCommunication' })} />
       </CtxParentRow>
 
       <CtxParentRow

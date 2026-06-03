@@ -1,6 +1,8 @@
 // src/api/appointments.ts
+import { DateTime } from 'luxon';
 import { http } from './http';
 import type { Appointment } from './roomLoader';
+import { mergeForwardBookingDispositionOntoAppointment } from '../utils/forwardBookingDisposition';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 
 export type RangeAppointment = Appointment;
@@ -190,16 +192,19 @@ export function normalizeRangeAppointment(row: Appointment): Appointment {
   const raw = row as Appointment & Record<string, unknown>;
   const text = appointmentAlternateAddressText(raw);
   const hasAlt = appointmentHasAlternateLocation(raw);
-  if (!text && !hasAlt) return row;
-  const out = { ...row } as Appointment & Record<string, unknown>;
-  if (text) {
-    out.alternateAddress = { addressText: text };
-    out.alternateAddressText = text;
+  let out = row;
+  if (text || hasAlt) {
+    const next = { ...row } as Appointment & Record<string, unknown>;
+    if (text) {
+      next.alternateAddress = { addressText: text };
+      next.alternateAddressText = text;
+    }
+    if (hasAlt && !truthyApiFlag(next.isAlternateStop)) {
+      next.isAlternateStop = true;
+    }
+    out = next;
   }
-  if (hasAlt && !truthyApiFlag(out.isAlternateStop)) {
-    out.isAlternateStop = true;
-  }
-  return out;
+  return mergeForwardBookingDispositionOntoAppointment(out);
 }
 
 export function isAppointmentNoLocation(
@@ -460,16 +465,91 @@ export function clientPhoneLineFromDoctorDayPayload(a: unknown): string | undefi
     doctorDayPhoneStr(row.clientPhone1) ??
     doctorDayPhoneStr(row.phone1) ??
     (client ? doctorDayPhoneStr(client.phone1) : undefined) ??
+    (client ? doctorDayPhoneStr(client.phone) : undefined) ??
     doctorDayPhoneStr(row.clientPhone) ??
     doctorDayPhoneStr(row.phone) ??
     (client ? doctorDayPhoneStr(client.mobilePhone) : undefined) ??
-    (client ? doctorDayPhoneStr(client.homePhone) : undefined);
+    (client ? doctorDayPhoneStr(client.homePhone) : undefined) ??
+    (client ? doctorDayPhoneStr(client.primaryPhone) : undefined);
   const phone2 =
     doctorDayPhoneStr(row.clientPhone2) ??
     doctorDayPhoneStr(row.phone2) ??
     (client ? doctorDayPhoneStr(client.phone2) : undefined);
   const unique = [...new Set([phone1, phone2].filter(Boolean) as string[])];
   return unique.length ? unique.join(' · ') : undefined;
+}
+
+function mergeRecordObjects(
+  a: Record<string, unknown> | null | undefined,
+  b: Record<string, unknown> | null | undefined
+): Record<string, unknown> | undefined {
+  if (!a && !b) return undefined;
+  return { ...(a ?? {}), ...(b ?? {}) };
+}
+
+/**
+ * Overlay calendar-range `client` (phone1/phone2) and confirm status onto doctor-day rows.
+ * Doctor-day (`GET /appointments/doctor`) is routing-focused; range (`GET /appointments/range`) has full client contact.
+ */
+export function mergeRangeClientContactOntoDoctorDayAppts(
+  appts: DoctorDayAppt[],
+  rangeAppts: readonly Appointment[]
+): DoctorDayAppt[] {
+  const byId = new Map<string, Appointment>();
+  for (const a of rangeAppts) {
+    if (a?.id == null) continue;
+    byId.set(String(a.id), a);
+  }
+  if (!byId.size) return appts;
+
+  return appts.map((appt) => {
+    if (appt.isPersonalBlock || appt.type === 'block' || appt.isBlock) return appt;
+    const full = appt.id != null ? byId.get(String(appt.id)) : undefined;
+    if (!full) return appt;
+
+    const mergedClient = mergeRecordObjects(
+      appt.client as Record<string, unknown> | undefined,
+      full.client as Record<string, unknown> | undefined
+    );
+    const next: DoctorDayAppt = {
+      ...appt,
+      confirmStatusName: appt.confirmStatusName ?? full.confirmStatusName ?? undefined,
+      ...(mergedClient ? { client: mergedClient } : {}),
+    };
+    const clientPhone = appt.clientPhone ?? clientPhoneLineFromDoctorDayPayload(next);
+    return clientPhone ? { ...next, clientPhone } : next;
+  });
+}
+
+const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+
+/** UTC bounds for one local calendar day (same shape as scheduler range queries). */
+export function localDayUtcRange(
+  dateIso: string,
+  practiceTz: string
+): { start: string; end: string } {
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  const day = DateTime.fromISO(dateIso, { zone: tz });
+  return {
+    start: day.startOf('day').toUTC().toISO()!,
+    end: day.endOf('day').toUTC().toISO()!,
+  };
+}
+
+/** Full calendar appointments for one provider day — used to enrich My Day PDF / visual with client phones. */
+export async function fetchAppointmentsRangeForLocalDay(params: {
+  dateIso: string;
+  practiceTimeZone: string;
+  primaryProviderId: string | number;
+  practiceId?: number;
+}): Promise<Appointment[]> {
+  const { start, end } = localDayUtcRange(params.dateIso, params.practiceTimeZone);
+  return fetchAppointmentsRange({
+    practiceId: params.practiceId ?? DEFAULT_PRACTICE_ID,
+    start,
+    end,
+    primaryProviderId: params.primaryProviderId,
+  });
 }
 
 export type DoctorDayAppt = {
@@ -479,6 +559,8 @@ export type DoctorDayAppt = {
   clientAlert?: string;
   /** Formatted client phone(s) when returned on doctor-day rows. */
   clientPhone?: string;
+  /** Nested client when returned by doctor-day API (phone, email, etc.). */
+  client?: Record<string, unknown> | null;
   patientName?: string;
   patientPimsId?: string;
   confirmStatusName?: string;
@@ -501,6 +583,8 @@ export type DoctorDayAppt = {
 
   description?: string;
   visitReason?: string;
+  /** Staff notes (PIMS instructions). */
+  instructions?: string;
   statusName?: string;
 
   expectedArrivalIso?: string;
@@ -538,6 +622,8 @@ export type DoctorDayAppt = {
 
   /** Chart primary provider for the patient on this visit (GET /appointments/doctor); null if none. */
   patientPrimaryProvider?: DoctorDayPatientPrimaryProvider | null;
+  /** Nested patient row when returned by doctor-day API (sex, alerts, etc.). */
+  patient?: Record<string, unknown> | null;
 }
 
 /** Item may be an appointment (doctor-day) or ETA byIndex row (has key). */
@@ -734,6 +820,7 @@ export async function fetchDoctorDay(
       clientPimsId: a?.clientPimsId,
       clientAlert: a?.clientAlert,
       clientPhone: clientPhoneLineFromDoctorDayPayload(a),
+      client: a?.client && typeof a.client === 'object' ? a.client : undefined,
       patientName: a?.patientName,
       alerts: a?.alerts,
       patientPimsId: a?.patientPimsId,
@@ -753,6 +840,7 @@ export async function fetchDoctorDay(
 
       description: a?.description,
       visitReason: a?.visitReason,
+      instructions: a?.instructions ?? undefined,
       statusName: a?.statusName,
 
       expectedArrivalIso: a?.expectedArrivalIso ?? undefined,
@@ -782,6 +870,7 @@ export async function fetchDoctorDay(
         return { isMember, membershipName };
       })(),
       patientPrimaryProvider: normalizeDoctorDayPatientPrimaryProvider(a?.patientPrimaryProvider),
+      patient: a?.patient && typeof a.patient === 'object' ? a.patient : undefined,
     };
   });
 

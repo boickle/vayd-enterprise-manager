@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   CalendarPlus,
+  CalendarClock,
   ClipboardPlus,
   DoorOpen,
   FlaskConical,
@@ -250,6 +251,16 @@ export default function ScheduleLayout() {
                 <ClipboardPlus size={18} strokeWidth={1.75} />
               </span>
               <span className="schedule-app__quick-link-label">New Task</span>
+            </NavLink>
+            <NavLink
+              to={{ pathname: '/schedule/scheduling-tools/forward-booking', search: '?new=1' }}
+              className="schedule-app__quick-link"
+              title={railCollapsedEffective ? 'Forward booking' : undefined}
+            >
+              <span className="schedule-app__quick-link-icon" aria-hidden>
+                <CalendarClock size={18} strokeWidth={1.75} />
+              </span>
+              <span className="schedule-app__quick-link-label">+ Forward Booking</span>
             </NavLink>
             {canAccessScheduleAnalytics ? (
               <NavLink

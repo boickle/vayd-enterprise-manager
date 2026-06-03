@@ -25,6 +25,7 @@ type Props = {
   appt: Appointment;
   practiceTz: string;
   accentColor: string;
+  allAppointments?: Appointment[];
   onClose: () => void;
   /** When the form is not completed yet, open full Room Loader details on the schedule */
   onOpenDetails: (roomLoaderId: number) => void;
@@ -34,6 +35,7 @@ export function SchedulerRoomLoaderPdfModal({
   appt,
   practiceTz,
   accentColor,
+  allAppointments,
   onClose,
   onOpenDetails,
 }: Props) {
@@ -53,7 +55,7 @@ export function SchedulerRoomLoaderPdfModal({
     }
     setPdfUrl(null);
     try {
-      const match = await findRoomLoaderForAppointment(appt, practiceTz);
+      const match = await findRoomLoaderForAppointment(appt, practiceTz, allAppointments);
       setRoomLoader(match);
       if (match?.sentStatus === 'completed' && match.id) {
         try {
@@ -73,7 +75,7 @@ export function SchedulerRoomLoaderPdfModal({
     } finally {
       setLoading(false);
     }
-  }, [appt, practiceTz]);
+  }, [appt, practiceTz, allAppointments]);
 
   useEffect(() => {
     void load();

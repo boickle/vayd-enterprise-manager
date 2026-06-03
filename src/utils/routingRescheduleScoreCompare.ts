@@ -131,7 +131,7 @@ export function formatReschedulePreviewScoreLine(
 
 /**
  * Header suffix for routing result cards during reschedule, e.g.
- * `(Score: 74.2 · was 86.8, −14.4% better)`.
+ * `Score: 204.3 · was 215.6 · 5.2% better`.
  */
 export function rescheduleScoreHeaderSuffix(
   candidateScore: number | undefined,
@@ -141,7 +141,7 @@ export function rescheduleScoreHeaderSuffix(
 
   const newLabel = formatScore(candidateScore);
   if (!originalVisit?.found || typeof originalVisit.score !== 'number' || !Number.isFinite(originalVisit.score)) {
-    return `(Score: ${newLabel} · no previous score available)`;
+    return `Score: ${newLabel} · no previous score`;
   }
 
   const was = originalVisit.score;
@@ -150,10 +150,10 @@ export function rescheduleScoreHeaderSuffix(
   const changeLabel = formatInPlaceScoreDeltaPercentLabel(was, delta);
 
   if (changeLabel === 'unchanged') {
-    return `(Score: ${newLabel} · was ${wasLabel}, unchanged)`;
+    return `Score: ${newLabel} · was ${wasLabel} · unchanged`;
   }
 
-  return `(Score: ${newLabel} · was ${wasLabel}, ${changeLabel})`;
+  return `Score: ${newLabel} · was ${wasLabel} · ${changeLabel}`;
 }
 
 /** One-line summary for the results panel when the original snapshot exists. */

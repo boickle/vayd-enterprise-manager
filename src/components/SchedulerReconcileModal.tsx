@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
 import {
@@ -6,6 +6,7 @@ import {
   isBlockEntry,
   isFlexBlockItem,
 } from '../api/appointments';
+import type { AppointmentType } from '../api/appointmentSettings';
 import {
   fetchEmployee,
   fetchScheduleOverrideByDate,
@@ -27,10 +28,23 @@ import {
 } from '../pages/MyWeek';
 import { fetchSchedulerDriveContextForDate } from '../utils/schedulerDriveEta';
 import { combineDateAndTimeToUtc, toTimeLocalValue } from '../utils/editVisitTimeFields';
+import { evetPatientChartLink } from '../utils/evet';
+import { useVisitHighlightsHoverPopover } from '../hooks/useVisitHighlightsHoverPopover';
+import {
+  buildTypeFillMap,
+  colorsForAppointment,
+} from '../utils/schedulerAppointmentColors';
+import { patientsForAppointment } from '../utils/schedulerAddPet';
+import type { SchedulerHoverDriveHint } from '../utils/schedulerHoverTypes';
+import { pickStr } from '../utils/schedulerVisitDisplay';
 import {
   formatIsoTimeShortInPracticeZone,
   practiceTimeZoneOrDefault,
 } from '../utils/practiceTimezone';
+import {
+  SchedulerAppointmentContextMenu,
+  type SchedulerContextMenuAction,
+} from '../pages/SchedulerContextMenu';
 import '../pages/Scheduler.css';
 
 const PPM = 1.1;
@@ -44,6 +58,8 @@ const BUFFER_FILL = 'rgba(255, 255, 255, 0.35)';
 const BUFFER_BORDER = '1px dashed #d1d5db';
 const DEPOT_LINE_PX = 5;
 const CONNECTOR_WIDTH_PX = 44;
+/** Above `.scheduler-reconcile-backdrop` (10001) so Visit Highlights renders on top of the modal. */
+const RECONCILE_VISIT_HOVER_Z_INDEX = 10100;
 
 type EmployeeDayTimes = { start: string; end: string };
 
@@ -58,6 +74,12 @@ type Props = {
   /** Cached drive-day from scheduler when available. */
   predictedDayData?: DayData | null;
   appointments: Appointment[];
+  appointmentTypes: AppointmentType[];
+  onWorkdaySaved?: (row: EmployeeWorkdayActual) => void;
+  renderVisitHighlights: (
+    appt: Appointment,
+    driveHint: SchedulerHoverDriveHint | null
+  ) => ReactNode;
 };
 
 function depotTimeToInputValue(timeStr: string | null | undefined): string {
@@ -146,6 +168,43 @@ function primaryApptId(h: WeekHousehold): string | null {
   return pid != null ? String(pid) : null;
 }
 
+function driveHouseholdAndSlotForAppointment(
+  dayData: DayData,
+  apptId: string | number
+): { h: WeekHousehold; slot: DayData['timeline'][number] } | null {
+  const apptKey = String(apptId);
+  const households = dayData.households;
+  for (let j = 0; j < households.length; j++) {
+    const hx = households[j] as { sourceAppointmentIds?: (string | number)[] };
+    const ids = hx.sourceAppointmentIds;
+    if (!ids?.some((id) => String(id) === apptKey)) continue;
+    const slot = dayData.timeline[j] ?? {};
+    return { h: households[j], slot };
+  }
+  return null;
+}
+
+function driveHintFromHouseholdSlot(
+  h: WeekHousehold,
+  slot: DayData['timeline'][number] | undefined,
+  practiceTz: string,
+  showDrive: boolean
+): SchedulerHoverDriveHint | null {
+  if (!showDrive) return null;
+  return {
+    practiceTz,
+    etaIso: slot?.eta ?? null,
+    etdIso: slot?.etd ?? null,
+    windowStartIso: slot?.windowStartIso ?? null,
+    windowEndIso: slot?.windowEndIso ?? null,
+    schedStartIso: h.startIso ?? null,
+    schedEndIso: h.endIso ?? null,
+    isPersonalBlock: Boolean(h.isPersonalBlock),
+    isFixedTime: false,
+    windowWarning: false,
+  };
+}
+
 function householdLabel(h: WeekHousehold): string {
   if (h.isPersonalBlock) {
     return blockDisplayLabel({
@@ -159,6 +218,31 @@ function householdLabel(h: WeekHousehold): string {
 function isoToDepotTimeStr(iso: string, practiceTz: string): string {
   const dt = DateTime.fromISO(iso, { zone: 'utc' }).setZone(practiceTimeZoneOrDefault(practiceTz));
   return dt.isValid ? dt.toFormat('HH:mm') : '';
+}
+
+/** Predicted column: routed return to depot (not scheduled shift end). */
+function predictedBackToDepotEndDisplay(
+  dayData: DayData,
+  practiceTz: string,
+  shiftEndTime: string
+): { endTime: string; endLabel: string; endIso: string | null } {
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  const backIso = dayData.backToDepotIso?.trim();
+  if (backIso) {
+    const dt = DateTime.fromISO(backIso, { zone: 'utc' }).setZone(tz);
+    if (dt.isValid) {
+      return {
+        endTime: dt.toFormat('HH:mm'),
+        endLabel: 'Back to depot (expected)',
+        endIso: backIso,
+      };
+    }
+  }
+  return {
+    endTime: shiftEndTime,
+    endLabel: 'Day end',
+    endIso: depotTimeToIso(dayData.date, shiftEndTime, tz),
+  };
 }
 
 function apiDayOfWeekFromDate(dateIso: string): number {
@@ -419,6 +503,7 @@ function computeGridBounds(
       latest = latest === null ? m : Math.max(latest, m);
     }
   }
+  considerIso(predicted.backToDepotIso);
 
   considerIso(workdayStartIso);
   considerIso(workdayEndIso);
@@ -455,6 +540,7 @@ function predictedVisitTiming(
 function ReconcileDayBoundsFields({
   dayStartTime,
   dayEndTime,
+  dayEndLabel = 'Day end',
   readOnly,
   onDayStartTimeChange,
   onDayEndTimeChange,
@@ -465,6 +551,7 @@ function ReconcileDayBoundsFields({
 }: {
   dayStartTime: string;
   dayEndTime: string;
+  dayEndLabel?: string;
   readOnly: boolean;
   onDayStartTimeChange?: (value: string) => void;
   onDayEndTimeChange?: (value: string) => void;
@@ -503,7 +590,7 @@ function ReconcileDayBoundsFields({
         ) : null}
       </label>
       <label className="scheduler-reconcile-time-field">
-        <span>Day end</span>
+        <span>{dayEndLabel}</span>
         <input
           type="time"
           className="scheduler-reconcile-time-input"
@@ -526,6 +613,56 @@ function ReconcileDayBoundsFields({
   );
 }
 
+function ReconcileTimeColumn({
+  weekGrid,
+  practiceTz,
+  align,
+}: {
+  weekGrid: { gridStartMinutesFromMidnight: number; totalMinutes: number };
+  practiceTz: string;
+  align: 'left' | 'right';
+}) {
+  const gridHeightPx = weekGrid.totalMinutes * PPM;
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  const labels = useMemo(() => {
+    const out: { min: number; label: string; major: boolean }[] = [];
+    const endMin = weekGrid.gridStartMinutesFromMidnight + weekGrid.totalMinutes;
+    for (let m = weekGrid.gridStartMinutesFromMidnight; m < endMin; m += SLOT_MINUTES) {
+      const h = Math.floor(m / 60);
+      const mm = m % 60;
+      const dt = DateTime.fromObject({ hour: h, minute: mm }, { zone: tz });
+      out.push({
+        min: m,
+        label: mm === 0 ? dt.toFormat('h:mm a') : '',
+        major: mm === 0,
+      });
+    }
+    return out;
+  }, [weekGrid.gridStartMinutesFromMidnight, weekGrid.totalMinutes, tz]);
+
+  return (
+    <div
+      className={`scheduler-reconcile-time-col scheduler-reconcile-time-col--${align}`}
+      aria-hidden
+    >
+      <div className="scheduler-reconcile-time-col-inner" style={{ height: gridHeightPx }}>
+        {labels.map(({ min, label, major }) => (
+          <div
+            key={min}
+            className={`scheduler-reconcile-time-slot${major ? ' scheduler-reconcile-time-slot--major' : ''}`}
+            style={{
+              top: (min - weekGrid.gridStartMinutesFromMidnight) * PPM,
+              height: SLOT_MINUTES * PPM,
+            }}
+          >
+            {label}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ReconcileDayGrid({
   dayData,
   weekGrid,
@@ -534,6 +671,15 @@ function ReconcileDayGrid({
   showDrive,
   showVisitDelta,
   predictedTimings,
+  shiftDepotStartTime,
+  shiftDepotEndTime,
+  apptById,
+  appointmentTypes,
+  typeFillMap,
+  onVisitMouseEnter,
+  onVisitMouseMove,
+  onVisitMouseLeave,
+  onVisitContextMenu,
 }: {
   dayData: DayData;
   weekGrid: { gridStartMinutesFromMidnight: number; totalMinutes: number };
@@ -542,6 +688,16 @@ function ReconcileDayGrid({
   showDrive: boolean;
   showVisitDelta?: boolean;
   predictedTimings?: VisitTiming[];
+  /** Scheduled appointment-day bounds (shift depot leave / return), not ETA or saved actuals. */
+  shiftDepotStartTime: string;
+  shiftDepotEndTime: string;
+  apptById: Map<string, Appointment>;
+  appointmentTypes: AppointmentType[];
+  typeFillMap: Map<number, string>;
+  onVisitMouseEnter: (appt: Appointment, ev: MouseEvent<HTMLElement>) => void;
+  onVisitMouseMove: (appt: Appointment, ev: MouseEvent<HTMLElement>) => void;
+  onVisitMouseLeave: (apptId: string | number) => void;
+  onVisitContextMenu: (appt: Appointment, ev: MouseEvent<HTMLElement>) => void;
 }) {
   const bufferMin = dayData.appointmentBufferMinutes ?? 5;
   const layout = computeMyWeekDayColumnLayout(
@@ -557,24 +713,21 @@ function ReconcileDayGrid({
       ? buildMyWeekDriveSegmentsFromLayout(layout, dayData, weekGrid, dateIso)
       : [];
 
-  const depotStartTop =
-    dayData.startDepotTime?.trim() != null
-      ? Math.max(
-          0,
-          (timeStrToMinutesFromMidnight(dayData.startDepotTime!) -
-            weekGrid.gridStartMinutesFromMidnight) *
-            PPM
-        )
-      : null;
-  const depotEndTop =
-    dayData.endDepotTime?.trim() != null
-      ? Math.max(
-          0,
-          (timeStrToMinutesFromMidnight(dayData.endDepotTime!) -
-            weekGrid.gridStartMinutesFromMidnight) *
-            PPM
-        )
-      : null;
+  const depotStartTop = shiftDepotStartTime.trim()
+    ? Math.max(
+        0,
+        (timeStrToMinutesFromMidnight(shiftDepotStartTime) -
+          weekGrid.gridStartMinutesFromMidnight) *
+          PPM
+      )
+    : null;
+  const depotEndTop = shiftDepotEndTime.trim()
+    ? Math.max(
+        0,
+        (timeStrToMinutesFromMidnight(shiftDepotEndTime) - weekGrid.gridStartMinutesFromMidnight) *
+          PPM
+      )
+    : null;
 
   return (
     <div className="scheduler-reconcile-day-grid" style={{ height: gridHeightPx }}>
@@ -592,17 +745,17 @@ function ReconcileDayGrid({
       })}
       {depotStartTop != null ? (
         <div
-          className="scheduler-reconcile-depot-line"
+          className="scheduler-day-depot-line"
           style={{ top: depotStartTop - Math.floor(DEPOT_LINE_PX / 2) }}
-          title="Day start"
+          title={`Leave depot (${shiftDepotStartTime})`}
           aria-hidden
         />
       ) : null}
       {depotEndTop != null ? (
         <div
-          className="scheduler-reconcile-depot-line"
+          className="scheduler-day-depot-line"
           style={{ top: depotEndTop - Math.floor(DEPOT_LINE_PX / 2) }}
-          title="Day end"
+          title={`Return to depot (${shiftDepotEndTime})`}
           aria-hidden
         />
       ) : null}
@@ -641,6 +794,11 @@ function ReconcileDayGrid({
             const isBlock = isBlockEntry(blockItem);
             const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(blockItem));
             const linkKey = primaryApptId(h) ?? h.key;
+            const appt = linkKey ? apptById.get(linkKey) : undefined;
+            const apptColors =
+              appt && !isBlock
+                ? colorsForAppointment(appt, appointmentTypes, typeFillMap)
+                : null;
 
             return (
               <div
@@ -648,12 +806,34 @@ function ReconcileDayGrid({
                 data-reconcile-link-key={linkKey}
                 className={[
                   'scheduler-reconcile-visit',
+                  'scheduler-event',
                   isBlock ? 'scheduler-reconcile-visit--block' : '',
                   flexBlock ? 'scheduler-reconcile-visit--flex' : '',
+                  appt ? 'scheduler-reconcile-visit--interactive' : '',
                 ]
                   .filter(Boolean)
                   .join(' ')}
-                style={{ top, height }}
+                style={{
+                  top,
+                  height,
+                  ...(apptColors
+                    ? { background: apptColors.fill, color: apptColors.text, borderColor: apptColors.fill }
+                    : {}),
+                }}
+                role={appt ? 'button' : undefined}
+                tabIndex={appt ? 0 : undefined}
+                onMouseEnter={appt ? (ev) => onVisitMouseEnter(appt, ev) : undefined}
+                onMouseMove={appt ? (ev) => onVisitMouseMove(appt, ev) : undefined}
+                onMouseLeave={appt ? () => onVisitMouseLeave(appt.id) : undefined}
+                onContextMenu={
+                  appt && !isBlock
+                    ? (ev) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        onVisitContextMenu(appt, ev);
+                      }
+                    : undefined
+                }
               >
                 <div className="scheduler-reconcile-visit-time">{timeLabel}</div>
                 <div className="scheduler-reconcile-visit-label">{householdLabel(h)}</div>
@@ -693,6 +873,7 @@ function ReconcileColumnHeader({
   title,
   dayStartTime,
   dayEndTime,
+  dayEndLabel,
   readOnly,
   onDayStartTimeChange,
   onDayEndTimeChange,
@@ -700,10 +881,12 @@ function ReconcileColumnHeader({
   predictedDayStartIso,
   predictedDayEndIso,
   dateIso,
+  saveAction,
 }: {
   title: string;
   dayStartTime: string;
   dayEndTime: string;
+  dayEndLabel?: string;
   readOnly: boolean;
   onDayStartTimeChange?: (value: string) => void;
   onDayEndTimeChange?: (value: string) => void;
@@ -711,6 +894,12 @@ function ReconcileColumnHeader({
   predictedDayStartIso?: string | null;
   predictedDayEndIso?: string | null;
   dateIso: string;
+  saveAction?: {
+    saving: boolean;
+    onSave: () => void;
+    saveError?: string | null;
+    saveSuccess?: string | null;
+  };
 }) {
   return (
     <div className="scheduler-reconcile-column-header">
@@ -718,6 +907,7 @@ function ReconcileColumnHeader({
       <ReconcileDayBoundsFields
         dayStartTime={dayStartTime}
         dayEndTime={dayEndTime}
+        dayEndLabel={dayEndLabel}
         readOnly={readOnly}
         onDayStartTimeChange={onDayStartTimeChange}
         onDayEndTimeChange={onDayEndTimeChange}
@@ -726,6 +916,26 @@ function ReconcileColumnHeader({
         predictedDayEndIso={predictedDayEndIso}
         dateIso={dateIso}
       />
+      {saveAction ? (
+        <div className="scheduler-reconcile-column-save">
+          {saveAction.saveError ? (
+            <p className="scheduler-reconcile-error" role="alert">
+              {saveAction.saveError}
+            </p>
+          ) : null}
+          {saveAction.saveSuccess ? (
+            <p className="scheduler-reconcile-success">{saveAction.saveSuccess}</p>
+          ) : null}
+          <button
+            type="button"
+            className="scheduler-day-header-btn scheduler-reconcile-save-btn"
+            disabled={saveAction.saving}
+            onClick={saveAction.onSave}
+          >
+            {saveAction.saving ? 'Saving…' : 'Save day times'}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -738,6 +948,9 @@ export function SchedulerReconcileModal({
   practiceTz,
   predictedDayData,
   appointments,
+  appointmentTypes,
+  onWorkdaySaved,
+  renderVisitHighlights,
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -749,6 +962,24 @@ export function SchedulerReconcileModal({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const [employeeDayTimes, setEmployeeDayTimes] = useState<EmployeeDayTimes>({ start: '', end: '' });
+  const [contextMenu, setContextMenu] = useState<{
+    appt: Appointment;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const typeFillMap = useMemo(() => buildTypeFillMap(appointmentTypes), [appointmentTypes]);
+  const apptById = useMemo(() => apptByIdMap(appointments), [appointments]);
+
+  const resolveDriveHint = useCallback(
+    (appt: Appointment, dayData: DayData | null, tz: string, showDriveCol: boolean) => {
+      if (!dayData || !showDriveCol) return null;
+      const row = driveHouseholdAndSlotForAppointment(dayData, appt.id);
+      if (!row) return null;
+      return driveHintFromHouseholdSlot(row.h, row.slot, tz, true);
+    },
+    []
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -807,35 +1038,35 @@ export function SchedulerReconcileModal({
       setActualDayEndTime('');
       return;
     }
-    const plannedStart = employeeDayTimes.start || depotTimeToInputValue(predicted.startDepotTime);
-    const plannedEnd = employeeDayTimes.end || depotTimeToInputValue(predicted.endDepotTime);
     const recordedStart = workday?.workdayStartActual?.trim()
       ? toTimeLocalValue(workday.workdayStartActual, predictedTz)
       : '';
     const recordedEnd = workday?.workdayEndActual?.trim()
       ? toTimeLocalValue(workday.workdayEndActual, predictedTz)
       : '';
-    setActualDayStartTime(recordedStart || plannedStart);
-    setActualDayEndTime(recordedEnd || plannedEnd);
-  }, [open, predicted, workday, predictedTz, employeeDayTimes]);
+    setActualDayStartTime(recordedStart);
+    setActualDayEndTime(recordedEnd);
+  }, [open, predicted, workday, predictedTz]);
 
   const actualBundle = useMemo(() => {
     if (!predicted) return null;
     const bundle = buildActualDayBundle(predicted, appointments, workday, employeeDayTimes);
+    const savedStartIso = workday?.workdayStartActual?.trim() || null;
+    const savedEndIso = workday?.workdayEndActual?.trim() || null;
     const startIso = actualDayStartTime.trim()
       ? combineDateAndTimeToUtc(date, actualDayStartTime, predictedTz)
-      : bundle.workdayStartIso;
+      : savedStartIso;
     const endIso = actualDayEndTime.trim()
       ? combineDateAndTimeToUtc(date, actualDayEndTime, predictedTz)
-      : bundle.workdayEndIso;
+      : savedEndIso;
     return {
       ...bundle,
       workdayStartIso: startIso,
       workdayEndIso: endIso,
       dayData: {
         ...bundle.dayData,
-        startDepotTime: startIso ? isoToDepotTimeStr(startIso, predictedTz) : bundle.dayData.startDepotTime,
-        endDepotTime: endIso ? isoToDepotTimeStr(endIso, predictedTz) : bundle.dayData.endDepotTime,
+        startDepotTime: startIso ? isoToDepotTimeStr(startIso, predictedTz) : null,
+        endDepotTime: endIso ? isoToDepotTimeStr(endIso, predictedTz) : null,
       },
     };
   }, [
@@ -852,6 +1083,37 @@ export function SchedulerReconcileModal({
   const actualDay = actualBundle?.dayData ?? null;
   const workdayStartIso = actualBundle?.workdayStartIso ?? null;
   const workdayEndIso = actualBundle?.workdayEndIso ?? null;
+
+  const visitHover = useVisitHighlightsHoverPopover({
+    enabled: open,
+    zIndex: RECONCILE_VISIT_HOVER_Z_INDEX,
+    renderContent: (appt) =>
+      renderVisitHighlights(
+        appt,
+        resolveDriveHint(appt, predicted, predictedTz, true) ??
+          resolveDriveHint(appt, actualDay, predictedTz, true)
+      ),
+  });
+
+  const handleVisitContextMenu = useCallback(
+    (appt: Appointment, ev: MouseEvent<HTMLElement>) => {
+      visitHover.onContextMenuOpen();
+      setContextMenu({ appt, x: ev.clientX, y: ev.clientY });
+    },
+    [visitHover]
+  );
+
+  const handleContextMenuAction = useCallback(
+    (action: SchedulerContextMenuAction) => {
+      setContextMenu(null);
+      if (action.kind !== 'viewChart' || !contextMenu) return;
+      const patients = patientsForAppointment(contextMenu.appt);
+      const pid = pickStr(patients[0]?.pimsId);
+      if (!pid) return;
+      window.open(evetPatientChartLink(pid), '_blank', 'noopener,noreferrer');
+    },
+    [contextMenu]
+  );
 
   const weekGrid = useMemo(() => {
     if (!predicted || !actualDay) {
@@ -875,18 +1137,26 @@ export function SchedulerReconcileModal({
     );
   }, [predicted, weekGrid, date]);
 
+  const predictedDayStartTime =
+    employeeDayTimes.start || depotTimeToInputValue(predicted?.startDepotTime);
+  const predictedShiftEndTime =
+    employeeDayTimes.end || depotTimeToInputValue(predicted?.endDepotTime);
+  const predictedDepotEnd = useMemo(() => {
+    if (!predicted) {
+      return { endTime: '', endLabel: 'Day end' as const, endIso: null as string | null };
+    }
+    return predictedBackToDepotEndDisplay(predicted, predictedTz, predictedShiftEndTime);
+  }, [predicted, predictedTz, predictedShiftEndTime]);
+
   const plannedDayStartIso = predicted
     ? depotTimeToIso(date, employeeDayTimes.start, predictedTz) ??
       depotTimeToIso(date, predicted.startDepotTime, practiceTimeZoneOrDefault(predicted.timezone))
     : null;
   const plannedDayEndIso = predicted
-    ? depotTimeToIso(date, employeeDayTimes.end, predictedTz) ??
+    ? predictedDepotEnd.endIso ??
+      depotTimeToIso(date, employeeDayTimes.end, predictedTz) ??
       depotTimeToIso(date, predicted.endDepotTime, practiceTimeZoneOrDefault(predicted.timezone))
     : null;
-
-  const predictedDayStartTime =
-    employeeDayTimes.start || depotTimeToInputValue(predicted?.startDepotTime);
-  const predictedDayEndTime = employeeDayTimes.end || depotTimeToInputValue(predicted?.endDepotTime);
 
   const gridHeightPx = weekGrid.totalMinutes * PPM;
   const bufferMin = predicted?.appointmentBufferMinutes ?? 5;
@@ -927,6 +1197,7 @@ export function SchedulerReconcileModal({
         workdayEndActual: endIso,
       });
       setWorkday(updated);
+      onWorkdaySaved?.(updated);
       setSaveSuccess('Day times saved.');
     } catch (e: unknown) {
       const ax = e as { response?: { data?: { message?: string | string[] } }; message?: string };
@@ -959,7 +1230,7 @@ export function SchedulerReconcileModal({
       >
         <div className="scheduler-modal-header">
           <div className="scheduler-modal-header-text">
-            <p className="scheduler-modal-eyebrow">Schedule reconcile</p>
+            <p className="scheduler-modal-eyebrow">Schedule progress</p>
             <h2 id="scheduler-reconcile-title" className="scheduler-modal-title-h">
               {dateLabel}
             </h2>
@@ -984,10 +1255,12 @@ export function SchedulerReconcileModal({
           ) : (
             <div className="scheduler-reconcile-board">
               <div className="scheduler-reconcile-board-headers">
+                <div className="scheduler-reconcile-time-col-spacer" aria-hidden />
                 <ReconcileColumnHeader
                   title="Predicted (drive times)"
                   dayStartTime={predictedDayStartTime}
-                  dayEndTime={predictedDayEndTime}
+                  dayEndTime={predictedDepotEnd.endTime}
+                  dayEndLabel={predictedDepotEnd.endLabel}
                   readOnly
                   practiceTz={practiceTimeZoneOrDefault(predicted.timezone)}
                   dateIso={date}
@@ -1004,10 +1277,22 @@ export function SchedulerReconcileModal({
                   predictedDayStartIso={plannedDayStartIso}
                   predictedDayEndIso={plannedDayEndIso}
                   dateIso={date}
+                  saveAction={{
+                    saving: savingWorkday,
+                    onSave: () => void handleSaveWorkdayTimes(),
+                    saveError,
+                    saveSuccess,
+                  }}
                 />
+                <div className="scheduler-reconcile-time-col-spacer" aria-hidden />
               </div>
               <div className="scheduler-reconcile-board-scroll">
                 <div className="scheduler-reconcile-board-timeline">
+                  <ReconcileTimeColumn
+                    weekGrid={weekGrid}
+                    practiceTz={practiceTimeZoneOrDefault(predicted.timezone)}
+                    align="right"
+                  />
                   <div className="scheduler-reconcile-column scheduler-reconcile-column--grid">
                     <ReconcileDayGrid
                       dayData={predicted}
@@ -1015,6 +1300,15 @@ export function SchedulerReconcileModal({
                       dateIso={date}
                       practiceTz={practiceTimeZoneOrDefault(predicted.timezone)}
                       showDrive
+                      shiftDepotStartTime={predictedDayStartTime}
+                      shiftDepotEndTime={predictedShiftEndTime}
+                      apptById={apptById}
+                      appointmentTypes={appointmentTypes}
+                      typeFillMap={typeFillMap}
+                      onVisitMouseEnter={visitHover.onMouseEnter}
+                      onVisitMouseMove={visitHover.onMouseMove}
+                      onVisitMouseLeave={visitHover.onMouseLeave}
+                      onVisitContextMenu={handleVisitContextMenu}
                     />
                   </div>
                   <ReconcileConnectorLines
@@ -1031,32 +1325,40 @@ export function SchedulerReconcileModal({
                       showDrive
                       showVisitDelta
                       predictedTimings={predictedTimings}
+                      shiftDepotStartTime={predictedDayStartTime}
+                      shiftDepotEndTime={predictedShiftEndTime}
+                      apptById={apptById}
+                      appointmentTypes={appointmentTypes}
+                      typeFillMap={typeFillMap}
+                      onVisitMouseEnter={visitHover.onMouseEnter}
+                      onVisitMouseMove={visitHover.onMouseMove}
+                      onVisitMouseLeave={visitHover.onMouseLeave}
+                      onVisitContextMenu={handleVisitContextMenu}
                     />
                   </div>
+                  <ReconcileTimeColumn
+                    weekGrid={weekGrid}
+                    practiceTz={practiceTimeZoneOrDefault(predicted.timezone)}
+                    align="left"
+                  />
                 </div>
               </div>
             </div>
           )}
-          {!loading && !error && predicted && actualDay ? (
-            <div className="scheduler-reconcile-footer">
-              {saveError ? (
-                <p className="scheduler-reconcile-error" role="alert">
-                  {saveError}
-                </p>
-              ) : null}
-              {saveSuccess ? <p className="scheduler-reconcile-success">{saveSuccess}</p> : null}
-              <button
-                type="button"
-                className="scheduler-day-header-btn scheduler-reconcile-save-btn"
-                disabled={savingWorkday}
-                onClick={() => void handleSaveWorkdayTimes()}
-              >
-                {savingWorkday ? 'Saving…' : 'Save day times'}
-              </button>
-            </div>
-          ) : null}
         </div>
       </div>
+      {visitHover.portal}
+      {contextMenu ? (
+        <SchedulerAppointmentContextMenu
+          appt={contextMenu.appt}
+          client={contextMenu.appt.client ?? undefined}
+          anchorPoint={{ x: contextMenu.x, y: contextMenu.y }}
+          onClose={() => setContextMenu(null)}
+          onAction={handleContextMenuAction}
+          patientChartOnly
+          roomLoaderMenuLabel=""
+        />
+      ) : null}
     </div>,
     document.body
   );

@@ -5,6 +5,10 @@
 import { DateTime } from 'luxon';
 import type { RescheduleOriginalVisitSnapshot } from '../api/routing';
 import type { Appointment, Client, Patient } from '../api/roomLoader';
+import type { AppointmentType } from '../api/appointmentSettings';
+import {
+  appointmentTypeLabelFromRow as routingTypeLabelFromRow,
+} from './routingCalculateTimeType';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
 import { ROUTING_DISMISS_RESCHEDULE_EVENT } from './routingUiSnapshot';
 import { routingCalendarDatePart } from './routingSlotSearchDates';
@@ -308,12 +312,19 @@ export function buildRescheduleVisitPatches(
   visits: RescheduleSameDayVisit[],
   rawAppointments: ReadonlyArray<Appointment>,
   practiceTz: string,
-  overrideAppointmentTypeId?: number
+  overrideAppointmentTypeId?: number,
+  appointmentTypesForLabel?: readonly AppointmentType[]
 ): RescheduleVisitPatch[] {
   const overrideTypeId =
     overrideAppointmentTypeId != null && Number.isFinite(Number(overrideAppointmentTypeId))
       ? Number(overrideAppointmentTypeId)
       : undefined;
+  const overrideTypeLabel =
+    overrideTypeId != null && appointmentTypesForLabel?.length
+      ? routingTypeLabelFromRow(
+          appointmentTypesForLabel.find((t) => Number(t.id) === overrideTypeId)
+        )
+      : null;
   return visits.map((v) => {
     const appt = rawAppointments.find((a) => a.id === v.appointmentId);
     const fromAppt = appt?.appointmentType?.id;
@@ -327,7 +338,8 @@ export function buildRescheduleVisitPatches(
       patientId: v.patientId,
       patientName: v.patientName,
       appointmentTypeId: Number.isFinite(appointmentTypeId) ? appointmentTypeId : undefined,
-      appointmentTypeLabel: appointmentTypeLabelFromRow(appt, v.appointmentTypeName),
+      appointmentTypeLabel:
+        (overrideTypeLabel ?? appointmentTypeLabelFromRow(appt, v.appointmentTypeName)) || '—',
       scheduledTimeLabel: scheduledTimeLabelFromAppt(appt, practiceTz),
       originalAppointmentStartIso: appt?.appointmentStart ?? undefined,
       description: appt?.description ?? v.description ?? null,
@@ -610,14 +622,6 @@ export function buildRoutingRescheduleIntentFromAppointment(
     }
   }
 
-  const addressParts = [pickStr(c.address1), pickStr(c.city), pickStr(c.state), pickStr(c.zipcode)].filter(
-    Boolean,
-  );
-  const address = addressParts.length ? addressParts.join(', ') : '';
-
-  const lat = typeof c.lat === 'number' && Number.isFinite(c.lat) ? c.lat : null;
-  const lon = typeof c.lon === 'number' && Number.isFinite(c.lon) ? c.lon : null;
-
   const practiceTz = opts?.practiceTz ?? practiceTimeZoneOrDefault(undefined);
   const startLocal = DateTime.fromISO(appt.appointmentStart, { zone: 'utc' }).setZone(practiceTz);
   const endLocal = DateTime.fromISO(appt.appointmentEnd, { zone: 'utc' }).setZone(practiceTz);
@@ -652,9 +656,6 @@ export function buildRoutingRescheduleIntentFromAppointment(
     instructions: appt.instructions ?? null,
     clientDisplayLabel,
     serviceMinutes: minutes,
-    address: address || undefined,
-    lat,
-    lon,
     clientAlerts: pickStr(c.alerts),
     sameDayVisits,
     rescheduleScope: sameDayVisits.length > 1 ? undefined : 'selected_pet',

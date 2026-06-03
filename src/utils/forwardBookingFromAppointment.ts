@@ -1,8 +1,187 @@
 import { DateTime } from 'luxon';
+import type { AppointmentType } from '../api/appointmentSettings';
+import { clientIdFromAppointment, patientIdFromAppointment } from '../api/pimsAppointments';
 import type { Appointment, Client, Patient } from '../api/roomLoader';
-import type { CreateForwardBookingPayload } from '../api/forwardBooking';
+import type {
+  CreateForwardBookingPayload,
+  ForwardBookingEntry,
+  ForwardBookingIntervalUnit,
+} from '../api/forwardBooking';
+import { practiceTimeZoneOrDefault } from './practiceTimezone';
 
-export const FORWARD_BOOKING_MONTHS_OPTIONS = [1, 2, 3, 4, 6, 9, 12, 18, 24] as const;
+export type { ForwardBookingIntervalUnit };
+
+export const FORWARD_BOOKING_AMOUNT_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
+
+export const FORWARD_BOOKING_UNIT_OPTIONS: { value: ForwardBookingIntervalUnit; label: string }[] = [
+  { value: 'days', label: 'Days' },
+  { value: 'weeks', label: 'Weeks' },
+  { value: 'months', label: 'Months' },
+];
+
+export type ForwardBookingInterval = {
+  amount: number;
+  unit: ForwardBookingIntervalUnit;
+};
+
+function normalizeIntervalUnit(unit: unknown): ForwardBookingIntervalUnit | null {
+  const u = String(unit ?? '')
+    .trim()
+    .toLowerCase();
+  if (u === 'days' || u === 'day') return 'days';
+  if (u === 'weeks' || u === 'week') return 'weeks';
+  if (u === 'months' || u === 'month') return 'months';
+  return null;
+}
+
+/** Calendar due date from source visit + staff interval (same rule the API should use). */
+/** Infer source visit time from target due date minus the forward-book interval. */
+export function forwardBookingSourceDateIsoFromTarget(args: {
+  targetDueDateIso: string;
+  intervalAmount: number;
+  intervalUnit: ForwardBookingIntervalUnit;
+  practiceTz: string;
+}): string | null {
+  const { targetDueDateIso, intervalAmount, intervalUnit, practiceTz } = args;
+  if (!Number.isFinite(intervalAmount) || intervalAmount <= 0) return null;
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  const target = DateTime.fromISO(targetDueDateIso, { zone: 'utc' }).setZone(tz);
+  if (!target.isValid) return null;
+  const source =
+    intervalUnit === 'days'
+      ? target.minus({ days: intervalAmount })
+      : intervalUnit === 'weeks'
+        ? target.minus({ weeks: intervalAmount })
+        : target.minus({ months: intervalAmount });
+  return source.toUTC().toISO();
+}
+
+export function resolveForwardBookingSourceStartIso(
+  entry: Pick<
+    ForwardBookingEntry,
+    'sourceAppointmentStart' | 'targetDueDate' | 'intervalAmount' | 'intervalUnit' | 'monthsOut'
+  >,
+  practiceTz: string
+): string | null {
+  const fromApi = entry.sourceAppointmentStart?.trim();
+  if (fromApi) return fromApi;
+  const interval = resolveForwardBookingIntervalFromEntry(entry);
+  const target = entry.targetDueDate?.trim();
+  if (!interval || !target) return null;
+  return forwardBookingSourceDateIsoFromTarget({
+    targetDueDateIso: target,
+    intervalAmount: interval.amount,
+    intervalUnit: interval.unit,
+    practiceTz,
+  });
+}
+
+export function forwardBookingTargetDueDateIso(
+  amount: number,
+  unit: ForwardBookingIntervalUnit,
+  sourceDateIso: string
+): string | null {
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const source = DateTime.fromISO(sourceDateIso);
+  if (!source.isValid) return null;
+  const target =
+    unit === 'days'
+      ? source.plus({ days: amount })
+      : unit === 'weeks'
+        ? source.plus({ weeks: amount })
+        : source.plus({ months: amount });
+  return target.toUTC().toISO();
+}
+
+/** Resolve interval from API row (new fields first, legacy integer monthsOut). */
+export function resolveForwardBookingIntervalFromEntry(
+  entry: Pick<ForwardBookingEntry, 'intervalAmount' | 'intervalUnit' | 'monthsOut'>
+): ForwardBookingInterval | null {
+  const unit = normalizeIntervalUnit(entry.intervalUnit);
+  const amount = entry.intervalAmount;
+  if (amount != null && Number.isFinite(amount) && amount > 0 && unit) {
+    return { amount, unit };
+  }
+  const mo = entry.monthsOut;
+  if (mo != null && Number.isFinite(mo) && mo > 0) {
+    const rounded = Math.round(mo);
+    if (rounded > 0) return { amount: rounded, unit: 'months' };
+  }
+  return null;
+}
+
+/**
+ * Interval length in days for the ±1/5 routing search window.
+ * Weeks use 7d; months use 30d (e.g. 1 mo → buffer round(30/5) = 6 days).
+ */
+export function forwardBookingIntervalSpanDays(
+  amount: number,
+  unit: ForwardBookingIntervalUnit
+): number {
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  if (unit === 'days') return amount;
+  if (unit === 'weeks') return amount * 7;
+  return amount * 30;
+}
+
+/**
+ * Routing slot search range: target due date ± round(spanDays / 5).
+ * Example: 2 weeks (14d) → ±3d around due date; 1 month (30d) → ±6d.
+ */
+export function forwardBookingRoutingSearchDateRange(args: {
+  intervalAmount: number;
+  intervalUnit: ForwardBookingIntervalUnit;
+  targetDueDateIso?: string | null;
+  practiceTz: string;
+}): { startDate: string; endDate: string } | null {
+  const { intervalAmount, intervalUnit, targetDueDateIso, practiceTz } = args;
+  const spanDays = forwardBookingIntervalSpanDays(intervalAmount, intervalUnit);
+  if (spanDays <= 0) return null;
+
+  const bufferDays = Math.max(1, Math.round(spanDays / 5));
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+
+  let target: DateTime;
+  if (targetDueDateIso?.trim()) {
+    target = DateTime.fromISO(targetDueDateIso, { zone: 'utc' }).setZone(tz);
+  } else {
+    target = DateTime.now().setZone(tz);
+    target =
+      intervalUnit === 'days'
+        ? target.plus({ days: intervalAmount })
+        : intervalUnit === 'weeks'
+          ? target.plus({ weeks: intervalAmount })
+          : target.plus({ months: intervalAmount });
+  }
+  if (!target.isValid) return null;
+
+  return {
+    startDate: target.minus({ days: bufferDays }).toFormat('yyyy-MM-dd'),
+    endDate: target.plus({ days: bufferDays }).toFormat('yyyy-MM-dd'),
+  };
+}
+
+export function formatForwardBookingIntervalLabel(opts: {
+  intervalAmount?: number | null;
+  intervalUnit?: ForwardBookingIntervalUnit | string | null;
+  /** Legacy rows only — not used when interval fields are present. */
+  monthsOut?: number | null;
+}): string {
+  const resolved = resolveForwardBookingIntervalFromEntry({
+    intervalAmount: opts.intervalAmount,
+    intervalUnit: opts.intervalUnit,
+    monthsOut: opts.monthsOut,
+  });
+  if (resolved) {
+    const { amount, unit } = resolved;
+    const unitLabel =
+      unit === 'days' ? (amount === 1 ? 'day' : 'days')
+      : unit === 'weeks' ? (amount === 1 ? 'week' : 'weeks')
+      : amount === 1 ? 'month' : 'months';
+    return `${amount} ${unitLabel} out`;
+  }
+  return '—';
+}
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -16,28 +195,77 @@ function patientsForAppointment(a: Appointment): Patient[] {
   return a.patient ? [a.patient] : [];
 }
 
+type ForwardBookingTypeCatalogRow = Pick<
+  AppointmentType,
+  'id' | 'name' | 'prettyName' | 'isDeleted' | 'isActive'
+>;
+
+function appointmentTypeNameCandidates(appt: Appointment): string[] {
+  const at = appt.appointmentType;
+  return [pickStr(at?.name), pickStr(at?.prettyName)].filter(Boolean) as string[];
+}
+
+/** Map source visit type to a practice catalog id; omit when unknown or archived. */
+export function resolveForwardBookingAppointmentTypeId(
+  appt: Appointment,
+  catalog?: readonly ForwardBookingTypeCatalogRow[]
+): number | undefined {
+  const rawId = appt.appointmentType?.id;
+  const typeId = rawId != null && Number.isFinite(Number(rawId)) ? Number(rawId) : undefined;
+  if (!catalog?.length) return typeId;
+
+  const active = catalog.filter((t) => t.isDeleted !== true && t.isActive !== false);
+  if (typeId != null) {
+    const byId = active.find((t) => t.id === typeId);
+    if (byId) return byId.id;
+  }
+
+  const names = appointmentTypeNameCandidates(appt).map((n) => n.toLowerCase());
+  for (const name of names) {
+    const match = active.find((t) => {
+      const n = pickStr(t.name)?.toLowerCase();
+      const p = pickStr(t.prettyName)?.toLowerCase();
+      return n === name || p === name;
+    });
+    if (match) return match.id;
+  }
+  return undefined;
+}
+
 /** Build POST /forward-bookings body from the visit being ended. */
 export function buildCreateForwardBookingPayloadFromAppointment(
   appt: Appointment,
-  monthsOut: number,
+  interval: ForwardBookingInterval,
   practiceId: number,
-  opts?: { bookingNotes?: string | null }
+  opts?: {
+    bookingNotes?: string | null;
+    appointmentTypes?: readonly ForwardBookingTypeCatalogRow[];
+    /** Fallback when the appointment payload omits nested client/patient. */
+    patientId?: number;
+    clientId?: number;
+  }
 ): CreateForwardBookingPayload | null {
   if (!appt?.id || typeof appt.id !== 'number') return null;
-  const c = appt.client as Client | undefined;
-  if (!c?.id) return null;
-  const p0 = patientsForAppointment(appt)[0];
-  if (!p0?.id) return null;
+
+  const patientIdRaw =
+    patientsForAppointment(appt)[0]?.id ??
+    patientIdFromAppointment(appt) ??
+    (opts?.patientId != null ? String(opts.patientId) : null);
+  const clientIdRaw =
+    (appt.client as Client | undefined)?.id ??
+    clientIdFromAppointment(appt) ??
+    (opts?.clientId != null ? String(opts.clientId) : null);
+
+  const patientId = patientIdRaw != null ? Number(patientIdRaw) : NaN;
+  const clientId = clientIdRaw != null ? Number(clientIdRaw) : NaN;
+  if (!Number.isFinite(patientId) || !Number.isFinite(clientId)) return null;
 
   const start = DateTime.fromISO(appt.appointmentStart);
   const end = DateTime.fromISO(appt.appointmentEnd);
   const minutes =
     start.isValid && end.isValid ? Math.max(15, Math.round(end.diff(start, 'minutes').minutes)) : 45;
 
-  const at = appt.appointmentType;
-  const typeId = at?.id;
-  const appointmentTypeId =
-    typeId != null && Number.isFinite(Number(typeId)) ? Number(typeId) : undefined;
+  const appointmentTypeId = resolveForwardBookingAppointmentTypeId(appt, opts?.appointmentTypes);
 
   const pp = appt.primaryProvider;
   const primaryProviderId =
@@ -49,9 +277,10 @@ export function buildCreateForwardBookingPayloadFromAppointment(
   return {
     practiceId,
     sourceAppointmentId: appt.id,
-    clientId: Number(c.id),
-    patientId: Number(p0.id),
-    monthsOut,
+    clientId,
+    patientId,
+    intervalAmount: interval.amount,
+    intervalUnit: interval.unit,
     ...(appointmentTypeId != null ? { appointmentTypeId } : {}),
     ...(primaryProviderId != null ? { primaryProviderId } : {}),
     description: appt.description ?? null,

@@ -13,6 +13,9 @@ export const ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT = 'vayd:routing-workspace-
 /** Calendar “Dismiss” during reschedule — clear intent and reset the Get Best Route form. */
 export const ROUTING_DISMISS_RESCHEDULE_EVENT = 'vayd:routing-dismiss-reschedule';
 
+/** Exit forward-booking mode from routing workspace — clear intent, preview, and form prefill. */
+export const ROUTING_DISMISS_FORWARD_BOOKING_EVENT = 'vayd:routing-dismiss-forward-booking';
+
 const SNAPSHOT_VERSION = 1 as const;
 
 /** localStorage: last resolved PIMS id + label for the logged-in user's linked doctor (avoids empty-doctor flash on cold load). */
@@ -52,6 +55,8 @@ export type RoutingUiSnapshotV1 = {
   feedbackSuccessKey: string | null;
   selectedClientAlerts: string | null;
   scheduleBookTypeId: number | null;
+  /** Routing → Calculate Time appointment type name (same as dropdown value). */
+  routingApptStatsTypeKey: string;
 };
 
 export type RoutingUiBootstrap = {
@@ -72,6 +77,8 @@ export type RoutingUiBootstrap = {
   feedbackSuccessKey: string | null;
   selectedClientAlerts: string | null;
   scheduleBookTypeId: number | null;
+  /** Routing → Calculate Time appointment type name (same as dropdown value). */
+  routingApptStatsTypeKey: string;
 };
 
 type AuthDoctorCacheV1 = { v: 1; userId: string; pimsId: string; doctorQuery: string };
@@ -119,6 +126,7 @@ function emptyBootstrap(): RoutingUiBootstrap {
     feedbackSuccessKey: null,
     selectedClientAlerts: null,
     scheduleBookTypeId: null,
+    routingApptStatsTypeKey: '',
   };
 }
 
@@ -214,6 +222,8 @@ export function readRoutingUiBootstrap(): RoutingUiBootstrap {
               typeof s.scheduleBookTypeId === 'number' && Number.isFinite(s.scheduleBookTypeId)
                 ? s.scheduleBookTypeId
                 : null,
+            routingApptStatsTypeKey:
+              typeof s.routingApptStatsTypeKey === 'string' ? s.routingApptStatsTypeKey : '',
           };
         }
       }

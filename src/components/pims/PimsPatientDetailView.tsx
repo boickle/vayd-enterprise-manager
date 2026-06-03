@@ -40,6 +40,7 @@ import { PimsExamDetailModal } from './PimsExamDetailModal';
 import PimsAppointmentsSection from './PimsAppointmentsSection';
 import { PIMS_ENTITY_EDIT_ENABLED } from '../../utils/pimsEntityEditing';
 import { evetPatientLink } from '../../utils/evet';
+import { patientSexDisplayFromRecord } from '../../utils/schedulerVisitDisplay';
 import './PimsPatientDetailView.css';
 
 const PIMS_DETAIL_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -722,10 +723,7 @@ export default function PimsPatientDetailView({
   }, []);
 
   const sexLine = useCallback((p: Record<string, unknown>) => {
-    const sx = pickStr(p.sex) ?? pickStr(p.gender) ?? '';
-    const nn = pickStr(p.neuterStatus) ?? pickStr(p.spayNeuterStatus) ?? pickStr(p.alteredStatus) ?? '';
-    if (sx && nn) return `${sx} (${nn})`;
-    return sx || nn || '—';
+    return patientSexDisplayFromRecord(p) ?? '—';
   }, []);
 
   if (loading) {

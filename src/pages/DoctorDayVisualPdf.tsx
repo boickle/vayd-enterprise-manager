@@ -1,8 +1,9 @@
 // src/pages/DoctorDayVisualPdf.tsx — Off-screen DOM for My Day — Visual PDF export (html2canvas).
 import type { CSSProperties } from 'react';
-import { AlertTriangle, Heart } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { formatIsoInPracticeZone } from '../utils/practiceTimezone';
 import { formatHM, colorForWhitespace, colorForHDRatio, colorForDrive } from '../utils/statsFormat';
+import { MyDayVisualPatientDetail } from '../components/MyDayVisualPatientDetail';
 
 const DRIVE_FILL =
   'repeating-linear-gradient(135deg, #e2e8f0 0px, #e2e8f0 6px, #cbd5e1 6px, #cbd5e1 12px)';
@@ -15,6 +16,10 @@ export type DoctorDayVisualPdfPatient = {
   recordStatus?: string | null;
   type?: string | null;
   desc?: string | null;
+  appointmentNotes?: string | null;
+  staffNotes?: string | null;
+  sex?: string | null;
+  petAlerts?: string | null;
   alerts?: string | null;
   isMember?: boolean;
   membershipName?: string | null;
@@ -26,6 +31,8 @@ export type DoctorDayVisualPdfAppointmentPayload = {
   address: string;
   clientPhone?: string;
   clientAlert?: string;
+  roomLoaderStatus?: string;
+  roomLoaderStatusColor?: string;
   durMin: number;
   etaIso?: string | null;
   etdIso?: string | null;
@@ -169,14 +176,6 @@ function AppointmentPdfBlock({
           }}
         >
           <span style={{ fontWeight: 800, color: '#14532d', fontSize: 22 }}>{payload.client}</span>
-          {payload.clientPhone ? (
-            <>
-              <span style={{ color: '#64748b' }}>·</span>
-              <span style={{ color: '#0f172a', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                {payload.clientPhone}
-              </span>
-            </>
-          ) : null}
           <span style={{ color: '#64748b' }}>·</span>
           <span style={{ color: '#64748b', flex: '1 1 12rem', minWidth: 0 }}>{addrNoZip}</span>
           {payload.windowWarning && (
@@ -199,11 +198,29 @@ function AppointmentPdfBlock({
             </span>
           )}
         </div>
+        {payload.clientPhone ? (
+          <div style={{ marginTop: 2, fontSize: 16, color: '#0f172a' }}>
+            <b>Phone:</b> {payload.clientPhone}
+          </div>
+        ) : null}
         {payload?.clientAlert && (
           <div style={{ marginTop: 2, color: '#dc2626', fontSize: 16, lineHeight: 1.3 }}>
             Alert: {payload.clientAlert}
           </div>
         )}
+        {!payload.isPersonalBlock ? (
+          <div
+            style={{
+              marginTop: 2,
+              fontSize: 16,
+              lineHeight: 1.3,
+              color: payload.roomLoaderStatusColor ?? '#dc2626',
+              fontWeight: 600,
+            }}
+          >
+            <b>Room loader:</b> {payload.roomLoaderStatus ?? 'Not sent'}
+          </div>
+        ) : null}
       </div>
       <div
         style={{
@@ -291,62 +308,12 @@ function AppointmentPdfBlock({
           >
             <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
               {payload.patients.map((p, i) => (
-                <li
+                <MyDayVisualPatientDetail
                   key={i}
-                  style={{
-                    marginBottom: i === payload.patients.length - 1 ? 0 : 4,
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    alignItems: 'baseline',
-                    gap: 6,
-                    fontSize: 18,
-                    color: '#334155',
-                  }}
-                >
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      fontWeight: 700,
-                    }}
-                  >
-                    {p.isMember && (
-                      <Heart
-                        size={16}
-                        fill="#dc2626"
-                        color="#dc2626"
-                        strokeWidth={1.5}
-                        aria-hidden
-                      />
-                    )}
-                    <span>{p.name}</span>
-                  </span>
-                  {p.isMember && p.membershipName?.trim() ? (
-                    <span style={{ color: '#991b1b', fontWeight: 600 }}>
-                      {p.membershipName.trim()}
-                    </span>
-                  ) : null}
-                  <span style={{ color: '#475569' }}>
-                    {p.type ? (
-                      <>
-                        — <b>{p.type}</b>
-                        {p.desc ? ` — ${p.desc}` : ''}
-                      </>
-                    ) : p.desc ? (
-                      <>— {p.desc}</>
-                    ) : null}
-                  </span>
-                  {p?.alerts ? (
-                    <span style={{ color: '#dc2626' }}>
-                      — <strong>Alert</strong>: {p.alerts}
-                    </span>
-                  ) : null}
-                  {p.status ? <span style={statusPillStyle(p.status)}>{p.status}</span> : null}
-                  {p.recordStatus ? (
-                    <span style={statusPillStyle(p.recordStatus)}>{p.recordStatus}</span>
-                  ) : null}
-                </li>
+                  patient={p}
+                  variant="pdf"
+                  statusPillStyle={statusPillStyle}
+                />
               ))}
             </ul>
           </div>

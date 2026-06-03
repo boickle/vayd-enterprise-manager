@@ -1115,7 +1115,8 @@ export default function Settings() {
             <h2 className="settings-section-title">Role manual booking</h2>
             <p className="settings-section-description">
               Configure which appointment types each employee role may book manually from the
-              scheduler calendar. Routing booking is not restricted by these settings.
+              scheduler calendar. Choose a role by name (for example, Business Manager or
+              Receptionist). Routing booking is not restricted by these settings.
             </p>
             <SettingsRoleManualBooking
               appointmentTypes={activeAppointmentTypes}

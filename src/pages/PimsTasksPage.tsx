@@ -19,6 +19,7 @@ import {
 } from '../utils/taskPriority';
 import { primaryClientLabelForPatientRow } from '../utils/pimsPatientSearchRow';
 import { taskLinkDisplayLabel, useTaskLinkLabels } from '../utils/taskLinkDisplay';
+import { buildSchedulerFocusAppointmentUrl } from '../utils/schedulerFocusAppointment';
 import {
   completeTask,
   createTask,
@@ -43,6 +44,7 @@ import {
   type AssignedTasksTab,
 } from '../utils/taskOwnership';
 import PimsTaskDetailView from '../components/pims/PimsTaskDetailView';
+import TaskReassignModal from '../components/pims/TaskReassignModal';
 import './PimsTasksPage.css';
 
 const PAGE_SIZE = 50;
@@ -905,7 +907,7 @@ export default function PimsTasksPage() {
       )}
 
       {reassignTask && (
-        <ReassignModal
+        <TaskReassignModal
           task={reassignTask}
           employees={employees}
           onClose={() => setReassignTask(null)}
@@ -959,72 +961,14 @@ function TaskLinkInline({
       </Link>
     );
   }
+  if (link.entityType === 'appointment') {
+    return (
+      <Link className="pims-task-card__link" to={buildSchedulerFocusAppointmentUrl(link.entityId)}>
+        {label}
+      </Link>
+    );
+  }
   return <span>{label}</span>;
-}
-
-type ReassignProps = {
-  task: TaskListItem;
-  employees: Employee[];
-  onClose: () => void;
-  onSaved: () => void;
-};
-
-function ReassignModal({ task, employees, onClose, onSaved }: ReassignProps) {
-  const [toId, setToId] = useState<string>(task.assignedToEmployeeId != null ? String(task.assignedToEmployeeId) : '');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const save = async () => {
-    const id = toId === '' ? null : Number(toId);
-    if (toId !== '' && !Number.isFinite(id)) {
-      setErr('Pick a valid assignee');
-      return;
-    }
-    setBusy(true);
-    setErr(null);
-    try {
-      await patchTask(task.id, { assignedToEmployeeId: id });
-      onSaved();
-    } catch (e: unknown) {
-      setErr(errMsg(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="pims-tasks__backdrop" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="pims-tasks__modal pims-tasks__modal--narrow" role="dialog" aria-labelledby="pims-reassign-title" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="pims-tasks__modal-head">
-          <h2 id="pims-reassign-title">Re-assign</h2>
-          <button type="button" className="pims-tasks__modal-close" aria-label="Close" onClick={onClose}>
-            ×
-          </button>
-        </div>
-        <p className="pims-tasks__reassign-task">{task.title}</p>
-        {err && <p className="pims-tasks__error">{err}</p>}
-        <label className="pims-tasks__modal-field">
-          <span>Assign to</span>
-          <select value={toId} onChange={(e) => setToId(e.target.value)} disabled={busy}>
-            <option value="">Queue (unassigned)</option>
-            {employees.map((em) => (
-              <option key={em.id} value={String(em.id)}>
-                {formatEmployeeDisplayName(em) || em.email}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="pims-tasks__modal-actions">
-          <button type="button" className="pims-tasks__modal-cancel" disabled={busy} onClick={onClose}>
-            Cancel
-          </button>
-          <button type="button" className="pims-tasks__modal-submit" disabled={busy} onClick={() => void save()}>
-            {busy ? 'Saving…' : 'Save'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 type ModalProps = {

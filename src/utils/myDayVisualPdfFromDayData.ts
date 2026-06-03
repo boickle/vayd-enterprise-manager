@@ -5,16 +5,30 @@
 import { DateTime } from 'luxon';
 import {
   blockDisplayLabel,
+  clientPhoneLineFromDoctorDayPayload,
   isFlexBlockItem,
+  mergeRangeClientContactOntoDoctorDayAppts,
   previewRoutingAppointmentLabel,
   type DoctorDayAppt,
   type MiniZone,
 } from '../api/appointments';
+import type { Appointment } from '../api/roomLoader';
 import { dayPoints, dayTotalDriveSeconds, type DayData, type WeekHousehold } from '../pages/MyWeek';
 import {
   clientFixedTimeUsesDoctorDayClockForDriveLayout,
   computeDriveTimeWindowWarning,
 } from './windowWarning';
+import {
+  aggregateRoomLoaderPreApptStatus,
+  roomLoaderPreApptDisplayColor,
+  roomLoaderPreApptDisplayLabel,
+} from './roomLoaderPreApptDisplay';
+import {
+  appointmentNotesFromDoctorDayRow,
+  petAlertsFromDoctorDayRow,
+  sexFromDoctorDayRow,
+  staffNotesFromDoctorDayRow,
+} from './myDayVisualPatientDetails';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
 import type {
   DoctorDayVisualPdfAppointmentPayload,
@@ -166,10 +180,26 @@ function getApptTypeString(appt: DoctorDayAppt): string {
 }
 
 function toPdfPatients(h: WeekHousehold): DoctorDayVisualPdfPatient[] {
-  return (h.patients ?? []).map((p) => ({
-    name: p.name,
-    type: p.type ?? undefined,
-  }));
+  return (h.patients ?? []).map((p) => {
+    const primary = h.primary;
+    return {
+      name: p.name,
+      type: p.type ?? undefined,
+      desc: p.desc ?? undefined,
+      appointmentNotes:
+        p.desc?.trim() ||
+        appointmentNotesFromDoctorDayRow(primary) ||
+        undefined,
+      staffNotes: staffNotesFromDoctorDayRow(primary) || undefined,
+      sex: sexFromDoctorDayRow(primary) || undefined,
+      petAlerts: p.alerts?.trim() || petAlertsFromDoctorDayRow(primary) || undefined,
+      alerts: p.alerts ?? undefined,
+      status: p.status ?? undefined,
+      recordStatus: p.recordStatus ?? undefined,
+      isMember: p.isMember,
+      membershipName: p.membershipName,
+    };
+  });
 }
 
 function buildStats(day: DayData, ordered: WeekHousehold[]): DoctorDayVisualPdfDocumentProps['stats'] {
@@ -343,11 +373,28 @@ function buildAppointmentPayload(
   const lastIdx = lastNonBlockIndex(ordered);
   const showBackToDepotInBlock = Boolean(backToDepotIso && idx === lastIdx && lastIdx >= 0);
 
+  const clientPhone = h.isPersonalBlock
+    ? undefined
+    : clientPhoneLineFromDoctorDayPayload(h.primary) ??
+      (h.primary.client
+        ? clientPhoneLineFromDoctorDayPayload({ client: h.primary.client })
+        : undefined) ??
+      str(h.primary, 'clientPhone');
+
+  const roomLoaderUi = h.isPersonalBlock
+    ? null
+    : aggregateRoomLoaderPreApptStatus([
+        str(h.primary, 'confirmStatusName'),
+        ...(h.patients ?? []).map((p) => p.status),
+      ]);
+
   return {
     key: h.key,
     client: blockTitleText,
     address: h.address,
-    clientPhone: h.isPersonalBlock ? undefined : str(h.primary, 'clientPhone'),
+    clientPhone,
+    roomLoaderStatus: roomLoaderUi ? roomLoaderPreApptDisplayLabel(roomLoaderUi) : undefined,
+    roomLoaderStatusColor: roomLoaderUi ? roomLoaderPreApptDisplayColor(roomLoaderUi) : undefined,
     durMin,
     etaIso:
       showByDriveTime && doctorDayClock
@@ -389,6 +436,20 @@ export type BuildMyDayVisualPdfFromDayDataArgs = {
   practiceTimeZone: string;
   dateIso: string;
 };
+
+/** Merge range API client phones / confirm status onto My Week households before PDF export. */
+export function enrichWeekHouseholdsFromRangeAppointments(
+  households: WeekHousehold[],
+  rangeAppts: readonly Appointment[]
+): WeekHousehold[] {
+  if (!rangeAppts.length) return households;
+  return households.map((h) => {
+    if (h.isPersonalBlock) return h;
+    const [primary] = mergeRangeClientContactOntoDoctorDayAppts([h.primary], rangeAppts);
+    if (!primary || primary === h.primary) return h;
+    return { ...h, primary };
+  });
+}
 
 export function buildMyDayVisualPdfExportPayloadFromDayData(
   args: BuildMyDayVisualPdfFromDayDataArgs

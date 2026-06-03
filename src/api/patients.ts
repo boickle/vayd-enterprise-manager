@@ -1,7 +1,16 @@
 // src/api/patients.ts
 import axios from 'axios';
 import { http } from './http';
+import { searchClientsStaff } from './clientsStaff';
 import type { MedicalRecordBundle } from '../utils/patientChartFromMedicalRecord';
+import {
+  clientRowMatchesNameTokens,
+  dedupePatientSearchRows,
+  rankPatientSearchResults,
+  scorePatientSearchRow,
+  tokenizePatientOwnerSearchQuery,
+} from '../utils/patientOwnerNameSearch';
+import type { ClientSearchRow } from './clientsStaff';
 // import type { PatientDto } from '../';
 
 // ---------------------------
@@ -45,23 +54,117 @@ export type PatientSearchRow = {
   [key: string]: unknown;
 };
 
-/** GET /patients/search — returns normalized rows for PIMS tables. */
-export async function searchPatientsStaff(
+type PatientSearchFetchOpts = {
+  practiceId?: string | number;
+  activeOnly?: boolean;
+  clientId?: string | number;
+};
+
+async function fetchPatientsSearchByName(
   name: string,
-  opts?: { practiceId?: string | number; activeOnly?: boolean }
+  opts?: PatientSearchFetchOpts
 ): Promise<PatientSearchRow[]> {
   const trimmed = name.trim();
-  if (!trimmed) return [];
+  if (!trimmed && opts?.clientId == null) return [];
   const activeOnly = opts?.activeOnly !== false;
   const { data } = await http.get('/patients/search', {
     params: {
-      name: trimmed,
+      ...(trimmed ? { name: trimmed } : {}),
+      ...(opts?.clientId != null ? { clientId: String(opts.clientId) } : {}),
       ...(opts?.practiceId != null ? { practiceId: opts.practiceId } : {}),
       activeOnly,
     },
   });
   const raw = extractPatientListFromSearchResponse(data);
   return raw.filter((r) => r && typeof r === 'object').map((r) => r as PatientSearchRow);
+}
+
+async function fetchPatientsForClients(
+  clients: ClientSearchRow[],
+  petNameHint: string | null,
+  opts?: PatientSearchFetchOpts,
+  maxClients = 8
+): Promise<PatientSearchRow[]> {
+  const slice = clients.slice(0, maxClients);
+  if (slice.length === 0) return [];
+  const batches = await Promise.all(
+    slice.map((client) =>
+      fetchPatientsSearchByName(petNameHint?.trim() ?? '', {
+        ...opts,
+        clientId: client.id,
+      })
+    )
+  );
+  return batches.flat();
+}
+
+async function fetchPatientsViaClientNameSearch(
+  clientQuery: string,
+  tokens: string[],
+  petNameHint: string | null,
+  opts?: PatientSearchFetchOpts,
+  maxClients = 8
+): Promise<PatientSearchRow[]> {
+  const includeInactive = opts?.activeOnly === false;
+  const clients = await searchClientsStaff(clientQuery, { includeInactive });
+  if (clients.length === 0) return [];
+
+  const matched =
+    tokens.length >= 2 ? clients.filter((client) => clientRowMatchesNameTokens(client, tokens)) : clients;
+  const scoped = matched.length > 0 ? matched : clients.slice(0, maxClients);
+  return fetchPatientsForClients(scoped, petNameHint, opts, maxClients);
+}
+
+function mergeRankPatientRows(rows: PatientSearchRow[], query: string): PatientSearchRow[] {
+  return rankPatientSearchResults(dedupePatientSearchRows(rows), query);
+}
+
+/**
+ * GET /patients/search — staff patient lookup.
+ * Supports pet + client combinations (e.g. "nala wilson") and client person names (e.g. "elise smith").
+ */
+export async function searchPatientsStaff(
+  name: string,
+  opts?: { practiceId?: string | number; activeOnly?: boolean }
+): Promise<PatientSearchRow[]> {
+  const trimmed = name.trim();
+  if (!trimmed) return [];
+  const tokens = tokenizePatientOwnerSearchQuery(trimmed);
+
+  const primary = await fetchPatientsSearchByName(trimmed, opts);
+
+  if (tokens.length < 2) {
+    return mergeRankPatientRows(primary, trimmed);
+  }
+
+  const clientPart = tokens.slice(1).join(' ');
+  const petToken = tokens[0]!;
+
+  const [petOnly, clientPartPatients, clientPersonPets] = await Promise.all([
+    fetchPatientsSearchByName(petToken, opts),
+    clientPart.toLowerCase() !== trimmed.toLowerCase()
+      ? fetchPatientsSearchByName(clientPart, opts)
+      : Promise.resolve([] as PatientSearchRow[]),
+    fetchPatientsViaClientNameSearch(trimmed, tokens, null, opts),
+  ]);
+
+  let merged = dedupePatientSearchRows([
+    ...primary,
+    ...petOnly,
+    ...clientPartPatients,
+    ...clientPersonPets,
+  ]);
+
+  const ranked = mergeRankPatientRows(merged, trimmed);
+  const topScore = ranked[0] ? scorePatientSearchRow(ranked[0], trimmed) : 0;
+
+  if (topScore < 70) {
+    const petClientPets = await fetchPatientsViaClientNameSearch(clientPart, tokens, petToken, opts);
+    merged = dedupePatientSearchRows([...merged, ...petClientPets]);
+    return mergeRankPatientRows(merged, trimmed);
+  }
+
+  return ranked;
 }
 
 /** GET /patients/:id — full patient for PIMS profile (may include nested client). */

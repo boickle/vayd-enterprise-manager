@@ -2,7 +2,9 @@
 import { http } from './http';
 import type { Appointment } from './roomLoader';
 
-export type ForwardBookingStatus = 'pending' | 'booked';
+export type ForwardBookingIntervalUnit = 'days' | 'weeks' | 'months';
+
+export type ForwardBookingStatus = 'pending' | 'booked' | 'complete';
 
 export type ForwardBookingClientRef = {
   id: number;
@@ -55,9 +57,15 @@ export type ForwardBookingEntry = {
   trackingToken: string;
   practiceId?: number;
   status: ForwardBookingStatus;
-  monthsOut: number;
-  /** Target date staff should book toward (source visit + monthsOut). */
+  /** Legacy rows — prefer `intervalAmount` + `intervalUnit`. */
+  monthsOut?: number | null;
+  intervalAmount?: number | null;
+  intervalUnit?: ForwardBookingIntervalUnit | string | null;
+  /** Target date staff should book toward (source visit + interval). */
   targetDueDate?: string | null;
+  /** Visit that ended with forward-book request (ISO UTC). */
+  sourceAppointmentStart?: string | null;
+  sourceAppointmentEnd?: string | null;
   sourceAppointmentId: number;
   clientId: number;
   patientId: number;
@@ -90,24 +98,70 @@ export type FetchForwardBookingsParams = {
   limit?: number;
 };
 
-function unwrapList(raw: unknown): ForwardBookingEntry[] {
-  if (Array.isArray(raw)) return raw as ForwardBookingEntry[];
-  if (raw && typeof raw === 'object') {
-    const o = raw as Record<string, unknown>;
-    if (Array.isArray(o.items)) return o.items as ForwardBookingEntry[];
-    if (Array.isArray(o.data)) return o.data as ForwardBookingEntry[];
+function pickIso(v: unknown): string | null {
+  if (typeof v !== 'string' || !v.trim()) return null;
+  return v.trim();
+}
+
+/** Map nested / alternate API shapes onto flat entry fields. */
+export function normalizeForwardBookingEntry(raw: unknown): ForwardBookingEntry {
+  const row = { ...(raw as ForwardBookingEntry) };
+  if (!raw || typeof raw !== 'object') return row;
+  const o = raw as Record<string, unknown>;
+  const src = o.sourceAppointment;
+  if (src && typeof src === 'object') {
+    const s = src as Record<string, unknown>;
+    if (!row.sourceAppointmentStart) {
+      row.sourceAppointmentStart = pickIso(s.appointmentStart) ?? pickIso(s.start) ?? null;
+    }
+    if (!row.sourceAppointmentEnd) {
+      row.sourceAppointmentEnd = pickIso(s.appointmentEnd) ?? pickIso(s.end) ?? null;
+    }
   }
-  return [];
+  if (!row.sourceAppointmentStart) {
+    row.sourceAppointmentStart = pickIso(o.sourceAppointmentStart) ?? null;
+  }
+  if (!row.sourceAppointmentEnd) {
+    row.sourceAppointmentEnd = pickIso(o.sourceAppointmentEnd) ?? null;
+  }
+  const booked = o.bookedAppointment;
+  if (booked && typeof booked === 'object') {
+    const b = booked as Record<string, unknown>;
+    if (row.bookedAppointmentId == null) {
+      const bid = b.id ?? b.appointmentId;
+      if (bid != null && Number.isFinite(Number(bid))) row.bookedAppointmentId = Number(bid);
+    }
+    if (!row.bookedAppointmentStart) {
+      row.bookedAppointmentStart =
+        pickIso(b.appointmentStart) ?? pickIso(b.start) ?? row.bookedAppointmentStart ?? null;
+    }
+    if (!row.bookedAppointmentEnd) {
+      row.bookedAppointmentEnd =
+        pickIso(b.appointmentEnd) ?? pickIso(b.end) ?? row.bookedAppointmentEnd ?? null;
+    }
+  }
+  return row;
+}
+
+function unwrapList(raw: unknown): ForwardBookingEntry[] {
+  let list: unknown[] = [];
+  if (Array.isArray(raw)) list = raw;
+  else if (raw && typeof raw === 'object') {
+    const o = raw as Record<string, unknown>;
+    if (Array.isArray(o.items)) list = o.items;
+    else if (Array.isArray(o.data)) list = o.data;
+  }
+  return list.map(normalizeForwardBookingEntry);
 }
 
 function unwrapEntry(raw: unknown): ForwardBookingEntry {
   if (raw && typeof raw === 'object') {
     const o = raw as Record<string, unknown>;
-    if (o.entry && typeof o.entry === 'object') return o.entry as ForwardBookingEntry;
+    if (o.entry && typeof o.entry === 'object') return normalizeForwardBookingEntry(o.entry);
     if (o.data && typeof o.data === 'object' && !Array.isArray(o.data))
-      return o.data as ForwardBookingEntry;
+      return normalizeForwardBookingEntry(o.data);
   }
-  return raw as ForwardBookingEntry;
+  return normalizeForwardBookingEntry(raw);
 }
 
 /**
@@ -125,7 +179,8 @@ export type CreateForwardBookingPayload = {
   sourceAppointmentId: number;
   clientId: number;
   patientId: number;
-  monthsOut: number;
+  intervalAmount: number;
+  intervalUnit: ForwardBookingIntervalUnit;
   appointmentTypeId?: number;
   primaryProviderId?: number;
   description?: string | null;
@@ -136,7 +191,7 @@ export type CreateForwardBookingPayload = {
 };
 
 /**
- * POST /forward-bookings — create when staff ends a visit and selects months out.
+ * POST /forward-bookings — create when staff ends a visit and selects a forward-book interval.
  */
 export async function createForwardBooking(
   body: CreateForwardBookingPayload
@@ -171,10 +226,12 @@ export type PatchForwardBookingBody = {
   /** Send `null` or `""` to clear. */
   note?: string | null;
   bookingNotes?: string | null;
+  /** `complete` — staff finished follow-up (moves row off the Booked tab). */
+  status?: ForwardBookingStatus;
 };
 
 /**
- * PATCH /forward-bookings/:id — update `note` and/or `bookingNotes` (send one or both).
+ * PATCH /forward-bookings/:id — update `note`, `bookingNotes`, and/or `status`.
  */
 export async function patchForwardBooking(
   forwardBookingId: number,
@@ -185,6 +242,14 @@ export async function patchForwardBooking(
     body
   );
   return unwrapEntry(data);
+}
+
+/** PATCH /forward-bookings/:id — mark follow-up finished (Booked → Complete tab). */
+export async function finishForwardBookingFollowUp(
+  forwardBookingId: number,
+  practiceId: number
+): Promise<ForwardBookingEntry> {
+  return patchForwardBooking(forwardBookingId, { practiceId, status: 'complete' });
 }
 
 export type ForwardBookingFutureAppointment = Pick<

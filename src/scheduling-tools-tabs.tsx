@@ -11,7 +11,7 @@ export type SchedulingToolsTabPage = {
 export const SCHEDULING_TOOLS_TAB_PAGES: SchedulingToolsTabPage[] = [
   {
     path: 'schedule-loader',
-    label: 'Fill',
+    label: 'Schedule loader',
     element: <FillDayPage />,
   },
   {

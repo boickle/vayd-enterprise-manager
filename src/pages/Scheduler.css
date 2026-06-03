@@ -264,6 +264,27 @@
   flex: 1;
 }
 
+/** Manual book proposal: red chip (timed slots only — all-day saves directly). */
+.scheduler-event.scheduler-routing-preview-slot.scheduler-manual-book-preview-slot {
+  outline: 3px solid rgba(220, 38, 38, 0.92);
+  outline-offset: 1px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.55),
+    0 4px 22px rgba(220, 38, 38, 0.48);
+  background: linear-gradient(165deg, #fee2e2 0%, #fecaca 52%, #fca5a5 100%) !important;
+  color: #7f1d1d !important;
+  border: 2px solid rgba(185, 28, 28, 0.55) !important;
+}
+
+.scheduler-page--routing-preview-focus .scheduler-event.scheduler-routing-preview-slot.scheduler-manual-book-preview-slot {
+  outline-width: 3px;
+  outline-color: rgba(239, 68, 68, 0.98);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.7),
+    0 0 28px 8px rgba(248, 113, 113, 0.68),
+    0 12px 36px rgba(153, 27, 27, 0.42);
+}
+
 .scheduler-page--routing-preview-focus .scheduler-routing-preview-slot {
   outline-width: 3px;
   outline-color: rgba(196, 181, 253, 0.98);
@@ -271,31 +292,6 @@
     0 0 0 2px rgba(255, 255, 255, 0.65),
     0 0 24px 6px rgba(167, 139, 250, 0.65),
     0 10px 32px rgba(91, 33, 182, 0.38);
-}
-
-.scheduler-page--routing-preview-focus .scheduler-day-header {
-  opacity: 0.78;
-}
-
-.scheduler-all-day-unified-outer--routing-preview-focus .scheduler-all-day-span-bar {
-  opacity: 0.58;
-  filter: grayscale(0.32);
-}
-
-.scheduler-day-body--routing-preview-focus
-  .scheduler-event:not(.scheduler-routing-preview-slot):not(.scheduler-edit-time-preview-slot):not(
-    .scheduler-reschedule-source-slot
-  ):not(.scheduler-edit-visit-active-slot):not(.scheduler-edit-visit-booked-slot) {
-  opacity: 0.72;
-  filter: grayscale(0.28);
-}
-
-.scheduler-all-day-unified-outer--routing-preview-focus
-  .scheduler-all-day-span-bar:not(.scheduler-reschedule-source-slot):not(
-    .scheduler-edit-visit-active-slot
-  ):not(.scheduler-edit-visit-booked-slot) {
-  opacity: 0.58;
-  filter: grayscale(0.32);
 }
 
 /** Edit-visit time preview: purple ring (keeps type colors). */
@@ -379,7 +375,7 @@
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background: rgba(241, 245, 249, 0.42);
+  background: transparent;
   border-radius: 6px;
 }
 
@@ -502,6 +498,53 @@
 }
 
 .scheduler-embedded-reschedule-bar-dismiss {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 12px;
+  padding: 4px 12px;
+}
+
+/** Routing workspace: forward booking from list — orange bar + frame around calendar */
+.scheduler-toolbar-calendar-merge--forward-booking-halo {
+  border: 2px solid #f97316;
+  border-radius: 10px;
+  background: #fff7ed;
+  box-shadow: 0 0 0 1px rgba(249, 115, 22, 0.22), 0 4px 18px rgba(194, 65, 12, 0.14);
+}
+
+.scheduler-embedded-forward-booking-bar {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #fdba74;
+  background: #ffedd5;
+  color: #9a3412;
+}
+
+.scheduler-embedded-forward-booking-bar-badge {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fff7ed;
+  background: #ea580c;
+}
+
+.scheduler-embedded-forward-booking-bar-msg {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  min-width: 0;
+}
+
+.scheduler-embedded-forward-booking-bar-dismiss {
   flex-shrink: 0;
   margin-left: auto;
   font-size: 12px;
@@ -1561,6 +1604,12 @@ label.scheduler-go-date-heading {
   background: #f8fafc;
 }
 
+.scheduler-day-header-btn--progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .scheduler-day-header-btn--icon {
   display: inline-flex;
   align-items: center;
@@ -2137,6 +2186,11 @@ label.scheduler-go-date-heading {
   box-shadow:
     0 10px 28px rgba(15, 23, 42, 0.18),
     0 0 0 1px rgba(255, 255, 255, 0.75) inset;
+  transition:
+    left 140ms ease,
+    top 140ms ease,
+    bottom 140ms ease,
+    max-height 140ms ease;
 }
 
 .scheduler-tooltip-vh-header {
@@ -2892,6 +2946,16 @@ label.scheduler-go-date-heading {
   background: #f1f5f9;
 }
 
+.scheduler-book-dropdown-section {
+  padding: 6px 12px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+  pointer-events: none;
+}
+
 .scheduler-book-dd-primary {
   font-weight: 600;
   color: #0f172a;
@@ -3243,6 +3307,227 @@ label.scheduler-go-date-heading {
 .scheduler-actual-visit-footer {
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.scheduler-forward-booking-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.scheduler-forward-booking-save-hint {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.scheduler-forward-booking-saved-lead {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.scheduler-forward-booking-mode-row--readonly {
+  cursor: default;
+}
+
+.scheduler-forward-booking-mode-option--readonly {
+  pointer-events: none;
+}
+
+.scheduler-forward-booking-saved-details {
+  margin: 0;
+  padding: 0 12px 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.scheduler-forward-booking-saved-details > div {
+  display: grid;
+  gap: 2px;
+}
+
+.scheduler-forward-booking-saved-details dt {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.scheduler-forward-booking-saved-details dd {
+  margin: 0;
+  font-size: 14px;
+  color: #0f172a;
+  white-space: pre-wrap;
+}
+
+.scheduler-forward-booking-mode-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.scheduler-forward-booking-mode-legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.scheduler-forward-booking-mode-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scheduler-forward-booking-mode-option {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.scheduler-forward-booking-mode-option--active {
+  border-color: color-mix(in srgb, var(--scheduler-accent, #0d9488) 45%, #cbd5e1);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--scheduler-accent, #0d9488) 18%, transparent);
+}
+
+.scheduler-forward-booking-mode-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.scheduler-forward-booking-mode-row input[type='radio'] {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+}
+
+.scheduler-forward-booking-mode-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.scheduler-forward-booking-mode-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  line-height: 1.35;
+}
+
+.scheduler-forward-booking-mode-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.scheduler-forward-booking-mode-panel {
+  padding: 0 12px 12px 40px;
+}
+
+.scheduler-forward-booking-task-preview {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.scheduler-forward-booking-task-preview-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 4px;
+}
+
+.scheduler-forward-booking-task-preview-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #0f172a;
+}
+
+.scheduler-forward-booking-task-preview-meta {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.scheduler-forward-booking-field-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 400;
+}
+
+.scheduler-forward-booking-section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.scheduler-forward-booking-booked-btn {
+  font-size: 12px !important;
+  padding: 6px 12px !important;
+  white-space: nowrap;
+}
+
+.scheduler-forward-booking-undo-btn {
+  font-size: 12px !important;
+  padding: 6px 12px !important;
+  white-space: nowrap;
+}
+
+.scheduler-forward-booking-booked-btn--active {
+  background: #e2e8f0 !important;
+  border-color: #94a3b8 !important;
+  color: #0f172a !important;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.scheduler-forward-booking-booked-hint {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.scheduler-forward-booking-section--override .scheduler-forward-booking-mode-option--active {
+  background: #f8fafc;
+}
+
+.scheduler-forward-booking-section--booked-at-appt .scheduler-edit-field > span,
+.scheduler-forward-booking-section--override .scheduler-edit-field > span {
+  color: #94a3b8;
+}
+
+.scheduler-forward-booking-section--booked-at-appt select:disabled,
+.scheduler-forward-booking-section--booked-at-appt textarea:disabled,
+.scheduler-forward-booking-section--override select:disabled,
+.scheduler-forward-booking-section--override textarea:disabled {
+  background: #f1f5f9;
+  color: #94a3b8;
+  cursor: not-allowed;
+  opacity: 1;
 }
 
 /* —— Appointment context (right-click) menu —— */
@@ -4303,6 +4588,10 @@ label.scheduler-go-date-heading {
   position: relative;
 }
 
+.scheduler-toolbar-calendar-merge--calendar-locked {
+  position: relative;
+}
+
 .scheduler-edit-visit-calendar-blocker {
   position: absolute;
   inset: 0;
@@ -4521,9 +4810,54 @@ label.scheduler-go-date-heading {
 .scheduler-reconcile-board-headers,
 .scheduler-reconcile-board-timeline {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr);
+  grid-template-columns: 56px minmax(0, 1fr) 44px minmax(0, 1fr) 56px;
   gap: 12px;
   align-items: stretch;
+}
+
+.scheduler-reconcile-time-col-spacer {
+  min-width: 0;
+}
+
+.scheduler-reconcile-time-col {
+  flex: 0 0 56px;
+  min-width: 56px;
+  background: #fafafa;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  box-sizing: border-box;
+}
+
+.scheduler-reconcile-time-col-inner {
+  position: relative;
+  width: 100%;
+}
+
+.scheduler-reconcile-time-slot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.2;
+  border-top: 1px solid #f1f5f9;
+  pointer-events: none;
+}
+
+.scheduler-reconcile-time-slot--major {
+  border-top-color: #e2e8f0;
+  font-weight: 500;
+}
+
+.scheduler-reconcile-time-col--right .scheduler-reconcile-time-slot {
+  text-align: right;
+  padding-right: 8px;
+}
+
+.scheduler-reconcile-time-col--left .scheduler-reconcile-time-slot {
+  text-align: left;
+  padding-left: 8px;
 }
 
 .scheduler-reconcile-column-header {
@@ -4585,6 +4919,11 @@ label.scheduler-go-date-heading {
   .scheduler-reconcile-board-headers,
   .scheduler-reconcile-board-timeline {
     grid-template-columns: 1fr;
+  }
+
+  .scheduler-reconcile-time-col,
+  .scheduler-reconcile-time-col-spacer {
+    display: none;
   }
 
   .scheduler-reconcile-connector-spacer,
@@ -4657,6 +4996,20 @@ label.scheduler-go-date-heading {
   font-weight: 600;
   text-transform: none;
   letter-spacing: normal;
+}
+
+.scheduler-reconcile-column-save {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  width: 100%;
+}
+
+.scheduler-reconcile-column-save .scheduler-reconcile-error,
+.scheduler-reconcile-column-save .scheduler-reconcile-success {
+  margin: 0;
 }
 
 .scheduler-reconcile-footer {
@@ -4736,6 +5089,16 @@ label.scheduler-go-date-heading {
   line-height: 1.25;
 }
 
+.scheduler-reconcile-visit.scheduler-event {
+  cursor: context-menu;
+}
+
+.scheduler-reconcile-visit--interactive:hover {
+  filter: brightness(0.94);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
+  z-index: 4;
+}
+
 .scheduler-reconcile-visit--block {
   background: #f1f5f9;
   border-color: #cbd5e1;
@@ -4749,6 +5112,11 @@ label.scheduler-go-date-heading {
 .scheduler-reconcile-visit-time {
   font-weight: 700;
   color: #0f172a;
+}
+
+.scheduler-reconcile-visit.scheduler-event .scheduler-reconcile-visit-time,
+.scheduler-reconcile-visit.scheduler-event .scheduler-reconcile-visit-label {
+  color: inherit;
 }
 
 .scheduler-reconcile-visit-label {
