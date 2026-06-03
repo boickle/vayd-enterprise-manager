@@ -1,5 +1,8 @@
 import { DateTime } from 'luxon';
 import type { ForwardBookingEntry } from '../api/forwardBooking';
+import type { AppointmentType } from '../api/appointmentSettings';
+import type { Appointment } from '../api/roomLoader';
+import { isFixedTimeTypeName } from './editVisitTimePreview';
 import { formatForwardBookingIntervalLabel } from './forwardBookingFromAppointment';
 
 export type ForwardBookingSmsBookedSlot = {
@@ -59,22 +62,163 @@ function petNamesPhrase(entry: ForwardBookingEntry): string {
 export function formatForwardBookingSmsBookedSlot(
   startIso: string,
   endIso: string | null | undefined,
-  practiceTz: string
+  practiceTz: string,
+  dateIsoForLabel?: string
 ): ForwardBookingSmsBookedSlot {
   const start = DateTime.fromISO(startIso, { zone: 'utc' }).setZone(practiceTz);
+  const dateSource = dateIsoForLabel ?? startIso;
+  const dateDt = DateTime.fromISO(dateSource, { zone: 'utc' }).setZone(practiceTz);
   if (!start.isValid) {
     return { dateLabel: 'xxxxx', windowStart: 'xxxx', windowEnd: 'xxxx' };
   }
   const end = endIso
     ? DateTime.fromISO(endIso, { zone: 'utc' }).setZone(practiceTz)
     : null;
-  const dateLabel = start.toFormat('EEEE, MMM d');
+  const dateLabel = dateDt.isValid ? dateDt.toFormat('EEEE, MMM d') : start.toFormat('EEEE, MMM d');
   const windowStart = start.toFormat('h:mm a');
   const windowEnd =
     end?.isValid && end.toMillis() !== start.toMillis()
       ? end.toFormat('h:mm a')
       : windowStart;
   return { dateLabel, windowStart, windowEnd };
+}
+
+type AppointmentTypeWindowFields = Pick<
+  AppointmentType,
+  'name' | 'prettyName' | 'windowBeforeMinutes' | 'windowAfterMinutes'
+>;
+
+function parseLocalTimeOnAppointmentDay(
+  appointmentStartIso: string,
+  localTime: string,
+  practiceTz: string
+): string | null {
+  const day = DateTime.fromISO(appointmentStartIso, { zone: 'utc' }).setZone(practiceTz);
+  if (!day.isValid) return null;
+  const trimmed = localTime.trim();
+  for (const fmt of ['h:mm a', 'h:mma', 'H:mm'] as const) {
+    const parsed = DateTime.fromFormat(trimmed, fmt, { zone: practiceTz });
+    if (!parsed.isValid) continue;
+    const combined = day.set({
+      hour: parsed.hour,
+      minute: parsed.minute,
+      second: 0,
+      millisecond: 0,
+    });
+    return combined.toISO({ includeOffset: true });
+  }
+  return null;
+}
+
+/** ± minutes around scheduled start from appointment type (matches edit-visit / routing preview). */
+export function computedArrivalWindowFromAppointmentType(
+  appointmentStart: string,
+  appointmentEnd: string,
+  type: AppointmentTypeWindowFields | null | undefined,
+  practiceTz: string
+): { startIso: string; endIso: string } | null {
+  const typeName = (type?.name || type?.prettyName || '').trim();
+  if (isFixedTimeTypeName(typeName)) {
+    return { startIso: appointmentStart, endIso: appointmentEnd };
+  }
+  const start = DateTime.fromISO(appointmentStart, { zone: 'utc' }).setZone(practiceTz);
+  if (!start.isValid) return null;
+  const before = type?.windowBeforeMinutes ?? 60;
+  const after = type?.windowAfterMinutes ?? 60;
+  return {
+    startIso: start.minus({ minutes: before }).toISO({ includeOffset: true }) ?? appointmentStart,
+    endIso: start.plus({ minutes: after }).toISO({ includeOffset: true }) ?? appointmentEnd,
+  };
+}
+
+/** Arrival window isos for SMS — API window fields, else compute from appointment type. */
+export function appointmentArrivalWindowIsosForSms(
+  appt: Pick<
+    Appointment,
+    'effectiveWindow' | 'arrivalWindow' | 'appointmentStart' | 'appointmentEnd' | 'appointmentType'
+  >,
+  practiceTz: string,
+  appointmentType?: AppointmentTypeWindowFields | null
+): { startIso: string; endIso: string; dateIsoForLabel: string } | null {
+  const schedStart = pickStr(appt.appointmentStart);
+  const schedEnd = pickStr(appt.appointmentEnd);
+  if (!schedStart) return null;
+
+  const type =
+    appointmentType ??
+    (appt.appointmentType as AppointmentTypeWindowFields | null | undefined) ??
+    null;
+
+  const ew = appt.effectiveWindow;
+  if (ew?.startIso?.trim() && ew?.endIso?.trim()) {
+    return {
+      startIso: ew.startIso.trim(),
+      endIso: ew.endIso.trim(),
+      dateIsoForLabel: schedStart,
+    };
+  }
+
+  const aw = appt.arrivalWindow;
+  const ws = pickStr(aw?.windowStartIso);
+  const we = pickStr(aw?.windowEndIso);
+  if (ws && we) {
+    return { startIso: ws, endIso: we, dateIsoForLabel: schedStart };
+  }
+
+  const wsl = pickStr(aw?.windowStartLocal);
+  const wel = pickStr(aw?.windowEndLocal);
+  if (wsl && wel) {
+    const startIso = parseLocalTimeOnAppointmentDay(schedStart, wsl, practiceTz);
+    const endIso = parseLocalTimeOnAppointmentDay(schedStart, wel, practiceTz);
+    if (startIso && endIso) {
+      return { startIso, endIso, dateIsoForLabel: schedStart };
+    }
+  }
+
+  const computed = computedArrivalWindowFromAppointmentType(
+    schedStart,
+    schedEnd ?? schedStart,
+    type,
+    practiceTz
+  );
+  if (!computed) return null;
+  return { ...computed, dateIsoForLabel: schedStart };
+}
+
+export function formatForwardBookingSmsBookedSlotFromAppointment(
+  appt: Pick<
+    Appointment,
+    'effectiveWindow' | 'arrivalWindow' | 'appointmentStart' | 'appointmentEnd' | 'appointmentType'
+  >,
+  practiceTz: string,
+  appointmentType?: AppointmentTypeWindowFields | null
+): ForwardBookingSmsBookedSlot | null {
+  const win = appointmentArrivalWindowIsosForSms(appt, practiceTz, appointmentType);
+  if (!win) return null;
+  return formatForwardBookingSmsBookedSlot(
+    win.startIso,
+    win.endIso,
+    practiceTz,
+    win.dateIsoForLabel
+  );
+}
+
+export function formatForwardBookingSmsBookedSlotFromEntry(
+  entry: ForwardBookingEntry,
+  practiceTz: string,
+  appointmentType?: AppointmentTypeWindowFields | null
+): ForwardBookingSmsBookedSlot | undefined {
+  const start = entry.bookedAppointmentStart?.trim();
+  if (!start) return undefined;
+  const end = entry.bookedAppointmentEnd?.trim() ?? start;
+  const computed = computedArrivalWindowFromAppointmentType(start, end, appointmentType ?? null, practiceTz);
+  if (!computed) return undefined;
+  return formatForwardBookingSmsBookedSlot(
+    computed.startIso,
+    computed.endIso,
+    practiceTz,
+    start
+  );
 }
 
 export function buildForwardBookingSmsMessage(

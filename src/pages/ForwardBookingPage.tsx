@@ -30,7 +30,9 @@ import { evetClientLink, evetPatientLink } from '../utils/evet';
 import {
   buildForwardBookingSmsMessage,
   clientHasSmsPhone,
-  formatForwardBookingSmsBookedSlot,
+  formatForwardBookingSmsBookedSlotFromAppointment,
+  formatForwardBookingSmsBookedSlotFromEntry,
+  type ForwardBookingSmsBookedSlot,
 } from '../utils/forwardBookingSmsMessage';
 import {
   clearForwardBookingLocalLink,
@@ -228,6 +230,40 @@ export default function ForwardBookingPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const practiceTz = practiceTimeZoneOrDefault(undefined);
+
+  const resolveBookedSlotForSms = useCallback(
+    async (entry: ForwardBookingEntry): Promise<ForwardBookingSmsBookedSlot | undefined> => {
+      const catalog = typeCatalogRef.current;
+      const entryType =
+        entry.appointmentTypeId != null
+          ? catalog?.byId.get(Number(entry.appointmentTypeId))
+          : undefined;
+
+      const apptId = forwardBookingLinkedAppointmentId(entry) ?? entry.bookedAppointmentId ?? null;
+      if (apptId != null) {
+        const appt = await fetchAppointmentById(apptId, { practiceId: PRACTICE_ID });
+        if (appt) {
+          const type =
+            entryType ??
+            (appt.appointmentType?.id != null
+              ? catalog?.byId.get(Number(appt.appointmentType.id))
+              : undefined) ??
+            (appt.appointmentType as typeof entryType) ??
+            undefined;
+          const fromAppt = formatForwardBookingSmsBookedSlotFromAppointment(
+            appt,
+            practiceTz,
+            type ?? null
+          );
+          if (fromAppt) return fromAppt;
+        }
+      }
+
+      return formatForwardBookingSmsBookedSlotFromEntry(entry, practiceTz, entryType ?? null);
+    },
+    [practiceTz]
+  );
+
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending');
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<ForwardBookingEntry[]>([]);
@@ -324,13 +360,9 @@ export default function ForwardBookingPage() {
         const entry = list.find((r) => r.id === openSmsForReturn.forwardBookingEntryId);
         const points = metaMap.get(openSmsForReturn.bookedAppointmentId)?.points ?? 0;
         if (entry && points <= 0 && clientHasSmsPhone(entry)) {
-          const bookedSlot = formatForwardBookingSmsBookedSlot(
-            openSmsForReturn.bookedAppointmentStart,
-            openSmsForReturn.bookedAppointmentEnd,
-            practiceTz
-          );
+          const bookedSlot = await resolveBookedSlotForSms(entry);
           setSmsError(null);
-          setSmsMessage(buildForwardBookingSmsMessage(entry, { bookedSlot }));
+          setSmsMessage(buildForwardBookingSmsMessage(entry, bookedSlot ? { bookedSlot } : undefined));
           setSmsEntry(entry);
         }
       }
@@ -344,7 +376,7 @@ export default function ForwardBookingPage() {
     } finally {
       setLoading(false);
     }
-  }, [practiceTz]);
+  }, [practiceTz, resolveBookedSlotForSms]);
 
   useEffect(() => {
     void load();
@@ -502,13 +534,10 @@ export default function ForwardBookingPage() {
     navigate('/schedule/routing');
   };
 
-  const openSmsModal = (entry: ForwardBookingEntry) => {
+  const openSmsModal = async (entry: ForwardBookingEntry) => {
     if (!clientHasSmsPhone(entry)) return;
     setSmsError(null);
-    const start = entry.bookedAppointmentStart?.trim();
-    const bookedSlot = start
-      ? formatForwardBookingSmsBookedSlot(start, entry.bookedAppointmentEnd, practiceTz)
-      : undefined;
+    const bookedSlot = await resolveBookedSlotForSms(entry);
     setSmsMessage(buildForwardBookingSmsMessage(entry, bookedSlot ? { bookedSlot } : undefined));
     setSmsEntry(entry);
   };
