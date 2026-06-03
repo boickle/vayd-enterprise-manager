@@ -1,12 +1,16 @@
 // src/pages/DoctorDayVisual.tsx
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
+import { createRoot } from 'react-dom/client';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
 import { DateTime } from 'luxon';
 import type { DoctorDayProps } from './DoctorDay';
 import {
   fetchDoctorDay,
   clientDisplayName,
+  previewRoutingAppointmentLabel,
   isBlockEntry,
   blockDisplayLabel,
   isFlexBlockItem,
@@ -43,6 +47,11 @@ import {
   isoFromSecondsSincePracticeMidnight,
 } from '../utils/practiceTimezone';
 import './DoctorDay.css';
+import {
+  DoctorDayVisualPdfDocument,
+  type DoctorDayVisualPdfAppointmentPayload,
+  type DoctorDayVisualPdfRow,
+} from './DoctorDayVisualPdf';
 
 // ===== Vertical scale: match My Week column density =====
 const PPM = 1.1;
@@ -449,14 +458,19 @@ function visualHouseholdIsClientFixedTime(h: Household): boolean {
 /**
  * When true, layout and hover Arrive/Leave use doctor-day start/end (My Week `weekHouseholdUsesDoctorDayClockForLayout`).
  * Client Fixed Time uses route ETA when arrival is after booked start; otherwise calendar start.
+ *
+ * `blockMetaForFlex` must match render: {@link blockLabelMetaForDisplay} so noloc / doctor-day rows that only
+ * expose `FLEX BLOCK` on ETA `byIndex` still count as flex (route clock), not fixed personal blocks.
  */
 function visualHouseholdUsesDoctorDayClockForLayout(
   h: Household,
   slot: { eta?: string | null; etd?: string | null } | undefined,
-  showByDriveTime: boolean
+  showByDriveTime: boolean,
+  blockMetaForFlex?: { blockLabel?: string; title?: string } | null
 ): boolean {
   if (!showByDriveTime) return true;
-  const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(h.primary));
+  const flexSource = blockMetaForFlex ?? h.primary;
+  const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(flexSource));
   if (h.isPersonalBlock && !flexBlock) return true;
   if (!visualHouseholdIsClientFixedTime(h)) return false;
   const eta = slot?.eta;
@@ -662,6 +676,7 @@ export default function DoctorDayVisual({
     y: number;
     title: string;
   } | null>(null);
+  const [pdfExporting, setPdfExporting] = useState(false);
 
   /** blockLabel from last ETA byIndex (keys include lat/lon variants) */
   const [etaBlockLabelByKey, setEtaBlockLabelByKey] = useState<Record<string, string>>({});
@@ -782,6 +797,8 @@ export default function DoctorDayVisual({
             city: virtualAppt.city ?? '',
             state: virtualAppt.state ?? '',
             zip: virtualAppt.zip ?? '',
+            clientZone: virtualAppt.clientZone,
+            effectiveZone: virtualAppt.effectiveZone,
             appointmentStart: start.toISO(),
             appointmentEnd: end.toISO(),
             isPreview: true as any,
@@ -1592,10 +1609,11 @@ export default function DoctorDayVisual({
     for (let idx = 0; idx < N; idx++) {
       const h = displayHouseholds[idx];
       const slot = displayTimeline[idx];
+      const labelMeta = blockLabelMetaForDisplay(h, etaBlockLabelByKey);
       const etaIso = slot?.eta ?? null;
       const etdIso = slot?.etd ?? null;
       const { startIso: sIso, endIso: eIso } = householdStartEnd(h, idx);
-      const doctorDayClock = visualHouseholdUsesDoctorDayClockForLayout(h, slot, showByDriveTime);
+      const doctorDayClock = visualHouseholdUsesDoctorDayClockForLayout(h, slot, showByDriveTime, labelMeta);
       const useEta = showByDriveTime && !doctorDayClock && (slot?.eta ?? slot?.etd);
       let anchorIso = useEta ? (slot?.eta ?? sIso) : sIso;
       const endIso = useEta && slot?.etd ? slot.etd : eIso;
@@ -1603,7 +1621,13 @@ export default function DoctorDayVisual({
         const prev = displayHouseholds[idx - 1];
         const prevSlot = displayTimeline[idx - 1];
         if (sameAddress(prev, h)) {
-          const prevDoctorDay = visualHouseholdUsesDoctorDayClockForLayout(prev, prevSlot, showByDriveTime);
+          const prevLabelMeta = blockLabelMetaForDisplay(prev, etaBlockLabelByKey);
+          const prevDoctorDay = visualHouseholdUsesDoctorDayClockForLayout(
+            prev,
+            prevSlot,
+            showByDriveTime,
+            prevLabelMeta
+          );
           const prevEtd =
             showByDriveTime && !prevDoctorDay && prevSlot?.etd
               ? prevSlot.etd
@@ -1643,7 +1667,6 @@ export default function DoctorDayVisual({
         const prevEndShiftedPx = baseTops[idx - 1] + driveOffsetsPx[idx - 1] + heights[idx - 1];
         const minsJ = driveBetweenMinForLayout[idx - 1] ?? 0;
         let off = Math.max(0, prevEndShiftedPx + minsJ * PPM - baseTop);
-        const labelMeta = blockLabelMetaForDisplay(h, etaBlockLabelByKey);
         const flexRow =
           h.isPersonalBlock === true &&
           (isFlexBlockItem(labelMeta) ||
@@ -2168,7 +2191,7 @@ export default function DoctorDayVisual({
         .map((h) => ({
           lat: h.lat,
           lon: h.lon,
-          label: h.client,
+          label: h.isPreview ? previewRoutingAppointmentLabel(h.primary) : h.client,
           address: h.address,
         })),
     [displayHouseholds]
@@ -2449,6 +2472,277 @@ export default function DoctorDayVisual({
     practiceTimeZone,
   ]);
 
+  const buildAppointmentPdfPayload = useCallback(
+    (idx: number): DoctorDayVisualPdfAppointmentPayload | null => {
+      const h = displayHouseholds[idx];
+      if (!h) return null;
+      const { startIso: resolvedStartIso, endIso: resolvedEndIso } = householdStartEnd(h, idx);
+      const schedStart = resolvedStartIso ? DateTime.fromISO(resolvedStartIso) : null;
+      const schedEnd = resolvedEndIso ? DateTime.fromISO(resolvedEndIso) : null;
+      if (!schedStart || !schedEnd) return null;
+
+      const durMin = Math.max(1, Math.round(schedEnd.diff(schedStart).as('minutes')));
+
+      const getApptTypeString = (appt: DoctorDayAppt): string => {
+        const type1 = str(appt, 'appointmentType');
+        const type2 = str(appt, 'appointmentTypeName');
+        const type3 = str(appt, 'serviceName');
+        const type4 = (appt as any)?.appointmentType;
+        const type5 = (appt as any)?.appointmentTypeName;
+        const type6 = typeof type4 === 'object' && type4?.name ? String(type4.name) : null;
+
+        return (
+          type1 ||
+          type2 ||
+          type3 ||
+          (typeof type4 === 'string' ? type4 : null) ||
+          (typeof type5 === 'string' ? type5 : null) ||
+          type6 ||
+          ''
+        );
+      };
+
+      const primaryTypeLower = getApptTypeString(h.primary).toLowerCase();
+      const firstPatientType = (h.patients[0]?.type || '').toLowerCase();
+
+      const blockLabelMetaEarly = h.isPersonalBlock
+        ? blockLabelMetaForDisplay(h, etaBlockLabelByKey)
+        : null;
+      const flexBlock = Boolean(
+        h.isPersonalBlock && isFlexBlockItem(blockLabelMetaEarly ?? h.primary)
+      );
+
+      const isFixedTime =
+        (h.isPersonalBlock && !flexBlock) ||
+        primaryTypeLower === 'fixed time' ||
+        firstPatientType === 'fixed time';
+
+      const slot = displayTimeline[idx];
+      const etaIso = slot?.eta ?? null;
+      const etdIso = slot?.etd ?? null;
+      const doctorDayClock = visualHouseholdUsesDoctorDayClockForLayout(
+        h,
+        slot,
+        showByDriveTime,
+        blockLabelMetaEarly ?? undefined
+      );
+      const useDriveTime = showByDriveTime && !doctorDayClock && (etaIso ?? etdIso);
+      const ew = h.primary?.effectiveWindow;
+      const { winStartIso, winEndIso } = isFixedTime
+        ? { winStartIso: resolvedStartIso, winEndIso: resolvedEndIso }
+        : slot?.windowStartIso && slot?.windowEndIso
+          ? { winStartIso: slot.windowStartIso, winEndIso: slot.windowEndIso }
+          : ew?.startIso && ew?.endIso
+            ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
+            : adjustedWindowForStart(date, h.startIso!, schedStartIso, practiceTimeZone);
+
+      const clientFixedRoutePushedPastSchedule =
+        showByDriveTime && visualHouseholdIsClientFixedTime(h) && !doctorDayClock;
+      const windowWarning =
+        showByDriveTime &&
+        !h.isPersonalBlock &&
+        ((useDriveTime && !isFixedTime && shouldShowEtaWindowWarning(etaIso, winEndIso)) ||
+          clientFixedRoutePushedPastSchedule);
+
+      const blockLabelMeta = blockLabelMetaEarly;
+      const blockTitleText =
+        h.isPersonalBlock && blockLabelMeta
+          ? blockDisplayLabel(blockLabelMeta)
+          : h.isPersonalBlock
+            ? h.client
+            : h.isPreview
+              ? previewRoutingAppointmentLabel(h.primary)
+              : h.client;
+
+      const g = blockGeom[idx];
+      const hoveredBlockBottomPx = g ? g.top + g.height : 0;
+      const showBackToDepotInBlock =
+        !!stats.backToDepotIso && hoveredBlockBottomPx >= maxDayVisualBottomPx - 2;
+
+      return {
+        key: h.key,
+        client: blockTitleText,
+        address: h.address,
+        durMin,
+        etaIso:
+          showByDriveTime && doctorDayClock
+            ? resolvedStartIso
+            : showByDriveTime
+              ? (etaIso ?? null)
+              : null,
+        etdIso:
+          showByDriveTime && doctorDayClock
+            ? resolvedEndIso
+            : showByDriveTime
+              ? (etdIso ?? null)
+              : null,
+        sIso: h.startIso!,
+        eIso: h.endIso!,
+        patients: h.patients || [],
+        clientAlert: h?.clientAlert,
+        isFixedTime,
+        isPersonalBlock: h.isPersonalBlock,
+        isNoLocation: h.isNoLocation,
+        isPreview: h.isPreview,
+        flexBlock,
+        effectiveWindow: h.primary?.effectiveWindow,
+        windowFromByIndex:
+          slot?.windowStartIso && slot?.windowEndIso
+            ? { winStartIso: slot.windowStartIso, winEndIso: slot.windowEndIso }
+            : undefined,
+        resolvedWinStartIso: winStartIso,
+        resolvedWinEndIso: winEndIso,
+        windowWarning,
+        showBackToDepotInBlock,
+        backToDepotIso: stats.backToDepotIso,
+      };
+    },
+    [
+      displayHouseholds,
+      displayTimeline,
+      showByDriveTime,
+      date,
+      schedStartIso,
+      practiceTimeZone,
+      etaBlockLabelByKey,
+      blockGeom,
+      stats.backToDepotIso,
+      maxDayVisualBottomPx,
+    ]
+  );
+
+  async function handleExportMyDayVisualPdf() {
+    if (loading || pdfExporting) return;
+    if (!selectedDoctorId?.trim()) return;
+    setPdfExporting(true);
+    const host = document.createElement('div');
+    host.setAttribute('data-myday-visual-pdf', '1');
+    // html2canvas does not reliably paint near-zero opacity or unlaid-out hosts; keep off-screen but fully opaque.
+    host.style.cssText =
+      'position:fixed;left:-16000px;top:0;width:1240px;opacity:1;pointer-events:none;z-index:-1;background:#fff;';
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+      const doctorName =
+        providers.find((p) => String(p.id) === selectedDoctorId)?.name ?? 'Provider';
+      const dateLabel = DateTime.fromISO(date).toLocaleString(DateTime.DATE_MED);
+
+      const pdfRows: DoctorDayVisualPdfRow[] = [];
+      if (fromDepotSegment) {
+        pdfRows.push({
+          rowType: 'segment',
+          segment: {
+            kind: 'fromDepot',
+            title: `Drive from depot: ${fromDepotSegment.mins} min`,
+            mins: fromDepotSegment.mins,
+          },
+        });
+      }
+      for (let idx = 0; idx < displayHouseholds.length; idx++) {
+        const payload = buildAppointmentPdfPayload(idx);
+        if (payload) pdfRows.push({ rowType: 'appointment', payload });
+        for (const c of vConnectors) {
+          if (c.segKey.startsWith(`vdd-between-${idx}-`)) {
+            pdfRows.push({
+              rowType: 'segment',
+              segment: { kind: c.kind, title: c.title, mins: c.mins },
+            });
+          }
+        }
+      }
+      if (backToDepotSegments) {
+        for (const c of backToDepotSegments) {
+          pdfRows.push({
+            rowType: 'segment',
+            segment: { kind: c.kind, title: c.title, mins: c.mins },
+          });
+        }
+      }
+
+      root.render(
+        <DoctorDayVisualPdfDocument
+          doctorName={doctorName}
+          dateLabel={dateLabel}
+          showByDriveTime={showByDriveTime}
+          practiceTimeZone={practiceTimeZone}
+          stats={stats}
+          rows={pdfRows}
+        />
+      );
+
+      await document.fonts?.ready?.catch(() => undefined);
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      });
+      await new Promise<void>((r) => setTimeout(r, 80));
+
+      const captureEl = (host.firstElementChild as HTMLElement | null) ?? host;
+      const headerEl = captureEl.querySelector<HTMLElement>('[data-myday-pdf-header]');
+      const rowEls = Array.from(
+        captureEl.querySelectorAll<HTMLElement>('[data-myday-pdf-row]')
+      );
+
+      const captureScale = 2.5;
+      const renderToCanvas = (el: HTMLElement) =>
+        html2canvas(el, {
+          scale: captureScale,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#ffffff',
+        });
+
+      const sections: Array<{ canvas: HTMLCanvasElement; gapAfter: number }> = [];
+      if (headerEl) {
+        sections.push({ canvas: await renderToCanvas(headerEl), gapAfter: 0.06 });
+      }
+      for (const el of rowEls) {
+        sections.push({ canvas: await renderToCanvas(el), gapAfter: 0.04 });
+      }
+
+      if (sections.length === 0) {
+        console.error('My Day PDF: nothing to render');
+        return;
+      }
+
+      const pageW = 8.5;
+      const pageH = 11;
+      const margin = 0.25;
+      const maxW = pageW - 2 * margin;
+      const maxH = pageH - 2 * margin;
+      // Use the widest section to anchor inches-per-pixel; all sections share the same DOM width.
+      const refWidthPx = sections[0].canvas.width;
+      const inchesPerPx = maxW / refWidthPx;
+
+      const pdf = new jsPDF('portrait', 'in', 'letter');
+      let y = margin;
+      let firstOnPage = true;
+      for (let i = 0; i < sections.length; i++) {
+        const { canvas: c, gapAfter } = sections[i];
+        const dispW = c.width * inchesPerPx;
+        const dispH = c.height * inchesPerPx;
+        const fits = y + dispH <= margin + maxH + 1e-6;
+        if (!firstOnPage && !fits) {
+          pdf.addPage();
+          y = margin;
+          firstOnPage = true;
+        }
+        const png = c.toDataURL('image/png');
+        pdf.addImage(png, 'PNG', margin, y, dispW, dispH);
+        y += dispH + gapAfter;
+        firstOnPage = false;
+      }
+
+      const safeName = doctorName.replace(/\s+/g, '_').replace(/[^\w.-]+/g, '');
+      pdf.save(`MyDay_Visual_${safeName}_${date}.pdf`);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      root.unmount();
+      document.body.removeChild(host);
+      setPdfExporting(false);
+    }
+  }
+
   /* ---------- UI helpers ---------- */
   function fmtTime(iso?: string | null) {
     if (!iso) return '';
@@ -2555,22 +2849,38 @@ export default function DoctorDayVisual({
             }}
           >
             <h3 style={{ margin: 0 }}>Day Metrics</h3>
-            {links.length > 0 && (
-              <a
-                href={links[0]}
-                className="btn"
-                style={{ fontSize: 13, padding: '7px 16px', whiteSpace: 'nowrap' }}
-                target="_blank"
-                rel="noreferrer"
-                title={
-                  links.length > 1
-                    ? `Open segment 1 of ${links.length} in Google Maps (full day is split for the 25-stop limit)`
-                    : 'Open this day in Google Maps'
-                }
-              >
-                Google Maps
-              </a>
-            )}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+              {links.length > 0 && (
+                <a
+                  href={links[0]}
+                  className="btn"
+                  style={{ fontSize: 13, padding: '7px 16px', whiteSpace: 'nowrap' }}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={
+                    links.length > 1
+                      ? `Open segment 1 of ${links.length} in Google Maps (full day is split for the 25-stop limit)`
+                      : 'Open this day in Google Maps'
+                  }
+                >
+                  Google Maps
+                </a>
+              )}
+              {selectedDoctorId?.trim() ? (
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ fontSize: 13, padding: '7px 16px', whiteSpace: 'nowrap' }}
+                  disabled={loading || pdfExporting}
+                  title="Download a PDF of this day with full appointment details"
+                  onClick={() => {
+                    void handleExportMyDayVisualPdf();
+                  }}
+                >
+                  {pdfExporting ? 'Creating PDF…' : 'Create PDF'}
+                </button>
+              ) : null}
+            </div>
           </div>
           <div
             className="dd-meta muted"
@@ -2787,7 +3097,12 @@ export default function DoctorDayVisual({
             const slot = displayTimeline[idx];
             const etaIso = slot?.eta ?? null;
             const etdIso = slot?.etd ?? null;
-            const doctorDayClock = visualHouseholdUsesDoctorDayClockForLayout(h, slot, showByDriveTime);
+            const doctorDayClock = visualHouseholdUsesDoctorDayClockForLayout(
+              h,
+              slot,
+              showByDriveTime,
+              blockLabelMetaEarly ?? undefined
+            );
             const useDriveTime = showByDriveTime && !doctorDayClock && (etaIso ?? etdIso);
             const anchorIso = useDriveTime ? (etaIso ?? resolvedStartIso) : resolvedStartIso;
             const endIsoForHeight = useDriveTime && etdIso ? etdIso : resolvedEndIso;
@@ -2837,7 +3152,13 @@ export default function DoctorDayVisual({
 
             const blockLabelMeta = blockLabelMetaEarly;
             const blockTitleText =
-              h.isPersonalBlock && blockLabelMeta ? blockDisplayLabel(blockLabelMeta) : h.client;
+              h.isPersonalBlock && blockLabelMeta
+                ? blockDisplayLabel(blockLabelMeta)
+                : h.isPersonalBlock
+                  ? h.client
+                  : h.isPreview
+                    ? previewRoutingAppointmentLabel(h.primary)
+                    : h.client;
 
             return (
               <div
@@ -2848,40 +3169,20 @@ export default function DoctorDayVisual({
                     hoverCardDismissTimerRef.current = null;
                   }
                   const anchor = rectFromElement(ev.currentTarget);
+                  const pdfPayload = buildAppointmentPdfPayload(idx);
+                  if (!pdfPayload) return;
+                  const {
+                    showBackToDepotInBlock: _sb,
+                    backToDepotIso: _bd,
+                    flexBlock: _fb,
+                    isPreview: _ip,
+                    ...hoverFields
+                  } = pdfPayload;
                   setHoverCard({
-                    key: h.key,
+                    ...hoverFields,
                     x: ev.clientX,
                     y: ev.clientY,
                     ...(anchor ? { anchor } : {}),
-                    client: blockTitleText,
-                    address: h.address,
-                    durMin,
-                    etaIso:
-                      showByDriveTime && doctorDayClock
-                        ? resolvedStartIso
-                        : showByDriveTime
-                          ? (etaIso ?? null)
-                          : null,
-                    etdIso:
-                      showByDriveTime && doctorDayClock
-                        ? resolvedEndIso
-                        : showByDriveTime
-                          ? (etdIso ?? null)
-                          : null,
-                    sIso: h.startIso!,
-                    eIso: h.endIso!,
-                    patients: h.patients || [],
-                    clientAlert: h?.clientAlert,
-                    isFixedTime,
-                    isPersonalBlock: h.isPersonalBlock,
-                    isNoLocation: h.isNoLocation,
-                    effectiveWindow: h.primary?.effectiveWindow,
-                    windowFromByIndex: slotWindow?.windowStartIso && slotWindow?.windowEndIso
-                      ? { winStartIso: slotWindow.windowStartIso, winEndIso: slotWindow.windowEndIso }
-                      : undefined,
-                    resolvedWinStartIso: winStartIso,
-                    resolvedWinEndIso: winEndIso,
-                    windowWarning,
                   });
                 }}
                 onPointerMove={(ev) => {
@@ -2941,7 +3242,7 @@ export default function DoctorDayVisual({
                 }}
               >
                 <div style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>
-                  {h.isPersonalBlock ? blockTitleText : h.client}
+                  {blockTitleText}
                 </div>
                 <div
                   className="muted"

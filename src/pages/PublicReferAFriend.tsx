@@ -69,8 +69,8 @@ export default function PublicReferAFriend() {
             Referring a friend is the highest compliment you can give our team. We are grateful for your trust.
           </p>
           <p className="survey-success-blurb" style={{ marginTop: 12, lineHeight: 1.5 }}>
-            We will reach out to your friend directly. You will receive a $50 VAYD credit once their appointment is
-            complete, plus an additional $25 credit if they become a member.
+            We will reach out to your friend directly. You and your friend will receive a $50 VAYD credit once their
+            appointment is complete, plus an additional $25 credit if they become a member.
           </p>
           <p className="survey-success-blurb" style={{ marginTop: 18 }}>
             <Link to="/client-portal">Open the client portal</Link> for appointments and account details.
@@ -90,8 +90,8 @@ export default function PublicReferAFriend() {
           Share Vet At Your Door with a friend and invite them into the Vet At Your Door veterinary experience.
         </p>
         <p className="survey-success-blurb survey-referral-copy" style={{ textAlign: 'center' }}>
-          You&apos;ll receive a <strong>$50 VAYD credit</strong> when your referral completes an appointment, and an{' '}
-          <strong>additional $25</strong> if they become a member.
+          You and your friend will receive a <strong>$50 VAYD credit</strong> when your referral completes an
+          appointment, and an <strong>additional $25</strong> if they become a member.
         </p>
 
         <div className="survey-referral-section" style={{ borderTop: 'none', paddingTop: 8 }}>

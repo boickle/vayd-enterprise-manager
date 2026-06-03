@@ -1,6 +1,16 @@
 // src/pages/Routing.tsx
-import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchDoctorMonth } from '../api/appointments';
+import {
+  FormEvent,
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
+import { fetchDoctorMonth, type MiniZone } from '../api/appointments';
 import { http } from '../api/http';
 import {
   monthsCoveringRange,
@@ -12,8 +22,28 @@ import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
 import { PreviewMyDayModal } from '../components/PreviewMyDayModal';
 import { validateAddress } from '../api/geo';
+import {
+  normalizeRoutingV2SlotSearchResponse,
+  type RoutingSlotSearchOptionalFlags,
+  type RoutingV2SlotSearchResult,
+} from '../api/routing';
+import {
+  adjustRoutingSlotSearchDates,
+  diffRoutingDaysInclusive,
+  routingCalendarDatePart,
+} from '../utils/routingSlotSearchDates';
+import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import './Routing.css';
 // Removed fetchPrimaryProviders import - now using /employees/veterinarians endpoint directly
+
+/** Yellow wrap when an optional routing preference is on—makes checked state obvious at a glance. */
+const ROUTING_PREF_CHECKED_LABEL: CSSProperties = {
+  backgroundColor: '#fef9c3',
+  border: '1px solid #ca8a04',
+  borderRadius: 8,
+  padding: '6px 10px',
+  boxSizing: 'border-box',
+};
 
 // =========================
 // Types
@@ -32,7 +62,89 @@ type RouteRequest = {
   };
 };
 
+/**
+ * Routing “Service minutes” from the same Appt lengths stats as the popover:
+ * 1 pet → regular average; 2+ pets → multipet average × pet count when multipet data exists,
+ * otherwise scales the regular average by pet count.
+ */
+function estimatedServiceMinutesFromStatsRow(row: AvgMinutesByTypeRow, pets: number): number | null {
+  const n = Math.floor(Number(pets));
+  const petCount = Number.isFinite(n) && n >= 1 ? n : 1;
+  const hasSingle = row.count > 0 && row.avgMinutes > 0;
+  const mp = row.multipetAvgMinutes;
+  const hasMp = mp != null && mp > 0;
+
+  if (petCount === 1) {
+    if (hasSingle) return Math.round(row.avgMinutes);
+    if (hasMp) return Math.round(mp);
+    return null;
+  }
+  if (hasMp) return Math.round(mp * petCount);
+  if (hasSingle) return Math.round(row.avgMinutes * petCount);
+  return null;
+}
+
 type Slot = 'early' | 'mid' | 'late';
+
+/** Scout empty-day row: `SCOUT_EMPTY_DAY_POLICY=zone_aware` (routing v2). May appear on root, each candidate, or `gaps[]`. */
+type ScoutRoutingGapRow = {
+  scoutEmptyDayPolicy?: string | null;
+  scoutLiaisonPrimaryLabel?: string | null;
+  scoutLiaisonLabels?: string[] | null;
+  /** i18n keys for liaison strings; surfaced in tooltip / `data-scout-liaison-label-ids`. */
+  scoutLiaisonLabelIds?: string[] | null;
+  /**
+   * Depot→candidate drive class: `local` | `corridor` | `anchor` from drive minutes (≤15 local, ≥25 anchor, between corridor).
+   * Same thresholds as anchor classification for N9.
+   */
+  scoutZoneClass?: string | null;
+  /** Not set on zone_aware slim pass; do not show from routing—use My Week / zone-percentages if needed. */
+  scoutAnchorPanelShare?: number | null;
+  /** Legacy: when `dayHouseholdCount` is absent, UI may treat this as household count. */
+  dayClientVisitCount?: number | null;
+  /** Scheduled households that day (scout). Preferred over inferring from `dayClientVisitCount`). */
+  dayHouseholdCount?: number | null;
+  /** Scheduled patients that day (scout). */
+  dayPatientCount?: number | null;
+  /** True when the day is “strategic light” (≤1 client visit). */
+  dayIsStrategicLight?: boolean | null;
+  /** True only when zero client visits (scout). */
+  dayIsEmpty?: boolean | null;
+  /**
+   * Slim pass: usually **0** (shape-stable). Heavier scorer used N6; ignore for ranking explanation unless non-zero.
+   */
+  scoutWeekPanelBalanceN6?: number | null;
+  /** Slim pass: usually **0** (shape-stable). */
+  scoutPackDayReserveN7?: number | null;
+  /**
+   * Zone-aware horizon add-on total from the server: **`scoutMultiAnchorDayN9` + `scoutPreservedEmptyDayPenalty`**
+   * (plus any future horizon terms the API adds). **N6–N8** stay shape-stable / usually 0. Use total score for ranking;
+   * this field is transparency only—do not re-sum client-side for preserve logic.
+   */
+  scoutZoneAwareScoreDelta?: number | null;
+  /** Slim pass: usually **0** (shape-stable). Heavier scorer used N8. */
+  scoutZoneHourPackN8?: number | null;
+  /**
+   * **N9 only:** cross–anchor-zone penalty for **non-local** slots on days with **two+** anchor legs (same thresholds
+   * as `scoutZoneClass`). **0** when not applied.
+   */
+  scoutMultiAnchorDayN9?: number | null;
+  /**
+   * Additive hit when this option **consumes a preserved empty anchor-seed day** (server-only; ISO week + panel %,
+   * depot, centroids, OSRM). **0** when not applied—**do not recompute in the UI.**
+   */
+  scoutPreservedEmptyDayPenalty?: number | null;
+};
+
+type ScoutZoneAwareDiagFields = Pick<
+  ScoutRoutingGapRow,
+  | 'scoutZoneClass'
+  | 'scoutWeekPanelBalanceN6'
+  | 'scoutPackDayReserveN7'
+  | 'scoutZoneHourPackN8'
+  | 'scoutMultiAnchorDayN9'
+  | 'scoutPreservedEmptyDayPenalty'
+>;
 
 type Winner = {
   date: string;
@@ -63,6 +175,10 @@ type Winner = {
   bookedServiceSeconds?: number; // seconds of booked service (no driving)
   _emptyDay?: boolean;
   dayIsEmpty?: boolean;
+  /**
+   * Empty-day candidate placement from routing API. Branch on `'earlier_feasible'` for highlight / copy.
+   */
+  emptyDayStartVariant?: string | null;
   flags?: string[];
   // 👇 Add these lines:
   overrunSeconds?: number;
@@ -80,6 +196,9 @@ type Winner = {
     windowStartIso?: string;
     windowEndIso?: string;
   };
+  /** Geocoded / routing zone for preview labels, e.g. `New Appointment (3E)`. */
+  clientZone?: MiniZone;
+  effectiveZone?: MiniZone;
   /** Scoring breakdown from routing-v2; downstreamWindowEdge > 0 means a downstream appt is pushed near its window end */
   scoringComponents?: {
     downstreamWindowEdge?: number;
@@ -87,6 +206,33 @@ type Winner = {
   /** Seconds since local midnight when return to depot completes (v2 validation). */
   validationReturnSec?: number;
   validationLastEtdSec?: number;
+  /** Scout zone-aware policy on this candidate (mirrors root when flattened). */
+  scoutEmptyDayPolicy?: string | null;
+  scoutLiaisonPrimaryLabel?: string | null;
+  scoutLiaisonLabels?: string[];
+  scoutLiaisonLabelIds?: string[];
+  scoutZoneClass?: string | null;
+  scoutAnchorPanelShare?: number | null;
+  dayClientVisitCount?: number | null;
+  dayHouseholdCount?: number | null;
+  dayPatientCount?: number | null;
+  dayIsStrategicLight?: boolean | null;
+  /** Scout: zero client visits (distinct from routing `dayIsEmpty` / EMPTY ribbon when API sends both). */
+  scoutDayNoClients?: boolean | null;
+  /** Per-gap scout liaison + day stats (zone-aware empty day). */
+  gaps?: ScoutRoutingGapRow[];
+  /** Slim pass: usually 0; see handoff. */
+  scoutWeekPanelBalanceN6?: number | null;
+  /** Slim pass: usually 0; see handoff. */
+  scoutPackDayReserveN7?: number | null;
+  /** Zone-aware horizon total: N9 + `scoutPreservedEmptyDayPenalty` (+ any future API terms). See handoff. */
+  scoutZoneAwareScoreDelta?: number | null;
+  /** Slim pass: usually 0; see handoff. */
+  scoutZoneHourPackN8?: number | null;
+  /** N9 cross–anchor-zone penalty only; see handoff. */
+  scoutMultiAnchorDayN9?: number | null;
+  /** Preserved empty anchor-seed day consumption penalty; 0 when not applied. Server-only—do not recompute. */
+  scoutPreservedEmptyDayPenalty?: number | null;
 };
 
 type UnifiedOption = Winner & {
@@ -114,8 +260,30 @@ type RoutingLearning = {
   stats?: RoutingLearningStat[];
 };
 
+/** One doctor × ISO week from fleet routing v2 `scoutPreservedEmptyDayWeeks` (preserve pass scope). */
+type ScoutPreservedEmptyDayWeek = {
+  doctorId?: string | null;
+  isoWeekMonday?: string | null;
+  timeZone?: string | null;
+  workingDaysInWeek?: number | null;
+  targetPreservedEmpties?: number | null;
+  seedAnchorZoneCount?: number | null;
+  emptyWorkingIsoDates?: string[] | null;
+  seedAnchorZones?: Array<{ zoneId?: string | number | null; zoneName?: string | null }> | null;
+  seedAnchorZonesVisitedThisWeek?: Array<{ zoneId?: string | number | null; zoneName?: string | null }> | null;
+  anchorZonesStillNeedingPreservation?: Array<{ zoneId?: string | number | null; zoneName?: string | null }> | null;
+};
+
 type Result = {
   status: string;
+  /**
+   * Scout empty-day policy: **`zone_aware`** (extra fields + liaison) vs **`legacy`** (omit zone-aware UI).
+   * Server: `SCOUT_EMPTY_DAY_POLICY`. No extra client env vars.
+   */
+  scoutEmptyDayPolicy?: string | null;
+  /** Geocoded zones for the new-appt request; API may also duplicate these on each candidate. */
+  clientZone?: MiniZone;
+  effectiveZone?: MiniZone;
   winner?: Winner;
   estimatedCost?: EstimatedCost;
   alternates?: Winner[];
@@ -138,6 +306,11 @@ type Result = {
   }>;
   routingRequestId?: string;
   learning?: RoutingLearning;
+  /**
+   * Per doctor × ISO week for preserved empty-day scoring (`SCOUT_EMPTY_DAY_POLICY=zone_aware`, with candidates).
+   * Omitted for legacy, no candidates, or when zone-aware preserve did not run.
+   */
+  scoutPreservedEmptyDayWeeks?: ScoutPreservedEmptyDayWeek[] | null;
 };
 
 type Client = {
@@ -278,6 +451,606 @@ function isEmptyDay(x: any) {
   return Boolean(x?._emptyDay || x?.dayIsEmpty || x?.flags?.includes?.('EMPTY'));
 }
 
+function scoutPolicyZoneAware(policy: unknown): boolean {
+  const s = String(policy ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_');
+  return s === 'zone_aware';
+}
+
+function scoutGapsFromCandidate(row: Record<string, unknown>): ScoutRoutingGapRow[] {
+  const raw = row.gaps ?? row.routingGaps;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((x) => x && typeof x === 'object') as ScoutRoutingGapRow[];
+}
+
+const SCOUT_BADGE_CHIP: CSSProperties = {
+  display: 'inline-block',
+  fontSize: 11,
+  fontWeight: 700,
+  letterSpacing: 0.2,
+  padding: '3px 8px',
+  borderRadius: 999,
+  background: '#e0e7ff',
+  color: '#312e81',
+  border: '1px solid #c7d2fe',
+};
+
+/** Preserved empty-day penalty chip (distinct from N9 indigo). */
+const SCOUT_PRESERVED_DAY_CHIP: CSSProperties = {
+  display: 'inline-block',
+  fontSize: 11,
+  fontWeight: 700,
+  letterSpacing: 0.2,
+  padding: '3px 8px',
+  borderRadius: 999,
+  background: '#fef3c7',
+  color: '#713f12',
+  border: '1px solid #fcd34d',
+};
+
+/** Purple “Zone-aware” pill (Results header + consistency). */
+const SCOUT_ZONE_AWARE_BADGE_STYLE: CSSProperties = {
+  display: 'inline-block',
+  fontSize: 12,
+  fontWeight: 700,
+  letterSpacing: 0.02,
+  padding: '5px 14px',
+  borderRadius: 8,
+  background: 'linear-gradient(180deg, #faf5ff 0%, #f3e8ff 100%)',
+  color: '#581c87',
+  border: '1px solid #c084fc',
+  boxShadow: '0 1px 2px rgba(88, 28, 135, 0.08)',
+};
+
+const SCOUT_RESULTS_ZONE_NAME_CHIP: CSSProperties = {
+  display: 'inline-block',
+  fontSize: 12,
+  fontWeight: 600,
+  padding: '4px 12px',
+  borderRadius: 8,
+  background: '#f1f5f9',
+  color: '#0f172a',
+  border: '1px solid #cbd5e1',
+};
+
+function scoutZoneClassRaw(raw: unknown): string | null {
+  if (raw == null || typeof raw !== 'string') return null;
+  const t = raw.trim();
+  return t ? t : null;
+}
+
+function scoutFormatZoneClassLabel(z: string): string {
+  const lo = z.toLowerCase();
+  if (lo === 'local' || lo === 'corridor' || lo === 'anchor') {
+    return z.charAt(0).toUpperCase() + z.slice(1).toLowerCase();
+  }
+  return z;
+}
+
+/** Banner phrase next to Zone-aware (e.g. “Anchor zone”). */
+function scoutZoneClassBannerPhrase(z: string): string {
+  const lo = z.trim().toLowerCase();
+  if (lo === 'anchor') return 'Anchor zone';
+  if (lo === 'local') return 'Local zone';
+  if (lo === 'corridor') return 'Corridor zone';
+  return `${scoutFormatZoneClassLabel(z)} zone`;
+}
+
+/** Title case for combined Results chip, e.g. `Anchor Zone`, `Local Zone`. */
+function scoutZoneClassBannerTitleCase(z: string): string {
+  return scoutZoneClassBannerPhrase(z)
+    .split(/\s+/)
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : ''))
+    .join(' ');
+}
+
+/** One line for the geocoded polygon zone, e.g. `Zone 3W (Lewiston)`. */
+function routingPolygonZoneDisplayLine(carrier: {
+  effectiveZone?: MiniZone;
+  clientZone?: MiniZone;
+}): string | null {
+  const a = carrier.effectiveZone?.name != null ? String(carrier.effectiveZone.name).trim() : '';
+  const b = carrier.clientZone?.name != null ? String(carrier.clientZone.name).trim() : '';
+  const raw = a || b;
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  if (lower.startsWith('zone ')) return raw;
+  return `Zone ${raw}`;
+}
+
+/** Calendar Monday (YYYY-MM-DD) of the ISO week containing `dateIso` (date part only). */
+function calendarIsoWeekMondayYmd(dateIso: string): string {
+  const d = DateTime.fromISO(dateIso.slice(0, 10));
+  if (!d.isValid) return '';
+  const mon = d.minus({ days: d.weekday - 1 });
+  return mon.toISODate() ?? '';
+}
+
+function scoutPreservedWeekEntryForCandidate(
+  weeks: ScoutPreservedEmptyDayWeek[] | null | undefined,
+  doctorPimsId: string,
+  candidateDateYmd: string
+): ScoutPreservedEmptyDayWeek | null {
+  if (!Array.isArray(weeks) || weeks.length === 0) return null;
+  const weekMon = calendarIsoWeekMondayYmd(candidateDateYmd);
+  const doc = String(doctorPimsId ?? '').trim();
+  for (const w of weeks) {
+    const wMon = String(w.isoWeekMonday ?? '').slice(0, 10);
+    const wDoc = String(w.doctorId ?? '').trim();
+    if (wDoc === doc && wMon === weekMon) return w;
+  }
+  return null;
+}
+
+/** Muted note listing `anchorZonesStillNeedingPreservation` when the preserved-day chip applies. */
+function scoutPreservedAnchorZonesStillNote(
+  weeks: ScoutPreservedEmptyDayWeek[] | null | undefined,
+  row: {
+    scoutPreservedEmptyDayPenalty?: number | null;
+    doctorPimsId?: string;
+    date?: string;
+  }
+): ReactNode {
+  const p = row.scoutPreservedEmptyDayPenalty;
+  if (typeof p !== 'number' || !Number.isFinite(p) || p <= 0) return null;
+  const entry = scoutPreservedWeekEntryForCandidate(
+    weeks,
+    row.doctorPimsId ?? '',
+    row.date ?? ''
+  );
+  const names =
+    entry?.anchorZonesStillNeedingPreservation
+      ?.map((z) => String(z.zoneName ?? '').trim())
+      .filter(Boolean) ?? [];
+  if (!names.length) return null;
+  return (
+    <div
+      className="muted"
+      style={{ fontSize: 11, marginTop: -4, marginBottom: 8, lineHeight: 1.35 }}
+    >
+      <strong>
+        This uses one of the remaining flexible days Scout is trying to preserve for other far-away
+        zones this week.
+      </strong>{' '}
+      <strong>Zone(s) not yet represented this week:</strong>{' '}
+      {names.join(', ')}
+    </div>
+  );
+}
+
+function scoutN9CrossesAnchorZones(n: number): boolean {
+  return typeof n === 'number' && Number.isFinite(n) && n > 0;
+}
+
+/** Slim pass: N9 / zone-aware anchor stacking—plain label + numeric in tooltip (penalty > 0 only). */
+function scoutAnchorRoutingCrossingCopy(n9: number): { label: string; tooltip: string } {
+  const val = Number.isInteger(n9) ? String(n9) : n9.toFixed(2);
+  return {
+    label: 'Adds Another Anchor Zone',
+    tooltip: `This option adds another anchor reach on a day that already has two or more long (anchor) drives from depot before this visit. Routing adjustment (N9): ${val}. Lower total score is still better.`,
+  };
+}
+
+function scoutFmtScoreDelta(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
+
+/** Muted line + tooltip for `scoutZoneAwareScoreDelta` (total); breakdown when N9 / preserved fields are present. */
+function scoutZoneAwareDeltaUi(row: {
+  scoutZoneAwareScoreDelta?: number | null;
+  scoutMultiAnchorDayN9?: number | null;
+  scoutPreservedEmptyDayPenalty?: number | null;
+}): { value: string; title: string } | null {
+  const d = row.scoutZoneAwareScoreDelta;
+  if (typeof d !== 'number' || !Number.isFinite(d)) return null;
+  const n9 = row.scoutMultiAnchorDayN9;
+  const pr = row.scoutPreservedEmptyDayPenalty;
+  const n9Ok = typeof n9 === 'number' && Number.isFinite(n9);
+  const prOk = typeof pr === 'number' && Number.isFinite(pr) && pr > 0;
+  const parts: string[] = [
+    `Total zone-aware score delta (from server): ${scoutFmtScoreDelta(d)}. Lower total score is still better.`,
+  ];
+  if (n9Ok) parts.push(`Includes N9 (multi-anchor): ${scoutFmtScoreDelta(n9)}.`);
+  if (prOk) parts.push(`Includes preserved empty-day penalty: ${scoutFmtScoreDelta(pr)}.`);
+  parts.push('Do not recompute preserve logic in the UI; panel context is GET /patients/provider/:id/zone-percentages.');
+  return { value: scoutFmtScoreDelta(d), title: parts.join(' ') };
+}
+
+function scoutZoneAwareDiagHasContent(row: ScoutZoneAwareDiagFields): boolean {
+  if (scoutZoneClassRaw(row.scoutZoneClass)) return true;
+  const n6 =
+    typeof row.scoutWeekPanelBalanceN6 === 'number' &&
+    Number.isFinite(row.scoutWeekPanelBalanceN6) &&
+    row.scoutWeekPanelBalanceN6 > 0;
+  const n7 =
+    typeof row.scoutPackDayReserveN7 === 'number' &&
+    Number.isFinite(row.scoutPackDayReserveN7) &&
+    row.scoutPackDayReserveN7 > 0;
+  const n8 =
+    typeof row.scoutZoneHourPackN8 === 'number' &&
+    Number.isFinite(row.scoutZoneHourPackN8) &&
+    row.scoutZoneHourPackN8 > 0;
+  const n9Crossing =
+    typeof row.scoutMultiAnchorDayN9 === 'number' &&
+    Number.isFinite(row.scoutMultiAnchorDayN9) &&
+    scoutN9CrossesAnchorZones(row.scoutMultiAnchorDayN9);
+  const preserved =
+    typeof row.scoutPreservedEmptyDayPenalty === 'number' &&
+    Number.isFinite(row.scoutPreservedEmptyDayPenalty) &&
+    row.scoutPreservedEmptyDayPenalty > 0;
+  return n6 || n7 || n8 || n9Crossing || preserved;
+}
+
+function ScoutZoneAwareDiagnosticsRow({
+  row,
+  hideZoneClass,
+  variant = 'block',
+}: {
+  row: ScoutZoneAwareDiagFields;
+  /** When true, omit depot→candidate zone class (shown once in Results header for this search). */
+  hideZoneClass?: boolean;
+  /** `inline`: no outer margin—use inside a parent flex row with day stat badges. */
+  variant?: 'block' | 'inline';
+}) {
+  const zc = hideZoneClass ? null : scoutZoneClassRaw(row.scoutZoneClass);
+  const n6Show =
+    typeof row.scoutWeekPanelBalanceN6 === 'number' &&
+    Number.isFinite(row.scoutWeekPanelBalanceN6) &&
+    row.scoutWeekPanelBalanceN6 > 0;
+  const n7Show =
+    typeof row.scoutPackDayReserveN7 === 'number' &&
+    Number.isFinite(row.scoutPackDayReserveN7) &&
+    row.scoutPackDayReserveN7 > 0;
+  const n8Show =
+    typeof row.scoutZoneHourPackN8 === 'number' &&
+    Number.isFinite(row.scoutZoneHourPackN8) &&
+    row.scoutZoneHourPackN8 > 0;
+  const n9Val = row.scoutMultiAnchorDayN9;
+  const n9Crossing =
+    typeof n9Val === 'number' && Number.isFinite(n9Val) && scoutN9CrossesAnchorZones(n9Val);
+  const n9Copy = n9Crossing ? scoutAnchorRoutingCrossingCopy(n9Val) : null;
+  const preservedShow =
+    typeof row.scoutPreservedEmptyDayPenalty === 'number' &&
+    Number.isFinite(row.scoutPreservedEmptyDayPenalty) &&
+    row.scoutPreservedEmptyDayPenalty > 0;
+  if (!zc && !n6Show && !n7Show && !n8Show && !n9Crossing && !preservedShow) return null;
+  const inner = (
+    <>
+      {zc ? (
+        <span
+          style={SCOUT_BADGE_CHIP}
+          title="From depot→candidate drive: ≤15 min = local, ≥25 min = anchor, between = corridor. Same minute thresholds as anchor legs counted for N9."
+        >
+          Zone class: {scoutFormatZoneClassLabel(zc)}
+        </span>
+      ) : null}
+      {n6Show ? (
+        <span
+          title="N6 week–panel (heavier scorer). On slim pass this is usually 0—shown only when non-zero."
+        >
+          Week–panel (N6): {row.scoutWeekPanelBalanceN6}
+        </span>
+      ) : null}
+      {n7Show ? (
+        <span title="N7 pack-day reserve. Slim pass: usually 0—shown only when non-zero.">
+          Pack-day reserve (N7): {row.scoutPackDayReserveN7}
+        </span>
+      ) : null}
+      {n8Show ? (
+        <span title="N8 zone-hour pack. Slim pass: usually 0—shown only when non-zero.">
+          Zone-hour pack (N8): {row.scoutZoneHourPackN8}
+        </span>
+      ) : null}
+      {n9Copy ? (
+        <span style={SCOUT_BADGE_CHIP} title={n9Copy.tooltip}>
+          {n9Copy.label}
+        </span>
+      ) : null}
+      {preservedShow ? (
+        <span
+          style={SCOUT_PRESERVED_DAY_CHIP}
+          title="Additive score from consuming a preserved empty anchor-seed day (server). Panel mix: GET /patients/provider/:id/zone-percentages. Do not recompute in the client."
+        >
+          Uses preserved empty day
+        </span>
+      ) : null}
+    </>
+  );
+  if (variant === 'inline') {
+    return (
+      <span
+        className="muted"
+        style={{
+          display: 'inline-flex',
+          flexWrap: 'wrap',
+          gap: '4px 10px',
+          alignItems: 'center',
+          fontSize: 11,
+        }}
+      >
+        {inner}
+      </span>
+    );
+  }
+  return (
+    <div
+      className="muted"
+      style={{
+        fontSize: 11,
+        marginBottom: 6,
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '4px 14px',
+        alignItems: 'center',
+      }}
+    >
+      {inner}
+    </div>
+  );
+}
+
+/**
+ * Local strings for `scoutLiaisonLabelIds` when mapping id → copy (API still sends English in primary/labels).
+ * `balances_week` = N4 busy-day spread only; `keeps_week_panel_mix` = panel-mix / N6 (distinct).
+ */
+const SCOUT_LIAISON_LABEL_ID_COPY: Record<string, string> = {
+  keeps_week_panel_mix: 'Keeps week vs panel mix (N6)',
+  balances_week: 'Balances busy-day spread across the week (N4 only)',
+  fits_far_run_day: 'Fits a day that already runs farther from home',
+  fits_zone_pack_day: 'Fits a day already concentrated in this zone (panel time budget)',
+  outside_zones_drive_fit: 'Address not in a zone polygon',
+  earliest_available: 'Earliest available (fallback)',
+  consumes_preserved_anchor_seed_day: 'Consumes a preserved empty anchor-seed day',
+  breaks_empty_day_integrity: 'Breaks empty-day integrity (preserve rule)',
+  low_cluster_value_preserved_day: 'Low cluster value on a preserved day',
+};
+
+/** Extra tooltip lines for liaison ids (product meaning). */
+const SCOUT_LIAISON_LABEL_LONG_TOOLTIP: Record<string, string> = {
+  fits_far_run_day:
+    'The day already tends to have longer depot→stop legs after adding this visit, so we pack the farther run onto that day instead of burning a “lighter” day—useful when a slot wins over another with similar drive.',
+  fits_zone_pack_day:
+    'N8: avoid diluting a day that is already mostly one zone’s booked hours when the week’s hours × panel say that zone deserves that time—soft rule; whitespace on the slot can reduce the penalty.',
+  consumes_preserved_anchor_seed_day:
+    'This placement uses a day the router treats as a preserved empty “anchor seed” for the week; the server adds a penalty so panel / cluster goals stay honest.',
+  breaks_empty_day_integrity:
+    'Related preserve rule: scheduling here would break the intended empty-day pattern the server is protecting.',
+  low_cluster_value_preserved_day:
+    'Related preserve rule: this day had low cluster value under the preserved-empty-day policy.',
+};
+
+/** When true, omit Client Liaison Note — preserve is already shown as the amber chip (+ tooltips on Δ / chip). */
+const SCOUT_PRESERVE_LIAISON_ID_SET = new Set<string>([
+  'consumes_preserved_anchor_seed_day',
+  'breaks_empty_day_integrity',
+  'low_cluster_value_preserved_day',
+]);
+
+function scoutRoutingHideLiaisonCopyForPreserve(row: {
+  scoutPreservedEmptyDayPenalty?: number | null;
+  scoutLiaisonLabelIds?: string[] | null;
+}): boolean {
+  const p = row.scoutPreservedEmptyDayPenalty;
+  if (typeof p === 'number' && Number.isFinite(p) && p > 0) return true;
+  const ids = row.scoutLiaisonLabelIds ?? [];
+  return ids.some((id) => SCOUT_PRESERVE_LIAISON_ID_SET.has(String(id).trim().toLowerCase()));
+}
+
+function scoutLiaisonIdHint(id: string): string | null {
+  const k = id.trim().toLowerCase();
+  return SCOUT_LIAISON_LABEL_ID_COPY[k] ?? null;
+}
+
+function scoutHumanizeLabelId(id: string): string {
+  const k = id.trim().toLowerCase();
+  if (SCOUT_LIAISON_LABEL_ID_COPY[k]) return SCOUT_LIAISON_LABEL_ID_COPY[k];
+  const w = id.replace(/_/g, ' ').trim().toLowerCase();
+  return w ? w.charAt(0).toUpperCase() + w.slice(1) : '';
+}
+
+function scoutLiaisonIdsTooltip(ids: string[]): string {
+  const parts: string[] = [`i18n: ${ids.join(', ')}`];
+  for (const id of ids) {
+    const k = id.trim().toLowerCase();
+    const hint = scoutLiaisonIdHint(id);
+    const long = SCOUT_LIAISON_LABEL_LONG_TOOLTIP[k];
+    if (hint) parts.push(`${id.trim()} → ${hint}${long ? ` — ${long}` : ''}`);
+    else
+      parts.push(
+        `${id.trim()} (no local hint—use scoutLiaisonPrimaryLabel / scoutLiaisonLabels from API)`
+      );
+  }
+  return parts.join(' · ');
+}
+
+/** Dedupe primary + list when the API repeats the same line (e.g. "Fits an existing route" twice). */
+function scoutLiaisonDedupeKey(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/\ban?\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function scoutLiaisonUniquePhrases(primary: string, labels: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (raw: string) => {
+    const t = raw.trim();
+    if (!t) return;
+    const k = scoutLiaisonDedupeKey(t);
+    if (!k || seen.has(k)) return;
+    seen.add(k);
+    out.push(t);
+  };
+  add(primary);
+  for (const l of labels) add(l);
+  return out;
+}
+
+/** One line: "Client Liaison Note: …". Label ids only in `title` / `data-scout-liaison-label-ids`. */
+function ScoutLiaisonCopyBlock({ row }: { row: ScoutRoutingGapRow }) {
+  const primary = (row.scoutLiaisonPrimaryLabel ?? '').trim();
+  const labels = (row.scoutLiaisonLabels ?? []).map((s) => String(s).trim()).filter(Boolean);
+  const ids = (row.scoutLiaisonLabelIds ?? []).map((s) => String(s).trim()).filter(Boolean);
+  const phrases = scoutLiaisonUniquePhrases(primary, labels);
+  const title = ids.length ? scoutLiaisonIdsTooltip(ids) : undefined;
+  if (phrases.length === 0) {
+    if (!ids.length) return null;
+    const human = ids.map((id) => scoutHumanizeLabelId(id)).filter(Boolean).join('; ');
+    return (
+      <p
+        style={{
+          margin: '0 0 8px 0',
+          padding: '6px 10px',
+          borderRadius: 8,
+          background: '#f8fafc',
+          border: '1px solid #e2e8f0',
+          fontSize: 13,
+          color: '#1e293b',
+        }}
+        title={title}
+        data-scout-liaison-label-ids={ids.join(',')}
+      >
+        <span style={{ fontWeight: 600 }}>Client Liaison Note:</span> {human}
+      </p>
+    );
+  }
+  const body = phrases.join('; ');
+  return (
+    <p
+      style={{
+        margin: '0 0 8px 0',
+        padding: '6px 10px',
+        borderRadius: 8,
+        background: '#f8fafc',
+        border: '1px solid #e2e8f0',
+        fontSize: 13,
+        color: '#1e293b',
+      }}
+      title={title}
+      data-scout-liaison-label-ids={ids.length ? ids.join(',') : undefined}
+    >
+      <span style={{ fontWeight: 600 }}>Client Liaison Note:</span> {body}
+    </p>
+  );
+}
+
+function scoutFiniteNumber(...vals: unknown[]): number | null {
+  for (const v of vals) {
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+  }
+  return null;
+}
+
+/** Household / patient totals for the day; accepts alternate API keys on the row object. */
+function scoutHouseholdsAndPatientsFromRow(row: ScoutRoutingGapRow): {
+  households: number | null;
+  patients: number | null;
+} {
+  const r = row as Record<string, unknown>;
+  const households =
+    scoutFiniteNumber(
+      row.dayHouseholdCount,
+      r.dayHouseholds,
+      r.householdCount,
+      r.dayHouseholdTotal
+    ) ?? scoutFiniteNumber(row.dayClientVisitCount);
+  const patients = scoutFiniteNumber(
+    row.dayPatientCount,
+    r.dayPatients,
+    r.patientCount,
+    r.totalPatients,
+    r.dayPatientTotal
+  );
+  return { households, patients };
+}
+
+function ScoutDayStatBadges({
+  row,
+  embedded,
+}: {
+  row: ScoutRoutingGapRow;
+  /** When true, return chip nodes only (no wrapper) so they sit in a parent flex row. */
+  embedded?: boolean;
+}) {
+  const chips: JSX.Element[] = [];
+  if (row.dayIsEmpty === true) {
+    chips.push(
+      <span key="empty" style={SCOUT_BADGE_CHIP} title="No households or patients scheduled this day (scout).">
+        Empty day
+      </span>
+    );
+  }
+  if (row.dayIsStrategicLight === true) {
+    chips.push(
+      <span
+        key="strategic"
+        style={SCOUT_BADGE_CHIP}
+        title="Strategic light: at most one household scheduled this day."
+      >
+        Strategic light
+      </span>
+    );
+  }
+  const { households: hNum, patients: pNum } = scoutHouseholdsAndPatientsFromRow(row);
+  if (hNum != null && !(row.dayIsEmpty === true && hNum === 0)) {
+    const label =
+      pNum != null
+        ? `${hNum} household${hNum === 1 ? '' : 's'}, ${pNum} patient${pNum === 1 ? '' : 's'}`
+        : `${hNum} household${hNum === 1 ? '' : 's'}`;
+    const title =
+      pNum != null
+        ? 'Households and patients scheduled on this day.'
+        : 'Households scheduled this day. Patient total appears when the API sends dayPatientCount.';
+    chips.push(
+      <span key="hhpt" style={SCOUT_BADGE_CHIP} title={title}>
+        {label}
+      </span>
+    );
+  }
+  if (!chips.length) return null;
+  if (embedded) return <>{chips}</>;
+  return <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>{chips}</div>;
+}
+
+/** Day metrics: prefer first gap that defines any scout stat; else candidate-level fields. */
+function scoutDayMetricsForCandidate(opt: Winner): ScoutRoutingGapRow {
+  const gaps = scoutGapsFromCandidate(opt as unknown as Record<string, unknown>);
+  const fromGap = gaps.find(
+    (g) =>
+      g.dayIsEmpty != null ||
+      g.dayIsStrategicLight != null ||
+      typeof g.dayClientVisitCount === 'number' ||
+      typeof g.dayHouseholdCount === 'number' ||
+      typeof g.dayPatientCount === 'number'
+  );
+  if (fromGap) {
+    return {
+      dayClientVisitCount: fromGap.dayClientVisitCount ?? null,
+      dayHouseholdCount: fromGap.dayHouseholdCount ?? null,
+      dayPatientCount: fromGap.dayPatientCount ?? null,
+      dayIsStrategicLight: fromGap.dayIsStrategicLight ?? null,
+      dayIsEmpty: fromGap.dayIsEmpty ?? null,
+    };
+  }
+  const count = opt.dayClientVisitCount;
+  const noClients =
+    opt.scoutDayNoClients === true ||
+    (typeof count === 'number' && Number.isFinite(count) && count === 0);
+  return {
+    dayClientVisitCount: typeof count === 'number' && Number.isFinite(count) ? count : null,
+    dayHouseholdCount: opt.dayHouseholdCount ?? null,
+    dayPatientCount: opt.dayPatientCount ?? null,
+    dayIsStrategicLight: opt.dayIsStrategicLight ?? null,
+    dayIsEmpty: noClients ? true : null,
+  };
+}
+
 function DoctorIcon({ color = 'white' }: { color?: string }) {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}>
@@ -294,29 +1067,6 @@ function extractErrorMessage(err: unknown): string {
     return maybe.response?.data?.message ?? maybe.message ?? 'Request failed';
   }
   return 'Request failed';
-}
-
-function SlotChip({ slot }: { slot?: Slot | null }) {
-  return null; // Slot labels (Early / Mid / Late) not shown
-}
-
-function EdgeChip({ first, last }: { first?: boolean; last?: boolean }) {
-  if (!first && !last) return null;
-  const text = first ? 'First of day' : 'Last of day';
-  return (
-    <span
-      style={{
-        background: '#eef2ff',
-        color: '#3730a3',
-        padding: '2px 8px',
-        borderRadius: 999,
-        fontSize: 12,
-        fontWeight: 600,
-      }}
-    >
-      {text}
-    </span>
-  );
 }
 
 /** "HH:mm" or "HH:mm:ss" → seconds since midnight */
@@ -459,6 +1209,8 @@ export default function Routing() {
   const [preferredTimeOfDay, setPreferredTimeOfDay] = useState<'first' | 'middle' | 'end' | null>(
     null
   ); // send exactly these
+  /** UI: "Force Earliest Time"; API: `preferEarliestFeasibleStart` on empty-day routing. */
+  const [preferEarliestFeasibleStart, setPreferEarliestFeasibleStart] = useState(false);
   const [edgeFirst, setEdgeFirst] = useState(false);
   const [edgeLast, setEdgeLast] = useState(false);
 
@@ -494,6 +1246,9 @@ export default function Routing() {
   const [apptLengthsLoading, setApptLengthsLoading] = useState(false);
   const [apptLengthsRows, setApptLengthsRows] = useState<AvgMinutesByTypeRow[]>([]);
   const [apptLengthsError, setApptLengthsError] = useState<string | null>(null);
+  /** Selected row from Appt lengths stats (same list as the popover); empty = do not auto-fill minutes. */
+  const [routingApptStatsTypeKey, setRoutingApptStatsTypeKey] = useState('');
+  const [routingPetCount, setRoutingPetCount] = useState(1);
   const latestDoctorQueryRef = useRef('');
   const [doctorActiveIdx, setDoctorActiveIdx] = useState<number>(-1);
   const [clientActiveIdx, setClientActiveIdx] = useState<number>(-1);
@@ -812,6 +1567,11 @@ export default function Routing() {
 
   useEffect(() => {
     setApptLengthsOpen(false);
+    setRoutingApptStatsTypeKey('');
+    setRoutingPetCount(1);
+    if (!form.doctorId.trim()) {
+      setApptLengthsRows([]);
+    }
   }, [form.doctorId]);
 
   const loadApptLengthStats = useCallback(async () => {
@@ -838,6 +1598,23 @@ export default function Routing() {
       setApptLengthsLoading(false);
     }
   }, [form.doctorId]);
+
+  useEffect(() => {
+    if (!form.doctorId.trim()) return;
+    void loadApptLengthStats();
+  }, [form.doctorId, loadApptLengthStats]);
+
+  useEffect(() => {
+    if (!routingApptStatsTypeKey) return;
+    const row = apptLengthsRows.find((r) => r.typeName === routingApptStatsTypeKey);
+    if (!row) return;
+    const mins = estimatedServiceMinutesFromStatsRow(row, routingPetCount);
+    if (mins == null || mins < 1) return;
+    setForm((f) => ({
+      ...f,
+      newAppt: { ...f.newAppt, serviceMinutes: mins },
+    }));
+  }, [routingApptStatsTypeKey, routingPetCount, apptLengthsRows]);
 
   useEffect(() => {
     if (!apptLengthsOpen) return;
@@ -951,14 +1728,6 @@ export default function Routing() {
     setShowDoctorDropdown(false);
   }
 
-  function diffDaysInclusive(aISO: string, bISO: string) {
-    const a = new Date(aISO + 'T00:00:00');
-    const b = new Date(bISO + 'T00:00:00');
-    const ms = b.getTime() - a.getTime();
-    const days = Math.floor(ms / (1000 * 60 * 60 * 24));
-    return days + 1;
-  }
-
   async function submitRoutingRequest(endpoint: string, doctorIdsArray?: string[]) {
     setError(null);
     setResult(null);
@@ -968,7 +1737,7 @@ export default function Routing() {
     setFeedbackToast(null);
     setFeedbackError(null);
 
-    if (new Date(form.endDate) < new Date(form.startDate)) {
+    if (routingCalendarDatePart(form.endDate) < routingCalendarDatePart(form.startDate)) {
       setError('End date must be on or after the start date.');
       return;
     }
@@ -1012,7 +1781,23 @@ export default function Routing() {
       }
     }
 
-    const numDays = Math.max(1, diffDaysInclusive(form.startDate, form.endDate));
+    const isV2 = endpoint.includes('/v2');
+    const { startDate: routingStartDate, endDate: routingEndDate, numDays } =
+      isV2
+        ? adjustRoutingSlotSearchDates(
+            form.startDate,
+            form.endDate,
+            DEFAULT_PRACTICE_TIMEZONE
+          )
+        : {
+            startDate: form.startDate,
+            endDate: form.endDate,
+            numDays: diffRoutingDaysInclusive(
+              form.startDate,
+              form.endDate,
+              DEFAULT_PRACTICE_TIMEZONE
+            ),
+          };
 
     // If both edge boxes are selected, cancel the preference.
     const preferEdge: 'first' | 'last' | null =
@@ -1030,8 +1815,9 @@ export default function Routing() {
           ? preferredWeekday[0] 
           : preferredWeekday;
 
-    const base = {
-      startDate: form.startDate,
+    const base: Record<string, unknown> & RoutingSlotSearchOptionalFlags = {
+      startDate: routingStartDate,
+      ...(isV2 ? { endDate: routingEndDate } : {}),
       numDays,
       newAppt: newApptPayload,
       useTraffic,
@@ -1045,10 +1831,8 @@ export default function Routing() {
             tailOvertimeMinutes: 120 as const,
           }
         : {}),
+      ...(preferEarliestFeasibleStart ? { preferEarliestFeasibleStart: true } : {}),
     };
-
-    // Determine if this is a v2 endpoint
-    const isV2 = endpoint.includes('/v2');
 
     let payload: any;
     if (isV2) {
@@ -1085,7 +1869,10 @@ export default function Routing() {
     setLoading(true);
     try {
       const { data } = await http.post<Result>(endpoint, payload);
-      setResult(data);
+      const normalized = normalizeRoutingV2SlotSearchResponse(
+        data as RoutingV2SlotSearchResult
+      ) as Result;
+      setResult(normalized);
     } catch (err: unknown) {
       setError(extractErrorMessage(err));
     } finally {
@@ -1107,7 +1894,9 @@ export default function Routing() {
       return { valid: false, error: 'Please select an end date.' };
     }
 
-    if (new Date(form.endDate) < new Date(form.startDate)) {
+    const startCal = routingCalendarDatePart(form.startDate);
+    const endCal = routingCalendarDatePart(form.endDate);
+    if (endCal < startCal) {
       return { valid: false, error: 'End date must be on or after the start date.' };
     }
 
@@ -1365,6 +2154,33 @@ export default function Routing() {
       };
     });
   }, [multiDoctor, result, doctorNames, form.doctorId, latestRoutingRequestId]);
+
+  /** Zone class + polygon name are the same for all cards in a search—show once in Results header. */
+  const routingZoneAwareResultsBanner = useMemo(() => {
+    if (!result || !scoutPolicyZoneAware(result.scoutEmptyDayPolicy)) return null;
+    let zoneClassRaw: string | null = scoutZoneClassRaw(result.winner?.scoutZoneClass);
+    let polyLine: string | null = routingPolygonZoneDisplayLine({
+      effectiveZone: result.winner?.effectiveZone,
+      clientZone: result.winner?.clientZone,
+    });
+    if (!polyLine) {
+      polyLine = routingPolygonZoneDisplayLine({
+        effectiveZone: result.effectiveZone,
+        clientZone: result.clientZone,
+      });
+    }
+    for (const o of displayOptions) {
+      if (!zoneClassRaw) zoneClassRaw = scoutZoneClassRaw(o.scoutZoneClass);
+      if (!polyLine) {
+        polyLine = routingPolygonZoneDisplayLine({
+          effectiveZone: o.effectiveZone,
+          clientZone: o.clientZone,
+        });
+      }
+      if (zoneClassRaw && polyLine) break;
+    }
+    return { zoneClassRaw, polyLine };
+  }, [result, displayOptions]);
 
   // =========================
   // Render
@@ -1638,13 +2454,76 @@ export default function Routing() {
           {/* Appointment & client */}
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Field label="Service minutes">
-              <input
-                className="input"
-                type="number"
-                min={1}
-                value={form.newAppt.serviceMinutes}
-                onChange={(e) => onNewApptChange('serviceMinutes', Number(e.target.value))}
-              />
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 8,
+                  alignItems: 'center',
+                }}
+              >
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  style={{ width: 88 }}
+                  value={form.newAppt.serviceMinutes}
+                  onChange={(e) => onNewApptChange('serviceMinutes', Number(e.target.value))}
+                />
+                <select
+                  className="input"
+                  aria-label="Appointment type from averages"
+                  style={{ minWidth: 160, flex: '1 1 140px' }}
+                  disabled={!form.doctorId.trim() || apptLengthsLoading}
+                  value={routingApptStatsTypeKey}
+                  onChange={(e) => setRoutingApptStatsTypeKey(e.target.value)}
+                >
+                  <option value="">Type (optional)</option>
+                  {apptLengthsRows.map((row) => (
+                    <option key={row.typeName} value={row.typeName}>
+                      {row.typeName}
+                    </option>
+                  ))}
+                </select>
+                <label
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  <span className="muted" style={{ fontSize: 13 }}>
+                    Pets
+                  </span>
+                  <input
+                    className="input"
+                    type="number"
+                    min={1}
+                    style={{ width: 64 }}
+                    value={routingPetCount}
+                    onChange={(e) => {
+                      const v = Math.floor(Number(e.target.value));
+                      setRoutingPetCount(Number.isFinite(v) && v >= 1 ? v : 1);
+                    }}
+                  />
+                </label>
+              </div>
+              {!form.doctorId.trim() ? (
+                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                  Select a doctor to load appointment types (same data as Appt lengths).
+                </div>
+              ) : apptLengthsLoading && apptLengthsRows.length === 0 ? (
+                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                  Loading appointment types…
+                </div>
+              ) : apptLengthsRows.length === 0 && !apptLengthsError ? (
+                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                  No appointment types in the last 30 days for this doctor.
+                </div>
+              ) : apptLengthsError ? (
+                <div style={{ color: '#b91c1c', fontSize: 12, marginTop: 6 }}>{apptLengthsError}</div>
+              ) : null}
             </Field>
 
             <Field label="Search Client (last name)">
@@ -1869,7 +2748,15 @@ export default function Routing() {
               </Field>
 
               <Field label="Multi-doctor">
-                <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <label
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'center',
+                    cursor: 'pointer',
+                    ...(multiDoctor ? ROUTING_PREF_CHECKED_LABEL : {}),
+                  }}
+                >
                   <input
                     type="checkbox"
                     checked={multiDoctor}
@@ -1884,7 +2771,16 @@ export default function Routing() {
             <Field label="Preferred Day of Week">
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 {weekdayLabels.map(({ n, label }) => (
-                  <label key={n} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  <label
+                    key={n}
+                    style={{
+                      display: 'inline-flex',
+                      gap: 6,
+                      alignItems: 'center',
+                      cursor: 'pointer',
+                      ...(preferredWeekday.includes(n) ? ROUTING_PREF_CHECKED_LABEL : {}),
+                    }}
+                  >
                     <input
                       type="checkbox"
                       checked={preferredWeekday.includes(n)}
@@ -1915,7 +2811,18 @@ export default function Routing() {
                   // { key: 'middle', label: 'Middle of day' },
                   { key: 'end', label: 'End of day' },
                 ].map(({ key, label }) => (
-                  <label key={key} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  <label
+                    key={key}
+                    style={{
+                      display: 'inline-flex',
+                      gap: 6,
+                      alignItems: 'center',
+                      cursor: 'pointer',
+                      ...(preferredTimeOfDay === (key as 'first' | 'middle' | 'end')
+                        ? ROUTING_PREF_CHECKED_LABEL
+                        : {}),
+                    }}
+                  >
                     <input
                       type="checkbox"
                       checked={preferredTimeOfDay === (key as 'first' | 'middle' | 'end')}
@@ -1942,6 +2849,45 @@ export default function Routing() {
               </div>
             </Field>
 
+            <div style={{ marginTop: 10, maxWidth: 560 }}>
+              <label
+                style={{
+                  display: 'inline-flex',
+                  gap: 8,
+                  alignItems: 'center',
+                  cursor: 'pointer',
+                  ...(preferEarliestFeasibleStart ? ROUTING_PREF_CHECKED_LABEL : {}),
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={preferEarliestFeasibleStart}
+                  onChange={(e) => setPreferEarliestFeasibleStart(e.target.checked)}
+                />
+                <span style={{ fontWeight: 600 }}>Force Earliest Time</span>
+              </label>
+              {preferEarliestFeasibleStart && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    backgroundColor: '#fefce8',
+                    border: '1px solid #fde68a',
+                  }}
+                >
+                  <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
+                    Turn on when the appointment must be early (outliers, long drives, front-loading the
+                    day).
+                  </div>
+                  <div className="muted" style={{ fontSize: 13, lineHeight: 1.5, marginTop: 8 }}>
+                    <strong>Only applies on empty days.</strong> You’ll still see optimized times—this adds an
+                    early option (shown in yellow).
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Edge preference (kept hidden for now) */}
             {/* ... */}
           </div>
@@ -1957,21 +2903,58 @@ export default function Routing() {
 
       {/* ------- Results ------- */}
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>Results</h3>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            flexWrap: 'wrap',
+            marginBottom: result ? 6 : 0,
+          }}
+        >
+          <h3 style={{ marginTop: 0, marginBottom: 0 }}>Results</h3>
+          {result && scoutPolicyZoneAware(result.scoutEmptyDayPolicy) ? (
+            <Fragment>
+              <span
+                style={SCOUT_ZONE_AWARE_BADGE_STYLE}
+                title="Scout empty-day policy is zone_aware. Liaison copy and day badges appear on each result and per gap."
+              >
+                Zone-aware
+              </span>
+              {(() => {
+                const b = routingZoneAwareResultsBanner;
+                if (!b) return null;
+                const poly = b.polyLine;
+                const zc = b.zoneClassRaw;
+                const combined =
+                  poly && zc
+                    ? `${poly}: ${scoutZoneClassBannerTitleCase(zc)}`
+                    : poly
+                      ? poly
+                      : zc
+                        ? scoutZoneClassBannerTitleCase(zc)
+                        : null;
+                if (!combined) return null;
+                const title =
+                  poly && zc
+                    ? `Geocoded routing zone (${poly}). Depot→candidate drive class: ${scoutZoneClassBannerTitleCase(zc)} (≤15 min local, ≥25 min anchor, between corridor).`
+                    : poly
+                      ? 'Geocoded routing zone for this search (effective zone when present, otherwise client zone).'
+                      : 'From depot→candidate drive: ≤15 min = local, ≥25 min = anchor, between = corridor.';
+                const chipStyle = poly ? SCOUT_RESULTS_ZONE_NAME_CHIP : SCOUT_BADGE_CHIP;
+                return (
+                  <span style={chipStyle} title={title}>
+                    {combined}
+                  </span>
+                );
+              })()}
+            </Fragment>
+          ) : null}
+        </div>
 
-        {result && latestRoutingRequestId && (
-          <div style={{ marginBottom: 8 }}>
-            <div className="muted" style={{ fontSize: 12 }}>
-              Routing request ID:{' '}
-              <code style={{ fontFamily: 'monospace', fontSize: 12 }}>
-                {latestRoutingRequestId}
-              </code>
-            </div>
-            <div style={{ fontSize: 12, fontWeight: 'bold', marginTop: 4 }}>
-              Lower score is better
-            </div>
-          </div>
-        )}
+        {result ? (
+          <div style={{ fontSize: 12, fontWeight: 'bold', marginBottom: 8 }}>Lower score is better</div>
+        ) : null}
 
         {feedbackToast && (
           <div
@@ -2049,12 +3032,40 @@ export default function Routing() {
                 const shiftOverrunSec =
                   typeof opt.overrunSeconds === 'number' ? opt.overrunSeconds : 0;
                 const overtimeBadge = finite(shiftOverrunSec) && shiftOverrunSec >= 60;
+                const isEarlierFeasibleEmptyDay = opt.emptyDayStartVariant === 'earlier_feasible';
+
+                const rootScoutAware = scoutPolicyZoneAware(result?.scoutEmptyDayPolicy);
+                const candScoutAware = scoutPolicyZoneAware(opt.scoutEmptyDayPolicy);
+                const scoutGaps = scoutGapsFromCandidate(opt as unknown as Record<string, unknown>);
+                const gapPolicyAware = scoutGaps.some((g) => scoutPolicyZoneAware(g.scoutEmptyDayPolicy));
+                const showScoutUi = rootScoutAware || candScoutAware || gapPolicyAware;
+                const candidateScoutRow: ScoutRoutingGapRow = {
+                  scoutLiaisonPrimaryLabel: opt.scoutLiaisonPrimaryLabel,
+                  scoutLiaisonLabels: opt.scoutLiaisonLabels,
+                  scoutLiaisonLabelIds: opt.scoutLiaisonLabelIds,
+                };
+                const candidateScoutCopy =
+                  !!(candidateScoutRow.scoutLiaisonPrimaryLabel?.trim() ||
+                    (candidateScoutRow.scoutLiaisonLabels ?? []).some(Boolean) ||
+                    (candidateScoutRow.scoutLiaisonLabelIds ?? []).some(Boolean));
+                const metricsRow = scoutDayMetricsForCandidate(opt);
+                const zoneAwareDeltaLine = showScoutUi ? scoutZoneAwareDeltaUi(opt) : null;
 
                 return (
                   <div
                     key={`${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${idx}`}
                     className="card"
-                    style={{ position: 'relative', paddingTop: 48 }}
+                    style={{
+                      position: 'relative',
+                      paddingTop: 48,
+                      ...(isEarlierFeasibleEmptyDay
+                        ? {
+                            backgroundColor: '#fefce8',
+                            border: '1px solid #fde68a',
+                            boxSizing: 'border-box',
+                          }
+                        : {}),
+                    }}
                   >
                     <div
                       style={{
@@ -2137,11 +3148,6 @@ export default function Routing() {
                       {isoToTime(opt.suggestedStartIso)}
                     </h3>
 
-                    <div style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
-                      <SlotChip slot={opt.slot ?? null} />
-                      <EdgeChip first={opt.isFirstEdge} last={opt.isLastEdge} />
-                    </div>
-
                     {(opt.scoringComponents?.downstreamWindowEdge ?? 0) > 0 && (
                       <div
                         style={{
@@ -2156,6 +3162,90 @@ export default function Routing() {
                         }}
                       >
                         ⚠ At least one downstream appointment is pushed within 15 minutes of its window end.
+                      </div>
+                    )}
+
+                    {showScoutUi && (
+                      <div style={{ marginBottom: 10 }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: 6,
+                            alignItems: 'center',
+                            marginBottom: 8,
+                          }}
+                        >
+                          <ScoutDayStatBadges row={metricsRow} embedded />
+                          <ScoutZoneAwareDiagnosticsRow
+                            row={opt}
+                            hideZoneClass
+                            variant="inline"
+                          />
+                        </div>
+                        {scoutPreservedAnchorZonesStillNote(result?.scoutPreservedEmptyDayWeeks, opt)}
+                        {(rootScoutAware || candScoutAware) &&
+                        candidateScoutCopy &&
+                        !scoutRoutingHideLiaisonCopyForPreserve(opt) ? (
+                          <ScoutLiaisonCopyBlock row={candidateScoutRow} />
+                        ) : null}
+                        {scoutGaps.map((gap, gi) => {
+                          const gapAware =
+                            rootScoutAware || scoutPolicyZoneAware(gap.scoutEmptyDayPolicy);
+                          if (!gapAware) return null;
+                          const gapCopy =
+                            !!(gap.scoutLiaisonPrimaryLabel?.trim() ||
+                              (gap.scoutLiaisonLabels ?? []).some(Boolean) ||
+                              (gap.scoutLiaisonLabelIds ?? []).some(Boolean));
+                          const gapStats =
+                            gap.dayIsEmpty === true ||
+                            gap.dayIsStrategicLight === true ||
+                            typeof gap.dayClientVisitCount === 'number' ||
+                            typeof gap.dayHouseholdCount === 'number' ||
+                            typeof gap.dayPatientCount === 'number';
+                          const gapDiag = scoutZoneAwareDiagHasContent(gap);
+                          if (!gapCopy && !gapStats && !gapDiag) return null;
+                          const gapDeltaLine = scoutZoneAwareDeltaUi(gap);
+                          return (
+                            <div key={`scout-gap-${gi}`} style={{ marginTop: 8 }}>
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  flexWrap: 'wrap',
+                                  gap: 6,
+                                  alignItems: 'center',
+                                  marginBottom: 8,
+                                }}
+                              >
+                                <ScoutDayStatBadges row={gap} embedded />
+                                <ScoutZoneAwareDiagnosticsRow
+                                  row={gap}
+                                  hideZoneClass={Boolean(
+                                    routingZoneAwareResultsBanner?.zoneClassRaw
+                                  )}
+                                  variant="inline"
+                                />
+                              </div>
+                              {scoutPreservedAnchorZonesStillNote(result?.scoutPreservedEmptyDayWeeks, {
+                                scoutPreservedEmptyDayPenalty: gap.scoutPreservedEmptyDayPenalty,
+                                doctorPimsId: opt.doctorPimsId,
+                                date: opt.date,
+                              })}
+                              {gapDeltaLine ? (
+                                <div
+                                  className="muted"
+                                  style={{ fontSize: 11, marginTop: 4, marginBottom: 4 }}
+                                  title={gapDeltaLine.title}
+                                >
+                                  <strong>Zone-aware Δ:</strong> {gapDeltaLine.value}
+                                </div>
+                              ) : null}
+                              {gapCopy && !scoutRoutingHideLiaisonCopyForPreserve(gap) ? (
+                                <ScoutLiaisonCopyBlock row={gap} />
+                              ) : null}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
 
@@ -2195,6 +3285,16 @@ export default function Routing() {
                         color="inherit"
                       />
                     </div>
+
+                    {zoneAwareDeltaLine ? (
+                      <div
+                        className="muted"
+                        style={{ fontSize: 12, marginTop: 4, marginBottom: 4 }}
+                        title={zoneAwareDeltaLine.title}
+                      >
+                        <strong>Zone-aware Δ:</strong> {zoneAwareDeltaLine.value}
+                      </div>
+                    ) : null}
 
                     <div
                       style={{
@@ -2315,9 +3415,16 @@ export default function Routing() {
                         alignItems: 'center',
                         padding: '12px 8px',
                         cursor: 'pointer',
-                        borderRadius: 4,
+                        borderRadius: 8,
                         marginBottom: 4,
-                        backgroundColor: isSelected ? '#f0f9ff' : 'transparent',
+                        border: '1px solid transparent',
+                        boxSizing: 'border-box',
+                        ...(isSelected
+                          ? {
+                              backgroundColor: '#fef9c3',
+                              borderColor: '#ca8a04',
+                            }
+                          : { backgroundColor: 'transparent' }),
                       }}
                       onMouseEnter={(e) => {
                         if (!isSelected) {
@@ -2327,6 +3434,8 @@ export default function Routing() {
                       onMouseLeave={(e) => {
                         if (!isSelected) {
                           e.currentTarget.style.backgroundColor = 'transparent';
+                        } else {
+                          e.currentTarget.style.backgroundColor = '#fef9c3';
                         }
                       }}
                     >

@@ -1,5 +1,5 @@
 // src/api/clientPortal.ts
-import { http } from './http';
+import { apiBaseUrl, http } from './http';
 
 /** ---------- Types ---------- **/
 export type Vaccination = {
@@ -141,7 +141,57 @@ export type ClientAppointment = {
 
   clientZone?: { id: string | number; name: string | null } | null;
   effectiveZone?: { id: string | number; name: string | null } | null;
+
+  /**
+   * When the practice attached a pre-visit room loader for this appointment, the API may include
+   * a public form token (same as email/SMS links). Shapes: top-level token fields or nested `roomLoader`.
+   */
+  roomLoaderPublicToken?: string | null;
+  /** e.g. `sent_1`, `sent_2`, `completed` — used to choose PDF vs open form. */
+  roomLoaderSentStatus?: string | null;
 };
+
+/** PDF download for a submitted public room loader (requires token from appointment payload). */
+export function getClientRoomLoaderPdfHref(token: string): string {
+  return `${apiBaseUrl}/public/room-loader/pdf?token=${encodeURIComponent(token)}`;
+}
+
+export function getClientRoomLoaderFormPath(token: string): string {
+  return `/public/room-loader/form?token=${encodeURIComponent(token)}`;
+}
+
+function pickRoomLoaderPublicToken(raw: any): string | null {
+  const candidates = [
+    raw?.roomLoaderPublicToken,
+    raw?.publicRoomLoaderToken,
+    raw?.roomLoaderToken,
+    raw?.roomLoader?.token,
+    raw?.publicRoomLoader?.token,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim()) return c.trim();
+  }
+  return null;
+}
+
+function pickRoomLoaderSentStatus(raw: any): string | null {
+  const submit =
+    raw?.roomLoader?.submitStatus ??
+    raw?.publicRoomLoader?.submitStatus ??
+    raw?.roomLoaderSubmitStatus ??
+    null;
+  if (typeof submit === 'string' && submit.trim().toLowerCase() === 'completed') {
+    return 'completed';
+  }
+  const s =
+    raw?.roomLoaderSentStatus ??
+    raw?.publicRoomLoaderSentStatus ??
+    raw?.roomLoader?.sentStatus ??
+    raw?.publicRoomLoader?.sentStatus ??
+    null;
+  if (typeof s !== 'string' || !s.trim()) return null;
+  return s.trim().toLowerCase();
+}
 
 /** ---------- Wellness plan types (aligned with your /wellness-plans controller) ---------- **/
 export type WellnessBenefit = {
@@ -295,6 +345,9 @@ export async function fetchClientAppointments(): Promise<ClientAppointment[]> {
 
         clientZone: a?.client?.clientZone ?? a?.clientZone ?? null,
         effectiveZone: a?.effectiveZone ?? null,
+
+        roomLoaderPublicToken: pickRoomLoaderPublicToken(a),
+        roomLoaderSentStatus: pickRoomLoaderSentStatus(a),
       } as ClientAppointment;
     })
     .filter(Boolean) as ClientAppointment[];

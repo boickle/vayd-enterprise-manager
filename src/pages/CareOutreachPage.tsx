@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dayjs from 'dayjs';
 import {
   fetchUnscheduledReminders,
+  patchReminder,
   patchReminderOutreachNotes,
   type CareOutreachClientRef,
   type CareOutreachPatientRef,
@@ -144,6 +145,12 @@ function initialNotes(r: UnscheduledReminder): string {
   return (r.outreachNotes ?? snake ?? r.notes ?? '') || '';
 }
 
+function reminderIsHidden(r: UnscheduledReminder): boolean {
+  const any = r as Record<string, unknown>;
+  if (typeof any.is_hidden === 'boolean') return any.is_hidden;
+  return r.isHidden === true;
+}
+
 function patientHasListableId(p: UnscheduledReminder['patient']): p is NonNullable<
   UnscheduledReminder['patient']
 > & { id: number } {
@@ -254,6 +261,19 @@ function mergeReminderAfterPatch(
     merged.description = row.description;
   }
   if (updated.practice == null && row.practice != null) merged.practice = row.practice;
+
+  const uAny = updated as Record<string, unknown>;
+  const hiddenFromPatch =
+    typeof uAny.is_hidden === 'boolean' ? (uAny.is_hidden as boolean) : undefined;
+  const hiddenFromPatch2 = typeof updated.isHidden === 'boolean' ? updated.isHidden : undefined;
+  if (hiddenFromPatch !== undefined) merged.isHidden = hiddenFromPatch;
+  else if (hiddenFromPatch2 !== undefined) merged.isHidden = hiddenFromPatch2;
+  else if (typeof row.isHidden === 'boolean') merged.isHidden = row.isHidden;
+  else {
+    const rAny = row as Record<string, unknown>;
+    if (typeof rAny.is_hidden === 'boolean') merged.isHidden = rAny.is_hidden as boolean;
+  }
+
   return merged;
 }
 
@@ -272,6 +292,10 @@ export default function CareOutreachPage() {
   const [noteError, setNoteError] = useState<Record<number, string | null>>({});
   const debounceTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
+  const [showHiddenReminders, setShowHiddenReminders] = useState(false);
+  const [reminderHiddenSaving, setReminderHiddenSaving] = useState<Record<number, boolean>>({});
+  const [reminderHiddenError, setReminderHiddenError] = useState<Record<number, string | null>>({});
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -288,6 +312,8 @@ export default function CareOutreachPage() {
         drafts[r.id] = initialNotes(r);
       }
       setNoteDrafts(drafts);
+      setReminderHiddenSaving({});
+      setReminderHiddenError({});
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -317,10 +343,15 @@ export default function CareOutreachPage() {
     });
   }, [rows, priority]);
 
+  const filteredByHidden = useMemo(
+    () => filteredByPriority.filter((r) => showHiddenReminders || !reminderIsHidden(r)),
+    [filteredByPriority, showHiddenReminders]
+  );
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return filteredByPriority;
-    return filteredByPriority.filter((r) => {
+    if (!q) return filteredByHidden;
+    return filteredByHidden.filter((r) => {
       const c = extractClient(r);
       const pet = r.patient?.name ?? '';
       const desc = r.description ?? '';
@@ -329,7 +360,7 @@ export default function CareOutreachPage() {
       const hay = [c.displayName, c.phone ?? '', pet, desc, prov, notes].join(' ').toLowerCase();
       return hay.includes(q);
     });
-  }, [filteredByPriority, search, noteDrafts]);
+  }, [filteredByHidden, search, noteDrafts]);
 
   const sortedForDisplay = useMemo(() => {
     return [...filtered].sort(compareRemindersForDisplay);
@@ -486,12 +517,41 @@ export default function CareOutreachPage() {
     }
     const value = valueFromDom;
     setNoteDrafts((d) => ({ ...d, [reminderId]: value }));
-    const server = rows.find((r) => r.id === reminderId);
+    const server = rows.find(
+      (r) => Number(r.id) === Number(reminderId) || String(r.id) === String(reminderId)
+    );
     const serverVal = server ? initialNotes(server) : '';
     if (value !== serverVal) {
       await flushSave(reminderId, value);
     }
   }
+
+  const setReminderHidden = useCallback(async (reminderId: number, isHidden: boolean) => {
+    setReminderHiddenSaving((s) => ({ ...s, [reminderId]: true }));
+    setReminderHiddenError((e) => ({ ...e, [reminderId]: null }));
+    try {
+      const updated = await patchReminder(reminderId, { isHidden });
+      setRows((prev) => {
+        const row = prev.find(
+          (r) => Number(r.id) === Number(reminderId) || String(r.id) === String(reminderId)
+        );
+        if (!row) return prev;
+        const mergedRow = mergeReminderAfterPatch(row, updated);
+        setNoteDrafts((d) => ({ ...d, [reminderId]: initialNotes(mergedRow) }));
+        return prev.map((r) =>
+          Number(r.id) === Number(reminderId) || String(r.id) === String(reminderId) ? mergedRow : r
+        );
+      });
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        (e as Error)?.message ??
+        'Could not update reminder';
+      setReminderHiddenError((er) => ({ ...er, [reminderId]: String(msg) }));
+    } finally {
+      setReminderHiddenSaving((s) => ({ ...s, [reminderId]: false }));
+    }
+  }, []);
 
   return (
     <div>
@@ -564,15 +624,37 @@ export default function CareOutreachPage() {
         ))}
       </div>
 
-      <div style={{ marginBottom: 16, maxWidth: 420 }}>
-        <input
-          type="search"
-          className="settings-input"
-          placeholder="Search client, patient, phone, service, provider, notes…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          aria-label="Search outreach list"
-        />
+      <div
+        style={{
+          marginBottom: 16,
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 16,
+          alignItems: 'center',
+        }}
+      >
+        <div style={{ flex: '1 1 280px', maxWidth: 420 }}>
+          <input
+            type="search"
+            className="settings-input"
+            placeholder="Search client, patient, phone, service, provider, notes…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search outreach list"
+            style={{ width: '100%' }}
+          />
+        </div>
+        <label
+          className="settings-muted"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', whiteSpace: 'nowrap' }}
+        >
+          <input
+            type="checkbox"
+            checked={showHiddenReminders}
+            onChange={(e) => setShowHiddenReminders(e.target.checked)}
+          />
+          <span>Show hidden reminders</span>
+        </label>
       </div>
 
       {error && (
@@ -663,6 +745,9 @@ export default function CareOutreachPage() {
                             <th style={{ padding: '6px 16px', fontWeight: 600 }}>Service</th>
                             <th style={{ padding: '6px 8px', fontWeight: 600 }}>Provider</th>
                             <th style={{ padding: '6px 8px', fontWeight: 600 }}>Due</th>
+                            <th style={{ padding: '6px 12px', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                              Visibility
+                            </th>
                             <th style={{ padding: '6px 16px', fontWeight: 600, minWidth: 220 }}>
                               Outreach notes
                             </th>
@@ -672,6 +757,7 @@ export default function CareOutreachPage() {
                           {pg.reminders.map((r) => {
                             const diff = calendarDayDiffFromToday(r.dueDate ?? null);
                             const overdue = diff !== null && diff < 0;
+                            const hidden = reminderIsHidden(r);
                             return (
                               <tr
                                 key={r.id}
@@ -681,7 +767,25 @@ export default function CareOutreachPage() {
                                 }}
                               >
                                 <td style={{ padding: '10px 16px', verticalAlign: 'top' }}>
-                                  {r.description}
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+                                    <span>{r.description}</span>
+                                    {hidden && showHiddenReminders && (
+                                      <span
+                                        style={{
+                                          fontSize: 11,
+                                          fontWeight: 700,
+                                          textTransform: 'uppercase',
+                                          color: '#92400e',
+                                          background: '#fef3c7',
+                                          border: '1px solid #fbbf24',
+                                          borderRadius: 4,
+                                          padding: '2px 6px',
+                                        }}
+                                      >
+                                        Hidden
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
                                 <td
                                   style={{
@@ -703,6 +807,30 @@ export default function CareOutreachPage() {
                                 >
                                   {formatDisplayDate(r.dueDate ?? undefined)}
                                 </td>
+                                <td style={{ padding: '10px 12px', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                                  <button
+                                    type="button"
+                                    className="btn"
+                                    disabled={Boolean(reminderHiddenSaving[r.id])}
+                                    onClick={() => void setReminderHidden(r.id, !hidden)}
+                                    style={{
+                                      fontSize: 13,
+                                      padding: '6px 12px',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    {reminderHiddenSaving[r.id]
+                                      ? 'Saving…'
+                                      : hidden
+                                        ? 'Unhide'
+                                        : 'Hide'}
+                                  </button>
+                                  {reminderHiddenError[r.id] && (
+                                    <div style={{ color: '#b91c1c', fontSize: 12, marginTop: 6, maxWidth: 160 }}>
+                                      {reminderHiddenError[r.id]}
+                                    </div>
+                                  )}
+                                </td>
                                 <td style={{ padding: '10px 16px', verticalAlign: 'top' }}>
                                   <textarea
                                     className="settings-input"
@@ -714,7 +842,7 @@ export default function CareOutreachPage() {
                                       fontFamily: 'inherit',
                                       fontSize: 13,
                                     }}
-                                    value={noteDrafts[r.id] ?? ''}
+                                    value={noteDrafts[r.id] ?? initialNotes(r)}
                                     onChange={(e) => onNotesChange(r.id, e.target.value)}
                                     onBlur={(e) => void onNotesBlur(r.id, e.currentTarget.value)}
                                     placeholder="e.g. 11/14/2026 DF – LMOM"

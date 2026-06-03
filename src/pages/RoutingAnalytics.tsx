@@ -45,6 +45,10 @@ import {
   type AppointmentBookingDetail,
   type AppointmentBookingsAnalyticsUser,
 } from '../api/appointmentBookingsAnalytics';
+import {
+  fetchAllAppointmentRequestSubmissions,
+  type AppointmentRequestSubmissionItem,
+} from '../api/appointmentRequestSubmissions';
 
 function toLocalDateStr(d: Dayjs) {
   return d.format('YYYY-MM-DD');
@@ -111,6 +115,65 @@ function addTotalBookedTrend<T extends { totalBooked: number }>(
 }
 
 const ALL_USERS = '';
+
+const APPOINTMENT_REQUEST_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+
+/** Classify persisted public form payload: euthanasia / end-of-life vs other appointment requests. */
+function isEuthanasiaRequestSubmission(requestData: Record<string, unknown>): boolean {
+  const chunks: string[] = [];
+  const top = requestData.appointmentType;
+  if (typeof top === 'string') chunks.push(top);
+  const psd = requestData.petSpecificData;
+  if (psd && typeof psd === 'object') {
+    for (const v of Object.values(psd as Record<string, unknown>)) {
+      if (!v || typeof v !== 'object') continue;
+      const o = v as Record<string, unknown>;
+      for (const key of ['needsToday', 'appointmentTypeName'] as const) {
+        const s = o[key];
+        if (typeof s === 'string') chunks.push(s);
+      }
+    }
+  }
+  const hay = chunks.join(' ').toLowerCase();
+  return (
+    hay.includes('euthanasia') ||
+    hay.includes('end-of-life') ||
+    hay.includes('end of life')
+  );
+}
+
+function isCompletedSubmission(item: AppointmentRequestSubmissionItem): boolean {
+  return item.kind == null || item.kind === 'submission';
+}
+
+function isAbandonedSubmission(item: AppointmentRequestSubmissionItem): boolean {
+  return item.kind === 'abandoned';
+}
+
+function classifyClientType(requestData: Record<string, unknown>): 'new' | 'existing' | 'unknown' {
+  const ct = requestData.clientType;
+  if (ct === 'new' || ct === 'existing') return ct;
+  const formFlow = requestData.formFlow;
+  if (formFlow && typeof formFlow === 'object') {
+    const startedAsExisting = (formFlow as Record<string, unknown>).startedAsExistingClient;
+    if (startedAsExisting === true) return 'existing';
+    if (startedAsExisting === false) return 'new';
+  }
+  return 'unknown';
+}
+
+function classifySubmission(item: AppointmentRequestSubmissionItem): {
+  isEuth: boolean;
+  clientType: 'new' | 'existing' | 'unknown';
+  localDay: string;
+} {
+  const rd = item.requestData ?? {};
+  return {
+    isEuth: isEuthanasiaRequestSubmission(rd),
+    clientType: classifyClientType(rd),
+    localDay: dayjs(item.submittedAt).format('YYYY-MM-DD'),
+  };
+}
 
 type OverviewLineKey =
   | 'totalBooked'
@@ -338,6 +401,11 @@ export default function RoutingAnalyticsPage() {
   const [bookingsError, setBookingsError] = useState<string | null>(null);
   const [fillDayError, setFillDayError] = useState<string | null>(null);
   const [careOutreachUsageError, setCareOutreachUsageError] = useState<string | null>(null);
+  const [requestSubmissions, setRequestSubmissions] = useState<AppointmentRequestSubmissionItem[] | null>(
+    null
+  );
+  const [requestSubmissionsLoading, setRequestSubmissionsLoading] = useState(false);
+  const [requestSubmissionsError, setRequestSubmissionsError] = useState<string | null>(null);
 
   const start = range.from.startOf('day');
   const end = range.to.startOf('day');
@@ -427,6 +495,82 @@ export default function RoutingAnalyticsPage() {
       alive = false;
     };
   }, [startStr, endStr]);
+
+  useEffect(() => {
+    let alive = true;
+    setRequestSubmissionsLoading(true);
+    setRequestSubmissionsError(null);
+    const fromIso = dayjs(startStr, 'YYYY-MM-DD', true).startOf('day').toISOString();
+    const toIso = dayjs(endStr, 'YYYY-MM-DD', true).endOf('day').toISOString();
+    fetchAllAppointmentRequestSubmissions({
+      practiceId: APPOINTMENT_REQUEST_PRACTICE_ID,
+      from: fromIso,
+      to: toIso,
+    })
+      .then((items) => {
+        if (!alive) return;
+        setRequestSubmissions(items);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        console.error('Appointment request submissions fetch failed:', e);
+        setRequestSubmissionsError('Failed to load public appointment request submissions');
+        setRequestSubmissions(null);
+      })
+      .finally(() => {
+        if (alive) setRequestSubmissionsLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [startStr, endStr]);
+
+  const requestSubmissionStats = useMemo(() => {
+    const items = requestSubmissions ?? [];
+    const byDay = new Map<string, { total: number; euth: number; nonEuth: number }>();
+    for (const d of dates) byDay.set(d, { total: 0, euth: 0, nonEuth: 0 });
+    let total = 0;
+    let euth = 0;
+    let newClient = 0;
+    let existingClient = 0;
+    let abandoned = 0;
+    for (const item of items) {
+      const { isEuth, clientType, localDay } = classifySubmission(item);
+      if (isAbandonedSubmission(item)) {
+        abandoned += 1;
+        continue;
+      }
+      if (!isCompletedSubmission(item)) continue;
+      total += 1;
+      if (isEuth) euth += 1;
+      if (clientType === 'new') newClient += 1;
+      else if (clientType === 'existing') existingClient += 1;
+      const row = byDay.get(localDay);
+      if (row) {
+        row.total += 1;
+        if (isEuth) row.euth += 1;
+        else row.nonEuth += 1;
+      }
+    }
+    const nonEuth = total - euth;
+    const attempted = total + abandoned;
+    const completionRate = attempted > 0 ? (total / attempted) * 100 : null;
+    const chartRows = dates.map((date) => {
+      const r = byDay.get(date) ?? { total: 0, euth: 0, nonEuth: 0 };
+      return { date, totalBookedRequests: r.total, euthRequests: r.euth, nonEuthRequests: r.nonEuth };
+    });
+    return {
+      total,
+      euth,
+      nonEuth,
+      newClient,
+      existingClient,
+      abandoned,
+      attempted,
+      completionRate,
+      chartRows,
+    };
+  }, [requestSubmissions, dates]);
 
   const overviewChartData = useMemo(() => {
     const bookingRows = aggregateBookingsByDay(bookingsData?.users, dates, selectedOverviewUserEmail);
@@ -1678,6 +1822,162 @@ export default function RoutingAnalyticsPage() {
             )}
           </CardContent>
         </Card>
+
+        <Typography variant="h6" sx={{ mt: 4, mb: 2 }}>
+          Public appointment requests
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          GET /appointments/request-submissions (practiceId={APPOINTMENT_REQUEST_PRACTICE_ID}, from / to in
+          ISO UTC derived from the selected local dates). Completed submissions (<code>kind: submission</code>)
+          are counted for totals, client type, and euthanasia breakdown; abandoned form sessions (
+          <code>kind: abandoned</code>) are counted separately. Attempted = completed + abandoned; completion
+          rate = completed ÷ attempted.
+        </Typography>
+
+        {requestSubmissionsError && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {requestSubmissionsError}
+          </Alert>
+        )}
+
+        {requestSubmissionsLoading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+            <CircularProgress size={28} />
+          </Box>
+        ) : (
+          <>
+            {isSingleDay && (
+              <Typography variant="body1" sx={{ mb: 2 }}>
+                Submissions for this day:{' '}
+                <strong>{requestSubmissionStats.attempted}</strong> attempted —{' '}
+                <strong>{requestSubmissionStats.total}</strong> completed (
+                {requestSubmissionStats.completionRate != null
+                  ? `${requestSubmissionStats.completionRate.toFixed(1)}%`
+                  : '—'}
+                ), <strong>{requestSubmissionStats.abandoned}</strong> abandoned.{' '}
+                <strong>{requestSubmissionStats.newClient}</strong> new client,{' '}
+                <strong>{requestSubmissionStats.existingClient}</strong> existing client —{' '}
+                <strong>{requestSubmissionStats.nonEuth}</strong> non-euthanasia,{' '}
+                <strong>{requestSubmissionStats.euth}</strong> euthanasia-related.
+              </Typography>
+            )}
+
+            {!isSingleDay && (
+              <Card sx={{ mb: 3 }}>
+                <CardHeader
+                  title="Public appointment requests by day"
+                  subheader="Completed submissions vs euthanasia-related vs other (local calendar day of submittedAt)."
+                />
+                <CardContent>
+                  <Box sx={{ width: '100%', height: 360 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart
+                        data={requestSubmissionStats.chartRows}
+                        margin={{ top: 8, right: 24, left: 8, bottom: 8 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                        <YAxis
+                          label={{ value: 'Submissions', angle: -90, position: 'insideLeft' }}
+                          tick={{ fontSize: 11 }}
+                          allowDecimals={false}
+                        />
+                        <Tooltip
+                          formatter={(value: unknown) =>
+                            value != null ? `${Number(value)}` : '0'
+                          }
+                          labelFormatter={(label) => String(label)}
+                        />
+                        <Legend />
+                        <Line
+                          type="monotone"
+                          dataKey="totalBookedRequests"
+                          name="Total"
+                          stroke="#1565c0"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="nonEuthRequests"
+                          name="Non-euthanasia"
+                          stroke="#2e7d32"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="euthRequests"
+                          name="Euthanasia-related"
+                          stroke="#c62828"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </Box>
+                </CardContent>
+              </Card>
+            )}
+
+            <Card>
+              <CardHeader
+                title={isSingleDay ? 'Submissions for this day' : 'Submissions for selected range'}
+                subheader="Completed submissions and abandoned sessions for the selected date range."
+              />
+              <CardContent>
+                <TableContainer component={Paper} variant="outlined">
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Category</TableCell>
+                        <TableCell align="right">Count</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      <TableRow>
+                        <TableCell>Total attempted requests</TableCell>
+                        <TableCell align="right">{requestSubmissionStats.attempted}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell>Total completed submissions</TableCell>
+                        <TableCell align="right">{requestSubmissionStats.total}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell>Completion rate</TableCell>
+                        <TableCell align="right">
+                          {requestSubmissionStats.completionRate != null
+                            ? `${requestSubmissionStats.completionRate.toFixed(1)}%`
+                            : '—'}
+                        </TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell>Abandoned submissions</TableCell>
+                        <TableCell align="right">{requestSubmissionStats.abandoned}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell>New client requests</TableCell>
+                        <TableCell align="right">{requestSubmissionStats.newClient}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell>Existing client requests</TableCell>
+                        <TableCell align="right">{requestSubmissionStats.existingClient}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell>Non-euthanasia-related</TableCell>
+                        <TableCell align="right">{requestSubmissionStats.nonEuth}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell>Euthanasia-related</TableCell>
+                        <TableCell align="right">{requestSubmissionStats.euth}</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </CardContent>
+            </Card>
+          </>
+        )}
     </Box>
   );
 }

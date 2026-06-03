@@ -21,6 +21,8 @@ import {
 import { http } from '../api/http';
 import { Heart } from 'lucide-react';
 import { KeyValue } from '../components/KeyValue';
+import { RoomLoaderReconciliationModal } from '../components/RoomLoaderReconciliationModal';
+import { roomLoaderAppointmentsHaveHappened } from '../utils/roomLoaderReconciliation';
 import { evetPatientLink, evetClientLink } from '../utils/evet';
 import {
   inventoryCategoryRequiresSharpsDisposal,
@@ -397,6 +399,8 @@ export default function RoomLoaderPage() {
   const [searchLoading, setSearchLoading] = useState<Record<number, boolean>>({});
   /** Room loader ID currently downloading PDF (for loading state on button). */
   const [downloadingPdfRoomLoaderId, setDownloadingPdfRoomLoaderId] = useState<number | null>(null);
+  /** Room loader ID for open reconciliation modal (completed loaders only). */
+  const [reconcileRoomLoaderId, setReconcileRoomLoaderId] = useState<number | null>(null);
   /** True when Update (save without email) request is in progress. */
   const [updatingToClient, setUpdatingToClient] = useState(false);
   /** Send-to-client confirmation modal: email vs SMS when re-sending (timesSent >= 1) */
@@ -970,6 +974,8 @@ export default function RoomLoaderPage() {
       /** Token for public PDF URL when completed */
       token?: string | null;
       sameDayLinkedNote: string | null;
+      /** Completed + all appointments in the past — show Reconcile. */
+      canReconcile: boolean;
     }> = [];
 
     roomLoaders.forEach((rl) => {
@@ -1106,6 +1112,9 @@ export default function RoomLoaderPage() {
       const sameDayLink = computeSameDayClientCompletedSiblingLink(rl, roomLoaders);
       const sameDayLinkedNote = sameDayLinkedTableNote(sameDayLink);
 
+      const canReconcile =
+        rl.sentStatus === 'completed' && roomLoaderAppointmentsHaveHappened(rl.appointments ?? []);
+
       rows.push({
         roomLoaderId: rl.id,
         apptDate,
@@ -1121,6 +1130,7 @@ export default function RoomLoaderPage() {
         clientHasNoEmail,
         token: rl.token ?? null,
         sameDayLinkedNote,
+        canReconcile,
       });
     });
 
@@ -1189,6 +1199,11 @@ export default function RoomLoaderPage() {
     setAppointmentReasons({});
     setVaccineCheckboxes({});
     setNotesToClient({});
+  }
+
+  function handleOpenReconcile(roomLoaderId: number, e: React.MouseEvent) {
+    e.stopPropagation();
+    setReconcileRoomLoaderId(roomLoaderId);
   }
 
   async function handleDownloadPdf(roomLoaderId: number, e: React.MouseEvent) {
@@ -2959,24 +2974,45 @@ export default function RoomLoaderPage() {
                           {row.sentStatus.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
                         </span>
                         {row.sentStatus === 'completed' && (
-                          <button
-                            type="button"
-                            onClick={(e) => handleDownloadPdf(row.roomLoaderId, e)}
-                            disabled={downloadingPdfRoomLoaderId === row.roomLoaderId}
-                            className="room-loader-download-pdf-btn"
-                            style={{
-                              fontSize: '12px',
-                              fontWeight: 600,
-                              color: '#0d6efd',
-                              background: 'none',
-                              border: 'none',
-                              padding: '4px 0',
-                              cursor: downloadingPdfRoomLoaderId === row.roomLoaderId ? 'wait' : 'pointer',
-                              textDecoration: 'underline',
-                            }}
-                          >
-                            {downloadingPdfRoomLoaderId === row.roomLoaderId ? 'Downloading…' : 'Download PDF'}
-                          </button>
+                          <>
+                            {row.canReconcile ? (
+                            <button
+                              type="button"
+                              onClick={(e) => handleOpenReconcile(row.roomLoaderId, e)}
+                              className="room-loader-download-pdf-btn"
+                              style={{
+                                fontSize: '12px',
+                                fontWeight: 600,
+                                color: '#0d6efd',
+                                background: 'none',
+                                border: 'none',
+                                padding: '4px 0',
+                                cursor: 'pointer',
+                                textDecoration: 'underline',
+                              }}
+                            >
+                              Reconcile
+                            </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={(e) => handleDownloadPdf(row.roomLoaderId, e)}
+                              disabled={downloadingPdfRoomLoaderId === row.roomLoaderId}
+                              className="room-loader-download-pdf-btn"
+                              style={{
+                                fontSize: '12px',
+                                fontWeight: 600,
+                                color: '#0d6efd',
+                                background: 'none',
+                                border: 'none',
+                                padding: '4px 0',
+                                cursor: downloadingPdfRoomLoaderId === row.roomLoaderId ? 'wait' : 'pointer',
+                                textDecoration: 'underline',
+                              }}
+                            >
+                              {downloadingPdfRoomLoaderId === row.roomLoaderId ? 'Downloading…' : 'Download PDF'}
+                            </button>
+                          </>
                         )}
                         {row.sameDayLinkedNote ? (
                           <span style={{ fontSize: '11px', color: '#664d03', lineHeight: 1.35, maxWidth: '220px' }}>
@@ -3085,29 +3121,53 @@ export default function RoomLoaderPage() {
                   </span>
                 </div>
                 {row.sentStatus === 'completed' && (
-                  <button
-                    type="button"
-                    onClick={(e) => handleDownloadPdf(row.roomLoaderId, e)}
-                    disabled={downloadingPdfRoomLoaderId === row.roomLoaderId}
-                    className="room-loader-mobile-download-pdf"
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      minHeight: '44px',
-                      marginTop: '12px',
-                      padding: '12px 20px',
-                      fontSize: '14px',
-                      fontWeight: 600,
-                      backgroundColor: '#1a1a1a',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: '8px',
-                      cursor: downloadingPdfRoomLoaderId === row.roomLoaderId ? 'wait' : 'pointer',
-                    }}
-                  >
-                    {downloadingPdfRoomLoaderId === row.roomLoaderId ? 'Downloading…' : 'Download PDF'}
-                  </button>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px', width: '100%' }}>
+                    {row.canReconcile ? (
+                    <button
+                      type="button"
+                      onClick={(e) => handleOpenReconcile(row.roomLoaderId, e)}
+                      className="room-loader-mobile-download-pdf"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        minHeight: '44px',
+                        padding: '12px 20px',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        backgroundColor: '#0d6efd',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Reconcile
+                    </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={(e) => handleDownloadPdf(row.roomLoaderId, e)}
+                      disabled={downloadingPdfRoomLoaderId === row.roomLoaderId}
+                      className="room-loader-mobile-download-pdf"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        minHeight: '44px',
+                        padding: '12px 20px',
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        backgroundColor: '#1a1a1a',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        cursor: downloadingPdfRoomLoaderId === row.roomLoaderId ? 'wait' : 'pointer',
+                      }}
+                    >
+                      {downloadingPdfRoomLoaderId === row.roomLoaderId ? 'Downloading…' : 'Download PDF'}
+                    </button>
+                  </div>
                 )}
               </button>
             );
@@ -5295,6 +5355,13 @@ export default function RoomLoaderPage() {
           </div>
         </div>
       )}
+
+      {reconcileRoomLoaderId != null ? (
+        <RoomLoaderReconciliationModal
+          roomLoaderId={reconcileRoomLoaderId}
+          onClose={() => setReconcileRoomLoaderId(null)}
+        />
+      ) : null}
     </div>
   );
 }

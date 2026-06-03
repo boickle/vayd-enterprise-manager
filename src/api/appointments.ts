@@ -159,6 +159,26 @@ export function clientDisplayName(a: {
   return suffix ? `${name} (${suffix})` : name;
 }
 
+/**
+ * Purple routing preview on My Day / My Week: shows **New Appointment** (or `clientName`) with the same
+ * parenthetical **zone or city** rules as {@link clientDisplayName}.
+ *
+ * **Data:** You only get **(3E)**-style suffixes when the candidate payload includes `clientZone` and/or
+ * `effectiveZone` (or `city` for city fallback). If the routing API does not send zones yet, the label
+ * stays **New Appointment** with no parentheses.
+ */
+export function previewRoutingAppointmentLabel(
+  a: { clientName?: string | null; clientZone?: MiniZone; effectiveZone?: MiniZone; city?: string | null } | null
+): string {
+  const base = (a?.clientName ?? 'New Appointment').trim() || 'New Appointment';
+  return clientDisplayName({
+    clientName: base,
+    clientZone: a?.clientZone,
+    effectiveZone: a?.effectiveZone,
+    city: a?.city ?? null,
+  });
+}
+
 export async function fetchDoctorDay(
   dateISO: string,
   doctorId?: string

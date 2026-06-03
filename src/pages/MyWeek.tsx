@@ -6,6 +6,7 @@ import { DateTime } from 'luxon';
 import {
   fetchDoctorDay,
   clientDisplayName,
+  previewRoutingAppointmentLabel,
   isBlockEntry,
   blockDisplayLabel,
   isFlexBlockItem,
@@ -461,6 +462,9 @@ export type MyWeekVirtualAppt = {
     windowEndIso?: string;
   };
   validationReturnSec?: number;
+  /** From routing / geocode so preview matches `clientDisplayName` zone suffix, e.g. (3E). */
+  clientZone?: MiniZone;
+  effectiveZone?: MiniZone;
 };
 
 export type MyWeekProps = {
@@ -1547,6 +1551,8 @@ export default function MyWeek(props: MyWeekProps = {}) {
               city: virtualAppt.city,
               state: virtualAppt.state,
               zip: virtualAppt.zip,
+              clientZone: virtualAppt.clientZone,
+              effectiveZone: virtualAppt.effectiveZone,
               effectiveWindow: virtualAppt.arrivalWindow?.windowStartIso && virtualAppt.arrivalWindow?.windowEndIso
                 ? {
                     startIso: virtualAppt.arrivalWindow.windowStartIso,
@@ -1581,7 +1587,16 @@ export default function MyWeek(props: MyWeekProps = {}) {
     return () => {
       on = false;
     };
-  }, [dates.join(','), selectedDoctorId, virtualAppt?.date, virtualAppt?.suggestedStartIso, virtualAppt?.serviceMinutes, virtualAppt?.insertionIndex]);
+  }, [
+    dates.join(','),
+    selectedDoctorId,
+    virtualAppt?.date,
+    virtualAppt?.suggestedStartIso,
+    virtualAppt?.serviceMinutes,
+    virtualAppt?.insertionIndex,
+    virtualAppt?.clientZone?.id,
+    virtualAppt?.effectiveZone?.id,
+  ]);
 
   // When showByDriveTime is true, fetch ETAs for each day that has households
   useEffect(() => {
@@ -2521,7 +2536,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                               .map((h) => ({
                                 lat: h.lat,
                                 lon: h.lon,
-                                label: h.client,
+                                label: h.isPreview ? previewRoutingAppointmentLabel(h.primary) : h.client,
                                 address: h.address,
                               }));
                             return buildGoogleMapsLinksForDay(stops, {
@@ -2752,7 +2767,9 @@ export default function MyWeek(props: MyWeekProps = {}) {
                                   x: ev.clientX,
                                   y: ev.clientY,
                                   ...(anchor ? { anchor } : {}),
-                                  client: h.client,
+                                  client: h.isPreview
+                                    ? previewRoutingAppointmentLabel(h.primary)
+                                    : h.client,
                                   clientAlert: str(h.primary, 'clientAlert') ?? null,
                                   address: h.address,
                                   startIso,
@@ -2846,7 +2863,11 @@ export default function MyWeek(props: MyWeekProps = {}) {
                                     flex: 1,
                                   }}
                                 >
-                                  {h.isPersonalBlock ? blockDisplayLabel(h.primary) : h.client}
+                                  {h.isPersonalBlock
+                                    ? blockDisplayLabel(h.primary)
+                                    : h.isPreview
+                                      ? previewRoutingAppointmentLabel(h.primary)
+                                      : h.client}
                                 </span>
                                 {windowWarning && (
                                   <span

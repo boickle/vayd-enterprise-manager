@@ -1,0 +1,34 @@
+[
+  {
+    "id": 1,
+    "isActive": true,
+    "isDeleted": false,
+    "pimsId": "1",
+    "pimsType": "type",
+    "name": "Wellness",
+    "prettyName": "Wellness exam / check-up",
+    "isBoardingType": false,
+    "hasExtraInstructions": false,
+    "defaultDuration": 60,
+    "defaultStartTime": "09:00",
+    "showInApptRequestForm": true,
+    "newPatientAllowed": true,
+    "formListOrder": 1
+  },
+  {
+    "id": 2,
+    "isActive": true,
+    "isDeleted": false,
+    "pimsId": "2",
+    "pimsType": "type",
+    "name": "Euthanasia",
+    "prettyName": "End-of-life care / euthanasia",
+    "isBoardingType": false,
+    "hasExtraInstructions": true,
+    "defaultDuration": 90,
+    "defaultStartTime": "09:00",
+    "showInApptRequestForm": true,
+    "newPatientAllowed": true,
+    "formListOrder": 99
+  }
+]
