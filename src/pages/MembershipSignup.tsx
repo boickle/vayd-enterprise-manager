@@ -8,6 +8,7 @@ import {
 } from '../api/clientPortal';
 import {
   PaymentIntent,
+  type MembershipCheckoutDiscount,
   type MembershipTransactionPayload,
   type MembershipTransactionAddOn,
   type MembershipPaymentRequestOrigin,
@@ -15,7 +16,19 @@ import {
   type SubscriptionPlanCatalog,
   fetchFormattedSubscriptionPlans,
   type FormattedSubscriptionPlan,
+  resolveMembershipDiscountToken,
 } from '../api/payments';
+import {
+  applyMembershipDiscountToCostSummary,
+  MEMBERSHIP_PROMO_QUERY_PARAM,
+} from '../utils/membershipStripeDiscount';
+import { getFrontendPaymentProvider } from '../config/paymentProvider';
+import {
+  ALL_PETS_ALREADY_MEMBERS_MESSAGE,
+  enrichPetWithMembershipContext,
+  filterPetsEligibleForMembershipSignup,
+  petCanEnrollInMembership,
+} from '../utils/membershipPetEligibility';
 import { useAuth } from '../auth/useAuth';
 import { trackEvent, trackViewItem, trackAddToCart, trackBeginCheckout } from '../utils/analytics';
 import { resolveMembershipPetKind } from '../utils/membershipSpecies';
@@ -464,19 +477,29 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const onProceedToPayment = props?.onProceedToPayment;
   const onCancelModal = props?.onCancel;
 
-  const petId = state?.petId;
+  const [searchParams] = useSearchParams();
+  const petIdFromQuery = searchParams.get('petId')?.trim() || null;
+  const petId = state?.petId ?? petIdFromQuery ?? undefined;
   const fromAppointmentFlow = state?.fromAppointmentFlow === true;
   const prospectivePet = state?.pet;
   const returnUrl = state?.returnUrl;
   const returnUrlAnotherBase = state?.returnUrlAnotherBase;
-  const [searchParams] = useSearchParams();
   const signedUpParam = searchParams.get('signedUp');
+  const promoTokenParam = searchParams.get(MEMBERSHIP_PROMO_QUERY_PARAM)?.trim() || null;
   const isSigningUpAdditionalPet = Boolean(signedUpParam || (state as any)?.signedUpPetIds?.length);
+  const paymentProvider = getFrontendPaymentProvider();
+
+  const [checkoutDiscount, setCheckoutDiscount] = useState<MembershipCheckoutDiscount | null>(null);
+  const [promoResolveError, setPromoResolveError] = useState<string | null>(null);
+  const [promoResolving, setPromoResolving] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [pet, setPet] = useState<Pet | null>(null);
+  /** Set when user lands without navigation state (e.g. promo link) and must pick a pet. */
+  const [chosenPetId, setChosenPetId] = useState<string | null>(null);
+  const [petsForPicker, setPetsForPicker] = useState<Pet[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [selectedPlanExplicit, setSelectedPlanExplicit] = useState<string | null>(null);
   const [plusExplicit, setPlusExplicit] = useState(false);
@@ -498,8 +521,48 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const [formattedPlansError, setFormattedPlansError] = useState<string | null>(null);
   const [clientPetCount, setClientPetCount] = useState<number | null>(null);
 
+  useEffect(() => {
+    if (paymentProvider !== 'stripe' || !promoTokenParam) {
+      setCheckoutDiscount(null);
+      setPromoResolveError(null);
+      setPromoResolving(false);
+      return;
+    }
+    let alive = true;
+    setPromoResolving(true);
+    setPromoResolveError(null);
+    (async () => {
+      try {
+        const res = await resolveMembershipDiscountToken(promoTokenParam);
+        if (!alive) return;
+        if (res.valid && res.discount) {
+          setCheckoutDiscount(res.discount);
+        } else {
+          setCheckoutDiscount(null);
+          setPromoResolveError(res.message || 'This offer link is not valid or has expired.');
+        }
+      } catch {
+        if (!alive) return;
+        setCheckoutDiscount(null);
+        setPromoResolveError('Could not apply this offer. Please contact us for a new link.');
+      } finally {
+        if (alive) setPromoResolving(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [paymentProvider, promoTokenParam]);
+
   const brand = 'var(--brand, #0f766e)';
   const brandSoft = 'var(--brand-soft, #e6f7f5)';
+
+  const effectivePetId = petId ?? chosenPetId ?? null;
+  const showPetPicker =
+    !fromModal &&
+    !(fromAppointmentFlow && prospectivePet) &&
+    !effectivePetId &&
+    petsForPicker.length > 1;
 
   const goBack = () => {
     if (fromModal && onCancelModal) {
@@ -649,10 +712,47 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       return;
     }
 
-    if (!petId) {
-      setError('No pet selected. Please go back and select a pet.');
-      setLoading(false);
-      return;
+    if (!effectivePetId) {
+      let alive = true;
+      (async () => {
+        setLoading(true);
+        setError(null);
+        setPetsForPicker([]);
+        try {
+          const pets = await fetchClientPets();
+          if (!alive) return;
+          setClientPetCount(pets.length);
+          if (pets.length === 0) {
+            setError(
+              'We could not find any pets on your account. Please contact us or add a pet through the client portal first.',
+            );
+            setLoading(false);
+            return;
+          }
+          const eligible = await filterPetsEligibleForMembershipSignup(
+            pets,
+            authUserId ?? undefined,
+          );
+          if (!alive) return;
+          if (eligible.length === 0) {
+            setError(ALL_PETS_ALREADY_MEMBERS_MESSAGE);
+            setLoading(false);
+            return;
+          }
+          if (eligible.length === 1) {
+            setChosenPetId(eligible[0].id);
+            return;
+          }
+          setPetsForPicker(eligible);
+          setLoading(false);
+        } catch (e: any) {
+          if (alive) setError(e?.message || 'Failed to load your pets.');
+          if (alive) setLoading(false);
+        }
+      })();
+      return () => {
+        alive = false;
+      };
     }
 
     let alive = true;
@@ -663,7 +763,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       try {
         const pets = await fetchClientPets();
         if (alive) setClientPetCount(pets.length);
-        const selectedPet = pets.find((p) => p.id === petId);
+        const selectedPet = pets.find((p) => p.id === effectivePetId);
         if (!selectedPet) {
           if (alive) {
             setError('Pet not found.');
@@ -671,13 +771,25 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
           }
           return;
         }
-        if (alive) setPet(selectedPet);
+        const selectedWithContext = await enrichPetWithMembershipContext(
+          selectedPet,
+          authUserId ?? undefined,
+        );
+        if (!alive) return;
+        if (!petCanEnrollInMembership(selectedWithContext)) {
+          setError(
+            `${selectedWithContext.name} already has an active membership or one in progress. Choose another pet from the client portal, or return to the portal.`,
+          );
+          setLoading(false);
+          return;
+        }
+        if (alive) setPet(selectedWithContext);
         
         // Track membership signup page view
         trackEvent('membership_signup_page_viewed', {
-          pet_id: selectedPet.id,
-          pet_name: selectedPet.name || 'Unknown',
-          pet_species: selectedPet.species || selectedPet.breed || 'Unknown',
+          pet_id: selectedWithContext.id,
+          pet_name: selectedWithContext.name || 'Unknown',
+          pet_species: selectedWithContext.species || selectedWithContext.breed || 'Unknown',
         });
 
         try {
@@ -685,8 +797,8 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
           if (alive) {
             const relevant = appts.filter(
               (appt) =>
-                (appt.patientPimsId && String(appt.patientPimsId) === selectedPet.id) ||
-                appt.patientName?.toLowerCase() === selectedPet.name.toLowerCase()
+                (appt.patientPimsId && String(appt.patientPimsId) === selectedWithContext.id) ||
+                appt.patientName?.toLowerCase() === selectedWithContext.name.toLowerCase()
             );
             const now = Date.now();
             const any = relevant.length > 0;
@@ -722,7 +834,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     return () => {
       alive = false;
     };
-  }, [petId, fromAppointmentFlow, prospectivePet, fromModal, modalPet]);
+  }, [effectivePetId, fromAppointmentFlow, prospectivePet, fromModal, modalPet, authUserId]);
 
   useEffect(() => {
     let alive = true;
@@ -934,10 +1046,15 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     return { items, totalMonthly, totalAnnual };
   }, [selectedPlanExplicit, plans, petDetails.kind, plusExplicit, starterExplicit]);
 
-  const annualAvailable = costSummary?.items.some((row) => row.annual != null) ?? false;
+  const displayCostSummary = useMemo(() => {
+    if (!costSummary || !checkoutDiscount) return costSummary;
+    return applyMembershipDiscountToCostSummary(costSummary, checkoutDiscount);
+  }, [costSummary, checkoutDiscount]);
+
+  const annualAvailable = displayCostSummary?.items.some((row) => row.annual != null) ?? false;
 
   function handleProceedToPayment() {
-    if (!pet || !selectedPlanExplicit || !costSummary) {
+    if (!pet || !selectedPlanExplicit || !displayCostSummary) {
       setError('Please add a plan to your cart.');
       return;
     }
@@ -945,9 +1062,16 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     const chosenPlan = plans.find((p) => p.id === selectedPlanExplicit) ?? null;
 
     const amountBase =
-      billingPreference === 'annual' && costSummary.totalAnnual != null
-        ? costSummary.totalAnnual
-        : costSummary.totalMonthly;
+      billingPreference === 'annual' && displayCostSummary.totalAnnual != null
+        ? displayCostSummary.totalAnnual
+        : displayCostSummary.totalMonthly;
+
+    const originalAmountBase =
+      checkoutDiscount && costSummary
+        ? billingPreference === 'annual' && costSummary.totalAnnual != null
+          ? costSummary.totalAnnual
+          : costSummary.totalMonthly
+        : null;
 
     if (!amountBase) {
       setError('Unable to determine the total for this membership.');
@@ -955,6 +1079,8 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     }
 
     const amountCents = Math.round(amountBase * 100);
+    const originalAmountCents =
+      originalAmountBase != null ? Math.round(originalAmountBase * 100) : undefined;
     const addOns: string[] = [];
     const includeStarter = starterExplicit && selectedPlanExplicit !== 'comfort-care';
     if (plusExplicit) addOns.push('plus-addon');
@@ -1232,8 +1358,17 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       planName: fullPlanName,
       billingPreference: effectiveBillingPreference,
       amountCents,
+      ...(originalAmountCents != null && originalAmountCents > amountCents
+        ? { originalAmountCents }
+        : {}),
       currency: 'USD' as const,
-      costSummary,
+      costSummary: displayCostSummary,
+      ...(checkoutDiscount
+        ? {
+            membershipDiscount: checkoutDiscount,
+            membershipDiscountToken: checkoutDiscount.token,
+          }
+        : {}),
       addOns,
       enrollmentPayload,
       note,
@@ -1252,7 +1387,13 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     if (returnUrl) paymentState.returnUrl = returnUrl;
     if (fromAppointmentFlow) paymentState.fromAppointmentFlow = true;
     if (returnUrlAnotherBase) paymentState.returnUrlAnotherBase = returnUrlAnotherBase;
-    else if (!fromModal) paymentState.returnUrlAnotherBase = '/client-portal/membership-signup';
+    else if (!fromModal) {
+      let anotherBase = '/client-portal/membership-signup';
+      if (promoTokenParam) {
+        anotherBase += `${anotherBase.includes('?') ? '&' : '?'}${MEMBERSHIP_PROMO_QUERY_PARAM}=${encodeURIComponent(promoTokenParam)}`;
+      }
+      paymentState.returnUrlAnotherBase = anotherBase;
+    }
     if (isSigningUpAdditionalPet) paymentState.multiPetCreditEligible = true;
     if (fromRoomLoaderPublicForm) paymentState.fromRoomLoaderPublicForm = true;
 
@@ -1301,6 +1442,100 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px' }}>
         <div style={{ textAlign: 'center', padding: '40px 0' }}>
           <div className="cp-muted">Loading membership information…</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (showPetPicker) {
+    return (
+      <div className="cp-wrap" style={{ maxWidth: 560, margin: '32px auto', padding: '0 16px' }}>
+        <button
+          type="button"
+          onClick={goBack}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: '#4FB128',
+            cursor: 'pointer',
+            fontSize: 14,
+            fontWeight: 600,
+            marginBottom: 16,
+            padding: 0,
+          }}
+        >
+          ← Back to Client Portal
+        </button>
+        {checkoutDiscount && !promoResolveError && (
+          <div
+            className="cp-card"
+            style={{
+              marginBottom: 16,
+              padding: 14,
+              borderLeft: '4px solid var(--brand, #0f766e)',
+              background: '#ecfdf5',
+            }}
+          >
+            <p style={{ margin: 0, fontSize: 14, color: '#065f46', fontWeight: 600 }}>
+              {checkoutDiscount.displayLabel}
+            </p>
+          </div>
+        )}
+        <div className="cp-card" style={{ padding: 24 }}>
+          <h1 className="cp-title" style={{ margin: '0 0 8px', fontSize: 22 }}>
+            Choose a pet
+          </h1>
+          <p className="cp-muted" style={{ margin: '0 0 20px', lineHeight: 1.5 }}>
+            Select which pet you are enrolling in a membership plan. You can enroll additional pets after completing
+            this one.
+          </p>
+          {(petsForPicker.length > 1 || (clientPetCount != null && clientPetCount > 1)) && (
+            <p
+              style={{
+                margin: '0 0 16px',
+                padding: '12px 16px',
+                background: '#f0fdf4',
+                border: '1px solid #bbf7d0',
+                borderRadius: 8,
+                color: '#166534',
+                fontSize: 14,
+                lineHeight: 1.5,
+              }}
+            >
+              Enroll more than one pet and receive a $75 credit for each additional pet.
+            </p>
+          )}
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 10 }}>
+            {petsForPicker.map((p) => (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError(null);
+                    setPetsForPicker([]);
+                    setChosenPetId(p.id);
+                  }}
+                  style={{
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '14px 16px',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: 8,
+                    background: '#fff',
+                    cursor: 'pointer',
+                    fontSize: 15,
+                  }}
+                >
+                  <strong>{p.name}</strong>
+                  {(p.species || p.breed) && (
+                    <span className="cp-muted" style={{ display: 'block', fontSize: 13, marginTop: 4 }}>
+                      {[p.species, p.breed].filter(Boolean).join(' · ')}
+                    </span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
     );
@@ -2229,7 +2464,44 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
         })()}
       </section>
 
-      {selectedPlanExplicit && costSummary && costSummary.items.length > 0 && (
+      {promoResolving && promoTokenParam && (
+        <p className="cp-muted" style={{ marginTop: 12, fontSize: 14 }}>
+          Applying your offer…
+        </p>
+      )}
+      {promoResolveError && (
+        <div
+          className="cp-card"
+          style={{
+            marginTop: 12,
+            padding: 14,
+            borderLeft: '4px solid #b45309',
+            background: '#fffbeb',
+          }}
+        >
+          <p style={{ margin: 0, fontSize: 14, color: '#92400e' }}>{promoResolveError}</p>
+        </div>
+      )}
+      {checkoutDiscount && !promoResolveError && (
+        <div
+          className="cp-card"
+          style={{
+            marginTop: 12,
+            padding: 14,
+            borderLeft: '4px solid var(--brand, #0f766e)',
+            background: '#ecfdf5',
+          }}
+        >
+          <p style={{ margin: 0, fontSize: 14, color: '#065f46', fontWeight: 600 }}>
+            {checkoutDiscount.displayLabel}
+          </p>
+          <p className="cp-muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
+            Your discounted price is shown below. No promo code is required at checkout.
+          </p>
+        </div>
+      )}
+
+      {selectedPlanExplicit && displayCostSummary && displayCostSummary.items.length > 0 && (
         <section className="cp-section" style={{ marginTop: 16 }}>
           <div className="cp-card" style={{ padding: 20 }}>
             <h3 style={{ marginTop: 0, marginBottom: 12 }}>Cost Summary</h3>
@@ -2261,7 +2533,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
             </p>
 
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
-              {costSummary.items.map((row) => (
+              {displayCostSummary.items.map((row) => (
                 <li
                   key={row.label}
                   style={{
@@ -2303,16 +2575,43 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
             >
               <span>Total</span>
               {(() => {
+                const orig = displayCostSummary as typeof displayCostSummary & {
+                  originalTotalMonthly?: number;
+                  originalTotalAnnual?: number | null;
+                };
                 const annualText =
-                  costSummary.totalAnnual != null
-                    ? `${formatMoney(costSummary.totalAnnual)} annually (10% discount!)`
+                  displayCostSummary.totalAnnual != null
+                    ? `${formatMoney(displayCostSummary.totalAnnual)} annually (10% discount!)`
                     : null;
-                const monthlyText = `${formatMoney(costSummary.totalMonthly)}/month`;
+                const monthlyText = `${formatMoney(displayCostSummary.totalMonthly)}/month`;
                 const preferAnnual = billingPreference === 'annual' && annualText !== null;
                 const primary = preferAnnual ? annualText! : monthlyText;
                 const secondary = preferAnnual ? monthlyText : annualText;
+                const origAnnual =
+                  orig.originalTotalAnnual != null
+                    ? `${formatMoney(orig.originalTotalAnnual)} annually`
+                    : null;
+                const origMonthly =
+                  orig.originalTotalMonthly != null
+                    ? `${formatMoney(orig.originalTotalMonthly)}/month`
+                    : null;
+                const origPrimary =
+                  preferAnnual && origAnnual ? origAnnual : origMonthly;
                 return (
-                  <span className="cp-cost-wrapper">
+                  <span className="cp-cost-wrapper" style={{ textAlign: 'right' }}>
+                    {checkoutDiscount && origPrimary ? (
+                      <span
+                        className="cp-muted"
+                        style={{
+                          display: 'block',
+                          fontSize: 13,
+                          textDecoration: 'line-through',
+                          fontWeight: 400,
+                        }}
+                      >
+                        {origPrimary}
+                      </span>
+                    ) : null}
                     <span className="cp-cost-primary">{primary}</span>
                     {secondary ? <span className="cp-cost-secondary">or {secondary}</span> : null}
                   </span>

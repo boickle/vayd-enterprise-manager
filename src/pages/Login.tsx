@@ -4,6 +4,12 @@ import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import { trackEvent } from '../utils/analytics';
 import { isCreateClientEnabled } from '../utils/env';
+import {
+  clientPortalReturnPath,
+  consumePostLoginRedirect,
+  isMembershipSignupReturnPath,
+  peekPostLoginRedirect,
+} from '../utils/postLoginRedirect';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -14,7 +20,14 @@ export default function LoginPage() {
   const nav = useNavigate();
   const location = useLocation() as any;
   const { login } = useAuth();
-  const from = location.state?.from?.pathname ?? '/';
+  const fromLocation = location.state?.from as
+    | { pathname?: string; search?: string; hash?: string }
+    | undefined;
+  const from = fromLocation?.pathname ?? '/';
+  const pendingReturnPath =
+    clientPortalReturnPath(fromLocation) ?? peekPostLoginRedirect() ?? '';
+  const membershipReturnPending =
+    isMembershipSignupReturnPath(pendingReturnPath) || from.includes('membership');
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -47,7 +60,12 @@ export default function LoginPage() {
       const isClient = roles.includes('client');
 
       if (isClient) {
-        // Clients always land on the standalone client portal
+        const returnTo =
+          clientPortalReturnPath(fromLocation) ?? consumePostLoginRedirect();
+        if (returnTo) {
+          nav(returnTo, { replace: true });
+          return;
+        }
         nav('/client-portal', { replace: true });
         return;
       }
@@ -373,7 +391,23 @@ export default function LoginPage() {
 
       <section className="auth-panel" style={panelStyle}>
         <div style={{ marginTop: '0' }}>
-          <div style={labelStyle}><strong>Log in to your portal.</strong></div>
+          <div style={labelStyle}>
+            <strong>Log in to your portal.</strong>
+            {membershipReturnPending && (
+              <div
+                style={{
+                  marginTop: 10,
+                  fontSize: 14,
+                  fontWeight: 400,
+                  color: '#166534',
+                  lineHeight: 1.5,
+                }}
+              >
+                After you sign in, we&apos;ll bring you back to finish your membership enrollment
+                (including any offer on your link).
+              </div>
+            )}
+          </div>
           <form
             onSubmit={onSubmit}
             style={{ display: 'flex', flexDirection: 'column', gap: 16 }}

@@ -256,6 +256,68 @@ function normalizeSubscriptionPlanCatalogResponse(data: unknown): SubscriptionPl
   return data as SubscriptionPlanCatalog;
 }
 
+// =========================
+// Stripe membership subscription discounts (promotion codes + opaque links)
+// =========================
+
+export type MembershipDiscountDuration = 'once' | 'repeating' | 'forever';
+
+/** Resolved at checkout from ?promo= token; never includes the human-readable Stripe code. */
+export type MembershipCheckoutDiscount = {
+  token: string;
+  stripePromotionCodeId: string;
+  displayLabel: string;
+  percentOff?: number;
+  amountOffCents?: number;
+  duration?: MembershipDiscountDuration;
+};
+
+export type MembershipDiscountRecord = {
+  id: string;
+  name: string;
+  displayLabel: string;
+  percentOff?: number;
+  amountOffCents?: number;
+  duration: MembershipDiscountDuration;
+  maxRedemptions?: number | null;
+  timesRedeemed?: number;
+  expiresAt?: string | null;
+  active: boolean;
+  createdAt?: string;
+  /** Latest opaque link token for sharing (if generated). */
+  linkToken?: string | null;
+};
+
+export type CreateMembershipDiscountRequest = {
+  name: string;
+  displayLabel?: string;
+  percentOff?: number;
+  amountOffCents?: number;
+  duration: MembershipDiscountDuration;
+  durationInMonths?: number;
+  maxRedemptions?: number;
+  expiresAt?: string;
+  /** When true, also create an opaque share link token. */
+  createLink?: boolean;
+};
+
+export type CreateMembershipDiscountLinkRequest = {
+  discountId: string;
+  /** Optional expiry for this link only (ISO date). */
+  linkExpiresAt?: string;
+};
+
+export type CreateMembershipDiscountLinkResponse = {
+  token: string;
+  url?: string;
+};
+
+export type ResolveMembershipDiscountResponse = {
+  valid: boolean;
+  discount?: MembershipCheckoutDiscount;
+  message?: string;
+};
+
 export interface PaymentRequest {
   provider?: PaymentProviderType;
   idempotencyKey: string;
@@ -273,6 +335,10 @@ export interface PaymentRequest {
   customerName?: string;
   metadata?: Record<string, any>;
   membershipTransaction?: MembershipTransactionPayload;
+  /** Opaque promo link token; backend re-validates and applies Stripe promotion code on subscription. */
+  membershipDiscountToken?: string;
+  /** Stripe promotion code id (promo_…); optional if token is sent. */
+  stripePromotionCodeId?: string;
 }
 
 export interface PaymentResponse {
@@ -319,6 +385,42 @@ export async function fetchSubscriptionPlanCatalog(): Promise<SubscriptionPlanCa
 export async function listPaymentProviders(): Promise<string[]> {
   const { data } = await http.get(`${paymentProcessingApiBasePath()}/providers`);
   return data;
+}
+
+const stripeMembershipDiscountsBase = () =>
+  `${paymentProcessingApiBasePath()}/membership-discounts`;
+
+export async function fetchMembershipDiscounts(): Promise<MembershipDiscountRecord[]> {
+  const { data } = await http.get(stripeMembershipDiscountsBase());
+  const rows = Array.isArray(data) ? data : (data?.items ?? data?.discounts ?? []);
+  return rows as MembershipDiscountRecord[];
+}
+
+export async function createMembershipDiscount(
+  payload: CreateMembershipDiscountRequest,
+): Promise<MembershipDiscountRecord> {
+  const { data } = await http.post(stripeMembershipDiscountsBase(), payload);
+  return data as MembershipDiscountRecord;
+}
+
+export async function createMembershipDiscountLink(
+  payload: CreateMembershipDiscountLinkRequest,
+): Promise<CreateMembershipDiscountLinkResponse> {
+  const { data } = await http.post(`${stripeMembershipDiscountsBase()}/links`, payload);
+  return data as CreateMembershipDiscountLinkResponse;
+}
+
+/**
+ * Resolve opaque ?promo= token for membership checkout (no Stripe code exposed).
+ * Backend should allow unauthenticated access for public signup flows.
+ */
+export async function resolveMembershipDiscountToken(
+  token: string,
+): Promise<ResolveMembershipDiscountResponse> {
+  const { data } = await http.get(`${stripeMembershipDiscountsBase()}/resolve`, {
+    params: { token },
+  });
+  return data as ResolveMembershipDiscountResponse;
 }
 
 // =========================

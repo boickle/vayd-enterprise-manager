@@ -2,6 +2,7 @@
 import { ReactNode, useMemo } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './useAuth';
+import { savePostLoginRedirect } from '../utils/postLoginRedirect';
 
 type ProtectedRouteProps = {
   children: ReactNode;
@@ -33,8 +34,9 @@ export function ProtectedRoute({
   const location = useLocation();
   const roles: string[] = Array.isArray(role) ? role : role ? [String(role)] : [];
 
-  // Not logged in - redirect to login
+  // Not logged in - redirect to login (preserve deep links e.g. ?promo= on membership signup)
   if (!token) {
+    savePostLoginRedirect(location.pathname, location.search, location.hash);
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 

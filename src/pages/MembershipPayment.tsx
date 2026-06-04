@@ -5,6 +5,7 @@ import {
   createPayment,
   type PaymentResponse,
   PaymentIntent,
+  type MembershipCheckoutDiscount,
   type MembershipTransactionPayload,
   type MembershipPaymentRequestOrigin,
   upgradeMembership,
@@ -132,6 +133,10 @@ type PaymentNavigationState = {
   formResponseEmail?: string;
   /** Public room-loader membership: omit client-portal NOTE on payment success. */
   fromRoomLoaderPublicForm?: boolean;
+  /** Stripe promo link — applied on subscription; code never shown to client. */
+  membershipDiscount?: MembershipCheckoutDiscount;
+  membershipDiscountToken?: string;
+  originalAmountCents?: number;
 };
 
 export type { PaymentNavigationState };
@@ -643,6 +648,13 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
           },
         },
         membershipTransaction: membershipTransactionPayload,
+        ...(state.membershipDiscountToken || state.membershipDiscount
+          ? {
+              membershipDiscountToken:
+                state.membershipDiscountToken ?? state.membershipDiscount?.token,
+              stripePromotionCodeId: state.membershipDiscount?.stripePromotionCodeId,
+            }
+          : {}),
       });
 
       if (!payment.success && payment.status === 'requires_action' && stripeRef.current) {
@@ -818,7 +830,15 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
               <strong>Billing preference:</strong> {state.billingPreference === 'annual' ? 'Annual' : 'Monthly'}
             </div>
             <div>
-              <strong>Total paid today:</strong> {formatMoney(state.amountCents, state.currency)}
+              <strong>Total paid today:</strong>{' '}
+              {state.originalAmountCents != null && state.originalAmountCents > state.amountCents ? (
+                <>
+                  <span style={{ textDecoration: 'line-through', color: '#6b7280', marginRight: 8 }}>
+                    {formatMoney(state.originalAmountCents, state.currency)}
+                  </span>
+                </>
+              ) : null}
+              {formatMoney(state.amountCents, state.currency)}
             </div>
             {state.addOns && state.addOns.length > 0 && (
               <div>
@@ -1020,6 +1040,22 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         </p>
       </div>
 
+      {state.membershipDiscount && paymentProvider === 'stripe' && (
+        <div
+          className="cp-card"
+          style={{
+            marginBottom: 16,
+            padding: 14,
+            borderLeft: '4px solid var(--brand, #0f766e)',
+            background: '#ecfdf5',
+          }}
+        >
+          <p style={{ margin: 0, fontSize: 14, color: '#065f46', fontWeight: 600 }}>
+            {state.membershipDiscount.displayLabel}
+          </p>
+        </div>
+      )}
+
       <section className="cp-section">
         <div className="cp-card" style={{ padding: 20 }}>
           <h3 style={{ marginTop: 0, marginBottom: 12 }}>
@@ -1108,7 +1144,23 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
             }}
           >
             <span>Total Due Today</span>
-            <span>{formatMoney(state.amountCents, state.currency)}</span>
+            <span style={{ textAlign: 'right' }}>
+              {state.originalAmountCents != null &&
+              state.originalAmountCents > state.amountCents ? (
+                <span
+                  className="cp-muted"
+                  style={{
+                    display: 'block',
+                    fontSize: 13,
+                    textDecoration: 'line-through',
+                    fontWeight: 400,
+                  }}
+                >
+                  {formatMoney(state.originalAmountCents, state.currency)}
+                </span>
+              ) : null}
+              {formatMoney(state.amountCents, state.currency)}
+            </span>
           </div>
         </div>
       </section>
