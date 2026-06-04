@@ -41,6 +41,7 @@ import {
   sexFromDoctorDayRow,
   staffNotesFromDoctorDayRow,
 } from '../utils/myDayVisualPatientDetails';
+import { myDayVisualAlternateAddressPdfFields } from '../utils/myDayVisualAlternateAddress';
 import {
   clientFixedTimeUsesDoctorDayClockForDriveLayout,
   computeDriveTimeWindowWarning,
@@ -2661,6 +2662,7 @@ export default function DoctorDayVisual({
         key: h.key,
         client: blockTitleText,
         address: h.address,
+        ...myDayVisualAlternateAddressPdfFields(h.primary, h.address),
         clientPhone: householdClientPhone(h),
         roomLoaderStatus: roomLoader?.label,
         roomLoaderStatusColor: roomLoader?.color,

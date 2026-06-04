@@ -511,10 +511,21 @@ export function mergeRangeClientContactOntoDoctorDayAppts(
       appt.client as Record<string, unknown> | undefined,
       full.client as Record<string, unknown> | undefined
     );
+    const altText = appointmentAlternateAddressText(full);
+    const hasAlt = appointmentHasAlternateLocation(full);
     const next: DoctorDayAppt = {
       ...appt,
       confirmStatusName: appt.confirmStatusName ?? full.confirmStatusName ?? undefined,
       ...(mergedClient ? { client: mergedClient } : {}),
+      ...(altText
+        ? {
+            alternateAddressText: altText,
+            alternateAddress:
+              full.alternateAddress ??
+              ({ addressText: altText } as DoctorDayAppt['alternateAddress']),
+          }
+        : {}),
+      ...(hasAlt ? { isAlternateStop: true } : {}),
     };
     const clientPhone = appt.clientPhone ?? clientPhoneLineFromDoctorDayPayload(next);
     return clientPhone ? { ...next, clientPhone } : next;
@@ -624,6 +635,10 @@ export type DoctorDayAppt = {
   patientPrimaryProvider?: DoctorDayPatientPrimaryProvider | null;
   /** Nested patient row when returned by doctor-day API (sex, alerts, etc.). */
   patient?: Record<string, unknown> | null;
+  /** Routing alternate stop — visit at this address instead of client home. */
+  alternateAddressText?: string;
+  isAlternateStop?: boolean;
+  alternateAddress?: { addressText?: string } | Record<string, unknown> | null;
 }
 
 /** Item may be an appointment (doctor-day) or ETA byIndex row (has key). */
@@ -871,6 +886,10 @@ export async function fetchDoctorDay(
       })(),
       patientPrimaryProvider: normalizeDoctorDayPatientPrimaryProvider(a?.patientPrimaryProvider),
       patient: a?.patient && typeof a.patient === 'object' ? a.patient : undefined,
+      alternateAddressText: appointmentAlternateAddressText(a) ?? undefined,
+      isAlternateStop: appointmentHasAlternateLocation(a) ? true : undefined,
+      alternateAddress:
+        a?.alternateAddress && typeof a.alternateAddress === 'object' ? a.alternateAddress : undefined,
     };
   });
 

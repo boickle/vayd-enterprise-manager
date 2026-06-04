@@ -29,6 +29,7 @@ import {
   sexFromDoctorDayRow,
   staffNotesFromDoctorDayRow,
 } from './myDayVisualPatientDetails';
+import { myDayVisualAlternateAddressPdfFields } from './myDayVisualAlternateAddress';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
 import type {
   DoctorDayVisualPdfAppointmentPayload,
@@ -392,6 +393,7 @@ function buildAppointmentPayload(
     key: h.key,
     client: blockTitleText,
     address: h.address,
+    ...myDayVisualAlternateAddressPdfFields(h.primary, h.address),
     clientPhone,
     roomLoaderStatus: roomLoaderUi ? roomLoaderPreApptDisplayLabel(roomLoaderUi) : undefined,
     roomLoaderStatusColor: roomLoaderUi ? roomLoaderPreApptDisplayColor(roomLoaderUi) : undefined,

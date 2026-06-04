@@ -486,10 +486,22 @@ export function SchedulerBookModal({
 
   const hasLinkedClient = Boolean(selectedClientId?.trim());
 
-  /** Address-only routing: alternate stop overrides client home; hide once a client is linked. */
-  const showRoutingAlternateAddress = Boolean(
-    isRoutingPreviewBook && prefill?.routingAlternateAddress?.trim() && !hasLinkedClient
+  const hasRoutingAlternateAddressText = Boolean(
+    alternateAddressText.trim() || prefill?.routingAlternateAddress?.trim()
   );
+
+  /** Address-only routing: alternate stop overrides client home for drive time and visit location. */
+  const showRoutingAlternateAddress = Boolean(
+    isRoutingPreviewBook && hasRoutingAlternateAddressText
+  );
+
+  /** Include on create/preview when routing supplied an alternate stop, even after linking a client. */
+  const bookAlternateAddressText = useMemo(() => {
+    const trimmed = alternateAddressText.trim();
+    if (bookedViaRouting) return trimmed;
+    if (canUseAlternateAddress && !hasLinkedClient) return trimmed;
+    return '';
+  }, [alternateAddressText, bookedViaRouting, canUseAlternateAddress, hasLinkedClient]);
 
   const perVisitReschedule = isRescheduleBook && rescheduleVisitEdits.length > 0;
 
@@ -1168,8 +1180,7 @@ export function SchedulerBookModal({
       setFormError('Invalid start time.');
       return true;
     }
-    const trimmedAlt =
-      canUseAlternateAddress && !hasLinkedClient ? alternateAddressText.trim() : '';
+    const trimmedAlt = bookAlternateAddressText;
     if (trimmedAlt.length > 4000) {
       setFormError('Alternate address must be 4000 characters or fewer.');
       return true;
@@ -1305,8 +1316,7 @@ export function SchedulerBookModal({
                     ? [prefill.rescheduleAppointmentId]
                     : []
               ).filter((id) => Number.isFinite(Number(id)));
-      const trimmedAlt =
-        canUseAlternateAddress && !hasLinkedClient ? alternateAddressText.trim() : '';
+      const trimmedAlt = bookAlternateAddressText;
       if (trimmedAlt.length > 4000) {
         setFormError('Alternate address must be 4000 characters or fewer.');
         setSubmitting(false);
@@ -1591,7 +1601,9 @@ export function SchedulerBookModal({
                 placeholder="Used for routing and drive time instead of the client's home address."
               />
               <p className="scheduler-book-hint muted">
-                Pre-filled from Get Best Route. Overrides the client home address when set.
+                {hasLinkedClient
+                  ? 'This visit will be scheduled for the client at this address (not their home).'
+                  : 'Pre-filled from Get Best Route. Overrides the client home address when set.'}
               </p>
             </label>
           ) : null}

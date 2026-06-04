@@ -51,6 +51,10 @@ export type DoctorDayVisualPdfAppointmentPayload = {
   windowWarning?: boolean;
   showBackToDepotInBlock: boolean;
   backToDepotIso?: string | null;
+  /** Visit is at a routing alternate address instead of client home. */
+  isAlternateStop?: boolean;
+  alternateVisitAddress?: string;
+  clientHomeAddress?: string;
 };
 
 export type DoctorDayVisualPdfSegmentRow = {
@@ -118,6 +122,13 @@ function AppointmentPdfBlock({
   practiceTimeZone: string;
 }) {
   const addrNoZip = stripZipFromAddressLine(payload.address);
+  const alternateVisitNoZip = payload.alternateVisitAddress
+    ? stripZipFromAddressLine(payload.alternateVisitAddress)
+    : addrNoZip;
+  const clientHomeNoZip = payload.clientHomeAddress
+    ? stripZipFromAddressLine(payload.clientHomeAddress)
+    : '';
+  const showAlternateCallout = Boolean(payload.isAlternateStop && !payload.isPersonalBlock);
   const showArrive = !!(payload.etaIso || payload.etdIso);
   const showWindow =
     !!(payload.resolvedWinStartIso && payload.resolvedWinEndIso) &&
@@ -176,8 +187,12 @@ function AppointmentPdfBlock({
           }}
         >
           <span style={{ fontWeight: 800, color: '#14532d', fontSize: 22 }}>{payload.client}</span>
-          <span style={{ color: '#64748b' }}>·</span>
-          <span style={{ color: '#64748b', flex: '1 1 12rem', minWidth: 0 }}>{addrNoZip}</span>
+          {!showAlternateCallout ? (
+            <>
+              <span style={{ color: '#64748b' }}>·</span>
+              <span style={{ color: '#64748b', flex: '1 1 12rem', minWidth: 0 }}>{addrNoZip}</span>
+            </>
+          ) : null}
           {payload.windowWarning && (
             <span
               style={{
@@ -198,6 +213,61 @@ function AppointmentPdfBlock({
             </span>
           )}
         </div>
+        {showAlternateCallout ? (
+          <div
+            role="alert"
+            style={{
+              marginTop: 8,
+              padding: '10px 12px',
+              borderRadius: 8,
+              border: '3px solid #ea580c',
+              background: 'linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%)',
+              color: '#7c2d12',
+              boxShadow: '0 2px 4px rgba(234, 88, 12, 0.2)',
+            }}
+          >
+            <div
+              style={{
+                fontSize: 15,
+                fontWeight: 800,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                color: '#c2410c',
+                marginBottom: 4,
+              }}
+            >
+              Alternate address — visit location
+            </div>
+            <div
+              style={{
+                fontSize: 20,
+                fontWeight: 800,
+                lineHeight: 1.35,
+                color: '#431407',
+                wordBreak: 'break-word',
+              }}
+            >
+              {alternateVisitNoZip}
+            </div>
+            <div
+              style={{
+                marginTop: 4,
+                fontSize: 15,
+                fontWeight: 600,
+                lineHeight: 1.35,
+                color: '#9a3412',
+              }}
+            >
+              This visit is at an alternate address, not the client&apos;s home.
+            </div>
+            {clientHomeNoZip ? (
+              <div style={{ marginTop: 6, fontSize: 16, lineHeight: 1.35, color: '#78350f' }}>
+                <span style={{ fontWeight: 700 }}>Home: </span>
+                {clientHomeNoZip}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {payload.clientPhone ? (
           <div style={{ marginTop: 2, fontSize: 16, color: '#0f172a' }}>
             <b>Phone:</b> {payload.clientPhone}
