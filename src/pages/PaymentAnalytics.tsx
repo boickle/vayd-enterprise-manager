@@ -16,7 +16,7 @@ import {
 } from '@mui/material';
 import Alert from '@mui/material/Alert';
 import Grid from '@mui/material/Grid';
-import { CalendarMonth, ChevronLeft, ChevronRight, Refresh } from '@mui/icons-material';
+import { CalendarMonth, ChevronLeft, ChevronRight, CheckCircle, Refresh, Warning } from '@mui/icons-material';
 import IconButton from '@mui/material/IconButton';
 import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
@@ -32,7 +32,17 @@ import {
   Line,
   Legend,
 } from 'recharts';
-import { fetchPaymentsAnalytics, type PaymentPoint } from '../api/payments';
+import {
+  fetchPaymentsAnalytics,
+  fetchPaymentsReconciliation,
+  fetchSquarePayments,
+  filterSquarePaymentsForDay,
+  sumCreditCardPaymentsForDay,
+  sumSquarePayments,
+  type PaymentPoint,
+} from '../api/payments';
+import DayPaymentsListModal from '../components/DayPaymentsListModal';
+import SquareDayReconciliationModal from '../components/SquareDayReconciliationModal';
 import TodaysPaymentsDetailModal from '../components/TodaysPaymentsDetailModal';
 
 dayjs.extend(utc);
@@ -124,7 +134,17 @@ export default function PaymentsAnalyticsPage() {
   const [chartLineVisible, setChartLineVisible] =
     useState<Record<ChartLineKey, boolean>>(defaultChartLineVisibility);
   const [paymentsDetailOpen, setPaymentsDetailOpen] = useState(false);
+  const [paymentsListOpen, setPaymentsListOpen] = useState(false);
+  const [squareReconcileOpen, setSquareReconcileOpen] = useState(false);
   const [revenueDay, setRevenueDay] = useState<Dayjs>(() => dayjs().startOf('day'));
+  const [squareLoading, setSquareLoading] = useState(false);
+  const [squareError, setSquareError] = useState<string | null>(null);
+  const [squareTotal, setSquareTotal] = useState(0);
+  const [squareCount, setSquareCount] = useState(0);
+  const [squareCardTotal, setSquareCardTotal] = useState(0);
+  const [squareCardCount, setSquareCardCount] = useState(0);
+  const [oursCardTotal, setOursCardTotal] = useState(0);
+  const [oursCardCount, setOursCardCount] = useState(0);
   const open = Boolean(anchorEl);
 
   const today = dayjs().startOf('day');
@@ -184,6 +204,73 @@ export default function PaymentsAnalyticsPage() {
       alive = false;
     };
   }, []);
+
+  // Square received + credit card comparison for the selected daily revenue day
+  useEffect(() => {
+    let alive = true;
+    setSquareLoading(true);
+    setSquareError(null);
+    (async () => {
+      try {
+        const [allSquare, cardSquare, reconciliation] = await Promise.all([
+          fetchSquarePayments({
+            start: revenueDayKey,
+            end: revenueDayKey,
+            completedOnly: true,
+          }),
+          fetchSquarePayments({
+            start: revenueDayKey,
+            end: revenueDayKey,
+            cardOnly: true,
+            completedOnly: true,
+          }),
+          fetchPaymentsReconciliation({ start: revenueDayKey, end: revenueDayKey }),
+        ]);
+        if (!alive) return;
+
+        const daySquare = filterSquarePaymentsForDay(allSquare.payments, revenueDayKey);
+        const dayCardSquare = filterSquarePaymentsForDay(cardSquare.payments, revenueDayKey);
+        const allTotals = sumSquarePayments(daySquare);
+        const cardTotals = sumSquarePayments(dayCardSquare);
+        const oursCards = sumCreditCardPaymentsForDay(reconciliation, revenueDayKey);
+
+        setSquareTotal(allTotals.total);
+        setSquareCount(allTotals.count);
+        setSquareCardTotal(cardTotals.total);
+        setSquareCardCount(cardTotals.count);
+        setOursCardTotal(oursCards.total);
+        setOursCardCount(oursCards.count);
+      } catch (err: unknown) {
+        if (!alive) return;
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        if (status === 503) {
+          setSquareError('Square is not configured on the server.');
+        } else {
+          setSquareError(
+            err instanceof Error ? err.message : 'Failed to load Square payments'
+          );
+        }
+        setSquareTotal(0);
+        setSquareCount(0);
+        setSquareCardTotal(0);
+        setSquareCardCount(0);
+        setOursCardTotal(0);
+        setOursCardCount(0);
+      } finally {
+        if (alive) setSquareLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [revenueDayKey]);
+
+  const creditCardTotalsMatch = useMemo(() => {
+    return Math.abs(oursCardTotal - squareCardTotal) < 0.005;
+  }, [oursCardTotal, squareCardTotal]);
+  const creditCardCountMatch = oursCardCount === squareCardCount;
+  const creditCardFullyMatch = creditCardTotalsMatch && creditCardCountMatch;
+  const creditCardDifference = oursCardTotal - squareCardTotal;
 
   const totals = useMemo(() => {
     const revenue = series.reduce((s, p) => s + p.revenue, 0);
@@ -448,13 +535,22 @@ export default function PaymentsAnalyticsPage() {
           <CardHeader
             title={isRevenueDayToday ? "Today's Revenue" : 'Revenue'}
             action={
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={() => setPaymentsDetailOpen(true)}
-              >
-                View payments
-              </Button>
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => setPaymentsListOpen(true)}
+                >
+                  All payments
+                </Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => setPaymentsDetailOpen(true)}
+                >
+                  View payments
+                </Button>
+              </Stack>
             }
           />
           <CardContent>
@@ -535,6 +631,107 @@ export default function PaymentsAnalyticsPage() {
                 <ChevronRight />
               </IconButton>
             </Box>
+          </CardContent>
+        </Card>
+
+        {/* Square received (same day as daily revenue card) */}
+        <Card variant="outlined">
+          <CardHeader
+            title={isRevenueDayToday ? 'Square Received Today' : 'Square Received'}
+            subheader="Completed payments recorded in Square for this day"
+            action={
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={!!squareError}
+                onClick={() => setSquareReconcileOpen(true)}
+              >
+                Match credit cards
+              </Button>
+            }
+          />
+          <CardContent>
+            {squareLoading ? (
+              <Box display="flex" justifyContent="center" py={1}>
+                <CircularProgress size={24} />
+              </Box>
+            ) : squareError ? (
+              <Alert severity="warning">{squareError}</Alert>
+            ) : (
+              <Stack spacing={1}>
+                <Typography variant="subtitle2" color="text.secondary">
+                  Credit card comparison
+                </Typography>
+                <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                  <Typography variant="body2" color="text.secondary">
+                    Our system (credit card)
+                  </Typography>
+                  <Box textAlign="right">
+                    <Typography variant="body1" fontWeight={600}>
+                      {fmtUSD(oursCardTotal)}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {oursCardCount} payment{oursCardCount === 1 ? '' : 's'}
+                    </Typography>
+                  </Box>
+                </Box>
+                <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                  <Typography variant="body2" color="text.secondary">
+                    Square (credit card)
+                  </Typography>
+                  <Box textAlign="right">
+                    <Typography variant="body1" fontWeight={600}>
+                      {fmtUSD(squareCardTotal)}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {squareCardCount} payment{squareCardCount === 1 ? '' : 's'}
+                    </Typography>
+                  </Box>
+                </Box>
+
+                {creditCardFullyMatch ? (
+                  <Alert severity="success" icon={<CheckCircle fontSize="inherit" />} sx={{ py: 0 }}>
+                    Credit card totals match for {revenueDayLabel}.
+                  </Alert>
+                ) : (
+                  <Alert severity="warning" icon={<Warning fontSize="inherit" />} sx={{ py: 0 }}>
+                    {!creditCardTotalsMatch && (
+                      <>
+                        Amount difference:{' '}
+                        <strong>
+                          {creditCardDifference >= 0 ? '+' : ''}
+                          {fmtUSD(creditCardDifference)}
+                        </strong>
+                        {!creditCardCountMatch && ' · '}
+                      </>
+                    )}
+                    {!creditCardCountMatch && (
+                      <>
+                        Payment count differs ({oursCardCount} ours vs {squareCardCount} Square)
+                      </>
+                    )}
+                  </Alert>
+                )}
+
+                <Divider sx={{ my: 0.5 }} />
+                <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                  <Typography variant="body2" color="text.secondary">
+                    All Square received
+                  </Typography>
+                  <Typography variant="body1" fontWeight={600}>
+                    {fmtUSD(squareTotal)}
+                  </Typography>
+                </Box>
+                <Typography variant="caption" color="text.secondary">
+                  {squareCount.toLocaleString()} completed payment{squareCount === 1 ? '' : 's'}{' '}
+                  (all types) · {revenueDayLabel}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" display="block">
+                  Use &ldquo;Match credit cards&rdquo; to see which individual payments matched or
+                  did not.
+                </Typography>
+              </Stack>
+            )}
           </CardContent>
         </Card>
 
@@ -806,10 +1003,22 @@ export default function PaymentsAnalyticsPage() {
           </Grid>
         </Grid>
 
+        <DayPaymentsListModal
+          open={paymentsListOpen}
+          date={revenueDayKey}
+          onClose={() => setPaymentsListOpen(false)}
+        />
+
         <TodaysPaymentsDetailModal
           open={paymentsDetailOpen}
           date={revenueDayKey}
           onClose={() => setPaymentsDetailOpen(false)}
+        />
+
+        <SquareDayReconciliationModal
+          open={squareReconcileOpen}
+          date={revenueDayKey}
+          onClose={() => setSquareReconcileOpen(false)}
         />
 
         {/* Date Range Popover */}

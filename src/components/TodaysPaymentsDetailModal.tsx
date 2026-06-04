@@ -23,8 +23,10 @@ import { Heart } from 'lucide-react';
 import { fetchPaymentsForDay } from '../api/payments';
 import { fetchClientRevenueSeries, type ClientRevenueSeriesResponse } from '../api/opsStats';
 import {
-  buildPaymentDetailRows,
+  buildConsolidatedClientPaymentRows,
   CLIENT_VSD_LOOKBACK_DAYS,
+  isMembershipPlanPaymentType,
+  type ConsolidatedClientPaymentRow,
   type PaymentDetailTableRow,
 } from '../utils/paymentsDayVsdMatch';
 
@@ -86,7 +88,7 @@ type Props = {
 export default function TodaysPaymentsDetailModal({ open, date, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [rows, setRows] = useState<PaymentDetailTableRow[]>([]);
+  const [rows, setRows] = useState<ConsolidatedClientPaymentRow[]>([]);
 
   const dateKey = date.slice(0, 10);
   const dateLabel = dayjs(dateKey).format('dddd, MMM D, YYYY');
@@ -139,12 +141,7 @@ export default function TodaysPaymentsDetailModal({ open, date, onClose }: Props
           if (response) clientRevenueById.set(clientId, response);
         }
 
-        const detailRows = buildPaymentDetailRows(payments, clientRevenueById, dayKey);
-        detailRows.sort((a, b) => {
-          const ta = a.payment.depositDate ?? a.payment.date ?? '';
-          const tb = b.payment.depositDate ?? b.payment.date ?? '';
-          return tb.localeCompare(ta);
-        });
+        const detailRows = buildConsolidatedClientPaymentRows(payments, clientRevenueById, dayKey);
         setRows(detailRows);
       } catch (e: unknown) {
         if (!alive) return;
@@ -162,11 +159,13 @@ export default function TodaysPaymentsDetailModal({ open, date, onClose }: Props
   }, [open, dateKey]);
 
   const totals = useMemo(() => {
-    const paymentTotal = rows.reduce((s, r) => s + Number(r.payment.amount ?? 0), 0);
+    const paymentCount = rows.reduce((s, r) => s + r.payments.length, 0);
+    const paymentTotal = rows.reduce((s, r) => s + r.paymentTotal, 0);
+    const vsdCompareTotal = rows.reduce((s, r) => s + r.vsdCompareTotal, 0);
     const vsdTotal = rows.reduce((s, r) => s + (r.vsdAmount ?? 0), 0);
     const matched = rows.filter((r) => r.matchesVsd === true).length;
     const mismatched = rows.filter((r) => r.matchesVsd === false).length;
-    return { paymentTotal, vsdTotal, matched, mismatched };
+    return { paymentCount, paymentTotal, vsdCompareTotal, vsdTotal, matched, mismatched };
   }, [rows]);
 
   return (
@@ -174,9 +173,11 @@ export default function TodaysPaymentsDetailModal({ open, date, onClose }: Props
       <DialogTitle>Payments for {dateLabel}</DialogTitle>
       <DialogContent dividers>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          VSD is treatment-item revenue from the client&apos;s most recent treatment day on or before
-          this payment date (via client revenue history, last {CLIENT_VSD_LOOKBACK_DAYS} days). Compare
-          payment amount to VSD to see whether they align.
+          Clients with multiple payments are consolidated into one row. Payment amounts are summed;
+          VSD is shown once per client (not summed across split payments). Membership plan payments
+          are excluded from the VSD comparison. VSD is treatment-item revenue from the client&apos;s
+          most recent treatment day on or before this payment date (via client revenue history, last{' '}
+          {CLIENT_VSD_LOOKBACK_DAYS} days).
         </Typography>
 
         {error && (
@@ -193,23 +194,34 @@ export default function TodaysPaymentsDetailModal({ open, date, onClose }: Props
           <>
             <Box display="flex" flexWrap="wrap" gap={2} mb={2}>
               <Typography variant="body2">
-                <strong>{rows.length}</strong> payment{rows.length === 1 ? '' : 's'}
+                <strong>{rows.length}</strong> client{rows.length === 1 ? '' : 's'}
+              </Typography>
+              <Typography variant="body2">
+                <strong>{totals.paymentCount}</strong> payment{totals.paymentCount === 1 ? '' : 's'}
               </Typography>
               <Typography variant="body2">
                 Total paid: <strong>{fmtUSD(totals.paymentTotal)}</strong>
               </Typography>
               <Typography variant="body2">
-                VSD (matched rows): <strong>{fmtUSD(totals.vsdTotal)}</strong>
+                Paid (excl. membership): <strong>{fmtUSD(totals.vsdCompareTotal)}</strong>
+              </Typography>
+              <Typography variant="body2">
+                VSD (per client): <strong>{fmtUSD(totals.vsdTotal)}</strong>
               </Typography>
               {totals.matched > 0 && (
-                <Chip size="small" color="success" variant="outlined" label={`${totals.matched} match`} />
+                <Chip
+                  size="small"
+                  color="success"
+                  variant="outlined"
+                  label={`${totals.matched} client match${totals.matched === 1 ? '' : 'es'}`}
+                />
               )}
               {totals.mismatched > 0 && (
                 <Chip
                   size="small"
                   color="warning"
                   variant="outlined"
-                  label={`${totals.mismatched} mismatch`}
+                  label={`${totals.mismatched} client mismatch${totals.mismatched === 1 ? '' : 'es'}`}
                 />
               )}
             </Box>
@@ -228,7 +240,7 @@ export default function TodaysPaymentsDetailModal({ open, date, onClose }: Props
                       <strong>Payment type</strong>
                     </TableCell>
                     <TableCell align="right">
-                      <strong>Payment</strong>
+                      <strong>Payment (vs VSD)</strong>
                     </TableCell>
                     <TableCell align="right">
                       <strong>VSD</strong>
@@ -237,25 +249,38 @@ export default function TodaysPaymentsDetailModal({ open, date, onClose }: Props
                       <strong>Match</strong>
                     </TableCell>
                     <TableCell>
-                      <strong>Latest treatment</strong>
+                      <strong>Payments</strong>
                     </TableCell>
                     <TableCell>
-                      <strong>Date</strong>
-                    </TableCell>
-                    <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85em' }}>
-                      <strong>ID</strong>
+                      <strong>Latest treatment</strong>
                     </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {rows.map((row) => (
-                    <TableRow key={row.payment.id} hover>
+                    <TableRow key={row.clientId ?? row.clientName} hover>
                       <TableCell>{row.clientName}</TableCell>
                       <TableCell>
                         <TreatmentPatientsCell patients={row.treatmentPatients} />
                       </TableCell>
-                      <TableCell>{row.payment.paymentTypeName ?? '—'}</TableCell>
-                      <TableCell align="right">{fmtUSD(row.payment.amount)}</TableCell>
+                      <TableCell>
+                        {row.paymentTypeNames.length ? row.paymentTypeNames.join(', ') : '—'}
+                      </TableCell>
+                      <TableCell align="right">
+                        <Typography variant="body2" fontWeight={600}>
+                          {fmtUSD(row.vsdCompareTotal)}
+                        </Typography>
+                        {row.membershipPaymentTotal > 0 ? (
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            + {fmtUSD(row.membershipPaymentTotal)} membership (excluded)
+                          </Typography>
+                        ) : null}
+                        {row.payments.length > 1 ? (
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            {row.payments.length} payments
+                          </Typography>
+                        ) : null}
+                      </TableCell>
                       <TableCell align="right">
                         {row.vsdAmount != null ? fmtUSD(row.vsdAmount) : '—'}
                       </TableCell>
@@ -272,16 +297,30 @@ export default function TodaysPaymentsDetailModal({ open, date, onClose }: Props
                           </Typography>
                         )}
                       </TableCell>
-                      <TableCell>{formatTreatmentDate(row.latestTreatmentDate)}</TableCell>
-                      <TableCell>{row.payment.date}</TableCell>
-                      <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85em' }}>
-                        {row.payment.id}
+                      <TableCell>
+                        <Typography variant="body2" color="text.secondary">
+                          {row.payments.map((p) => (
+                            <Box
+                              key={p.id}
+                              component="span"
+                              display="block"
+                              sx={{ fontFamily: 'monospace', fontSize: '0.85em' }}
+                            >
+                              #{p.id} · {fmtUSD(p.amount)}
+                              {p.paymentTypeName ? ` · ${p.paymentTypeName}` : ''}
+                              {p.paymentTypeName && isMembershipPlanPaymentType(p.paymentTypeName)
+                                ? ' (excluded from VSD)'
+                                : ''}
+                            </Box>
+                          ))}
+                        </Typography>
                       </TableCell>
+                      <TableCell>{formatTreatmentDate(row.latestTreatmentDate)}</TableCell>
                     </TableRow>
                   ))}
                   {rows.length === 0 && !error && (
                     <TableRow>
-                      <TableCell colSpan={9} align="center" sx={{ py: 4 }} color="text.secondary">
+                      <TableCell colSpan={8} align="center" sx={{ py: 4 }} color="text.secondary">
                         No payments recorded for this day
                       </TableCell>
                     </TableRow>

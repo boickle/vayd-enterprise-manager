@@ -6,6 +6,12 @@ const MONEY_EPS = 0.01;
 /** How far back to query client treatment history when matching a payment day. */
 export const CLIENT_VSD_LOOKBACK_DAYS = 90;
 
+/** Payment types that represent membership plan charges (excluded from VSD comparison). */
+export function isMembershipPlanPaymentType(paymentTypeName?: string | null): boolean {
+  if (!paymentTypeName?.trim()) return false;
+  return paymentTypeName.trim().toLowerCase().includes('membership');
+}
+
 export function reconciliationClientLabel(c?: ReconciliationClient): string {
   if (!c) return '—';
   return [c.firstName, c.lastName].filter(Boolean).join(' ') || c.email || '—';
@@ -110,4 +116,107 @@ export function buildPaymentDetailRows(
       matchesVsd,
     };
   });
+}
+
+export type ConsolidatedClientPaymentRow = {
+  clientId: number | null;
+  clientName: string;
+  payments: PaymentDayRow[];
+  /** Sum of all payments for the day. */
+  paymentTotal: number;
+  /** Sum of non-membership payments used for VSD comparison. */
+  vsdCompareTotal: number;
+  /** Sum of membership plan payments (excluded from VSD comparison). */
+  membershipPaymentTotal: number;
+  paymentTypeNames: string[];
+  treatmentPatients: LatestTreatmentPatient[];
+  vsdAmount: number | null;
+  latestTreatmentDate: string | null;
+  matchesVsd: boolean | null;
+};
+
+function clientGroupKey(payment: PaymentDayRow): string {
+  const clientId = payment.client?.id;
+  if (clientId != null && Number.isFinite(Number(clientId))) {
+    return `id:${Number(clientId)}`;
+  }
+  return `name:${reconciliationClientLabel(payment.client)}`;
+}
+
+/** One row per client; payment amounts sum, VSD is shown once per client. */
+export function buildConsolidatedClientPaymentRows(
+  payments: PaymentDayRow[],
+  clientRevenueById: Map<number, ClientRevenueSeriesResponse>,
+  asOfDate: string
+): ConsolidatedClientPaymentRow[] {
+  const byClient = new Map<string, PaymentDayRow[]>();
+  for (const payment of payments) {
+    const key = clientGroupKey(payment);
+    const list = byClient.get(key) ?? [];
+    list.push(payment);
+    byClient.set(key, list);
+  }
+
+  const rows: ConsolidatedClientPaymentRow[] = [];
+  for (const clientPayments of byClient.values()) {
+    clientPayments.sort((a, b) => {
+      const ta = a.depositDate ?? a.date ?? '';
+      const tb = b.depositDate ?? b.date ?? '';
+      return tb.localeCompare(ta);
+    });
+
+    const first = clientPayments[0];
+    const clientId = first.client?.id != null ? Number(first.client.id) : null;
+    const clientName = reconciliationClientLabel(first.client);
+    const revenue =
+      clientId != null && Number.isFinite(clientId)
+        ? clientRevenueById.get(clientId)
+        : undefined;
+    const {
+      amount: vsdAmount,
+      treatmentDate: latestTreatmentDate,
+      patients: treatmentPatients,
+    } = vsdFromLatestTreatment(revenue, asOfDate);
+    const paymentTotal = clientPayments.reduce((sum, p) => sum + Number(p.amount ?? 0), 0);
+    const vsdCompareTotal = clientPayments
+      .filter((p) => !isMembershipPlanPaymentType(p.paymentTypeName))
+      .reduce((sum, p) => sum + Number(p.amount ?? 0), 0);
+    const membershipPaymentTotal = paymentTotal - vsdCompareTotal;
+    const paymentTypeNames = [
+      ...new Set(
+        clientPayments
+          .map((p) => p.paymentTypeName?.trim())
+          .filter((name): name is string => Boolean(name))
+      ),
+    ];
+    const hasVsdComparePayments = clientPayments.some(
+      (p) => !isMembershipPlanPaymentType(p.paymentTypeName)
+    );
+    const matchesVsd =
+      vsdAmount == null || !hasVsdComparePayments
+        ? null
+        : Math.abs(vsdCompareTotal - vsdAmount) <= MONEY_EPS;
+
+    rows.push({
+      clientId,
+      clientName,
+      payments: clientPayments,
+      paymentTotal,
+      vsdCompareTotal,
+      membershipPaymentTotal,
+      paymentTypeNames,
+      treatmentPatients,
+      vsdAmount,
+      latestTreatmentDate,
+      matchesVsd,
+    });
+  }
+
+  rows.sort((a, b) => {
+    const ta = a.payments[0]?.depositDate ?? a.payments[0]?.date ?? '';
+    const tb = b.payments[0]?.depositDate ?? b.payments[0]?.date ?? '';
+    return tb.localeCompare(ta);
+  });
+
+  return rows;
 }
