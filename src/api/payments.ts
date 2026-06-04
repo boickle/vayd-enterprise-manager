@@ -267,3 +267,37 @@ export async function fetchPaymentsReconciliation(params: {
   const { data } = await http.get('/analytics/payments/reconciliation', { params });
   return data;
 }
+
+/** Payment row with type label when flattened from reconciliation `byPaymentType`. */
+export type PaymentDayRow = ReconciliationPaymentOurs & {
+  paymentTypeName?: string;
+};
+
+/** Flatten `byPaymentType` into one list (preserves per-row `paymentTypeName` when present). */
+export function flattenPaymentsByType(
+  byPaymentType?: Record<string, ReconciliationPaymentOurs[]>
+): PaymentDayRow[] {
+  if (!byPaymentType) return [];
+  const rows: PaymentDayRow[] = [];
+  for (const [typeName, list] of Object.entries(byPaymentType)) {
+    for (const p of list ?? []) {
+      rows.push({
+        ...p,
+        paymentTypeName: p.paymentTypeName ?? typeName,
+      });
+    }
+  }
+  return rows;
+}
+
+/**
+ * All practice payments on a single calendar day (from reconciliation).
+ * Filters rows whose `date` matches `date` (YYYY-MM-DD).
+ */
+export async function fetchPaymentsForDay(date: string): Promise<PaymentDayRow[]> {
+  const res = await fetchPaymentsReconciliation({ start: date, end: date });
+  const dayKey = date.slice(0, 10);
+  return flattenPaymentsByType(res.byPaymentType).filter(
+    (p) => String(p.date).slice(0, 10) === dayKey
+  );
+}

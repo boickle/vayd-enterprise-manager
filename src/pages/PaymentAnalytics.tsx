@@ -16,7 +16,8 @@ import {
 } from '@mui/material';
 import Alert from '@mui/material/Alert';
 import Grid from '@mui/material/Grid';
-import { CalendarMonth, Refresh } from '@mui/icons-material';
+import { CalendarMonth, ChevronLeft, ChevronRight, Refresh } from '@mui/icons-material';
+import IconButton from '@mui/material/IconButton';
 import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import dayjs, { Dayjs } from 'dayjs';
@@ -32,6 +33,7 @@ import {
   Legend,
 } from 'recharts';
 import { fetchPaymentsAnalytics, type PaymentPoint } from '../api/payments';
+import TodaysPaymentsDetailModal from '../components/TodaysPaymentsDetailModal';
 
 dayjs.extend(utc);
 
@@ -71,8 +73,12 @@ function daysBetween(a: Dayjs, b: Dayjs) {
   return Math.max(1, b.startOf('day').diff(a.startOf('day'), 'day') + 1);
 }
 const dayKeyUTC = (d: string | Date | dayjs.Dayjs) => dayjs.utc(d).format('YYYY-MM-DD');
-/** Today's date in the user's local timezone (YYYY-MM-DD) for "today" revenue. */
-const todayLocalKey = () => dayjs().format('YYYY-MM-DD');
+function findPaymentPointForDay(points: PaymentPoint[], localDayKey: string): PaymentPoint | null {
+  const utcKey = dayjs(localDayKey).utc().format('YYYY-MM-DD');
+  const matches = (p: PaymentPoint) =>
+    p.date === localDayKey || p.date === utcKey || dayKeyUTC(p.date) === utcKey;
+  return points.find(matches) ?? null;
+}
 
 /** Linear regression trend for total revenue series. */
 function addLinearTrend<T extends { totalRevenue: number }>(data: T[]): (T & { trend: number })[] {
@@ -117,7 +123,15 @@ export default function PaymentsAnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [chartLineVisible, setChartLineVisible] =
     useState<Record<ChartLineKey, boolean>>(defaultChartLineVisibility);
+  const [paymentsDetailOpen, setPaymentsDetailOpen] = useState(false);
+  const [revenueDay, setRevenueDay] = useState<Dayjs>(() => dayjs().startOf('day'));
   const open = Boolean(anchorEl);
+
+  const today = dayjs().startOf('day');
+  const revenueDayKey = revenueDay.format('YYYY-MM-DD');
+  const isRevenueDayToday = revenueDay.isSame(today, 'day');
+  const canAdvanceRevenueDay = revenueDay.isBefore(today, 'day');
+  const revenueDayLabel = revenueDay.format('dddd, MMM D, YYYY');
 
   const toggleChartLine = (key: ChartLineKey) => {
     setChartLineVisible((v) => ({ ...v, [key]: !v[key] }));
@@ -205,29 +219,29 @@ export default function PaymentsAnalyticsPage() {
 
   const chartDataWithTrend = useMemo(() => addLinearTrend(chartData), [chartData]);
 
-  // ---------- Leaderboards + Today's revenue ----------
+  // ---------- Leaderboards + daily revenue card ----------
   const dataset = seriesAll ?? series; // prefer all-time; fallback to current selection
-  /** Today's revenue row. Match by local date or UTC date so we find the row regardless of API timezone. */
-  const todaysRow = useMemo(() => {
-    const localKey = todayLocalKey();
-    const utcKey = dayjs().utc().format('YYYY-MM-DD');
-    const matches = (p: PaymentPoint) => p.date === localKey || p.date === utcKey || dayKeyUTC(p.date) === utcKey;
-    return series.find(matches) ?? (seriesAll ?? []).find(matches) ?? null;
-  }, [series, seriesAll]);
-  const todaysPracticeRevenue = todaysRow?.practiceRevenue ?? 0;
-  const todaysOnlinePharmacyRevenue = todaysRow?.onlinePharmacyRevenue ?? 0;
-  const todaysSubscriptionRevenue = todaysRow?.subscriptionRevenue ?? 0;
-  const todaysPaymentsBreakdown = todaysPracticeRevenue + todaysOnlinePharmacyRevenue;
-  const todaysRecordedRevenue = todaysRow?.revenue ?? 0;
-  const todaysUseLegacyPaymentsRow =
-    todaysPaymentsBreakdown === 0 && todaysRecordedRevenue !== 0;
-  const todaysPaymentsTotal = todaysUseLegacyPaymentsRow
-    ? todaysRecordedRevenue
-    : todaysPaymentsBreakdown > 0
-      ? todaysPaymentsBreakdown
-      : todaysRecordedRevenue;
-  const todaysTotalRevenue = todaysPaymentsTotal + todaysSubscriptionRevenue;
-  const todayLabel = dayjs().format('dddd, MMM D, YYYY');
+  /** Revenue row for the day selected on the daily revenue card (local + UTC date matching). */
+  const revenueDayRow = useMemo(() => {
+    return (
+      findPaymentPointForDay(series, revenueDayKey) ??
+      findPaymentPointForDay(seriesAll ?? [], revenueDayKey) ??
+      null
+    );
+  }, [series, seriesAll, revenueDayKey]);
+  const revenueDayPracticeRevenue = revenueDayRow?.practiceRevenue ?? 0;
+  const revenueDayOnlinePharmacyRevenue = revenueDayRow?.onlinePharmacyRevenue ?? 0;
+  const revenueDaySubscriptionRevenue = revenueDayRow?.subscriptionRevenue ?? 0;
+  const revenueDayPaymentsBreakdown = revenueDayPracticeRevenue + revenueDayOnlinePharmacyRevenue;
+  const revenueDayRecordedRevenue = revenueDayRow?.revenue ?? 0;
+  const revenueDayUseLegacyPaymentsRow =
+    revenueDayPaymentsBreakdown === 0 && revenueDayRecordedRevenue !== 0;
+  const revenueDayPaymentsTotal = revenueDayUseLegacyPaymentsRow
+    ? revenueDayRecordedRevenue
+    : revenueDayPaymentsBreakdown > 0
+      ? revenueDayPaymentsBreakdown
+      : revenueDayRecordedRevenue;
+  const revenueDayTotalRevenue = revenueDayPaymentsTotal + revenueDaySubscriptionRevenue;
 
   const topDays = useMemo(() => {
     const copy = [...dataset];
@@ -429,18 +443,29 @@ export default function PaymentsAnalyticsPage() {
           </Grid>
         </Grid>
 
-        {/* Today's revenue (current day in user's local timezone) */}
+        {/* Daily revenue (defaults to today; change day with arrows) */}
         <Card variant="outlined">
-          <CardHeader title="Today's Revenue" />
+          <CardHeader
+            title={isRevenueDayToday ? "Today's Revenue" : 'Revenue'}
+            action={
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => setPaymentsDetailOpen(true)}
+              >
+                View payments
+              </Button>
+            }
+          />
           <CardContent>
             <Stack spacing={0.5}>
-              {todaysUseLegacyPaymentsRow ? (
+              {revenueDayUseLegacyPaymentsRow ? (
                 <Box display="flex" justifyContent="space-between" alignItems="baseline">
                   <Typography variant="body2" color="text.secondary">
                     Payments revenue
                   </Typography>
                   <Typography variant="body1" fontWeight={600}>
-                    {fmtUSD(todaysRecordedRevenue)}
+                    {fmtUSD(revenueDayRecordedRevenue)}
                   </Typography>
                 </Box>
               ) : (
@@ -450,7 +475,7 @@ export default function PaymentsAnalyticsPage() {
                       Practice revenue
                     </Typography>
                     <Typography variant="body1" fontWeight={600}>
-                      {fmtUSD(todaysPracticeRevenue)}
+                      {fmtUSD(revenueDayPracticeRevenue)}
                     </Typography>
                   </Box>
                   <Box display="flex" justifyContent="space-between" alignItems="baseline">
@@ -458,7 +483,7 @@ export default function PaymentsAnalyticsPage() {
                       Online pharmacy revenue
                     </Typography>
                     <Typography variant="body1" fontWeight={600}>
-                      {fmtUSD(todaysOnlinePharmacyRevenue)}
+                      {fmtUSD(revenueDayOnlinePharmacyRevenue)}
                     </Typography>
                   </Box>
                 </>
@@ -468,7 +493,7 @@ export default function PaymentsAnalyticsPage() {
                   Subscription revenue
                 </Typography>
                 <Typography variant="body1" fontWeight={600}>
-                  {fmtUSD(todaysSubscriptionRevenue)}
+                  {fmtUSD(revenueDaySubscriptionRevenue)}
                 </Typography>
               </Box>
               <Divider sx={{ my: 0.5 }} />
@@ -477,13 +502,39 @@ export default function PaymentsAnalyticsPage() {
                   Total
                 </Typography>
                 <Typography variant="h5" fontWeight={800}>
-                  {fmtUSD(todaysTotalRevenue)}
+                  {fmtUSD(revenueDayTotalRevenue)}
                 </Typography>
               </Box>
             </Stack>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              {todayLabel}
-            </Typography>
+            <Box
+              display="flex"
+              alignItems="center"
+              justifyContent="center"
+              gap={0.5}
+              sx={{ mt: 1.5 }}
+            >
+              <IconButton
+                aria-label="Previous day"
+                size="small"
+                onClick={() => setRevenueDay((d) => d.subtract(1, 'day'))}
+              >
+                <ChevronLeft />
+              </IconButton>
+              <Typography variant="body2" color="text.secondary" sx={{ minWidth: 200, textAlign: 'center' }}>
+                {revenueDayLabel}
+              </Typography>
+              <IconButton
+                aria-label="Next day"
+                size="small"
+                disabled={!canAdvanceRevenueDay}
+                onClick={() => {
+                  if (!canAdvanceRevenueDay) return;
+                  setRevenueDay((d) => d.add(1, 'day'));
+                }}
+              >
+                <ChevronRight />
+              </IconButton>
+            </Box>
           </CardContent>
         </Card>
 
@@ -754,6 +805,12 @@ export default function PaymentsAnalyticsPage() {
             </Card>
           </Grid>
         </Grid>
+
+        <TodaysPaymentsDetailModal
+          open={paymentsDetailOpen}
+          date={revenueDayKey}
+          onClose={() => setPaymentsDetailOpen(false)}
+        />
 
         {/* Date Range Popover */}
         <Popover
