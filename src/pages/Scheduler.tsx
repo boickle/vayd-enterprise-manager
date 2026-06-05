@@ -5449,7 +5449,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           form: snapshot,
           previewAppointmentTypeId:
             preview.kind === 'type' ? preview.appointmentTypeId ?? null : null,
-          bookedViaRouting: Boolean(embedInRoutingWorkspace && editTimePreview != null),
           editedByAudit: {
             actor: appointmentChangeActor,
             practiceTz: PRACTICE_TZ,
@@ -7552,7 +7551,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             accentColor={colorsForAppointment(editAppt, typeList, typeFillMap).fill}
             inlinePaneMode={editPlacementMode && !embedInRoutingWorkspace}
             dockInRoutingPane={embedInRoutingWorkspace}
-            bookedViaRouting={Boolean(embedInRoutingWorkspace && editTimePreview != null)}
             placementPreviewActive={editTimePreview != null}
             placementPreviewKind={editTimePreview?.kind ?? null}
             draftPreviewAppointmentTypeId={
