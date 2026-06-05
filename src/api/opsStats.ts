@@ -130,7 +130,28 @@ export type DoctorRevenueSeriesItem = {
   description: string | null;
   patientName?: string | null;
   clientName?: string | null;
+  clientId?: number | null;
+  appointmentId?: number | string | null;
+  isMember?: boolean;
 };
+
+function mapRevenueSeriesItem(i: any): DoctorRevenueSeriesItem {
+  return {
+    treatmentItemId: Number(i?.treatmentItemId ?? 0),
+    cost: Number(i?.cost ?? 0),
+    description: i?.description ?? null,
+    patientName: i?.patientName ?? null,
+    clientName: i?.clientName ?? null,
+    clientId:
+      i?.clientId != null
+        ? Number(i.clientId)
+        : i?.client?.id != null
+          ? Number(i.client.id)
+          : null,
+    appointmentId: i?.appointmentId ?? i?.appointment?.id ?? null,
+    isMember: i?.isMember === true,
+  };
+}
 
 export type DoctorRevenuePoint = {
   date: string;
@@ -185,14 +206,62 @@ export async function fetchDoctorRevenueSeries(params: {
       date: String(r?.date ?? ''),
       total: Number(r?.total ?? 0),
       items: Array.isArray(r?.items)
-        ? (r.items as any[]).map((i: any) => ({
-            treatmentItemId: Number(i?.treatmentItemId ?? 0),
-            cost: Number(i?.cost ?? 0),
-            description: i?.description ?? null,
-            patientName: i?.patientName ?? null,
-            clientName: i?.clientName ?? null,
-          }))
+        ? (r.items as any[]).map(mapRevenueSeriesItem)
         : undefined,
+    })),
+  };
+}
+
+/* =========================
+ * One client's revenue series over a date range
+ * GET /analytics/ops/revenue/client/series
+ * ========================= */
+
+export type ClientRevenuePoint = {
+  date: string;
+  total: number;
+  items?: DoctorRevenueSeriesItem[];
+};
+
+export type ClientRevenueSeriesResponse = {
+  clientId: number;
+  start: string;
+  end: string;
+  total: number;
+  series: ClientRevenuePoint[];
+};
+
+/**
+ * GET /analytics/ops/revenue/client/series
+ * Treatment-item revenue for one client by day.
+ * Query: clientId, start (YYYY-MM-DD), end (YYYY-MM-DD).
+ */
+export async function fetchClientRevenueSeries(params: {
+  clientId: number | string;
+  start: string;
+  end: string;
+}): Promise<ClientRevenueSeriesResponse> {
+  const { data } = await http.get('/analytics/ops/revenue/client/series', {
+    params: {
+      clientId: String(params.clientId),
+      start: params.start,
+      end: params.end,
+    },
+  });
+
+  const resp = data ?? {};
+  const series = Array.isArray(resp.series) ? resp.series : [];
+  return {
+    clientId: Number(resp.clientId ?? params.clientId),
+    start: String(resp.start ?? params.start),
+    end: String(resp.end ?? params.end),
+    total: Number(
+      resp.total ?? series.reduce((s: number, r: any) => s + Number(r?.total ?? 0), 0)
+    ),
+    series: series.map((r: any) => ({
+      date: String(r?.date ?? ''),
+      total: Number(r?.total ?? 0),
+      items: Array.isArray(r?.items) ? r.items.map(mapRevenueSeriesItem) : undefined,
     })),
   };
 }
