@@ -58,7 +58,7 @@ import { buildAppointmentTypeCatalog } from '../utils/appointmentTypeSettings';
 import type { Appointment, Client, Patient } from '../api/roomLoader';
 import {
   computeEditPreviewPopoverPosition,
-  computeHoverPopoverPosition,
+  computeVisitHighlightsPopoverPosition,
   rectFromElement,
   type HoverPopoverPositionResult,
 } from '../utils/hoverPopoverPosition';
@@ -2673,28 +2673,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     ready: boolean;
   } | null>(null);
 
-  const computeVisitHighlightsPopoverPosition = useCallback(
-    (args: { anchorEl: HTMLElement | null; x: number; y: number; cardEstH?: number }) => {
-      const vwW = window.innerWidth;
-      const vwH = window.innerHeight;
-      const fallbackEstH = Math.min(520, Math.max(400, Math.floor(vwH * 0.42)));
-      return computeHoverPopoverPosition({
-        anchor: rectFromElement(args.anchorEl),
-        x: args.x,
-        y: args.y,
-        vwW,
-        vwH,
-        cardMaxW: 380,
-        cardMinW: 280,
-        padding: 8,
-        offset: 8,
-        cardEstH: args.cardEstH ?? fallbackEstH,
-        horizontalOnly: true,
-      });
-    },
-    []
-  );
-
   const cancelHoverDismiss = useCallback(() => {
     if (hoverDismissTimerRef.current != null) {
       clearTimeout(hoverDismissTimerRef.current);
@@ -4436,7 +4414,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       }),
       ready: false,
     });
-  }, [hover?.appt.id, hover?.el, computeVisitHighlightsPopoverPosition]);
+  }, [hover?.appt.id, hover?.el]);
 
   useLayoutEffect(() => {
     if (!hover || !hoverTooltipLayout || hoverTooltipLayout.ready) return;
@@ -4452,7 +4430,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       cardEstH: measuredH > 120 ? measuredH : fallbackEstH,
     });
     setHoverTooltipLayout({ pos, ready: true });
-  }, [hover, hoverAppt, hoverTooltipLayout, computeVisitHighlightsPopoverPosition]);
+  }, [hover, hoverAppt, hoverTooltipLayout]);
 
   /** As Visit Highlights content loads (alternate address, patient sex), grow scroll area only — do not re-anchor. */
   useLayoutEffect(() => {
@@ -7027,6 +7005,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           className={[
             'scheduler-calendar-shell',
             practiceCalendarStickyWeekChrome ? 'scheduler-calendar-shell--sticky-week' : '',
+            view === 'day'
+              ? 'scheduler-calendar-shell--day'
+              : view === 'week'
+                ? 'scheduler-calendar-shell--week'
+                : view === 'month'
+                  ? 'scheduler-calendar-shell--month'
+                  : '',
           ]
             .filter(Boolean)
             .join(' ')}
