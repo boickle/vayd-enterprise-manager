@@ -65,6 +65,8 @@ import {
   patchRescheduleIntentDoctorPims,
   resolveRescheduleIntentDoctorPimsId,
   rescheduleScopeTargets,
+  rescheduleIntentUsesAlternateAddress,
+  routingClientPickWouldReplaceAlternate,
   ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
   ROUTING_RESCHEDULE_SOURCE_SCORE_UPDATED_EVENT,
   writeRoutingRescheduleScope,
@@ -1697,8 +1699,15 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const [clientSearching, setClientSearching] = useState(false);
   const [showClientDropdown, setShowClientDropdown] = useState(false);
   const clientBoxRef = useRef<HTMLDivElement | null>(null);
-  const pickClientRef = useRef<(c: Client) => void>(() => {});
+  const pickClientRef = useRef<
+    (c: Client, opts?: { alternateAddress?: string | null; skipAlternateConfirm?: boolean }) => void
+  >(() => {});
   const latestClientQueryRef = useRef('');
+  const [clientPickAlternateConfirm, setClientPickAlternateConfirm] = useState<{
+    client: Client;
+    alternateAddress: string;
+    clientHomeAddress: string;
+  } | null>(null);
 
   // -------- Doctor search --------
   const [doctorQuery, setDoctorQuery] = useState(() => bootstrap.doctorQuery);
@@ -2011,7 +2020,10 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         if (cancelled) return;
         syncedClient = staffRecordToRoutingClient(raw);
         if (syncedClient) {
-          pickClientRef.current(syncedClient);
+          const alt = intent.isAlternateStop
+            ? intent.alternateAddressText?.trim() || intent.address?.trim() || ''
+            : '';
+          pickClientRef.current(syncedClient, alt ? { alternateAddress: alt } : undefined);
         }
       } catch {
         /* fall back to label only */
@@ -2057,7 +2069,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       const flashFields: RoutingPrefillFlashField[] = [];
       if (pimsDoc) flashFields.push('doctor');
       if (syncedClient || intent.clientDisplayLabel?.trim()) flashFields.push('client');
-      if (syncedClient && formatClientAddress(syncedClient)) flashFields.push('address');
+      if (intent.isAlternateStop && intent.alternateAddressText?.trim()) flashFields.push('address');
       if (intent.serviceMinutes > 0) flashFields.push('minutes');
       if (typeName || (tid != null && Number.isFinite(Number(tid)))) flashFields.push('apptType');
       if (flashFields.length > 0) triggerRoutingPrefillFlash(flashFields);
@@ -2453,6 +2465,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       opt.routingRequestId ?? latestRoutingRequestId ?? deriveRoutingRequestId(result) ?? undefined;
     const topForIndex = result ? routingTopCandidatesFromResult(result) : [];
     const candidateIndex = resolveRoutingCandidateIndex(opt, topForIndex);
+    const rescheduleRow = readRoutingRescheduleIntent();
 
     const payload: RoutingCalendarPreviewPayloadV1 = {
       version: 1,
@@ -2467,6 +2480,11 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         lat: form.newAppt.lat,
         lon: form.newAppt.lon,
       },
+      ...(rescheduleRow &&
+      rescheduleIntentUsesAlternateAddress(rescheduleRow) &&
+      (form.newAppt.address ?? '').trim()
+        ? { routingUsesAlternateAddress: true }
+        : {}),
       appointmentTypeId,
       appointmentTypeChosenInRouting: Boolean(routingApptStatsTypeKey.trim()),
       ...(routingApptStatsTypeKey.trim()
@@ -2477,7 +2495,6 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       candidateIndex,
       candidateId: opt.candidateId,
     };
-    const rescheduleRow = readRoutingRescheduleIntent();
     if (rescheduleRow) {
       if (rescheduleRequiresScopeChoice(rescheduleRow) && !rescheduleRow.rescheduleScope) {
         setRescheduleScopeError(true);
@@ -3045,8 +3062,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     });
   }
 
-  function pickClient(c: Client) {
-    const addr = formatClientAddress(c);
+  function applyPickClient(c: Client, opts?: { alternateAddress?: string | null }) {
+    const alt = opts?.alternateAddress?.trim();
+    const addr = alt || formatClientAddress(c);
     const latNum = typeof c.lat === 'string' ? parseFloat(c.lat) : c.lat;
     const lonNum = typeof c.lon === 'string' ? parseFloat(c.lon) : c.lon;
 
@@ -3056,8 +3074,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         ...f.newAppt,
         clientId: String(c.id),
         address: addr,
-        lat: Number.isFinite(latNum as number) ? (latNum as number) : undefined,
-        lon: Number.isFinite(lonNum as number) ? (lonNum as number) : undefined,
+        lat: alt ? undefined : Number.isFinite(latNum as number) ? (latNum as number) : undefined,
+        lon: alt ? undefined : Number.isFinite(lonNum as number) ? (lonNum as number) : undefined,
       },
     }));
     setAddressError(null);
@@ -3066,6 +3084,31 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     setClientResults([]);
     setShowClientDropdown(false);
     setSelectedClientAlerts((c as any).alerts ?? null);
+  }
+
+  function pickClient(
+    c: Client,
+    opts?: { alternateAddress?: string | null; skipAlternateConfirm?: boolean }
+  ) {
+    if (!opts?.skipAlternateConfirm) {
+      const clientHome = formatClientAddress(c);
+      const alternateToPreserve = routingClientPickWouldReplaceAlternate({
+        currentFormAddress: form.newAppt.address,
+        intent: readRoutingRescheduleIntent(),
+        clientHomeAddress: clientHome,
+        explicitAlternateOpt: opts?.alternateAddress,
+      });
+      if (alternateToPreserve && clientHome) {
+        setClientPickAlternateConfirm({
+          client: c,
+          alternateAddress: alternateToPreserve,
+          clientHomeAddress: clientHome,
+        });
+        setShowClientDropdown(false);
+        return;
+      }
+    }
+    applyPickClient(c, opts);
   }
   pickClientRef.current = pickClient;
 
@@ -4916,6 +4959,71 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         )}
 
       </div>
+
+      {clientPickAlternateConfirm ? (
+        <div
+          className="routing-doctor-select-backdrop"
+          role="presentation"
+          onClick={() => setClientPickAlternateConfirm(null)}
+        >
+          <div
+            className="routing-client-pick-alternate-modal"
+            role="dialog"
+            aria-modal
+            aria-labelledby="routing-client-pick-alternate-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="routing-client-pick-alternate-title" className="routing-doctor-select-title">
+              Change visit address?
+            </h2>
+            <p className="routing-client-pick-alternate-lead">
+              Are you sure you want to change the address to the client&apos;s address, instead of
+              using the alternate address &ldquo;{clientPickAlternateConfirm.alternateAddress}
+              &rdquo;?
+            </p>
+            <p className="routing-client-pick-alternate-home muted">
+              Client address: {clientPickAlternateConfirm.clientHomeAddress}
+            </p>
+            <div className="routing-doctor-select-actions">
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => setClientPickAlternateConfirm(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => {
+                  const pending = clientPickAlternateConfirm;
+                  setClientPickAlternateConfirm(null);
+                  if (pending) {
+                    applyPickClient(pending.client, {
+                      alternateAddress: pending.alternateAddress,
+                    });
+                  }
+                }}
+              >
+                Keep alternate address
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  const pending = clientPickAlternateConfirm;
+                  setClientPickAlternateConfirm(null);
+                  if (pending) {
+                    applyPickClient(pending.client);
+                  }
+                }}
+              >
+                Use client address
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {showDoctorSelectionModal ? (
         <div

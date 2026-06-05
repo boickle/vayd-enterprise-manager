@@ -173,6 +173,10 @@ type Props = {
     schedulingOverrideWarning?: string;
     schedulingOverridesApplied?: boolean;
     savedAppointmentId?: number;
+    /** Internal provider id used for the saved visit (for calendar focus after cross-doctor reschedule). */
+    primaryProviderId?: string;
+    /** Practice-local date (YYYY-MM-DD) of the booked slot. */
+    anchorDate?: string;
   }) => void;
 };
 
@@ -259,6 +263,8 @@ function BookPatientAlerts({ alerts }: { alerts: string | null | undefined }) {
 function BookSelectedClientCard({
   name,
   address,
+  visitAddress,
+  homeAddress,
   alerts,
   onClear,
   hint,
@@ -266,6 +272,8 @@ function BookSelectedClientCard({
 }: {
   name: string;
   address: string | null;
+  visitAddress?: string | null;
+  homeAddress?: string | null;
   alerts: string | null;
   onClear?: () => void;
   hint?: React.ReactNode;
@@ -286,7 +294,21 @@ function BookSelectedClientCard({
       ) : null}
       <span className="scheduler-book-selected-label">Client</span>
       <span className="scheduler-book-selected-value">{name}</span>
-      {address ? <span className="scheduler-book-selected-address">{address}</span> : null}
+      {visitAddress ? (
+        <>
+          <span className="scheduler-book-selected-label scheduler-book-selected-label--visit">
+            Visit location
+          </span>
+          <span className="scheduler-book-selected-visit-address">{visitAddress}</span>
+          {homeAddress ? (
+            <span className="scheduler-book-selected-address scheduler-book-selected-home-address">
+              Home: {homeAddress}
+            </span>
+          ) : null}
+        </>
+      ) : address ? (
+        <span className="scheduler-book-selected-address">{address}</span>
+      ) : null}
       <BookClientAlerts alerts={alerts} />
       {hint}
     </div>
@@ -490,20 +512,28 @@ export function SchedulerBookModal({
     alternateAddressText.trim() || prefill?.routingAlternateAddress?.trim()
   );
 
-  /** Address-only routing: alternate stop overrides client home for drive time and visit location. */
+  /** Routing / reschedule alternate stop overrides client home for drive time and visit location. */
   const showRoutingAlternateAddress = Boolean(
-    isRoutingPreviewBook && hasRoutingAlternateAddressText
+    (isRoutingPreviewBook || isRescheduleBook) && hasRoutingAlternateAddressText
   );
 
-  /** Include on create/preview when routing supplied an alternate stop, even after linking a client. */
+  /** Include on create/preview when routing supplied an explicit alternate stop. */
   const bookAlternateAddressText = useMemo(() => {
     const trimmed = alternateAddressText.trim();
-    if (bookedViaRouting) return trimmed;
+    const prefillAlt = prefill?.routingAlternateAddress?.trim();
+    if (prefillAlt) return trimmed || prefillAlt;
     if (canUseAlternateAddress && !hasLinkedClient) return trimmed;
     return '';
-  }, [alternateAddressText, bookedViaRouting, canUseAlternateAddress, hasLinkedClient]);
+  }, [
+    alternateAddressText,
+    prefill?.routingAlternateAddress,
+    canUseAlternateAddress,
+    hasLinkedClient,
+  ]);
 
   const perVisitReschedule = isRescheduleBook && rescheduleVisitEdits.length > 0;
+
+  const rescheduleAlternateVisitAddress = isRescheduleBook ? bookAlternateAddressText || null : null;
 
   const perVisitRoutingBook = isRoutingPreviewBook && routingBookVisitEdits.length > 0;
 
@@ -1519,7 +1549,12 @@ export function SchedulerBookModal({
           : undefined;
       onBooked(
         savedAppointmentId != null
-          ? { ...(bookedDetail ?? {}), savedAppointmentId }
+          ? {
+              ...(bookedDetail ?? {}),
+              savedAppointmentId,
+              primaryProviderId: providerId.trim() || undefined,
+              anchorDate: startLocal?.isValid ? startLocal.toISODate() ?? undefined : undefined,
+            }
           : bookedDetail
       );
       onClose();
@@ -1735,7 +1770,9 @@ export function SchedulerBookModal({
                 prefill?.clientLabel?.trim() ||
                 (prefill?.clientId ? `Client #${prefill.clientId}` : '…')
               }
-              address={selectedClientAddress}
+              address={rescheduleAlternateVisitAddress ? null : selectedClientAddress}
+              visitAddress={rescheduleAlternateVisitAddress}
+              homeAddress={rescheduleAlternateVisitAddress ? selectedClientAddress : null}
               alerts={selectedClientAlerts}
               hint={
                 prefill?.coVisitAddPet ? (
@@ -1748,6 +1785,10 @@ export function SchedulerBookModal({
                     {routingBookHasPrefilledClient
                       ? 'Choose one or more patients for this slot. Each patient gets their own appointment at the same time with its own type and description.'
                       : 'Optionally search for a client below, then choose patients. The alternate address above is used for routing regardless of client home address.'}
+                  </p>
+                ) : isRescheduleBook && rescheduleAlternateVisitAddress ? (
+                  <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
+                    This visit stays at the alternate address above (not the client&apos;s home).
                   </p>
                 ) : prefill?.lockClient ? (
                   <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>

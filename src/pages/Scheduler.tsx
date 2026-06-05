@@ -111,6 +111,7 @@ import {
 } from '../api/employeeWorkdayActuals';
 import { EditVisitPreviewPopover } from '../components/EditVisitPreviewPopover';
 import { RoutingPreviewSlotPopover } from '../components/RoutingPreviewSlotPopover';
+import { ScheduleCalendarBlockedNotice } from '../components/ScheduleCalendarBlockedNotice';
 import {
   SchedulerVisitClientContext,
   SchedulerVisitClientHeaderAlerts,
@@ -198,8 +199,10 @@ import {
 } from '../utils/manualBookCalendarPreview';
 import { commitManualBookPreviewDraft } from '../utils/commitManualBookPreview';
 import {
+  EDIT_VISIT_CALENDAR_BLOCKED_MESSAGE,
   EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE,
   getScheduleCalendarPreviewBlockedMessage,
+  RESCHEDULE_CALENDAR_BLOCKED_MESSAGE,
   ROUTING_PREVIEW_CALENDAR_BLOCKED_EVENT,
 } from '../utils/routingCalendarPreviewGuard';
 import {
@@ -225,6 +228,7 @@ import {
   readRoutingRescheduleIntent,
   rescheduleCalendarFocusFromIntent,
   rescheduleScopeTargets,
+  resolveRoutingBookAlternateAddress,
   ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
   ROUTING_RESCHEDULE_SOURCE_SCORE_UPDATED_EVENT,
   writeRoutingRescheduleIntent,
@@ -2233,9 +2237,14 @@ function buildRoutingPreviewSyntheticAppointment(
         } as Appointment['client'])
       : undefined;
 
-  /** Alternate stop only when routing without a client (address overrides home). */
-  const routingAlt =
-    clientId == null ? preview.newApptMeta?.address?.trim() || null : null;
+  /** Alternate stop when routing without a client, or reschedule at an explicit alternate address. */
+  const routingAlt = (() => {
+    const addr = preview.newApptMeta?.address?.trim();
+    if (!addr) return null;
+    if (clientId == null) return addr;
+    if (preview.routingUsesAlternateAddress) return addr;
+    return null;
+  })();
 
   return {
     id: SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID,
@@ -2597,6 +2606,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   /** null = not applicable or loading; true = at least one pet can be added; false = none left */
   const [addAnotherPetMenuReady, setAddAnotherPetMenuReady] = useState<boolean | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [calendarBlockedNotice, setCalendarBlockedNotice] = useState<string | null>(null);
   /** YYYY-MM-DD of the day column while its My Day — Visual PDF is generating. */
   const [practicePdfExportingKey, setPracticePdfExportingKey] = useState<string | null>(null);
   /** When true and a single provider is selected, timed events use ETA/ETD from /appointments/doctor + /routing/eta (same as My Week). */
@@ -3394,9 +3404,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [editAppt, editPlacementMode]
   );
 
-  const notifyEditVisitCalendarLocked = useCallback(() => {
-    setToast('Close Edit visit to use the calendar.');
+  const showCalendarBlockedNotice = useCallback((msg: string) => {
+    setCalendarBlockedNotice(msg);
   }, []);
+
+  const notifyEditVisitCalendarLocked = useCallback(() => {
+    showCalendarBlockedNotice(EDIT_VISIT_CALENDAR_BLOCKED_MESSAGE);
+  }, [showCalendarBlockedNotice]);
 
   const rescheduleSourceHighlightIds = useMemo(
     () => rescheduleSourceHighlightAppointmentIds(embedInRoutingWorkspace, routingPreview),
@@ -3443,26 +3457,27 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       return;
     }
     if (rescheduleWorkspaceActive) {
-      setToast('Dismiss rescheduling or finish choosing a new slot before using the calendar.');
+      showCalendarBlockedNotice(RESCHEDULE_CALENDAR_BLOCKED_MESSAGE);
       return;
     }
     if (editTimePreview) {
-      setToast(EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE);
+      showCalendarBlockedNotice(EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE);
       return;
     }
-    setToast(getScheduleCalendarPreviewBlockedMessage());
+    showCalendarBlockedNotice(getScheduleCalendarPreviewBlockedMessage());
   }, [
     editVisitCalendarLock,
     rescheduleWorkspaceActive,
     editTimePreview,
     notifyEditVisitCalendarLocked,
+    showCalendarBlockedNotice,
   ]);
 
   useEffect(() => {
-    const onBlocked = () => setToast(getScheduleCalendarPreviewBlockedMessage());
+    const onBlocked = () => showCalendarBlockedNotice(getScheduleCalendarPreviewBlockedMessage());
     window.addEventListener(ROUTING_PREVIEW_CALENDAR_BLOCKED_EVENT, onBlocked);
     return () => window.removeEventListener(ROUTING_PREVIEW_CALENDAR_BLOCKED_EVENT, onBlocked);
-  }, []);
+  }, [showCalendarBlockedNotice]);
 
   const embeddedRoutingCalendarLocked = Boolean(
     embedInRoutingWorkspace && (routingPreview || rescheduleWorkspaceActive)
@@ -4922,6 +4937,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         : undefined;
     const rescheduleId = rescheduleIds[0];
     const isReschedule = rescheduleId != null && Number.isFinite(Number(rescheduleId));
+    /** Internal id from the chosen routing slot — target doctor when rescheduling cross-doctor. */
+    const routingSlotProviderId = String(opt.doctorPimsId ?? '').trim() || undefined;
     const rescheduleSourceAppt = isReschedule
       ? rawAppointments.find((a) => a.id === Number(rescheduleId))
       : undefined;
@@ -4933,6 +4950,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           rawAppointments
         )
       : undefined;
+    const routingAlternateForBook = resolveRoutingBookAlternateAddress({
+      hasLinkedClient,
+      routingAddress,
+      intent: ri,
+      previewUsesAlternateAddress: routingPreview.routingUsesAlternateAddress,
+      sourceAppt: rescheduleSourceAppt,
+    });
     setBookPrefill({
       ...(hasLinkedClient
         ? {
@@ -4948,7 +4972,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         : {
             disableClientSearch: false,
           }),
-      routingAlternateAddress: routingAddress,
+      ...(routingAlternateForBook ? { routingAlternateAddress: routingAlternateForBook } : {}),
       appointmentTypeId: chosenRoutingTypeId,
       preserveDurationFromSlot: true,
       defaultDescription:
@@ -4962,11 +4986,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       preferredPatientId:
         routingPreview.reschedulePatientId?.trim() || ri?.patientId || fbi?.patientId,
       routingPreviewBook: !isReschedule,
-      lockProvider: !isReschedule,
+      lockProvider: Boolean(routingSlotProviderId) || !isReschedule,
       lockSlotTimes: !isReschedule,
-      providerId: isReschedule
-        ? ri?.primaryProviderInternalId?.trim()
-        : String(opt.doctorPimsId ?? '').trim() || undefined,
+      providerId:
+        routingSlotProviderId ??
+        (isReschedule ? ri?.primaryProviderInternalId?.trim() : undefined),
       modalTitle: isReschedule ? 'Reschedule appointment' : undefined,
       defaultInstructions: isReschedule
         ? rescheduleSourceAppt?.instructions?.trim()
@@ -5043,6 +5067,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       schedulingOverrideWarning?: string;
       schedulingOverridesApplied?: boolean;
       savedAppointmentId?: number;
+      primaryProviderId?: string;
+      anchorDate?: string;
     }) => {
       const wasReschedule = bookPrefill?.rescheduleAppointmentId != null;
       const wasForwardBooking = bookPrefill?.forwardBookingTrackingToken != null;
@@ -5099,6 +5125,25 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       }
       clearRoutingRescheduleIntent();
       clearRoutingForwardBookingIntent();
+      if (wasReschedule) {
+        const focusProviderId =
+          detail?.primaryProviderId?.trim() || bookPrefill?.providerId?.trim() || '';
+        if (
+          focusProviderId &&
+          providers.some((p) => String(p.id) === focusProviderId)
+        ) {
+          setProviderFilter(focusProviderId);
+        }
+        const focusDate =
+          detail?.anchorDate?.trim() ||
+          (bookSlot?.start?.isValid
+            ? bookSlot.start.setZone(PRACTICE_TZ).toISODate() ?? ''
+            : '');
+        if (focusDate) {
+          setAnchorDate(focusDate);
+          if (view === 'month') setView('week');
+        }
+      }
       await loadRange({ refreshDrive: true });
       if (savedId != null && Number.isFinite(savedId) && savedId > 0) {
         pulseEditVisitHighlight(savedId, 5000);
@@ -5127,11 +5172,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       bookPrefill?.rescheduleAppointmentId,
       bookPrefill?.forwardBookingTrackingToken,
       bookPrefill?.forwardBookingEntryId,
+      bookPrefill?.providerId,
       bookSlot,
       embedInRoutingWorkspace,
       closeBookModal,
       navigate,
+      providers,
       pulseEditVisitHighlight,
+      view,
     ]
   );
 
@@ -5507,6 +5555,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const id = window.setTimeout(() => setToast(null), 6000);
     return () => clearTimeout(id);
   }, [toast]);
+
+  useEffect(() => {
+    if (!calendarBlockedNotice) return;
+    const id = window.setTimeout(() => setCalendarBlockedNotice(null), 7000);
+    return () => clearTimeout(id);
+  }, [calendarBlockedNotice]);
 
   const handleAppointmentContextMenu = useCallback(
     (e: MouseEvent<HTMLDivElement>, appt: Appointment) => {
@@ -6811,6 +6865,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         <div className="scheduler-toast" role="status">
           {toast}
         </div>
+      ) : null}
+
+      {calendarBlockedNotice ? (
+        <ScheduleCalendarBlockedNotice
+          message={calendarBlockedNotice}
+          onDismiss={() => setCalendarBlockedNotice(null)}
+        />
       ) : null}
 
       {routingPreview && !embedInRoutingWorkspace ? (
