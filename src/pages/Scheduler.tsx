@@ -2917,10 +2917,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     if (isSchedulerRoutingBookPrefill(bookPrefill)) return typeList;
     return manualBookingAppointmentTypes;
   }, [bookPrefill, typeList, manualBookingAppointmentTypes]);
+  /** Edit visit — full active catalog (not limited to role manual-book permissions). */
   const editModalAppointmentTypes = useMemo(() => {
-    if (embedInRoutingWorkspace && editTimePreview != null) return typeList;
-    return manualBookingAppointmentTypes;
-  }, [embedInRoutingWorkspace, editTimePreview, typeList, manualBookingAppointmentTypes]);
+    const cur = editAppt?.appointmentType;
+    if (!cur?.id || typeList.some((t) => t.id === cur.id)) return typeList;
+    return [...typeList, cur];
+  }, [typeList, editAppt?.appointmentType]);
   const showEmployeeAddCoVisitPet = useMemo(
     () =>
       rolesLower.includes('employee') ||

@@ -7,6 +7,12 @@ import {
   isScheduleLoaderCalendarPreview,
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
+import {
+  PreviewPopoverClientContact,
+  type PreviewPopoverClientContact as PreviewPopoverClientContactType,
+} from './PreviewPopoverClientContact';
+
+export type RoutingPreviewClientContact = PreviewPopoverClientContactType;
 
 type Props = {
   preview: RoutingCalendarPreviewPayloadV1;
@@ -15,6 +21,8 @@ type Props = {
   sourceVisitForCompare?: RescheduleOriginalVisitSnapshot | null;
   originalAppointmentStart?: string | null;
   originalAppointmentEnd?: string | null;
+  /** Client phone + visit doctor Quo line for call/text while reviewing a reschedule slot. */
+  clientContact?: RoutingPreviewClientContact | null;
   bookDisabled?: boolean;
   onBook: () => void;
   onDismiss: () => void;
@@ -63,6 +71,7 @@ export function RoutingPreviewSlotPopover({
   sourceVisitForCompare,
   originalAppointmentStart,
   originalAppointmentEnd,
+  clientContact,
   bookDisabled,
   onBook,
   onDismiss,
@@ -128,6 +137,8 @@ export function RoutingPreviewSlotPopover({
         {doctorName}
         {clientLabel ? ` · ${clientLabel}` : ''}
       </div>
+
+      {isReschedule ? <PreviewPopoverClientContact contact={clientContact} /> : null}
 
       {originalRangeLabel || rangeLabel ? (
         <div className="scheduler-edit-preview-popover-change">

@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon';
 import type { Provider } from '../api/employee';
-import { resolveEmployeeIdFromToken } from './practiceIdFromToken';
+import { decodeJwtPayload, resolveEmployeeIdFromToken } from './practiceIdFromToken';
 
 export type AppointmentChangeActor = {
   firstName?: string | null;
@@ -150,54 +150,88 @@ export const appendEditedByAppointmentNote = appendEditedByStaffNote;
 /** @deprecated Use {@link appendRescheduledByStaffNote} — audit lines belong on staff notes (`instructions`). */
 export const appendRescheduledByAppointmentNote = appendRescheduledByStaffNote;
 
+function pickActorStr(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s || null;
+}
+
+/** Names embedded on the staff JWT — preferred over assigned-doctor calendar scope. */
+function resolveActorFromJwtToken(token: string | null): AppointmentChangeActor | null {
+  if (!token) return null;
+  const payload = decodeJwtPayload(token);
+  if (!payload) return null;
+
+  const employee = payload.employee;
+  if (employee && typeof employee === 'object' && !Array.isArray(employee)) {
+    const row = employee as Record<string, unknown>;
+    const firstName = pickActorStr(row.firstName);
+    const lastName = pickActorStr(row.lastName);
+    if (firstName || lastName) return { firstName, lastName };
+    const full = pickActorStr(row.fullName) ?? pickActorStr(row.name);
+    if (full) return { fallbackLabel: full };
+  }
+
+  const firstName = pickActorStr(payload.firstName) ?? pickActorStr(payload.given_name);
+  const lastName = pickActorStr(payload.lastName) ?? pickActorStr(payload.family_name);
+  if (firstName || lastName) return { firstName, lastName };
+
+  const display = pickActorStr(payload.name) ?? pickActorStr(payload.displayName);
+  if (display) return { fallbackLabel: display };
+
+  return null;
+}
+
+function actorFromProviderRow(row: Provider): AppointmentChangeActor {
+  return {
+    firstName: row.firstName,
+    lastName: row.lastName,
+    fallbackLabel: row.name?.trim() || null,
+  };
+}
+
 /** Resolve the logged-in staff member for audit notes on appointment description. */
 export function resolveAppointmentChangeActorFromAuth(args: {
   token?: string | null;
   userEmail?: string | null;
+  /**
+   * Assigned/default doctor for calendar scoping — not used for audit actor name
+   * (CLs share their doctor's id here but should sign notes with their own name).
+   */
   doctorId?: string | null;
   providers?: readonly Provider[];
 }): AppointmentChangeActor {
   const providers = args.providers ?? [];
 
-  const doctorId = args.doctorId?.trim();
-  if (doctorId) {
-    const row = providers.find((p) => String(p.id) === doctorId);
-    if (row) {
-      return {
-        firstName: row.firstName,
-        lastName: row.lastName,
-        fallbackLabel: row.name?.trim() || null,
-      };
-    }
+  const fromJwt = resolveActorFromJwtToken(args.token ?? null);
+  if (fromJwt && (fromJwt.firstName || fromJwt.lastName || fromJwt.fallbackLabel)) {
+    return fromJwt;
   }
 
   const jwtEmpId = resolveEmployeeIdFromToken(args.token ?? null);
   if (jwtEmpId != null) {
     const row = providers.find((p) => Number(p.id) === jwtEmpId);
-    if (row) {
-      return {
-        firstName: row.firstName,
-        lastName: row.lastName,
-        fallbackLabel: row.name?.trim() || null,
-      };
-    }
+    if (row) return actorFromProviderRow(row);
   }
 
   const email = args.userEmail?.trim();
   if (email && providers.length > 0) {
     const row = providers.find((p) => p.email?.trim().toLowerCase() === email.toLowerCase());
-    if (row) {
-      return {
-        firstName: row.firstName,
-        lastName: row.lastName,
-        fallbackLabel: row.name?.trim() || null,
-      };
-    }
+    if (row) return actorFromProviderRow(row);
   }
 
   if (email) {
     const local = email.split('@')[0]?.replace(/[._+-]/g, ' ').trim();
     if (local) return { fallbackLabel: local };
+  }
+
+  // Legacy doctor login with no employee id on JWT — only then use assigned doctor id.
+  if (jwtEmpId == null) {
+    const doctorId = args.doctorId?.trim();
+    if (doctorId) {
+      const row = providers.find((p) => String(p.id) === doctorId);
+      if (row) return actorFromProviderRow(row);
+    }
   }
 
   return { fallbackLabel: 'Staff' };

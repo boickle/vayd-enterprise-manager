@@ -17,6 +17,8 @@ export type Provider = {
   /** Set when lat/lon or address filters `/employees/veterinarians` to the client's zone. */
   seeingClientsInClientZone?: boolean;
   acceptingNewPatientsInClientZone?: boolean;
+  /** Doctor Quo/OpenPhone inbox line for outbound call/text (`from` deep link param). */
+  quoLinePhone?: string | null;
 };
 
 type VeterinarianWeeklyScheduleZone = {
@@ -117,6 +119,7 @@ export async function fetchPrimaryProviders(): Promise<Provider[]> {
     const designation =
       r.designation ?? r.credentials ?? emp.designation ?? emp.credentials ?? null;
     const title = r.title ?? emp.title ?? null;
+    const quoLinePhone = r.quoLinePhone ?? emp.quoLinePhone ?? null;
     return {
       id: r.id ?? r.pimsId ?? r.employeeId,
       pimsId: r.pimsId ?? r.employee?.pimsId ?? r.id ?? r.employeeId, // Preserve pimsId for API calls
@@ -130,6 +133,7 @@ export async function fetchPrimaryProviders(): Promise<Provider[]> {
       bonusRevenueGoal: r?.bonusRevenueGoal ?? null,
       dailyPointGoal: r?.dailyPointGoal ?? null,
       weeklyPointGoal: r?.weeklyPointGoal ?? null,
+      quoLinePhone: typeof quoLinePhone === 'string' ? quoLinePhone : null,
     };
   });
 }
