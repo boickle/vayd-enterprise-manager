@@ -26,8 +26,6 @@ export type CommitEditVisitInput = {
   form: EditVisitFormSnapshot;
   /** When set (type preview on calendar), overrides `form.appointmentTypeId`. */
   previewAppointmentTypeId?: number | null;
-  /** Routing-driven type change — bypass manual booking permission check. */
-  bookedViaRouting?: boolean;
   /** Append edit audit line(s) to staff notes before save. */
   editedByAudit?: {
     actor: AppointmentChangeActor;
@@ -75,7 +73,8 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
       allDay: input.form.allDay,
       appointmentStart: input.appointmentStart,
       appointmentEnd: input.appointmentEnd,
-      ...(input.bookedViaRouting ? { bookedViaRouting: true } : {}),
+      /** PATCH on existing visit — not manual booking; skip role type permission gate. */
+      bookedViaRouting: true,
     },
     { practiceId: input.practiceId }
   );
