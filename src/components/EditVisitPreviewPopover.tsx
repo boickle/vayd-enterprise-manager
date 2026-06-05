@@ -4,6 +4,10 @@ import type { EditVisitTimePreview } from '../utils/editVisitTimePreview';
 import type { EditVisitPreviewScoreCompare } from '../utils/editVisitTypeScoreCompare';
 import { EDIT_VISIT_PREVIEW_UNAVAILABLE_LINE } from '../utils/editVisitPreviewApi';
 import { EditVisitOverflowTag } from './EditVisitOverflowTag';
+import {
+  PreviewPopoverClientContact,
+  type PreviewPopoverClientContact as PreviewPopoverClientContactType,
+} from './PreviewPopoverClientContact';
 
 type EditVisitPreviewPopoverProps = {
   preview: EditVisitTimePreview;
@@ -12,6 +16,7 @@ type EditVisitPreviewPopoverProps = {
   originalAppointmentStart?: string | null;
   originalAppointmentEnd?: string | null;
   originalTypeLabel?: string | null;
+  clientContact?: PreviewPopoverClientContactType | null;
   scoreCompare: EditVisitPreviewScoreCompare | null;
   scoreLoading: boolean;
   scoreError: string | null;
@@ -46,6 +51,7 @@ export function EditVisitPreviewPopover({
   originalAppointmentStart,
   originalAppointmentEnd,
   originalTypeLabel,
+  clientContact,
   scoreCompare,
   scoreLoading,
   scoreError,
@@ -84,6 +90,8 @@ export function EditVisitPreviewPopover({
           <X size={14} strokeWidth={2.5} aria-hidden />
         </button>
       </div>
+
+      <PreviewPopoverClientContact contact={clientContact} />
 
       <div className="scheduler-edit-preview-popover-change">
         {typeChanged ? (

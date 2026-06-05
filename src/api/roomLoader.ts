@@ -205,6 +205,8 @@ export type PrimaryProvider = {
   designation?: string | null;
   isProvider?: boolean;
   phone1?: string | null;
+  /** Doctor Quo/OpenPhone inbox line for outbound call/text. */
+  quoLinePhone?: string | null;
 };
 
 export type AppointmentType = {

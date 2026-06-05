@@ -20,6 +20,7 @@ import { getZonePercentagesForProvider } from '../api/patients';
 import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
+import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
 import { AlertTriangle, Heart } from 'lucide-react';
 import {
   clientFixedTimeUsesDoctorDayClockForDriveLayout,
@@ -298,15 +299,6 @@ function weekHouseholdUsesDoctorDayClockForLayout(
     windowStartIso,
     windowEndIso,
   });
-}
-
-/** Household grouping key: same client at same location = one stop; different clients at same address = separate stops. */
-function householdGroupKey(a: DoctorDayAppt, lat: number, lon: number, addrKey: string | null, idPart: string, hasGeo: boolean): string {
-  const clientId = (a as any)?.clientPimsId ?? (a as any)?.clientId;
-  const clientPart = clientId != null ? String(clientId) : (str(a, 'clientName') ?? '').trim();
-  if (hasGeo) return `${lat}_${lon}_${clientPart}`;
-  if (addrKey) return `addr:${addrKey}_${clientPart}`;
-  return `noloc:${idPart}`;
 }
 
 /** Assign unique ETA keys: first at (lat,lon) gets "lat,lon", second "lat,lon:2", etc., so ETA API returns one entry per stop. */

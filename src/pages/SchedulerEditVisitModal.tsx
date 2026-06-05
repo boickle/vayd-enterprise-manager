@@ -105,8 +105,6 @@ type Props = {
   typeScoreError?: string | null;
   /** Shown after Book from type preview (split view stays open). */
   bookedSummary?: string | null;
-  /** Routing workspace placement preview — bypass manual type permission on PATCH. */
-  bookedViaRouting?: boolean;
 };
 
 export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle, Props>(
@@ -135,7 +133,6 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       typeScoreLoading = false,
       typeScoreError = null,
       bookedSummary = null,
-      bookedViaRouting = false,
     },
     ref
   ) {
@@ -459,7 +456,6 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
             allDay: appt.allDay,
           },
           previewAppointmentTypeId: tidFromPreview,
-          bookedViaRouting: bookedViaRouting || undefined,
           editedByAudit: {
             actor: editedByActor,
             practiceTz,
@@ -496,7 +492,6 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       placementPreviewActive,
       placementPreviewKind,
       draftPreviewAppointmentTypeId,
-      bookedViaRouting,
       editedByActor,
       practiceTz,
       typeScoreCompare,

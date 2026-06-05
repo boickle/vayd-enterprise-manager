@@ -297,22 +297,9 @@ export default function App() {
   }, [isClient, location.pathname]);
 
   return (
-    <div>
+    <div className={isProd ? 'app-root' : 'app-root app-root--nonprod'}>
       {!isProd && (
-        <div
-          role="banner"
-          aria-live="polite"
-          style={{
-            background: 'linear-gradient(90deg, #b45309 0%, #d97706 100%)',
-            color: '#fff',
-            textAlign: 'center',
-            padding: '6px 12px',
-            fontSize: '13px',
-            fontWeight: 600,
-            letterSpacing: '0.02em',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
-          }}
-        >
+        <div className="app-nonprod-banner" role="banner" aria-live="polite">
           Not production — you are using a development or staging environment
         </div>
       )}
