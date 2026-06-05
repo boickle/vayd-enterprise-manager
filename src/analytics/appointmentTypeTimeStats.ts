@@ -1,4 +1,4 @@
-import type { DoctorMonthAppt } from '../api/appointments';
+import { doctorMonthApptBookedMinutes, type DoctorMonthAppt } from '../api/appointments';
 
 /** Appointment with optional doctorId (multi-doctor / multi-pet grouping). */
 export type ApptWithDoctor = DoctorMonthAppt & { doctorId?: string };
@@ -61,7 +61,7 @@ export function processMultiPet(
         const a = clientGroup[0]!;
         out.push({
           appointmentType: a.appointmentType,
-          serviceMinutes: Number.isFinite(a.serviceMinutes) ? a.serviceMinutes : 0,
+          serviceMinutes: doctorMonthApptBookedMinutes(a),
         });
         continue;
       }
@@ -70,7 +70,7 @@ export function processMultiPet(
         const a = clientGroup[0]!;
         out.push({
           appointmentType: a.appointmentType,
-          serviceMinutes: Number.isFinite(a.serviceMinutes) ? a.serviceMinutes : 0,
+          serviceMinutes: doctorMonthApptBookedMinutes(a),
         });
         continue;
       }
@@ -84,10 +84,10 @@ export function processMultiPet(
 
       for (const slotGroup of bySlot.values()) {
         const slotN = slotGroup.length;
-        const blockMinutes = Number.isFinite(slotGroup[0]?.serviceMinutes) ? slotGroup[0]!.serviceMinutes! : 0;
+        const blockMinutes = doctorMonthApptBookedMinutes(slotGroup[0]!);
         const allSameDuration =
           slotN > 0 &&
-          slotGroup.every((a) => (Number.isFinite(a.serviceMinutes) ? a.serviceMinutes! : 0) === blockMinutes);
+          slotGroup.every((a) => doctorMonthApptBookedMinutes(a) === blockMinutes);
 
         if (slotN > 1 && allSameDuration) {
           const perPetMinutes = blockMinutes / slotN;
@@ -101,7 +101,7 @@ export function processMultiPet(
         } else {
           for (const a of slotGroup) {
             const baseType = normalizeAppointmentType(a.appointmentType);
-            const mins = Number.isFinite(a.serviceMinutes) ? a.serviceMinutes! : 0;
+            const mins = doctorMonthApptBookedMinutes(a);
             out.push({
               appointmentType: `multipet-${baseType}`,
               serviceMinutes: Math.round(mins * 10) / 10,

@@ -1,0 +1,89 @@
+.schedule-tasks-panel {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px 18px 18px;
+  min-height: 200px;
+}
+
+.schedule-tasks-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.schedule-tasks-panel__title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.schedule-tasks-panel__all {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.schedule-tasks-panel__all:hover {
+  text-decoration: underline;
+}
+
+.schedule-tasks-panel__err {
+  font-size: 13px;
+  color: #b91c1c;
+  margin: 0 0 10px;
+}
+
+.schedule-tasks-panel__section {
+  margin-bottom: 16px;
+}
+
+.schedule-tasks-panel__section:last-child {
+  margin-bottom: 0;
+}
+
+.schedule-tasks-panel__h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+}
+
+.schedule-tasks-panel__list {
+  margin: 0;
+  padding-left: 18px;
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.schedule-tasks-panel__link {
+  color: #0f172a;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.schedule-tasks-panel__link:hover {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+.schedule-tasks-panel__empty {
+  margin: 0;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.schedule-tasks-panel--drawer {
+  border: none;
+  border-radius: 0;
+  min-height: 0;
+  padding: 0;
+  box-shadow: none;
+}

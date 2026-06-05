@@ -1,12 +1,11 @@
 // src/components/UserMenu.tsx
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, type MouseEvent as ReactMouseEvent } from 'react';
 import { useNavigate, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
+import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import './UserMenu.css';
 
-type Page = { path: string; label: string };
-
-export default function UserMenu({ pages = [] }: { pages?: Page[] }) {
+export default function UserMenu({ menuExtras = [] }: { menuExtras?: { label: string; to: string }[] }) {
   const { logout, userEmail, role } = useAuth() as any;
   const nav = useNavigate();
   const location = useLocation();
@@ -40,17 +39,23 @@ export default function UserMenu({ pages = [] }: { pages?: Page[] }) {
   }, [isOpen]);
 
   const handleLogout = async () => {
+    if (blockRoutingCalendarPreviewNavigation()) return;
     setIsOpen(false);
     await logout();
     nav('/login');
   };
 
   const handleSettings = () => {
+    if (blockRoutingCalendarPreviewNavigation()) return;
     setIsOpen(false);
     nav('/admin');
   };
 
-  const handlePageClick = () => {
+  const handlePageClick = (e: ReactMouseEvent<HTMLAnchorElement>) => {
+    if (blockRoutingCalendarPreviewNavigation()) {
+      e.preventDefault();
+      return;
+    }
     setIsOpen(false);
   };
 
@@ -85,21 +90,21 @@ export default function UserMenu({ pages = [] }: { pages?: Page[] }) {
             <span className="user-menu-email">{userEmail || 'Signed in'}</span>
           </div>
           <div className="user-menu-divider"></div>
-          
-          {/* Navigation tabs - shown on mobile only */}
-          {pages.length > 0 && (
+
+          {menuExtras.length > 0 && (
             <>
-              <div className="user-menu-section-label">Navigation</div>
-              {pages.map((page) => {
-                const isActive = location.pathname === page.path || location.pathname.startsWith(page.path + '/');
+              <div className="user-menu-section-label">More</div>
+              {menuExtras.map((extra) => {
+                const isActive =
+                  location.pathname === extra.to || location.pathname.startsWith(`${extra.to}/`);
                 return (
                   <NavLink
-                    key={page.path}
-                    to={page.path}
+                    key={extra.to}
+                    to={extra.to}
                     className={`user-menu-item user-menu-nav-item${isActive ? ' is-active' : ''}`}
                     onClick={handlePageClick}
                   >
-                    {page.label}
+                    {extra.label}
                   </NavLink>
                 );
               })}
