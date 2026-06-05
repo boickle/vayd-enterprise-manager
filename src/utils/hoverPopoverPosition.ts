@@ -147,13 +147,24 @@ export function computeHoverPopoverPosition(args: {
 
     if (best.p.mode === 'bottom') {
       const maxCardH = Math.max(160, Math.min(vwH - 2 * pad, best.p.spaceH - 4));
-      return { left: best.p.left, top: 0, bottom: best.p.bottom, maxCardH, width };
+      return {
+        left: clamp(best.p.left, pad, vwW - pad - width),
+        top: 0,
+        bottom: best.p.bottom,
+        maxCardH,
+        width,
+      };
     }
     /** Use all space from `top` to the bottom of the viewport (no artificial cap — avoids clipping). */
     let top = best.p.top;
     if (horizontalOnly) {
       const maxCardH = Math.max(160, Math.min(H, vwH - pad - top));
-      return { left: best.p.left, top, maxCardH, width };
+      return {
+        left: clamp(best.p.left, pad, vwW - pad - width),
+        top,
+        maxCardH,
+        width,
+      };
     }
     let maxCardH = vwH - pad - top;
     const minReadable = 420;
@@ -163,7 +174,12 @@ export function computeHoverPopoverPosition(args: {
     }
     top = Math.max(pad, Math.min(top, vwH - pad - maxCardH));
     maxCardH = vwH - pad - top;
-    return { left: best.p.left, top, maxCardH, width };
+    return {
+      left: clamp(best.p.left, pad, vwW - pad - width),
+      top,
+      maxCardH,
+      width,
+    };
   };
 
   if (anchor) {
@@ -271,6 +287,9 @@ export function computeVisitHighlightsPopoverPosition(args: {
 }): HoverPopoverPositionResult {
   const vwW = window.innerWidth;
   const vwH = window.innerHeight;
+  const narrow = vwW <= 900;
+  const pad = narrow ? 12 : 8;
+  const maxUsableW = Math.max(0, vwW - 2 * pad);
   const fallbackEstH = Math.min(520, Math.max(400, Math.floor(vwH * 0.42)));
   const anchor = args.anchorRect ?? rectFromElement(args.anchorEl ?? null);
   const rawH = args.measuredCardH ?? args.cardEstH ?? fallbackEstH;
@@ -281,12 +300,12 @@ export function computeVisitHighlightsPopoverPosition(args: {
     y: args.y,
     vwW,
     vwH,
-    cardMaxW: 380,
-    cardMinW: 280,
-    padding: 8,
-    offset: 8,
+    cardMaxW: narrow ? maxUsableW : 380,
+    cardMinW: narrow ? Math.min(280, maxUsableW) : 280,
+    padding: pad,
+    offset: narrow ? 10 : 8,
     cardEstH,
-    horizontalOnly: args.horizontalOnly ?? false,
+    horizontalOnly: narrow ? false : (args.horizontalOnly ?? false),
     preferSide: args.preferSide,
   });
 }

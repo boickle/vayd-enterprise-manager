@@ -2193,6 +2193,13 @@ label.scheduler-go-date-heading {
     max-height 140ms ease;
 }
 
+@media (max-width: 900px), (max-height: 560px) {
+  .scheduler-tooltip--visit-highlights {
+    max-width: calc(100vw - 24px);
+    border-radius: 8px;
+  }
+}
+
 .scheduler-tooltip-vh-header {
   margin: 0;
   padding: 4px 8px;
@@ -5136,4 +5143,240 @@ label.scheduler-go-date-heading {
 
 .scheduler-day-header-adjust + .scheduler-day-header-adjust {
   margin-top: 4px;
+}
+
+/**
+ * Practice calendar — mobile layout (ScheduleLayout rail stacks at 900px).
+ * Desktop rules above are unchanged; these only apply on narrow viewports.
+ */
+@media (max-width: 900px), (max-height: 560px) {
+  .scheduler-page:not(.scheduler-page--embedded) {
+    padding: 8px 8px 16px;
+  }
+
+  /**
+   * Scroll the full calendar in the schedule outlet (not a tiny inner pane).
+   * Sticky week headers are disabled on mobile — they scroll off with the toolbar.
+   */
+  .scheduler-page:not(.scheduler-page--embedded) .scheduler-sticky-practice-week-head {
+    position: static;
+    box-shadow: none;
+  }
+
+  .scheduler-page:not(.scheduler-page--embedded) .scheduler-scroll {
+    flex: 0 0 auto;
+    min-height: auto;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y;
+  }
+
+  .scheduler-page:not(.scheduler-page--embedded) .scheduler-calendar-shell--sticky-week .scheduler-scroll {
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+
+  .scheduler-page:not(.scheduler-page--embedded) .scheduler-calendar-scroll {
+    flex: 0 0 auto;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .scheduler-page:not(.scheduler-page--embedded) .scheduler-calendar-shell,
+  .scheduler-page:not(.scheduler-page--embedded) .scheduler-calendar-shell--sticky-week {
+    overflow: visible;
+  }
+
+  .scheduler-page:not(.scheduler-page--embedded) .scheduler-toolbar-calendar-merge,
+  .scheduler-page:not(.scheduler-page--embedded) .scheduler-toolbar-calendar-merge--sticky-week {
+    overflow: visible;
+  }
+
+  .scheduler-toolbar-calendar-merge .scheduler-toolbar {
+    padding: 8px 10px 0;
+  }
+
+  .scheduler-toolbar-row--combined {
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .scheduler-toolbar-cluster--left,
+  .scheduler-toolbar-cluster--right {
+    flex: 1 1 100%;
+    min-width: 0;
+    justify-content: flex-start;
+  }
+
+  .scheduler-toolbar-calendar-merge .scheduler-toolbar-cluster--right .scheduler-filters {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .scheduler-filters {
+    justify-content: flex-start;
+  }
+
+  .scheduler-filters label {
+    flex: 1 1 calc(50% - 7px);
+    min-width: 0;
+  }
+
+  .scheduler-filters select,
+  .scheduler-go-date-controls input[type='date'] {
+    min-width: 0;
+    width: 100%;
+    max-width: none;
+  }
+
+  .scheduler-filters select {
+    max-width: none;
+  }
+
+  .scheduler-go-date-cluster {
+    width: 100%;
+  }
+
+  .scheduler-go-date-controls {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .scheduler-range-above-grid {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    row-gap: 8px;
+    column-gap: 10px;
+    padding: 8px 10px;
+  }
+
+  .scheduler-range-above-grid-nav {
+    order: 1;
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: 100%;
+    justify-content: center;
+    box-sizing: border-box;
+  }
+
+  .scheduler-range-above-grid-leading {
+    order: 2;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .scheduler-range-above-grid-actions {
+    order: 2;
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+
+  .scheduler-range-above-grid-title {
+    font-size: 14px;
+  }
+
+  /* Day view: single column fits the viewport without horizontal panning. */
+  .scheduler-calendar-shell--day .scheduler-grid-wrap {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .scheduler-calendar-shell--day .scheduler-day-headers-row .scheduler-day-header,
+  .scheduler-calendar-shell--day .scheduler-day-bodies-row .scheduler-day-col {
+    min-width: 0;
+  }
+
+  /* Week view: slightly tighter columns; pan horizontally inside the calendar scrollport. */
+  .scheduler-day-headers-row .scheduler-day-header,
+  .scheduler-day-bodies-row .scheduler-day-col {
+    min-width: 72px;
+  }
+
+  .scheduler-page--embedded .scheduler-scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .scheduler-day-header {
+    min-height: 80px;
+    padding: 4px 2px 6px;
+  }
+
+  .scheduler-day-header-date {
+    font-size: 11px;
+  }
+
+  .scheduler-day-header-metrics-row {
+    font-size: 9px;
+    gap: 2px 4px;
+  }
+
+  .scheduler-day-header-btn {
+    font-size: 9px;
+    padding: 3px 6px;
+  }
+
+  .scheduler-month-cell {
+    min-height: 56px;
+    padding: 4px;
+    font-size: 11px;
+  }
+
+  .scheduler-time-col {
+    flex: 0 0 44px;
+  }
+
+  .scheduler-time-slot {
+    font-size: 10px;
+    padding-right: 4px;
+  }
+}
+
+@media (max-width: 900px) and (orientation: landscape) and (max-height: 560px),
+  (max-height: 420px) {
+  .scheduler-page:not(.scheduler-page--embedded) {
+    padding: 4px 6px 8px;
+  }
+
+  .scheduler-toolbar-calendar-merge .scheduler-toolbar {
+    padding: 6px 8px 0;
+  }
+
+  .scheduler-toolbar-row--combined {
+    gap: 6px;
+    padding-bottom: 4px;
+  }
+
+  .scheduler-day-header {
+    min-height: 64px;
+    padding: 2px 2px 4px;
+  }
+
+  .scheduler-day-header-metrics {
+    min-height: 32px;
+  }
+
+  .scheduler-range-above-grid {
+    padding: 4px 8px;
+    row-gap: 4px;
+  }
+}
+
+@media (max-width: 480px) {
+  .scheduler-filters label {
+    flex: 1 1 100%;
+  }
+
+  .scheduler-range-nav-btn,
+  .scheduler-view-toggle button {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
 }

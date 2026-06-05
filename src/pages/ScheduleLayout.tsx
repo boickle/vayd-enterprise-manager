@@ -159,6 +159,9 @@ export default function ScheduleLayout() {
     [location.pathname]
   );
 
+  /** Practice calendar on mobile: hide the quick-actions rail so the grid gets vertical space. */
+  const scheduleAppMobileCompact = scheduleMainStickyCalendarChain;
+
   useEffect(() => {
     if (location.pathname === '/schedule/routing' && railWideEnough) {
       setRailCollapsed(true);
@@ -170,7 +173,14 @@ export default function ScheduleLayout() {
   }
 
   return (
-    <div className="schedule-app">
+    <div
+      className={[
+        'schedule-app',
+        scheduleAppMobileCompact ? 'schedule-app--scheduler-mobile-compact' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
       <aside
         className={`schedule-app__rail${railCollapsedEffective ? ' schedule-app__rail--collapsed' : ''}`}
         aria-label="Quick actions and work queues"
