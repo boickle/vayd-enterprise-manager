@@ -2918,10 +2918,25 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     return manualBookingAppointmentTypes;
   }, [bookPrefill, typeList, manualBookingAppointmentTypes]);
   /** Edit visit — full active catalog (not limited to role manual-book permissions). */
-  const editModalAppointmentTypes = useMemo(() => {
+  const editModalAppointmentTypes = useMemo((): AppointmentType[] => {
     const cur = editAppt?.appointmentType;
     if (!cur?.id || typeList.some((t) => t.id === cur.id)) return typeList;
-    return [...typeList, cur];
+    const archived: AppointmentType = {
+      id: cur.id,
+      name: cur.name,
+      prettyName: cur.prettyName ?? cur.name,
+      showInApptRequestForm: cur.showInApptRequestForm ?? false,
+      newPatientAllowed: cur.newPatientAllowed ?? true,
+      isBoardingType: cur.isBoardingType ?? false,
+      hasExtraInstructions: cur.hasExtraInstructions ?? false,
+      defaultDuration: typeof cur.defaultDuration === 'number' ? cur.defaultDuration : 30,
+      defaultStartTime: 'PT0S',
+      isActive: cur.isActive,
+      isDeleted: cur.isDeleted,
+      pimsId: String(cur.pimsId ?? ''),
+      pimsType: cur.pimsType ?? 'EVET',
+    };
+    return [...typeList, archived];
   }, [typeList, editAppt?.appointmentType]);
   const showEmployeeAddCoVisitPet = useMemo(
     () =>
