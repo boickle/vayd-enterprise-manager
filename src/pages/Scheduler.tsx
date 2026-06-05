@@ -103,6 +103,11 @@ import {
   evetQuickInvoicingLink,
 } from '../utils/evet';
 import { buildPhoneDialHref, buildPhoneSmsHref } from '../utils/quoContact';
+import {
+  loadRoutingPreviewClientContact,
+  previewClientContactFromAppointment,
+} from '../utils/schedulerPreviewClientContact';
+import type { PreviewPopoverClientContact } from '../components/PreviewPopoverClientContact';
 import ScheduleOverrideModal from '../components/ScheduleOverrideModal';
 import { SchedulerReconcileModal } from '../components/SchedulerReconcileModal';
 import {
@@ -2647,6 +2652,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [bookPrefill, setBookPrefill] = useState<SchedulerBookPrefill | null>(null);
   /** Routing → My Week: proposed slot until booked or dismissed. */
   const [routingPreview, setRoutingPreview] = useState<RoutingCalendarPreviewPayloadV1 | null>(null);
+  const [routingPreviewClientContact, setRoutingPreviewClientContact] =
+    useState<PreviewPopoverClientContact | null>(null);
   /** Bumped when session reschedule intent changes (scope, clear, new visit). */
   const [rescheduleIntentTick, setRescheduleIntentTick] = useState(0);
   /** Bumped when source-doctor placement score is cached for cross-provider compare. */
@@ -3545,6 +3552,32 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       end: intent?.originalEndIso?.trim() || null,
     };
   }, [routingPreviewIsReschedule, rescheduleIntentTick, routingPreview]);
+
+  useEffect(() => {
+    if (!routingPreview) {
+      setRoutingPreviewClientContact(null);
+      return;
+    }
+    let cancelled = false;
+    void loadRoutingPreviewClientContact({
+      preview: routingPreview,
+      isReschedule: routingPreviewIsReschedule,
+      rawAppointments,
+      providers,
+      practiceId: PRACTICE_ID,
+    }).then((contact) => {
+      if (!cancelled) setRoutingPreviewClientContact(contact);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    routingPreview,
+    routingPreviewIsReschedule,
+    rawAppointments,
+    providers,
+    rescheduleIntentTick,
+  ]);
 
   useEffect(() => {
     if (!routingPreviewIsReschedule) return;
@@ -4540,6 +4573,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     if (editAppt?.id === editTimePreview.appointmentId) return editAppt;
     return rawAppointments.find((a) => a.id === editTimePreview.appointmentId) ?? null;
   }, [editTimePreview, editAppt, rawAppointments]);
+
+  const editPreviewClientContact = useMemo(
+    () => previewClientContactFromAppointment(editPreviewBookedAppt, providers),
+    [editPreviewBookedAppt, providers]
+  );
 
   const editPreviewPopoverPos = useMemo(() => {
     if (!editTimePreview || !editPreviewAnchorRect) return null;
@@ -7215,6 +7253,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               sourceVisitForCompare={reschedulePreviewSourceVisit}
               originalAppointmentStart={reschedulePreviewOriginalTimes.start}
               originalAppointmentEnd={reschedulePreviewOriginalTimes.end}
+              clientContact={routingPreviewClientContact}
               bookDisabled={bookSlot != null || manualBookPreviewCommitting}
               onBook={() => {
                 if (routingPreviewIsManualBook) {
@@ -7271,6 +7310,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 editPreviewBookedAppt?.appointmentType?.name ??
                 null
               }
+              clientContact={editPreviewClientContact}
               scoreCompare={editPreviewScoreCompare}
               scoreLoading={editPreviewScoreLoading}
               scoreError={editPreviewScoreError}

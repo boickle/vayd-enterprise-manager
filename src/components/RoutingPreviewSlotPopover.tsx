@@ -138,7 +138,7 @@ export function RoutingPreviewSlotPopover({
         {clientLabel ? ` · ${clientLabel}` : ''}
       </div>
 
-      {isReschedule ? <PreviewPopoverClientContact contact={clientContact} /> : null}
+      <PreviewPopoverClientContact contact={clientContact} />
 
       {originalRangeLabel || rangeLabel ? (
         <div className="scheduler-edit-preview-popover-change">
