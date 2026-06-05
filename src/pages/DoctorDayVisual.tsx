@@ -20,6 +20,7 @@ import {
 } from '../api/appointments';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
+import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
 import {
   buildAppointmentTypeCatalog,
   sumHouseholdPoints,
@@ -328,15 +329,6 @@ function addressKeyForAppt(a: DoctorDayAppt): string | null {
     normalizeAddressString(str(a as any, 'addressStr')) ||
     normalizeAddressString(str(a as any, 'fullAddress'));
   return free ? `free:${free}` : null;
-}
-
-/** Same client at same location = one stop; different clients at same address = separate stops. */
-function householdGroupKey(a: DoctorDayAppt, lat: number, lon: number, addrKey: string | null, idPart: string, hasGeo: boolean): string {
-  const clientId = (a as any)?.clientPimsId ?? (a as any)?.clientId;
-  const clientPart = clientId != null ? String(clientId) : (str(a, 'clientName') ?? '').trim();
-  if (hasGeo) return `${lat}_${lon}_${clientPart}`;
-  if (addrKey) return `addr:${addrKey}_${clientPart}`;
-  return `noloc:${idPart}`;
 }
 
 /** Assign unique ETA keys: first at (lat,lon) gets "lat,lon", second "lat,lon:2", etc. */

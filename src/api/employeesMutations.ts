@@ -25,6 +25,7 @@ export type EmployeeDto = Record<string, unknown> & {
   country?: string | null;
   phone1?: string | null;
   phone2?: string | null;
+  quoLinePhone?: string | null;
   practice?: { id: number; name?: string } | null;
   isActive?: boolean;
   isDeleted?: boolean;

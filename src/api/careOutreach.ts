@@ -29,6 +29,7 @@ export type CareOutreachEmployeeRef = {
   lastName?: string | null;
   title?: string | null;
   designation?: string | null;
+  quoLinePhone?: string | null;
 };
 
 export type UnscheduledReminder = {

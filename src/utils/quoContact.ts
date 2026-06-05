@@ -1,7 +1,14 @@
 /** Click-to-call / SMS links for Quo (OpenPhone) and browser fallbacks. */
 
+import type { Provider } from '../api/employee';
+
 const DEFAULT_QUO_CALL_URL_TEMPLATE = 'openphone://dial?number={digits}&action=call';
 const DEFAULT_QUO_SMS_URL_TEMPLATE = 'openphone://message?number={digits}';
+
+export type QuoContactLinkOpts = {
+  /** Doctor Quo inbox line — Quo `from` param (caller ID / send-from line). */
+  fromLine?: string | null;
+};
 
 function phoneToE164(phone: string): string | null {
   const digits = phone.replace(/\D/g, '');
@@ -12,21 +19,40 @@ function phoneToE164(phone: string): string | null {
 }
 
 /** Digits for Quo deep links — US numbers use 10-digit NANP when possible. */
-function phoneToQuoDialDigits(phone: string): string | null {
+export function phoneToQuoDialDigits(phone: string): string | null {
   const digits = phone.replace(/\D/g, '');
   if (!digits) return null;
   if (digits.length === 11 && digits.startsWith('1')) return digits.slice(1);
   return digits;
 }
 
-function applyQuoUrlTemplate(template: string, phone: string): string | null {
+function applyQuoUrlTemplate(
+  template: string,
+  phone: string,
+  fromLine?: string | null
+): string | null {
   const e164 = phoneToE164(phone);
   const digits = phoneToQuoDialDigits(phone);
   if (!e164 || !digits) return null;
   if (!template.includes('{e164}') && !template.includes('{digits}')) return null;
-  return template
+
+  const fromDigits = fromLine ? phoneToQuoDialDigits(fromLine) : null;
+  if (template.includes('{from}') && !fromDigits) return null;
+
+  let out = template
     .replace(/\{e164\}/g, encodeURIComponent(e164))
     .replace(/\{digits\}/g, digits);
+  if (fromDigits) {
+    out = out.replace(/\{from\}/g, fromDigits);
+  }
+  return out;
+}
+
+function appendQuoFromParam(url: string, fromLine?: string | null): string {
+  const fromDigits = fromLine ? phoneToQuoDialDigits(fromLine) : null;
+  if (!fromDigits || url.includes('from=')) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}from=${encodeURIComponent(fromDigits)}`;
 }
 
 function quoCallTemplate(): string {
@@ -39,20 +65,48 @@ function quoSmsTemplate(): string {
   return fromEnv || DEFAULT_QUO_SMS_URL_TEMPLATE;
 }
 
-export function buildPhoneDialHref(phone: string): string {
+export function buildPhoneDialHref(phone: string, opts?: QuoContactLinkOpts): string {
   const e164 = phoneToE164(phone);
   const tpl = quoCallTemplate();
-  const fromTpl = applyQuoUrlTemplate(tpl, phone);
-  if (fromTpl) return fromTpl;
+  const fromTpl = applyQuoUrlTemplate(tpl, phone, opts?.fromLine);
+  if (fromTpl) return appendQuoFromParam(fromTpl, opts?.fromLine);
   if (e164) return `tel:${e164}`;
   return `tel:${phone}`;
 }
 
-export function buildPhoneSmsHref(phone: string): string {
+export function buildPhoneSmsHref(phone: string, opts?: QuoContactLinkOpts): string {
   const e164 = phoneToE164(phone);
   const tpl = quoSmsTemplate();
-  const fromTpl = applyQuoUrlTemplate(tpl, phone);
-  if (fromTpl) return fromTpl;
+  const fromTpl = applyQuoUrlTemplate(tpl, phone, opts?.fromLine);
+  if (fromTpl) return appendQuoFromParam(fromTpl, opts?.fromLine);
   if (e164) return `sms:${e164}`;
   return `sms:${phone}`;
+}
+
+function pickQuoLinePhone(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed || null;
+}
+
+/** Resolve the visit assignee's Quo line for outbound call/text. */
+export function resolveQuoFromLine(args: {
+  appointmentPrimaryProvider?: {
+    id?: number | string | null;
+    quoLinePhone?: string | null;
+  } | null;
+  /** `/employees/providers` — lookup when range row omits nested `quoLinePhone`. */
+  providers?: readonly Provider[];
+}): string | null {
+  const fromAppt = pickQuoLinePhone(args.appointmentPrimaryProvider?.quoLinePhone);
+  if (fromAppt) return fromAppt;
+
+  const apptProviderId = args.appointmentPrimaryProvider?.id;
+  if (apptProviderId != null && args.providers?.length) {
+    const row = args.providers.find((p) => String(p.id) === String(apptProviderId));
+    const fromRow = pickQuoLinePhone(row?.quoLinePhone);
+    if (fromRow) return fromRow;
+  }
+
+  return null;
 }

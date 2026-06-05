@@ -32,6 +32,7 @@ import {
   rescheduleScopeTargets,
   type RoutingRescheduleIntentV1,
 } from './routingRescheduleIntent';
+import { householdGroupKey } from './doctorDayHouseholdGroup';
 
 const str = (o: unknown, k: string) =>
   typeof (o as Record<string, unknown>)?.[k] === 'string' ? ((o as Record<string, unknown>)[k] as string) : undefined;
@@ -162,21 +163,6 @@ function addressKeyForAppt(a: DoctorDayAppt): string | null {
     normalizeAddressString(str(a as any, 'addressStr')) ||
     normalizeAddressString(str(a as any, 'fullAddress'));
   return free ? `free:${free}` : null;
-}
-
-function householdGroupKey(
-  a: DoctorDayAppt,
-  lat: number,
-  lon: number,
-  addrKey: string | null,
-  idPart: string,
-  hasGeo: boolean
-): string {
-  const clientId = (a as any)?.clientPimsId ?? (a as any)?.clientId;
-  const clientPart = clientId != null ? String(clientId) : (str(a, 'clientName') ?? '').trim();
-  if (hasGeo) return `${lat}_${lon}_${clientPart}`;
-  if (addrKey) return `addr:${addrKey}_${clientPart}`;
-  return `noloc:${idPart}`;
 }
 
 type PatientBadge = { name: string; type?: string | null };

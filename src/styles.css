@@ -91,6 +91,33 @@ a:hover {
   padding: 24px;
 }
 
+/** Dev/staging environment warning — stays visible while the page scrolls. */
+.app-root--nonprod {
+  --app-nonprod-banner-height: 32px;
+  padding-top: var(--app-nonprod-banner-height);
+}
+
+.app-nonprod-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10001;
+  background: linear-gradient(90deg, #b45309 0%, #d97706 100%);
+  color: #fff;
+  text-align: center;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.35;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.app-root--nonprod .navbar {
+  top: var(--app-nonprod-banner-height);
+}
+
 /* Full-width content under global header (PIMS sidebar layout). */
 main.pims-main-wrapper {
   max-width: none;
