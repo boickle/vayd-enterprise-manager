@@ -1,5 +1,5 @@
 // src/pages/Admin.tsx
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import { getAdminTabPages, type AdminTabPage } from '../admin-tabs';
 import './Settings.css';
@@ -12,11 +12,23 @@ function matchesRole(required: AdminTabPage['role'], userRoles: string[]): boole
   return need.some((r) => userRoles.includes(String(r)));
 }
 
-export default function Admin() {
+type AdminProps = {
+  /** Tab links and routing base, e.g. `/admin` or `/schedule/admin`. */
+  basePath?: string;
+};
+
+export default function Admin({ basePath = '/admin' }: AdminProps) {
   const { role } = useAuth() as { role?: string | string[] };
   const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
   const normalizedRoles = roles.map((r) => String(r).toLowerCase().trim()).filter(Boolean);
 
+  const canAccessAdmin =
+    normalizedRoles.includes('admin') || normalizedRoles.includes('superadmin');
+  if (!canAccessAdmin) {
+    return <Navigate to="/schedule/home" replace />;
+  }
+
+  const base = basePath.replace(/\/$/, '');
   const visibleTabs = getAdminTabPages().filter((tab) => matchesRole(tab.role, normalizedRoles));
 
   return (
@@ -30,7 +42,7 @@ export default function Admin() {
           {visibleTabs.map((tab) => (
             <NavLink
               key={tab.path}
-              to={`/admin/${tab.path}`}
+              to={`${base}/${tab.path}`}
               end={false}
               className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
             >

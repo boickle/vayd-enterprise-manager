@@ -10,6 +10,11 @@ export type EtaHouseholdInput = {
   lon: number;
   startIso?: string | null;
   endIso?: string | null;
+  /** Booked visit start/end — prefer over legacy startIso/endIso when present. */
+  appointmentStart?: string | null;
+  appointmentEnd?: string | null;
+  /** Service duration in minutes at this stop (required for edit-time preview ETAs). */
+  serviceMinutes?: number | null;
   /** Customer arrival window; prefer doctor-day `effectiveWindow` — do not use service `endIso` as window end. */
   windowStartIso?: string | null;
   windowEndIso?: string | null;
@@ -69,6 +74,12 @@ export type EtaRequestCandidateSlot = {
   arrivalWindow?: { windowStartIso?: string; windowEndIso?: string };
 };
 
+export type EtaRequestRescheduleContext = {
+  appointmentIds: number[];
+  originalStartIso: string;
+  excludeWindowMinutes?: number;
+};
+
 export type EtaRequest = {
   doctorId: string;
   date: string; // 'YYYY-MM-DD'
@@ -78,6 +89,8 @@ export type EtaRequest = {
   useTraffic?: boolean;
   /** When present, backend places candidate at this slot and uses suggestedStartIso for ETA */
   candidateSlot?: EtaRequestCandidateSlot;
+  /** Omit listed visits from this day and exclude the original-time band (reschedule preview). */
+  rescheduleContext?: EtaRequestRescheduleContext;
 };
 
 /** Per-stop row from ETA API; driveFromPrev is drive from previous stop (or depot) to this stop. */
@@ -213,6 +226,19 @@ export async function fetchEtas(payload: EtaRequest): Promise<EtaResult> {
  */
 export type RoutingSlotSearchOptionalFlags = {
   preferEarliestFeasibleStart?: boolean;
+};
+
+/** Reschedule / move-appointment slot search — excludes band around original visit on that calendar day. */
+export type RoutingRescheduleContext = {
+  appointmentIds: number[];
+  originalStartIso: string;
+  /** Server default 120 (±2 hours) when omitted. */
+  excludeWindowMinutes?: number;
+};
+
+export type RoutingV2SlotSearchBody = RoutingSlotSearchOptionalFlags & {
+  rescheduleContext?: RoutingRescheduleContext;
+  [key: string]: unknown;
 };
 
 // ---- Fill Day API ----
@@ -356,6 +382,112 @@ export function mergeRoutingRootZonesIntoCandidate<W extends RoutingZoneCarrier>
   return next;
 }
 
+/** Snapshot from accepted routing feedback at original book time (reschedule slot search only). */
+export type RescheduleOriginalVisitSnapshot = {
+  appointmentId: number;
+  found: boolean;
+  score?: number;
+  prefScore?: number;
+  scoringComponents?: Record<string, unknown>;
+  suggestedStartIso?: string;
+  date?: string;
+  doctorPimsId?: string;
+  slot?: string;
+  positionInDay?: number;
+  routingRequestId?: string;
+};
+
+export type RescheduleOriginalBooking = {
+  appointmentIds: number[];
+  originalStartIso: string;
+  visits: RescheduleOriginalVisitSnapshot[];
+};
+
+export type TypeChangePreviewScoreSnapshot = {
+  found: boolean;
+  score: number | null;
+  prefScore?: number | null;
+  appointmentTypeId?: number | null;
+  suggestedStartIso?: string | null;
+  suggestedEndIso?: string | null;
+  serviceMinutes?: number | null;
+  routingRequestId?: string | null;
+  /** In-place preview always uses 0 when present. */
+  candidateIndex?: number | null;
+  scoringComponents?: Record<string, number> | null;
+  feasible?: boolean;
+  reason?: string | null;
+  /** Seconds past depot when scored with fitInWithOverflow. */
+  overrunSeconds?: number | null;
+  /** True when score used overflow mode (same as Get Best Route overflow checkbox). */
+  scoredWithOverflowAllowed?: boolean | null;
+};
+
+/** POST /routing/feedback after type-change Book — from preview `feedbackHandoff`. */
+export type TypeChangeFeedbackHandoff = {
+  routingRequestId: string;
+  candidateIndex: number;
+  appointmentId: number;
+};
+
+export type TypeChangePreviewResponse = {
+  appointmentId: number;
+  date: string;
+  doctorId: string;
+  original: TypeChangePreviewScoreSnapshot;
+  withNewType: TypeChangePreviewScoreSnapshot;
+  delta: number | null;
+  arrivalWindow: {
+    before: { startIso: string; endIso: string } | null;
+    after: { startIso: string; endIso: string } | null;
+  };
+  /** Present when preview is feasible + scorable; omit for infeasible previews. */
+  feedbackHandoff?: TypeChangeFeedbackHandoff | null;
+  dayModelNotes?: string[];
+};
+
+export async function fetchTypeChangePreview(body: {
+  doctorId?: string;
+  date?: string;
+  appointmentId: number;
+  newAppointmentTypeId: number;
+  useTraffic?: boolean;
+}): Promise<TypeChangePreviewResponse> {
+  const { data } = await http.post<TypeChangePreviewResponse>(
+    '/routing/v2/type-change-preview',
+    body
+  );
+  return data;
+}
+
+export type TimeChangePreviewResponse = {
+  appointmentId: number;
+  date: string;
+  doctorId: string;
+  original: TypeChangePreviewScoreSnapshot;
+  withNewTime: TypeChangePreviewScoreSnapshot;
+  delta: number | null;
+  /** Present when preview is feasible + scorable; omit for infeasible previews. */
+  feedbackHandoff?: TypeChangeFeedbackHandoff | null;
+  dayModelNotes?: string[];
+};
+
+/** In-place re-score when visit start/end changes but slot position stays the same. */
+export async function fetchTimeChangePreview(body: {
+  doctorId?: string;
+  date?: string;
+  appointmentId: number;
+  newAppointmentStartIso: string;
+  newAppointmentEndIso: string;
+  useTraffic?: boolean;
+}): Promise<TimeChangePreviewResponse> {
+  const { data } = await http.post<TimeChangePreviewResponse>(
+    '/routing/v2/time-change-preview',
+    body
+  );
+  return data;
+}
+
 /** JSON shape for POST `/routing/v2`, `/routing/any-doctor`, etc. (slot search, not ETA). */
 export type RoutingV2SlotSearchResult = RoutingZoneCarrier & {
   winner?: RoutingZoneCarrier & Record<string, unknown>;
@@ -365,6 +497,7 @@ export type RoutingV2SlotSearchResult = RoutingZoneCarrier & {
     name?: string;
     top?: Array<RoutingZoneCarrier & Record<string, unknown>>;
   }>;
+  rescheduleOriginalBooking?: RescheduleOriginalBooking;
   [key: string]: unknown;
 };
 

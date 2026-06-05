@@ -1,8 +1,9 @@
 // src/pages/DoctorDayVisualPdf.tsx — Off-screen DOM for My Day — Visual PDF export (html2canvas).
 import type { CSSProperties } from 'react';
-import { AlertTriangle, Heart } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { formatIsoInPracticeZone } from '../utils/practiceTimezone';
 import { formatHM, colorForWhitespace, colorForHDRatio, colorForDrive } from '../utils/statsFormat';
+import { MyDayVisualPatientDetail } from '../components/MyDayVisualPatientDetail';
 
 const DRIVE_FILL =
   'repeating-linear-gradient(135deg, #e2e8f0 0px, #e2e8f0 6px, #cbd5e1 6px, #cbd5e1 12px)';
@@ -15,6 +16,10 @@ export type DoctorDayVisualPdfPatient = {
   recordStatus?: string | null;
   type?: string | null;
   desc?: string | null;
+  appointmentNotes?: string | null;
+  staffNotes?: string | null;
+  sex?: string | null;
+  petAlerts?: string | null;
   alerts?: string | null;
   isMember?: boolean;
   membershipName?: string | null;
@@ -24,7 +29,10 @@ export type DoctorDayVisualPdfAppointmentPayload = {
   key: string;
   client: string;
   address: string;
+  clientPhone?: string;
   clientAlert?: string;
+  roomLoaderStatus?: string;
+  roomLoaderStatusColor?: string;
   durMin: number;
   etaIso?: string | null;
   etdIso?: string | null;
@@ -43,6 +51,10 @@ export type DoctorDayVisualPdfAppointmentPayload = {
   windowWarning?: boolean;
   showBackToDepotInBlock: boolean;
   backToDepotIso?: string | null;
+  /** Visit is at a routing alternate address instead of client home. */
+  isAlternateStop?: boolean;
+  alternateVisitAddress?: string;
+  clientHomeAddress?: string;
 };
 
 export type DoctorDayVisualPdfSegmentRow = {
@@ -110,6 +122,13 @@ function AppointmentPdfBlock({
   practiceTimeZone: string;
 }) {
   const addrNoZip = stripZipFromAddressLine(payload.address);
+  const alternateVisitNoZip = payload.alternateVisitAddress
+    ? stripZipFromAddressLine(payload.alternateVisitAddress)
+    : addrNoZip;
+  const clientHomeNoZip = payload.clientHomeAddress
+    ? stripZipFromAddressLine(payload.clientHomeAddress)
+    : '';
+  const showAlternateCallout = Boolean(payload.isAlternateStop && !payload.isPersonalBlock);
   const showArrive = !!(payload.etaIso || payload.etdIso);
   const showWindow =
     !!(payload.resolvedWinStartIso && payload.resolvedWinEndIso) &&
@@ -168,8 +187,12 @@ function AppointmentPdfBlock({
           }}
         >
           <span style={{ fontWeight: 800, color: '#14532d', fontSize: 22 }}>{payload.client}</span>
-          <span style={{ color: '#64748b' }}>·</span>
-          <span style={{ color: '#64748b', flex: '1 1 12rem', minWidth: 0 }}>{addrNoZip}</span>
+          {!showAlternateCallout ? (
+            <>
+              <span style={{ color: '#64748b' }}>·</span>
+              <span style={{ color: '#64748b', flex: '1 1 12rem', minWidth: 0 }}>{addrNoZip}</span>
+            </>
+          ) : null}
           {payload.windowWarning && (
             <span
               style={{
@@ -190,11 +213,84 @@ function AppointmentPdfBlock({
             </span>
           )}
         </div>
+        {showAlternateCallout ? (
+          <div
+            role="alert"
+            style={{
+              marginTop: 8,
+              padding: '10px 12px',
+              borderRadius: 8,
+              border: '3px solid #ea580c',
+              background: 'linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%)',
+              color: '#7c2d12',
+              boxShadow: '0 2px 4px rgba(234, 88, 12, 0.2)',
+            }}
+          >
+            <div
+              style={{
+                fontSize: 15,
+                fontWeight: 800,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                color: '#c2410c',
+                marginBottom: 4,
+              }}
+            >
+              Alternate address — visit location
+            </div>
+            <div
+              style={{
+                fontSize: 20,
+                fontWeight: 800,
+                lineHeight: 1.35,
+                color: '#431407',
+                wordBreak: 'break-word',
+              }}
+            >
+              {alternateVisitNoZip}
+            </div>
+            <div
+              style={{
+                marginTop: 4,
+                fontSize: 15,
+                fontWeight: 600,
+                lineHeight: 1.35,
+                color: '#9a3412',
+              }}
+            >
+              This visit is at an alternate address, not the client&apos;s home.
+            </div>
+            {clientHomeNoZip ? (
+              <div style={{ marginTop: 6, fontSize: 16, lineHeight: 1.35, color: '#78350f' }}>
+                <span style={{ fontWeight: 700 }}>Home: </span>
+                {clientHomeNoZip}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {payload.clientPhone ? (
+          <div style={{ marginTop: 2, fontSize: 16, color: '#0f172a' }}>
+            <b>Phone:</b> {payload.clientPhone}
+          </div>
+        ) : null}
         {payload?.clientAlert && (
           <div style={{ marginTop: 2, color: '#dc2626', fontSize: 16, lineHeight: 1.3 }}>
             Alert: {payload.clientAlert}
           </div>
         )}
+        {!payload.isPersonalBlock ? (
+          <div
+            style={{
+              marginTop: 2,
+              fontSize: 16,
+              lineHeight: 1.3,
+              color: payload.roomLoaderStatusColor ?? '#dc2626',
+              fontWeight: 600,
+            }}
+          >
+            <b>Room loader:</b> {payload.roomLoaderStatus ?? 'Not sent'}
+          </div>
+        ) : null}
       </div>
       <div
         style={{
@@ -282,62 +378,12 @@ function AppointmentPdfBlock({
           >
             <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
               {payload.patients.map((p, i) => (
-                <li
+                <MyDayVisualPatientDetail
                   key={i}
-                  style={{
-                    marginBottom: i === payload.patients.length - 1 ? 0 : 4,
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    alignItems: 'baseline',
-                    gap: 6,
-                    fontSize: 18,
-                    color: '#334155',
-                  }}
-                >
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      fontWeight: 700,
-                    }}
-                  >
-                    {p.isMember && (
-                      <Heart
-                        size={16}
-                        fill="#dc2626"
-                        color="#dc2626"
-                        strokeWidth={1.5}
-                        aria-hidden
-                      />
-                    )}
-                    <span>{p.name}</span>
-                  </span>
-                  {p.isMember && p.membershipName?.trim() ? (
-                    <span style={{ color: '#991b1b', fontWeight: 600 }}>
-                      {p.membershipName.trim()}
-                    </span>
-                  ) : null}
-                  <span style={{ color: '#475569' }}>
-                    {p.type ? (
-                      <>
-                        — <b>{p.type}</b>
-                        {p.desc ? ` — ${p.desc}` : ''}
-                      </>
-                    ) : p.desc ? (
-                      <>— {p.desc}</>
-                    ) : null}
-                  </span>
-                  {p?.alerts ? (
-                    <span style={{ color: '#dc2626' }}>
-                      — <strong>Alert</strong>: {p.alerts}
-                    </span>
-                  ) : null}
-                  {p.status ? <span style={statusPillStyle(p.status)}>{p.status}</span> : null}
-                  {p.recordStatus ? (
-                    <span style={statusPillStyle(p.recordStatus)}>{p.recordStatus}</span>
-                  ) : null}
-                </li>
+                  patient={p}
+                  variant="pdf"
+                  statusPillStyle={statusPillStyle}
+                />
               ))}
             </ul>
           </div>

@@ -80,3 +80,59 @@ export function hasAnyGoal(goals: EmployeeGoalsResponseDto): boolean {
   if (goals.dailyGoals?.length) return true;
   return false;
 }
+
+/** Day header / My Day — `8/9` when a daily point goal exists, else points only. */
+export function formatPointsAgainstGoal(
+  points: number,
+  pointGoal: number | null | undefined
+): string {
+  const pts = Math.round(Number(points) || 0);
+  const goal = normalizedPointGoal(pointGoal);
+  return goal != null ? `${pts}/${goal}` : String(pts);
+}
+
+export function normalizedPointGoal(pointGoal: number | null | undefined): number | null {
+  if (pointGoal == null || !Number.isFinite(Number(pointGoal)) || Number(pointGoal) <= 0) {
+    return null;
+  }
+  return Math.round(Number(pointGoal));
+}
+
+/** Green at/above goal; yellow 1–2 below; red 3+ below; null when no goal. */
+export type PointsGoalProgressTone = 'met' | 'near' | 'below';
+
+export function pointsGoalProgressTone(
+  points: number,
+  pointGoal: number | null | undefined
+): PointsGoalProgressTone | null {
+  const goal = normalizedPointGoal(pointGoal);
+  if (goal == null) return null;
+  const pts = Math.round(Number(points) || 0);
+  if (pts >= goal) return 'met';
+  if (goal - pts <= 2) return 'near';
+  return 'below';
+}
+
+export function meetsDailyPointGoal(
+  points: number,
+  pointGoal: number | null | undefined
+): boolean {
+  return pointsGoalProgressTone(points, pointGoal) === 'met';
+}
+
+export function schedulerPointsGoalClassName(
+  points: number,
+  pointGoal: number | null | undefined,
+  variant: 'day-header' | 'week-summary'
+): string | undefined {
+  const tone = pointsGoalProgressTone(points, pointGoal);
+  if (!tone) return undefined;
+  const base =
+    variant === 'day-header' ? 'scheduler-day-header-points--goal-' : 'scheduler-week-points--goal-';
+  return `${base}${tone}`;
+}
+
+/** Luxon weekday (1=Mon … 7=Sun) → goals API dayOfWeek (0=Sun … 6=Sat). */
+export function goalDayOfWeekFromLuxonWeekday(luxonWeekday: number): number {
+  return luxonWeekday % 7;
+}

@@ -1,5 +1,18 @@
 /* Room Loader — responsive layout for list and modal */
 
+.room-loader-embedded-host {
+  position: fixed;
+  inset: 0;
+  z-index: 10040;
+  pointer-events: none;
+}
+
+.room-loader-embedded-host .room-loader-modal-overlay,
+.room-loader-embedded-host .room-loader-modal,
+.room-loader-embedded-host .room-loader-confirm-modal {
+  pointer-events: auto;
+}
+
 .room-loader-page {
   padding: 20px;
   box-sizing: border-box;

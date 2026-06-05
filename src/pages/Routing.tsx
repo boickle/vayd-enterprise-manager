@@ -10,31 +10,106 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react';
+import { useAuth } from '../auth/AuthProvider';
 import { fetchDoctorMonth, type MiniZone } from '../api/appointments';
+import { fetchAllAppointmentTypes, fetchEmployee, type AppointmentType } from '../api/appointmentSettings';
+import {
+  appointmentTypeAllowsClient,
+  appointmentTypeIncludedInRouting,
+  normalizeAppointmentTypeFromApi,
+} from '../utils/appointmentTypeSettings';
+import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { http } from '../api/http';
 import {
   monthsCoveringRange,
+  normalizeAppointmentType,
   summarizeAvgMinutesByAppointmentType,
   type AvgMinutesByTypeRow,
 } from '../analytics/appointmentTypeTimeStats';
 import { Field } from '../components/Field';
 import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
-import { PreviewMyDayModal } from '../components/PreviewMyDayModal';
 import { validateAddress } from '../api/geo';
+import { fetchPrimaryProviders, fetchVeterinarians } from '../api/employee';
 import {
   normalizeRoutingV2SlotSearchResponse,
   type RoutingSlotSearchOptionalFlags,
+  type RescheduleOriginalBooking,
   type RoutingV2SlotSearchResult,
 } from '../api/routing';
+import {
+  rescheduleOriginalScoreSummary,
+  rescheduleScoreHeaderSuffix,
+  fetchAndCacheRescheduleSourcePlacementSnapshot,
+  resolveRescheduleOriginalVisitForCompare,
+} from '../utils/routingRescheduleScoreCompare';
+import { WINDOW_WARNING_MINUTES_FROM_END } from '../utils/windowWarning';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  clearRoutingCalendarPreview,
+  readRoutingCalendarPreview,
+  ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
+  ROUTING_FOCUS_RESCHEDULE_SOURCE_EVENT,
+  routingCalendarPreviewOptionKey,
+  writeRoutingCalendarPreview,
+  type RoutingCalendarPreviewPayloadV1,
+} from '../utils/routingCalendarPreviewStorage';
+import { hasActiveRoutingCalendarPreview } from '../utils/routingCalendarPreviewGuard';
+import {
+  buildRoutingRescheduleContextForSlotSearch,
+  clearRoutingRescheduleIntent,
+  markRescheduleIntentAppliedToRoutingForm,
+  readRoutingRescheduleIntent,
+  rescheduleIntentIsActive,
+  rescheduleRequiresScopeChoice,
+  patchRescheduleIntentDoctorPims,
+  resolveRescheduleIntentDoctorPimsId,
+  rescheduleScopeTargets,
+  ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
+  ROUTING_RESCHEDULE_SOURCE_SCORE_UPDATED_EVENT,
+  writeRoutingRescheduleScope,
+  type RoutingRescheduleScope,
+} from '../utils/routingRescheduleIntent';
+import {
+  markForwardBookingIntentAppliedToRoutingForm,
+  readRoutingForwardBookingIntent,
+  ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT,
+} from '../utils/routingForwardBookingIntent';
+import {
+  formatForwardBookingIntervalLabel,
+  forwardBookingRoutingSearchDateRange,
+} from '../utils/forwardBookingFromAppointment';
+import {
+  appointmentTypeForRoutingStatsKey,
+  resolveRoutingChosenAppointmentTypeId,
+} from '../utils/routingCalculateTimeType';
+import {
+  clearRoutingUiSnapshot,
+  createDefaultRoutingForm,
+  readRoutingUiBootstrap,
+  ROUTING_DISMISS_RESCHEDULE_EVENT,
+  ROUTING_REQUEST_ID_SESSION_KEY,
+  ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT,
+  writeAuthDoctorCache,
+  writeRoutingUiSnapshot,
+} from '../utils/routingUiSnapshot';
 import {
   adjustRoutingSlotSearchDates,
   diffRoutingDaysInclusive,
   routingCalendarDatePart,
 } from '../utils/routingSlotSearchDates';
+import {
+  resolveRoutingCandidateIndex,
+  routingTopCandidatesFromResult,
+} from '../utils/routingCandidates';
+import { submitRoutingFeedback } from '../api/routingFeedback';
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
+import {
+  clearSchedulerHandoffPreferRoutingDoctor,
+  readSchedulerCalendarHandoff,
+  SCHEDULER_HANDOFF_ROUTING_DOCTOR_EVENT,
+} from '../utils/schedulerCalendarHandoff';
 import './Routing.css';
-// Removed fetchPrimaryProviders import - now using /employees/veterinarians endpoint directly
 
 /** Yellow wrap when an optional routing preference is on—makes checked state obvious at a glance. */
 const ROUTING_PREF_CHECKED_LABEL: CSSProperties = {
@@ -44,6 +119,17 @@ const ROUTING_PREF_CHECKED_LABEL: CSSProperties = {
   padding: '6px 10px',
   boxSizing: 'border-box',
 };
+
+/** Preferred day chips (ISO weekday 1–7); labels are one-line abbreviations. */
+const ROUTING_WEEKDAY_CHIPS: Array<{ n: number; label: string; title: string }> = [
+  { n: 1, label: 'M', title: 'Monday' },
+  { n: 2, label: 'T', title: 'Tuesday' },
+  { n: 3, label: 'W', title: 'Wednesday' },
+  { n: 4, label: 'Th', title: 'Thursday' },
+  { n: 5, label: 'F', title: 'Friday' },
+  { n: 6, label: 'Sa', title: 'Saturday' },
+  { n: 7, label: 'Su', title: 'Sunday' },
+];
 
 // =========================
 // Types
@@ -59,6 +145,8 @@ type RouteRequest = {
     lon?: number;
     address?: string;
     clientId?: string;
+    /** Sent to POST /routing/v2 when Calculate Time type is selected; omit for default ±60 window. */
+    appointmentTypeId?: number;
   };
 };
 
@@ -67,6 +155,46 @@ type RouteRequest = {
  * 1 pet → regular average; 2+ pets → multipet average × pet count when multipet data exists,
  * otherwise scales the regular average by pet count.
  */
+/** When Calculate Time has no stats row and no type default duration. */
+const ROUTING_FALLBACK_SERVICE_MINUTES = 45;
+/** Minimum doctor-day visits of a type in the last 30 days before using historical averages. */
+const ROUTING_MIN_APPT_TYPE_INSTANCES_FOR_STATS = 5;
+
+/** Picker `<option value>` uses appointment type `name`, not `prettyName`. */
+function routingPickerTypeNameForAppointmentType(
+  types: readonly AppointmentType[],
+  typeId: number | undefined | null,
+  fallbackLabel?: string | null
+): string | null {
+  if (typeId != null && Number.isFinite(Number(typeId))) {
+    const row = types.find((t) => Number(t.id) === Number(typeId));
+    const name = String(row?.name ?? '').trim();
+    if (name) return name;
+  }
+  const fb = (fallbackLabel ?? '').trim();
+  if (!fb || types.length === 0) return null;
+  const norm = normalizeAppointmentType(fb);
+  const lower = fb.toLowerCase();
+  const byLabel = types.find((t) => {
+    const name = String(t.name ?? '').trim();
+    const pretty = String(t.prettyName ?? '').trim();
+    return (
+      normalizeAppointmentType(name) === norm ||
+      normalizeAppointmentType(pretty) === norm ||
+      name.toLowerCase() === lower ||
+      pretty.toLowerCase() === lower
+    );
+  });
+  return byLabel ? String(byLabel.name ?? '').trim() || null : null;
+}
+
+function routingApptTypeStatsMeetMinInstances(
+  row: AvgMinutesByTypeRow,
+  minInstances = ROUTING_MIN_APPT_TYPE_INSTANCES_FOR_STATS
+): boolean {
+  return row.count + row.multipetCount >= minInstances;
+}
+
 function estimatedServiceMinutesFromStatsRow(row: AvgMinutesByTypeRow, pets: number): number | null {
   const n = Math.floor(Number(pets));
   const petCount = Number.isFinite(n) && n >= 1 ? n : 1;
@@ -82,6 +210,66 @@ function estimatedServiceMinutesFromStatsRow(row: AvgMinutesByTypeRow, pets: num
   if (hasMp) return Math.round(mp * petCount);
   if (hasSingle) return Math.round(row.avgMinutes * petCount);
   return null;
+}
+
+function resolveRoutingApptStatsRow(
+  typeKey: string,
+  apptLengthsRows: AvgMinutesByTypeRow[],
+  matchedType?: AppointmentType
+): AvgMinutesByTypeRow | undefined {
+  const key = typeKey.trim();
+  if (!key) return undefined;
+  const statsByNorm = new Map<string, AvgMinutesByTypeRow>();
+  for (const row of apptLengthsRows) {
+    const norm = normalizeAppointmentType(row.typeName);
+    if (norm) statsByNorm.set(norm, row);
+  }
+  const norm = normalizeAppointmentType(key);
+  const prettyNorm = matchedType?.prettyName
+    ? normalizeAppointmentType(String(matchedType.prettyName))
+    : '';
+  return (
+    statsByNorm.get(norm) ??
+    (prettyNorm ? statsByNorm.get(prettyNorm) : undefined) ??
+    apptLengthsRows.find((row) => {
+      const rowNorm = normalizeAppointmentType(row.typeName);
+      return rowNorm === norm || (prettyNorm !== '' && rowNorm === prettyNorm);
+    })
+  );
+}
+
+function defaultDurationMinutesForRoutingTypeSelection(
+  matchedType: AppointmentType | undefined,
+  pets: number
+): number | null {
+  const dur = matchedType?.defaultDuration != null ? Number(matchedType.defaultDuration) : NaN;
+  if (!Number.isFinite(dur) || dur <= 0) return null;
+  const petCount = Math.max(1, Math.floor(pets) || 1);
+  return Math.round(dur * petCount);
+}
+
+/** 30-day doctor stats (≥5 visits), then type default duration, then {@link ROUTING_FALLBACK_SERVICE_MINUTES}. */
+function estimateRoutingServiceMinutesForSelection(
+  typeKey: string,
+  pets: number,
+  apptLengthsRows: AvgMinutesByTypeRow[],
+  resolveType: (key: string) => AppointmentType | undefined
+): number | null {
+  const key = typeKey.trim();
+  if (!key) return null;
+  const matched = resolveType(key);
+  const row = resolveRoutingApptStatsRow(key, apptLengthsRows, matched);
+  let mins: number | null = null;
+  if (row && routingApptTypeStatsMeetMinInstances(row)) {
+    mins = estimatedServiceMinutesFromStatsRow(row, pets);
+  }
+  if (mins == null || mins < 1) {
+    mins = defaultDurationMinutesForRoutingTypeSelection(matched, pets);
+  }
+  if (mins == null || mins < 1) {
+    mins = ROUTING_FALLBACK_SERVICE_MINUTES;
+  }
+  return mins;
 }
 
 type Slot = 'early' | 'mid' | 'late';
@@ -287,6 +475,8 @@ type Result = {
   winner?: Winner;
   estimatedCost?: EstimatedCost;
   alternates?: Winner[];
+  /** v2 ordered candidates (winner is typically index 0). */
+  top?: Winner[];
 
   // Any-doctor extras
   doctorPimsId?: string;
@@ -311,6 +501,8 @@ type Result = {
    * Omitted for legacy, no candidates, or when zone-aware preserve did not run.
    */
   scoutPreservedEmptyDayWeeks?: ScoutPreservedEmptyDayWeek[] | null;
+  /** Present when slot search used `rescheduleContext` and feedback snapshot exists. */
+  rescheduleOriginalBooking?: RescheduleOriginalBooking;
 };
 
 type Client = {
@@ -406,6 +598,53 @@ function isoToTime(iso?: string): string {
   return dt.isValid ? dt.toLocaleString(DateTime.TIME_SIMPLE) : '-';
 }
 
+const ROUTING_DEFAULT_ARRIVAL_WINDOW_MINUTES = 60;
+const ROUTING_ARRIVAL_WINDOW_TOLERANCE_MINUTES = 2;
+
+/** True when backend window is not symmetric ±60 (standard 2-hour arrival window). */
+function routingVisitWindowDiffersFromDefault60(opt: {
+  suggestedStartIso?: string;
+  arrivalWindow?: { windowStartIso?: string; windowEndIso?: string };
+}): boolean {
+  const startIso = opt.arrivalWindow?.windowStartIso;
+  const endIso = opt.arrivalWindow?.windowEndIso;
+  if (!startIso || !endIso) return false;
+
+  const winStart = DateTime.fromISO(startIso);
+  const winEnd = DateTime.fromISO(endIso);
+  if (!winStart.isValid || !winEnd.isValid) return false;
+
+  const tol = ROUTING_ARRIVAL_WINDOW_TOLERANCE_MINUTES;
+  const def = ROUTING_DEFAULT_ARRIVAL_WINDOW_MINUTES;
+
+  const matchesDefaultSymmetric60 = (beforeMin: number, afterMin: number) =>
+    Math.abs(beforeMin - def) <= tol && Math.abs(afterMin - def) <= tol;
+
+  const apptIso = opt.suggestedStartIso;
+  if (apptIso) {
+    const appt = DateTime.fromISO(apptIso);
+    if (appt.isValid) {
+      const beforeMin = Math.round(appt.diff(winStart, 'minutes').minutes);
+      const afterMin = Math.round(winEnd.diff(appt, 'minutes').minutes);
+      if (matchesDefaultSymmetric60(beforeMin, afterMin)) return false;
+    }
+  }
+
+  /** ±60 is a 2-hour window; routed start may sit early/late while the window stays symmetric. */
+  const totalMin = Math.round(winEnd.diff(winStart, 'minutes').minutes);
+  if (Math.abs(totalMin - def * 2) <= tol * 2) {
+    const mid = DateTime.fromMillis((winStart.toMillis() + winEnd.toMillis()) / 2, {
+      zone: winStart.zoneName,
+    });
+    const halfBefore = Math.round(mid.diff(winStart, 'minutes').minutes);
+    const halfAfter = Math.round(winEnd.diff(mid, 'minutes').minutes);
+    if (matchesDefaultSymmetric60(halfBefore, halfAfter)) return false;
+  }
+
+  if (!apptIso) return false;
+  return true;
+}
+
 function colorForAddedDrive(seconds?: number): string {
   if (seconds == null) return 'inherit';
   const mins = seconds / 60;
@@ -425,6 +664,31 @@ function colorForProjectedDrive(seconds?: number): string {
 function formatClientAddress(c: Partial<Client>): string {
   const line = [c.address1, c.city, c.state].filter(Boolean).join(', ');
   return [line, c.zip].filter(Boolean).join(' ').trim();
+}
+
+function staffRecordToRoutingClient(raw: unknown): Client | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const id = o.id;
+  if (id == null || String(id).trim() === '') return null;
+  const zipRaw = o.zip ?? o.zipcode ?? o.zipCode;
+  return {
+    id: String(id),
+    firstName: String(o.firstName ?? o.first_name ?? '').trim(),
+    lastName: String(o.lastName ?? o.last_name ?? '').trim(),
+    address1: o.address1 != null ? String(o.address1).trim() : o.address_1 != null ? String(o.address_1).trim() : undefined,
+    city: o.city != null ? String(o.city).trim() : undefined,
+    state: o.state != null ? String(o.state).trim() : undefined,
+    zip: zipRaw != null ? String(zipRaw).trim() : undefined,
+    lat: (o.lat ?? o.latitude) as number | string | undefined,
+    lon: (o.lon ?? o.longitude) as number | string | undefined,
+    alerts:
+      o.alerts != null
+        ? String(o.alerts)
+        : o.clientAlerts != null
+          ? String(o.clientAlerts)
+          : null,
+  };
 }
 
 const DOCTOR_PALETTE = [
@@ -488,6 +752,20 @@ const SCOUT_PRESERVED_DAY_CHIP: CSSProperties = {
   background: '#fef3c7',
   color: '#713f12',
   border: '1px solid #fcd34d',
+};
+
+const ROUTING_RESULT_FONT_SCALE = 0.75;
+
+const SCOUT_BADGE_CHIP_DENSE: CSSProperties = {
+  ...SCOUT_BADGE_CHIP,
+  fontSize: Math.round(11 * ROUTING_RESULT_FONT_SCALE),
+  padding: '2px 6px',
+};
+
+const SCOUT_PRESERVED_DAY_CHIP_DENSE: CSSProperties = {
+  ...SCOUT_PRESERVED_DAY_CHIP,
+  fontSize: Math.round(11 * ROUTING_RESULT_FONT_SCALE),
+  padding: '2px 6px',
 };
 
 /** Purple “Zone-aware” pill (Results header + consistency). */
@@ -633,31 +911,6 @@ function scoutAnchorRoutingCrossingCopy(n9: number): { label: string; tooltip: s
   };
 }
 
-function scoutFmtScoreDelta(n: number): string {
-  return Number.isInteger(n) ? String(n) : n.toFixed(2);
-}
-
-/** Muted line + tooltip for `scoutZoneAwareScoreDelta` (total); breakdown when N9 / preserved fields are present. */
-function scoutZoneAwareDeltaUi(row: {
-  scoutZoneAwareScoreDelta?: number | null;
-  scoutMultiAnchorDayN9?: number | null;
-  scoutPreservedEmptyDayPenalty?: number | null;
-}): { value: string; title: string } | null {
-  const d = row.scoutZoneAwareScoreDelta;
-  if (typeof d !== 'number' || !Number.isFinite(d)) return null;
-  const n9 = row.scoutMultiAnchorDayN9;
-  const pr = row.scoutPreservedEmptyDayPenalty;
-  const n9Ok = typeof n9 === 'number' && Number.isFinite(n9);
-  const prOk = typeof pr === 'number' && Number.isFinite(pr) && pr > 0;
-  const parts: string[] = [
-    `Total zone-aware score delta (from server): ${scoutFmtScoreDelta(d)}. Lower total score is still better.`,
-  ];
-  if (n9Ok) parts.push(`Includes N9 (multi-anchor): ${scoutFmtScoreDelta(n9)}.`);
-  if (prOk) parts.push(`Includes preserved empty-day penalty: ${scoutFmtScoreDelta(pr)}.`);
-  parts.push('Do not recompute preserve logic in the UI; panel context is GET /patients/provider/:id/zone-percentages.');
-  return { value: scoutFmtScoreDelta(d), title: parts.join(' ') };
-}
-
 function scoutZoneAwareDiagHasContent(row: ScoutZoneAwareDiagFields): boolean {
   if (scoutZoneClassRaw(row.scoutZoneClass)) return true;
   const n6 =
@@ -687,12 +940,15 @@ function ScoutZoneAwareDiagnosticsRow({
   row,
   hideZoneClass,
   variant = 'block',
+  dense,
 }: {
   row: ScoutZoneAwareDiagFields;
   /** When true, omit depot→candidate zone class (shown once in Results header for this search). */
   hideZoneClass?: boolean;
   /** `inline`: no outer margin—use inside a parent flex row with day stat badges. */
   variant?: 'block' | 'inline';
+  /** Smaller chip + label text (routing result cards). */
+  dense?: boolean;
 }) {
   const zc = hideZoneClass ? null : scoutZoneClassRaw(row.scoutZoneClass);
   const n6Show =
@@ -716,11 +972,13 @@ function ScoutZoneAwareDiagnosticsRow({
     Number.isFinite(row.scoutPreservedEmptyDayPenalty) &&
     row.scoutPreservedEmptyDayPenalty > 0;
   if (!zc && !n6Show && !n7Show && !n8Show && !n9Crossing && !preservedShow) return null;
+  const chipStyle = dense ? SCOUT_BADGE_CHIP_DENSE : SCOUT_BADGE_CHIP;
+  const preservedStyle = dense ? SCOUT_PRESERVED_DAY_CHIP_DENSE : SCOUT_PRESERVED_DAY_CHIP;
   const inner = (
     <>
       {zc ? (
         <span
-          style={SCOUT_BADGE_CHIP}
+          style={chipStyle}
           title="From depot→candidate drive: ≤15 min = local, ≥25 min = anchor, between = corridor. Same minute thresholds as anchor legs counted for N9."
         >
           Zone class: {scoutFormatZoneClassLabel(zc)}
@@ -744,13 +1002,13 @@ function ScoutZoneAwareDiagnosticsRow({
         </span>
       ) : null}
       {n9Copy ? (
-        <span style={SCOUT_BADGE_CHIP} title={n9Copy.tooltip}>
+        <span style={chipStyle} title={n9Copy.tooltip}>
           {n9Copy.label}
         </span>
       ) : null}
       {preservedShow ? (
         <span
-          style={SCOUT_PRESERVED_DAY_CHIP}
+          style={preservedStyle}
           title="Additive score from consuming a preserved empty anchor-seed day (server). Panel mix: GET /patients/provider/:id/zone-percentages. Do not recompute in the client."
         >
           Uses preserved empty day
@@ -767,7 +1025,7 @@ function ScoutZoneAwareDiagnosticsRow({
           flexWrap: 'wrap',
           gap: '4px 10px',
           alignItems: 'center',
-          fontSize: 11,
+          fontSize: dense ? Math.round(11 * ROUTING_RESULT_FONT_SCALE) : 11,
         }}
       >
         {inner}
@@ -778,7 +1036,7 @@ function ScoutZoneAwareDiagnosticsRow({
     <div
       className="muted"
       style={{
-        fontSize: 11,
+        fontSize: dense ? Math.round(11 * ROUTING_RESULT_FONT_SCALE) : 11,
         marginBottom: 6,
         display: 'flex',
         flexWrap: 'wrap',
@@ -973,15 +1231,19 @@ function scoutHouseholdsAndPatientsFromRow(row: ScoutRoutingGapRow): {
 function ScoutDayStatBadges({
   row,
   embedded,
+  dense,
 }: {
   row: ScoutRoutingGapRow;
   /** When true, return chip nodes only (no wrapper) so they sit in a parent flex row. */
   embedded?: boolean;
+  /** Smaller chip typography (routing result cards). */
+  dense?: boolean;
 }) {
+  const chipStyle = dense ? SCOUT_BADGE_CHIP_DENSE : SCOUT_BADGE_CHIP;
   const chips: JSX.Element[] = [];
   if (row.dayIsEmpty === true) {
     chips.push(
-      <span key="empty" style={SCOUT_BADGE_CHIP} title="No households or patients scheduled this day (scout).">
+      <span key="empty" style={chipStyle} title="No households or patients scheduled this day (scout).">
         Empty day
       </span>
     );
@@ -990,7 +1252,7 @@ function ScoutDayStatBadges({
     chips.push(
       <span
         key="strategic"
-        style={SCOUT_BADGE_CHIP}
+        style={chipStyle}
         title="Strategic light: at most one household scheduled this day."
       >
         Strategic light
@@ -1008,7 +1270,7 @@ function ScoutDayStatBadges({
         ? 'Households and patients scheduled on this day.'
         : 'Households scheduled this day. Patient total appears when the API sends dayPatientCount.';
     chips.push(
-      <span key="hhpt" style={SCOUT_BADGE_CHIP} title={title}>
+      <span key="hhpt" style={chipStyle} title={title}>
         {label}
       </span>
     );
@@ -1067,6 +1329,37 @@ function extractErrorMessage(err: unknown): string {
     return maybe.response?.data?.message ?? maybe.message ?? 'Request failed';
   }
   return 'Request failed';
+}
+
+function pickStr(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s || null;
+}
+
+const ROUTING_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+
+function SlotChip({ slot }: { slot?: Slot | null }) {
+  return null; // Slot labels (Early / Mid / Late) not shown
+}
+
+function EdgeChip({ first, last }: { first?: boolean; last?: boolean }) {
+  if (!first && !last) return null;
+  const text = first ? 'First of day' : 'Last of day';
+  return (
+    <span
+      style={{
+        background: '#eef2ff',
+        color: '#3730a3',
+        padding: '2px 8px',
+        borderRadius: 999,
+        fontSize: Math.round(12 * ROUTING_RESULT_FONT_SCALE),
+        fontWeight: 600,
+      }}
+    >
+      {text}
+    </span>
+  );
 }
 
 /** "HH:mm" or "HH:mm:ss" → seconds since midnight */
@@ -1166,9 +1459,17 @@ function endOfDayOverrunSeconds(
   return delta < 0 ? -delta : 0;
 }
 
-const ROUTING_REQUEST_STORAGE_KEY = 'routing:last-request-id';
-const SELECTED_DOCTORS_STORAGE_KEY = 'routing:selected-doctors';
 const NONE_SELECTION_KEY = '__routing-none__';
+const SELECTED_DOCTORS_STORAGE_KEY = 'routing:selected-doctors';
+
+type RoutingDoctorPick = {
+  id: string | number;
+  name: string;
+  email: string;
+  pimsId: string;
+  seeingClients?: boolean;
+  acceptingNewPatients?: boolean;
+};
 
 function deriveRoutingRequestId(res: Result | null | undefined): string | undefined {
   if (!res) return undefined;
@@ -1195,77 +1496,282 @@ function deriveRoutingRequestId(res: Result | null | undefined): string | undefi
 /* Component */
 // =========================
 
-export default function Routing() {
+/** Results stack under Get Best Route when the routing pane is narrower than this share of the viewport. */
+const ROUTING_STACK_COLUMNS_MAX_SCREEN_SHARE = 0.35;
+
+type RoutingProps = {
+  /** When true, "Book appointment" updates the embedded calendar via event instead of navigating to `/schedule/scheduler`. */
+  calendarWorkspaceMode?: boolean;
+};
+
+type RoutingPrefillFlashField = 'doctor' | 'client' | 'address' | 'minutes' | 'apptType';
+
+export default function Routing({ calendarWorkspaceMode = false }: RoutingProps) {
+  const { token: authToken, userId: authUserId, doctorId: authDoctorInternalId } = useAuth();
+  const bootstrap = useMemo(() => readRoutingUiBootstrap(), []);
+
+  const routingPageRootRef = useRef<HTMLDivElement>(null);
+  const [stackFormAndResults, setStackFormAndResults] = useState(false);
+  const [calendarPreviewTick, setCalendarPreviewTick] = useState(0);
+  const [sourceScoreTick, setSourceScoreTick] = useState(0);
+
+  useEffect(() => {
+    const el = routingPageRootRef.current;
+    if (!el) return;
+    const update = () => {
+      const paneW = el.getBoundingClientRect().width;
+      const screenW = window.innerWidth || document.documentElement.clientWidth;
+      if (screenW <= 0) {
+        setStackFormAndResults(false);
+        return;
+      }
+      setStackFormAndResults(paneW / screenW < ROUTING_STACK_COLUMNS_MAX_SCREEN_SHARE);
+    };
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener('resize', update);
+    update();
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, []);
+
   // -------- Form state --------
-  const [form, setForm] = useState<RouteRequest>({
-    doctorId: '',
-    startDate: new Date().toISOString().slice(0, 10),
-    endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-    newAppt: { serviceMinutes: 45, address: '' },
-  });
+  const [form, setForm] = useState<RouteRequest>(() => ({ ...bootstrap.form }));
 
   // Preferences
-  const [preferredWeekday, setPreferredWeekday] = useState<number[]>([]); // 1..7, supports multiple days
+  const [preferredWeekday, setPreferredWeekday] = useState<number[]>(() => [...bootstrap.preferredWeekday]);
   const [preferredTimeOfDay, setPreferredTimeOfDay] = useState<'first' | 'middle' | 'end' | null>(
-    null
-  ); // send exactly these
+    () => bootstrap.preferredTimeOfDay
+  );
   /** UI: "Force Earliest Time"; API: `preferEarliestFeasibleStart` on empty-day routing. */
-  const [preferEarliestFeasibleStart, setPreferEarliestFeasibleStart] = useState(false);
-  const [edgeFirst, setEdgeFirst] = useState(false);
-  const [edgeLast, setEdgeLast] = useState(false);
+  const [preferEarliestFeasibleStart, setPreferEarliestFeasibleStart] = useState(
+    () => bootstrap.preferEarliestFeasibleStart
+  );
+  const [edgeFirst, setEdgeFirst] = useState(() => bootstrap.edgeFirst);
+  const [edgeLast, setEdgeLast] = useState(() => bootstrap.edgeLast);
 
   // Toggles
-  const [multiDoctor, setMultiDoctor] = useState(false);
-  const [useTraffic, setUseTraffic] = useState(false);
+  const [multiDoctor, setMultiDoctor] = useState(() => bootstrap.multiDoctor);
+  const [useTraffic, setUseTraffic] = useState(() => bootstrap.useTraffic);
   const [maxAddedDriveMinutes] = useState(20);
   // Reserve/Overflow option: 'reserve-only' | 'reserve-overflow' | null
-  const [reserveOption, setReserveOption] = useState<'reserve-only' | 'reserve-overflow' | null>(null);
+  const [reserveOption, setReserveOption] = useState<'reserve-only' | 'reserve-overflow' | null>(
+    () => bootstrap.reserveOption
+  );
+  /** Last committed client — prefs reset when routing for a different household. */
+  const lastRoutingClientIdRef = useRef<string | null>(
+    bootstrap.form.newAppt.clientId?.trim() || null
+  );
+
+  const resetRoutingSchedulePrefs = useCallback(() => {
+    setPreferredWeekday([]);
+    setPreferredTimeOfDay(null);
+    setPreferEarliestFeasibleStart(false);
+    setEdgeFirst(false);
+    setEdgeLast(false);
+    setMultiDoctor(false);
+  }, []);
 
   // -------- UX state --------
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<Result | null>(null);
+  const [result, setResult] = useState<Result | null>(() => (bootstrap.result as Result | null) ?? null);
   const [addressError, setAddressError] = useState<string | null>(null);
+  const [doctorRequiredBeforeApptType, setDoctorRequiredBeforeApptType] = useState(false);
+  const [schedulingPrefsOpen, setSchedulingPrefsOpen] = useState(false);
+  const [routingMinutesPulse, setRoutingMinutesPulse] = useState(false);
+  const routingMinutesPulseClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Last type|pets combo applied by the auto-minutes effect (flash when combo changes even if minutes stay the same). */
+  const routingCalcComboKeyRef = useRef<string | null>(null);
+
+  const [routingPrefillFlash, setRoutingPrefillFlash] = useState<
+    Partial<Record<RoutingPrefillFlashField, true>>
+  >({});
+  const routingPrefillFlashClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const routingPrefillFlashClass = useCallback(
+    (field: RoutingPrefillFlashField) =>
+      routingPrefillFlash[field] ? ' routing-prefill-flash--active' : '',
+    [routingPrefillFlash]
+  );
+
+  const triggerRoutingPrefillFlash = useCallback((fields: RoutingPrefillFlashField[]) => {
+    if (fields.length === 0) return;
+    if (routingPrefillFlashClearRef.current) {
+      clearTimeout(routingPrefillFlashClearRef.current);
+      routingPrefillFlashClearRef.current = null;
+    }
+    setRoutingPrefillFlash({});
+    requestAnimationFrame(() => {
+      const next = Object.fromEntries(fields.map((f) => [f, true as const])) as Partial<
+        Record<RoutingPrefillFlashField, true>
+      >;
+      setRoutingPrefillFlash(next);
+      routingPrefillFlashClearRef.current = setTimeout(() => {
+        routingPrefillFlashClearRef.current = null;
+        setRoutingPrefillFlash({});
+      }, 1200);
+    });
+  }, []);
+
+  const applyCalendarHandoffDoctor = useCallback(async () => {
+    const handoff = readSchedulerCalendarHandoff();
+    if (!handoff?.preferRoutingDoctor) return;
+    if (readRoutingRescheduleIntent()) {
+      clearSchedulerHandoffPreferRoutingDoctor();
+      return;
+    }
+
+    let pimsId = handoff.routingDoctorPimsId?.trim() ?? '';
+    let label = handoff.routingDoctorLabel?.trim() ?? '';
+
+    if (!pimsId && handoff.providerFilter) {
+      const internalId = Number(handoff.providerFilter);
+      if (Number.isFinite(internalId)) {
+        try {
+          const emp = await fetchEmployee(internalId);
+          pimsId =
+            emp?.pimsId != null ? String(emp.pimsId).trim() : '';
+          if (!label) label = buildDoctorName(emp, pimsId ? `Doctor ${pimsId}` : 'Doctor');
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    clearSchedulerHandoffPreferRoutingDoctor();
+    if (!pimsId) return;
+
+    setDoctorRequiredBeforeApptType(false);
+    setForm((f) => ({ ...f, doctorId: pimsId }));
+    setDoctorQuery(label || `Doctor ${pimsId}`);
+    triggerRoutingPrefillFlash(['doctor']);
+  }, [triggerRoutingPrefillFlash]);
+
+  useEffect(() => {
+    void applyCalendarHandoffDoctor();
+  }, [applyCalendarHandoffDoctor]);
+
+  useEffect(() => {
+    const onHandoffDoctor = () => {
+      void applyCalendarHandoffDoctor();
+    };
+    window.addEventListener(SCHEDULER_HANDOFF_ROUTING_DOCTOR_EVENT, onHandoffDoctor);
+    return () => window.removeEventListener(SCHEDULER_HANDOFF_ROUTING_DOCTOR_EVENT, onHandoffDoctor);
+  }, [applyCalendarHandoffDoctor]);
+
+  const triggerRoutingMinutesPulse = useCallback(() => {
+    if (routingMinutesPulseClearRef.current) {
+      clearTimeout(routingMinutesPulseClearRef.current);
+      routingMinutesPulseClearRef.current = null;
+    }
+    setRoutingMinutesPulse(false);
+    requestAnimationFrame(() => {
+      setRoutingMinutesPulse(true);
+      routingMinutesPulseClearRef.current = setTimeout(() => {
+        routingMinutesPulseClearRef.current = null;
+        setRoutingMinutesPulse(false);
+      }, 900);
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (routingMinutesPulseClearRef.current) {
+        clearTimeout(routingMinutesPulseClearRef.current);
+        routingMinutesPulseClearRef.current = null;
+      }
+      if (routingPrefillFlashClearRef.current) {
+        clearTimeout(routingPrefillFlashClearRef.current);
+        routingPrefillFlashClearRef.current = null;
+      }
+    },
+    []
+  );
 
   // -------- Client search --------
-  const [clientQuery, setClientQuery] = useState('');
+  const [clientQuery, setClientQuery] = useState(() => bootstrap.clientQuery);
   const [clientResults, setClientResults] = useState<Client[]>([]);
   const [clientSearching, setClientSearching] = useState(false);
   const [showClientDropdown, setShowClientDropdown] = useState(false);
   const clientBoxRef = useRef<HTMLDivElement | null>(null);
+  const pickClientRef = useRef<(c: Client) => void>(() => {});
   const latestClientQueryRef = useRef('');
 
   // -------- Doctor search --------
-  const [doctorQuery, setDoctorQuery] = useState('');
+  const [doctorQuery, setDoctorQuery] = useState(() => bootstrap.doctorQuery);
   const [doctorResults, setDoctorResults] = useState<Doctor[]>([]);
   const [doctorSearching, setDoctorSearching] = useState(false);
   const [showDoctorDropdown, setShowDoctorDropdown] = useState(false);
   const doctorBoxRef = useRef<HTMLDivElement | null>(null);
-  const apptLengthsWrapRef = useRef<HTMLDivElement | null>(null);
-  const [apptLengthsOpen, setApptLengthsOpen] = useState(false);
   const [apptLengthsLoading, setApptLengthsLoading] = useState(false);
   const [apptLengthsRows, setApptLengthsRows] = useState<AvgMinutesByTypeRow[]>([]);
   const [apptLengthsError, setApptLengthsError] = useState<string | null>(null);
   /** Selected row from Appt lengths stats (same list as the popover); empty = do not auto-fill minutes. */
-  const [routingApptStatsTypeKey, setRoutingApptStatsTypeKey] = useState('');
+  const [routingApptStatsTypeKey, setRoutingApptStatsTypeKey] = useState(
+    () => bootstrap.routingApptStatsTypeKey ?? ''
+  );
   const [routingPetCount, setRoutingPetCount] = useState(1);
   const latestDoctorQueryRef = useRef('');
   const [doctorActiveIdx, setDoctorActiveIdx] = useState<number>(-1);
   const [clientActiveIdx, setClientActiveIdx] = useState<number>(-1);
 
+  // -------- Doctor selection modal (Best fit across doctors) --------
+  const [showDoctorSelectionModal, setShowDoctorSelectionModal] = useState(false);
+  const [allProviders, setAllProviders] = useState<RoutingDoctorPick[]>([]);
+  const [doctorSelectClientZoneLabel, setDoctorSelectClientZoneLabel] = useState<string | null>(null);
+  const [selectedDoctorIds, setSelectedDoctorIds] = useState<string[]>([]);
+  const [providersLoading, setProvidersLoading] = useState(false);
+  const [pendingEndpoint, setPendingEndpoint] = useState<string | null>(null);
+
   // -------- Winner doctor name cache --------
-  const [doctorNames, setDoctorNames] = useState<Record<string, string>>({});
+  const [doctorNames, setDoctorNames] = useState<Record<string, string>>(() => ({ ...bootstrap.doctorNames }));
   const doctorNameReqs = useRef<Record<string, Promise<string>>>({});
 
-  const [schedulePreview, setSchedulePreview] = useState<null | { opt: UnifiedOption; scope: 'day' | 'week' }>(
-    null
-  );
   const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({});
-  const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(null); // 👈 NEW
+
+  const activeCalendarPreviewOptionKey = useMemo(() => {
+    const preview = readRoutingCalendarPreview();
+    if (!preview) return null;
+    if (preview.listOptionKey?.trim()) return preview.listOptionKey.trim();
+    const o = preview.option;
+    const cand =
+      preview.candidateIndex ??
+      (typeof o.candidateIndex === 'number' ? o.candidateIndex : undefined);
+    const internalDoctor = String(o.doctorPimsId ?? '').trim();
+    const pimsFromMap = Object.entries(doctorIdByPims).find(([, id]) => id === internalDoctor)?.[0];
+    if (pimsFromMap) {
+      return `${pimsFromMap}-${String(o.date ?? '')}-${String(o.insertionIndex ?? '')}-${cand ?? ''}`;
+    }
+    return routingCalendarPreviewOptionKey(preview);
+  }, [calendarPreviewTick, doctorIdByPims]);
+
+  useEffect(() => {
+    if (!calendarWorkspaceMode) return;
+    const bump = () => setCalendarPreviewTick((n) => n + 1);
+    bump();
+    window.addEventListener(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT, bump);
+    return () => window.removeEventListener(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT, bump);
+  }, [calendarWorkspaceMode]);
+
+  useEffect(() => {
+    if (!calendarWorkspaceMode || !activeCalendarPreviewOptionKey) return;
+    const root = routingPageRootRef.current;
+    const el = root?.querySelector(
+      `[data-routing-calendar-preview-card="${CSS.escape(activeCalendarPreviewOptionKey)}"]`
+    );
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [calendarWorkspaceMode, activeCalendarPreviewOptionKey]);
+
+  const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(
+    () => bootstrap.selectedClientAlerts
+  );
   const [latestRoutingRequestId, setLatestRoutingRequestId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     try {
-      return sessionStorage.getItem(ROUTING_REQUEST_STORAGE_KEY);
+      return sessionStorage.getItem(ROUTING_REQUEST_ID_SESSION_KEY);
     } catch {
       return null;
     }
@@ -1276,7 +1782,7 @@ export default function Routing() {
     setLatestRoutingRequestId(id);
     if (typeof window !== 'undefined') {
       try {
-        sessionStorage.setItem(ROUTING_REQUEST_STORAGE_KEY, id);
+        sessionStorage.setItem(ROUTING_REQUEST_ID_SESSION_KEY, id);
       } catch {
         /* ignore persistence errors */
       }
@@ -1286,46 +1792,614 @@ export default function Routing() {
   const [feedbackSubmittingKey, setFeedbackSubmittingKey] = useState<string | null>(null);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
-  const [feedbackSuccessKey, setFeedbackSuccessKey] = useState<string | null>(null);
+  const [feedbackSuccessKey, setFeedbackSuccessKey] = useState<string | null>(
+    () => bootstrap.feedbackSuccessKey
+  );
+  const [scheduleBookTypeId, setScheduleBookTypeId] = useState<number | null>(
+    () => bootstrap.scheduleBookTypeId
+  );
+  const [routingAppointmentTypes, setRoutingAppointmentTypes] = useState<AppointmentType[]>([]);
+  const rescheduleTypeSyncedForApptRef = useRef<number | null>(null);
+  /** Option keys for which POST /appointments succeeded (calendar book flow). */
+  const [scheduleBookedKeys, setScheduleBookedKeys] = useState<Record<string, true>>(
+    () => ({ ...bootstrap.scheduleBookedKeys })
+  );
 
-  // -------- Doctor selection modal (for multi-doctor mode) --------
-  const [showDoctorSelectionModal, setShowDoctorSelectionModal] = useState(false);
-  const [allProviders, setAllProviders] = useState<Array<{ id: string | number; name: string; email: string; pimsId: string }>>([]);
-  const [selectedDoctorIds, setSelectedDoctorIds] = useState<string[]>([]);
-  const [providersLoading, setProvidersLoading] = useState(false);
-  const [pendingEndpoint, setPendingEndpoint] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  async function openMyDay(opt: UnifiedOption) {
-    // 👇 allow undefined here
-    let internalId: string | undefined = doctorIdByPims[opt.doctorPimsId];
+  const [hasActiveRescheduleIntent, setHasActiveRescheduleIntent] = useState(() =>
+    rescheduleIntentIsActive()
+  );
+  const [rescheduleScope, setRescheduleScope] = useState<RoutingRescheduleScope | ''>(() => {
+    const ri = readRoutingRescheduleIntent();
+    if (!ri) return '';
+    if (!rescheduleRequiresScopeChoice(ri)) return 'selected_pet';
+    return ri.rescheduleScope ?? '';
+  });
+  const [rescheduleScopeError, setRescheduleScopeError] = useState(false);
 
-    if (!internalId) {
+  const activeRescheduleIntent = useMemo(
+    () => readRoutingRescheduleIntent(),
+    [hasActiveRescheduleIntent, rescheduleScope, sourceScoreTick]
+  );
+  const showRescheduleScopeField = useMemo(
+    () => hasActiveRescheduleIntent && rescheduleRequiresScopeChoice(activeRescheduleIntent),
+    [hasActiveRescheduleIntent, activeRescheduleIntent]
+  );
+
+  const routingRescheduleHighlightClass = useCallback(
+    (field: RoutingPrefillFlashField | 'scope') => {
+      if (!hasActiveRescheduleIntent) return '';
+      const ri = activeRescheduleIntent;
+      if (!ri) return '';
+      if (field === 'scope') {
+        return showRescheduleScopeField ? ' routing-reschedule-prefill-highlight' : '';
+      }
+      if (field === 'doctor' && !ri.primaryDoctorPimsId?.trim()) return '';
+      if (field === 'client' && !ri.clientId?.trim()) return '';
+      if (field === 'address' && !ri.address?.trim()) return '';
+      if (field === 'minutes' && !(ri.serviceMinutes > 0)) return '';
+      if (
+        field === 'apptType' &&
+        !ri.appointmentTypeName?.trim() &&
+        (ri.appointmentTypeId == null || !Number.isFinite(Number(ri.appointmentTypeId)))
+      ) {
+        return '';
+      }
+      return ' routing-reschedule-prefill-highlight';
+    },
+    [hasActiveRescheduleIntent, activeRescheduleIntent, showRescheduleScopeField]
+  );
+
+  const rescheduleScopePetLabel = useMemo(() => {
+    const ri = activeRescheduleIntent;
+    if (!ri) return 'This pet only';
+    const visit = ri.sameDayVisits?.find((v) => v.patientId === ri.patientId);
+    const name = visit?.patientName?.trim();
+    return name ? `Only ${name}` : 'This pet only';
+  }, [activeRescheduleIntent]);
+
+  const rescheduleHouseholdLabel = useMemo(() => {
+    const count = activeRescheduleIntent?.sameDayVisits?.length ?? 0;
+    return count > 1 ? `All pets today (${count})` : 'All pets today';
+  }, [activeRescheduleIntent]);
+
+  const onRescheduleScopeChange = useCallback((scope: RoutingRescheduleScope) => {
+    setRescheduleScope(scope);
+    setRescheduleScopeError(false);
+    writeRoutingRescheduleScope(scope);
+  }, []);
+
+  const exitRescheduleMode = useCallback(() => {
+    clearRoutingRescheduleIntent();
+    setRescheduleScope('');
+    setRescheduleScopeError(false);
+  }, []);
+
+  const resetRoutingFormAfterRescheduleDismiss = useCallback(() => {
+    setForm((f) => {
+      const empty = createDefaultRoutingForm();
+      const keepDoctorId = f.doctorId.trim();
+      return {
+        ...empty,
+        doctorId: keepDoctorId || empty.doctorId,
+      };
+    });
+    setClientQuery('');
+    setSelectedClientAlerts(null);
+    setRoutingApptStatsTypeKey('');
+    setScheduleBookTypeId(null);
+    setRescheduleScope('');
+    setRescheduleScopeError(false);
+    setResult(null);
+    setFeedbackError(null);
+    setFeedbackToast(null);
+  }, []);
+
+  const rescheduleOriginalVisitForCompare = useMemo(() => {
+    if (!hasActiveRescheduleIntent) return null;
+    return resolveRescheduleOriginalVisitForCompare(
+      result?.rescheduleOriginalBooking,
+      activeRescheduleIntent?.appointmentId,
+      activeRescheduleIntent
+    );
+  }, [
+    hasActiveRescheduleIntent,
+    result?.rescheduleOriginalBooking,
+    activeRescheduleIntent,
+    sourceScoreTick,
+  ]);
+
+  const rescheduleOriginalScoreSummaryLine = useMemo(
+    () =>
+      hasActiveRescheduleIntent
+        ? rescheduleOriginalScoreSummary(rescheduleOriginalVisitForCompare)
+        : null,
+    [hasActiveRescheduleIntent, rescheduleOriginalVisitForCompare]
+  );
+
+  const rescheduleModeSummary = useMemo(() => {
+    const ri = activeRescheduleIntent;
+    if (!ri) return null;
+    const client = ri.clientDisplayLabel?.trim() || 'this household';
+    if (rescheduleScope === 'household_day') {
+      const n = ri.sameDayVisits?.length ?? 0;
+      return n > 1
+        ? `Moving all ${n} pets at ${client} scheduled today`
+        : `Moving ${client}`;
+    }
+    if (rescheduleScope === 'selected_pet') {
+      const visit = ri.sameDayVisits?.find((v) => v.patientId === ri.patientId);
+      const pet = visit?.patientName?.trim();
+      return pet ? `Moving ${pet} (${client})` : `Moving one pet at ${client}`;
+    }
+    if (showRescheduleScopeField) {
+      return `Moving ${client} — choose which pets to reschedule below`;
+    }
+    return `Moving a visit for ${client}`;
+  }, [activeRescheduleIntent, rescheduleScope, showRescheduleScopeField]);
+
+  useEffect(() => {
+    function syncRescheduleIntentFlag() {
+      const active = rescheduleIntentIsActive();
+      setHasActiveRescheduleIntent(active);
+      const ri = readRoutingRescheduleIntent();
+      if (!ri) {
+        setRescheduleScope('');
+        return;
+      }
+      if (!rescheduleRequiresScopeChoice(ri)) {
+        setRescheduleScope('selected_pet');
+        return;
+      }
+      setRescheduleScope(ri.rescheduleScope ?? '');
+    }
+    syncRescheduleIntentFlag();
+    window.addEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, syncRescheduleIntentFlag);
+    return () =>
+      window.removeEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, syncRescheduleIntentFlag);
+  }, []);
+
+  useEffect(() => {
+    const onSourceScore = () => setSourceScoreTick((n) => n + 1);
+    window.addEventListener(ROUTING_RESCHEDULE_SOURCE_SCORE_UPDATED_EVENT, onSourceScore);
+    return () =>
+      window.removeEventListener(ROUTING_RESCHEDULE_SOURCE_SCORE_UPDATED_EVENT, onSourceScore);
+  }, []);
+
+  /** Calendar “Reschedule…” → hydrate Routing form once per intent row. */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function mergeRescheduleIntentFromCalendar() {
+      const intent = readRoutingRescheduleIntent();
+      if (!intent || intent.appliedToRoutingForm) return;
+
+      let resolvedDoctor = resolveRescheduleIntentDoctorPimsId(intent, []);
+      if (!resolvedDoctor) {
+        try {
+          const providerRows = await fetchPrimaryProviders();
+          if (cancelled) return;
+          resolvedDoctor = resolveRescheduleIntentDoctorPimsId(intent, providerRows);
+        } catch {
+          /* routing form can still be filled without doctor */
+        }
+      }
+
+      const pimsDoc = resolvedDoctor?.pimsId ?? intent.primaryDoctorPimsId?.trim() ?? '';
+      const doctorDisplayName =
+        resolvedDoctor?.displayName?.trim() || intent.primaryDoctorDisplayName?.trim() || '';
+
+      if (pimsDoc) {
+        patchRescheduleIntentDoctorPims(pimsDoc, doctorDisplayName, { notify: false });
+      }
+
+      setForm((f) => ({
+        ...f,
+        ...(pimsDoc ? { doctorId: pimsDoc } : {}),
+        newAppt: {
+          ...f.newAppt,
+          serviceMinutes:
+            intent.serviceMinutes > 0 ? intent.serviceMinutes : Math.max(15, f.newAppt.serviceMinutes || 45),
+        },
+      }));
+
+      let syncedClient: Client | null = null;
       try {
-        const { data } = await http.get(`/employees/pims/${encodeURIComponent(opt.doctorPimsId)}`);
-        const emp = Array.isArray(data) ? data[0] : data;
-
-        // 👇 resolve to a temp, then narrow
-        const resolvedId =
-          (emp?.id != null ? String(emp.id) : undefined) ??
-          (emp?.employee?.id != null ? String(emp.employee.id) : undefined);
-
-        if (resolvedId) {
-          internalId = resolvedId;
-          setDoctorIdByPims((m) => ({ ...m, [opt.doctorPimsId]: resolvedId }));
+        const raw = await fetchClientByIdStaff(intent.clientId);
+        if (cancelled) return;
+        syncedClient = staffRecordToRoutingClient(raw);
+        if (syncedClient) {
+          pickClientRef.current(syncedClient);
         }
       } catch {
-        /* ignore; we'll bail below if still missing */
+        /* fall back to label only */
       }
+
+      if (!syncedClient && !cancelled) {
+        const label = intent.clientDisplayLabel?.trim();
+        if (label) {
+          setClientQuery(label);
+          setForm((f) => ({
+            ...f,
+            newAppt: { ...f.newAppt, clientId: intent.clientId },
+          }));
+        }
+      }
+
+      const tid = intent.appointmentTypeId;
+      if (tid != null && Number.isFinite(Number(tid))) setScheduleBookTypeId(Number(tid));
+
+      const pickerTypeName = routingPickerTypeNameForAppointmentType(
+        routingAppointmentTypes,
+        tid,
+        intent.appointmentTypeName
+      );
+      if (pickerTypeName) {
+        setRoutingApptStatsTypeKey(pickerTypeName);
+        rescheduleTypeSyncedForApptRef.current = intent.appointmentId;
+      } else if (intent.appointmentTypeName?.trim()) {
+        setRoutingApptStatsTypeKey(intent.appointmentTypeName.trim());
+      }
+
+      const typeName = pickerTypeName ?? intent.appointmentTypeName?.trim();
+
+      if (!syncedClient) {
+        const alerts = intent.clientAlerts;
+        if (alerts !== undefined && alerts !== null) setSelectedClientAlerts(alerts);
+      }
+
+      if (pimsDoc) {
+        setDoctorQuery(doctorDisplayName || `Doctor ${pimsDoc}`);
+      }
+
+      const flashFields: RoutingPrefillFlashField[] = [];
+      if (pimsDoc) flashFields.push('doctor');
+      if (syncedClient || intent.clientDisplayLabel?.trim()) flashFields.push('client');
+      if (syncedClient && formatClientAddress(syncedClient)) flashFields.push('address');
+      if (intent.serviceMinutes > 0) flashFields.push('minutes');
+      if (typeName || (tid != null && Number.isFinite(Number(tid)))) flashFields.push('apptType');
+      if (flashFields.length > 0) triggerRoutingPrefillFlash(flashFields);
+
+      if (!rescheduleRequiresScopeChoice(intent)) {
+        setRescheduleScope('selected_pet');
+      } else {
+        setRescheduleScope(intent.rescheduleScope ?? '');
+      }
+      setRescheduleScopeError(false);
+
+      setResult(null);
+      setFeedbackError(null);
+      setFeedbackToast('Reschedule: client loaded. Run routing, open My Week, then confirm the new time.');
+      markRescheduleIntentAppliedToRoutingForm();
+      void fetchAndCacheRescheduleSourcePlacementSnapshot(intent).then(() => {
+        if (!cancelled) setSourceScoreTick((n) => n + 1);
+      });
     }
 
-    if (!internalId) return; // couldn’t resolve → don’t open
+    void mergeRescheduleIntentFromCalendar();
+    const onIntentUpdated = () => {
+      void mergeRescheduleIntentFromCalendar();
+    };
+    window.addEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, onIntentUpdated);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT, onIntentUpdated);
+    };
+  }, [triggerRoutingPrefillFlash, routingAppointmentTypes]);
 
-    // Pass INTERNAL id via the same property your Preview/DoctorDay read
-    setSchedulePreview({ opt: { ...opt, doctorPimsId: internalId }, scope: 'day' });
-  }
-  function closeSchedulePreview() {
-    setSchedulePreview(null);
-  }
+  /** Reschedule: hydrate Calculate Time type once doctor types load (picker uses `name`, not prettyName). */
+  useEffect(() => {
+    if (!hasActiveRescheduleIntent) {
+      rescheduleTypeSyncedForApptRef.current = null;
+      return;
+    }
+    const ri = readRoutingRescheduleIntent();
+    if (!ri?.appointmentTypeId && !ri?.appointmentTypeName?.trim()) return;
+    if (!form.doctorId.trim() || routingAppointmentTypes.length === 0) return;
+
+    const needsSync =
+      !routingApptStatsTypeKey.trim() ||
+      rescheduleTypeSyncedForApptRef.current !== ri.appointmentId;
+    if (!needsSync) return;
+
+    const pickerTypeName = routingPickerTypeNameForAppointmentType(
+      routingAppointmentTypes,
+      ri.appointmentTypeId ?? scheduleBookTypeId,
+      ri.appointmentTypeName
+    );
+    if (!pickerTypeName) return;
+
+    setRoutingApptStatsTypeKey(pickerTypeName);
+    const matched = routingAppointmentTypes.find(
+      (t) => String(t.name ?? '').trim() === pickerTypeName
+    );
+    if (matched?.id != null) setScheduleBookTypeId(Number(matched.id));
+    rescheduleTypeSyncedForApptRef.current = ri.appointmentId;
+  }, [
+    hasActiveRescheduleIntent,
+    form.doctorId,
+    routingAppointmentTypes,
+    routingApptStatsTypeKey,
+    scheduleBookTypeId,
+  ]);
+
+  /** Forward booking list → hydrate Routing form once per intent row. */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function mergeForwardBookingIntentFromList() {
+      const intent = readRoutingForwardBookingIntent();
+      if (!intent || intent.appliedToRoutingForm) return;
+      if (readRoutingRescheduleIntent()) return;
+
+      let resolvedDoctor = resolveRescheduleIntentDoctorPimsId(intent, []);
+      if (!resolvedDoctor) {
+        try {
+          const providerRows = await fetchPrimaryProviders();
+          if (cancelled) return;
+          resolvedDoctor = resolveRescheduleIntentDoctorPimsId(intent, providerRows);
+        } catch {
+          /* optional */
+        }
+      }
+
+      const pimsDoc = resolvedDoctor?.pimsId ?? intent.primaryDoctorPimsId?.trim() ?? '';
+      const doctorDisplayName =
+        resolvedDoctor?.displayName?.trim() || intent.primaryDoctorDisplayName?.trim() || '';
+
+      const routingDates = forwardBookingRoutingSearchDateRange({
+        intervalAmount: intent.intervalAmount,
+        intervalUnit: intent.intervalUnit,
+        targetDueDateIso: intent.targetDueDate,
+        practiceTz: DEFAULT_PRACTICE_TIMEZONE,
+      });
+
+      setForm((f) => ({
+        ...f,
+        ...(pimsDoc ? { doctorId: pimsDoc } : {}),
+        ...(routingDates
+          ? { startDate: routingDates.startDate, endDate: routingDates.endDate }
+          : {}),
+        newAppt: {
+          ...f.newAppt,
+          serviceMinutes:
+            intent.serviceMinutes > 0 ? intent.serviceMinutes : Math.max(15, f.newAppt.serviceMinutes || 45),
+        },
+      }));
+
+      let syncedClient: Client | null = null;
+      try {
+        const raw = await fetchClientByIdStaff(intent.clientId);
+        if (cancelled) return;
+        syncedClient = staffRecordToRoutingClient(raw);
+        if (syncedClient) {
+          pickClientRef.current(syncedClient);
+        }
+      } catch {
+        /* fall back to label only */
+      }
+
+      if (!syncedClient && !cancelled) {
+        const label = intent.clientDisplayLabel?.trim();
+        if (label) {
+          setClientQuery(label);
+          setForm((f) => ({
+            ...f,
+            newAppt: { ...f.newAppt, clientId: intent.clientId },
+          }));
+        }
+      }
+
+      const tid = intent.appointmentTypeId;
+      if (tid != null && Number.isFinite(Number(tid))) setScheduleBookTypeId(Number(tid));
+
+      const typeName = intent.appointmentTypeName?.trim();
+      if (typeName) setRoutingApptStatsTypeKey(typeName);
+
+      if (!syncedClient) {
+        const alerts = intent.clientAlerts;
+        if (alerts !== undefined && alerts !== null) setSelectedClientAlerts(alerts);
+      }
+
+      if (pimsDoc) {
+        setDoctorQuery(doctorDisplayName || `Doctor ${pimsDoc}`);
+      }
+
+      const flashFields: RoutingPrefillFlashField[] = [];
+      if (pimsDoc) flashFields.push('doctor');
+      if (syncedClient || intent.clientDisplayLabel?.trim()) flashFields.push('client');
+      if (syncedClient && formatClientAddress(syncedClient)) flashFields.push('address');
+      if (intent.serviceMinutes > 0) flashFields.push('minutes');
+      if (typeName || (tid != null && Number.isFinite(Number(tid)))) flashFields.push('apptType');
+      if (flashFields.length > 0) triggerRoutingPrefillFlash(flashFields);
+
+      setResult(null);
+      setFeedbackError(null);
+      const intervalLabel = formatForwardBookingIntervalLabel({
+        intervalAmount: intent.intervalAmount,
+        intervalUnit: intent.intervalUnit,
+      });
+      const rangeHint = routingDates
+        ? ` Search ${routingDates.startDate}–${routingDates.endDate}.`
+        : '';
+      const dueHint = intent.targetDueDate
+        ? ` Target around ${intent.targetDueDate.slice(0, 10)} (${intervalLabel}).`
+        : ` Book ${intervalLabel}.`;
+      setFeedbackToast(
+        `Follow-up booking: client loaded.${dueHint}${rangeHint} Run routing and preview a slot.`
+      );
+      markForwardBookingIntentAppliedToRoutingForm();
+    }
+
+    void mergeForwardBookingIntentFromList();
+    const onIntentUpdated = () => {
+      void mergeForwardBookingIntentFromList();
+    };
+    window.addEventListener(ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT, onIntentUpdated);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT, onIntentUpdated);
+    };
+  }, [triggerRoutingPrefillFlash]);
+
+  useEffect(() => {
+    if (!calendarWorkspaceMode) return;
+    function onDismissReschedule() {
+      setHasActiveRescheduleIntent(false);
+      resetRoutingFormAfterRescheduleDismiss();
+    }
+    window.addEventListener(ROUTING_DISMISS_RESCHEDULE_EVENT, onDismissReschedule);
+    return () => window.removeEventListener(ROUTING_DISMISS_RESCHEDULE_EVENT, onDismissReschedule);
+  }, [calendarWorkspaceMode, resetRoutingFormAfterRescheduleDismiss]);
+
+  /** Clear stale routing results when the search doctor changes; calendar stays on the source visit. */
+  const prevRescheduleSearchDoctorRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!hasActiveRescheduleIntent) {
+      prevRescheduleSearchDoctorRef.current = null;
+      return;
+    }
+    const doc = form.doctorId.trim();
+    const prev = prevRescheduleSearchDoctorRef.current;
+    prevRescheduleSearchDoctorRef.current = doc;
+    if (prev == null || prev === doc) return;
+    setResult(null);
+    setFeedbackError(null);
+    setFeedbackToast(null);
+    setScheduleBookedKeys({});
+  }, [form.doctorId, hasActiveRescheduleIntent]);
+
+  /** Leave reschedule mode when client changes on the routing form (not when dismissing a preview slot). */
+  useEffect(() => {
+    const ri = readRoutingRescheduleIntent();
+    if (!ri?.appliedToRoutingForm) return;
+
+    const anchorClient = ri.clientId?.trim();
+    const currentClient = form.newAppt.clientId?.trim();
+    if (anchorClient && currentClient && currentClient !== anchorClient) {
+      exitRescheduleMode();
+    }
+  }, [form.newAppt.clientId, exitRescheduleMode]);
+
+  useEffect(() => {
+    if (!authToken) clearRoutingUiSnapshot();
+  }, [authToken]);
+
+  /** Practice calendar (embedded) completed a book/reschedule — drop routing candidates from the pane. */
+  useEffect(() => {
+    if (!calendarWorkspaceMode) return;
+    function clearRoutingAfterCalendarBook() {
+      setResult(null);
+      setError(null);
+      setFeedbackError(null);
+      setFeedbackToast(null);
+      setFeedbackSubmittingKey(null);
+      setFeedbackSuccessKey(null);
+      setScheduleBookedKeys({});
+      setLatestRoutingRequestId(null);
+      if (typeof window !== 'undefined') {
+        try {
+          sessionStorage.removeItem(ROUTING_REQUEST_ID_SESSION_KEY);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    window.addEventListener(ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT, clearRoutingAfterCalendarBook);
+    return () =>
+      window.removeEventListener(ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT, clearRoutingAfterCalendarBook);
+  }, [calendarWorkspaceMode]);
+
+  useEffect(() => {
+    if (!authToken || !authDoctorInternalId?.trim()) return;
+    const pendingReschedule = readRoutingRescheduleIntent();
+    if (pendingReschedule && !pendingReschedule.appliedToRoutingForm) return;
+    const internal = authDoctorInternalId.trim();
+    const cacheUserId = authUserId?.trim() || null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await http.get(`/employees/${encodeURIComponent(internal)}`);
+        const emp = Array.isArray(data) ? data[0] : data;
+        const pimsRaw =
+          emp?.pimsId != null
+            ? String(emp.pimsId)
+            : emp?.employee?.pimsId != null
+              ? String(emp.employee.pimsId)
+              : '';
+        const pimsId = pimsRaw.trim();
+        if (cancelled || !pimsId) return;
+        const displayName = buildDoctorName(emp, `Doctor ${pimsId}`);
+        if (cacheUserId) writeAuthDoctorCache(cacheUserId, pimsId, displayName);
+        setForm((f) => (f.doctorId.trim() ? f : { ...f, doctorId: pimsId }));
+        setDoctorQuery((q) => (q.trim() ? q : displayName));
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken, authUserId, authDoctorInternalId]);
+
+  useEffect(() => {
+    if (loading || !authToken) return;
+    const uid = authUserId?.trim() || null;
+    writeRoutingUiSnapshot({
+      v: 1,
+      userId: uid,
+      form,
+      result,
+      multiDoctor,
+      useTraffic,
+      preferredWeekday,
+      preferredTimeOfDay,
+      preferEarliestFeasibleStart,
+      edgeFirst,
+      edgeLast,
+      reserveOption,
+      clientQuery,
+      doctorQuery,
+      doctorNames,
+      scheduleBookedKeys,
+      feedbackSuccessKey,
+      selectedClientAlerts,
+      scheduleBookTypeId,
+      routingApptStatsTypeKey,
+    });
+  }, [
+    loading,
+    authToken,
+    authUserId,
+    form,
+    result,
+    multiDoctor,
+    useTraffic,
+    preferredWeekday,
+    preferredTimeOfDay,
+    preferEarliestFeasibleStart,
+    edgeFirst,
+    edgeLast,
+    reserveOption,
+    clientQuery,
+    doctorQuery,
+    doctorNames,
+    scheduleBookedKeys,
+    feedbackSuccessKey,
+    selectedClientAlerts,
+    scheduleBookTypeId,
+    routingApptStatsTypeKey,
+  ]);
+
+  useEffect(() => {
+    const b = searchParams.get('booked');
+    if (!b) return;
+    setScheduleBookedKeys((m) => ({ ...m, [b]: true }));
+    setFeedbackToast('Appointment added to the schedule.');
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   async function openMyWeek(opt: UnifiedOption) {
     let internalId: string | undefined = doctorIdByPims[opt.doctorPimsId];
@@ -1345,54 +2419,119 @@ export default function Routing() {
       }
     }
     if (!internalId) return;
-    setSchedulePreview({ opt: { ...opt, doctorPimsId: internalId }, scope: 'week' });
+
+    const hasCoords =
+      Number.isFinite(form.newAppt.lat as number) && Number.isFinite(form.newAppt.lon as number);
+    const hasAddress = (form.newAppt.address ?? '').trim().length > 0;
+    if (!hasCoords) {
+      setFeedbackError(
+        hasAddress
+          ? 'Verify the address before viewing placement on the calendar.'
+          : 'Select a client or enter a valid street address.'
+      );
+      return;
+    }
+    const appointmentTypeId = resolveScheduleBookTypeId();
+    if (appointmentTypeId == null) {
+      setFeedbackError(
+        routingAppointmentTypes.length === 0
+          ? 'Appointment types are still loading. Try again in a moment.'
+          : 'Could not determine an appointment type for calendar preview.'
+      );
+      return;
+    }
+    setScheduleBookTypeId(appointmentTypeId);
+    if (!opt.suggestedStartIso) {
+      setFeedbackError('This option has no suggested start time.');
+      return;
+    }
+
+    setFeedbackError(null);
+    const listOptionKey = routingOptionKey(opt);
+    const merged = { ...opt, doctorPimsId: internalId } as UnifiedOption;
+    const routingRequestId =
+      opt.routingRequestId ?? latestRoutingRequestId ?? deriveRoutingRequestId(result) ?? undefined;
+    const topForIndex = result ? routingTopCandidatesFromResult(result) : [];
+    const candidateIndex = resolveRoutingCandidateIndex(opt, topForIndex);
+
+    const payload: RoutingCalendarPreviewPayloadV1 = {
+      version: 1,
+      listOptionKey,
+      option: { ...(merged as unknown as Record<string, unknown>), doctorPimsId: internalId } as RoutingCalendarPreviewPayloadV1['option'],
+      serviceMinutes: Math.max(1, Number(form.newAppt.serviceMinutes) || 30),
+      newApptMeta: {
+        ...(form.newAppt.clientId?.trim()
+          ? { clientId: form.newAppt.clientId.trim() }
+          : {}),
+        address: form.newAppt.address,
+        lat: form.newAppt.lat,
+        lon: form.newAppt.lon,
+      },
+      appointmentTypeId,
+      appointmentTypeChosenInRouting: Boolean(routingApptStatsTypeKey.trim()),
+      ...(routingApptStatsTypeKey.trim()
+        ? { routingStatsTypeKey: routingApptStatsTypeKey.trim() }
+        : {}),
+      clientDisplayLabel: form.newAppt.clientId?.trim() ? clientQuery.trim() || undefined : undefined,
+      routingRequestId,
+      candidateIndex,
+      candidateId: opt.candidateId,
+    };
+    const rescheduleRow = readRoutingRescheduleIntent();
+    if (rescheduleRow) {
+      if (rescheduleRequiresScopeChoice(rescheduleRow) && !rescheduleRow.rescheduleScope) {
+        setRescheduleScopeError(true);
+        setFeedbackError('Choose whether to reschedule only this pet or all pets at this household today.');
+        return;
+      }
+      const targets = rescheduleScopeTargets(rescheduleRow);
+      payload.rescheduleAppointmentId = targets.appointmentIds[0];
+      payload.rescheduleAppointmentIds =
+        targets.appointmentIds.length > 0 ? targets.appointmentIds : [rescheduleRow.appointmentId];
+      payload.reschedulePatientId = targets.patientId;
+      const visitsForPreview =
+        rescheduleRow.rescheduleScope === 'household_day'
+          ? targets.visits
+          : targets.visits.length > 0
+            ? [targets.visits[0]!]
+            : [];
+      if (visitsForPreview.length > 0) {
+        payload.previewPatients = visitsForPreview.map((v) => ({
+          id: v.patientId,
+          name: v.patientName?.trim() || `Pet ${v.patientId}`,
+        }));
+      }
+      let sourceSnapshot = resolveRescheduleOriginalVisitForCompare(
+        result?.rescheduleOriginalBooking,
+        rescheduleRow.appointmentId,
+        rescheduleRow
+      );
+      if (!sourceSnapshot?.found) {
+        sourceSnapshot = await fetchAndCacheRescheduleSourcePlacementSnapshot(rescheduleRow);
+      }
+      if (sourceSnapshot) {
+        payload.rescheduleSourceVisitSnapshot = sourceSnapshot;
+      }
+    }
+    writeRoutingCalendarPreview(payload);
+    if (calendarWorkspaceMode) {
+      setCalendarPreviewTick((n) => n + 1);
+    } else {
+      navigate('/schedule/scheduler?routingPreview=1');
+    }
+  }
+
+  function focusRescheduleSourceOnCalendar() {
+    if (!calendarWorkspaceMode || !hasActiveRescheduleIntent) return;
+    clearRoutingCalendarPreview();
+    setCalendarPreviewTick((n) => n + 1);
+    window.dispatchEvent(new Event(ROUTING_FOCUS_RESCHEDULE_SOURCE_EVENT));
   }
 
   const hasFinalSelection = feedbackSuccessKey != null;
 
-  async function submitFeedbackForOption(opt: UnifiedOption) {
-    if (hasFinalSelection) return;
-    const optionKey = `${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${opt.candidateIndex ?? ''}`;
-    setFeedbackSubmittingKey(optionKey);
-    setFeedbackError(null);
-    setFeedbackToast(null);
-
-    const routingRequestId =
-      opt.routingRequestId ?? latestRoutingRequestId ?? deriveRoutingRequestId(result);
-    if (!routingRequestId) {
-      setFeedbackError('Missing routing request identifier for this suggestion.');
-      setFeedbackSubmittingKey(null);
-      return;
-    }
-
-    const payload: {
-      routingRequestId: string;
-      appointmentId?: number;
-      candidateId?: string;
-      candidateIndex?: number;
-      selectionStatus?: 'accepted' | 'rejected';
-    } = {
-      routingRequestId,
-      selectionStatus: 'accepted',
-    };
-
-    if (opt.appointmentId != null) {
-      const appointmentId = Number(opt.appointmentId);
-      if (Number.isFinite(appointmentId)) payload.appointmentId = appointmentId;
-    }
-    if (opt.candidateId) payload.candidateId = opt.candidateId;
-    if (opt.candidateIndex != null) payload.candidateIndex = opt.candidateIndex;
-
-    try {
-      await http.post('/routing/feedback', payload);
-      rememberRoutingRequestId(routingRequestId);
-      setFeedbackToast('Thanks! Your selection was recorded.');
-      setFeedbackSuccessKey(optionKey);
-    } catch (err) {
-      setFeedbackError(extractErrorMessage(err));
-    } finally {
-      setFeedbackSubmittingKey(null);
-    }
+  function routingOptionKey(opt: UnifiedOption): string {
+    return `${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${opt.candidateIndex ?? ''}`;
   }
 
   async function submitFeedbackForNone() {
@@ -1415,7 +2554,7 @@ export default function Routing() {
     };
 
     try {
-      await http.post('/routing/feedback', payload);
+      await submitRoutingFeedback(payload);
       rememberRoutingRequestId(routingRequestId);
       setFeedbackToast('Thanks! We recorded that none of the suggestions were chosen.');
       setFeedbackSuccessKey(NONE_SELECTION_KEY);
@@ -1492,9 +2631,52 @@ export default function Routing() {
     };
   }, [feedbackToast]);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetchAllAppointmentTypes(ROUTING_PRACTICE_ID, { activeOnly: true })
+      .then((rows) => {
+        if (cancelled) return;
+        const active = rows
+          .map((t) => normalizeAppointmentTypeFromApi(t))
+          .filter((t) => appointmentTypeIncludedInRouting(t));
+        setRoutingAppointmentTypes(active);
+        const prefer =
+          active.find((t) =>
+            /wellness|standard|check-up|checkup|office/i.test(String(t.prettyName || t.name || ''))
+          ) ?? active[0];
+        if (prefer?.id != null) {
+          setScheduleBookTypeId((cur) => (cur != null ? cur : Number(prefer.id)));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // =========================
   // Effects
   // =========================
+
+  /** Drop stale clientId from session restore when the client field is empty (e.g. prior visit). */
+  useEffect(() => {
+    if (clientQuery.trim()) return;
+    setForm((f) => {
+      if (!f.newAppt.clientId?.trim()) return f;
+      return { ...f, newAppt: { ...f.newAppt, clientId: undefined } };
+    });
+  }, []);
+
+  /** New client → clear scheduling prefs (not reserve handling); doctor, dates, and calculate-time stay. */
+  useEffect(() => {
+    const nextId = form.newAppt.clientId?.trim() || null;
+    if (!nextId) return;
+    const prevId = lastRoutingClientIdRef.current;
+    if (prevId && prevId !== nextId) {
+      resetRoutingSchedulePrefs();
+    }
+    lastRoutingClientIdRef.current = nextId;
+  }, [form.newAppt.clientId, resetRoutingSchedulePrefs]);
 
   // Client search
   useEffect(() => {
@@ -1557,16 +2739,12 @@ export default function Routing() {
       if (doctorBoxRef.current && !doctorBoxRef.current.contains(e.target as Node)) {
         setShowDoctorDropdown(false);
       }
-      if (apptLengthsWrapRef.current && !apptLengthsWrapRef.current.contains(e.target as Node)) {
-        setApptLengthsOpen(false);
-      }
     }
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
   useEffect(() => {
-    setApptLengthsOpen(false);
     setRoutingApptStatsTypeKey('');
     setRoutingPetCount(1);
     if (!form.doctorId.trim()) {
@@ -1604,42 +2782,214 @@ export default function Routing() {
     void loadApptLengthStats();
   }, [form.doctorId, loadApptLengthStats]);
 
-  useEffect(() => {
-    if (!routingApptStatsTypeKey) return;
-    const row = apptLengthsRows.find((r) => r.typeName === routingApptStatsTypeKey);
-    if (!row) return;
-    const mins = estimatedServiceMinutesFromStatsRow(row, routingPetCount);
-    if (mins == null || mins < 1) return;
-    setForm((f) => ({
-      ...f,
-      newAppt: { ...f.newAppt, serviceMinutes: mins },
-    }));
-  }, [routingApptStatsTypeKey, routingPetCount, apptLengthsRows]);
+  function routingAppointmentTypeForStatsKey(typeKey: string): AppointmentType | undefined {
+    return appointmentTypeForRoutingStatsKey(typeKey, routingAppointmentTypes);
+  }
 
+  /** Keep scheduleBookTypeId aligned when appointment types load after a Calculate Time pick. */
   useEffect(() => {
-    if (!apptLengthsOpen) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setApptLengthsOpen(false);
+    const key = routingApptStatsTypeKey.trim();
+    if (!key || routingAppointmentTypes.length === 0) return;
+    const matched = routingAppointmentTypeForStatsKey(key);
+    if (matched?.id != null) {
+      setScheduleBookTypeId(Number(matched.id));
     }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [apptLengthsOpen]);
+  }, [routingApptStatsTypeKey, routingAppointmentTypes]);
+
+  /** Keep calendar preview appointment type in sync when Calculate Time changes after View Placement. */
+  useEffect(() => {
+    const key = routingApptStatsTypeKey.trim();
+    if (!key || routingAppointmentTypes.length === 0) return;
+    const preview = readRoutingCalendarPreview();
+    if (!preview) return;
+    const typeId = resolveRoutingChosenAppointmentTypeId({
+      statsTypeKey: key,
+      scheduleBookTypeId,
+      types: routingAppointmentTypes,
+      previewTypeId: preview.appointmentTypeId,
+      previewTypeChosenInRouting: preview.appointmentTypeChosenInRouting,
+    });
+    if (typeId == null) return;
+    if (
+      preview.appointmentTypeId === typeId &&
+      preview.appointmentTypeChosenInRouting === true
+    ) {
+      return;
+    }
+    writeRoutingCalendarPreview({
+      ...preview,
+      appointmentTypeId: typeId,
+      appointmentTypeChosenInRouting: true,
+      routingStatsTypeKey: key,
+    });
+  }, [routingApptStatsTypeKey, scheduleBookTypeId, routingAppointmentTypes]);
+
+  const routingApptTypePickerOptions = useMemo(() => {
+    const statsByNorm = new Map<string, AvgMinutesByTypeRow>();
+    for (const row of apptLengthsRows) {
+      const norm = normalizeAppointmentType(row.typeName);
+      if (norm) statsByNorm.set(norm, row);
+    }
+    return routingAppointmentTypes
+      .map((t) => {
+        const typeName = String(t.name ?? '').trim();
+        if (!typeName) return null;
+        const norm = normalizeAppointmentType(typeName);
+        const prettyNorm = normalizeAppointmentType(t.prettyName);
+        const statsRow =
+          statsByNorm.get(norm) ??
+          (prettyNorm ? statsByNorm.get(prettyNorm) : undefined) ??
+          apptLengthsRows.find((row) => {
+            const rowNorm = normalizeAppointmentType(row.typeName);
+            return rowNorm === norm || rowNorm === prettyNorm;
+          });
+        return { typeName, statsRow: statsRow ?? null };
+      })
+      .filter((o): o is { typeName: string; statsRow: AvgMinutesByTypeRow | null } => o != null)
+      .sort((a, b) => a.typeName.localeCompare(b.typeName, undefined, { sensitivity: 'base' }));
+  }, [apptLengthsRows, routingAppointmentTypes]);
 
   useEffect(() => {
-    if (!apptLengthsOpen) return;
-    const mq = window.matchMedia('(max-width: 640px)');
-    if (!mq.matches) return undefined;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const onMq = () => {
-      document.body.style.overflow = mq.matches ? 'hidden' : prev;
+    if (!routingApptStatsTypeKey.trim()) return;
+    const stillValid = routingApptTypePickerOptions.some((o) => o.typeName === routingApptStatsTypeKey);
+    if (stillValid) return;
+
+    const remapFromId = (typeId: number | null | undefined) => {
+      if (typeId == null || !Number.isFinite(Number(typeId))) return false;
+      const key = routingPickerTypeNameForAppointmentType(routingAppointmentTypes, typeId);
+      if (!key || !routingApptTypePickerOptions.some((o) => o.typeName === key)) return false;
+      setRoutingApptStatsTypeKey(key);
+      return true;
     };
-    mq.addEventListener('change', onMq);
-    return () => {
-      mq.removeEventListener('change', onMq);
-      document.body.style.overflow = prev;
-    };
-  }, [apptLengthsOpen]);
+
+    if (remapFromId(scheduleBookTypeId)) return;
+
+    if (hasActiveRescheduleIntent) {
+      const ri = readRoutingRescheduleIntent();
+      if (remapFromId(ri?.appointmentTypeId)) return;
+    }
+
+    if (form.doctorId.trim() && (apptLengthsLoading || routingAppointmentTypes.length === 0)) return;
+
+    setRoutingApptStatsTypeKey('');
+    setRoutingPetCount(1);
+  }, [
+    routingApptStatsTypeKey,
+    routingApptTypePickerOptions,
+    routingAppointmentTypes,
+    scheduleBookTypeId,
+    hasActiveRescheduleIntent,
+    form.doctorId,
+    apptLengthsLoading,
+  ]);
+
+  function defaultDurationMinutesForRoutingType(typeKey: string, pets: number): number | null {
+    return defaultDurationMinutesForRoutingTypeSelection(
+      routingAppointmentTypeForStatsKey(typeKey),
+      pets
+    );
+  }
+
+  const applyRoutingServiceMinutes = useCallback(
+    (typeKey: string, pets: number, opts?: { pulse?: boolean }) => {
+      if (hasActiveRescheduleIntent) return;
+      const mins = estimateRoutingServiceMinutesForSelection(
+        typeKey,
+        pets,
+        apptLengthsRows,
+        routingAppointmentTypeForStatsKey
+      );
+      if (mins == null) return;
+
+      const comboKey = `${typeKey.trim()}|${pets}`;
+      const comboChanged = routingCalcComboKeyRef.current !== comboKey;
+      routingCalcComboKeyRef.current = comboKey;
+
+      let didUpdateMinutes = false;
+      setForm((f) => {
+        if (f.newAppt.serviceMinutes === mins) return f;
+        didUpdateMinutes = true;
+        return { ...f, newAppt: { ...f.newAppt, serviceMinutes: mins } };
+      });
+
+      if (opts?.pulse !== false && (didUpdateMinutes || comboChanged)) {
+        triggerRoutingMinutesPulse();
+      }
+    },
+    [
+      hasActiveRescheduleIntent,
+      apptLengthsRows,
+      routingAppointmentTypes,
+      triggerRoutingMinutesPulse,
+    ]
+  );
+
+  /** Calendar preview book type — explicit Calculate Time pick, then stored id, then practice default. */
+  function resolveScheduleBookTypeId(): number | null {
+    const fromStatsKey = routingApptStatsTypeKey.trim();
+    if (fromStatsKey) {
+      const fromStats = routingAppointmentTypeForStatsKey(fromStatsKey);
+      if (fromStats?.id != null) return Number(fromStats.id);
+      if (scheduleBookTypeId != null && Number.isFinite(scheduleBookTypeId) && scheduleBookTypeId > 0) {
+        return scheduleBookTypeId;
+      }
+      return null;
+    }
+    if (scheduleBookTypeId != null && Number.isFinite(scheduleBookTypeId) && scheduleBookTypeId > 0) {
+      return scheduleBookTypeId;
+    }
+    const prefer =
+      routingAppointmentTypes.find((t) =>
+        /wellness|standard|check-up|checkup|office/i.test(String(t.prettyName || t.name || ''))
+      ) ?? routingAppointmentTypes[0];
+    if (prefer?.id != null) return Number(prefer.id);
+    return null;
+  }
+
+  /** POST /routing/v2 `newAppt.appointmentTypeId` — when Calculate Time type is selected (or reschedule prefill). */
+  function routingRequestAppointmentTypeId(): number | undefined {
+    const typeKey = routingApptStatsTypeKey.trim();
+    if (typeKey) {
+      const matched = routingAppointmentTypeForStatsKey(typeKey);
+      const id = matched?.id != null ? Number(matched.id) : NaN;
+      if (Number.isFinite(id) && id > 0) return id;
+    }
+    if (
+      hasActiveRescheduleIntent &&
+      scheduleBookTypeId != null &&
+      Number.isFinite(scheduleBookTypeId) &&
+      scheduleBookTypeId > 0
+    ) {
+      return scheduleBookTypeId;
+    }
+    return undefined;
+  }
+
+  /** Selected Calculate Time type forbids a client but the form still has one attached. */
+  function getRoutingClientTypeConflictMessage(): string | null {
+    if (!form.newAppt.clientId?.trim()) return null;
+    const typeKey = routingApptStatsTypeKey.trim();
+    if (!typeKey) return null;
+    const matched = routingAppointmentTypeForStatsKey(typeKey);
+    if (!matched || appointmentTypeAllowsClient(matched)) return null;
+    const label = String(matched.prettyName || matched.name || 'This appointment type').trim();
+    return `${label} does not allow a client. Clear the client field or choose a different appointment type.`;
+  }
+
+  useEffect(() => {
+    if (hasActiveRescheduleIntent) return;
+    if (!routingApptStatsTypeKey.trim()) {
+      routingCalcComboKeyRef.current = null;
+      return;
+    }
+    applyRoutingServiceMinutes(routingApptStatsTypeKey, routingPetCount, { pulse: false });
+  }, [
+    hasActiveRescheduleIntent,
+    routingApptStatsTypeKey,
+    routingPetCount,
+    apptLengthsRows,
+    applyRoutingServiceMinutes,
+  ]);
 
   // Fetch doctor name if missing
   useEffect(() => {
@@ -1679,6 +3029,7 @@ export default function Routing() {
     setForm((f) => {
       if (key === 'address') {
         setAddressError(null);
+        setSelectedClientAlerts(null);
         return {
           ...f,
           newAppt: {
@@ -1686,6 +3037,7 @@ export default function Routing() {
             address: (value as string) ?? '',
             lat: undefined,
             lon: undefined,
+            clientId: undefined,
           },
         };
       }
@@ -1715,6 +3067,7 @@ export default function Routing() {
     setShowClientDropdown(false);
     setSelectedClientAlerts((c as any).alerts ?? null);
   }
+  pickClientRef.current = pickClient;
 
   function pickDoctor(d: Doctor) {
     const pimsId = doctorPimsIdOf(d);
@@ -1722,10 +3075,25 @@ export default function Routing() {
       console.warn('No pimsId on doctor record', d);
       return;
     }
+    setDoctorRequiredBeforeApptType(false);
     setForm((f) => ({ ...f, doctorId: pimsId }));
     setDoctorQuery(localDoctorDisplayName(d));
     setDoctorResults([]);
     setShowDoctorDropdown(false);
+  }
+
+  function promptDoctorBeforeApptType() {
+    setDoctorRequiredBeforeApptType(true);
+    const input = doctorBoxRef.current?.querySelector('input');
+    if (input instanceof HTMLInputElement) input.focus();
+  }
+
+  function diffDaysInclusive(aISO: string, bISO: string) {
+    const a = new Date(aISO + 'T00:00:00');
+    const b = new Date(bISO + 'T00:00:00');
+    const ms = b.getTime() - a.getTime();
+    const days = Math.floor(ms / (1000 * 60 * 60 * 24));
+    return days + 1;
   }
 
   async function submitRoutingRequest(endpoint: string, doctorIdsArray?: string[]) {
@@ -1736,6 +3104,13 @@ export default function Routing() {
     setFeedbackSuccessKey(null);
     setFeedbackToast(null);
     setFeedbackError(null);
+    setScheduleBookedKeys({});
+
+    const clientTypeConflict = getRoutingClientTypeConflictMessage();
+    if (clientTypeConflict) {
+      setError(clientTypeConflict);
+      return;
+    }
 
     if (routingCalendarDatePart(form.endDate) < routingCalendarDatePart(form.startDate)) {
       setError('End date must be on or after the start date.');
@@ -1779,6 +3154,11 @@ export default function Routing() {
         setAddressError(msg);
         return;
       }
+    }
+
+    const routingTypeId = routingRequestAppointmentTypeId();
+    if (routingTypeId != null) {
+      newApptPayload = { ...newApptPayload, appointmentTypeId: routingTypeId };
     }
 
     const isV2 = endpoint.includes('/v2');
@@ -1838,17 +3218,15 @@ export default function Routing() {
     if (isV2) {
       // v2 endpoint supports new multi-doctor format
       if (multiDoctor && doctorIdsArray && doctorIdsArray.length > 0) {
-        // Use doctorIds array when provided (from modal selection)
         payload = {
           doctorIds: doctorIdsArray,
           ...base,
           maxAddedDriveMinutes,
         };
       } else if (multiDoctor) {
-        // Fallback to allowOtherDoctors if no doctorIds provided
+        const ids = form.doctorId.trim() ? [form.doctorId.trim()] : [];
         payload = {
-          doctorId: form.doctorId, // Primary doctor (preferred in tie-breakers)
-          allowOtherDoctors: true, // Search all available doctors
+          doctorIds: ids,
           ...base,
           maxAddedDriveMinutes,
         };
@@ -1866,6 +3244,17 @@ export default function Routing() {
         : { doctorId: form.doctorId, ...base };
     }
 
+    if (isV2) {
+      const rescheduleContext = buildRoutingRescheduleContextForSlotSearch(
+        readRoutingRescheduleIntent(),
+        routingStartDate,
+        routingEndDate
+      );
+      if (rescheduleContext) {
+        payload = { ...payload, rescheduleContext };
+      }
+    }
+
     setLoading(true);
     try {
       const { data } = await http.post<Result>(endpoint, payload);
@@ -1873,6 +3262,25 @@ export default function Routing() {
         data as RoutingV2SlotSearchResult
       ) as Result;
       setResult(normalized);
+      setFeedbackSuccessKey(null);
+      setScheduleBookedKeys({});
+      setFeedbackError(null);
+      setFeedbackToast(null);
+      const rid = deriveRoutingRequestId(normalized);
+      if (rid) rememberRoutingRequestId(rid);
+      const ri = readRoutingRescheduleIntent();
+      if (ri) {
+        const baseline = resolveRescheduleOriginalVisitForCompare(
+          normalized.rescheduleOriginalBooking,
+          ri.appointmentId,
+          ri
+        );
+        if (!baseline?.found) {
+          void fetchAndCacheRescheduleSourcePlacementSnapshot(ri).then(() => {
+            setSourceScoreTick((n) => n + 1);
+          });
+        }
+      }
     } catch (err: unknown) {
       setError(extractErrorMessage(err));
     } finally {
@@ -1913,12 +3321,31 @@ export default function Routing() {
       return { valid: false, error: 'Please enter a valid service duration.' };
     }
 
+    const ri = readRoutingRescheduleIntent();
+    if (ri && rescheduleRequiresScopeChoice(ri) && !ri.rescheduleScope) {
+      setRescheduleScopeError(true);
+      return {
+        valid: false,
+        error: 'Choose whether to reschedule only this pet or all pets at this household today.',
+      };
+    }
+
+    const clientTypeConflict = getRoutingClientTypeConflictMessage();
+    if (clientTypeConflict) {
+      return { valid: false, error: clientTypeConflict };
+    }
+
     return { valid: true };
   }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    
+
+    if (hasActiveRoutingCalendarPreview()) {
+      clearRoutingCalendarPreview();
+      window.dispatchEvent(new Event(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT));
+    }
+
     // Validate form first
     const validation = validateForm();
     if (!validation.valid) {
@@ -1927,70 +3354,68 @@ export default function Routing() {
     }
 
     const endpoint = '/routing/v2';
-    
-    // If multi-doctor is selected, show modal first
+
     if (multiDoctor) {
       setPendingEndpoint(endpoint);
       setShowDoctorSelectionModal(true);
-    } else {
-      await submitRoutingRequest(endpoint);
+      return;
     }
+    await submitRoutingRequest(endpoint);
   }
 
-  // Fetch providers when modal opens
   useEffect(() => {
     if (!showDoctorSelectionModal) return;
 
     let alive = true;
-    (async () => {
+    void (async () => {
       setProvidersLoading(true);
       try {
-        // Fetch veterinarians from the new endpoint
-        const { data } = await http.get('/employees/veterinarians');
-        const veterinarians: any[] = Array.isArray(data) ? data : [];
-        
+        const lat = form.newAppt.lat;
+        const lon = form.newAppt.lon;
+        const address = (form.newAppt.address ?? '').trim();
+        const { providers: veterinarians, clientZoneLabel } = await fetchVeterinarians(
+          address || undefined,
+          typeof lat === 'number' && Number.isFinite(lat) ? lat : undefined,
+          typeof lon === 'number' && Number.isFinite(lon) ? lon : undefined
+        );
         if (!alive) return;
-        
-        // Map veterinarians to provider format
-        // The endpoint already returns veterinarians (D.V.M/V.M.D), so no need to filter
-        const providersWithPims = veterinarians
-          .filter((v) => v.isActive !== false) // Only include active veterinarians
-          .map((v) => {
-            const pimsId = v.pimsId ? String(v.pimsId) : null;
-            const id = v.id ?? v.pimsId;
-            const name = buildDoctorName(v, `Veterinarian ${id ?? ''}`).trim();
-            
-            return {
-              id: id,
-              name,
-              email: v?.email || '',
-              pimsId: pimsId || String(id), // Use pimsId if available, otherwise use id
-            };
-          });
-        
+
+        setDoctorSelectClientZoneLabel(clientZoneLabel);
+
+        const providersWithPims: RoutingDoctorPick[] = veterinarians.map((v) => {
+          const pimsId = v.pimsId ? String(v.pimsId) : String(v.id);
+          return {
+            id: v.id,
+            name: v.name?.trim() || buildDoctorName(v, `Veterinarian ${v.id ?? ''}`),
+            email: v.email || '',
+            pimsId,
+            seeingClients: v.seeingClientsInClientZone === true,
+            acceptingNewPatients: v.acceptingNewPatientsInClientZone === true,
+          };
+        });
+
         setAllProviders(providersWithPims);
-        
-        // Load previously selected doctor IDs from localStorage, or select all by default
+
         let defaultSelectedIds: string[] = [];
         try {
           const stored = localStorage.getItem(SELECTED_DOCTORS_STORAGE_KEY);
           if (stored) {
             const parsed = JSON.parse(stored);
             if (Array.isArray(parsed) && parsed.length > 0) {
-              // Only use stored IDs that are still valid (exist in current providers)
-              const validPimsIds = providersWithPims.map((p) => p.pimsId || String(p.id)).filter(Boolean);
-              defaultSelectedIds = parsed.filter((id: string) => validPimsIds.includes(id));
+              const validPimsIds = providersWithPims.map((p) => p.pimsId).filter(Boolean);
+              defaultSelectedIds = parsed.filter(
+                (id: unknown) => typeof id === 'string' && validPimsIds.includes(id)
+              );
             }
           }
         } catch {
-          // If parsing fails, fall back to selecting all
+          /* fall back to all */
         }
-        
-        // If no stored selections or stored selections are invalid, select all providers by default
+
         if (defaultSelectedIds.length === 0) {
-          defaultSelectedIds = providersWithPims.map((p) => p.pimsId || String(p.id)).filter(Boolean);
+          defaultSelectedIds = providersWithPims.map((p) => p.pimsId).filter(Boolean);
         }
-        
+
         setSelectedDoctorIds(defaultSelectedIds);
       } catch (err) {
         console.error('Failed to fetch providers:', err);
@@ -2006,49 +3431,42 @@ export default function Routing() {
     };
   }, [showDoctorSelectionModal]);
 
-  // Handle doctor selection checkbox toggle
   function toggleDoctorSelection(doctorId: string) {
-    setSelectedDoctorIds((prev) => {
-      if (prev.includes(doctorId)) {
-        return prev.filter((id) => id !== doctorId);
-      } else {
-        return [...prev, doctorId];
-      }
-    });
+    setSelectedDoctorIds((prev) =>
+      prev.includes(doctorId) ? prev.filter((id) => id !== doctorId) : [...prev, doctorId]
+    );
   }
 
-  // Handle modal confirm
+  function handleCancelDoctorSelection() {
+    setShowDoctorSelectionModal(false);
+    setPendingEndpoint(null);
+    setSelectedDoctorIds([]);
+  }
+
   async function handleConfirmDoctorSelection() {
     if (selectedDoctorIds.length === 0) {
       setError('Please select at least one doctor.');
       return;
     }
 
-    // Save selected doctor IDs to localStorage
+    const validation = validateForm();
+    if (!validation.valid) {
+      setError(validation.error || 'Please fill in all required fields.');
+      setShowDoctorSelectionModal(false);
+      setPendingEndpoint(null);
+      return;
+    }
+
     try {
       localStorage.setItem(SELECTED_DOCTORS_STORAGE_KEY, JSON.stringify(selectedDoctorIds));
     } catch {
-      // If localStorage fails, continue anyway
+      /* ignore */
     }
 
     setShowDoctorSelectionModal(false);
-    const endpoint = pendingEndpoint || (multiDoctor ? '/routing/any-doctor' : '/routing');
+    const endpoint = pendingEndpoint || '/routing/v2';
     setPendingEndpoint(null);
-    
-    // For v2 endpoint, use doctorIds array
-    if (endpoint.includes('/v2')) {
-      await submitRoutingRequest(endpoint, selectedDoctorIds);
-    } else {
-      // For v1 endpoint, still use the old format
-      await submitRoutingRequest(endpoint);
-    }
-  }
-
-  // Handle modal cancel
-  function handleCancelDoctorSelection() {
-    setShowDoctorSelectionModal(false);
-    setPendingEndpoint(null);
-    setSelectedDoctorIds([]);
+    await submitRoutingRequest(endpoint, selectedDoctorIds);
   }
 
   // =========================
@@ -2058,6 +3476,7 @@ export default function Routing() {
   const displayOptions: UnifiedOption[] = useMemo(() => {
     const rows: UnifiedOption[] = [];
     const requestIdFromResult = result?.routingRequestId ?? latestRoutingRequestId ?? undefined;
+    const topForSingleDoctor = result ? routingTopCandidatesFromResult(result) : [];
 
     // Helper for displayInsertionIndex calculation
     const isEmptyDay = (x: any) =>
@@ -2075,12 +3494,14 @@ export default function Routing() {
       for (const d of result.doctors) {
         const pid = d.pimsId;
         const name = d.name || doctorNames[pid] || `Doctor ${pid}`;
-        for (const w of d.top || [])
+        const doctorTop = d.top || [];
+        for (const w of doctorTop)
           rows.push({
             ...w,
             doctorPimsId: pid,
             doctorName: name,
             routingRequestId: w.routingRequestId ?? requestIdFromResult,
+            candidateIndex: resolveRoutingCandidateIndex(w, doctorTop),
           });
       }
       // Sort all options by score (lowest first)
@@ -2117,6 +3538,7 @@ export default function Routing() {
           doctorPimsId: docInfo.pid,
           doctorName: docInfo.name,
           routingRequestId: result.winner.routingRequestId ?? requestIdFromResult,
+          candidateIndex: resolveRoutingCandidateIndex(result.winner, topForSingleDoctor),
         };
       }
       
@@ -2128,6 +3550,7 @@ export default function Routing() {
             doctorPimsId: docInfo.pid,
             doctorName: docInfo.name,
             routingRequestId: w.routingRequestId ?? requestIdFromResult,
+            candidateIndex: resolveRoutingCandidateIndex(w, topForSingleDoctor),
           });
         }
       }
@@ -2150,7 +3573,8 @@ export default function Routing() {
         displayInsertionIndex,
         positionInDay,
         routingRequestId: r.routingRequestId ?? requestIdFromResult,
-        candidateIndex: r.candidateIndex ?? idx,
+        candidateIndex:
+          r.candidateIndex ?? resolveRoutingCandidateIndex(r, topForSingleDoctor),
       };
     });
   }, [multiDoctor, result, doctorNames, form.doctorId, latestRoutingRequestId]);
@@ -2186,56 +3610,82 @@ export default function Routing() {
   // Render
   // =========================
 
-  const weekdayLabels: Array<{ n: number; label: string }> = [
-    { n: 1, label: 'Mon' },
-    { n: 2, label: 'Tue' },
-    { n: 3, label: 'Wed' },
-    { n: 4, label: 'Thu' },
-    { n: 5, label: 'Fri' },
-    { n: 6, label: 'Sat' },
-    { n: 7, label: 'Sun' },
-  ];
+  const routingClientTypeConflictMessage = getRoutingClientTypeConflictMessage();
 
   return (
-    <div className="grid" style={{ alignItems: 'start' }}>
+    <div
+      ref={routingPageRootRef}
+      className={[
+        'routing-page-root',
+        stackFormAndResults ? 'routing-page-root--stack-columns' : '',
+        calendarWorkspaceMode ? 'routing-page-root--calendar-workspace' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
       {/* ------- Form ------- */}
-      <div className="card">
-        <h2 style={{ marginTop: 0 }}>Get Best Route</h2>
-        <form onSubmit={onSubmit} className="grid" style={{ gap: 12 }}>
+      <div className="card routing-route-form-card">
+        <div className="routing-route-form-header">
+          <h2 className="routing-route-form-title">Get Best Route</h2>
+          {hasActiveRescheduleIntent ? (
+            <span className="routing-reschedule-mode-badge">Rescheduling</span>
+          ) : null}
+        </div>
+        {hasActiveRescheduleIntent && rescheduleModeSummary ? (
+          <p className="routing-reschedule-mode-summary muted" role="status">
+            {rescheduleModeSummary}
+          </p>
+        ) : null}
+        <form
+          onSubmit={onSubmit}
+          className={[
+            'routing-form-stack',
+            'routing-route-form-stack',
+            calendarWorkspaceMode ? 'routing-route-form-stack--workspace' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+        >
+          <div
+            className={[
+              'routing-form-body',
+              calendarWorkspaceMode ? '' : 'routing-form-body--inline',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+          >
           {/* Doctor picker */}
-          <div className="grid" style={{ gridTemplateColumns: 'minmax(16rem, 1fr) 1fr', gap: 12 }}>
+          <div className="routing-doctor-row">
             <Field label="Doctor">
-              <div ref={apptLengthsWrapRef} style={{ position: 'relative', width: '100%' }}>
-                {apptLengthsOpen && (
-                  <div
-                    className="routing-appt-lengths-backdrop"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      setApptLengthsOpen(false);
-                    }}
-                    aria-hidden
-                  />
-                )}
-                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                  <div
-                    ref={doctorBoxRef}
-                    style={{
-                      position: 'relative',
-                      flexGrow: 1,
-                      flexShrink: 0,
-                      flexBasis: 'auto',
-                      minWidth: '16rem',
-                    }}
-                  >
+              <div style={{ position: 'relative', width: '100%' }}>
+                <div
+                  ref={doctorBoxRef}
+                  className="routing-doctor-input-wrap"
+                  style={{
+                    position: 'relative',
+                  }}
+                >
                   <input
-                    className="input"
+                    className={[
+                      'input',
+                      doctorRequiredBeforeApptType ? 'routing-input--error' : '',
+                      routingPrefillFlashClass('doctor'),
+                      routingRescheduleHighlightClass('doctor'),
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
                     style={{ width: '100%', boxSizing: 'border-box' }}
                     value={doctorQuery}
                     onChange={(e) => {
                       setDoctorQuery(e.target.value);
                       setDoctorActiveIdx(-1);
+                      if (doctorRequiredBeforeApptType) setDoctorRequiredBeforeApptType(false);
                     }}
                     placeholder="Type doctor name..."
+                    aria-invalid={doctorRequiredBeforeApptType}
+                    aria-describedby={
+                      doctorRequiredBeforeApptType ? 'routing-doctor-required-hint' : undefined
+                    }
                     onFocus={() => doctorResults.length && setShowDoctorDropdown(true)}
                     onKeyDown={(e) => {
                       if (!doctorResults.length) return;
@@ -2335,206 +3785,246 @@ export default function Routing() {
                     })}
                   </ul>
                 )}
-                  </div>
-
-                  <div style={{ position: 'relative', flexShrink: 0, paddingTop: 2 }}>
-                    <button
-                      type="button"
-                      className="btn secondary"
-                      disabled={!form.doctorId.trim()}
-                      title={
-                        form.doctorId.trim()
-                          ? 'Average booked minutes by appointment type (last 30 days)'
-                          : 'Select a doctor first'
-                      }
-                      style={{
-                        fontSize: 12,
-                        padding: '8px 10px',
-                        whiteSpace: 'nowrap',
-                        lineHeight: 1.2,
-                      }}
-                      onClick={() => {
-                        if (!form.doctorId.trim()) return;
-                        if (apptLengthsOpen) {
-                          setApptLengthsOpen(false);
-                          return;
-                        }
-                        setApptLengthsOpen(true);
-                        void loadApptLengthStats();
-                      }}
-                    >
-                      Appt lengths
-                    </button>
-
-                    {apptLengthsOpen && (
-                      <div
-                        className="routing-appt-lengths-popover"
-                        role="dialog"
-                        aria-labelledby="routing-appt-lengths-heading"
-                      >
-                        <div className="routing-appt-lengths-popover-header">
-                          <span id="routing-appt-lengths-heading" className="routing-appt-lengths-popover-title">
-                            Appt lengths
-                          </span>
-                          <button
-                            type="button"
-                            className="routing-appt-lengths-close"
-                            aria-label="Close"
-                            onClick={() => setApptLengthsOpen(false)}
-                          >
-                            ×
-                          </button>
-                        </div>
-                        <div className="routing-appt-lengths-scroll">
-                          <div className="routing-appt-lengths-help">
-                            Average booked minutes per appointment by type over the last 30 days (same rules as
-                            Analytics → Time Spent; blocks excluded). Regular vs multi-pet slots are split into
-                            separate averages.
-                          </div>
-                          {apptLengthsLoading && <div className="muted">Loading…</div>}
-                          {apptLengthsError && (
-                            <div style={{ color: '#b91c1c', fontSize: 13 }}>{apptLengthsError}</div>
-                          )}
-                          {!apptLengthsLoading && !apptLengthsError && apptLengthsRows.length === 0 && (
-                            <div className="muted" style={{ fontSize: 13 }}>
-                              No appointments in this window.
-                            </div>
-                          )}
-                          {!apptLengthsLoading && !apptLengthsError && apptLengthsRows.length > 0 && (
-                            <table>
-                              <thead>
-                                <tr>
-                                  <th>Type</th>
-                                  <th>Avg min</th>
-                                  <th>Multipet avg</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {apptLengthsRows.map((row) => (
-                                  <tr key={row.typeName}>
-                                    <td>{row.typeName}</td>
-                                    <td>{row.count > 0 ? row.avgMinutes : '—'}</td>
-                                    <td>{row.multipetAvgMinutes != null ? row.multipetAvgMinutes : '—'}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
                 </div>
               </div>
             </Field>
+            {doctorRequiredBeforeApptType ? (
+              <p
+                id="routing-doctor-required-hint"
+                className="routing-doctor-required-hint"
+                role="alert"
+              >
+                You must pick a doctor first before picking an appointment type or number of pets.
+              </p>
+            ) : null}
           </div>
 
-          {/* Dates */}
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Field label="Start Date">
+          {/* Date range */}
+          <Field label="Date">
+            <div className="routing-date-range-row">
               <input
-                className="date"
+                className="date routing-date-input"
                 type="date"
                 value={form.startDate}
                 onChange={(e) => onChange('startDate', e.target.value)}
                 required
               />
-            </Field>
-            <Field label="End Date">
+              <span className="routing-date-range-sep" aria-hidden="true">
+                →
+              </span>
               <input
-                className="date"
+                className="date routing-date-input"
                 type="date"
                 value={form.endDate}
                 onChange={(e) => onChange('endDate', e.target.value)}
                 required
               />
-            </Field>
-          </div>
+            </div>
+          </Field>
 
-          {/* Appointment & client */}
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Field label="Service minutes">
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: 8,
-                  alignItems: 'center',
-                }}
-              >
-                <input
-                  className="input"
-                  type="number"
-                  min={1}
-                  style={{ width: 88 }}
-                  value={form.newAppt.serviceMinutes}
-                  onChange={(e) => onNewApptChange('serviceMinutes', Number(e.target.value))}
-                />
-                <select
-                  className="input"
-                  aria-label="Appointment type from averages"
-                  style={{ minWidth: 160, flex: '1 1 140px' }}
-                  disabled={!form.doctorId.trim() || apptLengthsLoading}
-                  value={routingApptStatsTypeKey}
-                  onChange={(e) => setRoutingApptStatsTypeKey(e.target.value)}
-                >
-                  <option value="">Type (optional)</option>
-                  {apptLengthsRows.map((row) => (
-                    <option key={row.typeName} value={row.typeName}>
-                      {row.typeName}
-                    </option>
-                  ))}
-                </select>
-                <label
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  <span className="muted" style={{ fontSize: 13 }}>
+          {/* Calculate time: bordered type + pets; minutes on next line */}
+          <div className="routing-visit-field routing-calculate-time-field">
+            <div id="routing-calculate-time-legend" className="routing-calculate-time-box-legend">
+              Calculate Time (optional)
+            </div>
+            <div
+              role="group"
+              className="routing-calculate-time-box"
+              aria-labelledby="routing-calculate-time-legend"
+            >
+              <div className="routing-calculate-time-box-inner">
+                <label className="routing-calculate-time-type-stack" htmlFor="routing-visit-type-select">
+                  <span className="routing-visit-stack-label muted">Appointment Type</span>
+                  <select
+                    id="routing-visit-type-select"
+                    className={`input routing-input-compact routing-visit-type-select${routingPrefillFlashClass('apptType')}${routingRescheduleHighlightClass('apptType')}${
+                      routingClientTypeConflictMessage ? ' routing-input--error' : ''
+                    }`}
+                    disabled={apptLengthsLoading}
+                    aria-invalid={Boolean(routingClientTypeConflictMessage)}
+                    value={routingApptStatsTypeKey}
+                    onMouseDown={(e) => {
+                      if (!form.doctorId.trim()) {
+                        e.preventDefault();
+                        promptDoctorBeforeApptType();
+                      }
+                    }}
+                    onFocus={() => {
+                      if (!form.doctorId.trim()) promptDoctorBeforeApptType();
+                    }}
+                    onChange={(e) => {
+                      if (!form.doctorId.trim()) {
+                        promptDoctorBeforeApptType();
+                        return;
+                      }
+                      const next = e.target.value;
+                      setRoutingApptStatsTypeKey(next);
+                      if (!next.trim()) {
+                        setRoutingPetCount(1);
+                        setScheduleBookTypeId(null);
+                        routingCalcComboKeyRef.current = null;
+                      } else {
+                        const matched = routingAppointmentTypeForStatsKey(next);
+                        if (matched?.id != null) setScheduleBookTypeId(Number(matched.id));
+                        applyRoutingServiceMinutes(next, routingPetCount, { pulse: true });
+                      }
+                    }}
+                  >
+                    <option value="">Select type…</option>
+                    {routingApptTypePickerOptions.map((opt) => (
+                      <option key={opt.typeName} value={opt.typeName}>
+                        {opt.typeName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="routing-visit-stack" htmlFor="routing-visit-pets">
+                  <span
+                    className="routing-visit-stack-label muted"
+                    title="Optional. Used with appointment type to estimate minutes."
+                  >
                     Pets
                   </span>
                   <input
-                    className="input"
+                    id="routing-visit-pets"
+                    className="input routing-input-compact routing-pet-input"
                     type="number"
                     min={1}
-                    style={{ width: 64 }}
-                    value={routingPetCount}
+                    inputMode="numeric"
+                    disabled={Boolean(form.doctorId.trim()) && !routingApptStatsTypeKey.trim()}
+                    title={
+                      !form.doctorId.trim()
+                        ? undefined
+                        : routingApptStatsTypeKey.trim()
+                          ? undefined
+                          : 'Select an appointment type to set the number of pets.'
+                    }
+                    value={routingApptStatsTypeKey.trim() ? routingPetCount : ''}
+                    onMouseDown={(e) => {
+                      if (!form.doctorId.trim()) {
+                        e.preventDefault();
+                        promptDoctorBeforeApptType();
+                      }
+                    }}
+                    onFocus={() => {
+                      if (!form.doctorId.trim()) promptDoctorBeforeApptType();
+                    }}
                     onChange={(e) => {
-                      const v = Math.floor(Number(e.target.value));
-                      setRoutingPetCount(Number.isFinite(v) && v >= 1 ? v : 1);
+                      if (!form.doctorId.trim()) {
+                        promptDoctorBeforeApptType();
+                        return;
+                      }
+                      const raw = e.target.value;
+                      if (raw === '') {
+                        setRoutingPetCount(1);
+                        applyRoutingServiceMinutes(routingApptStatsTypeKey, 1, { pulse: true });
+                        return;
+                      }
+                      const v = Math.floor(Number(raw));
+                      const nextPets = Number.isFinite(v) && v >= 1 ? v : 1;
+                      setRoutingPetCount(nextPets);
+                      applyRoutingServiceMinutes(routingApptStatsTypeKey, nextPets, { pulse: true });
                     }}
                   />
                 </label>
               </div>
-              {!form.doctorId.trim() ? (
-                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                  Select a doctor to load appointment types (same data as Appt lengths).
-                </div>
-              ) : apptLengthsLoading && apptLengthsRows.length === 0 ? (
-                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                  Loading appointment types…
-                </div>
-              ) : apptLengthsRows.length === 0 && !apptLengthsError ? (
-                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                  No appointment types in the last 30 days for this doctor.
-                </div>
-              ) : apptLengthsError ? (
-                <div style={{ color: '#b91c1c', fontSize: 12, marginTop: 6 }}>{apptLengthsError}</div>
+            </div>
+            <div className="routing-calculate-time-minutes-row">
+              <label className="routing-calculate-time-minutes-stack" htmlFor="routing-visit-mins">
+                <span
+                  className="routing-calculate-time-minutes-heading muted"
+                  title="Service length in minutes—auto-filled from type and pets, or type to override."
+                >
+                  Minutes
+                </span>
+                <input
+                  id="routing-visit-mins"
+                  className={`input routing-input-compact routing-mins-line-input${
+                    routingMinutesPulse ? ' routing-minutes-flash--active' : ''
+                  }${routingPrefillFlashClass('minutes')}${routingRescheduleHighlightClass('minutes')}`}
+                  aria-label="Service minutes"
+                    title="Auto-filled when you pick a type and pets, or enter minutes here to override."
+                    type="number"
+                  min={1}
+                  inputMode="numeric"
+                  value={form.newAppt.serviceMinutes}
+                  onChange={(e) => onNewApptChange('serviceMinutes', Number(e.target.value))}
+                />
+              </label>
+              {showRescheduleScopeField ? (
+                <label
+                  className="routing-reschedule-scope-stack"
+                  htmlFor="routing-reschedule-scope"
+                >
+                  <span className="routing-calculate-time-minutes-heading muted">
+                    Reschedule
+                    <span className="routing-required-mark" aria-hidden="true">
+                      {' '}
+                      *
+                    </span>
+                  </span>
+                  <select
+                    id="routing-reschedule-scope"
+                    className={`input routing-input-compact routing-reschedule-scope-select${
+                      rescheduleScopeError ? ' routing-input--error' : ''
+                    }${routingRescheduleHighlightClass('scope')}`}
+                    required
+                    aria-required
+                    aria-invalid={rescheduleScopeError}
+                    value={rescheduleScope}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === 'selected_pet' || v === 'household_day') {
+                        onRescheduleScopeChange(v);
+                      }
+                    }}
+                  >
+                    <option value="" disabled>
+                      Choose…
+                    </option>
+                    <option value="selected_pet">{rescheduleScopePetLabel}</option>
+                    <option value="household_day">{rescheduleHouseholdLabel}</option>
+                  </select>
+                </label>
               ) : null}
-            </Field>
+            </div>
+            {showRescheduleScopeField && rescheduleScopeError ? (
+              <div className="danger routing-route-hint" role="alert">
+                Choose whether to reschedule only this pet or all pets at this household today.
+              </div>
+            ) : null}
+            {form.doctorId.trim() && routingAppointmentTypes.length === 0 ? (
+              <div className="muted routing-route-hint">
+                No routable appointment types are configured (client or alternate address allowed, not
+                excluded from routing).
+              </div>
+            ) : form.doctorId.trim() && apptLengthsLoading && routingApptTypePickerOptions.length === 0 ? (
+              <div className="muted routing-route-hint">Loading appointment types…</div>
+            ) : form.doctorId.trim() && apptLengthsError ? (
+              <div className="danger routing-route-hint">{apptLengthsError}</div>
+            ) : null}
+          </div>
 
-            <Field label="Search Client (last name)">
+          {/* Client */}
+          <Field label="Client">
               <div ref={clientBoxRef} style={{ position: 'relative' }}>
                 <input
-                  className="input"
+                  className={`input${routingPrefillFlashClass('client')}${routingRescheduleHighlightClass('client')}${
+                    routingClientTypeConflictMessage ? ' routing-input--error' : ''
+                  }`}
                   value={clientQuery}
+                  aria-invalid={Boolean(routingClientTypeConflictMessage)}
                   onChange={(e) => {
-                    setClientQuery(e.target.value);
+                    const next = e.target.value;
+                    setClientQuery(next);
                     setClientActiveIdx(-1);
                     setSelectedClientAlerts(null);
+                    if (!next.trim()) {
+                      setForm((f) => ({
+                        ...f,
+                        newAppt: { ...f.newAppt, clientId: undefined },
+                      }));
+                    }
                   }}
                   placeholder="Type last name..."
                   onFocus={() => clientResults.length && setShowClientDropdown(true)}
@@ -2643,258 +4133,245 @@ export default function Routing() {
                 )}
               </div>
             </Field>
+            {routingClientTypeConflictMessage ? (
+              <div className="danger routing-route-hint routing-span-full" role="alert">
+                {routingClientTypeConflictMessage}
+              </div>
+            ) : null}
 
-            <Field label="Address (optional)">
+          <Field label="Address">
+            <div className="routing-address-row">
               <input
-                className="input"
+                className={`input routing-address-input${routingPrefillFlashClass('address')}${routingRescheduleHighlightClass('address')}`}
                 value={form.newAppt.address ?? ''}
                 onChange={(e) => onNewApptChange('address', e.target.value)}
-                placeholder="123 Main St, Portland ME"
+                placeholder="Street, city (optional if client has address)"
+                autoComplete="street-address"
               />
-              {addressError ? (
-                <div className="danger" style={{ marginTop: 6 }}>
-                  {addressError}
-                </div>
-              ) : (
+              {!addressError &&
                 form.newAppt.lat != null &&
                 form.newAppt.lon != null &&
-                (form.newAppt.address ?? '').trim() && (
-                  <div className="muted" style={{ marginTop: 6 }}>
-                    ✓ Address verified
-                  </div>
-                )
-              )}
-            </Field>
-            {!clientSearching && selectedClientAlerts && selectedClientAlerts.trim() && (
-              <div
-                style={{
-                  marginTop: 6,
-                  padding: '8px 10px',
-                  background: '#fff7ed', // soft amber
-                  border: '1px solid #fdba74', // amber border
-                  color: '#7c2d12', // dark amber text
-                  borderRadius: 8,
-                  whiteSpace: 'pre-wrap', // keep line breaks from server
-                  fontSize: 13,
-                  lineHeight: 1.3,
-                }}
-              >
-                <strong style={{ fontWeight: 700 }}>Client alert:</strong> {selectedClientAlerts}
-              </div>
-            )}
-          </div>
-
-          {/* Preferences */}
-          <div className="card" style={{ padding: 12, background: '#f8fafc' }}>
-            <h4 style={{ margin: '4px 0 10px 0' }}>Preferences (optional)</h4>
-
-            {/* Toggles */}
-            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <Field label="Reserve/Overflow">
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <label
-                    style={{
-                      display: 'flex',
-                      gap: 8,
-                      alignItems: 'center',
-                      padding: '4px 8px',
-                      borderRadius: 6,
-                      cursor: 'pointer',
-                    }}
-                    className={reserveOption === 'reserve-only' ? 'field-red' : ''}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={reserveOption === 'reserve-only'}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          // Check this one, uncheck the other
-                          setReserveOption('reserve-only');
-                        } else {
-                          // Uncheck this one
-                          setReserveOption(null);
-                        }
-                      }}
-                    />
-                    <span>Use Reserve Time (no overflow)</span>
-                  </label>
-                  <label
-                    style={{
-                      display: 'flex',
-                      gap: 8,
-                      alignItems: 'center',
-                      padding: '4px 8px',
-                      borderRadius: 6,
-                      cursor: 'pointer',
-                    }}
-                    className={reserveOption === 'reserve-overflow' ? 'field-red' : ''}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={reserveOption === 'reserve-overflow'}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          // Check this one, uncheck the other
-                          setReserveOption('reserve-overflow');
-                        } else {
-                          // Uncheck this one
-                          setReserveOption(null);
-                        }
-                      }}
-                    />
-                    <span>Use Reserve + Allow Overflow</span>
-                  </label>
-                </div>
-              </Field>
-
-              <Field label="Multi-doctor">
-                <label
-                  style={{
-                    display: 'flex',
-                    gap: 8,
-                    alignItems: 'center',
-                    cursor: 'pointer',
-                    ...(multiDoctor ? ROUTING_PREF_CHECKED_LABEL : {}),
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={multiDoctor}
-                    onChange={(e) => setMultiDoctor(e.target.checked)}
-                  />
-                  <span>Try other doctors for best fit</span>
-                </label>
-              </Field>
+                (form.newAppt.address ?? '').trim().length > 0 && (
+                  <span className="routing-address-inline-ok" title="Address verified">
+                    ✓
+                  </span>
+                )}
             </div>
+            {addressError ? <div className="danger routing-route-hint">{addressError}</div> : null}
+          </Field>
 
-            {/* Preferred weekday */}
-            <Field label="Preferred Day of Week">
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                {weekdayLabels.map(({ n, label }) => (
-                  <label
-                    key={n}
-                    style={{
-                      display: 'inline-flex',
-                      gap: 6,
-                      alignItems: 'center',
-                      cursor: 'pointer',
-                      ...(preferredWeekday.includes(n) ? ROUTING_PREF_CHECKED_LABEL : {}),
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={preferredWeekday.includes(n)}
-                      onChange={() => {
-                        setPreferredWeekday((cur) => {
-                          if (cur.includes(n)) {
-                            return cur.filter((day) => day !== n);
-                          } else {
-                            return [...cur, n].sort((a, b) => a - b);
-                          }
-                        });
-                      }}
-                    />
-                    <span>{label}</span>
-                  </label>
-                ))}
-              </div>
-              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                Select one or more days. Multiple selections are supported.
-              </div>
-            </Field>
+          {!clientSearching && selectedClientAlerts && selectedClientAlerts.trim() && (
+            <div className="routing-client-alert-banner">
+              <strong>Client alert:</strong> {selectedClientAlerts}
+            </div>
+          )}
 
-            {/* Preferred time of day */}
-            <Field label="Preferred Time of Day">
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                {[
-                  { key: 'first', label: 'First part of day' },
-                  // { key: 'middle', label: 'Middle of day' },
-                  { key: 'end', label: 'End of day' },
-                ].map(({ key, label }) => (
-                  <label
-                    key={key}
-                    style={{
-                      display: 'inline-flex',
-                      gap: 6,
-                      alignItems: 'center',
-                      cursor: 'pointer',
-                      ...(preferredTimeOfDay === (key as 'first' | 'middle' | 'end')
-                        ? ROUTING_PREF_CHECKED_LABEL
-                        : {}),
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={preferredTimeOfDay === (key as 'first' | 'middle' | 'end')}
-                      onChange={() =>
-                        setPreferredTimeOfDay((cur) => (cur === key ? null : (key as any)))
-                      }
-                    />
-                    <span>{label}</span>
-                  </label>
-                ))}
-                <label
-                  style={{ display: 'inline-flex', gap: 6, alignItems: 'center', marginLeft: 8 }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={preferredTimeOfDay === null}
-                    onChange={() => setPreferredTimeOfDay(null)}
-                  />
-                  <span>None</span>
-                </label>
-              </div>
-              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                Only one time window can be selected. Click again to unselect.
-              </div>
-            </Field>
-
-            <div style={{ marginTop: 10, maxWidth: 560 }}>
+          <Field label="Reserve handling">
+            <div className="routing-radio-stack">
               <label
-                style={{
-                  display: 'inline-flex',
-                  gap: 8,
-                  alignItems: 'center',
-                  cursor: 'pointer',
-                  ...(preferEarliestFeasibleStart ? ROUTING_PREF_CHECKED_LABEL : {}),
-                }}
+                className={`routing-radio-row${reserveOption === null ? ' routing-radio-row--active' : ''}`}
               >
                 <input
-                  type="checkbox"
-                  checked={preferEarliestFeasibleStart}
-                  onChange={(e) => setPreferEarliestFeasibleStart(e.target.checked)}
+                  type="radio"
+                  name="routing-reserve"
+                  checked={reserveOption === null}
+                  onChange={() => setReserveOption(null)}
                 />
-                <span style={{ fontWeight: 600 }}>Force Earliest Time</span>
+                <span>Protect reserve (default)</span>
               </label>
-              {preferEarliestFeasibleStart && (
-                <div
-                  style={{
-                    marginTop: 10,
-                    padding: '10px 12px',
-                    borderRadius: 8,
-                    backgroundColor: '#fefce8',
-                    border: '1px solid #fde68a',
-                  }}
-                >
-                  <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
-                    Turn on when the appointment must be early (outliers, long drives, front-loading the
-                    day).
-                  </div>
-                  <div className="muted" style={{ fontSize: 13, lineHeight: 1.5, marginTop: 8 }}>
-                    <strong>Only applies on empty days.</strong> You’ll still see optimized times—this adds an
-                    early option (shown in yellow).
+              <label
+                className={`routing-radio-row routing-radio-row--caution${
+                  reserveOption === 'reserve-only' ? ' routing-radio-row--active' : ''
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="routing-reserve"
+                  checked={reserveOption === 'reserve-only'}
+                  onChange={() => setReserveOption('reserve-only')}
+                />
+                <span>Use Reserve</span>
+              </label>
+              <label
+                className={`routing-radio-row routing-radio-row--caution${
+                  reserveOption === 'reserve-overflow' ? ' routing-radio-row--active' : ''
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="routing-reserve"
+                  checked={reserveOption === 'reserve-overflow'}
+                  onChange={() => setReserveOption('reserve-overflow')}
+                />
+                <span>Use Reserve and Allow Overflow</span>
+              </label>
+            </div>
+          </Field>
+
+          {/* Scheduling preferences (collapsed by default) */}
+          <div className="routing-prefs-accordion">
+            <button
+              type="button"
+              className="routing-prefs-accordion-trigger"
+              aria-expanded={schedulingPrefsOpen}
+              aria-controls="routing-scheduling-prefs-panel"
+              id="routing-scheduling-prefs-heading"
+              onClick={() => setSchedulingPrefsOpen((o) => !o)}
+            >
+              <span className="routing-prefs-accordion-title">Scheduling Preferences</span>
+              <span className="routing-prefs-accordion-chevron" aria-hidden="true">
+                {schedulingPrefsOpen ? '▾' : '▸'}
+              </span>
+            </button>
+
+            <div
+              id="routing-scheduling-prefs-panel"
+              role="region"
+              aria-labelledby="routing-scheduling-prefs-heading"
+              className="routing-prefs-accordion-panel"
+              hidden={!schedulingPrefsOpen}
+            >
+              <div className="routing-prefs-accordion-panel-inner">
+                <div className="routing-prefs-block">
+                  <div className="routing-field-label">Provider preference</div>
+                  <div className="routing-radio-stack">
+                    <label
+                      className={`routing-radio-row${!multiDoctor ? ' routing-radio-row--active' : ''}`}
+                    >
+                      <input
+                        type="radio"
+                        name="routing-provider-pref"
+                        checked={!multiDoctor}
+                        onChange={() => setMultiDoctor(false)}
+                      />
+                      <span>
+                        {doctorQuery.trim()
+                          ? `${doctorQuery.trim()} only`
+                          : 'This doctor only'}
+                      </span>
+                    </label>
+                    <label
+                      className={`routing-radio-row${multiDoctor ? ' routing-radio-row--active' : ''}`}
+                      style={multiDoctor ? ROUTING_PREF_CHECKED_LABEL : undefined}
+                    >
+                      <input
+                        type="radio"
+                        name="routing-provider-pref"
+                        checked={multiDoctor}
+                        onChange={() => setMultiDoctor(true)}
+                      />
+                      <span>Best fit across doctors</span>
+                    </label>
                   </div>
                 </div>
-              )}
-            </div>
 
-            {/* Edge preference (kept hidden for now) */}
-            {/* ... */}
+                <div className="routing-prefs-block">
+                  <div className="routing-field-label">Preferred day</div>
+                  <div className="routing-weekday-chips" role="group" aria-label="Preferred days">
+                    {ROUTING_WEEKDAY_CHIPS.map(({ n, label, title }) => {
+                      const on = preferredWeekday.includes(n);
+                      return (
+                        <button
+                          key={n}
+                          type="button"
+                          title={title}
+                          className={`routing-weekday-chip${on ? ' routing-weekday-chip--selected' : ''}`}
+                          aria-pressed={on}
+                          aria-label={title}
+                          onClick={() => {
+                            setPreferredWeekday((cur) => {
+                              if (cur.includes(n)) return cur.filter((d) => d !== n);
+                              return [...cur, n].sort((a, b) => a - b);
+                            });
+                          }}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="muted routing-route-hint routing-route-hint--tight">
+                    Optional. Pick one or more days.
+                  </div>
+                </div>
+
+                <div className="routing-prefs-block">
+                  <div className="routing-field-label">Preferred time</div>
+                  <div className="routing-radio-stack">
+                    <label
+                      className={`routing-radio-row${
+                        preferredTimeOfDay === null || preferredTimeOfDay === 'middle'
+                          ? ' routing-radio-row--active'
+                          : ''
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="routing-time-pref"
+                        checked={preferredTimeOfDay === null || preferredTimeOfDay === 'middle'}
+                        onChange={() => setPreferredTimeOfDay(null)}
+                      />
+                      <span>Any</span>
+                    </label>
+                    <label
+                      className={`routing-radio-row${
+                        preferredTimeOfDay === 'first' ? ' routing-radio-row--active' : ''
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="routing-time-pref"
+                        checked={preferredTimeOfDay === 'first'}
+                        onChange={() => setPreferredTimeOfDay('first')}
+                      />
+                      <span>Early</span>
+                    </label>
+                    <label
+                      className={`routing-radio-row${
+                        preferredTimeOfDay === 'end' ? ' routing-radio-row--active' : ''
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="routing-time-pref"
+                        checked={preferredTimeOfDay === 'end'}
+                        onChange={() => setPreferredTimeOfDay('end')}
+                      />
+                      <span>End of day</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="routing-prefs-block routing-prefs-block--subtle">
+                  <label className="routing-force-earliest">
+                    <input
+                      type="checkbox"
+                      checked={preferEarliestFeasibleStart}
+                      onChange={(e) => setPreferEarliestFeasibleStart(e.target.checked)}
+                    />
+                    <span>Force earliest available</span>
+                  </label>
+                  <div className="muted routing-route-hint routing-route-hint--tight">
+                    May reduce routing efficiency.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
           </div>
 
           {error && <div className="danger">{error}</div>}
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <button className="btn" type="submit" disabled={loading}>
+          <div className="routing-submit-row">
+            <button
+              className="btn routing-submit-btn"
+              type="submit"
+              disabled={loading || Boolean(routingClientTypeConflictMessage)}
+              title={
+                routingClientTypeConflictMessage
+                  ? routingClientTypeConflictMessage
+                  : undefined
+              }
+            >
               {loading ? 'Calculating…' : 'Get Best Route'}
             </button>
           </div>
@@ -2902,7 +4379,7 @@ export default function Routing() {
       </div>
 
       {/* ------- Results ------- */}
-      <div className="card">
+      <div className="card routing-results-card">
         <div
           style={{
             display: 'flex',
@@ -2912,48 +4389,98 @@ export default function Routing() {
             marginBottom: result ? 6 : 0,
           }}
         >
-          <h3 style={{ marginTop: 0, marginBottom: 0 }}>Results</h3>
+          <h3 style={{ marginTop: 0, marginBottom: 0 }}>
+            {result
+              ? hasActiveRescheduleIntent
+                ? 'Results (lower score is better — vs. original booking)'
+                : 'Results (lower score is better)'
+              : 'Results'}
+          </h3>
+          {rescheduleOriginalScoreSummaryLine ? (
+            <p className="routing-reschedule-original-score-summary muted" style={{ margin: 0, fontSize: 12 }}>
+              {rescheduleOriginalScoreSummaryLine}
+            </p>
+          ) : null}
           {result && scoutPolicyZoneAware(result.scoutEmptyDayPolicy) ? (
             <Fragment>
-              <span
-                style={SCOUT_ZONE_AWARE_BADGE_STYLE}
-                title="Scout empty-day policy is zone_aware. Liaison copy and day badges appear on each result and per gap."
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  flexWrap: 'nowrap',
+                  minWidth: 0,
+                }}
               >
-                Zone-aware
-              </span>
-              {(() => {
-                const b = routingZoneAwareResultsBanner;
-                if (!b) return null;
-                const poly = b.polyLine;
-                const zc = b.zoneClassRaw;
-                const combined =
-                  poly && zc
-                    ? `${poly}: ${scoutZoneClassBannerTitleCase(zc)}`
-                    : poly
-                      ? poly
-                      : zc
-                        ? scoutZoneClassBannerTitleCase(zc)
-                        : null;
-                if (!combined) return null;
-                const title =
-                  poly && zc
-                    ? `Geocoded routing zone (${poly}). Depot→candidate drive class: ${scoutZoneClassBannerTitleCase(zc)} (≤15 min local, ≥25 min anchor, between corridor).`
-                    : poly
-                      ? 'Geocoded routing zone for this search (effective zone when present, otherwise client zone).'
-                      : 'From depot→candidate drive: ≤15 min = local, ≥25 min = anchor, between = corridor.';
-                const chipStyle = poly ? SCOUT_RESULTS_ZONE_NAME_CHIP : SCOUT_BADGE_CHIP;
-                return (
-                  <span style={chipStyle} title={title}>
-                    {combined}
-                  </span>
-                );
-              })()}
+                <span
+                  style={SCOUT_ZONE_AWARE_BADGE_STYLE}
+                  title="Scout empty-day policy is zone_aware. Liaison copy and day badges appear on each result and per gap."
+                >
+                  Zone-aware
+                </span>
+                {(() => {
+                  const b = routingZoneAwareResultsBanner;
+                  if (!b) return null;
+                  const poly = b.polyLine;
+                  const zc = b.zoneClassRaw;
+                  const combined =
+                    poly && zc
+                      ? `${poly}: ${scoutZoneClassBannerTitleCase(zc)}`
+                      : poly
+                        ? poly
+                        : zc
+                          ? scoutZoneClassBannerTitleCase(zc)
+                          : null;
+                  if (!combined) return null;
+                  const title =
+                    poly && zc
+                      ? `Geocoded routing zone (${poly}). Depot→candidate drive class: ${scoutZoneClassBannerTitleCase(zc)} (≤15 min local, ≥25 min anchor, between corridor).`
+                      : poly
+                        ? 'Geocoded routing zone for this search (effective zone when present, otherwise client zone).'
+                        : 'From depot→candidate drive: ≤15 min = local, ≥25 min = anchor, between = corridor.';
+                  const chipStyle = poly ? SCOUT_RESULTS_ZONE_NAME_CHIP : SCOUT_BADGE_CHIP;
+                  return (
+                    <span
+                      style={{
+                        ...chipStyle,
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                      title={title}
+                    >
+                      {combined}
+                    </span>
+                  );
+                })()}
+              </div>
             </Fragment>
           ) : null}
         </div>
 
-        {result ? (
-          <div style={{ fontSize: 12, fontWeight: 'bold', marginBottom: 8 }}>Lower score is better</div>
+        {result && displayOptions.length > 0 ? (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              marginBottom: 12,
+            }}
+          >
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => submitFeedbackForNone()}
+              disabled={
+                hasFinalSelection ||
+                feedbackSubmittingKey === NONE_SELECTION_KEY ||
+                feedbackSuccessKey === NONE_SELECTION_KEY
+              }
+            >
+              {feedbackSubmittingKey === NONE_SELECTION_KEY ? 'Saving…' : 'None chosen'}
+            </button>
+          </div>
         ) : null}
 
         {feedbackToast && (
@@ -2984,26 +4511,11 @@ export default function Routing() {
 
         {result && displayOptions.length > 0 && (
           <Fragment>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-              <button
-                type="button"
-                className="btn secondary"
-                onClick={() => submitFeedbackForNone()}
-                disabled={
-                  hasFinalSelection ||
-                  feedbackSubmittingKey === NONE_SELECTION_KEY ||
-                  feedbackSuccessKey === NONE_SELECTION_KEY
-                }
-              >
-                {feedbackSubmittingKey === NONE_SELECTION_KEY ? 'Saving…' : 'None chosen'}
-              </button>
-            </div>
-            <div className="grid" style={{ gap: 14 }}>
+            <div className="routing-results-options">
               {displayOptions.map((opt, idx) => {
                 const headerColor = colorForDoctor(opt.doctorPimsId);
-                const optionKey = `${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${opt.candidateIndex ?? ''}`;
-                const submitting = feedbackSubmittingKey === optionKey;
-                const selected = feedbackSuccessKey === optionKey;
+                const optionKey = routingOptionKey(opt);
+                const scheduleBooked = Boolean(scheduleBookedKeys[optionKey]);
                 const whitespaceAfterBookingSec =
                   (opt as any).whitespaceAfterBookingSeconds ??
                   (function () {
@@ -3049,16 +4561,59 @@ export default function Routing() {
                     (candidateScoutRow.scoutLiaisonLabels ?? []).some(Boolean) ||
                     (candidateScoutRow.scoutLiaisonLabelIds ?? []).some(Boolean));
                 const metricsRow = scoutDayMetricsForCandidate(opt);
-                const zoneAwareDeltaLine = showScoutUi ? scoutZoneAwareDeltaUi(opt) : null;
+                const visitWindowTime =
+                  opt.arrivalWindow?.windowStartIso && opt.arrivalWindow?.windowEndIso
+                    ? `${isoToTime(opt.arrivalWindow.windowStartIso)} – ${isoToTime(opt.arrivalWindow.windowEndIso)}`
+                    : isoToTime(opt.suggestedStartIso);
+                const visitWindowNonDefault = routingVisitWindowDiffersFromDefault60(opt);
+
+                const isCalendarPreviewCard =
+                  calendarWorkspaceMode &&
+                  activeCalendarPreviewOptionKey != null &&
+                  activeCalendarPreviewOptionKey === optionKey;
+
+                const hasRoutingPlacementTarget =
+                  (Number.isFinite(form.newAppt.lat as number) &&
+                    Number.isFinite(form.newAppt.lon as number)) ||
+                  Boolean(form.newAppt.clientId?.trim());
+                const appointmentTypesReady =
+                  routingAppointmentTypes.length > 0 || scheduleBookTypeId != null;
+                const viewPlacementDisabled =
+                  !hasRoutingPlacementTarget ||
+                  !appointmentTypesReady ||
+                  (showRescheduleScopeField && !rescheduleScope);
+                const viewPlacementTitle = !hasRoutingPlacementTarget
+                  ? 'Enter and verify an address, or select a client'
+                  : !appointmentTypesReady
+                    ? 'Loading appointment types…'
+                    : showRescheduleScopeField && !rescheduleScope
+                      ? 'Choose which pets to reschedule'
+                      : hasActiveRescheduleIntent
+                        ? 'View placement on the practice calendar to reschedule this visit'
+                        : 'View placement on the practice calendar';
 
                 return (
-                  <div
+                  <button
                     key={`${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${idx}`}
-                    className="card"
+                    type="button"
+                    data-routing-calendar-preview-card={optionKey}
+                    className={[
+                      'card',
+                      'routing-result-option-card',
+                      isCalendarPreviewCard ? 'routing-result-option-card--calendar-preview' : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    disabled={viewPlacementDisabled}
+                    title={viewPlacementDisabled ? viewPlacementTitle : undefined}
+                    aria-label={viewPlacementTitle}
+                    onClick={() => {
+                      void openMyWeek(opt);
+                    }}
                     style={{
                       position: 'relative',
                       paddingTop: 48,
-                      ...(isEarlierFeasibleEmptyDay
+                      ...(isEarlierFeasibleEmptyDay && !isCalendarPreviewCard
                         ? {
                             backgroundColor: '#fefce8',
                             border: '1px solid #fde68a',
@@ -3085,16 +4640,37 @@ export default function Routing() {
                         gap: 10,
                       }}
                     >
-                      <span
-                        style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                      >
-                        {opt.doctorName}
-                      </span>
-                      {typeof opt.score === 'number' && (
-                        <span style={{ fontWeight: 600, opacity: 0.9, whiteSpace: 'nowrap' }}>
-                          (Score: {Number.isInteger(opt.score) ? String(opt.score) : opt.score.toFixed(2)})
+                      {!hasActiveRescheduleIntent && opt.doctorName?.trim() ? (
+                        <span
+                          style={{
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            minWidth: 0,
+                            flex: '1 1 auto',
+                          }}
+                        >
+                          {opt.doctorName}
                         </span>
-                      )}
+                      ) : null}
+                      {typeof opt.score === 'number' &&
+                        (() => {
+                          const scoreLabel = hasActiveRescheduleIntent
+                            ? rescheduleScoreHeaderSuffix(opt.score, rescheduleOriginalVisitForCompare)
+                            : `(Score: ${Number.isInteger(opt.score) ? String(opt.score) : opt.score.toFixed(2)})`;
+                          return scoreLabel ? (
+                            <span
+                              style={{
+                                fontWeight: 600,
+                                opacity: 0.9,
+                                whiteSpace: 'nowrap',
+                                flexShrink: 0,
+                              }}
+                            >
+                              {scoreLabel}
+                            </span>
+                          ) : null;
+                        })()}
                       <span style={{ marginLeft: 'auto' }}>
                         <DoctorIcon />
                       </span>
@@ -3148,6 +4724,28 @@ export default function Routing() {
                       {isoToTime(opt.suggestedStartIso)}
                     </h3>
 
+                    {scheduleBooked && (
+                      <div
+                        style={{
+                          marginBottom: 12,
+                          padding: '10px 12px',
+                          borderRadius: 8,
+                          border: '1px solid #86efac',
+                          background: '#f0fdf4',
+                          color: '#166534',
+                          fontSize: Math.round(14 * ROUTING_RESULT_FONT_SCALE),
+                          fontWeight: 700,
+                        }}
+                      >
+                        Appointment booked
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
+                      <SlotChip slot={opt.slot ?? null} />
+                      <EdgeChip first={opt.isFirstEdge} last={opt.isLastEdge} />
+                    </div>
+
                     {(opt.scoringComponents?.downstreamWindowEdge ?? 0) > 0 && (
                       <div
                         style={{
@@ -3157,11 +4755,11 @@ export default function Routing() {
                           background: '#fef3c7',
                           border: '1px solid #f59e0b',
                           color: '#92400e',
-                          fontSize: 13,
+                          fontSize: Math.round(13 * ROUTING_RESULT_FONT_SCALE),
                           fontWeight: 600,
                         }}
                       >
-                        ⚠ At least one downstream appointment is pushed within 15 minutes of its window end.
+                        {`⚠ At least one downstream appointment is pushed within ${WINDOW_WARNING_MINUTES_FROM_END} minutes of its window end.`}
                       </div>
                     )}
 
@@ -3176,11 +4774,12 @@ export default function Routing() {
                             marginBottom: 8,
                           }}
                         >
-                          <ScoutDayStatBadges row={metricsRow} embedded />
+                          <ScoutDayStatBadges row={metricsRow} embedded dense />
                           <ScoutZoneAwareDiagnosticsRow
                             row={opt}
                             hideZoneClass
                             variant="inline"
+                            dense
                           />
                         </div>
                         {scoutPreservedAnchorZonesStillNote(result?.scoutPreservedEmptyDayWeeks, opt)}
@@ -3205,7 +4804,6 @@ export default function Routing() {
                             typeof gap.dayPatientCount === 'number';
                           const gapDiag = scoutZoneAwareDiagHasContent(gap);
                           if (!gapCopy && !gapStats && !gapDiag) return null;
-                          const gapDeltaLine = scoutZoneAwareDeltaUi(gap);
                           return (
                             <div key={`scout-gap-${gi}`} style={{ marginTop: 8 }}>
                               <div
@@ -3217,13 +4815,14 @@ export default function Routing() {
                                   marginBottom: 8,
                                 }}
                               >
-                                <ScoutDayStatBadges row={gap} embedded />
+                                <ScoutDayStatBadges row={gap} embedded dense />
                                 <ScoutZoneAwareDiagnosticsRow
                                   row={gap}
                                   hideZoneClass={Boolean(
                                     routingZoneAwareResultsBanner?.zoneClassRaw
                                   )}
                                   variant="inline"
+                                  dense
                                 />
                               </div>
                               {scoutPreservedAnchorZonesStillNote(result?.scoutPreservedEmptyDayWeeks, {
@@ -3231,15 +4830,6 @@ export default function Routing() {
                                 doctorPimsId: opt.doctorPimsId,
                                 date: opt.date,
                               })}
-                              {gapDeltaLine ? (
-                                <div
-                                  className="muted"
-                                  style={{ fontSize: 11, marginTop: 4, marginBottom: 4 }}
-                                  title={gapDeltaLine.title}
-                                >
-                                  <strong>Zone-aware Δ:</strong> {gapDeltaLine.value}
-                                </div>
-                              ) : null}
                               {gapCopy && !scoutRoutingHideLiaisonCopyForPreserve(gap) ? (
                                 <ScoutLiaisonCopyBlock row={gap} />
                               ) : null}
@@ -3255,12 +4845,16 @@ export default function Routing() {
                         v={String((opt as any).positionInDay ?? (opt as any).displayInsertionIndex ?? opt.insertionIndex + 1)}
                       />
                       <KeyValue
-                        k="Visit Window"
+                        k="Arrival Window"
                         v={
-                          <strong>
-                            {opt.arrivalWindow?.windowStartIso && opt.arrivalWindow?.windowEndIso
-                              ? `${isoToTime(opt.arrivalWindow.windowStartIso)} – ${isoToTime(opt.arrivalWindow.windowEndIso)}`
-                              : isoToTime(opt.suggestedStartIso)}
+                          <strong
+                            className={
+                              visitWindowNonDefault
+                                ? 'routing-visit-window--non-default'
+                                : undefined
+                            }
+                          >
+                            {visitWindowTime}
                           </strong>
                         }
                       />
@@ -3286,53 +4880,35 @@ export default function Routing() {
                       />
                     </div>
 
-                    {zoneAwareDeltaLine ? (
-                      <div
-                        className="muted"
-                        style={{ fontSize: 12, marginTop: 4, marginBottom: 4 }}
-                        title={zoneAwareDeltaLine.title}
-                      >
-                        <strong>Zone-aware Δ:</strong> {zoneAwareDeltaLine.value}
+                    <div className="routing-result-option-card-placement-row">
+                      <div className="routing-result-option-card-placement-actions">
+                        {calendarWorkspaceMode &&
+                        hasActiveRescheduleIntent &&
+                        isCalendarPreviewCard ? (
+                          <button
+                            type="button"
+                            className="btn secondary routing-result-option-card-placement-btn"
+                            title="Back to where this visit is on the schedule now"
+                            disabled={viewPlacementDisabled}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                            }}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              focusRescheduleSourceOnCalendar();
+                            }}
+                          >
+                            Back
+                          </button>
+                        ) : null}
+                        <span className="btn secondary routing-result-option-card-placement-cta">
+                          View Placement
+                        </span>
                       </div>
-                    ) : null}
-
-                    <div
-                      style={{
-                        marginTop: 16,
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        gap: 8,
-                        justifyContent: 'flex-end',
-                      }}
-                    >
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        onClick={() => openMyDay(opt)}
-                      >
-                        My Day
-                      </button>
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        onClick={() => openMyWeek(opt)}
-                      >
-                        My Week
-                      </button>
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (hasFinalSelection) return;
-                          submitFeedbackForOption(opt);
-                        }}
-                        disabled={hasFinalSelection || submitting || selected}
-                      >
-                        {selected ? 'Booked' : submitting ? 'Booking…' : 'Booked this Appointment'}
-                      </button>
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -3340,159 +4916,86 @@ export default function Routing() {
         )}
 
       </div>
-      {schedulePreview && (
-        <PreviewMyDayModal
-          key={`routing-preview-${schedulePreview.opt.date}-${schedulePreview.opt.insertionIndex}-${schedulePreview.opt.suggestedStartIso}`}
-          option={schedulePreview.opt}
-          scheduleScope={schedulePreview.scope}
-          onScheduleScopeChange={(scope) =>
-            setSchedulePreview((p) => (p ? { ...p, scope } : null))
-          }
-          onClose={closeSchedulePreview}
-          serviceMinutes={form.newAppt.serviceMinutes}
-          newApptMeta={{
-            clientId: form.newAppt.clientId,
-            address: form.newAppt.address,
-            lat: form.newAppt.lat,
-            lon: form.newAppt.lon,
-          }}
-        />
-      )}
 
-      {/* Doctor Selection Modal for Multi-Doctor Mode */}
-      {showDoctorSelectionModal && (
+      {showDoctorSelectionModal ? (
         <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10000,
-          }}
+          className="routing-doctor-select-backdrop"
+          role="presentation"
           onClick={handleCancelDoctorSelection}
         >
           <div
-            style={{
-              backgroundColor: 'white',
-              borderRadius: 8,
-              padding: 24,
-              maxWidth: 600,
-              width: '90%',
-              maxHeight: '80vh',
-              overflow: 'auto',
-              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-            }}
+            className="routing-doctor-select-modal"
+            role="dialog"
+            aria-modal
+            aria-labelledby="routing-doctor-select-title"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 style={{ marginTop: 0, marginBottom: 16 }}>Select Doctors</h2>
-            <p style={{ marginTop: 0, marginBottom: 20, color: '#666' }}>
-              Select the doctors to include in the routing search. All doctors are selected by default.
+            <h2 id="routing-doctor-select-title" className="routing-doctor-select-title">
+              Select Doctors
+            </h2>
+            <p className="routing-doctor-select-lead">
+              Choose which doctors to include in the search. Your selections are saved for next time.
             </p>
 
             {providersLoading ? (
-              <div style={{ textAlign: 'center', padding: 40 }}>
-                <p>Loading doctors...</p>
-              </div>
+              <p className="routing-doctor-select-empty">Loading doctors…</p>
             ) : allProviders.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 40 }}>
-                <p>No doctors found.</p>
-              </div>
+              <p className="routing-doctor-select-empty">No doctors found.</p>
             ) : (
-              <div style={{ marginBottom: 24 }}>
+              <div className="routing-doctor-select-list">
                 {allProviders.map((provider) => {
                   const doctorId = provider.pimsId || String(provider.id);
                   const isSelected = selectedDoctorIds.includes(doctorId);
+                  const inZoneSuffix = doctorSelectClientZoneLabel
+                    ? ` in zone ${doctorSelectClientZoneLabel}`
+                    : '';
                   return (
                     <label
                       key={doctorId}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        padding: '12px 8px',
-                        cursor: 'pointer',
-                        borderRadius: 8,
-                        marginBottom: 4,
-                        border: '1px solid transparent',
-                        boxSizing: 'border-box',
-                        ...(isSelected
-                          ? {
-                              backgroundColor: '#fef9c3',
-                              borderColor: '#ca8a04',
-                            }
-                          : { backgroundColor: 'transparent' }),
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!isSelected) {
-                          e.currentTarget.style.backgroundColor = '#f9fafb';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!isSelected) {
-                          e.currentTarget.style.backgroundColor = 'transparent';
-                        } else {
-                          e.currentTarget.style.backgroundColor = '#fef9c3';
-                        }
-                      }}
+                      className={`routing-doctor-select-row${
+                        isSelected ? ' routing-doctor-select-row--selected' : ''
+                      }`}
                     >
                       <input
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => toggleDoctorSelection(doctorId)}
-                        style={{
-                          marginRight: 12,
-                          width: 18,
-                          height: 18,
-                          cursor: 'pointer',
-                        }}
                       />
-                      <span style={{ fontSize: 16 }}>{provider.name}</span>
+                      <span className="routing-doctor-select-row-main">
+                        <span className="routing-doctor-select-row-name">{provider.name}</span>
+                        {provider.seeingClients ? (
+                          <span className="routing-doctor-select-badge routing-doctor-select-badge--seeing">
+                            Seeing clients{inZoneSuffix}
+                          </span>
+                        ) : null}
+                        {provider.acceptingNewPatients ? (
+                          <span className="routing-doctor-select-badge routing-doctor-select-badge--accepting">
+                            Accepting new patients{inZoneSuffix}
+                          </span>
+                        ) : null}
+                      </span>
                     </label>
                   );
                 })}
               </div>
             )}
 
-            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                onClick={handleCancelDoctorSelection}
-                style={{
-                  padding: '10px 20px',
-                  borderRadius: 6,
-                  border: '1px solid #ccc',
-                  backgroundColor: 'white',
-                  cursor: 'pointer',
-                  fontSize: 14,
-                }}
-              >
+            <div className="routing-doctor-select-actions">
+              <button type="button" className="btn secondary" onClick={handleCancelDoctorSelection}>
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={handleConfirmDoctorSelection}
+                className="btn routing-doctor-select-confirm"
+                onClick={() => void handleConfirmDoctorSelection()}
                 disabled={selectedDoctorIds.length === 0 || providersLoading}
-                style={{
-                  padding: '10px 20px',
-                  borderRadius: 6,
-                  border: 'none',
-                  backgroundColor: selectedDoctorIds.length === 0 || providersLoading ? '#ccc' : '#4FB128',
-                  color: 'white',
-                  cursor: selectedDoctorIds.length === 0 || providersLoading ? 'not-allowed' : 'pointer',
-                  fontSize: 14,
-                  fontWeight: 600,
-                }}
               >
                 Confirm ({selectedDoctorIds.length} selected)
               </button>
             </div>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

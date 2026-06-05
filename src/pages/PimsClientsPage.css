@@ -1,0 +1,366 @@
+.pims-clients {
+  padding: 20px 24px 32px;
+  background: #fff;
+  min-height: 320px;
+}
+
+.pims-clients--detail {
+  padding: 20px 24px 32px;
+}
+
+.pims-clients__action-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  color: #2563eb;
+  border-radius: 6px;
+}
+
+.pims-clients__action-link:hover {
+  background: #eff6ff;
+}
+
+.pims-clients__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.pims-clients__title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.pims-clients__add {
+  border: none;
+  border-radius: 6px;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: #2563eb;
+  cursor: pointer;
+}
+
+.pims-clients__add:hover {
+  background: #1d4ed8;
+}
+
+.pims-clients__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.pims-clients__searchby {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 140px;
+}
+
+.pims-clients__searchby-label {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.pims-clients__select {
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 14px;
+  background: #fff;
+}
+
+.pims-clients__search-wrap {
+  flex: 1;
+  min-width: 200px;
+  display: flex;
+  align-items: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #fff;
+}
+
+.pims-clients__search-icon {
+  margin-right: 8px;
+  opacity: 0.6;
+}
+
+.pims-clients__search-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  padding: 10px 0;
+  font-size: 15px;
+  min-width: 0;
+}
+
+.pims-clients__inactive {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #334155;
+  cursor: pointer;
+  user-select: none;
+}
+
+.pims-clients__count {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: #64748b;
+}
+
+.pims-clients__error {
+  padding: 10px 12px;
+  background: #fef2f2;
+  color: #b91c1c;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.pims-clients__table-wrap {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: auto;
+}
+
+.pims-clients__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.pims-clients__table thead {
+  background: #f8fafc;
+}
+
+.pims-clients__table th {
+  text-align: left;
+  padding: 10px 12px;
+  font-weight: 600;
+  color: #475569;
+  border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;
+}
+
+.pims-clients__table td {
+  padding: 12px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: top;
+  color: #334155;
+}
+
+.pims-clients__th-narrow {
+  width: 36px;
+}
+
+.pims-clients__lastname {
+  color: #b45309;
+  font-weight: 600;
+}
+
+/* Patient list: name as gold link (matches PIMS reference). */
+a.pims-clients__petname {
+  color: #b45309;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+a.pims-clients__petname:hover {
+  text-decoration: underline;
+}
+
+.pims-clients__link {
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.pims-clients__link:hover {
+  text-decoration: underline;
+}
+
+.pims-clients__stack div + div {
+  margin-top: 4px;
+}
+
+.pims-clients__addr {
+  white-space: pre-line;
+  max-width: 220px;
+}
+
+.pims-clients__pets {
+  max-width: 180px;
+}
+
+.pims-clients__muted {
+  color: #94a3b8;
+}
+
+.pims-clients__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pims-clients__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+}
+
+.pims-clients__dot--off {
+  background: #94a3b8;
+}
+
+.pims-clients__dot--inactive {
+  background: #fff;
+  border: 2px solid #94a3b8;
+  box-sizing: border-box;
+}
+
+.pims-clients__expand {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pims-clients__action {
+  border: none;
+  background: transparent;
+  color: #2563eb;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.pims-clients__hint {
+  margin: 16px;
+  text-align: center;
+  color: #64748b;
+  font-size: 14px;
+}
+
+/* Add client modal */
+.pims-add-client-modal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+}
+
+.pims-add-client-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: rgba(15, 23, 42, 0.45);
+  cursor: pointer;
+}
+
+.pims-add-client-modal {
+  position: relative;
+  margin: 8vh auto 0;
+  max-width: 520px;
+  width: calc(100% - 32px);
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
+  border: 1px solid #e2e8f0;
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+
+.pims-add-client-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.pims-add-client-modal__head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.pims-add-client-modal__close {
+  border: none;
+  background: transparent;
+  font-size: 24px;
+  line-height: 1;
+  color: #64748b;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.pims-add-client-modal__form {
+  padding: 16px;
+}
+
+.pims-add-client-modal__error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.pims-add-client-modal__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.pims-add-client-modal__full {
+  grid-column: 1 / -1;
+}
+
+.pims-add-client-modal__label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.pims-add-client-modal__grid .input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.pims-add-client-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+@media (max-width: 480px) {
+  .pims-add-client-modal__grid {
+    grid-template-columns: 1fr;
+  }
+  .pims-add-client-modal__full {
+    grid-column: auto;
+  }
+}

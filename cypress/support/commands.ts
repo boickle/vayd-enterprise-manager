@@ -59,7 +59,7 @@ Cypress.Commands.add(
       cy.url().should('include', '/client-portal');
     } else {
       cy.url().should('satisfy', (url) => {
-        return url.includes('/home') || url.includes('/routing') || url.includes('/doctor');
+        return url.includes('/home') || url.includes('/schedule') || url.includes('/doctor');
       });
     }
   }

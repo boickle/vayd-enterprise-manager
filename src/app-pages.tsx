@@ -1,18 +1,14 @@
 // src/app-pages.ts
-import Routing from './pages/Routing';
 import { isProduction } from './utils/env';
-import DoctorDay from './pages/DoctorDay';
 import CreateUser from './pages/CreateUser';
 import Admin from './pages/Admin';
 import Analytics from './pages/Analytics';
-import MyWeek from './pages/MyWeek';
-import MyDayToggle from './pages/MyDayToggle';
 import Settings from './pages/Settings';
-import SchedulingTools from './pages/SchedulingTools';
-import RoomLoaderPage from './pages/RoomLoader';
+import ScheduleLayout from './pages/ScheduleLayout';
 import SurveyResponsesPage from './pages/SurveyResponses';
 import SurveyResults from './pages/SurveyResults';
 import Tools from './pages/Tools';
+import PimsLayout from './pages/PimsLayout';
 
 export type AppPage = {
   path: string;
@@ -36,32 +32,18 @@ function matchesRole(required: AppPage['role'], userRoles?: string[]) {
 export function getAccessiblePages(abilities?: string[], roles?: string[]): AppPage[] {
   const all: AppPage[] = [
     {
-      path: '/routing',
-      label: 'Routing',
-      element: <Routing />,
-      permission: 'canSeeRouting',
-      role: ['employee', 'admin'],
-    },
-    {
-      path: '/doctor',
-      label: 'My Day',
-      element: <MyDayToggle />,
-      permission: 'canSeeDoctorDay',
-      role: ['employee', 'admin'],
-    },
-    {
-      path: '/doctorweek',
-      label: 'My Week',
-      element: <MyWeek />,
-      permission: 'canSeeDoctorDay',
-      role: ['employee', 'admin'],
+      path: '/schedule',
+      label: 'Schedule',
+      element: <ScheduleLayout />,
+      role: ['employee', 'admin', 'superadmin'],
+      showInMainTabs: false,
     },
     {
       path: '/admin',
       label: 'Admin',
       element: <Admin />,
       role: ['admin', 'superadmin'],
-      showInMainTabs: true,
+      showInMainTabs: false,
     },
     {
       path: '/users/create',
@@ -76,19 +58,14 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
       label: 'Analytics',
       element: <Analytics />,
       role: ['employee', 'admin', 'superadmin'],
-      showInMainTabs: true,
+      showInMainTabs: false,
     },
     {
-      path: '/scheduling-tools',
-      label: 'Scheduling Tools',
-      element: <SchedulingTools />,
+      path: '/pims',
+      label: 'PIMS',
+      element: <PimsLayout />,
       role: ['employee', 'admin', 'superadmin'],
-    },
-    {
-      path: '/room-loader',
-      label: 'Room Loader',
-      element: <RoomLoaderPage />,
-      role: ['employee', 'admin', 'superadmin'],
+      showInMainTabs: false,
     },
     {
       path: '/tools',
