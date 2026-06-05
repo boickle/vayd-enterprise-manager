@@ -7,6 +7,10 @@ import type { RescheduleOriginalVisitSnapshot } from '../api/routing';
 import type { Appointment, Client, Patient } from '../api/roomLoader';
 import type { AppointmentType } from '../api/appointmentSettings';
 import {
+  appointmentAlternateAddressText,
+  appointmentHasAlternateLocation,
+} from '../api/appointments';
+import {
   appointmentTypeLabelFromRow as routingTypeLabelFromRow,
 } from './routingCalculateTimeType';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
@@ -116,7 +120,12 @@ export type RoutingRescheduleIntentV1 = {
   instructions?: string | null;
   clientDisplayLabel?: string;
   serviceMinutes: number;
+  /** Visit location when rescheduling a routing alternate stop (overrides client home). */
   address?: string;
+  /** True when the visit being moved is at an alternate address, not client home. */
+  isAlternateStop?: boolean;
+  /** Stored alternate / routing stop text from the appointment row. */
+  alternateAddressText?: string;
   lat?: number | null;
   lon?: number | null;
   /** Client alerts snippet for Routing hint row. */
@@ -131,6 +140,102 @@ function pickStr(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v).trim();
   return s || null;
+}
+
+function visitAddressFromAppointmentRow(appt: Appointment): string | null {
+  const o = appt as Record<string, unknown>;
+  const zip = pickStr(o.zip) ?? pickStr(o.zipcode);
+  const parts = [
+    pickStr(o.address1),
+    [pickStr(o.city), pickStr(o.state)].filter(Boolean).join(', '),
+    zip,
+  ].filter(Boolean);
+  return parts.length ? parts.join(', ') : null;
+}
+
+/** Alternate visit text stored on reschedule intent (may differ from client home). */
+export function rescheduleIntentAlternateAddress(
+  intent: Pick<RoutingRescheduleIntentV1, 'isAlternateStop' | 'alternateAddressText' | 'address'> | null | undefined
+): string | null {
+  if (!intent?.isAlternateStop) return null;
+  return intent.alternateAddressText?.trim() || intent.address?.trim() || null;
+}
+
+/** Alternate address to pass into the reschedule book modal from routing preview. */
+export function resolveRoutingBookAlternateAddress(args: {
+  hasLinkedClient: boolean;
+  routingAddress?: string | null;
+  intent?: RoutingRescheduleIntentV1 | null;
+  previewUsesAlternateAddress?: boolean;
+  sourceAppt?: Appointment | null;
+}): string | undefined {
+  const routingAddr = args.routingAddress?.trim();
+  if (!args.hasLinkedClient) return routingAddr || undefined;
+
+  const fromIntent = rescheduleIntentAlternateAddress(args.intent);
+  if (fromIntent) return fromIntent;
+
+  if (args.previewUsesAlternateAddress && routingAddr) return routingAddr;
+
+  if (args.sourceAppt && appointmentHasAlternateLocation(args.sourceAppt)) {
+    return (
+      appointmentAlternateAddressText(args.sourceAppt)?.trim() ||
+      visitAddressFromAppointmentRow(args.sourceAppt) ||
+      routingAddr ||
+      undefined
+    );
+  }
+
+  return undefined;
+}
+
+export function rescheduleIntentUsesAlternateAddress(
+  intent: Pick<RoutingRescheduleIntentV1, 'isAlternateStop' | 'alternateAddressText' | 'address'> | null | undefined
+): boolean {
+  return Boolean(intent?.isAlternateStop || rescheduleIntentAlternateAddress(intent));
+}
+
+function normalizeRoutingAddressForCompare(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/,\s*,+/g, ',')
+    .replace(/\busa\b/gi, '')
+    .replace(/[.,]/g, '')
+    .trim();
+}
+
+export function routingAddressesMatch(a: string, b: string): boolean {
+  const na = normalizeRoutingAddressForCompare(a);
+  const nb = normalizeRoutingAddressForCompare(b);
+  if (!na || !nb) return false;
+  return na === nb || na.includes(nb) || nb.includes(na);
+}
+
+/** Alternate routing stop currently on the form that should not be silently replaced by client home. */
+export function routingFormAlternateAddressToPreserve(
+  formAddress: string | undefined | null,
+  intent: RoutingRescheduleIntentV1 | null | undefined
+): string | null {
+  const fromIntent = rescheduleIntentAlternateAddress(intent);
+  if (fromIntent) return fromIntent;
+  if (intent?.isAlternateStop && formAddress?.trim()) return formAddress.trim();
+  return null;
+}
+
+/** When picking a client would overwrite an active alternate stop, return the alternate text to confirm. */
+export function routingClientPickWouldReplaceAlternate(args: {
+  currentFormAddress?: string | null;
+  intent?: RoutingRescheduleIntentV1 | null;
+  clientHomeAddress: string | null | undefined;
+  explicitAlternateOpt?: string | null;
+}): string | null {
+  if (args.explicitAlternateOpt?.trim()) return null;
+  const preserved = routingFormAlternateAddressToPreserve(args.currentFormAddress, args.intent);
+  const home = args.clientHomeAddress?.trim();
+  if (!preserved || !home) return null;
+  if (routingAddressesMatch(preserved, home)) return null;
+  return preserved;
 }
 
 export function rescheduleIntentIsActive(): boolean {
@@ -636,6 +741,10 @@ export function buildRoutingRescheduleIntentFromAppointment(
     practiceTz
   );
 
+  const alternateAddressText =
+    appointmentAlternateAddressText(appt) ?? visitAddressFromAppointmentRow(appt);
+  const isAlternateStop = appointmentHasAlternateLocation(appt);
+
   return {
     v: 1,
     appointmentId: appt.id,
@@ -657,6 +766,14 @@ export function buildRoutingRescheduleIntentFromAppointment(
     clientDisplayLabel,
     serviceMinutes: minutes,
     clientAlerts: pickStr(c.alerts),
+    ...(isAlternateStop
+      ? {
+          isAlternateStop: true,
+          ...(alternateAddressText
+            ? { alternateAddressText, address: alternateAddressText }
+            : {}),
+        }
+      : {}),
     sameDayVisits,
     rescheduleScope: sameDayVisits.length > 1 ? undefined : 'selected_pet',
   };

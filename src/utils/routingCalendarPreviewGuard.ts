@@ -21,6 +21,11 @@ export function notifyRoutingPreviewCalendarBlocked(): void {
 export const EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE =
   'An appointment preview is on the calendar. Save changes from the highlighted visit, or dismiss (×), before continuing.';
 
+export const RESCHEDULE_CALENDAR_BLOCKED_MESSAGE =
+  'Dismiss rescheduling or finish choosing a new slot before using the calendar.';
+
+export const EDIT_VISIT_CALENDAR_BLOCKED_MESSAGE = 'Close Edit visit to use the calendar.';
+
 export function getScheduleCalendarPreviewBlockedMessage(): string {
   if (hasActiveEditVisitTimePreview()) {
     return EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE;
@@ -115,6 +120,7 @@ function isAllowedPreviewInteractionTarget(target: Element): boolean {
   if (target.closest('.scheduler-modal-backdrop--routing-dock')) return true;
   if (target.closest('.scheduler-edit-inline-pane')) return true;
   if (target.closest('.scheduler-edit-placement-sidebar')) return true;
+  if (target.closest('.scheduler-calendar-blocked-notice-shell')) return true;
   if (target.closest('.scheduler-edit-preview-popover-shell')) return true;
   if (target.closest('.scheduler-edit-time-preview-slot')) return true;
   return false;

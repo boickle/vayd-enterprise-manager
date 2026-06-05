@@ -34,6 +34,8 @@ export type RoutingCalendarPreviewPayloadV1 = {
     state?: string;
     zip?: string;
   };
+  /** When true with a linked client, `newApptMeta.address` is an alternate stop (not client home). */
+  routingUsesAlternateAddress?: boolean;
   /** Used for calendar preview chip; may be a fallback when the user did not pick a type in Routing. */
   appointmentTypeId: number;
   /** True when the user picked a type in Routing → Calculate Time before opening the calendar preview. */
