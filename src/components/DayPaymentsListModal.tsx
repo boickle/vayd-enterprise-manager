@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import {
   Alert,
   Box,
@@ -27,6 +27,12 @@ import {
   type PaymentDayRow,
   type ReconciliationClient,
 } from '../api/payments';
+import PaymentInvoiceModal, { type PaymentInvoiceTarget } from './PaymentInvoiceModal';
+
+const clickablePaymentRowSx = {
+  cursor: 'pointer',
+  '&:hover': { backgroundColor: 'action.hover' },
+} as const;
 
 function fmtUSD(n: number) {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(
@@ -56,6 +62,33 @@ export default function DayPaymentsListModal({ open, date, onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [payments, setPayments] = useState<PaymentDayRow[]>([]);
   const [typeSummaries, setTypeSummaries] = useState<PaymentTypeSummary[]>([]);
+  const [invoiceTarget, setInvoiceTarget] = useState<PaymentInvoiceTarget | null>(null);
+
+  const openInvoiceForPayment = (payment: PaymentDayRow) => {
+    const clientId = payment.client?.id;
+    if (clientId == null) return;
+    setInvoiceTarget({
+      clientId: Number(clientId),
+      paymentId: payment.id,
+      amount: payment.amount,
+      date: String(payment.date).slice(0, 10),
+    });
+  };
+
+  const onPaymentRowClick = (payment: PaymentDayRow) => (e: MouseEvent<HTMLTableRowElement>) => {
+    if (payment.client?.id == null) return;
+    e.stopPropagation();
+    openInvoiceForPayment(payment);
+  };
+
+  const onPaymentRowKeyDown =
+    (payment: PaymentDayRow) => (e: KeyboardEvent<HTMLTableRowElement>) => {
+      if (payment.client?.id == null) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openInvoiceForPayment(payment);
+      }
+    };
 
   const dateKey = date.slice(0, 10);
   const dateLabel = dayjs(dateKey).format('dddd, MMM D, YYYY');
@@ -204,7 +237,20 @@ export default function DayPaymentsListModal({ open, date, onClose }: Props) {
                 </TableHead>
                 <TableBody>
                   {payments.map((p) => (
-                    <TableRow key={p.id} hover>
+                    <TableRow
+                      key={p.id}
+                      hover
+                      tabIndex={p.client?.id != null ? 0 : undefined}
+                      role={p.client?.id != null ? 'button' : undefined}
+                      aria-label={
+                        p.client?.id != null
+                          ? `View invoice for payment ${p.id}, ${clientLabel(p.client)}`
+                          : undefined
+                      }
+                      sx={p.client?.id != null ? clickablePaymentRowSx : undefined}
+                      onClick={p.client?.id != null ? onPaymentRowClick(p) : undefined}
+                      onKeyDown={p.client?.id != null ? onPaymentRowKeyDown(p) : undefined}
+                    >
                       <TableCell>{clientLabel(p.client)}</TableCell>
                       <TableCell>{p.paymentTypeName ?? '—'}</TableCell>
                       <TableCell align="right">{fmtUSD(p.amount)}</TableCell>
@@ -231,6 +277,8 @@ export default function DayPaymentsListModal({ open, date, onClose }: Props) {
       <DialogActions>
         <Button onClick={onClose}>Close</Button>
       </DialogActions>
+
+      <PaymentInvoiceModal target={invoiceTarget} onClose={() => setInvoiceTarget(null)} />
     </Dialog>
   );
 }

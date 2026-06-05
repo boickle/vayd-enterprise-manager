@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import {
   Box,
   Button,
@@ -29,6 +29,31 @@ import {
   type ConsolidatedClientPaymentRow,
   type PaymentDetailTableRow,
 } from '../utils/paymentsDayVsdMatch';
+import PaymentInvoiceModal, { type PaymentInvoiceTarget } from './PaymentInvoiceModal';
+import type { PaymentDayRow } from '../api/payments';
+
+const clickablePaymentLineSx = {
+  cursor: 'pointer',
+  borderRadius: 0.5,
+  px: 0.5,
+  mx: -0.5,
+  '&:hover': { backgroundColor: 'action.hover' },
+} as const;
+
+const clickablePaymentRowSx = {
+  cursor: 'pointer',
+  '&:hover': { backgroundColor: 'action.hover' },
+} as const;
+
+function primaryPaymentForRow(row: ConsolidatedClientPaymentRow): PaymentDayRow | null {
+  if (!row.payments.length) return null;
+  if (row.payments.length === 1) return row.payments[0]!;
+  const nonMembership = row.payments.filter(
+    (p) => !isMembershipPlanPaymentType(p.paymentTypeName)
+  );
+  const pool = nonMembership.length ? nonMembership : row.payments;
+  return pool.reduce((best, p) => (Number(p.amount) > Number(best.amount) ? p : best), pool[0]!);
+}
 
 function fmtUSD(n: number) {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(
@@ -89,6 +114,56 @@ export default function TodaysPaymentsDetailModal({ open, date, onClose }: Props
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<ConsolidatedClientPaymentRow[]>([]);
+  const [invoiceTarget, setInvoiceTarget] = useState<PaymentInvoiceTarget | null>(null);
+
+  const openInvoiceForPayment = (payment: PaymentDayRow, amountOverride?: number) => {
+    const clientId = payment.client?.id ?? null;
+    if (clientId == null) return;
+    setInvoiceTarget({
+      clientId: Number(clientId),
+      paymentId: payment.id,
+      amount: amountOverride ?? payment.amount,
+      date: String(payment.date).slice(0, 10),
+    });
+  };
+
+  const openInvoiceForRow = (row: ConsolidatedClientPaymentRow) => {
+    if (row.clientId == null) return;
+    const payment = primaryPaymentForRow(row);
+    if (!payment) return;
+    openInvoiceForPayment(payment, row.paymentTotal);
+  };
+
+  const onRowClick =
+    (row: ConsolidatedClientPaymentRow) => (e: MouseEvent<HTMLTableRowElement>) => {
+      if (row.clientId == null) return;
+      e.stopPropagation();
+      openInvoiceForRow(row);
+    };
+
+  const onRowKeyDown =
+    (row: ConsolidatedClientPaymentRow) => (e: KeyboardEvent<HTMLTableRowElement>) => {
+      if (row.clientId == null) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openInvoiceForRow(row);
+      }
+    };
+
+  const onPaymentLineClick =
+    (payment: PaymentDayRow) => (e: MouseEvent<HTMLSpanElement>) => {
+      e.stopPropagation();
+      openInvoiceForPayment(payment);
+    };
+
+  const onPaymentLineKeyDown =
+    (payment: PaymentDayRow) => (e: KeyboardEvent<HTMLSpanElement>) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        openInvoiceForPayment(payment);
+      }
+    };
 
   const dateKey = date.slice(0, 10);
   const dateLabel = dayjs(dateKey).format('dddd, MMM D, YYYY');
@@ -258,7 +333,20 @@ export default function TodaysPaymentsDetailModal({ open, date, onClose }: Props
                 </TableHead>
                 <TableBody>
                   {rows.map((row) => (
-                    <TableRow key={row.clientId ?? row.clientName} hover>
+                    <TableRow
+                      key={row.clientId ?? row.clientName}
+                      hover
+                      tabIndex={row.clientId != null ? 0 : undefined}
+                      role={row.clientId != null ? 'button' : undefined}
+                      aria-label={
+                        row.clientId != null
+                          ? `View invoice for ${row.clientName}`
+                          : undefined
+                      }
+                      sx={row.clientId != null ? clickablePaymentRowSx : undefined}
+                      onClick={row.clientId != null ? onRowClick(row) : undefined}
+                      onKeyDown={row.clientId != null ? onRowKeyDown(row) : undefined}
+                    >
                       <TableCell>{row.clientName}</TableCell>
                       <TableCell>
                         <TreatmentPatientsCell patients={row.treatmentPatients} />
@@ -304,7 +392,20 @@ export default function TodaysPaymentsDetailModal({ open, date, onClose }: Props
                               key={p.id}
                               component="span"
                               display="block"
-                              sx={{ fontFamily: 'monospace', fontSize: '0.85em' }}
+                              tabIndex={row.clientId != null ? 0 : undefined}
+                              role={row.clientId != null ? 'button' : undefined}
+                              aria-label={
+                                row.clientId != null
+                                  ? `View invoice for payment ${p.id}`
+                                  : undefined
+                              }
+                              sx={{
+                                fontFamily: 'monospace',
+                                fontSize: '0.85em',
+                                ...(row.clientId != null ? clickablePaymentLineSx : {}),
+                              }}
+                              onClick={row.clientId != null ? onPaymentLineClick(p) : undefined}
+                              onKeyDown={row.clientId != null ? onPaymentLineKeyDown(p) : undefined}
                             >
                               #{p.id} · {fmtUSD(p.amount)}
                               {p.paymentTypeName ? ` · ${p.paymentTypeName}` : ''}
@@ -334,6 +435,8 @@ export default function TodaysPaymentsDetailModal({ open, date, onClose }: Props
       <DialogActions>
         <Button onClick={onClose}>Close</Button>
       </DialogActions>
+
+      <PaymentInvoiceModal target={invoiceTarget} onClose={() => setInvoiceTarget(null)} />
     </Dialog>
   );
 }
