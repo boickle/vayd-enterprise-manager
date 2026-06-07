@@ -16,7 +16,8 @@ import {
 } from '@mui/material';
 import Alert from '@mui/material/Alert';
 import Grid from '@mui/material/Grid';
-import { CalendarMonth, Refresh } from '@mui/icons-material';
+import { CalendarMonth, ChevronLeft, ChevronRight, CheckCircle, Refresh, Warning } from '@mui/icons-material';
+import IconButton from '@mui/material/IconButton';
 import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import dayjs, { Dayjs } from 'dayjs';
@@ -31,7 +32,18 @@ import {
   Line,
   Legend,
 } from 'recharts';
-import { fetchPaymentsAnalytics, type PaymentPoint } from '../api/payments';
+import {
+  fetchPaymentsAnalytics,
+  fetchPaymentsReconciliation,
+  fetchSquarePayments,
+  filterSquarePaymentsForDay,
+  sumCreditCardPaymentsForDay,
+  sumSquarePayments,
+  type PaymentPoint,
+} from '../api/payments';
+import DayPaymentsListModal from '../components/DayPaymentsListModal';
+import SquareDayReconciliationModal from '../components/SquareDayReconciliationModal';
+import TodaysPaymentsDetailModal from '../components/TodaysPaymentsDetailModal';
 
 dayjs.extend(utc);
 
@@ -71,8 +83,12 @@ function daysBetween(a: Dayjs, b: Dayjs) {
   return Math.max(1, b.startOf('day').diff(a.startOf('day'), 'day') + 1);
 }
 const dayKeyUTC = (d: string | Date | dayjs.Dayjs) => dayjs.utc(d).format('YYYY-MM-DD');
-/** Today's date in the user's local timezone (YYYY-MM-DD) for "today" revenue. */
-const todayLocalKey = () => dayjs().format('YYYY-MM-DD');
+function findPaymentPointForDay(points: PaymentPoint[], localDayKey: string): PaymentPoint | null {
+  const utcKey = dayjs(localDayKey).utc().format('YYYY-MM-DD');
+  const matches = (p: PaymentPoint) =>
+    p.date === localDayKey || p.date === utcKey || dayKeyUTC(p.date) === utcKey;
+  return points.find(matches) ?? null;
+}
 
 /** Linear regression trend for total revenue series. */
 function addLinearTrend<T extends { totalRevenue: number }>(data: T[]): (T & { trend: number })[] {
@@ -117,7 +133,25 @@ export default function PaymentsAnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [chartLineVisible, setChartLineVisible] =
     useState<Record<ChartLineKey, boolean>>(defaultChartLineVisibility);
+  const [paymentsDetailOpen, setPaymentsDetailOpen] = useState(false);
+  const [paymentsListOpen, setPaymentsListOpen] = useState(false);
+  const [squareReconcileOpen, setSquareReconcileOpen] = useState(false);
+  const [revenueDay, setRevenueDay] = useState<Dayjs>(() => dayjs().startOf('day'));
+  const [squareLoading, setSquareLoading] = useState(false);
+  const [squareError, setSquareError] = useState<string | null>(null);
+  const [squareTotal, setSquareTotal] = useState(0);
+  const [squareCount, setSquareCount] = useState(0);
+  const [squareCardTotal, setSquareCardTotal] = useState(0);
+  const [squareCardCount, setSquareCardCount] = useState(0);
+  const [oursCardTotal, setOursCardTotal] = useState(0);
+  const [oursCardCount, setOursCardCount] = useState(0);
   const open = Boolean(anchorEl);
+
+  const today = dayjs().startOf('day');
+  const revenueDayKey = revenueDay.format('YYYY-MM-DD');
+  const isRevenueDayToday = revenueDay.isSame(today, 'day');
+  const canAdvanceRevenueDay = revenueDay.isBefore(today, 'day');
+  const revenueDayLabel = revenueDay.format('dddd, MMM D, YYYY');
 
   const toggleChartLine = (key: ChartLineKey) => {
     setChartLineVisible((v) => ({ ...v, [key]: !v[key] }));
@@ -171,6 +205,73 @@ export default function PaymentsAnalyticsPage() {
     };
   }, []);
 
+  // Square received + credit card comparison for the selected daily revenue day
+  useEffect(() => {
+    let alive = true;
+    setSquareLoading(true);
+    setSquareError(null);
+    (async () => {
+      try {
+        const [allSquare, cardSquare, reconciliation] = await Promise.all([
+          fetchSquarePayments({
+            start: revenueDayKey,
+            end: revenueDayKey,
+            completedOnly: true,
+          }),
+          fetchSquarePayments({
+            start: revenueDayKey,
+            end: revenueDayKey,
+            cardOnly: true,
+            completedOnly: true,
+          }),
+          fetchPaymentsReconciliation({ start: revenueDayKey, end: revenueDayKey }),
+        ]);
+        if (!alive) return;
+
+        const daySquare = filterSquarePaymentsForDay(allSquare.payments, revenueDayKey);
+        const dayCardSquare = filterSquarePaymentsForDay(cardSquare.payments, revenueDayKey);
+        const allTotals = sumSquarePayments(daySquare);
+        const cardTotals = sumSquarePayments(dayCardSquare);
+        const oursCards = sumCreditCardPaymentsForDay(reconciliation, revenueDayKey);
+
+        setSquareTotal(allTotals.total);
+        setSquareCount(allTotals.count);
+        setSquareCardTotal(cardTotals.total);
+        setSquareCardCount(cardTotals.count);
+        setOursCardTotal(oursCards.total);
+        setOursCardCount(oursCards.count);
+      } catch (err: unknown) {
+        if (!alive) return;
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        if (status === 503) {
+          setSquareError('Square is not configured on the server.');
+        } else {
+          setSquareError(
+            err instanceof Error ? err.message : 'Failed to load Square payments'
+          );
+        }
+        setSquareTotal(0);
+        setSquareCount(0);
+        setSquareCardTotal(0);
+        setSquareCardCount(0);
+        setOursCardTotal(0);
+        setOursCardCount(0);
+      } finally {
+        if (alive) setSquareLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [revenueDayKey]);
+
+  const creditCardTotalsMatch = useMemo(() => {
+    return Math.abs(oursCardTotal - squareCardTotal) < 0.005;
+  }, [oursCardTotal, squareCardTotal]);
+  const creditCardCountMatch = oursCardCount === squareCardCount;
+  const creditCardFullyMatch = creditCardTotalsMatch && creditCardCountMatch;
+  const creditCardDifference = oursCardTotal - squareCardTotal;
+
   const totals = useMemo(() => {
     const revenue = series.reduce((s, p) => s + p.revenue, 0);
     const practiceRevenue = series.reduce((s, p) => s + (p.practiceRevenue ?? 0), 0);
@@ -205,29 +306,29 @@ export default function PaymentsAnalyticsPage() {
 
   const chartDataWithTrend = useMemo(() => addLinearTrend(chartData), [chartData]);
 
-  // ---------- Leaderboards + Today's revenue ----------
+  // ---------- Leaderboards + daily revenue card ----------
   const dataset = seriesAll ?? series; // prefer all-time; fallback to current selection
-  /** Today's revenue row. Match by local date or UTC date so we find the row regardless of API timezone. */
-  const todaysRow = useMemo(() => {
-    const localKey = todayLocalKey();
-    const utcKey = dayjs().utc().format('YYYY-MM-DD');
-    const matches = (p: PaymentPoint) => p.date === localKey || p.date === utcKey || dayKeyUTC(p.date) === utcKey;
-    return series.find(matches) ?? (seriesAll ?? []).find(matches) ?? null;
-  }, [series, seriesAll]);
-  const todaysPracticeRevenue = todaysRow?.practiceRevenue ?? 0;
-  const todaysOnlinePharmacyRevenue = todaysRow?.onlinePharmacyRevenue ?? 0;
-  const todaysSubscriptionRevenue = todaysRow?.subscriptionRevenue ?? 0;
-  const todaysPaymentsBreakdown = todaysPracticeRevenue + todaysOnlinePharmacyRevenue;
-  const todaysRecordedRevenue = todaysRow?.revenue ?? 0;
-  const todaysUseLegacyPaymentsRow =
-    todaysPaymentsBreakdown === 0 && todaysRecordedRevenue !== 0;
-  const todaysPaymentsTotal = todaysUseLegacyPaymentsRow
-    ? todaysRecordedRevenue
-    : todaysPaymentsBreakdown > 0
-      ? todaysPaymentsBreakdown
-      : todaysRecordedRevenue;
-  const todaysTotalRevenue = todaysPaymentsTotal + todaysSubscriptionRevenue;
-  const todayLabel = dayjs().format('dddd, MMM D, YYYY');
+  /** Revenue row for the day selected on the daily revenue card (local + UTC date matching). */
+  const revenueDayRow = useMemo(() => {
+    return (
+      findPaymentPointForDay(series, revenueDayKey) ??
+      findPaymentPointForDay(seriesAll ?? [], revenueDayKey) ??
+      null
+    );
+  }, [series, seriesAll, revenueDayKey]);
+  const revenueDayPracticeRevenue = revenueDayRow?.practiceRevenue ?? 0;
+  const revenueDayOnlinePharmacyRevenue = revenueDayRow?.onlinePharmacyRevenue ?? 0;
+  const revenueDaySubscriptionRevenue = revenueDayRow?.subscriptionRevenue ?? 0;
+  const revenueDayPaymentsBreakdown = revenueDayPracticeRevenue + revenueDayOnlinePharmacyRevenue;
+  const revenueDayRecordedRevenue = revenueDayRow?.revenue ?? 0;
+  const revenueDayUseLegacyPaymentsRow =
+    revenueDayPaymentsBreakdown === 0 && revenueDayRecordedRevenue !== 0;
+  const revenueDayPaymentsTotal = revenueDayUseLegacyPaymentsRow
+    ? revenueDayRecordedRevenue
+    : revenueDayPaymentsBreakdown > 0
+      ? revenueDayPaymentsBreakdown
+      : revenueDayRecordedRevenue;
+  const revenueDayTotalRevenue = revenueDayPaymentsTotal + revenueDaySubscriptionRevenue;
 
   const topDays = useMemo(() => {
     const copy = [...dataset];
@@ -429,18 +530,38 @@ export default function PaymentsAnalyticsPage() {
           </Grid>
         </Grid>
 
-        {/* Today's revenue (current day in user's local timezone) */}
+        {/* Daily revenue (defaults to today; change day with arrows) */}
         <Card variant="outlined">
-          <CardHeader title="Today's Revenue" />
+          <CardHeader
+            title={isRevenueDayToday ? "Today's Revenue" : 'Revenue'}
+            action={
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => setPaymentsListOpen(true)}
+                >
+                  All payments
+                </Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => setPaymentsDetailOpen(true)}
+                >
+                  View payments
+                </Button>
+              </Stack>
+            }
+          />
           <CardContent>
             <Stack spacing={0.5}>
-              {todaysUseLegacyPaymentsRow ? (
+              {revenueDayUseLegacyPaymentsRow ? (
                 <Box display="flex" justifyContent="space-between" alignItems="baseline">
                   <Typography variant="body2" color="text.secondary">
                     Payments revenue
                   </Typography>
                   <Typography variant="body1" fontWeight={600}>
-                    {fmtUSD(todaysRecordedRevenue)}
+                    {fmtUSD(revenueDayRecordedRevenue)}
                   </Typography>
                 </Box>
               ) : (
@@ -450,7 +571,7 @@ export default function PaymentsAnalyticsPage() {
                       Practice revenue
                     </Typography>
                     <Typography variant="body1" fontWeight={600}>
-                      {fmtUSD(todaysPracticeRevenue)}
+                      {fmtUSD(revenueDayPracticeRevenue)}
                     </Typography>
                   </Box>
                   <Box display="flex" justifyContent="space-between" alignItems="baseline">
@@ -458,7 +579,7 @@ export default function PaymentsAnalyticsPage() {
                       Online pharmacy revenue
                     </Typography>
                     <Typography variant="body1" fontWeight={600}>
-                      {fmtUSD(todaysOnlinePharmacyRevenue)}
+                      {fmtUSD(revenueDayOnlinePharmacyRevenue)}
                     </Typography>
                   </Box>
                 </>
@@ -468,7 +589,7 @@ export default function PaymentsAnalyticsPage() {
                   Subscription revenue
                 </Typography>
                 <Typography variant="body1" fontWeight={600}>
-                  {fmtUSD(todaysSubscriptionRevenue)}
+                  {fmtUSD(revenueDaySubscriptionRevenue)}
                 </Typography>
               </Box>
               <Divider sx={{ my: 0.5 }} />
@@ -477,13 +598,140 @@ export default function PaymentsAnalyticsPage() {
                   Total
                 </Typography>
                 <Typography variant="h5" fontWeight={800}>
-                  {fmtUSD(todaysTotalRevenue)}
+                  {fmtUSD(revenueDayTotalRevenue)}
                 </Typography>
               </Box>
             </Stack>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              {todayLabel}
-            </Typography>
+            <Box
+              display="flex"
+              alignItems="center"
+              justifyContent="center"
+              gap={0.5}
+              sx={{ mt: 1.5 }}
+            >
+              <IconButton
+                aria-label="Previous day"
+                size="small"
+                onClick={() => setRevenueDay((d) => d.subtract(1, 'day'))}
+              >
+                <ChevronLeft />
+              </IconButton>
+              <Typography variant="body2" color="text.secondary" sx={{ minWidth: 200, textAlign: 'center' }}>
+                {revenueDayLabel}
+              </Typography>
+              <IconButton
+                aria-label="Next day"
+                size="small"
+                disabled={!canAdvanceRevenueDay}
+                onClick={() => {
+                  if (!canAdvanceRevenueDay) return;
+                  setRevenueDay((d) => d.add(1, 'day'));
+                }}
+              >
+                <ChevronRight />
+              </IconButton>
+            </Box>
+          </CardContent>
+        </Card>
+
+        {/* Square received (same day as daily revenue card) */}
+        <Card variant="outlined">
+          <CardHeader
+            title={isRevenueDayToday ? 'Square Received Today' : 'Square Received'}
+            subheader="Completed payments recorded in Square for this day"
+            action={
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={!!squareError}
+                onClick={() => setSquareReconcileOpen(true)}
+              >
+                Match credit cards
+              </Button>
+            }
+          />
+          <CardContent>
+            {squareLoading ? (
+              <Box display="flex" justifyContent="center" py={1}>
+                <CircularProgress size={24} />
+              </Box>
+            ) : squareError ? (
+              <Alert severity="warning">{squareError}</Alert>
+            ) : (
+              <Stack spacing={1}>
+                <Typography variant="subtitle2" color="text.secondary">
+                  Credit card comparison
+                </Typography>
+                <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                  <Typography variant="body2" color="text.secondary">
+                    Our system (credit card)
+                  </Typography>
+                  <Box textAlign="right">
+                    <Typography variant="body1" fontWeight={600}>
+                      {fmtUSD(oursCardTotal)}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {oursCardCount} payment{oursCardCount === 1 ? '' : 's'}
+                    </Typography>
+                  </Box>
+                </Box>
+                <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                  <Typography variant="body2" color="text.secondary">
+                    Square (credit card)
+                  </Typography>
+                  <Box textAlign="right">
+                    <Typography variant="body1" fontWeight={600}>
+                      {fmtUSD(squareCardTotal)}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {squareCardCount} payment{squareCardCount === 1 ? '' : 's'}
+                    </Typography>
+                  </Box>
+                </Box>
+
+                {creditCardFullyMatch ? (
+                  <Alert severity="success" icon={<CheckCircle fontSize="inherit" />} sx={{ py: 0 }}>
+                    Credit card totals match for {revenueDayLabel}.
+                  </Alert>
+                ) : (
+                  <Alert severity="warning" icon={<Warning fontSize="inherit" />} sx={{ py: 0 }}>
+                    {!creditCardTotalsMatch && (
+                      <>
+                        Amount difference:{' '}
+                        <strong>
+                          {creditCardDifference >= 0 ? '+' : ''}
+                          {fmtUSD(creditCardDifference)}
+                        </strong>
+                        {!creditCardCountMatch && ' · '}
+                      </>
+                    )}
+                    {!creditCardCountMatch && (
+                      <>
+                        Payment count differs ({oursCardCount} ours vs {squareCardCount} Square)
+                      </>
+                    )}
+                  </Alert>
+                )}
+
+                <Divider sx={{ my: 0.5 }} />
+                <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                  <Typography variant="body2" color="text.secondary">
+                    All Square received
+                  </Typography>
+                  <Typography variant="body1" fontWeight={600}>
+                    {fmtUSD(squareTotal)}
+                  </Typography>
+                </Box>
+                <Typography variant="caption" color="text.secondary">
+                  {squareCount.toLocaleString()} completed payment{squareCount === 1 ? '' : 's'}{' '}
+                  (all types) · {revenueDayLabel}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" display="block">
+                  Use &ldquo;Match credit cards&rdquo; to see which individual payments matched or
+                  did not.
+                </Typography>
+              </Stack>
+            )}
           </CardContent>
         </Card>
 
@@ -754,6 +1002,24 @@ export default function PaymentsAnalyticsPage() {
             </Card>
           </Grid>
         </Grid>
+
+        <DayPaymentsListModal
+          open={paymentsListOpen}
+          date={revenueDayKey}
+          onClose={() => setPaymentsListOpen(false)}
+        />
+
+        <TodaysPaymentsDetailModal
+          open={paymentsDetailOpen}
+          date={revenueDayKey}
+          onClose={() => setPaymentsDetailOpen(false)}
+        />
+
+        <SquareDayReconciliationModal
+          open={squareReconcileOpen}
+          date={revenueDayKey}
+          onClose={() => setSquareReconcileOpen(false)}
+        />
 
         {/* Date Range Popover */}
         <Popover

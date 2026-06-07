@@ -1,6 +1,28 @@
 // src/utils/maps.ts
 export type Stop = { lat: number; lon: number; label?: string; address?: string };
 
+/** New tab — never pass windowFeatures (third arg) or the browser may open a popup window. */
+export function openUrlInNewTab(url: string): void {
+  window.open(url, '_blank');
+}
+
+type MapsRoutableHousehold = {
+  isNoLocation?: boolean;
+  lat: number;
+  lon: number;
+};
+
+/** Route order from `/routing/eta` (`routingOrderIndices`), else doctor-day order. */
+export function householdsInRoutingDisplayOrder<H extends MapsRoutableHousehold>(
+  households: H[],
+  routingOrderIndices?: number[] | null
+): H[] {
+  if (routingOrderIndices && routingOrderIndices.length === households.length) {
+    return routingOrderIndices.map((i) => households[i]);
+  }
+  return households;
+}
+
 function toLocationString(s: Stop): string {
   // Prefer address if available, otherwise fall back to lat/lon
   if (s.address && s.address.trim()) {

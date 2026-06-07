@@ -10,6 +10,7 @@ import {
 } from '../api/careOutreach';
 import './Settings.css';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
+import { buildPhoneDialHref, resolveQuoFromLine } from '../utils/quoContact';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
@@ -113,18 +114,6 @@ function dueSortTime(dueIso: string | null | undefined): number {
   return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
 }
 
-function buildPhoneDialHref(phone: string): string {
-  const digits = phone.replace(/\D/g, '');
-  if (!digits) return '#';
-  const e164 = digits.length === 10 ? `+1${digits}` : `+${digits}`;
-  const tpl = (import.meta.env.VITE_QUO_CALL_URL_TEMPLATE as string | undefined)?.trim();
-  if (tpl && (tpl.includes('{e164}') || tpl.includes('{digits}'))) {
-    return tpl.replace(/\{e164\}/g, encodeURIComponent(e164)).replace(/\{digits\}/g, digits);
-  }
-  // Quo (OpenPhone) and other apps commonly register for tel: when set as default calling app.
-  return `tel:${e164}`;
-}
-
 function formatDisplayDate(iso: string | null | undefined): string {
   if (!iso) return '—';
   try {
@@ -190,6 +179,35 @@ function employeeFromPatientPrimary(
 function reminderAssignedProvider(r: UnscheduledReminder): UnscheduledReminder['employee'] {
   if (employeeIsPresent(r.employee)) return r.employee;
   return employeeFromPatientPrimary(r.patient);
+}
+
+type CareOutreachClientBucket = {
+  clientKey: string;
+  clientId: number | null;
+  clientPimsId: string | null;
+  displayName: string;
+  phone: string | null;
+  isMember: boolean;
+  patients: Map<
+    number,
+    {
+      patientName: string;
+      isMember: boolean;
+      patientPimsId: string | null;
+      reminders: UnscheduledReminder[];
+    }
+  >;
+};
+
+function clientBucketQuoFromLine(client: CareOutreachClientBucket): string | null {
+  for (const pg of client.patients.values()) {
+    for (const r of pg.reminders) {
+      const provider = reminderAssignedProvider(r);
+      const fromLine = resolveQuoFromLine({ appointmentPrimaryProvider: provider });
+      if (fromLine) return fromLine;
+    }
+  }
+  return null;
 }
 
 /** Earliest due first (most overdue first), then provider, then service name. */
@@ -366,26 +384,8 @@ export default function CareOutreachPage() {
     return [...filtered].sort(compareRemindersForDisplay);
   }, [filtered]);
 
-  type ClientBucket = {
-    clientKey: string;
-    clientId: number | null;
-    clientPimsId: string | null;
-    displayName: string;
-    phone: string | null;
-    isMember: boolean;
-    patients: Map<
-      number,
-      {
-        patientName: string;
-        isMember: boolean;
-        patientPimsId: string | null;
-        reminders: UnscheduledReminder[];
-      }
-    >;
-  };
-
   const grouped = useMemo(() => {
-    const clients = new Map<string, ClientBucket>();
+    const clients = new Map<string, CareOutreachClientBucket>();
     for (const r of sortedForDisplay) {
       const c = extractClient(r);
       const clientKey = c.id != null ? `c-${c.id}` : `orphan-p-${r.patient?.id ?? r.id}`;
@@ -704,7 +704,9 @@ export default function CareOutreachPage() {
                 </strong>
                 {client.phone ? (
                   <a
-                    href={buildPhoneDialHref(client.phone)}
+                    href={buildPhoneDialHref(client.phone, {
+                      fromLine: clientBucketQuoFromLine(client),
+                    })}
                     style={{ fontWeight: 600, color: 'var(--accent-strong, #2563eb)' }}
                   >
                     {client.phone}

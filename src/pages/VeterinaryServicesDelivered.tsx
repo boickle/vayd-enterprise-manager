@@ -60,11 +60,22 @@ import {
   fetchDoctorMonth,
   type DoctorMonthDay,
 } from '../api/appointments';
-import { fetchEmployee, type EmployeeWeeklySchedule } from '../api/appointmentSettings';
+import {
+  fetchAllAppointmentTypes,
+  fetchEmployee,
+  type EmployeeWeeklySchedule,
+} from '../api/appointmentSettings';
+import {
+  buildAppointmentTypeCatalog,
+  pointsFromAppointmentRows,
+  type AppointmentTypeCatalog,
+} from '../utils/appointmentTypeSettings';
 import { useAuth } from '../auth/useAuth';
 import { isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
 
 dayjs.extend(utc);
+
+const VSD_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
 const PRACTICE_TOTAL_ID = '__practice__';
 const NOT_SPECIFIED_DOCTOR_ID = '__not_specified__';
@@ -191,28 +202,15 @@ function addLinearTrend<T extends { total: number }>(
   }));
 }
 
-/** Points from appointments (same rules as My Day: 1 normal, 0.5 tech, 2 euthanasia; skip personal blocks; Ash Drop Off excluded). */
-function pointsFromAppts(
-  appts: { appointmentType?: string; isPersonalBlock?: boolean }[]
-): number {
-  return (appts ?? []).reduce((total, a) => {
-    if ((a as any)?.isPersonalBlock) return total;
-    const type = (a?.appointmentType || '').toLowerCase().replace(/-/g, ' ');
-    if (type.includes('ash drop off')) return total;
-    if (type === 'euthanasia') return total + 2;
-    if (type.includes('tech appointment')) return total + 0.5;
-    return total + 1;
-  }, 0);
-}
-
 /** Points for one day from month API: appts (with appointmentType) + blocks (counted as personal). */
-function pointsFromMonthDay(day: DoctorMonthDay): number {
+function pointsFromMonthDay(day: DoctorMonthDay, catalog?: AppointmentTypeCatalog): number {
   const apptsWithType = (day.appts ?? []).map((a) => ({
     appointmentType: a.appointmentType,
+    appointmentTypeId: (a as { appointmentTypeId?: number }).appointmentTypeId,
     isPersonalBlock: false,
   }));
   const blocksAsPersonal = (day.blocks ?? []).map(() => ({ isPersonalBlock: true }));
-  return pointsFromAppts([...apptsWithType, ...blocksAsPersonal]);
+  return pointsFromAppointmentRows([...apptsWithType, ...blocksAsPersonal], catalog);
 }
 
 /** Time at appointments for one day: sum of (end - start) in minutes; uses serviceMinutes when present. */
@@ -309,6 +307,7 @@ export default function VeterinaryServicesDeliveredPage() {
     Record<string, Record<string, number>>
   >({});
   const [pointsLoading, setPointsLoading] = useState(false);
+  const [typeCatalog, setTypeCatalog] = useState<AppointmentTypeCatalog | undefined>();
   const [itemsModalOpen, setItemsModalOpen] = useState(false);
   const [itemsModalDoctor, setItemsModalDoctor] = useState<{ id: string; name: string } | null>(null);
   const [itemsModalData, setItemsModalData] = useState<DoctorRevenueSeriesResponse | null>(null);
@@ -485,6 +484,20 @@ export default function VeterinaryServicesDeliveredPage() {
     };
   }, [providersForApi, startStr, endStr, restrictEmployeeAnalytics]);
 
+  useEffect(() => {
+    let alive = true;
+    void fetchAllAppointmentTypes(VSD_PRACTICE_ID, { activeOnly: false })
+      .then((rows) => {
+        if (alive) setTypeCatalog(buildAppointmentTypeCatalog(Array.isArray(rows) ? rows : []));
+      })
+      .catch(() => {
+        if (alive) setTypeCatalog(undefined);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   // Load appointments per doctor per month for points (one request per doctor per month in range; includes single-day)
   useEffect(() => {
     if (!providersForApi.length) {
@@ -516,7 +529,7 @@ export default function VeterinaryServicesDeliveredPage() {
           for (const day of days) {
             const date = day?.date?.slice(0, 10);
             if (date) {
-              byDoctorByDate[doctorId][date] = pointsFromMonthDay(day);
+              byDoctorByDate[doctorId][date] = pointsFromMonthDay(day, typeCatalog);
               serviceMinByDoctorByDate[doctorId][date] = serviceMinutesFromMonthDay(day);
             }
           }
@@ -535,7 +548,7 @@ export default function VeterinaryServicesDeliveredPage() {
     return () => {
       alive = false;
     };
-  }, [providersForApi, startStr, endStr]);
+  }, [providersForApi, startStr, endStr, typeCatalog]);
 
   // Trailing history for "estimated day revenue" when the selected day is calendar today
   useEffect(() => {
@@ -597,7 +610,7 @@ export default function VeterinaryServicesDeliveredPage() {
           for (const day of days) {
             const date = day?.date?.slice(0, 10);
             if (date) {
-              byDoctorByDate[doctorId][date] = pointsFromMonthDay(day);
+              byDoctorByDate[doctorId][date] = pointsFromMonthDay(day, typeCatalog);
             }
           }
         }
@@ -617,7 +630,7 @@ export default function VeterinaryServicesDeliveredPage() {
     return () => {
       alive = false;
     };
-  }, [isViewingCalendarToday, providersForApi, restrictEmployeeAnalytics]);
+  }, [isViewingCalendarToday, providersForApi, restrictEmployeeAnalytics, typeCatalog]);
 
   const practiceSeries = useMemo(() => {
     if (loading) return [];
@@ -1274,7 +1287,7 @@ export default function VeterinaryServicesDeliveredPage() {
                 </ResponsiveContainer>
               </Box>
               <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 2, mb: 1 }}>
-                VSD per point (revenue ÷ points; points: 1 normal, 0.5 tech, 2 euthanasia)
+                VSD per point (revenue ÷ points; uses appointment type settings or legacy rules)
               </Typography>
               <Box sx={{ width: '100%', height: 320 }}>
                 <ResponsiveContainer width="100%" height="100%">

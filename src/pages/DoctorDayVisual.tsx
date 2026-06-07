@@ -2,14 +2,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { createRoot } from 'react-dom/client';
-import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf';
 import { DateTime } from 'luxon';
 import type { DoctorDayProps } from './DoctorDay';
 import {
   fetchDoctorDay,
+  fetchAppointmentsRangeForLocalDay,
+  mergeRangeClientContactOntoDoctorDayAppts,
   clientDisplayName,
+  clientPhoneLineFromDoctorDayPayload,
   previewRoutingAppointmentLabel,
   isBlockEntry,
   blockDisplayLabel,
@@ -19,13 +19,33 @@ import {
   type Depot,
 } from '../api/appointments';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
+import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
+import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
+import {
+  buildAppointmentTypeCatalog,
+  sumHouseholdPoints,
+  type AppointmentTypeCatalog,
+} from '../utils/appointmentTypeSettings';
 import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
 import { AlertTriangle, Heart } from 'lucide-react';
+import { MyDayVisualPatientDetail } from '../components/MyDayVisualPatientDetail';
 import {
-  fixedTimeRouteEtaMeaningfullyAfterScheduledStart,
-  shouldShowEtaWindowWarning,
+  aggregateRoomLoaderPreApptStatus,
+  roomLoaderPreApptDisplayColor,
+  roomLoaderPreApptDisplayLabel,
+} from '../utils/roomLoaderPreApptDisplay';
+import {
+  appointmentNotesFromDoctorDayRow,
+  petAlertsFromDoctorDayRow,
+  sexFromDoctorDayRow,
+  staffNotesFromDoctorDayRow,
+} from '../utils/myDayVisualPatientDetails';
+import { myDayVisualAlternateAddressPdfFields } from '../utils/myDayVisualAlternateAddress';
+import {
+  clientFixedTimeUsesDoctorDayClockForDriveLayout,
+  computeDriveTimeWindowWarning,
 } from '../utils/windowWarning';
 import {
   computeHoverPopoverPosition,
@@ -47,11 +67,10 @@ import {
   isoFromSecondsSincePracticeMidnight,
 } from '../utils/practiceTimezone';
 import './DoctorDay.css';
-import {
-  DoctorDayVisualPdfDocument,
-  type DoctorDayVisualPdfAppointmentPayload,
-  type DoctorDayVisualPdfRow,
-} from './DoctorDayVisualPdf';
+
+const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+import type { DoctorDayVisualPdfAppointmentPayload, DoctorDayVisualPdfRow } from './DoctorDayVisualPdf';
+import { exportMyDayVisualPdf } from '../utils/myDayVisualPdfExport';
 
 // ===== Vertical scale: match My Week column density =====
 const PPM = 1.1;
@@ -312,15 +331,6 @@ function addressKeyForAppt(a: DoctorDayAppt): string | null {
   return free ? `free:${free}` : null;
 }
 
-/** Same client at same location = one stop; different clients at same address = separate stops. */
-function householdGroupKey(a: DoctorDayAppt, lat: number, lon: number, addrKey: string | null, idPart: string, hasGeo: boolean): string {
-  const clientId = (a as any)?.clientPimsId ?? (a as any)?.clientId;
-  const clientPart = clientId != null ? String(clientId) : (str(a, 'clientName') ?? '').trim();
-  if (hasGeo) return `${lat}_${lon}_${clientPart}`;
-  if (addrKey) return `addr:${addrKey}_${clientPart}`;
-  return `noloc:${idPart}`;
-}
-
 /** Assign unique ETA keys: first at (lat,lon) gets "lat,lon", second "lat,lon:2", etc. */
 function assignEtaKeysForSameAddress<T extends { key: string; lat: number; lon: number }>(households: T[]): void {
   const byLoc = new Map<string, T[]>();
@@ -350,7 +360,12 @@ type PatientBadge = {
   /** statusName — records status (PIMS) */
   recordStatus?: string | null;
   type?: string | null;
+  /** @deprecated use appointmentNotes */
   desc?: string | null;
+  appointmentNotes?: string | null;
+  staffNotes?: string | null;
+  sex?: string | null;
+  petAlerts?: string | null;
   startIso?: string | null;
   endIso?: string | null;
   alerts?: string | null;
@@ -366,7 +381,10 @@ function makePatientBadge(a: any): PatientBadge {
     'Patient';
   const type =
     str(a, 'appointmentType') || str(a, 'appointmentTypeName') || str(a, 'serviceName') || null;
-  const desc = str(a, 'description') || str(a, 'visitReason') || null;
+  const appointmentNotes = appointmentNotesFromDoctorDayRow(a);
+  const staffNotes = staffNotesFromDoctorDayRow(a);
+  const petAlerts = petAlertsFromDoctorDayRow(a);
+  const sex = sexFromDoctorDayRow(a);
   const status = str(a, 'confirmStatusName') ?? null;
   const recordStatus = str(a, 'statusName') ?? null;
   const pat = a?.patient;
@@ -381,13 +399,17 @@ function makePatientBadge(a: any): PatientBadge {
   return {
     name,
     type,
-    desc,
+    desc: appointmentNotes,
+    appointmentNotes,
+    staffNotes,
+    sex,
+    petAlerts,
     status,
     recordStatus,
     pimsId: str(a, 'patientPimsId') ?? null,
     startIso: getStartISO(a) ?? null,
     endIso: getEndISO(a) ?? null,
-    alerts: str(a, 'alerts') ?? null,
+    alerts: petAlerts,
     isMember,
     membershipName,
   };
@@ -424,16 +446,42 @@ type Household = {
   lon: number;
   startIso?: string | null;
   endIso?: string | null;
+  /** Window of arrival from effectiveWindow (startIso/endIso) when present on the appointment */
+  windowStartIso?: string | null;
+  windowEndIso?: string | null;
   isNoLocation?: boolean;
   isPreview?: boolean;
   isPersonalBlock?: boolean;
   patients: PatientBadge[];
   primary: DoctorDayAppt; // Store primary appointment for checking appointment type
+  /** Backend effectiveWindow when available (from primary) */
+  effectiveWindow?: { startIso: string; endIso: string };
   /** Min index in appts array (for visit-order sort when preview is present) */
   firstApptIndex?: number;
 };
 
-/** Client appointment (not personal block) with Fixed Time — same rules as My Week `weekHouseholdIsClientFixedTime`. */
+function householdClientPhone(h: Household): string | undefined {
+  if (h.isPersonalBlock) return undefined;
+  return (
+    clientPhoneLineFromDoctorDayPayload(h.primary) ??
+    (h.primary.client ? clientPhoneLineFromDoctorDayPayload({ client: h.primary.client }) : undefined) ??
+    str(h.primary, 'clientPhone') ??
+    undefined
+  );
+}
+
+function householdRoomLoaderStatus(h: Household): { label: string; color: string } | null {
+  if (h.isPersonalBlock) return null;
+  const ui = aggregateRoomLoaderPreApptStatus([
+    str(h.primary, 'confirmStatusName'),
+    ...h.patients.map((p) => p.status),
+  ]);
+  return {
+    label: roomLoaderPreApptDisplayLabel(ui),
+    color: roomLoaderPreApptDisplayColor(ui),
+  };
+}
+
 function visualHouseholdIsClientFixedTime(h: Household): boolean {
   if (h.isPersonalBlock) return false;
   const at = (h.primary as any)?.appointmentType;
@@ -464,7 +512,7 @@ function visualHouseholdIsClientFixedTime(h: Household): boolean {
  */
 function visualHouseholdUsesDoctorDayClockForLayout(
   h: Household,
-  slot: { eta?: string | null; etd?: string | null } | undefined,
+  slot: { eta?: string | null; etd?: string | null; windowStartIso?: string | null; windowEndIso?: string | null } | undefined,
   showByDriveTime: boolean,
   blockMetaForFlex?: { blockLabel?: string; title?: string } | null
 ): boolean {
@@ -473,14 +521,22 @@ function visualHouseholdUsesDoctorDayClockForLayout(
   const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(flexSource));
   if (h.isPersonalBlock && !flexBlock) return true;
   if (!visualHouseholdIsClientFixedTime(h)) return false;
-  const eta = slot?.eta;
-  const schedStart = h.startIso;
-  if (!eta || !schedStart) return true;
-  const etaDt = DateTime.fromISO(eta);
-  const schedDt = DateTime.fromISO(schedStart);
-  if (!etaDt.isValid || !schedDt.isValid) return true;
-  if (fixedTimeRouteEtaMeaningfullyAfterScheduledStart(schedStart, eta)) return false;
-  return true;
+  const windowStartIso =
+    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
+    h.windowStartIso ??
+    h.effectiveWindow?.startIso ??
+    null;
+  const windowEndIso =
+    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
+    h.windowEndIso ??
+    h.effectiveWindow?.endIso ??
+    null;
+  return clientFixedTimeUsesDoctorDayClockForDriveLayout({
+    schedStartIso: h.startIso,
+    etaIso: slot?.eta,
+    windowStartIso,
+    windowEndIso,
+  });
 }
 
 /* ----------------- schedule bounds (for work start) ----------------- */
@@ -594,6 +650,7 @@ export default function DoctorDayVisual({
   const [providers, setProviders] = useState<Provider[]>([]);
   const [providersLoading, setProvidersLoading] = useState(false);
   const [providersErr, setProvidersErr] = useState<string | null>(null);
+  const [typeCatalog, setTypeCatalog] = useState<AppointmentTypeCatalog | undefined>();
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>(initialDoctorId || '');
   const didInitDoctor = useRef(false);
 
@@ -647,6 +704,9 @@ export default function DoctorDayVisual({
     x: number;
     y: number;
     client: string;
+    clientPhone?: string;
+    roomLoaderStatus?: string;
+    roomLoaderStatusColor?: string;
     clientAlert?: string;
     isFixedTime?: boolean;
     isPersonalBlock?: boolean;
@@ -719,6 +779,20 @@ export default function DoctorDayVisual({
   }, [userEmail]);
 
   useEffect(() => {
+    let on = true;
+    void fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false })
+      .then((rows) => {
+        if (on) setTypeCatalog(buildAppointmentTypeCatalog(Array.isArray(rows) ? rows : []));
+      })
+      .catch(() => {
+        if (on) setTypeCatalog(undefined);
+      });
+    return () => {
+      on = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (didInitDoctor.current || !providers.length || initialDoctorId) return;
     const idToSet =
       userDoctorId != null && String(userDoctorId).trim() !== ''
@@ -745,17 +819,12 @@ export default function DoctorDayVisual({
     }
   }, [providers, userEmail, userDoctorId, initialDoctorId]);
 
-  /* ---------- Depot reverse geocode ---------- */
+  /* ---------- End depot reverse geocode (start office town comes from doctor-day startDepotTown) ---------- */
   useEffect(() => {
     let on = true;
     (async () => {
-      setStartDepotAddr(null);
       setEndDepotAddr(null);
       try {
-        if (startDepot) {
-          const addr = await reverseGeocode(startDepot.lat, startDepot.lon);
-          if (on) setStartDepotAddr(addr);
-        }
         if (endDepot) {
           const addr = await reverseGeocode(endDepot.lat, endDepot.lon);
           if (on) setEndDepotAddr(addr);
@@ -767,7 +836,7 @@ export default function DoctorDayVisual({
     return () => {
       on = false;
     };
-  }, [startDepot, endDepot]);
+  }, [endDepot]);
 
   /* ------------ load day (with optional preview injection) ------------ */
   useEffect(() => {
@@ -815,9 +884,24 @@ export default function DoctorDayVisual({
           return [...inVisitOrder.slice(0, idx), prev, ...inVisitOrder.slice(idx)];
         })();
 
-        setAppts(final);
+        let enriched = final;
+        if (selectedDoctorId?.trim()) {
+          try {
+            const range = await fetchAppointmentsRangeForLocalDay({
+              dateIso: date,
+              practiceTimeZone: resp.timezone ?? practiceTimeZone,
+              primaryProviderId: selectedDoctorId,
+            });
+            enriched = mergeRangeClientContactOntoDoctorDayAppts(enriched, range);
+          } catch {
+            /* range enrichment is optional */
+          }
+        }
+
+        setAppts(enriched);
         setStartDepot(resp.startDepot ?? null);
         setEndDepot(resp.endDepot ?? null);
+        setStartDepotAddr(str(resp, 'startDepotTown')?.trim() || null);
         setPracticeTimeZone(resp.timezone);
 
         const sdt = str(resp as any, 'startDepotTime');
@@ -2258,16 +2342,7 @@ export default function DoctorDayVisual({
       return sum + durSec(h.startIso, h.endIso);
     }, 0);
 
-    // Points per patient (exclude personal blocks and "Note To Staff"): 1 standard, 0.5 tech, 2 euthanasia
-    const points = displayHouseholds.reduce((total, h) => {
-      if ((h as any)?.isPersonalBlock) return total;
-      const type = (h.primary?.appointmentType || '').toLowerCase();
-      if (type.includes('note to staff')) return total;
-      const n = Math.max(1, h.patients?.length ?? 1);
-      if (type === 'euthanasia') return total + 2 * n;
-      if (type.includes('tech appointment')) return total + 0.5 * n;
-      return total + 1 * n;
-    }, 0);
+    const points = sumHouseholdPoints(displayHouseholds, typeCatalog);
 
     // ---------- Prefer authoritative fields from Routing winner ----------
     const winnerDriveSec = Number.isFinite(virtualAppt?.projectedDriveSeconds as number)
@@ -2470,6 +2545,7 @@ export default function DoctorDayVisual({
     virtualAppt,
     date,
     practiceTimeZone,
+    typeCatalog,
   ]);
 
   const buildAppointmentPdfPayload = useCallback(
@@ -2536,13 +2612,26 @@ export default function DoctorDayVisual({
             ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
             : adjustedWindowForStart(date, h.startIso!, schedStartIso, practiceTimeZone);
 
-      const clientFixedRoutePushedPastSchedule =
-        showByDriveTime && visualHouseholdIsClientFixedTime(h) && !doctorDayClock;
+      const windowEndForWarn =
+        (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
+        ew?.endIso ??
+        (h as { windowEndIso?: string | null }).windowEndIso ??
+        null;
+      const windowStartForWarn =
+        (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
+        ew?.startIso ??
+        (h as { windowStartIso?: string | null }).windowStartIso ??
+        null;
       const windowWarning =
         showByDriveTime &&
         !h.isPersonalBlock &&
-        ((useDriveTime && !isFixedTime && shouldShowEtaWindowWarning(etaIso, winEndIso)) ||
-          clientFixedRoutePushedPastSchedule);
+        computeDriveTimeWindowWarning({
+          etaIso,
+          windowEndIso: windowEndForWarn,
+          windowStartIso: windowStartForWarn,
+          isClientFixedTime: visualHouseholdIsClientFixedTime(h),
+          scheduledStartIso: h.startIso,
+        });
 
       const blockLabelMeta = blockLabelMetaEarly;
       const blockTitleText =
@@ -2559,10 +2648,16 @@ export default function DoctorDayVisual({
       const showBackToDepotInBlock =
         !!stats.backToDepotIso && hoveredBlockBottomPx >= maxDayVisualBottomPx - 2;
 
+      const roomLoader = householdRoomLoaderStatus(h);
+
       return {
         key: h.key,
         client: blockTitleText,
         address: h.address,
+        ...myDayVisualAlternateAddressPdfFields(h.primary, h.address),
+        clientPhone: householdClientPhone(h),
+        roomLoaderStatus: roomLoader?.label,
+        roomLoaderStatusColor: roomLoader?.color,
         durMin,
         etaIso:
           showByDriveTime && doctorDayClock
@@ -2615,13 +2710,6 @@ export default function DoctorDayVisual({
     if (loading || pdfExporting) return;
     if (!selectedDoctorId?.trim()) return;
     setPdfExporting(true);
-    const host = document.createElement('div');
-    host.setAttribute('data-myday-visual-pdf', '1');
-    // html2canvas does not reliably paint near-zero opacity or unlaid-out hosts; keep off-screen but fully opaque.
-    host.style.cssText =
-      'position:fixed;left:-16000px;top:0;width:1240px;opacity:1;pointer-events:none;z-index:-1;background:#fff;';
-    document.body.appendChild(host);
-    const root = createRoot(host);
     try {
       const doctorName =
         providers.find((p) => String(p.id) === selectedDoctorId)?.name ?? 'Provider';
@@ -2659,86 +2747,19 @@ export default function DoctorDayVisual({
         }
       }
 
-      root.render(
-        <DoctorDayVisualPdfDocument
-          doctorName={doctorName}
-          dateLabel={dateLabel}
-          showByDriveTime={showByDriveTime}
-          practiceTimeZone={practiceTimeZone}
-          stats={stats}
-          rows={pdfRows}
-        />
-      );
-
-      await document.fonts?.ready?.catch(() => undefined);
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-      });
-      await new Promise<void>((r) => setTimeout(r, 80));
-
-      const captureEl = (host.firstElementChild as HTMLElement | null) ?? host;
-      const headerEl = captureEl.querySelector<HTMLElement>('[data-myday-pdf-header]');
-      const rowEls = Array.from(
-        captureEl.querySelectorAll<HTMLElement>('[data-myday-pdf-row]')
-      );
-
-      const captureScale = 2.5;
-      const renderToCanvas = (el: HTMLElement) =>
-        html2canvas(el, {
-          scale: captureScale,
-          useCORS: true,
-          logging: false,
-          backgroundColor: '#ffffff',
-        });
-
-      const sections: Array<{ canvas: HTMLCanvasElement; gapAfter: number }> = [];
-      if (headerEl) {
-        sections.push({ canvas: await renderToCanvas(headerEl), gapAfter: 0.06 });
-      }
-      for (const el of rowEls) {
-        sections.push({ canvas: await renderToCanvas(el), gapAfter: 0.04 });
-      }
-
-      if (sections.length === 0) {
-        console.error('My Day PDF: nothing to render');
-        return;
-      }
-
-      const pageW = 8.5;
-      const pageH = 11;
-      const margin = 0.25;
-      const maxW = pageW - 2 * margin;
-      const maxH = pageH - 2 * margin;
-      // Use the widest section to anchor inches-per-pixel; all sections share the same DOM width.
-      const refWidthPx = sections[0].canvas.width;
-      const inchesPerPx = maxW / refWidthPx;
-
-      const pdf = new jsPDF('portrait', 'in', 'letter');
-      let y = margin;
-      let firstOnPage = true;
-      for (let i = 0; i < sections.length; i++) {
-        const { canvas: c, gapAfter } = sections[i];
-        const dispW = c.width * inchesPerPx;
-        const dispH = c.height * inchesPerPx;
-        const fits = y + dispH <= margin + maxH + 1e-6;
-        if (!firstOnPage && !fits) {
-          pdf.addPage();
-          y = margin;
-          firstOnPage = true;
-        }
-        const png = c.toDataURL('image/png');
-        pdf.addImage(png, 'PNG', margin, y, dispW, dispH);
-        y += dispH + gapAfter;
-        firstOnPage = false;
-      }
-
       const safeName = doctorName.replace(/\s+/g, '_').replace(/[^\w.-]+/g, '');
-      pdf.save(`MyDay_Visual_${safeName}_${date}.pdf`);
+      await exportMyDayVisualPdf({
+        doctorName,
+        dateLabel,
+        showByDriveTime,
+        practiceTimeZone,
+        stats,
+        rows: pdfRows,
+        filenameStem: `MyDay_Visual_${safeName}_${date}`,
+      });
     } catch (e) {
       console.error(e);
     } finally {
-      root.unmount();
-      document.body.removeChild(host);
       setPdfExporting(false);
     }
   }
@@ -3134,18 +3155,30 @@ export default function DoctorDayVisual({
                   ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
                   : adjustedWindowForStart(date, h.startIso!, schedStartIso, practiceTimeZone);
 
-            // Client Fixed Time: scheduled start should hold; route ETA after start = forced move (Olivia-style).
-            const clientFixedRoutePushedPastSchedule =
-              showByDriveTime &&
-              visualHouseholdIsClientFixedTime(h) &&
-              !doctorDayClock;
+            const windowEndForWarn =
+              (slotWindow?.windowStartIso != null && slotWindow?.windowEndIso != null
+                ? slotWindow.windowEndIso
+                : null) ??
+              ew?.endIso ??
+              (h as { windowEndIso?: string | null }).windowEndIso ??
+              null;
+            const windowStartForWarn =
+              (slotWindow?.windowStartIso != null && slotWindow?.windowEndIso != null
+                ? slotWindow.windowStartIso
+                : null) ??
+              ew?.startIso ??
+              (h as { windowStartIso?: string | null }).windowStartIso ??
+              null;
             const windowWarning =
               showByDriveTime &&
               !h.isPersonalBlock &&
-              ((useDriveTime &&
-                !isFixedTime &&
-                shouldShowEtaWindowWarning(etaIso, winEndIso)) ||
-                clientFixedRoutePushedPastSchedule);
+              computeDriveTimeWindowWarning({
+                etaIso,
+                windowEndIso: windowEndForWarn,
+                windowStartIso: windowStartForWarn,
+                isClientFixedTime: visualHouseholdIsClientFixedTime(h),
+                scheduledStartIso: h.startIso,
+              });
 
             const previewPatients = h.patients.slice(0, 3);
             const moreCount = Math.max(0, (h.patients?.length || 0) - 3);
@@ -3452,7 +3485,7 @@ export default function DoctorDayVisual({
               padding: PADDING,
               offset: OFFSET,
             });
-            const { left, top, maxCardH, width: popoverW } = pos;
+            const { left, top, bottom, maxCardH, width: popoverW } = pos;
 
             const winStartIso = hoverCard.resolvedWinStartIso;
             const winEndIso = hoverCard.resolvedWinEndIso;
@@ -3485,7 +3518,7 @@ export default function DoctorDayVisual({
                 style={{
                   position: 'fixed',
                   left,
-                  top,
+                  ...(bottom != null ? { top: 'auto', bottom } : { top }),
                   zIndex: 9999,
                   width: popoverW,
                   maxWidth: CARD_MAX_W,
@@ -3538,11 +3571,29 @@ export default function DoctorDayVisual({
                     </span>
                   )}
                 </div>
+                {hoverCard.clientPhone ? (
+                  <div style={{ marginBottom: 4, fontSize: 12, color: '#0f172a' }}>
+                    <b>Phone:</b> {hoverCard.clientPhone}
+                  </div>
+                ) : null}
                 {hoverCard?.clientAlert && (
                   <div style={{ marginBottom: 4, color: '#dc2626', fontSize: 12, lineHeight: 1.35 }}>
                     Alert: {hoverCard.clientAlert}
                   </div>
                 )}
+                {!hoverCard.isPersonalBlock ? (
+                  <div
+                    style={{
+                      marginBottom: 4,
+                      fontSize: 12,
+                      lineHeight: 1.35,
+                      color: hoverCard.roomLoaderStatusColor ?? '#dc2626',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <b>Room loader:</b> {hoverCard.roomLoaderStatus ?? 'Not sent'}
+                  </div>
+                ) : null}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'baseline', marginBottom: 4, fontSize: 13, color: '#334155' }}>
                   <span>
                     <b>Scheduled:</b>{' '}
@@ -3616,61 +3667,12 @@ export default function DoctorDayVisual({
                     <div style={{ fontWeight: 700, marginBottom: 4, color: '#14532d' }}>Patients</div>
                     <ul style={{ margin: 0, paddingLeft: 16 }}>
                       {hoverCard.patients.map((p, i) => (
-                        <li key={i} style={{ marginBottom: 6 }}>
-                          <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                              {p.isMember && (
-                                <Heart size={14} fill="#dc2626" color="#dc2626" strokeWidth={1.5} aria-hidden />
-                              )}
-                              <span>{p.name}</span>
-                            </span>
-                            {p.isMember && p.membershipName?.trim() ? (
-                              <span style={{ color: '#991b1b', fontWeight: 600, fontSize: 13 }}>
-                                {p.membershipName.trim()}
-                              </span>
-                            ) : null}
-                            {p?.alerts ? (
-                              <>
-                                {' '}
-                                — <strong>Alert</strong>:{' '}
-                                <span style={{ color: '#dc2626' }}>{p.alerts}</span>
-                              </>
-                            ) : null}
-                          </div>
-
-                          <div style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>
-                            {p.type ? (
-                              <>
-                                <b>{p.type}</b>
-                                {p.desc ? ` — ${p.desc}` : ''}
-                              </>
-                            ) : (
-                              p.desc || '—'
-                            )}
-                          </div>
-                          {(p.status || p.recordStatus) && (
-                            <div
-                              style={{
-                                display: 'flex',
-                                flexWrap: 'wrap',
-                                alignItems: 'center',
-                                gap: 6,
-                                marginTop: 4,
-                              }}
-                            >
-                              {p.status ? (
-                                <span style={statusPillStyle(p.status)} title="Status">
-                                  {p.status}
-                                </span>
-                              ) : null}
-                              {p.recordStatus ? (
-                                <span style={statusPillStyle(p.recordStatus)} title="Records status">
-                                  {p.recordStatus}
-                                </span>
-                              ) : null}
-                            </div>
-                          )}
-                        </li>
+                        <MyDayVisualPatientDetail
+                          key={i}
+                          patient={p}
+                          variant="hover"
+                          statusPillStyle={statusPillStyle}
+                        />
                       ))}
                     </ul>
                   </div>

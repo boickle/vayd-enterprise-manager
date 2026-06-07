@@ -1,5 +1,6 @@
 // src/pages/RoomLoader.tsx
 import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { DateTime } from 'luxon';
 import {
   searchRoomLoaders,
@@ -365,7 +366,19 @@ function roomLoaderListDefaultLookbackIso(): string {
   return DateTime.now().minus({ days: ROOM_LOADER_LIST_LOOKBACK_DEFAULT_DAYS }).toISODate() ?? '';
 }
 
-export default function RoomLoaderPage() {
+export type RoomLoaderEmbeddedConfig = {
+  roomLoaderId: number;
+  onClose: () => void;
+};
+
+type RoomLoaderPageProps = {
+  /** Open Room Loader Details on top of another page (e.g. practice scheduler). */
+  embedded?: RoomLoaderEmbeddedConfig;
+};
+
+export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [roomLoaders, setRoomLoaders] = useState<RoomLoader[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -452,10 +465,25 @@ export default function RoomLoaderPage() {
     }
   }, [filters, useAppointmentDateFilter, filterAppointmentFrom, filterAppointmentTo]);
 
+  // Open a specific room loader when navigated from Scheduler (legacy navigation)
+  useEffect(() => {
+    if (embedded) return;
+    const id = (location.state as { openRoomLoaderId?: number } | null)?.openRoomLoaderId;
+    if (id == null || !Number.isFinite(id)) return;
+    setSelectedRoomLoaderId(id);
+    navigate(location.pathname, { replace: true, state: {} });
+  }, [embedded, location.state, location.pathname, navigate]);
+
+  useEffect(() => {
+    if (!embedded?.roomLoaderId) return;
+    setSelectedRoomLoaderId(embedded.roomLoaderId);
+  }, [embedded?.roomLoaderId]);
+
   // Load room loaders
   useEffect(() => {
+    if (embedded) return;
     void loadRoomLoaders();
-  }, [loadRoomLoaders]);
+  }, [embedded, loadRoomLoaders]);
 
   // Load selected room loader details
   useEffect(() => {
@@ -1199,6 +1227,7 @@ export default function RoomLoaderPage() {
     setAppointmentReasons({});
     setVaccineCheckboxes({});
     setNotesToClient({});
+    embedded?.onClose();
   }
 
   function handleOpenReconcile(roomLoaderId: number, e: React.MouseEvent) {
@@ -2414,12 +2443,11 @@ export default function RoomLoaderPage() {
       if (options?.sendViaSms) payload.sendViaSms = true;
       if (options?.smsMessage) payload.smsMessage = options.smsMessage;
       await http.post('/room-loader/send-to-client', payload);
-      await loadRoomLoaders();
+      if (!embedded) await loadRoomLoaders();
       if (selectedRoomLoaderId) {
         await loadRoomLoaderDetails(selectedRoomLoaderId);
       }
-      setIsModalOpen(false);
-      setSelectedRoomLoaderId(null);
+      handleCloseModal();
     } catch (error: any) {
       console.error('Error sending to client:', error);
       alert(`Failed to send to client: ${error?.message || 'Please try again.'}`);
@@ -2473,12 +2501,11 @@ export default function RoomLoaderPage() {
         roomLoaderId: selectedRoomLoader.id,
         formData: formDataToSave,
       });
-      await loadRoomLoaders();
+      if (!embedded) await loadRoomLoaders();
       if (selectedRoomLoaderId) {
         await loadRoomLoaderDetails(selectedRoomLoaderId);
       }
-      setIsModalOpen(false);
-      setSelectedRoomLoaderId(null);
+      handleCloseModal();
     } catch (error: any) {
       console.error('Error saving form:', error);
       alert(`Failed to save form: ${error?.message || 'Please try again.'}`);
@@ -2743,8 +2770,20 @@ export default function RoomLoaderPage() {
     });
   }, [selectedSameDayClientLink, petsWithAppointments, removedReminders, addedItems]);
 
+  const embeddedDetailsLoading =
+    Boolean(embedded) && selectedRoomLoaderId != null && selectedRoomLoader == null;
+
   return (
-    <div className="room-loader-page">
+    <div className={embedded ? 'room-loader-embedded-host' : 'room-loader-page'}>
+      {embeddedDetailsLoading ? (
+        <div className="room-loader-modal-overlay" role="status" aria-live="polite">
+          <div className="card" style={{ padding: '24px 32px' }}>
+            Loading Room Loader…
+          </div>
+        </div>
+      ) : null}
+      {!embedded ? (
+        <>
       <style>{`
         .room-loader-qty-input::-webkit-outer-spin-button,
         .room-loader-qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
@@ -3174,6 +3213,8 @@ export default function RoomLoaderPage() {
           })
         )}
       </div>
+        </>
+      ) : null}
 
       {/* Room Loader Details Modal */}
       {isModalOpen && selectedRoomLoader && (

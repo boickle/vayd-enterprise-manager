@@ -1,6 +1,8 @@
 // src/pages/Settings.tsx
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
+import ScheduleOverrideModal from '../components/ScheduleOverrideModal';
 import {
   fetchAllAppointmentTypes,
   fetchAllEmployees,
@@ -8,18 +10,11 @@ import {
   fetchEmployee,
   updateEmployeeAppointmentTypes,
   updateEmployeeScheduleZones,
-  updateAppointmentType,
   updateWeeklySchedule,
   uploadEmployeeImage,
-  fetchScheduleOverrides,
-  fetchScheduleOverrideByDate,
-  createScheduleOverride,
-  updateScheduleOverride,
-  deleteScheduleOverride,
   type AppointmentType,
   type Employee,
   type EmployeeWeeklySchedule,
-  type ScheduleOverride,
   type Zone,
 } from '../api/appointmentSettings';
 import {
@@ -51,6 +46,31 @@ import {
 } from '../api/employeeGoals';
 import { DepotLocationField } from '../components/DepotLocationField';
 import './Settings.css';
+import SettingsEmployeeDirectory from '../components/settings/SettingsEmployeeDirectory';
+import SettingsAppointmentTypes from '../components/settings/SettingsAppointmentTypes';
+import SettingsRoleManualBooking from '../components/settings/SettingsRoleManualBooking';
+import { appointmentTypeIsArchived } from '../utils/appointmentTypeSettings';
+
+const SETTINGS_TAB_IDS = [
+  'appointment-types',
+  'role-manual-booking',
+  'employee-types',
+  'employee-zones',
+  'employee-schedule',
+  'inventory',
+  'employee-images',
+  'employee-goals',
+  'employee-directory',
+  'reminders',
+] as const;
+type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number];
+
+function parseSettingsTabParam(tab: string | null): SettingsTabId {
+  if (tab && (SETTINGS_TAB_IDS as readonly string[]).includes(tab)) {
+    return tab as SettingsTabId;
+  }
+  return 'appointment-types';
+}
 
 /** Practice ID for reminder settings (default 1; override via env if needed) */
 const REMINDERS_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -77,24 +97,38 @@ function formatEmployeeName(emp: Employee): string {
 
 export default function Settings() {
   const { role } = useAuth() as any;
-  const [activeTab, setActiveTab] = useState<
-    | 'appointment-types'
-    | 'employee-types'
-    | 'employee-zones'
-    | 'employee-schedule'
-    | 'inventory'
-    | 'employee-images'
-    | 'employee-goals'
-    | 'reminders'
-  >('appointment-types');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = useMemo(
+    () => parseSettingsTabParam(searchParams.get('tab')),
+    [searchParams]
+  );
+  const goToTab = useCallback(
+    (tab: SettingsTabId) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (tab === 'appointment-types') next.delete('tab');
+          else next.set('tab', tab);
+          return next;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // Appointment Types state
+  // Appointment Types state (shared with employee-types tab)
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
-  const [editingAppointmentType, setEditingAppointmentType] = useState<AppointmentType | null>(null);
+
+  /** Types available for new bookings / admin pickers (excludes archived). */
+  const activeAppointmentTypes = useMemo(
+    () => appointmentTypes.filter((t) => t.isActive !== false && !appointmentTypeIsArchived(t)),
+    [appointmentTypes]
+  );
 
   // Employee Appointment Types state
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -129,15 +163,11 @@ export default function Settings() {
   } | null>(null);
   const [priceManuallyEdited, setPriceManuallyEdited] = useState(false);
 
-  // Schedule overrides calendar (per-date overrides for routing)
-  const [showOverrideCalendar, setShowOverrideCalendar] = useState(false);
-  const [overrideCalendarEmployeeId, setOverrideCalendarEmployeeId] = useState<number | null>(null);
-  const [overrideCalendarMonth, setOverrideCalendarMonth] = useState(() => dayjs().startOf('month'));
-  const [overridesInRange, setOverridesInRange] = useState<ScheduleOverride[]>([]);
-  const [selectedOverrideDate, setSelectedOverrideDate] = useState<string | null>(null);
-  const [overrideForm, setOverrideForm] = useState<ScheduleOverride | Partial<ScheduleOverride> & { date: string } | null>(null);
-  const [overrideFormLoading, setOverrideFormLoading] = useState(false);
-  const [overrideFormSaving, setOverrideFormSaving] = useState(false);
+  const [overrideModalOpen, setOverrideModalOpen] = useState(false);
+  const [overrideModalInitial, setOverrideModalInitial] = useState<{
+    employeeId?: number;
+    date?: string;
+  }>({});
 
   // Employee Images state
   const [uploadingEmployeeId, setUploadingEmployeeId] = useState<number | null>(null);
@@ -187,22 +217,6 @@ export default function Settings() {
     });
   }, [employees]);
 
-  // Sort appointment types: first by showInApptRequestForm (true first), then by formListOrder
-  const sortedAppointmentTypes = useMemo(() => {
-    return [...appointmentTypes].sort((a, b) => {
-      // First, sort by showInApptRequestForm (true first)
-      const aShowInForm = a.showInApptRequestForm === true ? 0 : 1;
-      const bShowInForm = b.showInApptRequestForm === true ? 0 : 1;
-      if (aShowInForm !== bShowInForm) {
-        return aShowInForm - bShowInForm;
-      }
-      // Then sort by formListOrder (ascending, null values at the end)
-      const aOrder = a.formListOrder ?? Number.MAX_SAFE_INTEGER;
-      const bOrder = b.formListOrder ?? Number.MAX_SAFE_INTEGER;
-      return aOrder - bOrder;
-    });
-  }, [appointmentTypes]);
-
   useEffect(() => {
     if (!isAdmin) return;
     loadData();
@@ -236,7 +250,7 @@ export default function Settings() {
     setError(null);
     try {
       const [types, emps, zones] = await Promise.all([
-        fetchAllAppointmentTypes(),
+        fetchAllAppointmentTypes(practiceId, { activeOnly: false }),
         fetchAllEmployees(),
         fetchAllZones(),
       ]);
@@ -366,31 +380,6 @@ export default function Settings() {
       setError(err?.response?.data?.message || err?.message || 'Failed to update goals');
     } finally {
       setGoalsSaving(false);
-    }
-  };
-
-  const handleSaveAppointmentType = async () => {
-    if (!editingAppointmentType) return;
-    setSaving(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      const updated = await updateAppointmentType(editingAppointmentType.id, {
-        prettyName: editingAppointmentType.prettyName,
-        showInApptRequestForm: editingAppointmentType.showInApptRequestForm,
-        newPatientAllowed: editingAppointmentType.newPatientAllowed,
-        formListOrder: editingAppointmentType.formListOrder ?? null,
-      });
-      setAppointmentTypes((prev) =>
-        prev.map((at) => (at.id === updated.id ? updated : at))
-      );
-      setEditingAppointmentType(null);
-      setSuccess('Appointment type updated successfully');
-      setTimeout(() => setSuccess(null), 3000);
-    } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to update appointment type');
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -565,136 +554,47 @@ export default function Settings() {
     return { lat, lon };
   };
 
-  // Load overrides for the calendar month when modal is open and employee/month change
-  useEffect(() => {
-    if (!showOverrideCalendar || !overrideCalendarEmployeeId) {
-      setOverridesInRange([]);
-      return;
-    }
-    const start = overrideCalendarMonth.format('YYYY-MM-DD');
-    const end = overrideCalendarMonth.endOf('month').format('YYYY-MM-DD');
-    fetchScheduleOverrides(overrideCalendarEmployeeId, { startDate: start, endDate: end })
-      .then(setOverridesInRange)
-      .catch(() => setOverridesInRange([]));
-  }, [showOverrideCalendar, overrideCalendarEmployeeId, overrideCalendarMonth]);
-
   const handleOpenOverrideCalendar = () => {
-    setOverrideCalendarEmployeeId(selectedEmployeeForSchedule?.id ?? sortedEmployees.find((e) => e.isProvider)?.id ?? null);
-    setOverrideCalendarMonth(dayjs().startOf('month'));
-    setSelectedOverrideDate(null);
-    setOverrideForm(null);
-    setShowOverrideCalendar(true);
+    setOverrideModalInitial({
+      employeeId:
+        selectedEmployeeForSchedule?.id ?? sortedEmployees.find((e) => e.isProvider)?.id ?? undefined,
+    });
+    setOverrideModalOpen(true);
   };
 
-  const handleOverrideDayClick = async (dateStr: string) => {
-    if (!overrideCalendarEmployeeId) return;
-    setSelectedOverrideDate(dateStr);
-    setOverrideFormLoading(true);
-    setOverrideForm(null);
-    try {
-      const [existing, employee] = await Promise.all([
-        fetchScheduleOverrideByDate(overrideCalendarEmployeeId, dateStr),
-        fetchEmployee(overrideCalendarEmployeeId),
-      ]);
-      const dayOfWeek = dayjs(dateStr).day();
-      const defaultSchedule = employee.weeklySchedules?.find((s) => s.dayOfWeek === dayOfWeek);
+  const scheduleOverrideDeepLinkRef = useRef<string | null>(null);
 
-      const defaultLatLon = {
-        startDepotLat: defaultSchedule?.startDepotLat ?? undefined,
-        startDepotLon: defaultSchedule?.startDepotLon ?? undefined,
-        endDepotLat: defaultSchedule?.endDepotLat ?? undefined,
-        endDepotLon: defaultSchedule?.endDepotLon ?? undefined,
-      };
+  useEffect(() => {
+    if (!isAdmin || employees.length === 0) return;
+    const open = searchParams.get('openScheduleOverride') === '1';
+    const empRaw = searchParams.get('overrideEmployeeId');
+    const dateStr = searchParams.get('overrideDate');
+    if (!open || !empRaw || !dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return;
+    const empId = Number(empRaw);
+    if (!Number.isFinite(empId) || !employees.some((e) => e.id === empId)) return;
 
-      if (existing) {
-        setOverrideForm({
-          ...existing,
-          startDepotLat: existing.startDepotLat ?? defaultLatLon.startDepotLat,
-          startDepotLon: existing.startDepotLon ?? defaultLatLon.startDepotLon,
-          endDepotLat: existing.endDepotLat ?? defaultLatLon.endDepotLat,
-          endDepotLon: existing.endDepotLon ?? defaultLatLon.endDepotLon,
-        });
-      } else {
-        setOverrideForm({
-          date: dateStr,
-          workStartLocal: defaultSchedule?.workStartLocal ?? '',
-          workEndLocal: defaultSchedule?.workEndLocal ?? '',
-          ...defaultLatLon,
-        });
-      }
-    } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to load override');
-    } finally {
-      setOverrideFormLoading(false);
+    const sig = `${empId}:${dateStr}`;
+    if (scheduleOverrideDeepLinkRef.current === sig) return;
+    scheduleOverrideDeepLinkRef.current = sig;
+
+    if (activeTab !== 'employee-schedule') {
+      goToTab('employee-schedule');
     }
-  };
+    setOverrideModalInitial({ employeeId: empId, date: dateStr });
+    setOverrideModalOpen(true);
+    void handleLoadEmployeeForSchedule(empId);
 
-  const handleOverrideSave = async () => {
-    if (!overrideCalendarEmployeeId || !overrideForm?.date) return;
-    setOverrideFormSaving(true);
-    setError(null);
-    try {
-      const payload = {
-        workStartLocal: overrideForm.workStartLocal || undefined,
-        workEndLocal: overrideForm.workEndLocal || undefined,
-        startDepotLat: overrideForm.startDepotLat ?? undefined,
-        startDepotLon: overrideForm.startDepotLon ?? undefined,
-        endDepotLat: overrideForm.endDepotLat ?? undefined,
-        endDepotLon: overrideForm.endDepotLon ?? undefined,
-      };
-      if ('id' in overrideForm && overrideForm.id) {
-        await updateScheduleOverride(overrideCalendarEmployeeId, overrideForm.id, payload);
-      } else {
-        await createScheduleOverride(overrideCalendarEmployeeId, {
-          date: overrideForm.date,
-          ...payload,
-        });
-      }
-      setSuccess('Schedule override saved');
-      setTimeout(() => setSuccess(null), 3000);
-      const start = overrideCalendarMonth.format('YYYY-MM-DD');
-      const end = overrideCalendarMonth.endOf('month').format('YYYY-MM-DD');
-      const list = await fetchScheduleOverrides(overrideCalendarEmployeeId, { startDate: start, endDate: end });
-      setOverridesInRange(list);
-      const updated = list.find((o) => o.date === overrideForm.date) ?? { ...overrideForm, date: overrideForm.date };
-      setOverrideForm(updated as ScheduleOverride);
-    } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to save override');
-    } finally {
-      setOverrideFormSaving(false);
-    }
-  };
-
-  const handleOverrideRemove = async () => {
-    if (!overrideCalendarEmployeeId || !overrideForm || !('id' in overrideForm) || !overrideForm.id) return;
-    setOverrideFormSaving(true);
-    setError(null);
-    try {
-      await deleteScheduleOverride(overrideCalendarEmployeeId, overrideForm.id);
-      setSuccess('Override removed; default schedule will be used for that day');
-      setTimeout(() => setSuccess(null), 3000);
-      const start = overrideCalendarMonth.format('YYYY-MM-DD');
-      const end = overrideCalendarMonth.endOf('month').format('YYYY-MM-DD');
-      const list = await fetchScheduleOverrides(overrideCalendarEmployeeId, { startDate: start, endDate: end });
-      setOverridesInRange(list);
-      const employee = await fetchEmployee(overrideCalendarEmployeeId);
-      const dayOfWeek = dayjs(overrideForm.date).day();
-      const defaultSchedule = employee.weeklySchedules?.find((s) => s.dayOfWeek === dayOfWeek);
-      setOverrideForm({
-        date: overrideForm.date,
-        workStartLocal: defaultSchedule?.workStartLocal ?? '',
-        workEndLocal: defaultSchedule?.workEndLocal ?? '',
-        startDepotLat: defaultSchedule?.startDepotLat ?? undefined,
-        startDepotLon: defaultSchedule?.startDepotLon ?? undefined,
-        endDepotLat: defaultSchedule?.endDepotLat ?? undefined,
-        endDepotLon: defaultSchedule?.endDepotLon ?? undefined,
-      });
-    } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to remove override');
-    } finally {
-      setOverrideFormSaving(false);
-    }
-  };
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('openScheduleOverride');
+        next.delete('overrideEmployeeId');
+        next.delete('overrideDate');
+        return next;
+      },
+      { replace: true }
+    );
+  }, [isAdmin, employees, searchParams, activeTab, goToTab, setSearchParams]);
 
   const handleSaveEmployeeSchedule = async () => {
     if (!selectedEmployeeForSchedule) return;
@@ -760,6 +660,16 @@ export default function Settings() {
     setSelectedAppointmentTypeIds((prev) =>
       prev.includes(typeId) ? prev.filter((id) => id !== typeId) : [...prev, typeId]
     );
+  };
+
+  const selectAllEmployeeAppointmentTypes = () => {
+    const activeIds = activeAppointmentTypes.map((t) => t.id);
+    const archivedKept = selectedAppointmentTypeIds.filter((id) => !activeIds.includes(id));
+    setSelectedAppointmentTypeIds([...activeIds, ...archivedKept]);
+  };
+
+  const unselectAllEmployeeAppointmentTypes = () => {
+    setSelectedAppointmentTypeIds([]);
   };
 
   const toggleZoneAssignment = (zoneId: number, isAssigned: boolean) => {
@@ -1093,49 +1003,61 @@ export default function Settings() {
         <div className="settings-tabs">
           <button
             className={`settings-tab ${activeTab === 'appointment-types' ? 'active' : ''}`}
-            onClick={() => setActiveTab('appointment-types')}
+            onClick={() => goToTab('appointment-types')}
           >
             Appointment Types
           </button>
           <button
+            className={`settings-tab ${activeTab === 'role-manual-booking' ? 'active' : ''}`}
+            onClick={() => goToTab('role-manual-booking')}
+          >
+            Role Manual Booking
+          </button>
+          <button
             className={`settings-tab ${activeTab === 'employee-types' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-types')}
+            onClick={() => goToTab('employee-types')}
           >
             Employee Appointment Types
           </button>
           <button
             className={`settings-tab ${activeTab === 'employee-zones' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-zones')}
+            onClick={() => goToTab('employee-zones')}
           >
             Employee Zones
           </button>
           <button
             className={`settings-tab ${activeTab === 'employee-schedule' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-schedule')}
+            onClick={() => goToTab('employee-schedule')}
           >
             Employee Schedule
           </button>
           <button
             className={`settings-tab ${activeTab === 'inventory' ? 'active' : ''}`}
-            onClick={() => setActiveTab('inventory')}
+            onClick={() => goToTab('inventory')}
           >
             Inventory
           </button>
           <button
             className={`settings-tab ${activeTab === 'employee-images' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-images')}
+            onClick={() => goToTab('employee-images')}
           >
             Employee Images
           </button>
           <button
             className={`settings-tab ${activeTab === 'employee-goals' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employee-goals')}
+            onClick={() => goToTab('employee-goals')}
           >
             Employee Goals
           </button>
           <button
+            className={`settings-tab ${activeTab === 'employee-directory' ? 'active' : ''}`}
+            onClick={() => goToTab('employee-directory')}
+          >
+            Employees
+          </button>
+          <button
             className={`settings-tab ${activeTab === 'reminders' ? 'active' : ''}`}
-            onClick={() => setActiveTab('reminders')}
+            onClick={() => goToTab('reminders')}
           >
             Reminders
           </button>
@@ -1165,128 +1087,51 @@ export default function Settings() {
         {/* Appointment Types Tab */}
         {activeTab === 'appointment-types' && (
           <div className="settings-section">
-            <h2 className="settings-section-title">Appointment Form Settings</h2>
+            <h2 className="settings-section-title">Appointment Types</h2>
             <p className="settings-section-description">
-              Configure which appointment types appear in the appointment request form and whether they allow new patients.
+              Manage display names, scheduler colors, arrival windows, and appointment request form options for each
+              appointment type. Add new types or archive existing ones to hide them from new bookings.
             </p>
+            <SettingsAppointmentTypes
+              types={appointmentTypes}
+              practiceId={practiceId}
+              onTypesChange={setAppointmentTypes}
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
+          </div>
+        )}
 
-            <div className="settings-table-container">
-              <table className="settings-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Pretty Name</th>
-                    <th>Show in Form</th>
-                    <th>New Patients Allowed</th>
-                    <th>Form List Order</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedAppointmentTypes.map((type) => (
-                    <tr key={type.id}>
-                      <td>{type.name}</td>
-                      <td>
-                        {editingAppointmentType?.id === type.id ? (
-                          <input
-                            type="text"
-                            value={editingAppointmentType.prettyName}
-                            onChange={(e) =>
-                              setEditingAppointmentType({
-                                ...editingAppointmentType,
-                                prettyName: e.target.value,
-                              })
-                            }
-                            className="settings-input"
-                          />
-                        ) : (
-                          type.prettyName || type.name
-                        )}
-                      </td>
-                      <td>
-                        {editingAppointmentType?.id === type.id ? (
-                          <input
-                            type="checkbox"
-                            checked={editingAppointmentType.showInApptRequestForm}
-                            onChange={(e) =>
-                              setEditingAppointmentType({
-                                ...editingAppointmentType,
-                                showInApptRequestForm: e.target.checked,
-                              })
-                            }
-                          />
-                        ) : (
-                          type.showInApptRequestForm ? 'Yes' : 'No'
-                        )}
-                      </td>
-                      <td>
-                        {editingAppointmentType?.id === type.id ? (
-                          <input
-                            type="checkbox"
-                            checked={editingAppointmentType.newPatientAllowed}
-                            onChange={(e) =>
-                              setEditingAppointmentType({
-                                ...editingAppointmentType,
-                                newPatientAllowed: e.target.checked,
-                              })
-                            }
-                          />
-                        ) : (
-                          type.newPatientAllowed ? 'Yes' : 'No'
-                        )}
-                      </td>
-                      <td>
-                        {editingAppointmentType?.id === type.id ? (
-                          <input
-                            type="number"
-                            value={editingAppointmentType.formListOrder ?? ''}
-                            onChange={(e) =>
-                              setEditingAppointmentType({
-                                ...editingAppointmentType,
-                                formListOrder: e.target.value === '' ? null : Number(e.target.value),
-                              })
-                            }
-                            className="settings-input"
-                            placeholder="Order (1 = top)"
-                            min="1"
-                            style={{ width: '100px' }}
-                          />
-                        ) : (
-                          type.formListOrder ?? '—'
-                        )}
-                      </td>
-                      <td>
-                        {editingAppointmentType?.id === type.id ? (
-                          <div className="settings-action-buttons">
-                            <button
-                              className="btn"
-                              onClick={handleSaveAppointmentType}
-                              disabled={saving}
-                            >
-                              {saving ? 'Saving...' : 'Save'}
-                            </button>
-                            <button
-                              className="btn secondary"
-                              onClick={() => setEditingAppointmentType(null)}
-                              disabled={saving}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            className="btn secondary"
-                            onClick={() => setEditingAppointmentType(type)}
-                          >
-                            Edit
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+        {activeTab === 'role-manual-booking' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Role manual booking</h2>
+            <p className="settings-section-description">
+              Configure which appointment types each employee role may book manually from the
+              scheduler calendar. Choose a role by name (for example, Business Manager or
+              Receptionist). Routing booking is not restricted by these settings.
+            </p>
+            <SettingsRoleManualBooking
+              appointmentTypes={activeAppointmentTypes}
+              allAppointmentTypes={appointmentTypes}
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
           </div>
         )}
 
@@ -1329,8 +1174,30 @@ export default function Settings() {
                 </h3>
                 <p className="settings-card-subtitle">Select appointment types this employee can handle:</p>
 
+                {activeAppointmentTypes.length > 0 ? (
+                  <div className="settings-checkbox-bulk-actions">
+                    <button
+                      type="button"
+                      className="settings-checkbox-bulk-action"
+                      onClick={selectAllEmployeeAppointmentTypes}
+                    >
+                      Select all
+                    </button>
+                    <span className="settings-checkbox-bulk-sep" aria-hidden>
+                      ·
+                    </span>
+                    <button
+                      type="button"
+                      className="settings-checkbox-bulk-action"
+                      onClick={unselectAllEmployeeAppointmentTypes}
+                    >
+                      Unselect all
+                    </button>
+                  </div>
+                ) : null}
+
                 <div className="settings-checkbox-list">
-                  {appointmentTypes.map((type) => (
+                  {activeAppointmentTypes.map((type) => (
                     <label key={type.id} className="settings-checkbox-item">
                       <input
                         type="checkbox"
@@ -1345,6 +1212,18 @@ export default function Settings() {
                       </span>
                     </label>
                   ))}
+                  {appointmentTypes
+                    .filter((t) => appointmentTypeIsArchived(t) && selectedAppointmentTypeIds.includes(t.id))
+                    .map((type) => (
+                      <label key={type.id} className="settings-checkbox-item settings-checkbox-item--disabled">
+                        <input type="checkbox" checked disabled readOnly />
+                        <span>
+                          {type.prettyName || type.name}
+                          <span className="settings-appt-type-archived-badge">Archived</span>
+                          <span className="settings-muted"> — remove from employee or restore the type</span>
+                        </span>
+                      </label>
+                    ))}
                 </div>
 
                 <div className="settings-action-bar">
@@ -2019,199 +1898,12 @@ export default function Settings() {
           </div>
         )}
 
-        {/* Schedule overrides calendar modal */}
-        {showOverrideCalendar && (
-          <div
-            className="settings-modal-overlay"
-            onClick={(e) => e.target === e.currentTarget && setShowOverrideCalendar(false)}
-          >
-            <div className="settings-modal settings-modal-wide">
-              <div className="settings-modal-header">
-                <h3>Schedule overrides by day</h3>
-                <button
-                  type="button"
-                  className="settings-modal-close"
-                  onClick={() => setShowOverrideCalendar(false)}
-                  aria-label="Close"
-                >
-                  ×
-                </button>
-              </div>
-              <div className="settings-modal-body">
-                <div className="settings-form-group">
-                  <label className="settings-label">Employee (doctor)</label>
-                  <select
-                    className="settings-select"
-                    value={overrideCalendarEmployeeId ?? ''}
-                    onChange={(e) => {
-                      const id = e.target.value ? Number(e.target.value) : null;
-                      setOverrideCalendarEmployeeId(id);
-                      setSelectedOverrideDate(null);
-                      setOverrideForm(null);
-                    }}
-                  >
-                    <option value="">-- Select employee --</option>
-                    {sortedEmployees.map((emp) => (
-                      <option key={emp.id} value={emp.id}>
-                        {formatEmployeeName(emp)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {!overrideCalendarEmployeeId ? (
-                  <p className="settings-muted" style={{ marginTop: 16 }}>
-                    Please select a provider above to view and set schedule overrides by day.
-                  </p>
-                ) : (
-                  <>
-                    <div className="settings-override-calendar-nav">
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        onClick={() => setOverrideCalendarMonth((m) => m.subtract(1, 'month'))}
-                      >
-                        ← Prev
-                      </button>
-                      <span className="settings-override-calendar-month">
-                        {overrideCalendarMonth.format('MMMM YYYY')}
-                      </span>
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        onClick={() => setOverrideCalendarMonth((m) => m.add(1, 'month'))}
-                      >
-                        Next →
-                      </button>
-                    </div>
-
-                    <div className="settings-override-calendar-grid">
-                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
-                        <div key={d} className="settings-override-calendar-weekday">
-                          {d}
-                        </div>
-                      ))}
-                      {(() => {
-                        const start = overrideCalendarMonth.startOf('month');
-                        const end = overrideCalendarMonth.endOf('month');
-                        const startDay = start.day();
-                        const daysInMonth = end.date();
-                        const cells: React.ReactNode[] = [];
-                        for (let i = 0; i < startDay; i++) {
-                          cells.push(<div key={`pad-${i}`} className="settings-override-calendar-day settings-override-calendar-day-pad" />);
-                        }
-                        const overrideDates = new Set(overridesInRange.map((o) => o.date));
-                        for (let d = 1; d <= daysInMonth; d++) {
-                          const date = start.date(d);
-                          const dateStr = date.format('YYYY-MM-DD');
-                          const hasOverride = overrideDates.has(dateStr);
-                          const isSelected = selectedOverrideDate === dateStr;
-                          cells.push(
-                            <button
-                              key={dateStr}
-                              type="button"
-                              className={`settings-override-calendar-day ${hasOverride ? 'settings-override-calendar-day-has-override' : ''} ${isSelected ? 'settings-override-calendar-day-selected' : ''}`}
-                              onClick={() => handleOverrideDayClick(dateStr)}
-                            >
-                              {d}
-                            </button>
-                          );
-                        }
-                        return cells;
-                      })()}
-                    </div>
-
-                    {overrideFormLoading && (
-                      <div className="settings-loading" style={{ padding: 24 }}>
-                        <span className="settings-spinner" />
-                        <span>Loading day…</span>
-                      </div>
-                    )}
-
-                    {!overrideFormLoading && overrideForm && (
-                      <div className="settings-override-form">
-                        <h4 className="settings-schedule-subtitle">
-                          {overrideForm.date} {dayjs(overrideForm.date).format('dddd')}
-                        </h4>
-                        <p className="settings-muted" style={{ marginBottom: 12 }}>
-                          Set start/end time and depot locations for this day. Routing will use these values instead of the weekly schedule.
-                        </p>
-                        <div className="settings-schedule-row">
-                          <div className="settings-schedule-field">
-                            <label className="settings-label">Start time</label>
-                            <input
-                              type="time"
-                              className="settings-input"
-                              value={overrideForm.workStartLocal ?? ''}
-                              onChange={(e) => setOverrideForm((f) => (f ? { ...f, workStartLocal: e.target.value } : null))}
-                            />
-                          </div>
-                          <div className="settings-schedule-field">
-                            <label className="settings-label">End time</label>
-                            <input
-                              type="time"
-                              className="settings-input"
-                              value={overrideForm.workEndLocal ?? ''}
-                              onChange={(e) => setOverrideForm((f) => (f ? { ...f, workEndLocal: e.target.value } : null))}
-                            />
-                          </div>
-                        </div>
-                        <div className="settings-schedule-section">
-                          <h4 className="settings-schedule-subtitle">Start depot</h4>
-                          <DepotLocationField
-                            id={`override-start-depot-${overrideForm.date}`}
-                            lat={overrideForm.startDepotLat}
-                            lon={overrideForm.startDepotLon}
-                            onChange={(lat, lon) =>
-                              setOverrideForm((f) =>
-                                f ? { ...f, startDepotLat: lat, startDepotLon: lon } : null
-                              )
-                            }
-                            placeholder="Start typing start depot address"
-                          />
-                        </div>
-                        <div className="settings-schedule-section">
-                          <h4 className="settings-schedule-subtitle">End depot</h4>
-                          <DepotLocationField
-                            id={`override-end-depot-${overrideForm.date}`}
-                            lat={overrideForm.endDepotLat}
-                            lon={overrideForm.endDepotLon}
-                            onChange={(lat, lon) =>
-                              setOverrideForm((f) =>
-                                f ? { ...f, endDepotLat: lat, endDepotLon: lon } : null
-                              )
-                            }
-                            placeholder="Start typing end depot address"
-                          />
-                        </div>
-                        <div className="settings-action-bar" style={{ marginTop: 16 }}>
-                          <button
-                            type="button"
-                            className="btn"
-                            onClick={handleOverrideSave}
-                            disabled={overrideFormSaving}
-                          >
-                            {overrideFormSaving ? 'Saving…' : 'Save override'}
-                          </button>
-                          {'id' in overrideForm && overrideForm.id && (
-                            <button
-                              type="button"
-                              className="btn secondary"
-                              onClick={handleOverrideRemove}
-                              disabled={overrideFormSaving}
-                            >
-                              Remove override (use default)
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        <ScheduleOverrideModal
+          open={overrideModalOpen}
+          onClose={() => setOverrideModalOpen(false)}
+          initialEmployeeId={overrideModalInitial.employeeId}
+          initialDate={overrideModalInitial.date}
+        />
 
         {/* Inventory Tab */}
         {activeTab === 'inventory' && (
@@ -2728,6 +2420,30 @@ export default function Settings() {
               </div>
             </div>
           )}
+          </div>
+        )}
+
+        {/* Employees directory (CRUD via POST /employees, upsert, DELETE) */}
+        {activeTab === 'employee-directory' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Employees</h2>
+            <p className="settings-section-description">
+              View staff and assign employee roles (for manual booking permissions). Click an employee name to edit roles
+              only. When PIMS editing is enabled (<code>VITE_ENABLE_PIMS_ENTITY_EDIT=true</code>), you can also add, edit,
+              deactivate, or remove employee records.
+            </p>
+            <SettingsEmployeeDirectory
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
           </div>
         )}
 
