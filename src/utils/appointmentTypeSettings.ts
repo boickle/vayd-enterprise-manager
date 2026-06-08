@@ -98,6 +98,10 @@ export function normalizeAppointmentTypeFromApi(row: AppointmentType): Appointme
     row.addressRequired === true ||
     truthyFlag(r.address_required) ||
     truthyFlag(row.addressRequired);
+  const requiresPatient =
+    row.requiresPatient === true ||
+    truthyFlag(r.requires_patient) ||
+    truthyFlag(row.requiresPatient);
   const excludeFromRouting =
     row.excludeFromRouting === true ||
     truthyFlag(r.exclude_from_routing) ||
@@ -123,6 +127,7 @@ export function normalizeAppointmentTypeFromApi(row: AppointmentType): Appointme
     allowClient,
     allowAlternateAddress,
     addressRequired,
+    requiresPatient,
     excludeFromRouting,
     usesLegacyRouting,
     allowSchedulingOverride:
@@ -191,6 +196,11 @@ export function appointmentTypeAddressRequired(type: AppointmentType | undefined
   return normalizeAppointmentTypeFromApi(type).addressRequired === true;
 }
 
+export function appointmentTypeRequiresPatient(type: AppointmentType | undefined): boolean {
+  if (!type) return false;
+  return normalizeAppointmentTypeFromApi(type).requiresPatient === true;
+}
+
 /** Types that may appear on Get Best Route / routing book pickers. */
 export function appointmentTypeIncludedInRouting(type: AppointmentType | undefined): boolean {
   if (!type) return false;
@@ -209,6 +219,7 @@ export function appointmentFormFlags(type: AppointmentType | undefined) {
     /** allowClient means optional — not “client required”. */
     requireClient: false,
     addressRequired: appointmentTypeAddressRequired(t),
+    requirePatient: appointmentTypeRequiresPatient(t),
     showAlternateAddress: t?.allowAlternateAddress === true,
     showNotRoutedHint: t?.excludeFromRouting === true,
     showSchedulingOverride: t?.allowSchedulingOverride === true,

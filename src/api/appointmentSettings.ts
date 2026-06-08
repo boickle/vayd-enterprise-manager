@@ -40,6 +40,8 @@ export type AppointmentType = {
   allowAlternateAddress?: boolean;
   /** Visit must have a client home address or an alternate address (when allowed). */
   addressRequired?: boolean;
+  /** Visit must have a patient linked to be saved. */
+  requiresPatient?: boolean;
   /** Omitted from drive routing / doctor-day routable stops (server-side) */
   excludeFromRouting?: boolean;
   /** Use legacy routing rules for this type (server-side) */
@@ -251,6 +253,7 @@ export type AppointmentTypeUpdate = {
   allowClient?: boolean;
   allowAlternateAddress?: boolean;
   addressRequired?: boolean;
+  requiresPatient?: boolean;
   excludeFromRouting?: boolean;
   usesLegacyRouting?: boolean;
   points?: number | null;

@@ -6,6 +6,8 @@ import type { Provider } from '../api/employee';
 import { appendBookedStaffNote } from '../utils/bookedAppointmentDescription';
 import { resolveAppointmentChangeActorFromAuth } from '../utils/appointmentChangeAuditNote';
 import type { ManualBookPreviewDraft } from './routingCalendarPreviewStorage';
+import type { AppointmentType } from '../api/appointmentSettings';
+import { appointmentFormFlags } from './appointmentTypeSettings';
 
 export async function commitManualBookPreviewDraft(
   draft: ManualBookPreviewDraft,
@@ -15,11 +17,17 @@ export async function commitManualBookPreviewDraft(
     token?: string | null;
     userEmail?: string | null;
     doctorId?: string | null;
+    appointmentTypes?: readonly AppointmentType[];
   },
 ): Promise<number> {
   const trimmedAlt = draft.alternateAddressText?.trim() ?? '';
   if (trimmedAlt.length > 4000) {
     throw new Error('Alternate address must be 4000 characters or fewer.');
+  }
+
+  const selectedType = ctx.appointmentTypes?.find((t) => t.id === draft.appointmentTypeId);
+  if (appointmentFormFlags(selectedType).requirePatient && !draft.patientId?.trim()) {
+    throw new Error('Select a patient — this appointment type requires one.');
   }
 
   const bookActor = resolveAppointmentChangeActorFromAuth({

@@ -407,6 +407,10 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         setError('Choose a valid appointment type.');
         return;
       }
+      if (editTypeFormFlags.requirePatient && !appt.patient?.id) {
+        setError('This appointment type requires a patient on the visit.');
+        return;
+      }
       if (!Number.isFinite(pid) || pid <= 0) {
         setError('Choose a primary provider.');
         return;
@@ -495,6 +499,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       editedByActor,
       practiceTz,
       typeScoreCompare,
+      editTypeFormFlags,
       onSaved,
       onClose,
     ]);
