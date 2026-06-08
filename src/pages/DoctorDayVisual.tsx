@@ -27,6 +27,11 @@ import {
   type AppointmentTypeCatalog,
 } from '../utils/appointmentTypeSettings';
 import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
+import {
+  buildEtaCandidateSlot,
+  orderHouseholdsWithCandidateAtInsertion,
+  resolveRoutingEtaInsertionIndex,
+} from '../utils/routingEtaCandidateSlot';
 import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
 import { AlertTriangle, Heart } from 'lucide-react';
@@ -1037,24 +1042,14 @@ export default function DoctorDayVisual({
       // households first (by firstApptIndex) and the candidate at insertionIndex so the backend
       // gets the correct order (e.g. [existing1..4, candidate] for POST-LAST).
       const hasVirtual = virtualAppt && virtualAppt.date === date;
-      const insertionIndex = Math.max(0, Math.min(households.length - 1, virtualAppt?.insertionIndex ?? households.length - 1));
+      const insertionIndex = hasVirtual
+        ? resolveRoutingEtaInsertionIndex(virtualAppt.insertionIndex, households.length)
+        : 0;
       const keyToHouseholdIndex = new Map(households.map((h, i) => [h.key, i]));
 
       let ordered: { h: Household; viewIdx: number }[];
       if (hasVirtual) {
-        const existing = households.filter((h) => !h.isPreview);
-        const virtualH = households.find((h) => h.isPreview);
-        const sortedExisting = [...existing].sort(
-          (a, b) => (a.firstApptIndex ?? 999) - (b.firstApptIndex ?? 999)
-        );
-        const inVisitOrder =
-          virtualH != null
-            ? [
-                ...sortedExisting.slice(0, insertionIndex),
-                virtualH,
-                ...sortedExisting.slice(insertionIndex),
-              ]
-            : sortedExisting;
+        const inVisitOrder = orderHouseholdsWithCandidateAtInsertion(households, insertionIndex);
         ordered = inVisitOrder.map((h) => ({
           h,
           viewIdx: keyToHouseholdIndex.get(h.key) ?? 0,
@@ -1096,6 +1091,25 @@ export default function DoctorDayVisual({
         } as any;
       });
 
+      const candidateSlot =
+        hasVirtual && virtualAppt
+          ? buildEtaCandidateSlot(
+              {
+                insertionIndex: virtualAppt.insertionIndex,
+                positionInDay: virtualAppt.positionInDay,
+                suggestedStartIso: virtualAppt.suggestedStartIso,
+                lat: virtualAppt.lat,
+                lon: virtualAppt.lon,
+                serviceMinutes: virtualAppt.serviceMinutes,
+                overrunSeconds: (virtualAppt as { overrunSeconds?: number }).overrunSeconds,
+                validationLastEtdSec: (virtualAppt as { validationLastEtdSec?: number }).validationLastEtdSec,
+                validationReturnSec: virtualAppt.validationReturnSec,
+                arrivalWindow: virtualAppt.arrivalWindow,
+              },
+              { householdCount: households.length }
+            )
+          : undefined;
+
       const payload = {
         doctorId: inferredDoctorId,
         date,
@@ -1103,28 +1117,7 @@ export default function DoctorDayVisual({
         startDepot: startDepot ? { lat: startDepot.lat, lon: startDepot.lon } : undefined,
         endDepot: endDepot ? { lat: endDepot.lat, lon: endDepot.lon } : undefined,
         useTraffic: false,
-        ...(hasVirtual &&
-        virtualAppt &&
-        Number.isFinite(virtualAppt.lat) &&
-        Number.isFinite(virtualAppt.lon)
-          ? {
-              candidateSlot: {
-                insertionIndex,
-                positionInDay: virtualAppt.positionInDay ?? insertionIndex + 1,
-                suggestedStartIso: virtualAppt.suggestedStartIso,
-                lat: virtualAppt.lat,
-                lon: virtualAppt.lon,
-                serviceMinutes: virtualAppt.serviceMinutes,
-                overrunSeconds: (virtualAppt as any).overrunSeconds,
-                arrivalWindow: virtualAppt.arrivalWindow?.windowStartIso && virtualAppt.arrivalWindow?.windowEndIso
-                  ? {
-                      windowStartIso: virtualAppt.arrivalWindow.windowStartIso,
-                      windowEndIso: virtualAppt.arrivalWindow.windowEndIso,
-                    }
-                  : undefined,
-              },
-            }
-          : {}),
+        ...(candidateSlot ? { candidateSlot } : {}),
       } as any;
 
       try {

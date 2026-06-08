@@ -72,6 +72,8 @@ import {
   type SchedulerDoctorDayAppointmentZones,
   type SchedulerDoctorDayMembership,
 } from '../utils/schedulerDriveEta';
+import { mergeAppointmentPreserveRoomLoaderConfirmStatus } from '../utils/roomLoaderPreApptDisplay';
+import { summarizeReconciledDayWindowWarnings } from '../utils/routingCardWindowWarning';
 import {
   buildGoogleMapsLinksForDay,
   householdsInRoutingDisplayOrder,
@@ -107,6 +109,10 @@ import {
   loadRoutingPreviewClientContact,
   previewClientContactFromAppointment,
 } from '../utils/schedulerPreviewClientContact';
+import {
+  formatVisitHighlightsNextAppointmentLine,
+  loadNextScheduledAppointmentForVisit,
+} from '../utils/nextScheduledAppointmentForVisit';
 import type { PreviewPopoverClientContact } from '../components/PreviewPopoverClientContact';
 import ScheduleOverrideModal from '../components/ScheduleOverrideModal';
 import { SchedulerReconcileModal } from '../components/SchedulerReconcileModal';
@@ -194,6 +200,8 @@ import {
   ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
   ROUTING_FOCUS_RESCHEDULE_SOURCE_EVENT,
   SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID,
+  notifyRoutingPreviewEtaWindowWarnings,
+  routingCalendarPreviewOptionKey,
   writeRoutingCalendarPreview,
   type ManualBookPreviewDraft,
   type RoutingCalendarPreviewPayloadV1,
@@ -282,6 +290,19 @@ const PRACTICE_TZ =
 
 /** Admin double-click on practice calendar — distinct from routing / reschedule book flows. */
 const MANUAL_CALENDAR_BOOK_MODAL_TITLE = 'Book appointment - MANUAL OVERIDE';
+
+/** True when the slot is already mostly inside the timed grid scrollport (skip hover auto-scroll). */
+function timedGridElementMostlyVisible(el: HTMLElement, marginPx = 28): boolean {
+  const scrollRoot = el.closest('.scheduler-calendar-scroll');
+  if (!(scrollRoot instanceof HTMLElement)) return true;
+  const rootRect = scrollRoot.getBoundingClientRect();
+  const elRect = el.getBoundingClientRect();
+  return (
+    elRect.top >= rootRect.top + marginPx &&
+    elRect.bottom <= rootRect.bottom - marginPx &&
+    elRect.height > 0
+  );
+}
 
 /** Scroll the timed grid (embedded routing column or full-page calendar) so a slot is centered. */
 function scrollTimedGridElementIntoView(el: HTMLElement, behavior: ScrollBehavior = 'auto') {
@@ -774,22 +795,36 @@ function dayHasRecordedWorkdayBounds(row: EmployeeWorkdayActual | undefined): bo
   return Boolean(row?.workdayStartActual?.trim() && row?.workdayEndActual?.trim());
 }
 
+/** Progress / day actuals only for today or past days (practice-local). */
+function isScheduleDayOnOrBeforeToday(dateIso: string, practiceTz: string): boolean {
+  const day = DateTime.fromISO(dateIso, { zone: practiceTz }).startOf('day');
+  const today = DateTime.now().setZone(practiceTz).startOf('day');
+  if (!day.isValid || !today.isValid) return false;
+  return day <= today;
+}
+
 function SchedulerDayHeaderProgressButton({
   dayLabel,
   workday,
   onClick,
+  disabled = false,
 }: {
   dayLabel: string;
   workday: EmployeeWorkdayActual | undefined;
   onClick: () => void;
+  disabled?: boolean;
 }) {
   const timesTitle = workdayActualTimesTitle(workday, PRACTICE_TZ);
   const showTimesBadge = dayHasRecordedWorkdayBounds(workday);
+  const title = disabled
+    ? `Progress is available for today and past days only (${dayLabel})`
+    : `Progress: predicted vs actual for ${dayLabel}`;
   return (
     <button
       type="button"
       className="scheduler-day-header-btn scheduler-day-header-adjust scheduler-day-header-btn--progress"
-      title={`Progress: predicted vs actual for ${dayLabel}`}
+      title={title}
+      disabled={disabled}
       onClick={onClick}
     >
       Progress
@@ -1647,6 +1682,47 @@ export function SchedulerHoverContent({
   const createdLine = formatAppointmentAuditWhenByLine(createdWhen, createdBy);
   const modifiedLine = formatAppointmentAuditWhenByLine(modifiedWhen, modifiedBy);
   const showAuditFooter = !!(createdLine || modifiedLine);
+  const [nextScheduledAppt, setNextScheduledAppt] = useState<Appointment | null>(null);
+  const [nextScheduledApptLoading, setNextScheduledApptLoading] = useState(false);
+
+  const nextScheduledAsOfIso = useMemo(() => {
+    const candidates = [
+      Date.now(),
+      appt.appointmentEnd ? Date.parse(appt.appointmentEnd) : NaN,
+      appt.appointmentEndActual ? Date.parse(appt.appointmentEndActual) : NaN,
+    ].filter((ms) => Number.isFinite(ms));
+    return new Date(Math.max(...candidates)).toISOString();
+  }, [appt.appointmentEnd, appt.appointmentEndActual, appt.id]);
+
+  useEffect(() => {
+    let on = true;
+    setNextScheduledApptLoading(true);
+    setNextScheduledAppt(null);
+    void (async () => {
+      try {
+        const next = await loadNextScheduledAppointmentForVisit(appt, PRACTICE_ID, {
+          asOf: nextScheduledAsOfIso,
+        });
+        if (on) setNextScheduledAppt(next);
+      } catch {
+        if (on) setNextScheduledAppt(null);
+      } finally {
+        if (on) setNextScheduledApptLoading(false);
+      }
+    })();
+    return () => {
+      on = false;
+    };
+  }, [appt, nextScheduledAsOfIso]);
+
+  const nextScheduledLine = useMemo(() => {
+    if (!nextScheduledAppt) return null;
+    return formatVisitHighlightsNextAppointmentLine(
+      nextScheduledAppt,
+      PRACTICE_TZ,
+      providerLabelFormal(nextScheduledAppt.primaryProvider)
+    );
+  }, [nextScheduledAppt]);
 
   return (
     <>
@@ -1870,6 +1946,12 @@ export function SchedulerHoverContent({
             ) : null}
           </div>
         ) : null}
+        <>
+          <hr className="scheduler-tooltip-vh-divider" />
+          <VisitHighlightsRow label="Next Appointment">
+            {nextScheduledApptLoading ? 'Loading…' : nextScheduledLine ?? 'None'}
+          </VisitHighlightsRow>
+        </>
         {showAuditFooter ? (
           <>
             <hr className="scheduler-tooltip-vh-divider" />
@@ -2663,6 +2745,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     x: number;
     y: number;
     el: HTMLElement | null;
+    /** Freeze timed-grid bar placement while Visit Highlights is open (ETA reflow won't yank the chip). */
+    pinnedRange?: { startIso: string; endIso: string };
   } | null>(null);
 
   const [driveHoverCard, setDriveHoverCard] = useState<{
@@ -2915,6 +2999,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     if (isAdminOrSuper) return true;
     return rolesLower.includes('employee');
   }, [rolesLower, isAdminOrSuper]);
+  const canManageScheduleOverrides = isAdminOrSuper;
   const manualBookingAppointmentTypes = useMemo(() => {
     if (isAdminOrSuper) return typeList;
     if (manualBookableTypeIds === null) return [];
@@ -3757,8 +3842,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             continue;
           }
           const idx = next.findIndex((a) => a.id === row.id);
-          if (idx === -1) next.push(row);
-          else next[idx] = row;
+          const merged = mergeAppointmentPreserveRoomLoaderConfirmStatus(
+            idx >= 0 ? next[idx] : null,
+            row
+          );
+          if (idx === -1) next.push(merged);
+          else next[idx] = merged;
         }
         return next;
       });
@@ -3945,6 +4034,22 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               }
               return m;
             });
+
+            if (
+              routingPreview &&
+              routingPreviewColumnKey &&
+              r.date === routingPreviewColumnKey
+            ) {
+              const etaWindowSummary = summarizeReconciledDayWindowWarnings(r.dayData);
+              notifyRoutingPreviewEtaWindowWarnings({
+                optionKey:
+                  routingPreview.listOptionKey?.trim() ||
+                  routingCalendarPreviewOptionKey(routingPreview),
+                hasWindowWarning: etaWindowSummary.hasAnyWarning,
+                warningStopCount: etaWindowSummary.warningStopCount,
+                candidateHasWarning: etaWindowSummary.candidateHasWarning,
+              });
+            }
           } catch {
             /* skip day — other dates may still succeed */
           } finally {
@@ -4074,6 +4179,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
   const displayRangeForAppt = useMemo(() => {
     return (a: Appointment) => {
+      if (hover?.appt.id === a.id && hover.pinnedRange) {
+        return hover.pinnedRange;
+      }
       const inRescheduleHighlight =
         rescheduleSourceHighlightIds != null &&
         typeof a.id === 'number' &&
@@ -4090,6 +4198,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       );
     };
   }, [
+    hover?.appt.id,
+    hover?.pinnedRange,
     showByDriveTime,
     resolvedPrimaryProviderId,
     driveIsoByApptId,
@@ -4464,7 +4574,23 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       return;
     }
     const anchorEl = hover.el instanceof HTMLElement ? hover.el : null;
-    if (anchorEl) {
+    if (!hover.pinnedRange) {
+      const liveRange = driveDisplayRangeForAppointment(
+        hover.appt,
+        showByDriveTime,
+        resolvedPrimaryProviderId,
+        driveDayByDate,
+        driveIsoByApptId
+      );
+      setHover((prev) =>
+        prev?.appt.id === hover.appt.id ? { ...prev, pinnedRange: liveRange } : prev
+      );
+    }
+    if (
+      anchorEl &&
+      !embedInRoutingWorkspace &&
+      !timedGridElementMostlyVisible(anchorEl)
+    ) {
       suppressHoverScrollDismissRef.current = true;
       scrollTimedGridElementIntoView(anchorEl, 'auto');
       requestAnimationFrame(() => {
@@ -4479,7 +4605,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       }),
       ready: false,
     });
-  }, [hover?.appt.id, hover?.el]);
+  }, [hover?.appt.id, hover?.el, embedInRoutingWorkspace]);
 
   useLayoutEffect(() => {
     if (!hover || !hoverTooltipLayout || hoverTooltipLayout.ready) return;
@@ -6227,6 +6353,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                     providerWeeklySchedules,
                     scheduleOverridesByDate
                   );
+                  const progressEnabled = isScheduleDayOnOrBeforeToday(key, PRACTICE_TZ);
                   return (
                     <div
                       key={key}
@@ -6252,10 +6379,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                               <SchedulerDayHeaderProgressButton
                                 dayLabel={dayDt.toFormat('cccc, MMMM d')}
                                 workday={workdayActualsByDate.get(key)}
+                                disabled={!progressEnabled}
                                 onClick={() => setReconcileModal({ open: true, date: key })}
                               />
                             ) : null}
-                            {canManualBookOnCalendar && resolvedPrimaryProviderId.trim() ? (
+                            {canManageScheduleOverrides && resolvedPrimaryProviderId.trim() ? (
                               <button
                                 type="button"
                                 className="scheduler-day-header-btn scheduler-day-header-adjust"
@@ -6340,10 +6468,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                               <SchedulerDayHeaderProgressButton
                                 dayLabel={dayDt.toFormat('cccc, MMMM d')}
                                 workday={workdayActualsByDate.get(key)}
+                                disabled={!progressEnabled}
                                 onClick={() => setReconcileModal({ open: true, date: key })}
                               />
                             ) : null}
-                            {canManualBookOnCalendar && resolvedPrimaryProviderId.trim() ? (
+                            {canManageScheduleOverrides && resolvedPrimaryProviderId.trim() ? (
                               <button
                                 type="button"
                                 className="scheduler-day-header-btn scheduler-day-header-adjust"

@@ -1,5 +1,6 @@
 // src/pages/RoomLoader.tsx
 import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DateTime } from 'luxon';
 import {
@@ -1227,6 +1228,11 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     setAppointmentReasons({});
     setVaccineCheckboxes({});
     setNotesToClient({});
+    setRemovedReminders(new Set());
+    setConfirmedMatchReminders(new Set());
+    setReminderToRemove(null);
+    setConfirmAction(null);
+    setSendWarningReasons([]);
     embedded?.onClose();
   }
 
@@ -5327,75 +5333,78 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
         </div>
       )}
 
-      {/* Confirmation Modal for Removing Reminder */}
-      {reminderToRemove && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10000,
-          }}
-          onClick={cancelRemoveReminder}
-        >
-          <div
-            style={{
-              backgroundColor: 'white',
-              padding: '30px',
-              borderRadius: '8px',
-              maxWidth: '500px',
-              width: '90%',
-              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.3)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 style={{ marginTop: 0, marginBottom: '15px', color: '#333', fontSize: '20px' }}>
-              Remove Reminder?
-            </h2>
-            <p style={{ marginBottom: '20px', color: '#666', fontSize: '16px', lineHeight: '1.5' }}>
-              Are you sure you want to remove <strong>"{reminderToRemove.description}"</strong>?
-            </p>
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button
-                onClick={cancelRemoveReminder}
+      {/* Confirmation Modal for Removing Reminder — portaled so embedded scheduler host pointer-events:none does not block clicks */}
+      {reminderToRemove
+        ? createPortal(
+            <div
+              className="room-loader-modal-overlay"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="room-loader-remove-reminder-title"
+              style={{ zIndex: 10050 }}
+              onClick={cancelRemoveReminder}
+            >
+              <div
+                className="room-loader-confirm-modal"
                 style={{
-                  padding: '10px 20px',
-                  fontSize: '14px',
-                  fontWeight: 500,
-                  backgroundColor: '#6c757d',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
+                  backgroundColor: 'white',
+                  borderRadius: '8px',
+                  maxWidth: '500px',
+                  boxShadow: '0 4px 6px rgba(0, 0, 0, 0.3)',
                 }}
+                onClick={(e) => e.stopPropagation()}
               >
-                Cancel
-              </button>
-              <button
-                onClick={confirmRemoveReminder}
-                style={{
-                  padding: '10px 20px',
-                  fontSize: '14px',
-                  fontWeight: 500,
-                  backgroundColor: '#f44336',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                }}
-              >
-                Remove
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+                <h2
+                  id="room-loader-remove-reminder-title"
+                  style={{ marginTop: 0, marginBottom: '15px', color: '#333', fontSize: '20px' }}
+                >
+                  Remove Reminder?
+                </h2>
+                <p style={{ marginBottom: '20px', color: '#666', fontSize: '16px', lineHeight: '1.5' }}>
+                  Are you sure you want to remove <strong>"{reminderToRemove.description}"</strong>?
+                </p>
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={cancelRemoveReminder}
+                    style={{
+                      padding: '10px 20px',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                      backgroundColor: '#6c757d',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      confirmRemoveReminder();
+                    }}
+                    style={{
+                      padding: '10px 20px',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                      backgroundColor: '#f44336',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
 
       {reconcileRoomLoaderId != null ? (
         <RoomLoaderReconciliationModal
