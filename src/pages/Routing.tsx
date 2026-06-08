@@ -43,14 +43,19 @@ import {
   fetchAndCacheRescheduleSourcePlacementSnapshot,
   resolveRescheduleOriginalVisitForCompare,
 } from '../utils/routingRescheduleScoreCompare';
-import { WINDOW_WARNING_MINUTES_FROM_END } from '../utils/windowWarning';
+import {
+  routingCardWindowWarningMessage,
+  routingCardWindowWarningReasons,
+} from '../utils/routingCardWindowWarning';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   clearRoutingCalendarPreview,
   readRoutingCalendarPreview,
   ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
   ROUTING_FOCUS_RESCHEDULE_SOURCE_EVENT,
+  ROUTING_PREVIEW_ETA_WINDOW_WARNINGS_EVENT,
   routingCalendarPreviewOptionKey,
+  type RoutingPreviewEtaWindowWarningsDetail,
   writeRoutingCalendarPreview,
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
@@ -390,6 +395,10 @@ type Winner = {
   clientZone?: MiniZone;
   effectiveZone?: MiniZone;
   /** Scoring breakdown from routing-v2; downstreamWindowEdge > 0 means a downstream appt is pushed near its window end */
+  scoreBreakdown?: {
+    downstreamWindowEdge?: number;
+  };
+  /** @deprecated Prefer scoreBreakdown — kept for older API responses */
   scoringComponents?: {
     downstreamWindowEdge?: number;
   };
@@ -426,6 +435,7 @@ type Winner = {
 };
 
 type UnifiedOption = Winner & {
+  displayInsertionIndex?: number;
   doctorPimsId: string;
   doctorName: string;
 };
@@ -757,6 +767,10 @@ const SCOUT_PRESERVED_DAY_CHIP: CSSProperties = {
 };
 
 const ROUTING_RESULT_FONT_SCALE = 0.75;
+/** Scores at or above this threshold show a nudge to try other dates when possible. */
+const ROUTING_HIGH_SCORE_WARNING_THRESHOLD = 225;
+const ROUTING_HIGH_SCORE_WARNING_MESSAGE =
+  '⚠ Not a strong fit. Try alternate dates if the client is flexible.';
 
 const SCOUT_BADGE_CHIP_DENSE: CSSProperties = {
   ...SCOUT_BADGE_CHIP,
@@ -1757,6 +1771,10 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     return routingCalendarPreviewOptionKey(preview);
   }, [calendarPreviewTick, doctorIdByPims]);
 
+  const [etaWindowWarningsByOptionKey, setEtaWindowWarningsByOptionKey] = useState<
+    Record<string, RoutingPreviewEtaWindowWarningsDetail>
+  >({});
+
   useEffect(() => {
     if (!calendarWorkspaceMode) return;
     const bump = () => setCalendarPreviewTick((n) => n + 1);
@@ -1764,6 +1782,17 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     window.addEventListener(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT, bump);
     return () => window.removeEventListener(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT, bump);
   }, [calendarWorkspaceMode]);
+
+  useEffect(() => {
+    const onEtaWindowWarnings = (ev: Event) => {
+      const detail = (ev as CustomEvent<RoutingPreviewEtaWindowWarningsDetail>).detail;
+      if (!detail?.optionKey) return;
+      setEtaWindowWarningsByOptionKey((prev) => ({ ...prev, [detail.optionKey]: detail }));
+    };
+    window.addEventListener(ROUTING_PREVIEW_ETA_WINDOW_WARNINGS_EVENT, onEtaWindowWarnings);
+    return () =>
+      window.removeEventListener(ROUTING_PREVIEW_ETA_WINDOW_WARNINGS_EVENT, onEtaWindowWarnings);
+  }, []);
 
   useEffect(() => {
     if (!calendarWorkspaceMode || !activeCalendarPreviewOptionKey) return;
@@ -2601,6 +2630,19 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         }
       }
     }
+    if (Array.isArray(result?.top)) {
+      for (const row of result.top) {
+        if (row.doctorId) doctorIdsToFetch.add(row.doctorId);
+      }
+    }
+    if (Array.isArray(result?.doctors)) {
+      for (const d of result.doctors) {
+        if (d.pimsId) doctorIdsToFetch.add(d.pimsId);
+        for (const w of d.top ?? []) {
+          if (w.doctorId) doctorIdsToFetch.add(w.doctorId);
+        }
+      }
+    }
     
     // Fetch names for all doctor IDs that don't already have names
     for (const pid of doctorIdsToFetch) {
@@ -3305,6 +3347,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         data as RoutingV2SlotSearchResult
       ) as Result;
       setResult(normalized);
+      setEtaWindowWarningsByOptionKey({});
       setFeedbackSuccessKey(null);
       setScheduleBookedKeys({});
       setFeedbackError(null);
@@ -4635,6 +4678,18 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                         ? 'View placement on the practice calendar to reschedule this visit'
                         : 'View placement on the practice calendar';
 
+                const scoreHeaderLabel =
+                  typeof opt.score === 'number'
+                    ? hasActiveRescheduleIntent
+                      ? rescheduleScoreHeaderSuffix(opt.score, rescheduleOriginalVisitForCompare)
+                      : `(Score: ${Number.isInteger(opt.score) ? String(opt.score) : opt.score.toFixed(2)})`
+                    : null;
+                const providerLabel = opt.doctorName?.trim() || null;
+                const showHighScoreWarning =
+                  typeof opt.score === 'number' &&
+                  Number.isFinite(opt.score) &&
+                  opt.score >= ROUTING_HIGH_SCORE_WARNING_THRESHOLD;
+
                 return (
                   <button
                     key={`${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${idx}`}
@@ -4655,7 +4710,6 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                     }}
                     style={{
                       position: 'relative',
-                      paddingTop: 48,
                       ...(isEarlierFeasibleEmptyDay && !isCalendarPreviewCard
                         ? {
                             backgroundColor: '#fefce8',
@@ -4665,59 +4719,38 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                         : {}),
                     }}
                   >
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: 10,
-                        left: 10,
-                        right: 10,
-                        height: 28,
-                        borderRadius: 10,
-                        padding: '0 12px',
-                        background: `linear-gradient(135deg, ${headerColor}, ${headerColor}cc)`,
-                        color: 'white',
-                        display: 'flex',
-                        alignItems: 'center',
-                        fontWeight: 700,
-                        letterSpacing: 0.2,
-                        gap: 10,
-                      }}
-                    >
-                      {!hasActiveRescheduleIntent && opt.doctorName?.trim() ? (
-                        <span
-                          style={{
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            minWidth: 0,
-                            flex: '1 1 auto',
-                          }}
-                        >
-                          {opt.doctorName}
-                        </span>
-                      ) : null}
-                      {typeof opt.score === 'number' &&
-                        (() => {
-                          const scoreLabel = hasActiveRescheduleIntent
-                            ? rescheduleScoreHeaderSuffix(opt.score, rescheduleOriginalVisitForCompare)
-                            : `(Score: ${Number.isInteger(opt.score) ? String(opt.score) : opt.score.toFixed(2)})`;
-                          return scoreLabel ? (
-                            <span
-                              style={{
-                                fontWeight: 600,
-                                opacity: 0.9,
-                                whiteSpace: 'nowrap',
-                                flexShrink: 0,
-                              }}
-                            >
-                              {scoreLabel}
+                    {(providerLabel || scoreHeaderLabel) && (
+                      <div
+                        className="routing-result-option-card-header"
+                        style={{
+                          background: `linear-gradient(135deg, ${headerColor}, ${headerColor}cc)`,
+                        }}
+                      >
+                        {providerLabel ? (
+                          <div className="routing-result-option-card-header-provider">{providerLabel}</div>
+                        ) : null}
+                        {showHighScoreWarning ? (
+                          <div
+                            className="routing-result-option-card-header-warning"
+                            role="status"
+                          >
+                            {ROUTING_HIGH_SCORE_WARNING_MESSAGE}
+                          </div>
+                        ) : null}
+                        {(scoreHeaderLabel || providerLabel) && (
+                          <div className="routing-result-option-card-header-meta">
+                            {scoreHeaderLabel ? (
+                              <span className="routing-result-option-card-header-score">{scoreHeaderLabel}</span>
+                            ) : (
+                              <span className="routing-result-option-card-header-score" aria-hidden="true" />
+                            )}
+                            <span className="routing-result-option-card-header-icon">
+                              <DoctorIcon />
                             </span>
-                          ) : null;
-                        })()}
-                      <span style={{ marginLeft: 'auto' }}>
-                        <DoctorIcon />
-                      </span>
-                    </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {emptyBadge && (
                       <div
@@ -4789,22 +4822,36 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                       <EdgeChip first={opt.isFirstEdge} last={opt.isLastEdge} />
                     </div>
 
-                    {(opt.scoringComponents?.downstreamWindowEdge ?? 0) > 0 && (
-                      <div
-                        style={{
-                          marginBottom: 8,
-                          padding: '8px 12px',
-                          borderRadius: 8,
-                          background: '#fef3c7',
-                          border: '1px solid #f59e0b',
-                          color: '#92400e',
-                          fontSize: Math.round(13 * ROUTING_RESULT_FONT_SCALE),
-                          fontWeight: 600,
-                        }}
-                      >
-                        {`⚠ At least one downstream appointment is pushed within ${WINDOW_WARNING_MINUTES_FROM_END} minutes of its window end.`}
-                      </div>
-                    )}
+                    {(() => {
+                      const etaRow = etaWindowWarningsByOptionKey[optionKey];
+                      const etaReconciled = etaRow
+                        ? {
+                            hasAnyWarning: etaRow.hasWindowWarning,
+                            warningStopCount: etaRow.warningStopCount,
+                            candidateHasWarning: etaRow.candidateHasWarning,
+                          }
+                        : null;
+                      const windowWarningMessage = routingCardWindowWarningMessage(
+                        routingCardWindowWarningReasons(opt, etaReconciled)
+                      );
+                      if (!windowWarningMessage) return null;
+                      return (
+                        <div
+                          style={{
+                            marginBottom: 8,
+                            padding: '8px 12px',
+                            borderRadius: 8,
+                            background: '#fef3c7',
+                            border: '1px solid #f59e0b',
+                            color: '#92400e',
+                            fontSize: Math.round(13 * ROUTING_RESULT_FONT_SCALE),
+                            fontWeight: 600,
+                          }}
+                        >
+                          {windowWarningMessage}
+                        </div>
+                      );
+                    })()}
 
                     {showScoutUi && (
                       <div style={{ marginBottom: 10 }}>

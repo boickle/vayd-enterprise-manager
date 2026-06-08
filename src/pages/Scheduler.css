@@ -1658,6 +1658,15 @@ label.scheduler-go-date-heading {
   background: #f8fafc;
 }
 
+.scheduler-day-header-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.scheduler-day-header-btn:disabled:hover {
+  background: #fff;
+}
+
 .scheduler-day-header-btn--progress {
   display: inline-flex;
   align-items: center;
@@ -3586,6 +3595,14 @@ label.scheduler-go-date-heading {
   margin: 0 0 10px;
   font-size: 13px;
   line-height: 1.45;
+}
+
+.scheduler-forward-booking-next-appt {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
 }
 
 .scheduler-forward-booking-section--override .scheduler-forward-booking-mode-option--active {

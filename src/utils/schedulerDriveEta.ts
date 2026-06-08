@@ -27,6 +27,12 @@ import {
   type RoutingCalendarPreviewPayloadV1,
 } from './routingCalendarPreviewStorage';
 import {
+  buildEtaCandidateSlot,
+  orderHouseholdsWithCandidateAtInsertion,
+  resolveRoutingEtaInsertionIndex,
+  type RoutingEtaCandidateSlotSource,
+} from './routingEtaCandidateSlot';
+import {
   buildRoutingRescheduleContextForSlotSearch,
   readRoutingRescheduleIntent,
   rescheduleScopeTargets,
@@ -420,66 +426,26 @@ async function fetchEtaForOneDay(
   if (hasVirtual && routingOpts?.routingPreview) {
     const rp = routingOpts.routingPreview;
     const opt = rp.option as Record<string, unknown>;
-    const rawIns = opt.insertionIndex;
-    const insertionIndex = Math.max(
-      0,
-      Math.min(
-        day.households.length - 1,
-        typeof rawIns === 'number' && Number.isFinite(rawIns)
-          ? Math.floor(rawIns)
-          : rawIns != null
-            ? Math.floor(Number(rawIns)) || day.households.length - 1
-            : day.households.length - 1
-      )
-    );
-    const existing = day.households.filter((h: { isPreview?: boolean }) => !h.isPreview);
-    const virtualH = day.households.find((h: { isPreview?: boolean }) => h.isPreview);
-    const sortedExisting = [...existing].sort(
-      (a: { firstApptIndex?: number }, b: { firstApptIndex?: number }) =>
-        (a.firstApptIndex ?? 999) - (b.firstApptIndex ?? 999)
-    );
-    householdsForPayload =
-      virtualH != null
-        ? [...sortedExisting.slice(0, insertionIndex), virtualH, ...sortedExisting.slice(insertionIndex)]
-        : sortedExisting;
+    const insertionIndex = resolveRoutingEtaInsertionIndex(opt.insertionIndex, day.households.length);
+    householdsForPayload = orderHouseholdsWithCandidateAtInsertion(day.households, insertionIndex);
 
-    const lat = rp.newApptMeta?.lat;
-    const lon = rp.newApptMeta?.lon;
-    if (Number.isFinite(lat) && Number.isFinite(lon)) {
-      const pd = opt.positionInDay;
-      const positionInDay =
-        typeof pd === 'number' && Number.isFinite(pd)
-          ? Math.floor(pd)
-          : pd != null
-            ? Math.floor(Number(pd)) || insertionIndex + 1
-            : insertionIndex + 1;
-      const aw = opt.arrivalWindow as { windowStartIso?: string; windowEndIso?: string } | undefined;
-      const vr = opt.validationReturnSec;
-      const overrunSeconds =
-        typeof vr === 'number' && Number.isFinite(vr)
-          ? vr
-          : vr != null && Number.isFinite(Number(vr))
-            ? Number(vr)
-            : undefined;
-      candidateExtras = {
-        candidateSlot: {
-          insertionIndex,
-          positionInDay,
-          suggestedStartIso: String(opt.suggestedStartIso ?? ''),
-          lat,
-          lon,
-          serviceMinutes: Math.max(1, Math.floor(rp.serviceMinutes) || 30),
-          ...(overrunSeconds !== undefined ? { overrunSeconds } : {}),
-          ...(aw?.windowStartIso && aw?.windowEndIso
-            ? {
-                arrivalWindow: {
-                  windowStartIso: aw.windowStartIso,
-                  windowEndIso: aw.windowEndIso,
-                },
-              }
-            : {}),
-        },
-      };
+    const candidateSlot = buildEtaCandidateSlot(
+      {
+        insertionIndex: opt.insertionIndex as RoutingEtaCandidateSlotSource['insertionIndex'],
+        positionInDay: opt.positionInDay as RoutingEtaCandidateSlotSource['positionInDay'],
+        suggestedStartIso: opt.suggestedStartIso as string | undefined,
+        lat: rp.newApptMeta?.lat,
+        lon: rp.newApptMeta?.lon,
+        serviceMinutes: rp.serviceMinutes,
+        overrunSeconds: opt.overrunSeconds as RoutingEtaCandidateSlotSource['overrunSeconds'],
+        validationLastEtdSec: opt.validationLastEtdSec as RoutingEtaCandidateSlotSource['validationLastEtdSec'],
+        validationReturnSec: opt.validationReturnSec as RoutingEtaCandidateSlotSource['validationReturnSec'],
+        arrivalWindow: opt.arrivalWindow as RoutingEtaCandidateSlotSource['arrivalWindow'],
+      },
+      { householdCount: day.households.length, defaultServiceMinutes: rp.serviceMinutes }
+    );
+    if (candidateSlot) {
+      candidateExtras = { candidateSlot };
     }
   }
 

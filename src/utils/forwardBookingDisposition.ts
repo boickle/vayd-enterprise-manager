@@ -137,6 +137,10 @@ export function buildForwardBookingDispositionPayload(
     payload.bookingNotes = state.bookingNotes.trim() || null;
   }
 
+  if (state.mode === 'not_appropriate') {
+    payload.bookingNotes = state.bookingNotes.trim() || null;
+  }
+
   if (state.mode === 'labs_pending') {
     const assigneeId = Number(state.labsAssigneeEmployeeId);
     const startAt = fromDatetimeLocalValue(state.labsTaskStartLocal);

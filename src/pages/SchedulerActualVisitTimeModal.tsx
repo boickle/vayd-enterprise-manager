@@ -39,6 +39,12 @@ import {
   forwardBookingFormStateFromDisposition,
   hasPersistedForwardBookingDisposition,
 } from '../utils/forwardBookingDisposition';
+import {
+  appointmentNotesDisplay,
+  appointmentTypeDisplayName,
+  formatNextAppointmentWhen,
+  loadNextScheduledAppointmentForVisit,
+} from '../utils/nextScheduledAppointmentForVisit';
 import './Scheduler.css';
 
 export type ActualVisitTimeField = 'start' | 'end' | 'both';
@@ -232,6 +238,9 @@ export function SchedulerActualVisitTimeModal({
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [branchIds, setBranchIds] = useState<number[]>([]);
   const [forwardBookingMetaLoading, setForwardBookingMetaLoading] = useState(false);
+  const [nextScheduledAppt, setNextScheduledAppt] = useState<Appointment | null>(null);
+  const [nextScheduledApptLoading, setNextScheduledApptLoading] = useState(false);
+  const [nextScheduledApptLoaded, setNextScheduledApptLoaded] = useState(false);
   const [dispositionSaveStatus, setDispositionSaveStatus] = useState<
     'idle' | 'saving' | 'saved' | 'error'
   >('idle');
@@ -266,6 +275,18 @@ export function SchedulerActualVisitTimeModal({
   const savedForwardIntervalLabel = useMemo(
     () => formatSavedForwardInterval(forwardAmount, forwardUnit),
     [forwardAmount, forwardUnit]
+  );
+  const nextScheduledAsOfIso = useMemo(() => {
+    const candidates = [
+      Date.now(),
+      existingEndIso ? Date.parse(existingEndIso) : NaN,
+      appt.appointmentEnd ? Date.parse(appt.appointmentEnd) : NaN,
+    ].filter((ms) => Number.isFinite(ms));
+    return new Date(Math.max(...candidates)).toISOString();
+  }, [appt.appointmentEnd, existingEndIso]);
+  const nextScheduledNotes = useMemo(
+    () => (nextScheduledAppt ? appointmentNotesDisplay(nextScheduledAppt) : null),
+    [nextScheduledAppt]
   );
 
   const applyForwardBookingForm = useCallback(
@@ -317,6 +338,32 @@ export function SchedulerActualVisitTimeModal({
     practiceId,
     requiresForwardBooking,
   ]);
+
+  useEffect(() => {
+    if (!requiresForwardBooking) return;
+    let on = true;
+    setNextScheduledApptLoading(true);
+    setNextScheduledApptLoaded(false);
+    setNextScheduledAppt(null);
+    void (async () => {
+      try {
+        const next = await loadNextScheduledAppointmentForVisit(appt, practiceId, {
+          asOf: nextScheduledAsOfIso,
+        });
+        if (on) setNextScheduledAppt(next);
+      } catch {
+        if (on) setNextScheduledAppt(null);
+      } finally {
+        if (on) {
+          setNextScheduledApptLoading(false);
+          setNextScheduledApptLoaded(true);
+        }
+      }
+    })();
+    return () => {
+      on = false;
+    };
+  }, [appt, nextScheduledAsOfIso, practiceId, requiresForwardBooking]);
 
   const persistForwardBookingDisposition = useCallback(async () => {
     const payload = buildForwardBookingDispositionPayload({
@@ -577,6 +624,14 @@ export function SchedulerActualVisitTimeModal({
       return true;
     }
 
+    if (forwardBookingMode === 'not_appropriate') {
+      if (!bookingNotes.trim()) {
+        setError('Enter why forward booking is not appropriate for this visit.');
+        return false;
+      }
+      return true;
+    }
+
     if (skipsForwardBookingList) return true;
 
     if (!forwardInterval) {
@@ -766,6 +821,33 @@ export function SchedulerActualVisitTimeModal({
                 ) : null}
               </div>
 
+              {nextScheduledApptLoading ? (
+                <p className="settings-muted scheduler-forward-booking-booked-hint">
+                  Checking for scheduled follow-ups…
+                </p>
+              ) : nextScheduledAppt ? (
+                <dl className="scheduler-forward-booking-saved-details scheduler-forward-booking-next-appt">
+                  <div>
+                    <dt>Next scheduled visit</dt>
+                    <dd>{formatNextAppointmentWhen(nextScheduledAppt, practiceTz)}</dd>
+                  </div>
+                  <div>
+                    <dt>Appointment type</dt>
+                    <dd>{appointmentTypeDisplayName(nextScheduledAppt)}</dd>
+                  </div>
+                  {nextScheduledNotes ? (
+                    <div>
+                      <dt>Appointment notes</dt>
+                      <dd>{nextScheduledNotes}</dd>
+                    </div>
+                  ) : null}
+                </dl>
+              ) : nextScheduledApptLoaded ? (
+                <p className="settings-muted scheduler-forward-booking-booked-hint">
+                  No upcoming appointment scheduled for this patient.
+                </p>
+              ) : null}
+
               {dispositionLocked ? (
                 <div className="scheduler-forward-booking-saved">
                   <p className="scheduler-forward-booking-saved-lead">
@@ -817,6 +899,15 @@ export function SchedulerActualVisitTimeModal({
                           </div>
                           <div>
                             <dt>Forward booking note</dt>
+                            <dd>{bookingNotes.trim() || '—'}</dd>
+                          </div>
+                        </dl>
+                      ) : null}
+
+                      {forwardBookingMode === 'not_appropriate' ? (
+                        <dl className="scheduler-forward-booking-saved-details">
+                          <div>
+                            <dt>Reason</dt>
                             <dd>{bookingNotes.trim() || '—'}</dd>
                           </div>
                         </dl>
@@ -992,6 +1083,39 @@ export function SchedulerActualVisitTimeModal({
                                 disabled={forwardBookingFieldsDisabled}
                                 placeholder="e.g. Prefers AM slots, same provider"
                                 aria-label="Forward booking note"
+                                style={{
+                                  width: '100%',
+                                  resize: 'vertical',
+                                  fontFamily: 'inherit',
+                                  fontSize: 14,
+                                }}
+                              />
+                            </label>
+                          </div>
+                        ) : null}
+
+                        {active && value === 'not_appropriate' ? (
+                          <div className="scheduler-forward-booking-mode-panel">
+                            <label className="scheduler-edit-field" style={{ display: 'block' }}>
+                              <span>Reason *</span>
+                              <p
+                                className="settings-muted"
+                                style={{ fontSize: 13, margin: '4px 0 8px', fontWeight: 400 }}
+                              >
+                                Required — why is forward booking not appropriate for this visit?
+                              </p>
+                              <textarea
+                                className="settings-input"
+                                rows={3}
+                                value={bookingNotes}
+                                onChange={(e) => {
+                                  forwardBookingUserEditedRef.current = true;
+                                  setBookingNotes(e.target.value);
+                                }}
+                                disabled={saving}
+                                required
+                                placeholder="e.g. Hospice care, client declined follow-up, single euthanasia visit"
+                                aria-label="Reason forward booking is not appropriate"
                                 style={{
                                   width: '100%',
                                   resize: 'vertical',

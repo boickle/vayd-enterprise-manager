@@ -11,6 +11,16 @@ export const ROUTING_CALENDAR_PREVIEW_STORAGE_KEY = 'vayd:routing-calendar-previ
 /** Fired on `window` after `writeRoutingCalendarPreview` when the practice calendar is embedded beside Routing. */
 export const ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT = 'vayd:routing-calendar-preview-updated';
 
+/** Scheduler → Routing: reconciled POST /routing/eta window warnings for the active preview card. */
+export const ROUTING_PREVIEW_ETA_WINDOW_WARNINGS_EVENT = 'vayd:routing-preview-eta-window-warnings';
+
+export type RoutingPreviewEtaWindowWarningsDetail = {
+  optionKey: string;
+  hasWindowWarning: boolean;
+  warningStopCount: number;
+  candidateHasWarning: boolean;
+};
+
 /** Return embedded calendar to the visit being rescheduled (clear purple preview, green highlight). */
 export const ROUTING_FOCUS_RESCHEDULE_SOURCE_EVENT = 'vayd:routing-focus-reschedule-source';
 
@@ -176,4 +186,13 @@ function notifyRoutingCalendarPreviewUpdated(): void {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT));
   }
+}
+
+export function notifyRoutingPreviewEtaWindowWarnings(detail: RoutingPreviewEtaWindowWarningsDetail): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(
+    new CustomEvent<RoutingPreviewEtaWindowWarningsDetail>(ROUTING_PREVIEW_ETA_WINDOW_WARNINGS_EVENT, {
+      detail,
+    })
+  );
 }

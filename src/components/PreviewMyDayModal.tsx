@@ -5,7 +5,6 @@ import type { MiniZone } from '../api/appointments';
 import DoctorDay from '../pages/DoctorDay';
 import DoctorDayVisual from '../pages/DoctorDayVisual';
 import MyWeek, { type MyWeekVirtualAppt, weekStartSunday } from '../pages/MyWeek';
-
 export type PreviewMyDayOption = {
   date: string; // YYYY-MM-DD
   insertionIndex: number;
@@ -28,6 +27,8 @@ export type PreviewMyDayOption = {
   };
   /** Routing-v2: depot return as seconds since local midnight (overrun-aware). */
   validationReturnSec?: number;
+  validationLastEtdSec?: number;
+  overrunSeconds?: number;
   /** Zone for preview label, e.g. `New Appointment (3E)` via `clientDisplayName`. */
   clientZone?: MiniZone;
   effectiveZone?: MiniZone;
@@ -112,6 +113,8 @@ export function PreviewMyDayModal({
     whitespaceAfterBookingSeconds: (option as any).whitespaceAfterBookingSeconds,
     arrivalWindow: option.arrivalWindow,
     validationReturnSec: option.validationReturnSec,
+    validationLastEtdSec: option.validationLastEtdSec,
+    overrunSeconds: option.overrunSeconds,
     clientZone: option.clientZone,
     effectiveZone: option.effectiveZone,
   };
@@ -131,6 +134,8 @@ export function PreviewMyDayModal({
     zip: parts.zip ?? newApptMeta?.zip,
     arrivalWindow: option.arrivalWindow,
     validationReturnSec: option.validationReturnSec,
+    validationLastEtdSec: option.validationLastEtdSec,
+    overrunSeconds: option.overrunSeconds,
     clientZone: option.clientZone,
     effectiveZone: option.effectiveZone,
   };
