@@ -83,6 +83,7 @@ type EditDraft = {
   allowClient: boolean;
   allowAlternateAddress: boolean;
   addressRequired: boolean;
+  requiresPatient: boolean;
   excludeFromRouting: boolean;
   usesLegacyRouting: boolean;
   allowSchedulingOverride: boolean;
@@ -114,6 +115,7 @@ function draftFromType(type: AppointmentType): EditDraft {
     allowClient: t.allowClient !== false,
     allowAlternateAddress: t.allowAlternateAddress === true,
     addressRequired: t.addressRequired === true,
+    requiresPatient: t.requiresPatient === true,
     excludeFromRouting: t.excludeFromRouting === true,
     usesLegacyRouting: t.usesLegacyRouting === true,
     allowSchedulingOverride: t.allowSchedulingOverride === true,
@@ -161,6 +163,7 @@ function emptyDraft(): EditDraft {
     allowClient: true,
     allowAlternateAddress: false,
     addressRequired: false,
+    requiresPatient: false,
     excludeFromRouting: false,
     usesLegacyRouting: false,
     allowSchedulingOverride: false,
@@ -229,6 +232,7 @@ function buildUpdatePayloadFromDraft(draft: EditDraft): AppointmentTypeUpdate {
     allowClient: draft.allowClient,
     allowAlternateAddress: draft.allowAlternateAddress,
     addressRequired: draft.addressRequired,
+    requiresPatient: draft.requiresPatient,
     excludeFromRouting: draft.excludeFromRouting,
     usesLegacyRouting: draft.usesLegacyRouting,
     allowSchedulingOverride: draft.allowSchedulingOverride,
@@ -469,6 +473,7 @@ export default function SettingsAppointmentTypes({
             type.allowClient === false ? 'No client' : null,
             type.allowAlternateAddress ? 'Alt addr' : null,
             type.addressRequired ? 'Addr required' : null,
+            type.requiresPatient ? 'Patient required' : null,
             type.excludeFromRouting ? 'No route' : null,
             type.usesLegacyRouting ? 'Legacy routing' : null,
             type.allowSchedulingOverride ? 'Sched override' : null,
@@ -938,6 +943,16 @@ export default function SettingsAppointmentTypes({
                         <label className="settings-checkbox-label">
                           <input
                             type="checkbox"
+                            checked={draft.requiresPatient}
+                            onChange={(e) =>
+                              setDraft({ ...draft, requiresPatient: e.target.checked })
+                            }
+                          />
+                          Requires patient
+                        </label>
+                        <label className="settings-checkbox-label">
+                          <input
+                            type="checkbox"
                             checked={draft.excludeFromRouting}
                             onChange={(e) =>
                               setDraft({ ...draft, excludeFromRouting: e.target.checked })
@@ -968,7 +983,8 @@ export default function SettingsAppointmentTypes({
                       </div>
                       <p className="settings-muted settings-appt-type-window-hint">
                         Address required means the visit must have a linked client with an address, or an
-                        alternate address when alternate address is allowed.
+                        alternate address when alternate address is allowed. Requires patient means the visit
+                        must have a patient linked to be saved as that type.
                       </p>
                       <p className="settings-muted settings-appt-type-window-hint">
                         Scheduling override is shown in the scheduler UI only; appointment create/update

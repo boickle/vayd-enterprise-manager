@@ -27,6 +27,7 @@ import {
   type AvgMinutesByTypeRow,
 } from '../analytics/appointmentTypeTimeStats';
 import { Field } from '../components/Field';
+import RoutingClientPatientsList from '../components/routing/RoutingClientPatientsList';
 import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
 import { validateAddress } from '../api/geo';
@@ -4219,6 +4220,13 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                 )}
               </div>
             </Field>
+            {form.newAppt.clientId ? (
+              <RoutingClientPatientsList
+                clientId={form.newAppt.clientId}
+                practiceId={ROUTING_PRACTICE_ID}
+                practiceTz={DEFAULT_PRACTICE_TIMEZONE}
+              />
+            ) : null}
             {routingClientTypeConflictMessage ? (
               <div className="danger routing-route-hint routing-span-full" role="alert">
                 {routingClientTypeConflictMessage}

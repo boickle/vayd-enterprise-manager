@@ -34,7 +34,7 @@ import {
   resolveRoutingChosenAppointmentTypeId,
 } from '../utils/routingCalculateTimeType';
 import { Field } from '../components/Field';
-import { BookPatientRemindersLink } from '../components/BookPatientRemindersLink';
+import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import { appendBookedStaffNote } from '../utils/bookedAppointmentDescription';
 import {
   appendRescheduledByStaffNote,
@@ -470,6 +470,7 @@ export function SchedulerBookModal({
 
   const typeFormFlags = useMemo(() => appointmentFormFlags(selectedType), [selectedType]);
   const showClient = typeFormFlags.showClient;
+  const requirePatient = typeFormFlags.requirePatient;
   const canBookAllDay = typeFormFlags.showAllDay;
   const canUseAlternateAddress = typeFormFlags.showAlternateAddress;
 
@@ -559,7 +560,13 @@ export function SchedulerBookModal({
   const showClientSection =
     Boolean(prefill?.lockClient && prefill?.clientId?.trim()) ||
     (isRoutingPreviewBook && routingBookHasPrefilledClient) ||
-    (showClient && Boolean(selectedType));
+    ((showClient || requirePatient) && Boolean(selectedType));
+
+  const patientRequiredButMissing =
+    requirePatient &&
+    !perVisitReschedule &&
+    !perVisitRoutingBook &&
+    !selectedPatientId?.trim();
 
   const showAdditionalEmployeesField = showAllDayFields && !perVisitRoutingBook;
 
@@ -1215,6 +1222,10 @@ export function SchedulerBookModal({
       setFormError('Alternate address must be 4000 characters or fewer.');
       return true;
     }
+    if (requirePatient && !selectedPatientId?.trim()) {
+      setFormError('Select a patient — this appointment type requires one.');
+      return true;
+    }
     onPreviewOnCalendar({
       practiceId,
       primaryProviderId: Number(providerId),
@@ -1272,6 +1283,14 @@ export function SchedulerBookModal({
         setFormError('Select an appointment type for each patient.');
         return;
       }
+      const missingPatientForType = selected.find((v) => {
+        const t = appointmentTypes.find((at) => String(at.id) === v.appointmentTypeId);
+        return appointmentFormFlags(t).requirePatient && !v.patientId?.trim();
+      });
+      if (missingPatientForType) {
+        setFormError('Each selected visit with a patient-required type must have a patient.');
+        return;
+      }
     } else {
       if (!typeId) {
         setFormError('Select an appointment type.');
@@ -1279,6 +1298,10 @@ export function SchedulerBookModal({
       }
       if (allDayBookSession && !selectedType) {
         setFormError('Select an appointment type that allows all-day booking.');
+        return;
+      }
+      if (requirePatient && !selectedPatientId?.trim()) {
+        setFormError('Select a patient — this appointment type requires one.');
         return;
       }
     }
@@ -1702,6 +1725,11 @@ export function SchedulerBookModal({
                       This type is excluded from drive routing.
                     </p>
                   ) : null}
+                  {requirePatient ? (
+                    <p className="scheduler-book-hint" style={{ marginTop: 6, marginBottom: 0 }}>
+                      A patient is required for this appointment type.
+                    </p>
+                  ) : null}
                 </Field>
               </div>
 
@@ -1879,7 +1907,12 @@ export function SchedulerBookModal({
           ) : null}
 
           {!perVisitReschedule && !perVisitRoutingBook && showClientSection ? (
-          <Field label="Patient">
+          <Field label="Patient" required={requirePatient}>
+            {requirePatient && !selectedPatientId?.trim() ? (
+              <p className="scheduler-book-hint" style={{ marginTop: 0, marginBottom: 8 }}>
+                This appointment type requires a patient before you can book.
+              </p>
+            ) : null}
             {isRescheduleBook ? (
               <>
                 <div className="scheduler-book-selected scheduler-book-patient-name-row">
@@ -1887,9 +1920,11 @@ export function SchedulerBookModal({
                     {selectedPatientLabel || '…'}
                   </span>
                   {selectedPatientId ? (
-                    <BookPatientRemindersLink
+                    <BookPatientChartButton
                       patientId={selectedPatientId}
                       patientName={selectedPatientLabel || ''}
+                      practiceId={practiceId}
+                      practiceTz={practiceTz}
                     />
                   ) : null}
                 </div>
@@ -1908,7 +1943,7 @@ export function SchedulerBookModal({
                   const pet = petChoices.find((x) => String(x.id) === v);
                   setSelectedPatientLabel(pet?.name ?? '');
                 }}
-                required
+                required={requirePatient}
               >
                 <option value="">Select patient…</option>
                 {petChoices.map((p) => (
@@ -1920,9 +1955,11 @@ export function SchedulerBookModal({
                 {selectedPatientId ? (
                   <>
                     <div className="scheduler-book-patient-reminders-below">
-                      <BookPatientRemindersLink
+                      <BookPatientChartButton
                         patientId={selectedPatientId}
                         patientName={selectedPatientLabel || ''}
+                        practiceId={practiceId}
+                        practiceTz={practiceTz}
                       />
                     </div>
                     <BookPatientAlerts alerts={patientAlertsFor(selectedPatientId)} />
@@ -1933,9 +1970,11 @@ export function SchedulerBookModal({
               <>
                 <div className="scheduler-book-selected scheduler-book-patient-name-row">
                   <span className="scheduler-book-selected-value">{selectedPatientLabel}</span>
-                  <BookPatientRemindersLink
+                  <BookPatientChartButton
                     patientId={selectedPatientId}
                     patientName={selectedPatientLabel || ''}
+                    practiceId={practiceId}
+                    practiceTz={practiceTz}
                   />
                 </div>
                 <BookPatientAlerts alerts={patientAlertsFor(selectedPatientId)} />
@@ -1946,13 +1985,17 @@ export function SchedulerBookModal({
               </div>
             ) : clientHasNoPetsOnFile ? (
               <div className="scheduler-book-hint muted">
-                No patients on file for this client. You can book without selecting a patient.
+                {requirePatient
+                  ? 'No patients on file for this client. Add a patient or choose a different appointment type.'
+                  : 'No patients on file for this client. You can book without selecting a patient.'}
               </div>
             ) : (
               <div className="scheduler-book-hint muted">
                 {selectedClientId
                   ? 'No patients found for this client. Try patient search or update the client record.'
-                  : 'Select a client or search for a patient first.'}
+                  : requirePatient
+                    ? 'Search for a client or patient below — a patient is required for this appointment type.'
+                    : 'Select a client or search for a patient first.'}
               </div>
             )}
           </Field>
@@ -2020,9 +2063,11 @@ export function SchedulerBookModal({
                           <span className="scheduler-book-reschedule-visit-name">
                             {visit.patientName}
                           </span>
-                          <BookPatientRemindersLink
+                          <BookPatientChartButton
                             patientId={visit.patientId}
                             patientName={visit.patientName}
+                            practiceId={practiceId}
+                            practiceTz={practiceTz}
                           />
                         </div>
                         <span className="scheduler-book-reschedule-visit-was muted">
@@ -2097,9 +2142,11 @@ export function SchedulerBookModal({
                             {visit.patientName}
                           </span>
                         </label>
-                        <BookPatientRemindersLink
+                        <BookPatientChartButton
                           patientId={visit.patientId}
                           patientName={visit.patientName}
+                          practiceId={practiceId}
+                          practiceTz={practiceTz}
                         />
                       </div>
                       <BookPatientAlerts alerts={patientAlertsFor(visit.patientId)} />
@@ -2386,7 +2433,16 @@ export function SchedulerBookModal({
             <button type="button" className="scheduler-book-btn secondary" onClick={onClose} disabled={submitting}>
               Cancel
             </button>
-            <button type="submit" className="scheduler-book-btn primary" disabled={submitting}>
+            <button
+              type="submit"
+              className="scheduler-book-btn primary"
+              disabled={submitting || patientRequiredButMissing}
+              title={
+                patientRequiredButMissing
+                  ? 'Select a patient — this appointment type requires one.'
+                  : undefined
+              }
+            >
               {submitting
                 ? isRescheduleBook
                   ? 'Saving…'

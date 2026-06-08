@@ -5219,6 +5219,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         token: authToken,
         userEmail: authUserEmail,
         doctorId: authDoctorId,
+        appointmentTypes: typeList,
       });
       clearRoutingCalendarPreview();
       setRoutingPreview(null);
@@ -5234,6 +5235,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, [
     routingPreview?.manualBookDraft,
     providers,
+    typeList,
     authToken,
     authUserEmail,
     authDoctorId,
