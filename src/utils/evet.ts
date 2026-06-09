@@ -16,19 +16,6 @@ export function evetPatientLink(pimsId: string) {
 }
 
 /**
- * Patient chart in eVet — medical record by date panel.
- * `patientPimsId` → `pid`, `clientPimsId` → `cid` (both PIMS numeric ids).
- * e.g. …/Practice/MedicalRecord/GetPatientViewByDatePanel?pid=4743780&cid=1745684
- */
-export function evetPatientChartLink(patientPimsId: string, clientPimsId: string) {
-  const q = new URLSearchParams({
-    pid: patientPimsId,
-    cid: clientPimsId,
-  });
-  return `${EVET_HOST}/Practice/MedicalRecord/GetPatientViewByDatePanel?${q.toString()}`;
-}
-
-/**
  * Quick Invoicing / Add Charges for a client (`client.pimsId`).
  * e.g. https://se4.evetpractice.com/Practice/Clients/QuickInvoice/1359439
  */
