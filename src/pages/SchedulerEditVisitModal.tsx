@@ -35,7 +35,7 @@ import {
 import { submitEditVisitPreviewAcceptedFeedback } from '../utils/routingBookFeedback';
 import { fullClientHouseholdName } from '../utils/schedulerVisitDisplay';
 import { formatSchedulerBookingApiError } from '../utils/manualBookingPermissions';
-import { appointmentFormFlags } from '../utils/appointmentTypeSettings';
+import { appointmentFormFlags, sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
 import { useAuth } from '../auth/useAuth';
 import { resolveAppointmentChangeActorFromAuth, detectEditVisitChanges } from '../utils/appointmentChangeAuditNote';
 import './Scheduler.css';
@@ -150,6 +150,11 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
           providers,
         }),
       [token, userEmail, doctorId, providers]
+    );
+
+    const sortedAppointmentTypes = useMemo(
+      () => sortAppointmentTypesForPicker(appointmentTypes, { unrankedOrder: 'preserve' }),
+      [appointmentTypes]
     );
 
     const appointmentDateKey = useMemo(
@@ -682,7 +687,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                     onChange={(e) => setAppointmentTypeId(e.target.value)}
                   >
                     <option value="">—</option>
-                    {appointmentTypes.map((t) => (
+                    {sortedAppointmentTypes.map((t) => (
                       <option key={t.id} value={String(t.id)}>
                         {t.name || t.prettyName}
                       </option>

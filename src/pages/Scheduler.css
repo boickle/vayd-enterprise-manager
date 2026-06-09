@@ -3365,6 +3365,12 @@ label.scheduler-go-date-heading {
   flex-shrink: 0;
 }
 
+.scheduler-book-routing-visit--no-patient {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px dashed #cbd5e1;
+}
+
 .scheduler-book-reschedule-visit-was,
 .scheduler-book-reschedule-visit-type {
   font-size: 12px;

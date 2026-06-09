@@ -5,6 +5,7 @@ import {
   loadRoutingPatientHoverSummary,
   type RoutingPatientHoverSummary,
 } from '../utils/routingPatientHoverData';
+import './BookPatientChartButton.css';
 
 type Props = {
   patientId: string;
