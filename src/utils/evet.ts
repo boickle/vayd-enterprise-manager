@@ -15,9 +15,17 @@ export function evetPatientLink(pimsId: string) {
   return `${EVET_HOST}/Practice/Patients/Edit/${pimsId}`;
 }
 
-/** Patient chart / medical record (legacy numeric PIMS id on patient). */
-export function evetPatientChartLink(pimsId: string) {
-  return evetPatientLink(pimsId);
+/**
+ * Patient chart in eVet — medical record by date panel.
+ * `patientPimsId` → `pid`, `clientPimsId` → `cid` (both PIMS numeric ids).
+ * e.g. …/Practice/MedicalRecord/GetPatientViewByDatePanel?pid=4743780&cid=1745684
+ */
+export function evetPatientChartLink(patientPimsId: string, clientPimsId: string) {
+  const q = new URLSearchParams({
+    pid: patientPimsId,
+    cid: clientPimsId,
+  });
+  return `${EVET_HOST}/Practice/MedicalRecord/GetPatientViewByDatePanel?${q.toString()}`;
 }
 
 /**
