@@ -48,6 +48,13 @@ import {
   type MembershipPurchasesAnalytics,
 } from '../api/membershipPurchasesAnalytics';
 
+/** Render a conversion rate as a percentage. Accepts a fraction (0–1) or an already-scaled percent (>1). */
+function formatConversionRate(rate: number): string {
+  if (!Number.isFinite(rate)) return '—';
+  const pct = rate > 1 ? rate : rate * 100;
+  return `${pct.toFixed(1)}%`;
+}
+
 function toLocalDateStr(d: Dayjs) {
   return d.format('YYYY-MM-DD');
 }
@@ -429,6 +436,43 @@ export default function MembershipPurchasesAnalyticsPage() {
                 </Card>
               </Grid>
             </Grid>
+
+            {data.signUpCardConversion ? (
+              <Card variant="outlined" sx={{ mb: 2 }}>
+                <CardHeader
+                  title="Sign-up card conversion"
+                  subheader={data.signUpCardConversion.cardItemName || undefined}
+                />
+                <CardContent>
+                  <Grid container spacing={2}>
+                    <Grid item xs={6} sm={3}>
+                      <KpiCard
+                        title="Conversion rate"
+                        value={formatConversionRate(data.signUpCardConversion.conversionRate)}
+                        subtitle="Clients converted ÷ clients given a card"
+                      />
+                    </Grid>
+                    <Grid item xs={6} sm={3}>
+                      <KpiCard title="Cards given" value={data.signUpCardConversion.cardsGiven} />
+                    </Grid>
+                    <Grid item xs={6} sm={3}>
+                      <KpiCard
+                        title="Clients given a card"
+                        value={data.signUpCardConversion.clientsGivenCard}
+                        subtitle="Distinct clients"
+                      />
+                    </Grid>
+                    <Grid item xs={6} sm={3}>
+                      <KpiCard
+                        title="Clients converted"
+                        value={data.signUpCardConversion.clientsConverted}
+                        subtitle="Bought a membership"
+                      />
+                    </Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
+            ) : null}
 
             <Paper variant="outlined" sx={{ p: 2 }}>
               <Stack
