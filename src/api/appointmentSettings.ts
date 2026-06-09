@@ -44,6 +44,8 @@ export type AppointmentType = {
   requiresPatient?: boolean;
   /** Omitted from drive routing / doctor-day routable stops (server-side) */
   excludeFromRouting?: boolean;
+  /** Excluded from appointment reminders and visit-based analytics (server-side) */
+  excludeFromReminders?: boolean;
   /** Use legacy routing rules for this type (server-side) */
   usesLegacyRouting?: boolean;
   /** Ops analytics doctor-day points; null = legacy name-based rules on server */
@@ -255,6 +257,7 @@ export type AppointmentTypeUpdate = {
   addressRequired?: boolean;
   requiresPatient?: boolean;
   excludeFromRouting?: boolean;
+  excludeFromReminders?: boolean;
   usesLegacyRouting?: boolean;
   points?: number | null;
   allowSchedulingOverride?: boolean;
