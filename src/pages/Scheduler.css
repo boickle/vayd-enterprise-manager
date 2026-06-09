@@ -3650,12 +3650,26 @@ label.scheduler-go-date-heading {
   line-height: 1.45;
 }
 
-.scheduler-forward-booking-next-appt {
+.scheduler-forward-booking-next-appt,
+.scheduler-forward-booking-patient-context {
   margin: 0 0 12px;
   padding: 10px 12px;
   border-radius: 8px;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
+}
+
+.scheduler-forward-booking-patient-name {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.scheduler-forward-booking-patient-context .scheduler-book-patient-name-row {
+  margin-bottom: 0;
+}
+
+.scheduler-forward-booking-patient-context .scheduler-book-patient-alerts {
+  margin-top: 10px;
 }
 
 .scheduler-forward-booking-section--override .scheduler-forward-booking-mode-option--active {

@@ -101,7 +101,7 @@ import {
   evetCheckoutLink,
   evetClientLink,
   evetMedicalNoteLink,
-  evetPatientChartLink,
+  evetPatientLink,
   evetQuickInvoicingLink,
 } from '../utils/evet';
 import { buildPhoneDialHref, buildPhoneSmsHref } from '../utils/quoContact';
@@ -5950,13 +5950,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             return;
           }
           case 'viewChart': {
-            const cid = pickStr(client?.pimsId);
             const pid = pickStr(firstPatient?.pimsId);
-            if (!cid || !pid) {
-              fail('Client and patient PIMS ids are required for the eVet chart link.');
+            if (!pid) {
+              fail('Patient has no PIMS id (eVet link unavailable).');
               return;
             }
-            window.open(evetPatientChartLink(pid, cid), '_blank', 'noopener,noreferrer');
+            window.open(evetPatientLink(pid), '_blank', 'noopener,noreferrer');
             return;
           }
           case 'writeMedicalNote': {

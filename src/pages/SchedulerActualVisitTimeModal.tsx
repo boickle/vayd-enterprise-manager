@@ -39,12 +39,7 @@ import {
   forwardBookingFormStateFromDisposition,
   hasPersistedForwardBookingDisposition,
 } from '../utils/forwardBookingDisposition';
-import {
-  appointmentNotesDisplay,
-  appointmentTypeDisplayName,
-  formatNextAppointmentWhen,
-  loadNextScheduledAppointmentForVisit,
-} from '../utils/nextScheduledAppointmentForVisit';
+import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import './Scheduler.css';
 
 export type ActualVisitTimeField = 'start' | 'end' | 'both';
@@ -145,6 +140,33 @@ function primaryPatientName(appt: Appointment): string | null {
   return pickStr(appt.patient?.name);
 }
 
+function primaryPatientContext(appt: Appointment): {
+  id: string;
+  name: string;
+  alerts: string | null;
+} | null {
+  const multi = (appt as { patients?: { id?: number | string; name?: string | null; alerts?: string | null }[] })
+    .patients;
+  const row =
+    Array.isArray(multi) && multi.length > 0
+      ? multi[0]
+      : appt.patient
+        ? {
+            id: appt.patient.id,
+            name: appt.patient.name,
+            alerts: appt.patient.alerts,
+          }
+        : null;
+  if (!row?.id) return null;
+  const id = String(row.id).trim();
+  if (!id) return null;
+  return {
+    id,
+    name: pickStr(row.name) ?? 'Patient',
+    alerts: pickStr(row.alerts),
+  };
+}
+
 function defaultLabsPendingTaskTitle(appt: Appointment): string {
   const subject = [primaryPatientName(appt), pickStr(appt.client?.lastName)].filter(Boolean).join(' ');
   if (!subject) return 'Forward book once labs come back.';
@@ -238,9 +260,6 @@ export function SchedulerActualVisitTimeModal({
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [branchIds, setBranchIds] = useState<number[]>([]);
   const [forwardBookingMetaLoading, setForwardBookingMetaLoading] = useState(false);
-  const [nextScheduledAppt, setNextScheduledAppt] = useState<Appointment | null>(null);
-  const [nextScheduledApptLoading, setNextScheduledApptLoading] = useState(false);
-  const [nextScheduledApptLoaded, setNextScheduledApptLoaded] = useState(false);
   const [dispositionSaveStatus, setDispositionSaveStatus] = useState<
     'idle' | 'saving' | 'saved' | 'error'
   >('idle');
@@ -276,18 +295,7 @@ export function SchedulerActualVisitTimeModal({
     () => formatSavedForwardInterval(forwardAmount, forwardUnit),
     [forwardAmount, forwardUnit]
   );
-  const nextScheduledAsOfIso = useMemo(() => {
-    const candidates = [
-      Date.now(),
-      existingEndIso ? Date.parse(existingEndIso) : NaN,
-      appt.appointmentEnd ? Date.parse(appt.appointmentEnd) : NaN,
-    ].filter((ms) => Number.isFinite(ms));
-    return new Date(Math.max(...candidates)).toISOString();
-  }, [appt.appointmentEnd, existingEndIso]);
-  const nextScheduledNotes = useMemo(
-    () => (nextScheduledAppt ? appointmentNotesDisplay(nextScheduledAppt) : null),
-    [nextScheduledAppt]
-  );
+  const forwardBookingPatient = useMemo(() => primaryPatientContext(appt), [appt]);
 
   const applyForwardBookingForm = useCallback(
     (form: ReturnType<typeof forwardBookingFormStateFromDisposition>) => {
@@ -338,32 +346,6 @@ export function SchedulerActualVisitTimeModal({
     practiceId,
     requiresForwardBooking,
   ]);
-
-  useEffect(() => {
-    if (!requiresForwardBooking) return;
-    let on = true;
-    setNextScheduledApptLoading(true);
-    setNextScheduledApptLoaded(false);
-    setNextScheduledAppt(null);
-    void (async () => {
-      try {
-        const next = await loadNextScheduledAppointmentForVisit(appt, practiceId, {
-          asOf: nextScheduledAsOfIso,
-        });
-        if (on) setNextScheduledAppt(next);
-      } catch {
-        if (on) setNextScheduledAppt(null);
-      } finally {
-        if (on) {
-          setNextScheduledApptLoading(false);
-          setNextScheduledApptLoaded(true);
-        }
-      }
-    })();
-    return () => {
-      on = false;
-    };
-  }, [appt, nextScheduledAsOfIso, practiceId, requiresForwardBooking]);
 
   const persistForwardBookingDisposition = useCallback(async () => {
     const payload = buildForwardBookingDispositionPayload({
@@ -821,31 +803,29 @@ export function SchedulerActualVisitTimeModal({
                 ) : null}
               </div>
 
-              {nextScheduledApptLoading ? (
-                <p className="settings-muted scheduler-forward-booking-booked-hint">
-                  Checking for scheduled follow-ups…
-                </p>
-              ) : nextScheduledAppt ? (
-                <dl className="scheduler-forward-booking-saved-details scheduler-forward-booking-next-appt">
-                  <div>
-                    <dt>Next scheduled visit</dt>
-                    <dd>{formatNextAppointmentWhen(nextScheduledAppt, practiceTz)}</dd>
+              {forwardBookingPatient ? (
+                <div className="scheduler-forward-booking-patient-context">
+                  <div className="scheduler-book-patient-name-row">
+                    <span className="scheduler-forward-booking-patient-name">
+                      {forwardBookingPatient.name}
+                    </span>
+                    <BookPatientChartButton
+                      patientId={forwardBookingPatient.id}
+                      patientName={forwardBookingPatient.name}
+                      practiceId={practiceId}
+                      practiceTz={practiceTz}
+                    />
                   </div>
-                  <div>
-                    <dt>Appointment type</dt>
-                    <dd>{appointmentTypeDisplayName(nextScheduledAppt)}</dd>
-                  </div>
-                  {nextScheduledNotes ? (
-                    <div>
-                      <dt>Appointment notes</dt>
-                      <dd>{nextScheduledNotes}</dd>
+                  {forwardBookingPatient.alerts ? (
+                    <div
+                      className="scheduler-modal-alerts-box scheduler-book-patient-alerts"
+                      role="alert"
+                    >
+                      <span className="scheduler-modal-alerts-box-label">Patient alerts</span>
+                      {forwardBookingPatient.alerts}
                     </div>
                   ) : null}
-                </dl>
-              ) : nextScheduledApptLoaded ? (
-                <p className="settings-muted scheduler-forward-booking-booked-hint">
-                  No upcoming appointment scheduled for this patient.
-                </p>
+                </div>
               ) : null}
 
               {dispositionLocked ? (
