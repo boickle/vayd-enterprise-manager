@@ -85,6 +85,7 @@ type EditDraft = {
   addressRequired: boolean;
   requiresPatient: boolean;
   excludeFromRouting: boolean;
+  excludeFromReminders: boolean;
   usesLegacyRouting: boolean;
   allowSchedulingOverride: boolean;
   useLegacyPoints: boolean;
@@ -117,6 +118,7 @@ function draftFromType(type: AppointmentType): EditDraft {
     addressRequired: t.addressRequired === true,
     requiresPatient: t.requiresPatient === true,
     excludeFromRouting: t.excludeFromRouting === true,
+    excludeFromReminders: t.excludeFromReminders === true,
     usesLegacyRouting: t.usesLegacyRouting === true,
     allowSchedulingOverride: t.allowSchedulingOverride === true,
     useLegacyPoints: t.points == null,
@@ -165,6 +167,7 @@ function emptyDraft(): EditDraft {
     addressRequired: false,
     requiresPatient: false,
     excludeFromRouting: false,
+    excludeFromReminders: false,
     usesLegacyRouting: false,
     allowSchedulingOverride: false,
     useLegacyPoints: true,
@@ -234,6 +237,7 @@ function buildUpdatePayloadFromDraft(draft: EditDraft): AppointmentTypeUpdate {
     addressRequired: draft.addressRequired,
     requiresPatient: draft.requiresPatient,
     excludeFromRouting: draft.excludeFromRouting,
+    excludeFromReminders: draft.excludeFromReminders,
     usesLegacyRouting: draft.usesLegacyRouting,
     allowSchedulingOverride: draft.allowSchedulingOverride,
     points,
@@ -475,6 +479,7 @@ export default function SettingsAppointmentTypes({
             type.addressRequired ? 'Addr required' : null,
             type.requiresPatient ? 'Patient required' : null,
             type.excludeFromRouting ? 'No route' : null,
+            type.excludeFromReminders ? 'No reminders' : null,
             type.usesLegacyRouting ? 'Legacy routing' : null,
             type.allowSchedulingOverride ? 'Sched override' : null,
           ]
@@ -959,6 +964,16 @@ export default function SettingsAppointmentTypes({
                             }
                           />
                           Exclude from routing
+                        </label>
+                        <label className="settings-checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={draft.excludeFromReminders}
+                            onChange={(e) =>
+                              setDraft({ ...draft, excludeFromReminders: e.target.checked })
+                            }
+                          />
+                          Exclude from reminders &amp; visit analytics
                         </label>
                         <label className="settings-checkbox-label">
                           <input
