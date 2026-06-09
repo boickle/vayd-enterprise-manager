@@ -29,10 +29,7 @@ import {
 } from '../api/appointmentSettings';
 import { useAuth } from '../auth/useAuth';
 import type { RescheduleVisitPatch } from '../utils/routingRescheduleIntent';
-import {
-  appointmentTypeForRoutingStatsKey,
-  resolveRoutingChosenAppointmentTypeId,
-} from '../utils/routingCalculateTimeType';
+import { resolveBookModalDefaultAppointmentTypeId } from '../utils/routingCalculateTimeType';
 import { Field } from '../components/Field';
 import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import { appendBookedStaffNote } from '../utils/bookedAppointmentDescription';
@@ -785,23 +782,25 @@ export function SchedulerBookModal({
   const clientHasNoPetsOnFile =
     hasLinkedClient && !loadingClientPets && petChoices.length === 0;
 
-  const resolvePrefillAppointmentTypeId = useCallback((): number | undefined => {
-    return resolveRoutingChosenAppointmentTypeId({
-      statsTypeKey: prefill?.routingStatsTypeKey,
-      scheduleBookTypeId: prefill?.appointmentTypeId,
-      types: appointmentTypes,
-      previewTypeId: prefill?.appointmentTypeId,
-      previewTypeChosenInRouting: Boolean(
-        prefill?.routingStatsTypeKey?.trim() ||
-          (prefill?.appointmentTypeId != null && usesRoutingTypeCatalog)
-      ),
-    });
-  }, [
-    appointmentTypes,
-    prefill?.appointmentTypeId,
-    prefill?.routingStatsTypeKey,
-    usesRoutingTypeCatalog,
-  ]);
+  const resolveDefaultBookTypeId = useCallback(
+    (sortedPicker: AppointmentType[]): string => {
+      const id = resolveBookModalDefaultAppointmentTypeId({
+        sortedPickerTypes: sortedPicker,
+        allTypes: appointmentTypes,
+        routingStatsTypeKey: prefill?.routingStatsTypeKey,
+        pinnedAppointmentTypeId: prefill?.coVisitAddPet
+          ? prefill?.appointmentTypeId
+          : undefined,
+      });
+      return id != null ? String(id) : '';
+    },
+    [
+      appointmentTypes,
+      prefill?.routingStatsTypeKey,
+      prefill?.coVisitAddPet,
+      prefill?.appointmentTypeId,
+    ]
+  );
 
   const bookSessionKey = useMemo(() => {
     if (!open || !slot) return '';
@@ -878,12 +877,20 @@ export function SchedulerBookModal({
       (v) => Number.isFinite(Number(v.appointmentId)) && v.patientId?.trim()
     );
     if (patches?.length) {
-      const routingTypeId = resolvePrefillAppointmentTypeId();
-      const routingTypeRow = routingTypeId
-        ? appointmentTypes.find((t) => Number(t.id) === routingTypeId)
+      const statsKey = prefill?.routingStatsTypeKey?.trim();
+      const calcTimeTypeId = statsKey
+        ? resolveBookModalDefaultAppointmentTypeId({
+            sortedPickerTypes: routingBookFullAppointmentTypes,
+            allTypes: appointmentTypes,
+            routingStatsTypeKey: statsKey,
+          })
         : undefined;
-      const routingTypeLabel =
-        routingTypeRow?.name?.trim() || routingTypeRow?.prettyName?.trim() || null;
+      const calcTimeRow =
+        calcTimeTypeId != null
+          ? appointmentTypes.find((t) => Number(t.id) === calcTimeTypeId)
+          : undefined;
+      const calcTimeLabel =
+        calcTimeRow?.name?.trim() || calcTimeRow?.prettyName?.trim() || null;
       setRescheduleVisitEdits(
         patches.map((p) => {
           const tid =
@@ -894,9 +901,9 @@ export function SchedulerBookModal({
             appointmentId: Number(p.appointmentId),
             patientId: String(p.patientId).trim(),
             patientName: p.patientName?.trim() || `Pet ${p.patientId}`,
-            appointmentTypeId: routingTypeId ?? tid,
+            appointmentTypeId: calcTimeTypeId ?? tid,
             appointmentTypeLabel:
-              (routingTypeLabel ?? p.appointmentTypeLabel?.trim()) || '—',
+              (calcTimeLabel ?? p.appointmentTypeLabel?.trim()) || '—',
             scheduledTimeLabel: p.scheduledTimeLabel?.trim() || '—',
             originalAppointmentStartIso: p.originalAppointmentStartIso?.trim() || undefined,
             description: p.description?.trim() ?? '',
@@ -943,26 +950,18 @@ export function SchedulerBookModal({
     );
 
     const manualBookTypes = usesRoutingTypeCatalog
-      ? appointmentTypes.map((t) => normalizeAppointmentTypeFromApi(t))
+      ? routingBookFullAppointmentTypes
       : typesForPicker;
     const pickerTypes = prefill?.allDay
       ? allDayBookableTypesFromCatalog(manualBookTypes)
       : manualBookTypes;
-    const resolvedPrefillTypeId = resolvePrefillAppointmentTypeId();
-    if (pickerTypes.length > 0) {
-      const preT = resolvedPrefillTypeId ?? prefill?.appointmentTypeId;
-      if (preT != null && pickerTypes.some((t) => String(t.id) === String(preT))) {
-        const t = pickerTypes.find((x) => String(x.id) === String(preT))!;
-        setTypeId(String(t.id));
+    const defaultTypeId = resolveDefaultBookTypeId(pickerTypes);
+    if (pickerTypes.length > 0 && defaultTypeId) {
+      const t = pickerTypes.find((x) => String(x.id) === defaultTypeId);
+      if (t) {
+        setTypeId(defaultTypeId);
         if (!prefill?.preserveDurationFromSlot && t.defaultDuration && t.defaultDuration > 0) {
           const d = Math.round(t.defaultDuration);
-          if (d >= 5) setDurationMin(DURATION_OPTIONS.includes(d) ? d : Math.min(120, Math.max(15, d)));
-        }
-      } else if (!usesRoutingTypeCatalog) {
-        const firstType = pickerTypes[0];
-        setTypeId(firstType ? String(firstType.id) : '');
-        if (!prefill?.preserveDurationFromSlot && firstType?.defaultDuration && firstType.defaultDuration > 0) {
-          const d = Math.round(firstType.defaultDuration);
           if (d >= 5) setDurationMin(DURATION_OPTIONS.includes(d) ? d : Math.min(120, Math.max(15, d)));
         }
       } else {
@@ -980,14 +979,12 @@ export function SchedulerBookModal({
     providers,
     typesForPicker,
     appointmentTypes,
+    routingBookFullAppointmentTypes,
     usesRoutingTypeCatalog,
-    resolvePrefillAppointmentTypeId,
-    prefill?.appointmentTypeId,
-    prefill?.defaultDescription,
-    prefill?.defaultInstructions,
+    resolveDefaultBookTypeId,
+    prefill?.allDay,
     prefill?.preserveDurationFromSlot,
     prefill?.providerId,
-    prefill?.allDay,
     prefill?.additionalEmployeeIds,
     practiceTz,
   ]);
@@ -995,36 +992,21 @@ export function SchedulerBookModal({
   /** When appointment types load after open, set type without wiping the rest of the form. */
   useEffect(() => {
     if (!open || !slot) return;
-    const catalog = usesRoutingTypeCatalog
-      ? appointmentTypes.map((t) => normalizeAppointmentTypeFromApi(t))
+    const sortedCatalog = usesRoutingTypeCatalog
+      ? routingBookFullAppointmentTypes
       : typesForActivePicker;
-    if (!catalog.length) return;
+    if (!sortedCatalog.length) return;
     setTypeId((prev) => {
-      const validPrev = prev && catalog.some((t) => String(t.id) === prev);
-      if (validPrev) return prev;
-      const resolved = resolvePrefillAppointmentTypeId();
-      const preT = resolved ?? prefill?.appointmentTypeId;
-      if (preT != null) {
-        const tid = String(preT);
-        if (catalog.some((t) => String(t.id) === tid)) return tid;
-      }
-      const statsKey = prefill?.routingStatsTypeKey?.trim();
-      if (statsKey) {
-        const matched = appointmentTypeForRoutingStatsKey(statsKey, appointmentTypes);
-        if (matched?.id != null) return String(matched.id);
-      }
-      if (usesRoutingTypeCatalog) return prev || '';
-      return typesForActivePicker[0] ? String(typesForActivePicker[0].id) : '';
+      if (prev && sortedCatalog.some((t) => String(t.id) === prev)) return prev;
+      return resolveDefaultBookTypeId(sortedCatalog);
     });
   }, [
     open,
     slot,
     typesForActivePicker,
-    appointmentTypes,
+    routingBookFullAppointmentTypes,
     usesRoutingTypeCatalog,
-    resolvePrefillAppointmentTypeId,
-    prefill?.appointmentTypeId,
-    prefill?.routingStatsTypeKey,
+    resolveDefaultBookTypeId,
   ]);
 
   useEffect(() => {
@@ -1078,15 +1060,16 @@ export function SchedulerBookModal({
       setRoutingBookVisitEdits([]);
       return;
     }
-    const defaultType =
-      prefill.appointmentTypeId != null &&
-      routingBookFullAppointmentTypes.some((t) => String(t.id) === String(prefill.appointmentTypeId))
-        ? String(prefill.appointmentTypeId)
-        : '';
-    const defaultTypeForNoPatient =
-      defaultType && noPatientBookAppointmentTypes.some((t) => String(t.id) === defaultType)
-        ? defaultType
-        : '';
+    const defaultType = resolveDefaultBookTypeId(routingBookFullAppointmentTypes);
+    const defaultTypeForNoPatient = (() => {
+      if (
+        defaultType &&
+        noPatientBookAppointmentTypes.some((t) => String(t.id) === defaultType)
+      ) {
+        return defaultType;
+      }
+      return resolveDefaultBookTypeId(noPatientBookAppointmentTypes);
+    })();
     const defaultDesc = prefill.defaultDescription?.trim() ?? '';
     const defaultStaffNotes = prefill.defaultInstructions?.trim() ?? '';
     const preferredPatientId = prefill.preferredPatientId?.trim() ?? '';
@@ -1136,6 +1119,7 @@ export function SchedulerBookModal({
     petChoices,
     routingBookFullAppointmentTypes,
     noPatientBookAppointmentTypes,
+    resolveDefaultBookTypeId,
     selectedClientId,
     loadingClientPets,
   ]);

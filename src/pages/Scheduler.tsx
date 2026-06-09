@@ -5107,13 +5107,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       previewTypeId: routingPreview.appointmentTypeId,
       previewTypeChosenInRouting: routingPreview.appointmentTypeChosenInRouting,
     });
+    const rescheduleTypeOverride = routingStatsTypeKey.trim()
+      ? chosenRoutingTypeId
+      : undefined;
     const rescheduleVisitPatches =
       rescheduleTargets && rescheduleTargets.visits.length > 0
         ? buildRescheduleVisitPatches(
             rescheduleTargets.visits,
             rawAppointments,
             PRACTICE_TZ,
-            chosenRoutingTypeId,
+            rescheduleTypeOverride,
             typeList
           )
         : undefined;
@@ -5155,7 +5158,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             disableClientSearch: false,
           }),
       ...(routingAlternateForBook ? { routingAlternateAddress: routingAlternateForBook } : {}),
-      appointmentTypeId: chosenRoutingTypeId,
+      ...(routingStatsTypeKey.trim() && chosenRoutingTypeId != null
+        ? { appointmentTypeId: chosenRoutingTypeId }
+        : {}),
       preserveDurationFromSlot: true,
       defaultDescription:
         isReschedule && (rescheduleVisitPatches?.length ?? 0) <= 1
