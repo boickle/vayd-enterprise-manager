@@ -751,21 +751,24 @@ function SchedulerApptCompleteBadge({ appt }: { appt: Appointment }) {
   );
 }
 
+function appointmentHasRecordedVisitBounds(appt: Appointment): boolean {
+  return Boolean(pickStr(appt.appointmentStartActual) && pickStr(appt.appointmentEndActual));
+}
+
 function appointmentActualVisitTimesTitle(appt: Appointment, practiceTz: string): string | null {
   const startIso = pickStr(appt.appointmentStartActual);
   const endIso = pickStr(appt.appointmentEndActual);
-  if (!startIso && !endIso) return null;
+  if (!startIso || !endIso) return null;
   const fmt = (iso: string) => {
     const dt = DateTime.fromISO(iso, { zone: 'utc' }).setZone(practiceTz);
     return dt.isValid ? dt.toFormat('h:mm a') : '—';
   };
-  if (startIso && endIso) return `Visit: ${fmt(startIso)} – ${fmt(endIso)}`;
-  if (startIso) return `Visit started: ${fmt(startIso)}`;
-  return `Visit ended: ${fmt(endIso!)}`;
+  return `Visit: ${fmt(startIso)} – ${fmt(endIso)}`;
 }
 
-/** Clock when actual visit start/end has been recorded (Start / End Visit). */
+/** Clock when both actual visit start and end have been recorded (Start / End Visit). */
 function SchedulerApptVisitTimesBadge({ appt }: { appt: Appointment }) {
+  if (!appointmentHasRecordedVisitBounds(appt)) return null;
   const title = appointmentActualVisitTimesTitle(appt, PRACTICE_TZ);
   if (!title) return null;
   return (
@@ -781,14 +784,12 @@ function workdayActualTimesTitle(
 ): string | null {
   const startIso = row?.workdayStartActual?.trim();
   const endIso = row?.workdayEndActual?.trim();
-  if (!startIso && !endIso) return null;
+  if (!startIso || !endIso) return null;
   const fmt = (iso: string) => {
     const dt = DateTime.fromISO(iso, { zone: 'utc' }).setZone(practiceTz);
     return dt.isValid ? dt.toFormat('h:mm a') : '—';
   };
-  if (startIso && endIso) return `Day: ${fmt(startIso)} – ${fmt(endIso)}`;
-  if (startIso) return `Day started: ${fmt(startIso)}`;
-  return `Day ended: ${fmt(endIso!)}`;
+  return `Day: ${fmt(startIso)} – ${fmt(endIso)}`;
 }
 
 function dayHasRecordedWorkdayBounds(row: EmployeeWorkdayActual | undefined): boolean {
