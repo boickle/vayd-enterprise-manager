@@ -81,14 +81,27 @@ export function hasAnyGoal(goals: EmployeeGoalsResponseDto): boolean {
   return false;
 }
 
+/** Normalize ops points to one decimal (avoids float noise); preserves 0.5 etc. */
+export function normalizePointsValue(points: number): number {
+  const n = Number(points);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 10) / 10;
+}
+
+/** Display ops points — whole numbers without decimals, halves as `1.5`. */
+export function formatPointsValue(points: number): string {
+  const n = normalizePointsValue(points);
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
 /** Day header / My Day — `8/9` when a daily point goal exists, else points only. */
 export function formatPointsAgainstGoal(
   points: number,
   pointGoal: number | null | undefined
 ): string {
-  const pts = Math.round(Number(points) || 0);
+  const pts = formatPointsValue(points);
   const goal = normalizedPointGoal(pointGoal);
-  return goal != null ? `${pts}/${goal}` : String(pts);
+  return goal != null ? `${pts}/${goal}` : pts;
 }
 
 export function normalizedPointGoal(pointGoal: number | null | undefined): number | null {
@@ -107,7 +120,7 @@ export function pointsGoalProgressTone(
 ): PointsGoalProgressTone | null {
   const goal = normalizedPointGoal(pointGoal);
   if (goal == null) return null;
-  const pts = Math.round(Number(points) || 0);
+  const pts = normalizePointsValue(points);
   if (pts >= goal) return 'met';
   if (goal - pts <= 2) return 'near';
   return 'below';
