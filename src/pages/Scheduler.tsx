@@ -5950,12 +5950,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             return;
           }
           case 'viewChart': {
+            const cid = pickStr(client?.pimsId);
             const pid = pickStr(firstPatient?.pimsId);
-            if (!pid) {
-              fail('Patient has no PIMS id (eVet link unavailable).');
+            if (!cid || !pid) {
+              fail('Client and patient PIMS ids are required for the eVet chart link.');
               return;
             }
-            window.open(evetPatientChartLink(pid), '_blank', 'noopener,noreferrer');
+            window.open(evetPatientChartLink(pid, cid), '_blank', 'noopener,noreferrer');
             return;
           }
           case 'writeMedicalNote': {

@@ -1108,9 +1108,10 @@ export function SchedulerReconcileModal({
       setContextMenu(null);
       if (action.kind !== 'viewChart' || !contextMenu) return;
       const patients = patientsForAppointment(contextMenu.appt);
+      const cid = pickStr(contextMenu.appt.client?.pimsId);
       const pid = pickStr(patients[0]?.pimsId);
-      if (!pid) return;
-      window.open(evetPatientChartLink(pid), '_blank', 'noopener,noreferrer');
+      if (!cid || !pid) return;
+      window.open(evetPatientChartLink(pid, cid), '_blank', 'noopener,noreferrer');
     },
     [contextMenu]
   );
