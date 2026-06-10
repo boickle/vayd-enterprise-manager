@@ -27,6 +27,10 @@ import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
 import {
+  appointmentNotesFromDoctorDayRow,
+  petAlertsFromDoctorDayRow,
+} from '../utils/myDayVisualPatientDetails';
+import {
   buildAppointmentTypeCatalog,
   sumHouseholdPoints,
   type AppointmentTypeCatalog,
@@ -599,9 +603,9 @@ export default function DoctorDay({
           str(a, 'serviceName') ??
           str(a as any, 'apptTypeName') ??
           'Appointment',
-        description: str(a as any, 'description') ?? str(a as any, 'visitReason') ?? null,
+        description: appointmentNotesFromDoctorDayRow(a),
         recordStatus: str(a, 'statusName') ?? null,
-        alerts: str(a, 'alerts') ?? null,
+        alerts: petAlertsFromDoctorDayRow(a),
         isMember: Boolean(
           a.isMember ?? (a as any).patient?.isMember
         ),
@@ -1742,11 +1746,7 @@ export default function DoctorDay({
                               str(h.primary, 'appointmentTypeName') ??
                               str(h.primary, 'serviceName') ??
                               'Appointment';
-                            const apptDesc =
-                              (p as any)?.description ??
-                              str(h.primary, 'description') ??
-                              str(h.primary, 'visitReason') ??
-                              '';
+                            const apptDesc = p.description ?? '';
                             return (
                               <li key={`${p.pimsId || p.name}-${idx2}`} className="dd-patient-item">
                                 <span style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>

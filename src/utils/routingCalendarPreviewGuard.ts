@@ -7,6 +7,7 @@ import {
   readRoutingCalendarPreview,
   ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
 } from './routingCalendarPreviewStorage';
+import { blockForwardBookingWorkspaceNavigation } from './forwardBookingWorkspaceGuard';
 
 export const ROUTING_CALENDAR_PREVIEW_BLOCKED_MESSAGE =
   'A calendar preview is open. Book or dismiss from the preview slot before using the calendar.';
@@ -23,6 +24,9 @@ export const EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE =
 
 export const RESCHEDULE_CALENDAR_BLOCKED_MESSAGE =
   'Dismiss rescheduling or finish choosing a new slot before using the calendar.';
+
+export const FORWARD_BOOKING_CALENDAR_BLOCKED_MESSAGE =
+  'Forward booking is locked to this workflow. Preview a slot from Get Best Route, or use Exit forward booking.';
 
 export const EDIT_VISIT_CALENDAR_BLOCKED_MESSAGE = 'Close Edit visit to use the calendar.';
 
@@ -70,6 +74,7 @@ export function alertAndBlockRoutingCalendarPreviewLeave(): boolean {
 
 /** Use on NavLink / button handlers that navigate away while a preview is active. */
 export function blockRoutingCalendarPreviewNavigation(): boolean {
+  if (blockForwardBookingWorkspaceNavigation()) return true;
   return alertAndBlockRoutingCalendarPreviewLeave();
 }
 

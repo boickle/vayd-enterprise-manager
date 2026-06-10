@@ -10,7 +10,12 @@ import {
   useState,
 } from 'react';
 import { DateTime } from 'luxon';
-import { commitEditVisit, type EditVisitFormSnapshot } from '../utils/editVisitCommit';
+import {
+  commitEditVisit,
+  commitLinkClientFromEditVisitSelection,
+  validateEditVisitLinkSelection,
+  type EditVisitFormSnapshot,
+} from '../utils/editVisitCommit';
 import type { Appointment } from '../api/roomLoader';
 import {
   appointmentAlternateAddressText,
@@ -28,6 +33,10 @@ import type { EditVisitPreviewKind } from '../utils/editVisitTimePreview';
 import type { EditVisitPreviewScoreCompare } from '../utils/editVisitTypeScoreCompare';
 import { EditVisitOverflowTag } from '../components/EditVisitOverflowTag';
 import {
+  EditVisitLinkClientPanel,
+  type EditVisitLinkSelection,
+} from '../components/EditVisitLinkClientPanel';
+import {
   SchedulerVisitClientHeaderAlerts,
   SchedulerVisitClientZoneBadge,
   SchedulerVisitPatientContext,
@@ -38,6 +47,11 @@ import { formatSchedulerBookingApiError } from '../utils/manualBookingPermission
 import { appointmentFormFlags, sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
 import { useAuth } from '../auth/useAuth';
 import { resolveAppointmentChangeActorFromAuth, detectEditVisitChanges } from '../utils/appointmentChangeAuditNote';
+import {
+  appointmentResolvedClientId,
+  editVisitLinkClearsAlternateAddress,
+  visitAddressForLinkMatching,
+} from '../utils/visitAddressMatch';
 import './Scheduler.css';
 
 function pickStr(v: unknown): string | null {
@@ -88,11 +102,16 @@ type Props = {
   draftPreviewAppointmentEnd?: string | null;
   /** Latest form values for calendar Book / Adjust time. */
   onFormSnapshotChange?: (snapshot: EditVisitFormSnapshot | null) => void;
+  /** Parent-owned link selection (survives portal remount during preview). */
+  linkSelection?: EditVisitLinkSelection | null;
+  onLinkSelectionChange?: (selection: EditVisitLinkSelection | null) => void;
   onClose: () => void;
   onSaved: (updated?: Appointment, detail?: { routingFeedbackWarning?: string }) => void;
   onViewPlacement?: (startUtc: string, endUtc: string) => void;
   /** Preview drive/windows when only the appointment type changes (times unchanged). */
   onPreviewSchedule?: (startUtc: string, endUtc: string, appointmentTypeId: number) => void;
+  /** Book / Adjust time while placement preview is on the calendar. */
+  onConfirmPreview?: () => void | Promise<void>;
   /** While placement preview is on the calendar, keep drive/calendar in sync. */
   onPlacementTimesChange?: (
     startUtc: string,
@@ -124,10 +143,13 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       draftPreviewAppointmentStart = null,
       draftPreviewAppointmentEnd = null,
       onFormSnapshotChange,
+      linkSelection = null,
+      onLinkSelectionChange,
       onClose,
       onSaved,
       onViewPlacement,
       onPreviewSchedule,
+      onConfirmPreview,
       onPlacementTimesChange,
       typeScoreCompare = null,
       typeScoreLoading = false,
@@ -202,6 +224,30 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
     );
     const alternateAddressDisplay = appointmentAlternateAddressText(appt) ?? '';
     const hasAlternateRoutingAddress = appointmentHasAlternateLocation(appt);
+    const visitAddressForLink = useMemo(() => visitAddressForLinkMatching(appt), [appt]);
+    const showLinkClientPanel = useMemo(() => !appointmentResolvedClientId(appt), [appt]);
+    const clearsAlternateOnLink = useMemo(
+      () => editVisitLinkClearsAlternateAddress(appt, linkSelection),
+      [appt, linkSelection]
+    );
+    const showAlternateRoutingCallout = hasAlternateRoutingAddress && !clearsAlternateOnLink;
+    const editVisitTitle = useMemo(() => {
+      if (appointmentResolvedClientId(appt)) return fullClientHouseholdName(appt.client);
+      const addr = visitAddressForLink?.trim();
+      if (addr) return addr.length > 52 ? `${addr.slice(0, 49)}…` : addr;
+      return (
+        pickStr(appt.appointmentType?.prettyName) ??
+        pickStr(appt.appointmentType?.name) ??
+        pickStr(appt.description) ??
+        'Unlinked visit'
+      );
+    }, [appt, visitAddressForLink]);
+    const handleLinkSelectionChange = useCallback(
+      (selection: EditVisitLinkSelection | null) => {
+        onLinkSelectionChange?.(selection);
+      },
+      [onLinkSelectionChange]
+    );
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const placementPreviewWasActiveRef = useRef(false);
@@ -412,8 +458,25 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         setError('Choose a valid appointment type.');
         return;
       }
-      if (editTypeFormFlags.requirePatient && !appt.patient?.id) {
-        setError('This appointment type requires a patient on the visit.');
+      const linkingClient = Boolean(linkSelection?.clientId?.trim());
+      if (editTypeFormFlags.requirePatient) {
+        const hasPatient =
+          appt.patient?.id != null ||
+          (linkingClient && linkSelection?.patientId?.trim());
+        const needsPatient =
+          appointmentResolvedClientId(appt) != null || linkingClient;
+        if (needsPatient && !hasPatient) {
+          setError('This appointment type requires a patient on the visit.');
+          return;
+        }
+      }
+      const linkValidationError = validateEditVisitLinkSelection({
+        linkSelection,
+        visitAddress: visitAddressForLink,
+        requirePatient: editTypeFormFlags.requirePatient,
+      });
+      if (linkValidationError) {
+        setError(linkValidationError);
         return;
       }
       if (!Number.isFinite(pid) || pid <= 0) {
@@ -470,6 +533,13 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
             practiceTz,
             changes: editChanges,
           },
+          linkClient:
+            linkingClient && linkSelection
+              ? commitLinkClientFromEditVisitSelection(appt, linkSelection, {
+                  actor: editedByActor,
+                  practiceTz,
+                })
+              : undefined,
         });
         let routingFeedbackWarning: string | undefined;
         if (placementPreviewActive && typeScoreCompare?.feedbackHandoff) {
@@ -505,6 +575,8 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       practiceTz,
       typeScoreCompare,
       editTypeFormFlags,
+      linkSelection,
+      visitAddressForLink,
       onSaved,
       onClose,
     ]);
@@ -543,11 +615,51 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         setError('Choose a valid appointment type.');
         return;
       }
+      const previewTypeFlags = appointmentFormFlags(
+        appointmentTypes.find((t) => Number(t.id) === tid)
+      );
+      const linkValidationError = validateEditVisitLinkSelection({
+        linkSelection,
+        visitAddress: visitAddressForLink,
+        requirePatient: previewTypeFlags.requirePatient,
+      });
+      if (linkValidationError) {
+        setError(linkValidationError);
+        return;
+      }
       onPreviewSchedule?.(times.startUtc, times.endUtc, tid);
     }
 
     const canViewPlacement = Boolean(!appt.allDay && onViewPlacement && timesDirty && !placementPreviewActive);
     const canPreviewSchedule = Boolean(!appt.allDay && onPreviewSchedule && typeDirty && !placementPreviewActive);
+    const previewConfirmLabel =
+      placementPreviewKind === 'type' ? (saving ? 'Booking…' : 'Book') : saving ? 'Saving…' : 'Adjust time';
+
+    const handleConfirmPreviewClick = useCallback(() => {
+      if (!onConfirmPreview) return;
+      const linkValidationError = validateEditVisitLinkSelection({
+        linkSelection,
+        visitAddress: visitAddressForLink,
+        requirePatient: editTypeFormFlags.requirePatient,
+      });
+      if (linkValidationError) {
+        setError(linkValidationError);
+        return;
+      }
+      setSaving(true);
+      void Promise.resolve(onConfirmPreview())
+        .catch((e: unknown) => {
+          setError(formatSchedulerBookingApiError(e));
+        })
+        .finally(() => {
+          setSaving(false);
+        });
+    }, [
+      onConfirmPreview,
+      linkSelection,
+      visitAddressForLink,
+      editTypeFormFlags.requirePatient,
+    ]);
 
     const modalPanel = (
       <div
@@ -571,7 +683,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
             <p className="scheduler-modal-eyebrow">Edit visit</p>
             <h2 id="scheduler-edit-title" className="scheduler-modal-title-h">
               <span className="scheduler-modal-title-client">
-                {fullClientHouseholdName(appt.client)}
+                {editVisitTitle}
               </span>
               <SchedulerVisitClientZoneBadge appt={appt} compact />
             </h2>
@@ -606,8 +718,8 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
             ) : placementPreviewActive ? (
               <p className="scheduler-edit-preview-hint">
                 {placementPreviewKind === 'type'
-                  ? 'Appointment type preview on the calendar — hover the visit to book or dismiss (×).'
-                  : 'Time preview on the calendar — hover the visit for Adjust time or dismiss (×).'}
+                  ? 'Type preview is on the calendar — use Book in the panel beside the visit or below.'
+                  : 'Time preview is on the calendar — use Adjust time in the panel beside the visit or below.'}
               </p>
             ) : null}
           </div>
@@ -837,7 +949,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                 </>
               )}
 
-              {hasAlternateRoutingAddress ? (
+              {showAlternateRoutingCallout ? (
                 <div
                   className="scheduler-edit-alternate-callout"
                   role="status"
@@ -856,7 +968,9 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                     </span>
                   </div>
                   <p className="scheduler-edit-alternate-callout-lead">
-                    The visit address cannot be changed here. Reschedule the visit to change it.
+                    {showLinkClientPanel
+                      ? 'This is the visit address used for routing. Link a client below whose home matches this address.'
+                      : 'The visit address cannot be changed here. Reschedule the visit to change it.'}
                   </p>
                   <p className="scheduler-edit-alternate-callout-address">{alternateAddressDisplay}</p>
                   {clientHomeSummary ? (
@@ -873,6 +987,18 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                     The visit address cannot be changed here. Reschedule the visit to change it.
                   </p>
                 </div>
+              ) : null}
+
+              {showLinkClientPanel ? (
+                <EditVisitLinkClientPanel
+                  practiceId={practiceId}
+                  visitAddress={visitAddressForLink}
+                  requiresPatient={editTypeFormFlags.requirePatient}
+                  hasAlternateAddress={hasAlternateRoutingAddress}
+                  persistedSelection={linkSelection}
+                  onSelectionChange={handleLinkSelectionChange}
+                  hideVisitAddress={hasAlternateRoutingAddress}
+                />
               ) : null}
 
               <label className="scheduler-edit-field scheduler-edit-field--full scheduler-edit-field--staff-notes">
@@ -900,6 +1026,15 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
               disabled={saving}
             >
               View Placement
+            </button>
+          ) : placementPreviewActive && onConfirmPreview ? (
+            <button
+              type="button"
+              className="btn"
+              onClick={handleConfirmPreviewClick}
+              disabled={saving || typeScoreLoading}
+            >
+              {previewConfirmLabel}
             </button>
           ) : canPreviewSchedule ? (
             <button

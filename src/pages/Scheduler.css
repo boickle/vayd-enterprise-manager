@@ -2236,7 +2236,7 @@ label.scheduler-go-date-heading {
 
 /* Visit Highlights hover card — compact PIMS-style (max height from JS so card can use viewport) */
 .scheduler-tooltip--visit-highlights {
-  max-width: min(380px, calc(100vw - 16px));
+  max-width: min(420px, calc(100vw - 16px));
   pointer-events: auto;
   overflow-x: hidden;
   overflow-y: auto;
@@ -4409,6 +4409,230 @@ label.scheduler-go-date-heading {
   font-weight: 600;
   line-height: 1.4;
   color: #9a3412;
+}
+
+.scheduler-edit-link-client {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  padding: 16px 18px;
+  border-radius: 10px;
+  border: 2px solid #0d9488;
+  background: linear-gradient(180deg, #f0fdfa 0%, #ccfbf1 100%);
+  color: #134e4a;
+}
+
+.scheduler-edit-link-client-head {
+  margin-bottom: 12px;
+}
+
+.scheduler-edit-link-client-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #0f766e;
+}
+
+.scheduler-edit-link-client-lead {
+  margin: 0;
+}
+
+.scheduler-edit-link-client-visit-address {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.65);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.scheduler-edit-link-client-visit-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #0f766e;
+}
+
+.scheduler-edit-link-client-keep-alt {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #99f6e4;
+  background: #f0fdfa;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #134e4a;
+  cursor: pointer;
+}
+
+.scheduler-edit-link-client-keep-alt input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.scheduler-edit-link-client-suggestions {
+  margin-bottom: 12px;
+}
+
+.scheduler-edit-link-client-suggestions .scheduler-edit-field-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #115e59;
+}
+
+.scheduler-edit-link-client-match-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scheduler-edit-link-client-match-item {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #99f6e4;
+  background: #fff;
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+}
+
+.scheduler-edit-link-client-match-item:hover {
+  border-color: #0d9488;
+  background: #f0fdfa;
+}
+
+.scheduler-edit-link-client-match-item--selected {
+  border-color: #0d9488;
+  box-shadow: 0 0 0 2px rgba(13, 148, 136, 0.25);
+}
+
+.scheduler-edit-link-client-match-primary {
+  font-weight: 700;
+  color: #134e4a;
+}
+
+.scheduler-edit-link-client-match-secondary {
+  font-size: 13px;
+  color: #475569;
+}
+
+.scheduler-edit-link-client-match-badge {
+  justify-self: start;
+  margin-top: 2px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.scheduler-edit-link-client-match-badge--exact {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.scheduler-edit-link-client-show-more {
+  margin-top: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.scheduler-edit-link-client-weak-warning {
+  margin: 8px 0 0;
+  color: #92400e;
+  font-weight: 600;
+}
+
+.scheduler-edit-link-client-search-wrap {
+  position: relative;
+}
+
+.scheduler-edit-link-client-search-wrap input {
+  width: 100%;
+}
+
+.scheduler-edit-link-client-dropdown {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.scheduler-edit-link-client-selected {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(13, 148, 136, 0.25);
+}
+
+.scheduler-edit-link-client-selected-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.scheduler-edit-link-client-selected-name {
+  display: block;
+  font-weight: 800;
+  color: #134e4a;
+}
+
+.scheduler-edit-link-client-selected-address {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  color: #475569;
+}
+
+.scheduler-edit-link-client-clear {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: 1px solid #99f6e4;
+  border-radius: 6px;
+  background: #fff;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.scheduler-edit-link-client-match-error {
+  margin: 8px 0 0;
+}
+
+.scheduler-edit-link-client-match-ok {
+  margin: 8px 0 0;
+  color: #065f46;
+  font-weight: 600;
+}
+
+.scheduler-edit-link-client-alerts {
+  margin: 0 0 8px;
 }
 
 .scheduler-edit-hint {

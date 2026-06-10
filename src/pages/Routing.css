@@ -284,6 +284,20 @@
   border: 1px solid color-mix(in srgb, var(--accent, #10a37f) 40%, #ffffff);
 }
 
+.routing-forward-booking-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #9a3412;
+  background: #ffedd5;
+  border: 1px solid #fdba74;
+}
+
 .routing-reschedule-mode-summary {
   margin: 0 0 10px 0;
   font-size: 12px;
@@ -297,11 +311,27 @@
   gap: 8px;
 }
 
+.routing-forward-booking-mode-summary-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .routing-forward-booking-mode-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+.routing-input--locked {
+  background: #f8fafc;
+  color: #334155;
+  cursor: not-allowed;
+}
+
+.routing-forward-booking-client-lock-hint {
+  margin: 6px 0 0;
 }
 
 /* Persistent highlight on fields auto-filled from calendar “Reschedule”. */
