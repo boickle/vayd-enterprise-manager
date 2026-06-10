@@ -1,6 +1,7 @@
 // Admin sub-tabs: path is relative to /admin. Kept in a separate file to avoid circular import (Admin.tsx imports this; app-pages imports Admin).
 import CreateUser from './pages/CreateUser';
 import MembershipPromotionsPage from './pages/MembershipPromotions';
+import AppointmentRequestPromotionsPage from './pages/AppointmentRequestPromotions';
 import OpenPhoneCoaching from './pages/OpenPhoneCoaching';
 import SurveyResults from './pages/SurveyResults';
 import { getFrontendPaymentProvider } from './config/paymentProvider';
@@ -31,6 +32,12 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
     path: 'membership-promotions',
     label: 'Promotions',
     element: <MembershipPromotionsPage />,
+    role: ['admin', 'superadmin'],
+  },
+  {
+    path: 'appointment-request-promotions',
+    label: 'Appt Request Promotions',
+    element: <AppointmentRequestPromotionsPage />,
     role: ['admin', 'superadmin'],
   },
 ];

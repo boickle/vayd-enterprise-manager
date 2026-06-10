@@ -263,9 +263,12 @@ function normalizeSubscriptionPlanCatalogResponse(data: unknown): SubscriptionPl
 
 export type MembershipDiscountDuration = 'once' | 'repeating' | 'forever';
 
-/** Resolved at checkout from ?promo= token; never includes the human-readable Stripe code. */
+/** Resolved at checkout from ?promo= token or staff-entered code. */
 export type MembershipCheckoutDiscount = {
-  token: string;
+  /** Opaque link token (may be absent when resolved via code). */
+  token?: string;
+  /** Human-readable code, e.g. VAYDH7K2MQ (may be absent when resolved via token). */
+  code?: string;
   stripePromotionCodeId: string;
   displayLabel: string;
   percentOff?: number;
@@ -287,6 +290,8 @@ export type MembershipDiscountRecord = {
   createdAt?: string;
   /** Latest opaque link token for sharing (if generated). */
   linkToken?: string | null;
+  /** Human-readable promo code auto-generated at creation, e.g. VAYDH7K2MQ. */
+  code?: string | null;
 };
 
 export type CreateMembershipDiscountRequest = {
@@ -338,6 +343,8 @@ export interface PaymentRequest {
   membershipTransaction?: MembershipTransactionPayload;
   /** Opaque promo link token; backend re-validates and applies Stripe promotion code on subscription. */
   membershipDiscountToken?: string;
+  /** Human-readable promo code entered by the client, e.g. VAYDH7K2MQ. Takes effect when no token is present. */
+  membershipDiscountCode?: string;
   /** Stripe promotion code id (promo_…); optional if token is sent. */
   stripePromotionCodeId?: string;
 }
@@ -420,6 +427,20 @@ export async function resolveMembershipDiscountToken(
 ): Promise<ResolveMembershipDiscountResponse> {
   const { data } = await http.get(`${stripeMembershipDiscountsBase()}/resolve`, {
     params: { token },
+  });
+  return data as ResolveMembershipDiscountResponse;
+}
+
+/**
+ * Resolve a human-readable promo code entered by the client at checkout.
+ * GET /stripe/payment-processing/membership-discounts/resolve-by-code?code=<code>
+ * Matching is case-insensitive on the backend; normalise to uppercase before display.
+ */
+export async function resolveMembershipDiscountByCode(
+  code: string,
+): Promise<ResolveMembershipDiscountResponse> {
+  const { data } = await http.get(`${stripeMembershipDiscountsBase()}/resolve-by-code`, {
+    params: { code: code.trim().toUpperCase() },
   });
   return data as ResolveMembershipDiscountResponse;
 }

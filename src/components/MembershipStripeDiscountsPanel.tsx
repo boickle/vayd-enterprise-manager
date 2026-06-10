@@ -21,6 +21,7 @@ import {
 } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LinkIcon from '@mui/icons-material/Link';
+import Tooltip from '@mui/material/Tooltip';
 import {
   createMembershipDiscount,
   createMembershipDiscountLink,
@@ -64,6 +65,7 @@ export default function MembershipStripeDiscountsPanel() {
   const [creating, setCreating] = useState(false);
   const [linkingId, setLinkingId] = useState<string | null>(null);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   const [name, setName] = useState('');
   const [displayLabel, setDisplayLabel] = useState('');
@@ -212,6 +214,13 @@ export default function MembershipStripeDiscountsPanel() {
     await navigator.clipboard.writeText(url);
     setCopiedToken(token);
     setSuccess('Link copied to clipboard.');
+  }
+
+  async function copyCode(code: string) {
+    await navigator.clipboard.writeText(code);
+    setCopiedCode(code);
+    setSuccess(`Code ${code} copied to clipboard.`);
+    setTimeout(() => setCopiedCode(null), 3000);
   }
 
   return (
@@ -394,6 +403,7 @@ export default function MembershipStripeDiscountsPanel() {
                     <TableCell>Offer</TableCell>
                     <TableCell>Duration</TableCell>
                     <TableCell>Redemptions</TableCell>
+                    <TableCell>Code</TableCell>
                     <TableCell align="right">Link</TableCell>
                   </TableRow>
                 </TableHead>
@@ -406,6 +416,24 @@ export default function MembershipStripeDiscountsPanel() {
                       <TableCell>
                         {row.timesRedeemed ?? 0}
                         {row.maxRedemptions != null ? ` / ${row.maxRedemptions}` : ''}
+                      </TableCell>
+                      <TableCell>
+                        {row.code ? (
+                          <Tooltip title={copiedCode === row.code ? 'Copied!' : 'Copy code'}>
+                            <Button
+                              size="small"
+                              startIcon={<ContentCopyIcon fontSize="small" />}
+                              onClick={() => void copyCode(row.code!)}
+                              sx={{ fontFamily: 'monospace', fontWeight: 700, letterSpacing: 1 }}
+                            >
+                              {row.code}
+                            </Button>
+                          </Tooltip>
+                        ) : (
+                          <Typography variant="body2" color="text.disabled" sx={{ fontSize: 12 }}>
+                            —
+                          </Typography>
+                        )}
                       </TableCell>
                       <TableCell align="right">
                         {row.linkToken ? (

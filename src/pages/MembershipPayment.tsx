@@ -10,6 +10,7 @@ import {
   type MembershipPaymentRequestOrigin,
   upgradeMembership,
   type MembershipUpgradeRequest,
+  resolveMembershipDiscountByCode,
 } from '../api/payments';
 import { useAuth } from '../auth/useAuth';
 import { getFrontendPaymentProvider, getStripePublishableKey } from '../config/paymentProvider';
@@ -136,6 +137,8 @@ type PaymentNavigationState = {
   /** Stripe promo link — applied on subscription; code never shown to client. */
   membershipDiscount?: MembershipCheckoutDiscount;
   membershipDiscountToken?: string;
+  /** Human-readable promo code pre-applied before reaching this screen (e.g. from signup flow). */
+  membershipDiscountCode?: string;
   originalAmountCents?: number;
 };
 
@@ -197,6 +200,12 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const [stripeCardReady, setStripeCardReady] = useState(false);
   const stripeRef = useRef<Stripe | null>(null);
   const stripeCardRef = useRef<StripeCardElement | null>(null);
+
+  // Promo code entered by the client at checkout
+  const [promoCodeInput, setPromoCodeInput] = useState('');
+  const [promoCodeApplying, setPromoCodeApplying] = useState(false);
+  const [promoCodeError, setPromoCodeError] = useState<string | null>(null);
+  const [appliedCodeDiscount, setAppliedCodeDiscount] = useState<MembershipCheckoutDiscount | null>(null);
 
   const locationId = state?.enrollmentPayload?.locationId ?? defaultSquareLocationId;
 
@@ -346,6 +355,30 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   }, [state, formResetKey]);
 
   const costSummaryItems = useMemo(() => state?.costSummary?.items ?? [], [state]);
+
+  /**
+   * Display-only discount preview for a code entered directly on this page.
+   * The backend applies the discount at the Stripe subscription level; this is purely
+   * for showing the client an accurate "due today" before they hit Pay.
+   */
+  const codeDiscountPreview = useMemo(() => {
+    if (!appliedCodeDiscount || !state) return null;
+    const base = state.amountCents;
+    let discountCents = 0;
+    if (appliedCodeDiscount.percentOff != null && appliedCodeDiscount.percentOff > 0) {
+      discountCents = Math.round((base * appliedCodeDiscount.percentOff) / 100);
+    } else if (appliedCodeDiscount.amountOffCents != null && appliedCodeDiscount.amountOffCents > 0) {
+      discountCents = Math.min(appliedCodeDiscount.amountOffCents, base);
+    }
+    return {
+      discountCents,
+      dueTodayCents: Math.max(0, base - discountCents),
+      duration: appliedCodeDiscount.duration,
+      displayLabel: appliedCodeDiscount.displayLabel,
+    };
+  // appliedCodeDiscount reference changes when set/cleared
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appliedCodeDiscount, state?.amountCents]);
 
   const prefilledCustomerEmail = useMemo(
     () => resolveCustomerEmailFromNavigationState(state),
@@ -654,6 +687,12 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                 state.membershipDiscountToken ?? state.membershipDiscount?.token,
               stripePromotionCodeId: state.membershipDiscount?.stripePromotionCodeId,
             }
+          : appliedCodeDiscount || state.membershipDiscountCode
+          ? {
+              membershipDiscountCode:
+                appliedCodeDiscount?.code ?? state.membershipDiscountCode,
+              stripePromotionCodeId: appliedCodeDiscount?.stripePromotionCodeId,
+            }
           : {}),
       });
 
@@ -831,14 +870,34 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
             </div>
             <div>
               <strong>Total paid today:</strong>{' '}
-              {state.originalAmountCents != null && state.originalAmountCents > state.amountCents ? (
+              {/* Link-based promo: originalAmountCents already set */}
+              {state.originalAmountCents != null && state.originalAmountCents > state.amountCents && !codeDiscountPreview ? (
+                <span style={{ textDecoration: 'line-through', color: '#6b7280', marginRight: 8 }}>
+                  {formatMoney(state.originalAmountCents, state.currency)}
+                </span>
+              ) : null}
+              {/* Code-based promo: show strikethrough base and discounted amount */}
+              {codeDiscountPreview && codeDiscountPreview.discountCents > 0 ? (
                 <>
                   <span style={{ textDecoration: 'line-through', color: '#6b7280', marginRight: 8 }}>
-                    {formatMoney(state.originalAmountCents, state.currency)}
+                    {formatMoney(state.amountCents, state.currency)}
                   </span>
+                  <span style={{ fontWeight: 700, color: '#065f46' }}>
+                    {formatMoney(codeDiscountPreview.dueTodayCents, state.currency)}
+                  </span>
+                  {codeDiscountPreview.duration === 'once' && (
+                    <span style={{ fontSize: 13, color: '#6b7280', marginLeft: 8, fontStyle: 'italic' }}>
+                      (then {formatMoney(state.amountCents, state.currency)}/
+                      {state.billingPreference === 'annual' ? 'year' : 'mo'} after)
+                    </span>
+                  )}
                 </>
-              ) : null}
-              {formatMoney(state.amountCents, state.currency)}
+              ) : (
+                formatMoney(
+                  codeDiscountPreview ? codeDiscountPreview.dueTodayCents : state.amountCents,
+                  state.currency,
+                )
+              )}
             </div>
             {state.addOns && state.addOns.length > 0 && (
               <div>
@@ -881,6 +940,30 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                   );
                 })}
               </ul>
+              {/* Discount line in breakdown */}
+              {codeDiscountPreview && codeDiscountPreview.discountCents > 0 && (
+                <li
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    fontSize: 14,
+                    borderBottom: '1px solid rgba(0,0,0,0.06)',
+                    paddingBottom: 6,
+                    color: '#065f46',
+                  }}
+                >
+                  <span>
+                    {codeDiscountPreview.displayLabel}
+                    {codeDiscountPreview.duration === 'once' && (
+                      <span style={{ fontSize: 11, color: '#6b7280', marginLeft: 4 }}>(first charge only)</span>
+                    )}
+                  </span>
+                  <span style={{ fontWeight: 600 }}>
+                    −{formatMoney(codeDiscountPreview.discountCents, state.currency)}
+                  </span>
+                </li>
+              )}
               <div
                 style={{
                   display: 'flex',
@@ -892,7 +975,12 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                 }}
               >
                 <span>Total</span>
-                <span>{formatMoney(state.amountCents, state.currency)}</span>
+                <span>
+                  {formatMoney(
+                    codeDiscountPreview ? codeDiscountPreview.dueTodayCents : state.amountCents,
+                    state.currency,
+                  )}
+                </span>
               </div>
             </div>
           </section>
@@ -1056,6 +1144,146 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         </div>
       )}
 
+      {/* Promo code entry — only on Stripe, only when no link-based discount is already applied */}
+      {paymentProvider === 'stripe' && !state.membershipDiscount && !state.isUpgrade && (
+        <div
+          className="cp-card"
+          style={{ marginBottom: 16, padding: 14 }}
+        >
+          {appliedCodeDiscount ? (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+              }}
+            >
+              <div>
+                <p style={{ margin: 0, fontSize: 14, color: '#065f46', fontWeight: 600 }}>
+                  ✓ {appliedCodeDiscount.displayLabel}
+                </p>
+                <p style={{ margin: '2px 0 0', fontSize: 12, color: '#6b7280' }}>
+                  Code <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{appliedCodeDiscount.code}</span> applied
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setAppliedCodeDiscount(null);
+                  setPromoCodeInput('');
+                  setPromoCodeError(null);
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  color: '#6b7280',
+                  textDecoration: 'underline',
+                  padding: 0,
+                  flexShrink: 0,
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          ) : (
+            <>
+              <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 600, color: '#374151' }}>
+                Have a promo code?
+              </p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="text"
+                  placeholder="e.g. VAYDH7K2MQ"
+                  value={promoCodeInput}
+                  onChange={(e) => {
+                    setPromoCodeInput(e.target.value.toUpperCase());
+                    setPromoCodeError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void (async () => {
+                        if (!promoCodeInput.trim()) return;
+                        setPromoCodeApplying(true);
+                        setPromoCodeError(null);
+                        try {
+                          const res = await resolveMembershipDiscountByCode(promoCodeInput);
+                          if (res.valid && res.discount) {
+                            setAppliedCodeDiscount(res.discount);
+                          } else {
+                            setPromoCodeError(res.message || 'Code not found or no longer valid.');
+                          }
+                        } catch {
+                          setPromoCodeError('Code not found or no longer valid.');
+                        } finally {
+                          setPromoCodeApplying(false);
+                        }
+                      })();
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '8px 10px',
+                    border: `1px solid ${promoCodeError ? '#ef4444' : '#d1d5db'}`,
+                    borderRadius: 6,
+                    fontSize: 13,
+                    fontFamily: 'monospace',
+                    letterSpacing: '0.05em',
+                    textTransform: 'uppercase',
+                    outline: 'none',
+                  }}
+                  disabled={promoCodeApplying}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  disabled={promoCodeApplying || !promoCodeInput.trim()}
+                  onClick={() => {
+                    void (async () => {
+                      setPromoCodeApplying(true);
+                      setPromoCodeError(null);
+                      try {
+                        const res = await resolveMembershipDiscountByCode(promoCodeInput);
+                        if (res.valid && res.discount) {
+                          setAppliedCodeDiscount(res.discount);
+                        } else {
+                          setPromoCodeError(res.message || 'Code not found or no longer valid.');
+                        }
+                      } catch {
+                        setPromoCodeError('Code not found or no longer valid.');
+                      } finally {
+                        setPromoCodeApplying(false);
+                      }
+                    })();
+                  }}
+                  style={{
+                    padding: '8px 16px',
+                    background: '#0f766e',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 6,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: promoCodeApplying || !promoCodeInput.trim() ? 'not-allowed' : 'pointer',
+                    opacity: promoCodeApplying || !promoCodeInput.trim() ? 0.6 : 1,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {promoCodeApplying ? 'Applying…' : 'Apply'}
+                </button>
+              </div>
+              {promoCodeError && (
+                <p style={{ margin: '6px 0 0', fontSize: 12, color: '#ef4444' }}>{promoCodeError}</p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       <section className="cp-section">
         <div className="cp-card" style={{ padding: 20 }}>
           <h3 style={{ marginTop: 0, marginBottom: 12 }}>
@@ -1130,14 +1358,43 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                     </li>
                   );
                 })}
+                {/* Discount line for code entered on this page */}
+                {codeDiscountPreview && codeDiscountPreview.discountCents > 0 && (
+                  <li
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      fontSize: 14,
+                      borderBottom: '1px solid rgba(0,0,0,0.06)',
+                      paddingBottom: 6,
+                      color: '#065f46',
+                    }}
+                  >
+                    <span>
+                      {codeDiscountPreview.displayLabel}
+                      {codeDiscountPreview.duration === 'once' && (
+                        <span style={{ fontSize: 11, color: '#6b7280', marginLeft: 4 }}>(first charge only)</span>
+                      )}
+                      {codeDiscountPreview.duration === 'repeating' && (
+                        <span style={{ fontSize: 11, color: '#6b7280', marginLeft: 4 }}>(limited time)</span>
+                      )}
+                    </span>
+                    <span style={{ fontWeight: 600 }}>
+                      −{formatMoney(codeDiscountPreview.discountCents, state.currency)}
+                    </span>
+                  </li>
+                )}
               </ul>
             </>
           )}
+
+          {/* Total Due Today */}
           <div
             style={{
               display: 'flex',
               justifyContent: 'space-between',
-              alignItems: 'center',
+              alignItems: 'flex-start',
               fontWeight: 700,
               fontSize: 16,
               marginTop: 16,
@@ -1145,8 +1402,10 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
           >
             <span>Total Due Today</span>
             <span style={{ textAlign: 'right' }}>
+              {/* Link-based promo already adjusted amountCents — show original struck through */}
               {state.originalAmountCents != null &&
-              state.originalAmountCents > state.amountCents ? (
+              state.originalAmountCents > state.amountCents &&
+              !codeDiscountPreview ? (
                 <span
                   className="cp-muted"
                   style={{
@@ -1159,9 +1418,44 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                   {formatMoney(state.originalAmountCents, state.currency)}
                 </span>
               ) : null}
-              {formatMoney(state.amountCents, state.currency)}
+              {/* Code-based promo: strike through base price, show discounted */}
+              {codeDiscountPreview && codeDiscountPreview.discountCents > 0 ? (
+                <>
+                  <span
+                    className="cp-muted"
+                    style={{
+                      display: 'block',
+                      fontSize: 13,
+                      textDecoration: 'line-through',
+                      fontWeight: 400,
+                    }}
+                  >
+                    {formatMoney(state.amountCents, state.currency)}
+                  </span>
+                  {formatMoney(codeDiscountPreview.dueTodayCents, state.currency)}
+                </>
+              ) : (
+                formatMoney(state.amountCents, state.currency)
+              )}
             </span>
           </div>
+
+          {/* Recurring billing note for once/repeating discounts */}
+          {(codeDiscountPreview?.duration === 'once' || state.membershipDiscount?.duration === 'once') && (
+            <p style={{ margin: '10px 0 0', fontSize: 13, color: '#065f46', fontStyle: 'italic' }}>
+              {state.billingPreference === 'annual'
+                ? `Then ${formatMoney(state.amountCents, state.currency)} annually after this first charge.`
+                : `Then ${formatMoney(state.amountCents, state.currency)}/mo starting your next billing cycle.`}
+            </p>
+          )}
+          {codeDiscountPreview?.duration === 'repeating' && (
+            <p style={{ margin: '10px 0 0', fontSize: 13, color: '#065f46', fontStyle: 'italic' }}>
+              Discount applies for a limited time, then regular pricing resumes at{' '}
+              {state.billingPreference === 'annual'
+                ? `${formatMoney(state.amountCents, state.currency)}/year.`
+                : `${formatMoney(state.amountCents, state.currency)}/mo.`}
+            </p>
+          )}
         </div>
       </section>
 
