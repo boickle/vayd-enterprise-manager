@@ -38,6 +38,7 @@ import {
   forwardBookingDispositionFromAppointment,
   forwardBookingFormStateFromDisposition,
   hasPersistedForwardBookingDisposition,
+  type ForwardBookingDispositionFormState,
 } from '../utils/forwardBookingDisposition';
 import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import './Scheduler.css';
@@ -69,7 +70,7 @@ const FORWARD_BOOKING_MODE_OPTIONS: {
   {
     value: 'labs_pending',
     label: 'Labs pending',
-    hint: 'Assign a task to forward book after lab results are back.',
+    hint: 'Recommended: assign this to the doctor first. Once labs are reviewed and the follow-up timing is determined, the doctor can reassign the forward-booking task to the technician.',
   },
   {
     value: 'forward_book_fields',
@@ -173,6 +174,21 @@ function defaultLabsPendingTaskTitle(appt: Appointment): string {
   return `Forward book ${subject} once labs come back.`;
 }
 
+function defaultLabsAssigneeEmployeeId(appt: Appointment): string {
+  const id = appt.primaryProvider?.id;
+  if (id == null || !Number.isFinite(Number(id))) return '';
+  return String(id);
+}
+
+function applyDefaultLabsAssignee(
+  form: ForwardBookingDispositionFormState,
+  appt: Appointment
+): ForwardBookingDispositionFormState {
+  if (form.labsAssigneeEmployeeId.trim()) return form;
+  const def = defaultLabsAssigneeEmployeeId(appt);
+  return def ? { ...form, labsAssigneeEmployeeId: def } : form;
+}
+
 function defaultStartTimeLocal(
   existingIso: string | null | undefined,
   practiceTz: string
@@ -224,9 +240,12 @@ export function SchedulerActualVisitTimeModal({
 
   const initialForwardBookingForm = useMemo(
     () =>
-      forwardBookingFormStateFromDisposition(
-        appt.forwardBookingDisposition ?? forwardBookingDispositionFromAppointment(appt),
-        { labsTaskTitle: defaultLabsTaskTitle, labsTaskStartLocal: defaultLabsStartLocal }
+      applyDefaultLabsAssignee(
+        forwardBookingFormStateFromDisposition(
+          appt.forwardBookingDisposition ?? forwardBookingDispositionFromAppointment(appt),
+          { labsTaskTitle: defaultLabsTaskTitle, labsTaskStartLocal: defaultLabsStartLocal }
+        ),
+        appt
       ),
     [appt, defaultLabsStartLocal, defaultLabsTaskTitle]
   );
@@ -323,9 +342,12 @@ export function SchedulerActualVisitTimeModal({
         dispositionHydratedRef.current = true;
         return;
       }
-      const form = forwardBookingFormStateFromDisposition(
-        fresh.forwardBookingDisposition ?? forwardBookingDispositionFromAppointment(fresh),
-        { labsTaskTitle: defaultLabsTaskTitle, labsTaskStartLocal: defaultLabsStartLocal }
+      const form = applyDefaultLabsAssignee(
+        forwardBookingFormStateFromDisposition(
+          fresh.forwardBookingDisposition ?? forwardBookingDispositionFromAppointment(fresh),
+          { labsTaskTitle: defaultLabsTaskTitle, labsTaskStartLocal: defaultLabsStartLocal }
+        ),
+        fresh
       );
       if (!forwardBookingUserEditedRef.current) {
         applyForwardBookingForm(form);
@@ -921,6 +943,10 @@ export function SchedulerActualVisitTimeModal({
                               forwardBookingUserEditedRef.current = true;
                               setForwardBookingMode(value);
                               setError(null);
+                              if (value === 'labs_pending' && !labsAssigneeEmployeeId.trim()) {
+                                const def = defaultLabsAssigneeEmployeeId(appt);
+                                if (def) setLabsAssigneeEmployeeId(def);
+                              }
                             }}
                           />
                           <span className="scheduler-forward-booking-mode-copy">

@@ -30,6 +30,41 @@ export function appointmentTypeLabelFromRow(
   return label || null;
 }
 
+/** First type in a sorted picker list (`formListOrder` #1 when configured). */
+export function defaultAppointmentTypeIdFromSortedPicker(
+  types: readonly { id?: number | null | string }[]
+): number | undefined {
+  const first = types[0];
+  if (first?.id == null) return undefined;
+  const id = Number(first.id);
+  return Number.isFinite(id) && id > 0 ? id : undefined;
+}
+
+/**
+ * Book-modal default: Calculate Time type from Get Best Route when set,
+ * otherwise the first type in the sorted picker (`formListOrder` #1).
+ */
+export function resolveBookModalDefaultAppointmentTypeId(opts: {
+  sortedPickerTypes: readonly AppointmentType[];
+  allTypes: readonly AppointmentType[];
+  routingStatsTypeKey?: string | null;
+  /** Co-visit and similar flows that pin the visit type. */
+  pinnedAppointmentTypeId?: number | null;
+}): number | undefined {
+  const statsKey = opts.routingStatsTypeKey?.trim() ?? '';
+  if (statsKey) {
+    const matched = appointmentTypeForRoutingStatsKey(statsKey, opts.allTypes);
+    if (matched?.id != null && Number.isFinite(Number(matched.id))) {
+      return Number(matched.id);
+    }
+  }
+  const pinned = opts.pinnedAppointmentTypeId;
+  if (pinned != null && Number.isFinite(Number(pinned)) && Number(pinned) > 0) {
+    return Number(pinned);
+  }
+  return defaultAppointmentTypeIdFromSortedPicker(opts.sortedPickerTypes);
+}
+
 /** Resolve the appointment type chosen in Routing → Calculate Time for book / preview. */
 export function resolveRoutingChosenAppointmentTypeId(opts: {
   statsTypeKey?: string | null;
