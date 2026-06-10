@@ -42,6 +42,7 @@ import {
   roomLoaderPreApptDisplayLabel,
 } from '../utils/roomLoaderPreApptDisplay';
 import {
+  buildPdfPatientsFromBadges,
   appointmentNotesFromDoctorDayRow,
   petAlertsFromDoctorDayRow,
   sexFromDoctorDayRow,
@@ -359,6 +360,7 @@ function assignEtaKeysForSameAddress<T extends { key: string; lat: number; lon: 
 /* ----------------- patient extraction ----------------- */
 type PatientBadge = {
   name: string;
+  sourceApptId?: string | number | null;
   pimsId?: string | null;
   /** confirmStatusName — pre-exam / check-in */
   status?: string | null;
@@ -403,6 +405,7 @@ function makePatientBadge(a: any): PatientBadge {
         : null;
   return {
     name,
+    sourceApptId: (a as { id?: string | number | null })?.id ?? null,
     type,
     desc: appointmentNotes,
     appointmentNotes,
@@ -1017,6 +1020,15 @@ export default function DoctorDayVisual({
     });
     assignEtaKeysForSameAddress(list);
     return list;
+  }, [appts]);
+
+  const apptsById = useMemo(() => {
+    const m = new Map<string, DoctorDayAppt>();
+    for (const a of appts) {
+      if (a?.id == null || isBlockEntry(a)) continue;
+      m.set(String(a.id), a);
+    }
+    return m;
   }, [appts]);
 
   /* =========================================================================
@@ -2666,7 +2678,7 @@ export default function DoctorDayVisual({
               : null,
         sIso: h.startIso!,
         eIso: h.endIso!,
-        patients: h.patients || [],
+        patients: buildPdfPatientsFromBadges(h.patients ?? [], apptsById),
         clientAlert: h?.clientAlert,
         isFixedTime,
         isPersonalBlock: h.isPersonalBlock,
@@ -2696,6 +2708,7 @@ export default function DoctorDayVisual({
       blockGeom,
       stats.backToDepotIso,
       maxDayVisualBottomPx,
+      apptsById,
     ]
   );
 

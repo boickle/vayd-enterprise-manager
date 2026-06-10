@@ -31,9 +31,7 @@ import { evetClientLink, evetPatientLink } from '../utils/evet';
 import {
   buildForwardBookingSmsMessage,
   clientHasSmsPhone,
-  formatForwardBookingSmsBookedSlotFromAppointment,
-  formatForwardBookingSmsBookedSlotFromEntry,
-  type ForwardBookingSmsBookedSlot,
+  resolveForwardBookingSmsBookedSlot,
 } from '../utils/forwardBookingSmsMessage';
 import {
   clearForwardBookingLocalLink,
@@ -233,34 +231,17 @@ export default function ForwardBookingPage() {
   const practiceTz = practiceTimeZoneOrDefault(undefined);
 
   const resolveBookedSlotForSms = useCallback(
-    async (entry: ForwardBookingEntry): Promise<ForwardBookingSmsBookedSlot | undefined> => {
+    async (entry: ForwardBookingEntry) => {
       const catalog = typeCatalogRef.current;
       const entryType =
         entry.appointmentTypeId != null
           ? catalog?.byId.get(Number(entry.appointmentTypeId))
           : undefined;
 
-      const apptId = forwardBookingLinkedAppointmentId(entry) ?? entry.bookedAppointmentId ?? null;
-      if (apptId != null) {
-        const appt = await fetchAppointmentById(apptId, { practiceId: PRACTICE_ID });
-        if (appt) {
-          const type =
-            entryType ??
-            (appt.appointmentType?.id != null
-              ? catalog?.byId.get(Number(appt.appointmentType.id))
-              : undefined) ??
-            (appt.appointmentType as typeof entryType) ??
-            undefined;
-          const fromAppt = formatForwardBookingSmsBookedSlotFromAppointment(
-            appt,
-            practiceTz,
-            type ?? null
-          );
-          if (fromAppt) return fromAppt;
-        }
-      }
-
-      return formatForwardBookingSmsBookedSlotFromEntry(entry, practiceTz, entryType ?? null);
+      return resolveForwardBookingSmsBookedSlot(entry, practiceTz, {
+        practiceId: PRACTICE_ID,
+        appointmentType: entryType ?? null,
+      });
     },
     [practiceTz]
   );
@@ -531,7 +512,11 @@ export default function ForwardBookingPage() {
       setError('This forward booking is missing client or patient data.');
       return;
     }
-    writeRoutingForwardBookingIntent({ ...intent, returnToListAfterBook: true });
+    writeRoutingForwardBookingIntent({
+      ...intent,
+      returnToListAfterBook: true,
+      workspaceActive: true,
+    });
     navigate('/schedule/routing');
   };
 

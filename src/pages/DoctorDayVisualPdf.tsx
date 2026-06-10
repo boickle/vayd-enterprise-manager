@@ -376,7 +376,16 @@ function AppointmentPdfBlock({
               minWidth: 0,
             }}
           >
-            <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+            <ul
+              style={{
+                margin: 0,
+                padding: 0,
+                listStyle: 'none',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+              }}
+            >
               {payload.patients.map((p, i) => (
                 <MyDayVisualPatientDetail
                   key={i}

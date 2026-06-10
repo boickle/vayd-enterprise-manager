@@ -30,6 +30,38 @@ export type ForwardBookingDisposition = {
 
 export type PatchForwardBookingDispositionPayload = ForwardBookingDisposition;
 
+function pickStr(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s || null;
+}
+
+function dispositionFromPatchResponse(data: unknown): ForwardBookingDisposition | null {
+  if (!data || typeof data !== 'object') return null;
+  const o = data as Record<string, unknown>;
+  const nested = o.forwardBookingDisposition;
+  const src =
+    nested && typeof nested === 'object' ? (nested as Record<string, unknown>) : o;
+  const mode = src.mode;
+  if (typeof mode !== 'string' || !mode.trim()) return null;
+  return {
+    mode: mode as ForwardBookingDispositionMode,
+    intervalAmount:
+      typeof src.intervalAmount === 'number' && Number.isFinite(src.intervalAmount)
+        ? src.intervalAmount
+        : null,
+    intervalUnit:
+      typeof src.intervalUnit === 'string'
+        ? (src.intervalUnit as ForwardBookingIntervalUnit)
+        : null,
+    bookingNotes: pickStr(src.bookingNotes ?? src.booking_notes ?? src.reason),
+    labsPendingTask:
+      src.labsPendingTask && typeof src.labsPendingTask === 'object'
+        ? (src.labsPendingTask as ForwardBookingDispositionLabsPendingTask)
+        : null,
+  };
+}
+
 /** PATCH /appointments/:id/forward-booking-disposition — save staff’s follow-up choice. */
 export async function patchForwardBookingDisposition(
   appointmentId: number | string,
@@ -43,12 +75,6 @@ export async function patchForwardBookingDisposition(
     body,
     { params }
   );
-  if (data && typeof data === 'object') {
-    const o = data as Record<string, unknown>;
-    if (o.forwardBookingDisposition && typeof o.forwardBookingDisposition === 'object') {
-      return o.forwardBookingDisposition as ForwardBookingDisposition;
-    }
-    if ('mode' in o) return data as ForwardBookingDisposition;
-  }
-  return body;
+  const normalized = dispositionFromPatchResponse(data);
+  return normalized ?? body;
 }

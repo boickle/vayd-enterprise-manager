@@ -129,6 +129,21 @@ export function appendEditedByStaffNote(
   return out;
 }
 
+export function appendLinkedClientStaffNote(
+  existing: string | null | undefined,
+  actor: AppointmentChangeActor,
+  practiceTz: string,
+  clientLabel: string,
+  patientLabel?: string | null
+): string {
+  const name = formatEmployeeFirstNameLastInitial(actor);
+  const date = appointmentChangeDateLabel(practiceTz);
+  const who = patientLabel?.trim()
+    ? `${clientLabel.trim()} / ${patientLabel.trim()}`
+    : clientLabel.trim();
+  return appendStaffNoteLine(existing, `Linked to ${who} by ${name} on ${date}`);
+}
+
 export function appendRescheduledByStaffNote(
   existing: string | null | undefined,
   actor: AppointmentChangeActor,

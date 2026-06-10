@@ -34,10 +34,12 @@ import {
 import { notifyTasksChanged } from '../utils/taskOwnership';
 import { LABS_PENDING_FORWARD_BOOKING_TASK_BODY } from '../utils/forwardBookingCreateLink';
 import {
+  assertForwardBookingDispositionSaved,
   buildForwardBookingDispositionPayload,
   forwardBookingDispositionFromAppointment,
   forwardBookingFormStateFromDisposition,
-  hasPersistedForwardBookingDisposition,
+  forwardBookingFormStateIsComplete,
+  shouldLockForwardBookingDisposition,
   type ForwardBookingDispositionFormState,
 } from '../utils/forwardBookingDisposition';
 import { BookPatientChartButton } from '../components/BookPatientChartButton';
@@ -283,13 +285,23 @@ export function SchedulerActualVisitTimeModal({
     'idle' | 'saving' | 'saved' | 'error'
   >('idle');
   const [dispositionLocked, setDispositionLocked] = useState(() =>
-    hasPersistedForwardBookingDisposition(appt)
+    shouldLockForwardBookingDisposition(appt)
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dispositionHydratedRef = useRef(false);
   const forwardBookingUserEditedRef = useRef(false);
   const dispositionSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const forwardBookingFormRef = useRef<ForwardBookingDispositionFormState>({
+    mode: initialForwardBookingForm.mode,
+    forwardAmount: initialForwardBookingForm.forwardAmount,
+    forwardUnit: initialForwardBookingForm.forwardUnit,
+    bookingNotes: initialForwardBookingForm.bookingNotes,
+    labsAssigneeEmployeeId: initialForwardBookingForm.labsAssigneeEmployeeId,
+    labsTaskTitle: initialForwardBookingForm.labsTaskTitle,
+    labsTaskStartLocal: initialForwardBookingForm.labsTaskStartLocal,
+    labsTaskDueLocal: initialForwardBookingForm.labsTaskDueLocal,
+  });
 
   const requiresForwardBooking = !isStartOnly;
   const skipsForwardBookingList =
@@ -315,6 +327,44 @@ export function SchedulerActualVisitTimeModal({
     [forwardAmount, forwardUnit]
   );
   const forwardBookingPatient = useMemo(() => primaryPatientContext(appt), [appt]);
+
+  useEffect(() => {
+    forwardBookingFormRef.current = {
+      mode: forwardBookingMode,
+      forwardAmount,
+      forwardUnit,
+      bookingNotes,
+      labsAssigneeEmployeeId,
+      labsTaskTitle,
+      labsTaskStartLocal,
+      labsTaskDueLocal,
+    };
+  }, [
+    bookingNotes,
+    forwardAmount,
+    forwardBookingMode,
+    forwardUnit,
+    labsAssigneeEmployeeId,
+    labsTaskDueLocal,
+    labsTaskStartLocal,
+    labsTaskTitle,
+  ]);
+
+  const currentForwardBookingFormState = useCallback((): ForwardBookingDispositionFormState => {
+    return forwardBookingFormRef.current;
+  }, []);
+
+  const shouldPersistForwardBookingDisposition = useCallback((): boolean => {
+    if (!requiresForwardBooking || dispositionLocked) return false;
+    return forwardBookingFormStateIsComplete(currentForwardBookingFormState());
+  }, [currentForwardBookingFormState, dispositionLocked, requiresForwardBooking]);
+
+  const clearPendingDispositionSave = useCallback(() => {
+    if (dispositionSaveTimerRef.current) {
+      clearTimeout(dispositionSaveTimerRef.current);
+      dispositionSaveTimerRef.current = null;
+    }
+  }, []);
 
   const applyForwardBookingForm = useCallback(
     (form: ReturnType<typeof forwardBookingFormStateFromDisposition>) => {
@@ -352,9 +402,7 @@ export function SchedulerActualVisitTimeModal({
       if (!forwardBookingUserEditedRef.current) {
         applyForwardBookingForm(form);
       }
-      if (hasPersistedForwardBookingDisposition(fresh)) {
-        setDispositionLocked(true);
-      }
+      setDispositionLocked(shouldLockForwardBookingDisposition(fresh));
       dispositionHydratedRef.current = true;
     })();
     return () => {
@@ -370,7 +418,19 @@ export function SchedulerActualVisitTimeModal({
   ]);
 
   const persistForwardBookingDisposition = useCallback(async () => {
-    const payload = buildForwardBookingDispositionPayload({
+    const formState = currentForwardBookingFormState();
+    const payload = buildForwardBookingDispositionPayload(formState);
+    const saved = await patchForwardBookingDisposition(appt.id, payload, { practiceId });
+    assertForwardBookingDispositionSaved(payload, saved);
+    return saved;
+  }, [appt.id, currentForwardBookingFormState, practiceId]);
+
+  useEffect(() => {
+    if (!requiresForwardBooking || !dispositionHydratedRef.current || saving || dispositionLocked) {
+      return;
+    }
+
+    const formState: ForwardBookingDispositionFormState = {
       mode: forwardBookingMode,
       forwardAmount,
       forwardUnit,
@@ -379,29 +439,13 @@ export function SchedulerActualVisitTimeModal({
       labsTaskTitle,
       labsTaskStartLocal,
       labsTaskDueLocal,
-    });
-    await patchForwardBookingDisposition(appt.id, payload, { practiceId });
-  }, [
-    appt.id,
-    bookingNotes,
-    forwardAmount,
-    forwardBookingMode,
-    forwardUnit,
-    labsAssigneeEmployeeId,
-    labsTaskDueLocal,
-    labsTaskStartLocal,
-    labsTaskTitle,
-    practiceId,
-  ]);
-
-  useEffect(() => {
-    if (!requiresForwardBooking || !dispositionHydratedRef.current || saving || dispositionLocked) {
+    };
+    if (!forwardBookingFormStateIsComplete(formState)) {
+      clearPendingDispositionSave();
       return;
     }
 
-    if (dispositionSaveTimerRef.current) {
-      clearTimeout(dispositionSaveTimerRef.current);
-    }
+    clearPendingDispositionSave();
 
     dispositionSaveTimerRef.current = setTimeout(() => {
       setDispositionSaveStatus('saving');
@@ -411,12 +455,11 @@ export function SchedulerActualVisitTimeModal({
     }, 600);
 
     return () => {
-      if (dispositionSaveTimerRef.current) {
-        clearTimeout(dispositionSaveTimerRef.current);
-      }
+      clearPendingDispositionSave();
     };
   }, [
     bookingNotes,
+    clearPendingDispositionSave,
     forwardAmount,
     forwardBookingMode,
     forwardUnit,
@@ -577,8 +620,11 @@ export function SchedulerActualVisitTimeModal({
         let updated = appt;
         if (opts.start) updated = await saveStart(opts.start);
         if (opts.end) updated = await saveEnd(opts.end);
-        if (savingEnd && requiresForwardBooking && !dispositionLocked) {
-          await persistForwardBookingDisposition();
+        if (shouldPersistForwardBookingDisposition()) {
+          clearPendingDispositionSave();
+          const savedDisposition = await persistForwardBookingDisposition();
+          updated = { ...updated, forwardBookingDisposition: savedDisposition };
+          setDispositionLocked(shouldLockForwardBookingDisposition(updated));
         }
         await saveForwardBookingIfNeeded(savingEnd);
         onSaved(updated);
@@ -594,7 +640,17 @@ export function SchedulerActualVisitTimeModal({
         setSaving(false);
       }
     },
-    [appt, dispositionLocked, onClose, onSaved, persistForwardBookingDisposition, requiresForwardBooking, saveEnd, saveStart, saveForwardBookingIfNeeded]
+    [
+      appt,
+      clearPendingDispositionSave,
+      onClose,
+      onSaved,
+      persistForwardBookingDisposition,
+      saveEnd,
+      saveStart,
+      saveForwardBookingIfNeeded,
+      shouldPersistForwardBookingDisposition,
+    ]
   );
 
   const validateForwardBooking = (savingEnd: boolean): boolean => {

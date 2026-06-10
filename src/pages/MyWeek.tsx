@@ -26,6 +26,12 @@ import {
 import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
 import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
+import {
+  appointmentNotesFromDoctorDayRow,
+  petAlertsFromDoctorDayRow,
+  sexFromDoctorDayRow,
+  staffNotesFromDoctorDayRow,
+} from '../utils/myDayVisualPatientDetails';
 import { AlertTriangle, Heart } from 'lucide-react';
 import {
   clientFixedTimeUsesDoctorDayClockForDriveLayout,
@@ -163,14 +169,22 @@ function addressKeyForAppt(a: DoctorDayAppt): string | null {
   return free ? `free:${free}` : null;
 }
 
-type PatientBadge = {
+export type PatientBadge = {
   name: string;
+  sourceApptId?: string | number | null;
+  pimsId?: string | null;
   type?: string | null;
+  /** @deprecated use appointmentNotes */
   desc?: string | null;
+  appointmentNotes?: string | null;
+  staffNotes?: string | null;
+  sex?: string | null;
+  petAlerts?: string | null;
   /** confirmStatusName — pre-exam / check-in */
   status?: string | null;
   /** statusName — records status (PIMS) */
   recordStatus?: string | null;
+  /** @deprecated use petAlerts */
   alerts?: string | null;
   isMember?: boolean;
   membershipName?: string | null;
@@ -179,10 +193,12 @@ function makePatientBadge(a: any): PatientBadge {
   const name =
     str(a, 'patientName') || str(a, 'petName') || str(a, 'animalName') || str(a, 'name') || 'Patient';
   const type = str(a, 'appointmentType') || str(a, 'appointmentTypeName') || str(a, 'serviceName') || null;
-  const desc = str(a, 'description') || str(a, 'visitReason') || null;
+  const appointmentNotes = appointmentNotesFromDoctorDayRow(a);
+  const staffNotes = staffNotesFromDoctorDayRow(a);
+  const petAlerts = petAlertsFromDoctorDayRow(a);
+  const sex = sexFromDoctorDayRow(a);
   const status = str(a, 'confirmStatusName') ?? null;
   const recordStatus = str(a, 'statusName') ?? null;
-  const alerts = str(a, 'alerts') || null;
   const pat = a?.patient;
   const isMember = Boolean(a?.isMember ?? pat?.isMember);
   const rawMem = a?.membershipName ?? pat?.membershipName;
@@ -192,7 +208,22 @@ function makePatientBadge(a: any): PatientBadge {
       : rawMem != null && String(rawMem).trim()
         ? String(rawMem).trim()
         : null;
-  return { name, type, desc, status, recordStatus, alerts, isMember, membershipName };
+  return {
+    name,
+    sourceApptId: (a as { id?: string | number | null })?.id ?? null,
+    pimsId: str(a, 'patientPimsId') ?? null,
+    type,
+    desc: appointmentNotes,
+    appointmentNotes,
+    staffNotes,
+    sex,
+    petAlerts,
+    status,
+    recordStatus,
+    alerts: petAlerts,
+    isMember,
+    membershipName,
+  };
 }
 
 function statusPillStyle(text: string): CSSProperties {

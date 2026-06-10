@@ -70,7 +70,7 @@ export function forwardBookingDispositionFromAppointment(
     mode,
     intervalAmount: pickPositiveInt(src.intervalAmount),
     intervalUnit: pickUnit(src.intervalUnit),
-    bookingNotes: pickStr(src.bookingNotes),
+    bookingNotes: pickStr(src.bookingNotes ?? src.booking_notes ?? src.reason),
     labsPendingTask,
   };
 }
@@ -156,11 +156,78 @@ export function buildForwardBookingDispositionPayload(
   return payload;
 }
 
+/** True when all required fields for the chosen mode are present. */
+export function forwardBookingDispositionIsComplete(
+  disposition: ForwardBookingDisposition | null | undefined
+): boolean {
+  if (!disposition?.mode) return false;
+
+  switch (disposition.mode) {
+    case 'booked_at_appointment':
+    case 'already_booked':
+      return true;
+    case 'not_appropriate':
+      return Boolean(disposition.bookingNotes?.trim());
+    case 'forward_book_fields':
+      return (
+        disposition.intervalAmount != null &&
+        disposition.intervalAmount > 0 &&
+        Boolean(disposition.intervalUnit)
+      );
+    case 'labs_pending': {
+      const l = disposition.labsPendingTask;
+      const assigneeId = l?.assignedToEmployeeId;
+      return (
+        assigneeId != null &&
+        Number(assigneeId) > 0 &&
+        Boolean(l?.title?.trim()) &&
+        Boolean(l?.startAt?.trim())
+      );
+    }
+    default:
+      return false;
+  }
+}
+
+export function forwardBookingFormStateIsComplete(
+  state: ForwardBookingDispositionFormState
+): boolean {
+  return forwardBookingDispositionIsComplete(buildForwardBookingDispositionPayload(state));
+}
+
 /** True when the appointment already has a persisted follow-up disposition from the API. */
 export function hasPersistedForwardBookingDisposition(
   appt: Appointment | Record<string, unknown> | null | undefined
 ): boolean {
   return forwardBookingDispositionFromAppointment(appt ?? {})?.mode != null;
+}
+
+/** Lock the End Visit follow-up UI when a complete disposition is already saved. */
+export function shouldLockForwardBookingDisposition(
+  appt: Appointment | Record<string, unknown> | null | undefined
+): boolean {
+  return forwardBookingDispositionIsComplete(
+    forwardBookingDispositionFromAppointment(appt ?? {})
+  );
+}
+
+/** Throw when the API accepted the PATCH but dropped required fields (helps diagnose backend gaps). */
+export function assertForwardBookingDispositionSaved(
+  sent: ForwardBookingDisposition,
+  saved: ForwardBookingDisposition | null | undefined
+): void {
+  if (!saved?.mode) {
+    throw new Error('The server did not save the forward booking choice. Check that PATCH /forward-booking-disposition is implemented.');
+  }
+  if (sent.mode === 'not_appropriate') {
+    const sentNotes = sent.bookingNotes?.trim();
+    const savedNotes = saved.bookingNotes?.trim();
+    if (sentNotes && !savedNotes) {
+      throw new Error(
+        'The server saved "Not appropriate" but did not store the reason. The API must persist bookingNotes for mode not_appropriate.'
+      );
+    }
+  }
 }
 
 /** Attach normalized disposition onto appointment rows from range/realtime APIs. */

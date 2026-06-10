@@ -31,6 +31,12 @@ import {
   useRoutingCalendarPreviewActive,
   useRoutingCalendarPreviewNavigationGuard,
 } from '../utils/routingCalendarPreviewGuard';
+import {
+  FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE,
+  FORWARD_BOOKING_ROUTE_PATH,
+  useForwardBookingWorkspaceLockActive,
+  useForwardBookingWorkspaceNavigationGuard,
+} from '../utils/forwardBookingWorkspaceGuard';
 import { markSchedulerHandoffPreferRoutingDoctor } from '../utils/schedulerCalendarHandoff';
 import { evetCreateClientLink } from '../utils/evet';
 import './ScheduleLayout.css';
@@ -101,6 +107,17 @@ export default function ScheduleLayout() {
 
   const routingCalendarPreviewActive = useRoutingCalendarPreviewActive();
   useRoutingCalendarPreviewNavigationGuard(routingCalendarPreviewActive);
+
+  const forwardBookingWorkspaceLockActive = useForwardBookingWorkspaceLockActive();
+  useForwardBookingWorkspaceNavigationGuard(forwardBookingWorkspaceLockActive);
+
+  useEffect(() => {
+    if (!forwardBookingWorkspaceLockActive) return;
+    if (!location.pathname.startsWith('/schedule')) return;
+    if (location.pathname === FORWARD_BOOKING_ROUTE_PATH) return;
+    window.alert(FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE);
+    navigate(FORWARD_BOOKING_ROUTE_PATH, { replace: true });
+  }, [forwardBookingWorkspaceLockActive, location.pathname, navigate]);
 
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 901px)');
@@ -209,7 +226,12 @@ export default function ScheduleLayout() {
               to={appointmentHref}
               className="schedule-app__quick-link schedule-app__quick-link--primary"
               title={railCollapsedEffective ? 'New appointment' : undefined}
-              onClick={() => {
+              onClick={(e) => {
+                if (forwardBookingWorkspaceLockActive) {
+                  e.preventDefault();
+                  window.alert(FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE);
+                  return;
+                }
                 markSchedulerHandoffPreferRoutingDoctor();
               }}
             >

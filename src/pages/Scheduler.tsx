@@ -22,6 +22,7 @@ import {
   fetchAppointmentById,
   appointmentAlternateAddressText,
   appointmentHasAlternateLocation,
+  appointmentWithoutAlternateRoutingAddress,
   fetchAppointmentsRange,
   isAppointmentCancelledOnPracticeCalendar,
   isAppointmentNoLocation,
@@ -54,11 +55,12 @@ import {
   filterAppointmentTypesByIds,
   rolesIncludeAdminBypass,
 } from '../utils/manualBookingPermissions';
-import { buildAppointmentTypeCatalog } from '../utils/appointmentTypeSettings';
+import { buildAppointmentTypeCatalog, appointmentFormFlags } from '../utils/appointmentTypeSettings';
 import type { Appointment, Client, Patient } from '../api/roomLoader';
 import {
   computeEditPreviewPopoverPosition,
   computeVisitHighlightsPopoverPosition,
+  fallbackEditPreviewPopoverPosition,
   rectFromElement,
   type HoverPopoverPositionResult,
 } from '../utils/hoverPopoverPosition';
@@ -109,10 +111,6 @@ import {
   loadRoutingPreviewClientContact,
   previewClientContactFromAppointment,
 } from '../utils/schedulerPreviewClientContact';
-import {
-  formatVisitHighlightsNextAppointmentLine,
-  loadNextScheduledAppointmentForVisit,
-} from '../utils/nextScheduledAppointmentForVisit';
 import type { PreviewPopoverClientContact } from '../components/PreviewPopoverClientContact';
 import ScheduleOverrideModal from '../components/ScheduleOverrideModal';
 import { SchedulerReconcileModal } from '../components/SchedulerReconcileModal';
@@ -153,7 +151,7 @@ import {
   resolveAppointmentChangeActorFromAuth,
   detectEditVisitChanges,
 } from '../utils/appointmentChangeAuditNote';
-import { commitEditVisit, type EditVisitFormSnapshot } from '../utils/editVisitCommit';
+import { commitEditVisit, commitLinkClientFromEditVisitSelection, validateEditVisitLinkSelection, type EditVisitFormSnapshot } from '../utils/editVisitCommit';
 import {
   fetchEditVisitTypeScoreCompare,
   type EditVisitPreviewScoreCompare,
@@ -181,6 +179,8 @@ import {
   SchedulerEditVisitModal,
   type SchedulerEditVisitModalHandle,
 } from './SchedulerEditVisitModal';
+import type { EditVisitLinkSelection } from '../components/EditVisitLinkClientPanel';
+import { editVisitLinkClearsAlternateAddress, visitAddressForLinkMatching } from '../utils/visitAddressMatch';
 import { SchedulerActualVisitTimeModal } from './SchedulerActualVisitTimeModal';
 import { SchedulerRemoveVisitModal } from './SchedulerRemoveVisitModal';
 import {
@@ -216,6 +216,7 @@ import {
   EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE,
   getScheduleCalendarPreviewBlockedMessage,
   RESCHEDULE_CALENDAR_BLOCKED_MESSAGE,
+  FORWARD_BOOKING_CALENDAR_BLOCKED_MESSAGE,
   ROUTING_PREVIEW_CALENDAR_BLOCKED_EVENT,
 } from '../utils/routingCalendarPreviewGuard';
 import {
@@ -252,7 +253,10 @@ import {
 } from '../utils/routingRescheduleScoreCompare';
 import {
   clearRoutingForwardBookingIntent,
+  dismissRoutingForwardBookingWorkspace,
+  forwardBookingWorkspaceIsActive,
   readRoutingForwardBookingIntent,
+  ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT,
 } from '../utils/routingForwardBookingIntent';
 import {
   FORWARD_BOOKING_LIST_PATH,
@@ -1683,47 +1687,6 @@ export function SchedulerHoverContent({
   const createdLine = formatAppointmentAuditWhenByLine(createdWhen, createdBy);
   const modifiedLine = formatAppointmentAuditWhenByLine(modifiedWhen, modifiedBy);
   const showAuditFooter = !!(createdLine || modifiedLine);
-  const [nextScheduledAppt, setNextScheduledAppt] = useState<Appointment | null>(null);
-  const [nextScheduledApptLoading, setNextScheduledApptLoading] = useState(false);
-
-  const nextScheduledAsOfIso = useMemo(() => {
-    const candidates = [
-      Date.now(),
-      appt.appointmentEnd ? Date.parse(appt.appointmentEnd) : NaN,
-      appt.appointmentEndActual ? Date.parse(appt.appointmentEndActual) : NaN,
-    ].filter((ms) => Number.isFinite(ms));
-    return new Date(Math.max(...candidates)).toISOString();
-  }, [appt.appointmentEnd, appt.appointmentEndActual, appt.id]);
-
-  useEffect(() => {
-    let on = true;
-    setNextScheduledApptLoading(true);
-    setNextScheduledAppt(null);
-    void (async () => {
-      try {
-        const next = await loadNextScheduledAppointmentForVisit(appt, PRACTICE_ID, {
-          asOf: nextScheduledAsOfIso,
-        });
-        if (on) setNextScheduledAppt(next);
-      } catch {
-        if (on) setNextScheduledAppt(null);
-      } finally {
-        if (on) setNextScheduledApptLoading(false);
-      }
-    })();
-    return () => {
-      on = false;
-    };
-  }, [appt, nextScheduledAsOfIso]);
-
-  const nextScheduledLine = useMemo(() => {
-    if (!nextScheduledAppt) return null;
-    return formatVisitHighlightsNextAppointmentLine(
-      nextScheduledAppt,
-      PRACTICE_TZ,
-      providerLabelFormal(nextScheduledAppt.primaryProvider)
-    );
-  }, [nextScheduledAppt]);
 
   return (
     <>
@@ -1947,12 +1910,6 @@ export function SchedulerHoverContent({
             ) : null}
           </div>
         ) : null}
-        <>
-          <hr className="scheduler-tooltip-vh-divider" />
-          <VisitHighlightsRow label="Next Appointment">
-            {nextScheduledApptLoading ? 'Loading…' : nextScheduledLine ?? 'None'}
-          </VisitHighlightsRow>
-        </>
         {showAuditFooter ? (
           <>
             <hr className="scheduler-tooltip-vh-divider" />
@@ -2653,36 +2610,32 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [editAppt, setEditAppt] = useState<Appointment | null>(null);
   const [editTimePreview, setEditTimePreview] = useState<EditVisitTimePreview | null>(null);
   const [editPlacementMode, setEditPlacementMode] = useState(false);
-  const editPlacementMountRef = useRef<HTMLDivElement>(null);
+  const [editSidebarMountEl, setEditSidebarMountEl] = useState<HTMLDivElement | null>(null);
+  const editSidebarMountRef = useCallback((node: HTMLDivElement | null) => {
+    setEditSidebarMountEl(node);
+  }, []);
   const editVisitModalRef = useRef<SchedulerEditVisitModalHandle>(null);
   const editVisitFormSnapshotRef = useRef<EditVisitFormSnapshot | null>(null);
+  const [editVisitLinkSelection, setEditVisitLinkSelection] = useState<EditVisitLinkSelection | null>(null);
   const [editPreviewScoreCompare, setEditPreviewScoreCompare] =
     useState<EditVisitPreviewScoreCompare | null>(null);
   const [editPreviewScoreLoading, setEditPreviewScoreLoading] = useState(false);
   const [editPreviewScoreError, setEditPreviewScoreError] = useState<string | null>(null);
+  const [editPreviewConfirming, setEditPreviewConfirming] = useState(false);
   const [editVisitHighlightId, setEditVisitHighlightId] = useState<number | null>(null);
   const [pendingFocusApptId, setPendingFocusApptId] = useState<number | null>(null);
   const editVisitHighlightTimerRef = useRef<number | null>(null);
   const editVisitPostBookScrollSigRef = useRef<string>('');
-  const [editModalPortalTarget, setEditModalPortalTarget] = useState<HTMLElement | null>(null);
-
   useLayoutEffect(() => {
-    if (!editAppt) {
-      setEditModalPortalTarget(null);
-      return;
+    if (!editPlacementMode || embedInRoutingWorkspace) {
+      setEditSidebarMountEl(null);
     }
-    if (editPlacementMode && !embedInRoutingWorkspace) {
-      setEditModalPortalTarget(editPlacementMountRef.current);
-      return;
-    }
-    if (embedInRoutingWorkspace) {
-      setEditModalPortalTarget(
-        document.querySelector('.schedule-routing-workspace__routing-inner') as HTMLElement | null
-      );
-      return;
-    }
-    setEditModalPortalTarget(document.body);
-  }, [editAppt, editPlacementMode, embedInRoutingWorkspace]);
+  }, [editPlacementMode, embedInRoutingWorkspace]);
+
+  /** Practice calendar only: inline sidebar during View Placement. Routing workspace uses body modal like View appointment. */
+  const editVisitInlinePaneMode = Boolean(
+    editPlacementMode && !embedInRoutingWorkspace && editSidebarMountEl
+  );
   const [contextMenu, setContextMenu] = useState<{ appt: Appointment; x: number; y: number } | null>(
     null
   );
@@ -3545,19 +3498,45 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [embedInRoutingWorkspace, routingPreview, rescheduleSourceHighlightIds]
   );
 
+  const [forwardBookingIntentTick, setForwardBookingIntentTick] = useState(0);
+  useEffect(() => {
+    const sync = () => setForwardBookingIntentTick((n) => n + 1);
+    sync();
+    window.addEventListener(ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT, sync);
+    return () => window.removeEventListener(ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT, sync);
+  }, []);
+
+  const forwardBookingLockActive = useMemo(() => {
+    void forwardBookingIntentTick;
+    return Boolean(embedInRoutingWorkspace && forwardBookingWorkspaceIsActive());
+  }, [embedInRoutingWorkspace, forwardBookingIntentTick]);
+
+  const forwardBookingBarLabel = useMemo(() => {
+    void forwardBookingIntentTick;
+    const intent = readRoutingForwardBookingIntent();
+    if (!intent) return 'Forward booking';
+    const client = intent.clientDisplayLabel?.trim() || 'Client';
+    const due = intent.targetDueDate?.trim()
+      ? ` · due ~${intent.targetDueDate.slice(0, 10)}`
+      : '';
+    return `${client}${due}`;
+  }, [forwardBookingIntentTick]);
+
   const scheduleCalendarInteractionLock = useMemo(
     () =>
       Boolean(
         routingPreview ||
           editTimePreview ||
           editVisitCalendarLock ||
-          rescheduleWorkspaceActive
+          rescheduleWorkspaceActive ||
+          forwardBookingLockActive
       ),
     [
       routingPreview,
       editTimePreview,
       editVisitCalendarLock,
       rescheduleWorkspaceActive,
+      forwardBookingLockActive,
     ]
   );
 
@@ -3570,6 +3549,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       showCalendarBlockedNotice(RESCHEDULE_CALENDAR_BLOCKED_MESSAGE);
       return;
     }
+    if (forwardBookingLockActive) {
+      showCalendarBlockedNotice(FORWARD_BOOKING_CALENDAR_BLOCKED_MESSAGE);
+      return;
+    }
     if (editTimePreview) {
       showCalendarBlockedNotice(EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE);
       return;
@@ -3578,6 +3561,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, [
     editVisitCalendarLock,
     rescheduleWorkspaceActive,
+    forwardBookingLockActive,
     editTimePreview,
     notifyEditVisitCalendarLocked,
     showCalendarBlockedNotice,
@@ -3590,7 +3574,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, [showCalendarBlockedNotice]);
 
   const embeddedRoutingCalendarLocked = Boolean(
-    embedInRoutingWorkspace && (routingPreview || rescheduleWorkspaceActive)
+    embedInRoutingWorkspace &&
+      (routingPreview || rescheduleWorkspaceActive || forwardBookingLockActive)
   );
 
   const calendarFocusDim =
@@ -4143,23 +4128,31 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             editPreviewScoreCompare?.arrivalWindowAfter
           )
         : null);
-    return base.map((a) =>
-      a.id === editTimePreview.appointmentId
-        ? {
-            ...a,
-            appointmentStart: editTimePreview.appointmentStart,
-            appointmentEnd: editTimePreview.appointmentEnd,
-            ...(draftType ? { appointmentType: draftType } : {}),
-            ...(arrivalAfter ? { effectiveWindow: arrivalAfter } : {}),
-          }
-        : a
-    );
+    return base.map((a) => {
+      if (a.id !== editTimePreview.appointmentId) return a;
+      let merged: Appointment = {
+        ...a,
+        appointmentStart: editTimePreview.appointmentStart,
+        appointmentEnd: editTimePreview.appointmentEnd,
+        ...(draftType ? { appointmentType: draftType } : {}),
+        ...(arrivalAfter ? { effectiveWindow: arrivalAfter } : {}),
+      };
+      if (
+        editAppt &&
+        editVisitLinkClearsAlternateAddress(editAppt, editVisitLinkSelection)
+      ) {
+        merged = appointmentWithoutAlternateRoutingAddress(merged);
+      }
+      return merged;
+    });
   }, [
     filteredAppointments,
     editTimePreview,
     reschedulePreviewHiddenApptIds,
     typeList,
     editPreviewScoreCompare?.arrivalWindowAfter,
+    editAppt,
+    editVisitLinkSelection,
   ]);
 
   /** Routed timeline range for the visit that opened reschedule — keeps household highlights aligned at ETA. */
@@ -4652,14 +4645,19 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     useState<HoverAnchorRect | null>(null);
 
   const refreshEditPreviewAnchor = useCallback(() => {
-    const el = document.querySelector('[data-edit-time-preview="1"]');
-    const slotEl = el instanceof HTMLElement ? el : null;
-    const columnEl = slotEl?.closest('.scheduler-day-col');
-    setEditPreviewAnchorRect(rectFromElement(slotEl));
+    let slotEl = document.querySelector('[data-edit-time-preview="1"]');
+    if (!(slotEl instanceof HTMLElement) && editTimePreview?.appointmentId != null) {
+      const byId = document.querySelector(
+        `[data-appt-id="${CSS.escape(String(editTimePreview.appointmentId))}"]`
+      );
+      if (byId instanceof HTMLElement) slotEl = byId;
+    }
+    const columnEl = slotEl instanceof HTMLElement ? slotEl.closest('.scheduler-day-col') : null;
+    setEditPreviewAnchorRect(rectFromElement(slotEl instanceof HTMLElement ? slotEl : null));
     setEditPreviewDayColumnRect(
       rectFromElement(columnEl instanceof HTMLElement ? columnEl : null)
     );
-  }, []);
+  }, [editTimePreview?.appointmentId]);
 
   const refreshRoutingPreviewAnchor = useCallback(() => {
     const el = document.querySelector('[data-routing-preview-slot="1"]');
@@ -4707,20 +4705,55 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   );
 
   const editPreviewPopoverPos = useMemo(() => {
-    if (!editTimePreview || !editPreviewAnchorRect) return null;
+    if (!editTimePreview) return null;
     const vwW = typeof window !== 'undefined' ? window.innerWidth : 1200;
     const vwH = typeof window !== 'undefined' ? window.innerHeight : 800;
-    return computeEditPreviewPopoverPosition({
-      slotAnchor: editPreviewAnchorRect,
-      dayColumnAnchor: editPreviewDayColumnRect,
+    if (editPreviewAnchorRect) {
+      return computeEditPreviewPopoverPosition({
+        slotAnchor: editPreviewAnchorRect,
+        dayColumnAnchor: editPreviewDayColumnRect,
+        vwW,
+        vwH,
+        cardW: 300,
+        cardEstH: 340,
+        padding: 12,
+        gutter: 10,
+      });
+    }
+    return fallbackEditPreviewPopoverPosition({
       vwW,
       vwH,
       cardW: 300,
       cardEstH: 340,
       padding: 12,
-      gutter: 10,
     });
   }, [editTimePreview, editPreviewAnchorRect, editPreviewDayColumnRect, editPreviewScoreCompare]);
+
+  /** Preview slot may mount after drive refresh — retry anchor until the calendar paints. */
+  useEffect(() => {
+    if (!editTimePreview || editPreviewAnchorRect) return;
+    if (!showTimeGrid) return;
+    let attempts = 0;
+    const tick = () => {
+      attempts += 1;
+      refreshEditPreviewAnchor();
+    };
+    tick();
+    const id = window.setInterval(() => {
+      if (attempts >= 24) {
+        window.clearInterval(id);
+        return;
+      }
+      tick();
+    }, 100);
+    return () => window.clearInterval(id);
+  }, [
+    editTimePreview,
+    editPreviewAnchorRect,
+    loading,
+    showTimeGrid,
+    refreshEditPreviewAnchor,
+  ]);
 
   useLayoutEffect(() => {
     if (!routingPreview) {
@@ -4982,6 +5015,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [providers, rawAppointments],
   );
 
+  const dismissForwardBookingWorkspace = useCallback(() => {
+    dismissRoutingForwardBookingWorkspace();
+    setForwardBookingIntentTick((n) => n + 1);
+    setBookSlot(null);
+    setBookPrefill(null);
+    driveSoftRefreshRef.current = true;
+    setDriveRefreshNonce((n) => n + 1);
+    navigate(FORWARD_BOOKING_LIST_PATH);
+  }, [navigate]);
+
   const dismissRescheduleWorkspace = useCallback(() => {
     const intent = readRoutingRescheduleIntent();
     if (intent) {
@@ -5020,12 +5063,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         const doctorName = providers.find((p) => String(p.id) === docId)?.name ?? 'Provider';
         const tz = (day.timezone && day.timezone.trim()) || PRACTICE_TZ;
         let exportDay = day;
+        let apptsById: Map<string, unknown> | undefined;
         try {
           const range = await fetchAppointmentsRangeForLocalDay({
             dateIso: dayIso,
             practiceTimeZone: tz,
             primaryProviderId: docId,
           });
+          apptsById = new Map(range.map((a) => [String(a.id), a]));
           exportDay = {
             ...day,
             households: enrichWeekHouseholdsFromRangeAppointments(day.households, range),
@@ -5038,6 +5083,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           showByDriveTime,
           practiceTimeZone: tz,
           dateIso: dayIso,
+          apptsById,
         });
         const dateLabel = DateTime.fromISO(dayIso).toLocaleString(DateTime.DATE_MED);
         const safeName = doctorName.replace(/\s+/g, '_').replace(/[^\w.-]+/g, '');
@@ -5087,7 +5133,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const end = start.plus({ minutes: mins });
     const isAdminOrSuper = rolesLower.includes('admin') || rolesLower.includes('superadmin');
     const ri = readRoutingRescheduleIntent();
-    const fbi = readRoutingForwardBookingIntent();
+    const fbi = forwardBookingWorkspaceIsActive() ? readRoutingForwardBookingIntent() : null;
     const rescheduleTargets = ri ? rescheduleScopeTargets(ri) : null;
     const rescheduleIds =
       routingPreview.rescheduleAppointmentIds?.filter((id) => Number.isFinite(Number(id))) ??
@@ -5543,103 +5589,134 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     clearEditVisitTimePreview();
     setEditPlacementMode(false);
     setEditAppt(null);
+    setEditVisitLinkSelection(null);
     setEditPreviewScoreCompare(null);
     setEditPreviewScoreError(null);
     setEditPreviewScoreLoading(false);
+    setEditPreviewConfirming(false);
   }, []);
 
-  const confirmEditTimeFromSlot = useCallback(() => {
-    void (async () => {
-      const preview = readEditVisitTimePreview() ?? editTimePreview;
-      const snapshot = editVisitFormSnapshotRef.current;
-      if (!preview || !snapshot || !editAppt) return;
-      const scoreLine = editPreviewScoreCompare?.summaryLine;
-      try {
-        const typeId =
-          preview.kind === 'type' && preview.appointmentTypeId != null
-            ? Number(preview.appointmentTypeId)
-            : snapshot.appointmentTypeId;
-        const editChanges = detectEditVisitChanges(
-          {
-            description: editAppt.description,
-            instructions: editAppt.instructions,
-            appointmentTypeId: editAppt.appointmentType?.id,
-            appointmentStart: editAppt.appointmentStart,
-            appointmentEnd: editAppt.appointmentEnd,
-          },
-          {
-            description: snapshot.description,
-            instructions: snapshot.instructions,
-            appointmentTypeId: typeId,
-            appointmentStart: preview.appointmentStart,
-            appointmentEnd: preview.appointmentEnd,
-          }
-        );
-        const updated = await commitEditVisit({
-          appointmentId: Number(editAppt.id),
-          practiceId: PRACTICE_ID,
+  const confirmEditTimeFromSlot = useCallback(async (): Promise<void> => {
+    const preview = readEditVisitTimePreview() ?? editTimePreview;
+    const snapshot = editVisitFormSnapshotRef.current;
+    if (!preview || !snapshot || !editAppt) {
+      if (!preview) {
+        setToast('Preview expired — open Preview schedule again.');
+      } else if (!snapshot) {
+        setToast('Still preparing the visit form — try Book again in a moment.');
+      }
+      return;
+    }
+    const scoreLine = editPreviewScoreCompare?.summaryLine;
+    setEditPreviewConfirming(true);
+    try {
+      const typeId =
+        preview.kind === 'type' && preview.appointmentTypeId != null
+          ? Number(preview.appointmentTypeId)
+          : snapshot.appointmentTypeId;
+      const previewType = typeList.find((t) => Number(t.id) === typeId);
+      const previewTypeFlags = appointmentFormFlags(previewType);
+      const linkValidationError = validateEditVisitLinkSelection({
+        linkSelection: editVisitLinkSelection,
+        visitAddress: visitAddressForLinkMatching(editAppt),
+        requirePatient: previewTypeFlags.requirePatient,
+      });
+      if (linkValidationError) {
+        setToast(linkValidationError);
+        return;
+      }
+      const editChanges = detectEditVisitChanges(
+        {
+          description: editAppt.description,
+          instructions: editAppt.instructions,
+          appointmentTypeId: editAppt.appointmentType?.id,
+          appointmentStart: editAppt.appointmentStart,
+          appointmentEnd: editAppt.appointmentEnd,
+        },
+        {
+          description: snapshot.description,
+          instructions: snapshot.instructions,
+          appointmentTypeId: typeId,
           appointmentStart: preview.appointmentStart,
           appointmentEnd: preview.appointmentEnd,
-          form: snapshot,
-          previewAppointmentTypeId:
-            preview.kind === 'type' ? preview.appointmentTypeId ?? null : null,
-          editedByAudit: {
+        }
+      );
+      const updated = await commitEditVisit({
+        appointmentId: Number(editAppt.id),
+        practiceId: PRACTICE_ID,
+        appointmentStart: preview.appointmentStart,
+        appointmentEnd: preview.appointmentEnd,
+        form: snapshot,
+        previewAppointmentTypeId:
+          preview.kind === 'type' ? preview.appointmentTypeId ?? null : null,
+        editedByAudit: {
+          actor: appointmentChangeActor,
+          practiceTz: PRACTICE_TZ,
+          changes: editChanges,
+        },
+        linkClient: commitLinkClientFromEditVisitSelection(
+          editAppt,
+          editVisitLinkSelection,
+          {
             actor: appointmentChangeActor,
             practiceTz: PRACTICE_TZ,
-            changes: editChanges,
-          },
-        });
-        if (updated?.id != null) {
-          setRawAppointments((prev) => {
-            const idx = prev.findIndex((a) => a.id === updated.id);
-            if (idx === -1) return prev;
-            const next = [...prev];
-            next[idx] = { ...next[idx], ...updated };
-            return next;
-          });
-          setEditAppt(updated);
-        }
-        let routingFeedbackWarning: string | undefined;
-        if (editPreviewScoreCompare?.feedbackHandoff) {
-          const fb = await submitEditVisitPreviewAcceptedFeedback(editPreviewScoreCompare.feedbackHandoff);
-          if (!fb.submitted && fb.error) {
-            routingFeedbackWarning =
-              'Appointment saved, but routing score could not be linked. ' + fb.error;
           }
-        }
-        const typeName =
-          preview.kind === 'type' && preview.appointmentTypeId != null
-            ? typeList.find((t) => t.id === preview.appointmentTypeId)?.name ||
-              typeList.find((t) => t.id === preview.appointmentTypeId)?.prettyName
-            : null;
-        const patientLabel = patientsForAppointment(updated ?? editAppt)
-          .map((p) => p.name)
-          .filter(Boolean)
-          .join(', ');
-        const bookedParts = [
-          typeName ? `Saved as ${typeName}` : 'Appointment updated',
-          patientLabel || clientLabel((updated ?? editAppt).client) || null,
-          scoreLine,
-          editPreviewScoreCompare?.windowLine,
-        ].filter(Boolean);
-        const savedId = Number((updated ?? editAppt).id);
-        if (Number.isFinite(savedId) && savedId > 0) {
-          pulseEditVisitHighlight(savedId);
-        }
-        closeEditVisitModal();
-        void loadRange({ refreshDrive: true });
-        setToast(routingFeedbackWarning ?? bookedParts.join(' · ') ?? 'Appointment updated.');
-      } catch (e: unknown) {
-        const msg =
-          e instanceof Error && e.message.trim()
-            ? e.message
-            : 'Could not save changes.';
-        setToast(msg);
+        ),
+      });
+      if (updated?.id != null) {
+        setRawAppointments((prev) => {
+          const idx = prev.findIndex((a) => a.id === updated.id);
+          if (idx === -1) return prev;
+          const next = [...prev];
+          next[idx] = { ...next[idx], ...updated };
+          return next;
+        });
       }
-    })();
+      closeEditVisitModal();
+      let routingFeedbackWarning: string | undefined;
+      if (editPreviewScoreCompare?.feedbackHandoff) {
+        const fb = await submitEditVisitPreviewAcceptedFeedback(
+          editPreviewScoreCompare.feedbackHandoff
+        );
+        if (!fb.submitted && fb.error) {
+          routingFeedbackWarning =
+            'Appointment saved, but routing score could not be linked. ' + fb.error;
+        }
+      }
+      const typeName =
+        preview.kind === 'type' && preview.appointmentTypeId != null
+          ? typeList.find((t) => t.id === preview.appointmentTypeId)?.name ||
+            typeList.find((t) => t.id === preview.appointmentTypeId)?.prettyName
+          : null;
+      const patientLabel = patientsForAppointment(updated ?? editAppt)
+        .map((p) => p.name)
+        .filter(Boolean)
+        .join(', ');
+      const bookedParts = [
+        typeName ? `Saved as ${typeName}` : 'Appointment updated',
+        patientLabel || clientLabel((updated ?? editAppt).client) || null,
+        scoreLine,
+        editPreviewScoreCompare?.windowLine,
+      ].filter(Boolean);
+      const savedId = Number((updated ?? editAppt).id);
+      if (Number.isFinite(savedId) && savedId > 0) {
+        pulseEditVisitHighlight(savedId);
+      }
+      void loadRange({ refreshDrive: true });
+      setToast(routingFeedbackWarning ?? bookedParts.join(' · ') ?? 'Appointment updated.');
+    } catch (e: unknown) {
+      const msg =
+        e instanceof Error && e.message.trim()
+          ? e.message
+          : 'Could not save changes.';
+      setToast(msg);
+    } finally {
+      setEditPreviewConfirming(false);
+    }
   }, [
     editTimePreview,
     editAppt,
+    editVisitLinkSelection,
     closeEditVisitModal,
     loadRange,
     editPreviewScoreCompare,
@@ -5846,6 +5923,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             setModalAppt(appt);
             return;
           case 'edit':
+            setEditVisitLinkSelection(null);
+            setEditTimePreview(null);
+            clearEditVisitTimePreview();
+            setEditPlacementMode(false);
+            setEditPreviewScoreCompare(null);
+            setEditPreviewScoreError(null);
+            setEditPreviewScoreLoading(false);
             setEditAppt(appt);
             return;
           case 'reschedule': {
@@ -7112,7 +7196,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           .join(' ')}
       >
         {editPlacementMode && !embedInRoutingWorkspace ? (
-          <div ref={editPlacementMountRef} className="scheduler-edit-placement-sidebar" />
+          <div ref={editSidebarMountRef} className="scheduler-edit-placement-sidebar" />
         ) : null}
         <div
         className={[
@@ -7122,13 +7206,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             ? 'scheduler-toolbar-calendar-merge--routing-preview-halo'
             : '',
           rescheduleWorkspaceActive ? 'scheduler-toolbar-calendar-merge--reschedule-halo' : '',
+          forwardBookingLockActive ? 'scheduler-toolbar-calendar-merge--forward-booking-halo' : '',
           editPlacementMode && !embedInRoutingWorkspace ? 'scheduler-edit-placement-main' : '',
           scheduleCalendarInteractionLock ? 'scheduler-toolbar-calendar-merge--calendar-locked' : '',
         ]
           .filter(Boolean)
           .join(' ')}
         role={
-          embedInRoutingWorkspace && (routingPreview || rescheduleWorkspaceActive)
+          embedInRoutingWorkspace && (routingPreview || rescheduleWorkspaceActive || forwardBookingLockActive)
             ? 'region'
             : undefined
         }
@@ -7137,7 +7222,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             ? `Routing preview: ${embeddedCalendarProviderLabel}`
             : embedInRoutingWorkspace && rescheduleWorkspaceActive
               ? `Rescheduling: ${embeddedCalendarProviderLabel}`
-              : undefined
+              : embedInRoutingWorkspace && forwardBookingLockActive
+                ? `Forward booking: ${forwardBookingBarLabel}`
+                : undefined
         }
       >
         {embedInRoutingWorkspace && routingPreview ? (
@@ -7164,6 +7251,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               disabled={bookSlot != null}
             >
               Dismiss
+            </button>
+          </div>
+        ) : null}
+        {forwardBookingLockActive ? (
+          <div className="scheduler-embedded-forward-booking-bar" role="status" aria-live="polite">
+            <span className="scheduler-embedded-forward-booking-bar-badge">Forward booking</span>
+            <span className="scheduler-embedded-forward-booking-bar-msg">{forwardBookingBarLabel}</span>
+            <button
+              type="button"
+              className="btn secondary scheduler-embedded-forward-booking-bar-dismiss"
+              onClick={dismissForwardBookingWorkspace}
+              disabled={bookSlot != null}
+            >
+              Exit forward booking
             </button>
           </div>
         ) : null}
@@ -7451,7 +7552,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               scoreLoading={editPreviewScoreLoading}
               scoreError={editPreviewScoreError}
               confirmLabel={editTimePreview.kind === 'type' ? 'Book' : 'Adjust time'}
-              onConfirm={confirmEditTimeFromSlot}
+              confirming={editPreviewConfirming}
+              onConfirm={() => void confirmEditTimeFromSlot()}
               onDismiss={dismissEditPlacementPreview}
             />
           </div>,
@@ -7686,8 +7788,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             appointmentTypes={editModalAppointmentTypes}
             providers={providers}
             accentColor={colorsForAppointment(editAppt, typeList, typeFillMap).fill}
-            inlinePaneMode={editPlacementMode && !embedInRoutingWorkspace}
-            dockInRoutingPane={embedInRoutingWorkspace}
+            inlinePaneMode={editVisitInlinePaneMode}
+            dockInRoutingPane={false}
             placementPreviewActive={editTimePreview != null}
             placementPreviewKind={editTimePreview?.kind ?? null}
             draftPreviewAppointmentTypeId={
@@ -7701,8 +7803,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             onFormSnapshotChange={(snapshot) => {
               editVisitFormSnapshotRef.current = snapshot;
             }}
+            linkSelection={editVisitLinkSelection}
+            onLinkSelectionChange={setEditVisitLinkSelection}
             onViewPlacement={handleViewPlacement}
             onPreviewSchedule={handlePreviewSchedule}
+            onConfirmPreview={confirmEditTimeFromSlot}
             onPlacementTimesChange={
               editPlacementMode ? handleEditPlacementTimesChange : undefined
             }
@@ -7728,7 +7833,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               }
             }}
           />,
-          editModalPortalTarget ?? document.body
+          editPlacementMode && !embedInRoutingWorkspace && editSidebarMountEl
+            ? editSidebarMountEl
+            : document.body
         )}
 
       {showDriveLoadingOverlay ? (
