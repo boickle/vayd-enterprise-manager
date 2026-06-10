@@ -15,11 +15,6 @@ export function evetPatientLink(pimsId: string) {
   return `${EVET_HOST}/Practice/Patients/Edit/${pimsId}`;
 }
 
-/** Patient chart / medical record (legacy numeric PIMS id on patient). */
-export function evetPatientChartLink(pimsId: string) {
-  return evetPatientLink(pimsId);
-}
-
 /**
  * Quick Invoicing / Add Charges for a client (`client.pimsId`).
  * e.g. https://se4.evetpractice.com/Practice/Clients/QuickInvoice/1359439

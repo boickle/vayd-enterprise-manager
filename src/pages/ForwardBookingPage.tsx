@@ -11,6 +11,7 @@ import {
 } from '../api/forwardBooking';
 import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
+import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import { ForwardBookingManualCompleteModal } from '../components/ForwardBookingManualCompleteModal';
 import { CreateForwardBookingModal } from '../components/CreateForwardBookingModal';
 import {
@@ -620,8 +621,7 @@ export default function ForwardBookingPage() {
       const updated = await finishForwardBookingFollowUp(entry.id, PRACTICE_ID);
       clearForwardBookingLocalLink(updated.id);
       setRows((prev) => prev.map((r) => (r.id === entry.id ? { ...r, ...updated } : r)));
-      setStatusFilter('complete');
-      setNotice('Marked complete — moved to the Complete tab.');
+      setNotice('Marked complete.');
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -815,18 +815,41 @@ export default function ForwardBookingPage() {
                         </span>
                       ) : null}
                     </div>
-                    <div className="settings-muted" style={{ fontSize: '0.92rem' }}>
-                      {patientPimsId ? (
-                        <a href={evetPatientLink(patientPimsId)} target="_blank" rel="noreferrer">
-                          {patientName}
-                        </a>
-                      ) : (
-                        patientName
-                      )}
-                      <span> · </span>
-                      {entry.appointmentTypeName?.trim() || 'Visit'}
-                      <span> · </span>
-                      {formatForwardBookingIntervalLabel(entry)}
+                    <div
+                      className="settings-muted"
+                      style={{
+                        fontSize: '0.92rem',
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        alignItems: 'center',
+                        gap: '6px 8px',
+                      }}
+                    >
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                        {patientPimsId ? (
+                          <a href={evetPatientLink(patientPimsId)} target="_blank" rel="noreferrer">
+                            {patientName}
+                          </a>
+                        ) : (
+                          patientName
+                        )}
+                        {entry.patientId ? (
+                          <BookPatientChartButton
+                            patientId={String(entry.patientId)}
+                            patientName={patientName}
+                            practiceId={PRACTICE_ID}
+                            practiceTz={practiceTz}
+                            label="View patient details"
+                            showAlerts
+                          />
+                        ) : null}
+                      </span>
+                      <span aria-hidden>·</span>
+                      <span>
+                        {entry.appointmentTypeName?.trim() || 'Visit'}
+                        <span> · </span>
+                        {formatForwardBookingIntervalLabel(entry)}
+                      </span>
                     </div>
                     <div className="settings-muted" style={{ fontSize: '0.88rem', marginTop: 6 }}>
                       Original visit: {formatSourceVisit(entry, practiceTz).label}

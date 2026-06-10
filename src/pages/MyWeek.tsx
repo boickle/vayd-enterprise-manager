@@ -18,6 +18,11 @@ import {
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { getZonePercentagesForProvider } from '../api/patients';
 import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
+import {
+  buildEtaCandidateSlot,
+  orderHouseholdsWithCandidateAtInsertion,
+  resolveRoutingEtaInsertionIndex,
+} from '../utils/routingEtaCandidateSlot';
 import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
 import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
@@ -470,6 +475,8 @@ export type MyWeekVirtualAppt = {
     windowEndIso?: string;
   };
   validationReturnSec?: number;
+  validationLastEtdSec?: number;
+  overrunSeconds?: number;
   /** From routing / geocode so preview matches `clientDisplayName` zone suffix, e.g. (3E). */
   clientZone?: MiniZone;
   effectiveZone?: MiniZone;
@@ -1830,28 +1837,30 @@ export default function MyWeek(props: MyWeekProps = {}) {
             // Visit order for ETA: when this day has the selected routing candidate (virtualAppt), put
             // existing households first and the candidate at insertionIndex so the backend gets correct order.
             const hasVirtual = virtualAppt && virtualAppt.date === day.date;
-            const insertionIndex = Math.max(
-              0,
-              Math.min(day.households.length - 1, virtualAppt?.insertionIndex ?? day.households.length - 1)
-            );
-            let householdsInVisitOrder: typeof day.households;
-            if (hasVirtual) {
-              const existing = day.households.filter((h) => !h.isPreview);
-              const virtualH = day.households.find((h) => h.isPreview);
-              const sortedExisting = [...existing].sort(
-                (a, b) => (a.firstApptIndex ?? 999) - (b.firstApptIndex ?? 999)
-              );
-              householdsInVisitOrder =
-                virtualH != null
-                  ? [
-                      ...sortedExisting.slice(0, insertionIndex),
-                      virtualH,
-                      ...sortedExisting.slice(insertionIndex),
-                    ]
-                  : sortedExisting;
-            } else {
-              householdsInVisitOrder = day.households;
-            }
+            const insertionIndex = hasVirtual
+              ? resolveRoutingEtaInsertionIndex(virtualAppt.insertionIndex, day.households.length)
+              : 0;
+            const householdsInVisitOrder = hasVirtual
+              ? orderHouseholdsWithCandidateAtInsertion(day.households, insertionIndex)
+              : day.households;
+            const candidateSlot =
+              hasVirtual && virtualAppt
+                ? buildEtaCandidateSlot(
+                    {
+                      insertionIndex: virtualAppt.insertionIndex,
+                      positionInDay: virtualAppt.positionInDay,
+                      suggestedStartIso: virtualAppt.suggestedStartIso,
+                      lat: virtualAppt.lat,
+                      lon: virtualAppt.lon,
+                      serviceMinutes: virtualAppt.serviceMinutes,
+                      overrunSeconds: virtualAppt.overrunSeconds,
+                      validationLastEtdSec: virtualAppt.validationLastEtdSec,
+                      validationReturnSec: virtualAppt.validationReturnSec,
+                      arrivalWindow: virtualAppt.arrivalWindow,
+                    },
+                    { householdCount: day.households.length }
+                  )
+                : undefined;
             const payload = {
               doctorId: selectedDoctorId || '',
               date: day.date,
@@ -1874,29 +1883,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
               startDepot: day.startDepot ? { lat: day.startDepot.lat, lon: day.startDepot.lon } : undefined,
               endDepot: day.endDepot ? { lat: day.endDepot.lat, lon: day.endDepot.lon } : undefined,
               useTraffic: false,
-              ...(hasVirtual &&
-              virtualAppt &&
-              Number.isFinite(virtualAppt.lat) &&
-              Number.isFinite(virtualAppt.lon)
-                ? {
-                    candidateSlot: {
-                      insertionIndex,
-                      positionInDay: virtualAppt.positionInDay ?? insertionIndex + 1,
-                      suggestedStartIso: virtualAppt.suggestedStartIso,
-                      lat: virtualAppt.lat,
-                      lon: virtualAppt.lon,
-                      serviceMinutes: virtualAppt.serviceMinutes,
-                      overrunSeconds: (virtualAppt as any).overrunSeconds,
-                      arrivalWindow:
-                        virtualAppt.arrivalWindow?.windowStartIso && virtualAppt.arrivalWindow?.windowEndIso
-                          ? {
-                              windowStartIso: virtualAppt.arrivalWindow.windowStartIso,
-                              windowEndIso: virtualAppt.arrivalWindow.windowEndIso,
-                            }
-                          : undefined,
-                    },
-                  }
-                : {}),
+              ...(candidateSlot ? { candidateSlot } : {}),
             } as any;
             const result: any = await fetchEtas(payload);
             const valid = (s?: string | null) => !!(s && DateTime.fromISO(s).isValid);

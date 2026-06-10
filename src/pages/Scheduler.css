@@ -1658,6 +1658,15 @@ label.scheduler-go-date-heading {
   background: #f8fafc;
 }
 
+.scheduler-day-header-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.scheduler-day-header-btn:disabled:hover {
+  background: #fff;
+}
+
 .scheduler-day-header-btn--progress {
   display: inline-flex;
   align-items: center;
@@ -3214,6 +3223,59 @@ label.scheduler-go-date-heading {
   color: #0d3d99;
 }
 
+.scheduler-book-patient-details-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1a56db;
+  text-decoration: underline;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.scheduler-book-patient-details-btn:hover {
+  color: #0d3d99;
+}
+
+.scheduler-book-patient-details-backdrop {
+  z-index: 12000;
+}
+
+.scheduler-book-patient-details-modal {
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(75vh, 560px);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.scheduler-book-patient-details-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.scheduler-book-patient-details-head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.scheduler-book-patient-details-body {
+  padding: 12px 16px 16px;
+  overflow: auto;
+}
+
 .scheduler-book-reminders-backdrop {
   z-index: 12000;
 }
@@ -3301,6 +3363,12 @@ label.scheduler-go-date-heading {
   height: 16px;
   margin: 0;
   flex-shrink: 0;
+}
+
+.scheduler-book-routing-visit--no-patient {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px dashed #cbd5e1;
 }
 
 .scheduler-book-reschedule-visit-was,
@@ -3586,6 +3654,28 @@ label.scheduler-go-date-heading {
   margin: 0 0 10px;
   font-size: 13px;
   line-height: 1.45;
+}
+
+.scheduler-forward-booking-next-appt,
+.scheduler-forward-booking-patient-context {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.scheduler-forward-booking-patient-name {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.scheduler-forward-booking-patient-context .scheduler-book-patient-name-row {
+  margin-bottom: 0;
+}
+
+.scheduler-forward-booking-patient-context .scheduler-book-patient-alerts {
+  margin-top: 10px;
 }
 
 .scheduler-forward-booking-section--override .scheduler-forward-booking-mode-option--active {

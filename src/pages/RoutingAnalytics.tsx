@@ -48,6 +48,7 @@ import {
 import {
   fetchAllAppointmentRequestSubmissions,
   type AppointmentRequestSubmissionItem,
+  type AppointmentRequestSubmissionConversions,
 } from '../api/appointmentRequestSubmissions';
 
 function toLocalDateStr(d: Dayjs) {
@@ -140,6 +141,23 @@ function isEuthanasiaRequestSubmission(requestData: Record<string, unknown>): bo
     hay.includes('end-of-life') ||
     hay.includes('end of life')
   );
+}
+
+/**
+ * Formats the request → appointment conversion rate as a percentage string.
+ * Prefers deriving the rate from the raw counts; falls back to the API-provided
+ * `conversionRate` (treated as a fraction when ≤ 1, otherwise as a percentage).
+ */
+function formatConversionRate(conversions: AppointmentRequestSubmissionConversions): string {
+  const { totalRequests, converted, conversionRate } = conversions;
+  if (totalRequests > 0) {
+    return `${((converted / totalRequests) * 100).toFixed(1)}%`;
+  }
+  if (typeof conversionRate === 'number' && Number.isFinite(conversionRate)) {
+    const pct = conversionRate <= 1 ? conversionRate * 100 : conversionRate;
+    return `${pct.toFixed(1)}%`;
+  }
+  return '—';
 }
 
 function isCompletedSubmission(item: AppointmentRequestSubmissionItem): boolean {
@@ -404,6 +422,8 @@ export default function RoutingAnalyticsPage() {
   const [requestSubmissions, setRequestSubmissions] = useState<AppointmentRequestSubmissionItem[] | null>(
     null
   );
+  const [requestSubmissionConversions, setRequestSubmissionConversions] =
+    useState<AppointmentRequestSubmissionConversions | null>(null);
   const [requestSubmissionsLoading, setRequestSubmissionsLoading] = useState(false);
   const [requestSubmissionsError, setRequestSubmissionsError] = useState<string | null>(null);
 
@@ -507,15 +527,17 @@ export default function RoutingAnalyticsPage() {
       from: fromIso,
       to: toIso,
     })
-      .then((items) => {
+      .then((res) => {
         if (!alive) return;
-        setRequestSubmissions(items);
+        setRequestSubmissions(res.items);
+        setRequestSubmissionConversions(res.conversions);
       })
       .catch((e) => {
         if (!alive) return;
         console.error('Appointment request submissions fetch failed:', e);
         setRequestSubmissionsError('Failed to load public appointment request submissions');
         setRequestSubmissions(null);
+        setRequestSubmissionConversions(null);
       })
       .finally(() => {
         if (alive) setRequestSubmissionsLoading(false);
@@ -1860,6 +1882,57 @@ export default function RoutingAnalyticsPage() {
                 <strong>{requestSubmissionStats.nonEuth}</strong> non-euthanasia,{' '}
                 <strong>{requestSubmissionStats.euth}</strong> euthanasia-related.
               </Typography>
+            )}
+
+            {requestSubmissionConversions != null && (
+              <Card sx={{ mb: 3 }}>
+                <CardHeader
+                  title="Request → appointment conversions"
+                  subheader="Public appointment requests that were converted into actual appointments for the selected date range."
+                />
+                <CardContent>
+                  <TableContainer component={Paper} variant="outlined">
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Category</TableCell>
+                          <TableCell align="right">Count</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        <TableRow>
+                          <TableCell>Total requests</TableCell>
+                          <TableCell align="right">
+                            {requestSubmissionConversions.totalRequests}
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>Converted to appointment</TableCell>
+                          <TableCell align="right">
+                            <Typography variant="body2" component="span" color="success.main">
+                              {requestSubmissionConversions.converted}
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>Not converted</TableCell>
+                          <TableCell align="right">
+                            <Typography variant="body2" component="span" color="warning.main">
+                              {requestSubmissionConversions.notConverted}
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>Conversion rate</TableCell>
+                          <TableCell align="right">
+                            {formatConversionRate(requestSubmissionConversions)}
+                          </TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </CardContent>
+              </Card>
             )}
 
             {!isSingleDay && (

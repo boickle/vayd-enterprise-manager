@@ -40,8 +40,12 @@ export type AppointmentType = {
   allowAlternateAddress?: boolean;
   /** Visit must have a client home address or an alternate address (when allowed). */
   addressRequired?: boolean;
+  /** Visit must have a patient linked to be saved. */
+  requiresPatient?: boolean;
   /** Omitted from drive routing / doctor-day routable stops (server-side) */
   excludeFromRouting?: boolean;
+  /** Excluded from appointment reminders and visit-based analytics (server-side) */
+  excludeFromReminders?: boolean;
   /** Use legacy routing rules for this type (server-side) */
   usesLegacyRouting?: boolean;
   /** Ops analytics doctor-day points; null = legacy name-based rules on server */
@@ -251,7 +255,9 @@ export type AppointmentTypeUpdate = {
   allowClient?: boolean;
   allowAlternateAddress?: boolean;
   addressRequired?: boolean;
+  requiresPatient?: boolean;
   excludeFromRouting?: boolean;
+  excludeFromReminders?: boolean;
   usesLegacyRouting?: boolean;
   points?: number | null;
   allowSchedulingOverride?: boolean;

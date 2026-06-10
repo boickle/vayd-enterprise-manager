@@ -70,6 +70,10 @@ export type EtaRequestCandidateSlot = {
   lon?: number;
   serviceMinutes?: number;
   overrunSeconds?: number;
+  /** Seconds since local midnight when last visit ETD completes (v2 validation). */
+  validationLastEtdSec?: number;
+  /** Seconds since local midnight when return to depot completes (v2 validation). */
+  validationReturnSec?: number;
   depotEndIso?: string;
   arrivalWindow?: { windowStartIso?: string; windowEndIso?: string };
 };

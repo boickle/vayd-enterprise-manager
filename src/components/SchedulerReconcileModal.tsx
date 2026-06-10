@@ -28,7 +28,7 @@ import {
 } from '../pages/MyWeek';
 import { fetchSchedulerDriveContextForDate } from '../utils/schedulerDriveEta';
 import { combineDateAndTimeToUtc, toTimeLocalValue } from '../utils/editVisitTimeFields';
-import { evetPatientChartLink } from '../utils/evet';
+import { evetPatientLink } from '../utils/evet';
 import { useVisitHighlightsHoverPopover } from '../hooks/useVisitHighlightsHoverPopover';
 import {
   buildTypeFillMap,
@@ -1110,7 +1110,7 @@ export function SchedulerReconcileModal({
       const patients = patientsForAppointment(contextMenu.appt);
       const pid = pickStr(patients[0]?.pimsId);
       if (!pid) return;
-      window.open(evetPatientChartLink(pid), '_blank', 'noopener,noreferrer');
+      window.open(evetPatientLink(pid), '_blank', 'noopener,noreferrer');
     },
     [contextMenu]
   );

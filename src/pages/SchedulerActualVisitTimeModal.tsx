@@ -38,7 +38,9 @@ import {
   forwardBookingDispositionFromAppointment,
   forwardBookingFormStateFromDisposition,
   hasPersistedForwardBookingDisposition,
+  type ForwardBookingDispositionFormState,
 } from '../utils/forwardBookingDisposition';
+import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import './Scheduler.css';
 
 export type ActualVisitTimeField = 'start' | 'end' | 'both';
@@ -68,7 +70,7 @@ const FORWARD_BOOKING_MODE_OPTIONS: {
   {
     value: 'labs_pending',
     label: 'Labs pending',
-    hint: 'Assign a task to forward book after lab results are back.',
+    hint: 'Recommended: assign this to the doctor first. Once labs are reviewed and the follow-up timing is determined, the doctor can reassign the forward-booking task to the technician.',
   },
   {
     value: 'forward_book_fields',
@@ -139,10 +141,52 @@ function primaryPatientName(appt: Appointment): string | null {
   return pickStr(appt.patient?.name);
 }
 
+function primaryPatientContext(appt: Appointment): {
+  id: string;
+  name: string;
+  alerts: string | null;
+} | null {
+  const multi = (appt as { patients?: { id?: number | string; name?: string | null; alerts?: string | null }[] })
+    .patients;
+  const row =
+    Array.isArray(multi) && multi.length > 0
+      ? multi[0]
+      : appt.patient
+        ? {
+            id: appt.patient.id,
+            name: appt.patient.name,
+            alerts: appt.patient.alerts,
+          }
+        : null;
+  if (!row?.id) return null;
+  const id = String(row.id).trim();
+  if (!id) return null;
+  return {
+    id,
+    name: pickStr(row.name) ?? 'Patient',
+    alerts: pickStr(row.alerts),
+  };
+}
+
 function defaultLabsPendingTaskTitle(appt: Appointment): string {
   const subject = [primaryPatientName(appt), pickStr(appt.client?.lastName)].filter(Boolean).join(' ');
   if (!subject) return 'Forward book once labs come back.';
   return `Forward book ${subject} once labs come back.`;
+}
+
+function defaultLabsAssigneeEmployeeId(appt: Appointment): string {
+  const id = appt.primaryProvider?.id;
+  if (id == null || !Number.isFinite(Number(id))) return '';
+  return String(id);
+}
+
+function applyDefaultLabsAssignee(
+  form: ForwardBookingDispositionFormState,
+  appt: Appointment
+): ForwardBookingDispositionFormState {
+  if (form.labsAssigneeEmployeeId.trim()) return form;
+  const def = defaultLabsAssigneeEmployeeId(appt);
+  return def ? { ...form, labsAssigneeEmployeeId: def } : form;
 }
 
 function defaultStartTimeLocal(
@@ -196,9 +240,12 @@ export function SchedulerActualVisitTimeModal({
 
   const initialForwardBookingForm = useMemo(
     () =>
-      forwardBookingFormStateFromDisposition(
-        appt.forwardBookingDisposition ?? forwardBookingDispositionFromAppointment(appt),
-        { labsTaskTitle: defaultLabsTaskTitle, labsTaskStartLocal: defaultLabsStartLocal }
+      applyDefaultLabsAssignee(
+        forwardBookingFormStateFromDisposition(
+          appt.forwardBookingDisposition ?? forwardBookingDispositionFromAppointment(appt),
+          { labsTaskTitle: defaultLabsTaskTitle, labsTaskStartLocal: defaultLabsStartLocal }
+        ),
+        appt
       ),
     [appt, defaultLabsStartLocal, defaultLabsTaskTitle]
   );
@@ -267,6 +314,7 @@ export function SchedulerActualVisitTimeModal({
     () => formatSavedForwardInterval(forwardAmount, forwardUnit),
     [forwardAmount, forwardUnit]
   );
+  const forwardBookingPatient = useMemo(() => primaryPatientContext(appt), [appt]);
 
   const applyForwardBookingForm = useCallback(
     (form: ReturnType<typeof forwardBookingFormStateFromDisposition>) => {
@@ -294,9 +342,12 @@ export function SchedulerActualVisitTimeModal({
         dispositionHydratedRef.current = true;
         return;
       }
-      const form = forwardBookingFormStateFromDisposition(
-        fresh.forwardBookingDisposition ?? forwardBookingDispositionFromAppointment(fresh),
-        { labsTaskTitle: defaultLabsTaskTitle, labsTaskStartLocal: defaultLabsStartLocal }
+      const form = applyDefaultLabsAssignee(
+        forwardBookingFormStateFromDisposition(
+          fresh.forwardBookingDisposition ?? forwardBookingDispositionFromAppointment(fresh),
+          { labsTaskTitle: defaultLabsTaskTitle, labsTaskStartLocal: defaultLabsStartLocal }
+        ),
+        fresh
       );
       if (!forwardBookingUserEditedRef.current) {
         applyForwardBookingForm(form);
@@ -577,6 +628,14 @@ export function SchedulerActualVisitTimeModal({
       return true;
     }
 
+    if (forwardBookingMode === 'not_appropriate') {
+      if (!bookingNotes.trim()) {
+        setError('Enter why forward booking is not appropriate for this visit.');
+        return false;
+      }
+      return true;
+    }
+
     if (skipsForwardBookingList) return true;
 
     if (!forwardInterval) {
@@ -766,6 +825,31 @@ export function SchedulerActualVisitTimeModal({
                 ) : null}
               </div>
 
+              {forwardBookingPatient ? (
+                <div className="scheduler-forward-booking-patient-context">
+                  <div className="scheduler-book-patient-name-row">
+                    <span className="scheduler-forward-booking-patient-name">
+                      {forwardBookingPatient.name}
+                    </span>
+                    <BookPatientChartButton
+                      patientId={forwardBookingPatient.id}
+                      patientName={forwardBookingPatient.name}
+                      practiceId={practiceId}
+                      practiceTz={practiceTz}
+                    />
+                  </div>
+                  {forwardBookingPatient.alerts ? (
+                    <div
+                      className="scheduler-modal-alerts-box scheduler-book-patient-alerts"
+                      role="alert"
+                    >
+                      <span className="scheduler-modal-alerts-box-label">Patient alerts</span>
+                      {forwardBookingPatient.alerts}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
               {dispositionLocked ? (
                 <div className="scheduler-forward-booking-saved">
                   <p className="scheduler-forward-booking-saved-lead">
@@ -821,6 +905,15 @@ export function SchedulerActualVisitTimeModal({
                           </div>
                         </dl>
                       ) : null}
+
+                      {forwardBookingMode === 'not_appropriate' ? (
+                        <dl className="scheduler-forward-booking-saved-details">
+                          <div>
+                            <dt>Reason</dt>
+                            <dd>{bookingNotes.trim() || '—'}</dd>
+                          </div>
+                        </dl>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -850,6 +943,10 @@ export function SchedulerActualVisitTimeModal({
                               forwardBookingUserEditedRef.current = true;
                               setForwardBookingMode(value);
                               setError(null);
+                              if (value === 'labs_pending' && !labsAssigneeEmployeeId.trim()) {
+                                const def = defaultLabsAssigneeEmployeeId(appt);
+                                if (def) setLabsAssigneeEmployeeId(def);
+                              }
                             }}
                           />
                           <span className="scheduler-forward-booking-mode-copy">
@@ -992,6 +1089,39 @@ export function SchedulerActualVisitTimeModal({
                                 disabled={forwardBookingFieldsDisabled}
                                 placeholder="e.g. Prefers AM slots, same provider"
                                 aria-label="Forward booking note"
+                                style={{
+                                  width: '100%',
+                                  resize: 'vertical',
+                                  fontFamily: 'inherit',
+                                  fontSize: 14,
+                                }}
+                              />
+                            </label>
+                          </div>
+                        ) : null}
+
+                        {active && value === 'not_appropriate' ? (
+                          <div className="scheduler-forward-booking-mode-panel">
+                            <label className="scheduler-edit-field" style={{ display: 'block' }}>
+                              <span>Reason *</span>
+                              <p
+                                className="settings-muted"
+                                style={{ fontSize: 13, margin: '4px 0 8px', fontWeight: 400 }}
+                              >
+                                Required — why is forward booking not appropriate for this visit?
+                              </p>
+                              <textarea
+                                className="settings-input"
+                                rows={3}
+                                value={bookingNotes}
+                                onChange={(e) => {
+                                  forwardBookingUserEditedRef.current = true;
+                                  setBookingNotes(e.target.value);
+                                }}
+                                disabled={saving}
+                                required
+                                placeholder="e.g. Hospice care, client declined follow-up, single euthanasia visit"
+                                aria-label="Reason forward booking is not appropriate"
                                 style={{
                                   width: '100%',
                                   resize: 'vertical',

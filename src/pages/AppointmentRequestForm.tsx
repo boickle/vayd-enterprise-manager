@@ -23,6 +23,7 @@ import {
   type PetHandlingFields,
 } from '../components/PetHandlingNeedsPicker';
 import { getSelectedAppointmentType } from '../utils/petVisitQuestionUtils';
+import { sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
 import { scrollToFirstAppointmentFormError } from '../utils/appointmentFormScrollToError';
 import { normalizeRoutingV2SlotSearchResponse, type RoutingV2SlotSearchResult } from '../api/routing';
 import { DateTime } from 'luxon';
@@ -766,45 +767,15 @@ export default function AppointmentRequestForm() {
       filteredTypes = appointmentTypes.filter(type => type.newPatientAllowed === true);
     }
     
-    // Map to objects with id, name and prettyName, and sort by formListOrder
-    const optionsWithOrder = filteredTypes.map(type => ({
+    const sortedTypes = sortAppointmentTypesForPicker(filteredTypes, {
+      unrankedOrder: 'alphabetical',
+    });
+
+    return sortedTypes.map((type) => ({
       id: type.id,
       name: type.name,
       prettyName: type.prettyName || type.name,
-      formListOrder: type.formListOrder ?? null,
     }));
-    
-    // Sort by formListOrder:
-    // 1. Items with formListOrder (ascending, 1 at top)
-    // 2. Items with same formListOrder sorted alphabetically by prettyName
-    // 3. Items with null formListOrder at the bottom, sorted alphabetically
-    optionsWithOrder.sort((a, b) => {
-      const aOrder = a.formListOrder;
-      const bOrder = b.formListOrder;
-      
-      // If both have order values, sort by order, then alphabetically
-      if (aOrder !== null && bOrder !== null) {
-        if (aOrder !== bOrder) {
-          return aOrder - bOrder;
-        }
-        // Same order, sort alphabetically by prettyName
-        return a.prettyName.localeCompare(b.prettyName);
-      }
-      
-      // If only one has an order value, the one with order comes first
-      if (aOrder !== null && bOrder === null) {
-        return -1;
-      }
-      if (aOrder === null && bOrder !== null) {
-        return 1;
-      }
-      
-      // Both are null, sort alphabetically
-      return a.prettyName.localeCompare(b.prettyName);
-    });
-    
-    // Remove formListOrder from the returned objects to maintain compatibility
-    return optionsWithOrder.map(({ id, name, prettyName }) => ({ id, name, prettyName }));
   };
 
   // Get all selected appointment type names from the form
@@ -3909,12 +3880,11 @@ export default function AppointmentRequestForm() {
 
             <div style={{ marginBottom: isNewClientIntroStep ? 0 : 20 }}>
               <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: newClientCompactForm ? '13px' : undefined }}>
-                Previous Veterinarian (if any)
+                What veterinary practice(s), including specialists, have you used previously for your pet(s)?
               </label>
               <textarea
                 value={formData.previousVeterinaryPractices || ''}
                 onChange={(e) => updateFormData('previousVeterinaryPractices', e.target.value)}
-                placeholder="We'll request records for you"
                 rows={isNewClientIntroStep ? 2 : 4}
                 style={{
                   width: '100%',
@@ -3926,6 +3896,9 @@ export default function AppointmentRequestForm() {
                   resize: 'vertical',
                 }}
               />
+              <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '8px', marginBottom: 0, lineHeight: 1.5 }}>
+                We will contact the practice(s) listed above to obtain your pet&apos;s prior medical records.
+              </p>
             </div>
 
           </div>
@@ -4937,6 +4910,101 @@ export default function AppointmentRequestForm() {
                 </div>
               </>
             )}
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                Did your pet(s) get veterinary care from another hospital (e.g. specialists, emergency, etc.) since the last time we saw your pet(s)?
+              </label>
+              <div style={{ display: 'flex', gap: '16px' }}>
+                {['Yes', 'No'].map((option) => (
+                  <label
+                    key={option}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: 'pointer',
+                      padding: '12px',
+                      border: `1px solid ${formData.hadVetCareElsewhere === option ? '#10b981' : '#d1d5db'}`,
+                      borderRadius: '8px',
+                      backgroundColor: formData.hadVetCareElsewhere === option ? '#f0fdf4' : '#fff',
+                      flex: 1,
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="hadVetCareElsewhere"
+                      value={option}
+                      checked={formData.hadVetCareElsewhere === option}
+                      onChange={(e) => updateFormData('hadVetCareElsewhere', e.target.value)}
+                      style={{ margin: 0 }}
+                    />
+                    <span>{option}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {formData.hadVetCareElsewhere === 'Yes' && (
+              <>
+                <div style={{ marginBottom: '20px' }}>
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                    Please let us know which veterinary hospitals you went to.
+                  </label>
+                  <textarea
+                    value={formData.previousVeterinaryHospitals || ''}
+                    onChange={(e) => updateFormData('previousVeterinaryHospitals', e.target.value)}
+                    rows={4}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontFamily: 'inherit',
+                    }}
+                  />
+                </div>
+
+                <div style={{ marginBottom: '20px' }}>
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                    May we ask for records from the above hospitals?
+                  </label>
+                  <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '12px', lineHeight: 1.5 }}>
+                    Access to your pet&apos;s prior medical records is important for their safety and continuity of care. Declining to share available records may limit our ability to provide comprehensive care.
+                  </p>
+                  <div style={{ display: 'flex', gap: '16px' }}>
+                    {['Yes', 'No'].map((option) => (
+                      <label
+                        key={option}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          cursor: 'pointer',
+                          padding: '12px',
+                          border: `1px solid ${formData.mayWeAskForRecords === option ? '#10b981' : '#d1d5db'}`,
+                          borderRadius: '8px',
+                          backgroundColor: formData.mayWeAskForRecords === option ? '#f0fdf4' : '#fff',
+                          flex: 1,
+                        }}
+                      >
+                        <input
+                          type="radio"
+                          name="mayWeAskForRecords"
+                          value={option}
+                          checked={formData.mayWeAskForRecords === option}
+                          onChange={(e) => updateFormData('mayWeAskForRecords', e.target.value)}
+                          style={{ margin: 0 }}
+                        />
+                        <span>{option}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
             {renderPage({ page: 'existing-client-pets', embedded: true })}
             {renderPage({ page: 'request-visit-continued', embedded: true })}
 

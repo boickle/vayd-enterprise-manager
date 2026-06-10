@@ -98,10 +98,20 @@ export function normalizeAppointmentTypeFromApi(row: AppointmentType): Appointme
     row.addressRequired === true ||
     truthyFlag(r.address_required) ||
     truthyFlag(row.addressRequired);
+  const requiresPatient =
+    row.requiresPatient === true ||
+    truthyFlag(r.requires_patient) ||
+    truthyFlag(row.requiresPatient) ||
+    truthyFlag(r.patient_required) ||
+    truthyFlag(r.patientRequired);
   const excludeFromRouting =
     row.excludeFromRouting === true ||
     truthyFlag(r.exclude_from_routing) ||
     truthyFlag(row.excludeFromRouting);
+  const excludeFromReminders =
+    row.excludeFromReminders === true ||
+    truthyFlag(r.exclude_from_reminders) ||
+    truthyFlag(row.excludeFromReminders);
   const usesLegacyRouting =
     row.usesLegacyRouting === true ||
     truthyFlag(r.uses_legacy_routing) ||
@@ -123,7 +133,9 @@ export function normalizeAppointmentTypeFromApi(row: AppointmentType): Appointme
     allowClient,
     allowAlternateAddress,
     addressRequired,
+    requiresPatient,
     excludeFromRouting,
+    excludeFromReminders,
     usesLegacyRouting,
     allowSchedulingOverride:
       row.allowSchedulingOverride === true || truthyFlag(r.allow_scheduling_override),
@@ -191,6 +203,88 @@ export function appointmentTypeAddressRequired(type: AppointmentType | undefined
   return normalizeAppointmentTypeFromApi(type).addressRequired === true;
 }
 
+export function appointmentTypeRequiresPatient(type: AppointmentType | undefined): boolean {
+  if (!type) return false;
+  return normalizeAppointmentTypeFromApi(type).requiresPatient === true;
+}
+
+function appointmentTypePickerLabel(type: {
+  prettyName?: string | null;
+  name?: string | null;
+}): string {
+  return String(type.prettyName ?? type.name ?? '').trim();
+}
+
+function appointmentTypeFormListOrder(type: { formListOrder?: number | null | string }): number | null {
+  const raw = type.formListOrder;
+  if (raw == null || raw === '') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return n;
+}
+
+export type SortAppointmentTypesForPickerOptions = {
+  /** Default `alphabetical` — matches routing book. Use `preserve` for manual book (API order). */
+  unrankedOrder?: 'alphabetical' | 'preserve';
+};
+
+type AppointmentTypeSortable = {
+  formListOrder?: number | null | string;
+  prettyName?: string | null;
+  name?: string | null;
+};
+
+/**
+ * Order appointment-type pickers: ranked types first (`formListOrder` ascending),
+ * then unranked types (alphabetical or original list order).
+ */
+export function sortAppointmentTypesForPicker<T extends AppointmentTypeSortable>(
+  types: T[],
+  opts?: SortAppointmentTypesForPickerOptions
+): T[] {
+  const unrankedOrder = opts?.unrankedOrder ?? 'alphabetical';
+  const input = [...types];
+
+  const compareRanked = (a: T, b: T): number => {
+    const aOrder = appointmentTypeFormListOrder(a)!;
+    const bOrder = appointmentTypeFormListOrder(b)!;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    return appointmentTypePickerLabel(a).localeCompare(
+      appointmentTypePickerLabel(b),
+      undefined,
+      { sensitivity: 'base' }
+    );
+  };
+
+  if (unrankedOrder === 'preserve') {
+    const ranked = input.filter((t) => appointmentTypeFormListOrder(t) != null);
+    const unranked = input.filter((t) => appointmentTypeFormListOrder(t) == null);
+    ranked.sort(compareRanked);
+    return [...ranked, ...unranked];
+  }
+
+  return input.sort((a, b) => {
+    const aOrder = appointmentTypeFormListOrder(a);
+    const bOrder = appointmentTypeFormListOrder(b);
+    if (aOrder != null && bOrder != null) return compareRanked(a, b);
+    if (aOrder != null && bOrder == null) return -1;
+    if (aOrder == null && bOrder != null) return 1;
+    return appointmentTypePickerLabel(a).localeCompare(
+      appointmentTypePickerLabel(b),
+      undefined,
+      { sensitivity: 'base' }
+    );
+  });
+}
+
+/** Active types that may be booked without a linked patient (`requiresPatient` off in settings). */
+export function filterAppointmentTypesPatientOptional(types: AppointmentType[]): AppointmentType[] {
+  return types
+    .map((t) => normalizeAppointmentTypeFromApi(t))
+    .filter((t) => t.isDeleted !== true && t.isActive !== false)
+    .filter((t) => !appointmentTypeRequiresPatient(t));
+}
+
 /** Types that may appear on Get Best Route / routing book pickers. */
 export function appointmentTypeIncludedInRouting(type: AppointmentType | undefined): boolean {
   if (!type) return false;
@@ -209,6 +303,7 @@ export function appointmentFormFlags(type: AppointmentType | undefined) {
     /** allowClient means optional — not “client required”. */
     requireClient: false,
     addressRequired: appointmentTypeAddressRequired(t),
+    requirePatient: appointmentTypeRequiresPatient(t),
     showAlternateAddress: t?.allowAlternateAddress === true,
     showNotRoutedHint: t?.excludeFromRouting === true,
     showSchedulingOverride: t?.allowSchedulingOverride === true,

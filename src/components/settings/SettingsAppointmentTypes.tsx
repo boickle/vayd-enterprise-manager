@@ -83,7 +83,9 @@ type EditDraft = {
   allowClient: boolean;
   allowAlternateAddress: boolean;
   addressRequired: boolean;
+  requiresPatient: boolean;
   excludeFromRouting: boolean;
+  excludeFromReminders: boolean;
   usesLegacyRouting: boolean;
   allowSchedulingOverride: boolean;
   useLegacyPoints: boolean;
@@ -114,7 +116,9 @@ function draftFromType(type: AppointmentType): EditDraft {
     allowClient: t.allowClient !== false,
     allowAlternateAddress: t.allowAlternateAddress === true,
     addressRequired: t.addressRequired === true,
+    requiresPatient: t.requiresPatient === true,
     excludeFromRouting: t.excludeFromRouting === true,
+    excludeFromReminders: t.excludeFromReminders === true,
     usesLegacyRouting: t.usesLegacyRouting === true,
     allowSchedulingOverride: t.allowSchedulingOverride === true,
     useLegacyPoints: t.points == null,
@@ -161,7 +165,9 @@ function emptyDraft(): EditDraft {
     allowClient: true,
     allowAlternateAddress: false,
     addressRequired: false,
+    requiresPatient: false,
     excludeFromRouting: false,
+    excludeFromReminders: false,
     usesLegacyRouting: false,
     allowSchedulingOverride: false,
     useLegacyPoints: true,
@@ -229,7 +235,9 @@ function buildUpdatePayloadFromDraft(draft: EditDraft): AppointmentTypeUpdate {
     allowClient: draft.allowClient,
     allowAlternateAddress: draft.allowAlternateAddress,
     addressRequired: draft.addressRequired,
+    requiresPatient: draft.requiresPatient,
     excludeFromRouting: draft.excludeFromRouting,
+    excludeFromReminders: draft.excludeFromReminders,
     usesLegacyRouting: draft.usesLegacyRouting,
     allowSchedulingOverride: draft.allowSchedulingOverride,
     points,
@@ -469,7 +477,9 @@ export default function SettingsAppointmentTypes({
             type.allowClient === false ? 'No client' : null,
             type.allowAlternateAddress ? 'Alt addr' : null,
             type.addressRequired ? 'Addr required' : null,
+            type.requiresPatient ? 'Patient required' : null,
             type.excludeFromRouting ? 'No route' : null,
+            type.excludeFromReminders ? 'No reminders' : null,
             type.usesLegacyRouting ? 'Legacy routing' : null,
             type.allowSchedulingOverride ? 'Sched override' : null,
           ]
@@ -938,12 +948,32 @@ export default function SettingsAppointmentTypes({
                         <label className="settings-checkbox-label">
                           <input
                             type="checkbox"
+                            checked={draft.requiresPatient}
+                            onChange={(e) =>
+                              setDraft({ ...draft, requiresPatient: e.target.checked })
+                            }
+                          />
+                          Requires patient
+                        </label>
+                        <label className="settings-checkbox-label">
+                          <input
+                            type="checkbox"
                             checked={draft.excludeFromRouting}
                             onChange={(e) =>
                               setDraft({ ...draft, excludeFromRouting: e.target.checked })
                             }
                           />
                           Exclude from routing
+                        </label>
+                        <label className="settings-checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={draft.excludeFromReminders}
+                            onChange={(e) =>
+                              setDraft({ ...draft, excludeFromReminders: e.target.checked })
+                            }
+                          />
+                          Exclude from reminders &amp; visit analytics
                         </label>
                         <label className="settings-checkbox-label">
                           <input
@@ -968,7 +998,8 @@ export default function SettingsAppointmentTypes({
                       </div>
                       <p className="settings-muted settings-appt-type-window-hint">
                         Address required means the visit must have a linked client with an address, or an
-                        alternate address when alternate address is allowed.
+                        alternate address when alternate address is allowed. Requires patient means the visit
+                        must have a patient linked to be saved as that type.
                       </p>
                       <p className="settings-muted settings-appt-type-window-hint">
                         Scheduling override is shown in the scheduler UI only; appointment create/update

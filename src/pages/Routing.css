@@ -76,7 +76,8 @@
 }
 
 .routing-form-body {
-  flex: 1 1 0;
+  /* Size to content when short; shrink + scroll when the pane is shorter than the form. */
+  flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
@@ -778,9 +779,7 @@
   max-width: min(100%, 320px);
   box-sizing: border-box;
   margin: 0;
-  padding-left: 14px;
-  padding-right: 14px;
-  padding-bottom: 14px;
+  padding: 14px;
   font-size: 75%;
   font-family: inherit;
   text-align: left;
@@ -788,6 +787,59 @@
   cursor: pointer;
   appearance: none;
   -webkit-appearance: none;
+}
+
+.routing-result-option-card-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: -2px 0 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.routing-result-option-card-header-provider {
+  font-size: 13px;
+  line-height: 1.25;
+  word-break: break-word;
+}
+
+.routing-result-option-card-header-warning {
+  padding: 6px 10px;
+  border-radius: 6px;
+  /* Opaque panel — readable on any doctor header color (avoids yellow-on-cyan glare). */
+  background: #fffbeb;
+  border: 1px solid #e7c77a;
+  color: #7c4a12;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.35;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.routing-result-option-card-header-meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.routing-result-option-card-header-score {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  opacity: 0.95;
+}
+
+.routing-result-option-card-header-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
 .routing-result-option-card.card:not(:disabled):hover {
@@ -991,4 +1043,55 @@
 .routing-doctor-select-confirm:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+/* Active patients under client (Get Best Route) */
+.routing-client-patients {
+  margin-top: -2px;
+  margin-bottom: 2px;
+}
+
+.routing-client-patients-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 6px;
+}
+
+.routing-client-patients-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.routing-client-patients-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.routing-client-patient-chip-wrap {
+  display: inline-flex;
+}
+
+.routing-client-patient-chip {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--accent, #10a37f) 35%, #cbd5e1);
+  background: color-mix(in srgb, var(--accent, #10a37f) 8%, #ffffff);
+  color: #0f172a;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: default;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.routing-client-patient-chip-wrap:hover .routing-client-patient-chip,
+.routing-client-patient-chip:focus-visible {
+  background: color-mix(in srgb, var(--accent, #10a37f) 16%, #ffffff);
+  border-color: color-mix(in srgb, var(--accent, #10a37f) 55%, #cbd5e1);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+  outline: none;
 }

@@ -38,3 +38,22 @@ export function roomLoaderPreApptDisplayColor(status: RoomLoaderPreApptUiStatus)
   if (status === 'sent') return '#ca8a04';
   return '#dc2626';
 }
+
+/** Keep completed/sent pre-appt confirm status when a refresh omits it (e.g. after reschedule sync). */
+export function mergeAppointmentPreserveRoomLoaderConfirmStatus<
+  T extends { confirmStatusName?: string | null },
+>(previous: T | null | undefined, incoming: T): T {
+  if (!previous) return incoming;
+  const prevStatus = roomLoaderPreApptUiStatus(previous.confirmStatusName);
+  const nextStatus = roomLoaderPreApptUiStatus(incoming.confirmStatusName);
+  if (
+    (prevStatus === 'complete' || prevStatus === 'sent') &&
+    nextStatus === 'none'
+  ) {
+    return { ...incoming, confirmStatusName: previous.confirmStatusName };
+  }
+  if (prevStatus === 'complete' && nextStatus === 'sent') {
+    return { ...incoming, confirmStatusName: previous.confirmStatusName };
+  }
+  return incoming;
+}
