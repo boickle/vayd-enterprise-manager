@@ -25,7 +25,7 @@ type Props = {
 function noteLine(
   label: string,
   value: string | null | undefined,
-  opts: { fontSize: number; alert?: boolean }
+  opts: { fontSize: number; alert?: boolean; pdf?: boolean }
 ): ReactNode {
   const text = value?.trim();
   if (!text) return null;
@@ -34,8 +34,8 @@ function noteLine(
       style={{
         fontSize: opts.fontSize,
         color: opts.alert ? '#dc2626' : '#475569',
-        marginTop: 2,
-        lineHeight: 1.35,
+        marginTop: opts.pdf ? 4 : 2,
+        lineHeight: 1.4,
       }}
     >
       <b>{label}:</b> {text}
@@ -53,8 +53,8 @@ export function MyDayVisualPatientDetail({
   const metaSize = isPdf ? 16 : 12;
   const petAlerts = p.petAlerts?.trim() || p.alerts?.trim() || null;
 
-  return (
-    <li style={{ marginBottom: isPdf ? 4 : 6, listStyle: isPdf ? 'none' : undefined }}>
+  const detail = (
+    <>
       <div
         style={{
           fontWeight: 600,
@@ -82,14 +82,14 @@ export function MyDayVisualPatientDetail({
       </div>
 
       {p.type?.trim() ? (
-        <div style={{ fontSize: metaSize, color: '#475569', marginTop: 2 }}>
+        <div style={{ fontSize: metaSize, color: '#475569', marginTop: isPdf ? 4 : 2 }}>
           <b>{p.type.trim()}</b>
         </div>
       ) : null}
 
-      {noteLine('Appt notes', p.appointmentNotes, { fontSize: metaSize })}
-      {noteLine('Staff notes', p.staffNotes, { fontSize: metaSize })}
-      {noteLine('Pet alerts', petAlerts, { fontSize: metaSize, alert: true })}
+      {noteLine('Appt notes', p.appointmentNotes, { fontSize: metaSize, pdf: isPdf })}
+      {noteLine('Staff notes', p.staffNotes, { fontSize: metaSize, pdf: isPdf })}
+      {noteLine('Pet alerts', petAlerts, { fontSize: metaSize, alert: true, pdf: isPdf })}
 
       {(p.status || p.recordStatus) && statusPillStyle ? (
         <div
@@ -113,6 +113,40 @@ export function MyDayVisualPatientDetail({
           ) : null}
         </div>
       ) : null}
-    </li>
+    </>
   );
+
+  if (isPdf) {
+    return (
+      <li
+        style={{
+          listStyle: 'none',
+          margin: 0,
+          padding: '10px 12px 10px 10px',
+          background: '#f8fafc',
+          border: '1px solid #e2e8f0',
+          borderRadius: 8,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+          <span
+            aria-hidden
+            style={{
+              flexShrink: 0,
+              color: '#0284c7',
+              fontWeight: 800,
+              fontSize: 22,
+              lineHeight: 1.15,
+              marginTop: 1,
+            }}
+          >
+            •
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>{detail}</div>
+        </div>
+      </li>
+    );
+  }
+
+  return <li style={{ marginBottom: 6 }}>{detail}</li>;
 }

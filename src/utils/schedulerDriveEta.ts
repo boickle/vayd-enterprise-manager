@@ -17,6 +17,7 @@ import {
 } from '../api/appointments';
 import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import type { DayData } from '../pages/MyWeek';
+import { makeMyDayVisualPatientBadge, type MyDayVisualPatientBadge } from './myDayVisualPatientDetails';
 import { mergeEtaFetchIntoDayData, type DayBundleIn } from './schedulerEtaMerge';
 import {
   applyEditTimePreviewToDoctorDayAppts,
@@ -171,16 +172,9 @@ function addressKeyForAppt(a: DoctorDayAppt): string | null {
   return free ? `free:${free}` : null;
 }
 
-type PatientBadge = { name: string; type?: string | null };
+type PatientBadge = MyDayVisualPatientBadge;
 function makePatientBadge(a: DoctorDayAppt): PatientBadge {
-  const name =
-    str(a as any, 'patientName') ||
-    str(a as any, 'petName') ||
-    str(a as any, 'animalName') ||
-    str(a as any, 'name') ||
-    'Patient';
-  const type = str(a, 'appointmentType') || str(a as any, 'appointmentTypeName') || str(a as any, 'serviceName') || null;
-  return { name, type };
+  return makeMyDayVisualPatientBadge(a);
 }
 
 function formatAddress(a: DoctorDayAppt) {

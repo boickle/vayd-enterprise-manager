@@ -28,7 +28,10 @@ import {
   type AppointmentType,
 } from '../api/appointmentSettings';
 import { useAuth } from '../auth/useAuth';
-import type { RescheduleVisitPatch } from '../utils/routingRescheduleIntent';
+import {
+  routingAddressesMatch,
+  type RescheduleVisitPatch,
+} from '../utils/routingRescheduleIntent';
 import { resolveBookModalDefaultAppointmentTypeId } from '../utils/routingCalculateTimeType';
 import { Field } from '../components/Field';
 import { BookPatientChartButton } from '../components/BookPatientChartButton';
@@ -50,6 +53,7 @@ import {
 } from '../utils/scheduleOverrideBook';
 import {
   appointmentFormFlags,
+  appointmentTypeAddressRequired,
   appointmentTypeAllowsAllDay,
   appointmentTypeRequiresPatient,
   normalizeAppointmentTypeFromApi,
@@ -481,6 +485,19 @@ export function SchedulerBookModal({
     });
   }, [isRoutingBook, isAdminOrSuper, appointmentTypes, manualBookableTypeIds]);
 
+  /** Add another pet: active types where address is required (ignore role manual-book permissions). */
+  const coVisitAddPetAppointmentTypes = useMemo(
+    () =>
+      sortAppointmentTypesForPicker(
+        appointmentTypes
+          .map((t) => normalizeAppointmentTypeFromApi(t))
+          .filter((t) => t.isDeleted !== true && t.isActive !== false)
+          .filter((t) => appointmentTypeAddressRequired(t)),
+        { unrankedOrder: 'alphabetical' }
+      ),
+    [appointmentTypes]
+  );
+
   const [startLocal, setStartLocal] = useState<DateTime | null>(null);
   const [durationMin, setDurationMin] = useState(30);
   const [isAllDay, setIsAllDay] = useState(false);
@@ -509,12 +526,13 @@ export function SchedulerBookModal({
 
   /**
    * All-day manual book: types the user may book that also allow all-day.
-   * Uses the same role permissions as timed manual book (`typesForPicker`).
+   * Add pet uses all address-required types, not role-filtered manual-book permissions.
    */
   const typesForActivePicker = useMemo(() => {
-    if (!allDayBookSession) return typesForPicker;
-    return allDayBookableTypesFromCatalog(typesForPicker);
-  }, [typesForPicker, allDayBookSession]);
+    const base = prefill?.coVisitAddPet ? coVisitAddPetAppointmentTypes : typesForPicker;
+    if (!allDayBookSession) return base;
+    return allDayBookableTypesFromCatalog(base);
+  }, [prefill?.coVisitAddPet, typesForPicker, coVisitAddPetAppointmentTypes, allDayBookSession]);
 
   const selectedType = useMemo(() => {
     if (!typeId) return undefined;
@@ -571,32 +589,75 @@ export function SchedulerBookModal({
 
   const hasLinkedClient = Boolean(selectedClientId?.trim());
 
-  const hasRoutingAlternateAddressText = Boolean(
-    alternateAddressText.trim() || prefill?.routingAlternateAddress?.trim()
+  const routingVisitAddressText = useMemo(() => {
+    const fromState = alternateAddressText.trim();
+    const fromPrefill = prefill?.routingAlternateAddress?.trim() ?? '';
+    return fromState || fromPrefill;
+  }, [alternateAddressText, prefill?.routingAlternateAddress]);
+
+  const hasRoutingAlternateAddressText = Boolean(routingVisitAddressText);
+
+  /** Hide alternate UI only when routing preview already had a client (visit uses client home). */
+  const routingPreviewUsesClientHome = Boolean(
+    isRoutingPreviewBook && routingBookHasPrefilledClient && !prefill?.routingAlternateAddress?.trim()
   );
 
-  /** Routing / reschedule alternate stop overrides client home for drive time and visit location. */
+  /** Address-only or explicit alternate routing — show routed stop (read-only in preview). */
   const showRoutingAlternateAddress = Boolean(
-    (isRoutingPreviewBook || isRescheduleBook) && hasRoutingAlternateAddressText
+    (isRescheduleBook || isRoutingPreviewBook) &&
+      hasRoutingAlternateAddressText &&
+      !routingPreviewUsesClientHome
   );
 
-  /** Include on create/preview when routing supplied an explicit alternate stop. */
+  /** Include on create/preview when type allows alternate address (blank is OK). */
   const bookAlternateAddressText = useMemo(() => {
+    if (routingPreviewUsesClientHome) return '';
     const trimmed = alternateAddressText.trim();
     const prefillAlt = prefill?.routingAlternateAddress?.trim();
     if (prefillAlt) return trimmed || prefillAlt;
-    if (canUseAlternateAddress && !hasLinkedClient) return trimmed;
+    if (canUseAlternateAddress) return trimmed;
     return '';
   }, [
     alternateAddressText,
-    prefill?.routingAlternateAddress,
     canUseAlternateAddress,
-    hasLinkedClient,
+    prefill?.routingAlternateAddress,
+    routingPreviewUsesClientHome,
+  ]);
+
+  const alternateAddressTextForSubmit = useMemo(() => {
+    if (routingPreviewUsesClientHome) return '';
+    const alt = bookAlternateAddressText.trim();
+    if (!alt) return '';
+    // Routing preview: always book at the routed stop (placement was computed for this address).
+    if (isRoutingPreviewBook && hasRoutingAlternateAddressText) return alt;
+    if (
+      selectedClientAddress?.trim() &&
+      routingAddressesMatch(alt, selectedClientAddress)
+    ) {
+      return '';
+    }
+    return alt;
+  }, [
+    bookAlternateAddressText,
+    hasRoutingAlternateAddressText,
+    isRoutingPreviewBook,
+    routingPreviewUsesClientHome,
+    selectedClientAddress,
   ]);
 
   const perVisitReschedule = isRescheduleBook && rescheduleVisitEdits.length > 0;
 
   const rescheduleAlternateVisitAddress = isRescheduleBook ? bookAlternateAddressText || null : null;
+
+  /** Manual book or routing preview — show visit vs home on client card. */
+  const manualBookAlternateVisitAddress =
+    bookAlternateAddressText &&
+    !showRoutingAlternateAddress &&
+    (canUseAlternateAddress || (isRoutingPreviewBook && !routingPreviewUsesClientHome))
+      ? bookAlternateAddressText
+      : showRoutingAlternateAddress && isRoutingPreviewBook && bookAlternateAddressText
+        ? bookAlternateAddressText
+        : null;
 
   const perVisitRoutingBook = isRoutingPreviewBook && routingBookVisitEdits.length > 0;
 
@@ -614,9 +675,9 @@ export function SchedulerBookModal({
     return bookOverrideAnchorDate;
   }, [showAllDayFields, allDayEndDate, bookOverrideAnchorDate, practiceTz]);
 
-  /** Manual book: alternate stop when type allows (routing preview uses its own field). */
+  /** Manual book: alternate stop when type allows (not for routing-preview client-home books). */
   const showManualAlternateAddress = Boolean(
-    canUseAlternateAddress && !showRoutingAlternateAddress && !hasLinkedClient
+    canUseAlternateAddress && !showRoutingAlternateAddress && !routingPreviewUsesClientHome
   );
 
   const showClientSection =
@@ -788,17 +849,12 @@ export function SchedulerBookModal({
         sortedPickerTypes: sortedPicker,
         allTypes: appointmentTypes,
         routingStatsTypeKey: prefill?.routingStatsTypeKey,
-        pinnedAppointmentTypeId: prefill?.coVisitAddPet
-          ? prefill?.appointmentTypeId
-          : undefined,
       });
       return id != null ? String(id) : '';
     },
     [
       appointmentTypes,
       prefill?.routingStatsTypeKey,
-      prefill?.coVisitAddPet,
-      prefill?.appointmentTypeId,
     ]
   );
 
@@ -951,7 +1007,9 @@ export function SchedulerBookModal({
 
     const manualBookTypes = usesRoutingTypeCatalog
       ? routingBookFullAppointmentTypes
-      : typesForPicker;
+      : prefill?.coVisitAddPet
+        ? coVisitAddPetAppointmentTypes
+        : typesForPicker;
     const pickerTypes = prefill?.allDay
       ? allDayBookableTypesFromCatalog(manualBookTypes)
       : manualBookTypes;
@@ -978,11 +1036,13 @@ export function SchedulerBookModal({
     bookSessionKey,
     providers,
     typesForPicker,
+    coVisitAddPetAppointmentTypes,
     appointmentTypes,
     routingBookFullAppointmentTypes,
     usesRoutingTypeCatalog,
     resolveDefaultBookTypeId,
     prefill?.allDay,
+    prefill?.coVisitAddPet,
     prefill?.preserveDurationFromSlot,
     prefill?.providerId,
     prefill?.additionalEmployeeIds,
@@ -1300,7 +1360,7 @@ export function SchedulerBookModal({
       setFormError('Invalid start time.');
       return true;
     }
-    const trimmedAlt = bookAlternateAddressText;
+    const trimmedAlt = alternateAddressTextForSubmit;
     if (trimmedAlt.length > 4000) {
       setFormError('Alternate address must be 4000 characters or fewer.');
       return true;
@@ -1462,7 +1522,7 @@ export function SchedulerBookModal({
                     ? [prefill.rescheduleAppointmentId]
                     : []
               ).filter((id) => Number.isFinite(Number(id)));
-      const trimmedAlt = bookAlternateAddressText;
+      const trimmedAlt = alternateAddressTextForSubmit;
       if (trimmedAlt.length > 4000) {
         setFormError('Alternate address must be 4000 characters or fewer.');
         setSubmitting(false);
@@ -1751,27 +1811,17 @@ export function SchedulerBookModal({
                 maxLength={4000}
                 value={alternateAddressText}
                 onChange={(e) => setAlternateAddressText(e.target.value)}
+                readOnly={isRoutingPreviewBook}
+                disabled={isRoutingPreviewBook}
                 placeholder="Used for routing and drive time instead of the client's home address."
               />
               <p className="scheduler-book-hint muted">
-                {hasLinkedClient
-                  ? 'This visit will be scheduled for the client at this address (not their home).'
-                  : 'Pre-filled from Get Best Route. Overrides the client home address when set.'}
+                {isRoutingPreviewBook
+                  ? 'From Get Best Route — this address is fixed and will be saved as the visit location.'
+                  : hasLinkedClient
+                    ? 'This visit will be scheduled for the client at this address (not their home).'
+                    : 'Pre-filled from routing. Overrides the client home address when set.'}
               </p>
-            </label>
-          ) : null}
-
-          {showManualAlternateAddress ? (
-            <label className="scheduler-book-field scheduler-book-field--full">
-              <span className="scheduler-book-field-label">Alternate address</span>
-              <textarea
-                className="scheduler-book-textarea"
-                rows={2}
-                maxLength={4000}
-                value={alternateAddressText}
-                onChange={(e) => setAlternateAddressText(e.target.value)}
-                placeholder="Visit location when different from the client's home address."
-              />
             </label>
           ) : null}
 
@@ -1907,7 +1957,9 @@ export function SchedulerBookModal({
                   <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
                     {routingBookHasPrefilledClient
                       ? 'Choose one or more patients for this slot. Each patient gets their own appointment at the same time with its own type and description.'
-                      : 'Optionally search for a client below, then choose patients. The alternate address above is used for routing regardless of client home address.'}
+                      : showRoutingAlternateAddress
+                        ? 'Search for a client above, then choose patients. The visit stays at the routed address above.'
+                        : 'Search for a client above, then choose patients for this routed slot.'}
                   </p>
                 ) : isRescheduleBook && rescheduleAlternateVisitAddress ? (
                   <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
@@ -1992,13 +2044,34 @@ export function SchedulerBookModal({
               {selectedClientId ? (
                 <BookSelectedClientCard
                   name={selectedClientLabel}
-                  address={selectedClientAddress}
+                  address={manualBookAlternateVisitAddress ? null : selectedClientAddress}
+                  visitAddress={manualBookAlternateVisitAddress}
+                  homeAddress={manualBookAlternateVisitAddress ? selectedClientAddress : null}
                   alerts={selectedClientAlerts}
                   onClear={clearSelectedClient}
                 />
               ) : null}
             </>
           )
+          ) : null}
+
+          {showManualAlternateAddress ? (
+            <label className="scheduler-book-field scheduler-book-field--full">
+              <span className="scheduler-book-field-label">Alternate address</span>
+              <textarea
+                className="scheduler-book-textarea"
+                rows={2}
+                maxLength={4000}
+                value={alternateAddressText}
+                onChange={(e) => setAlternateAddressText(e.target.value)}
+                placeholder="Visit location when different from the client's home address."
+              />
+              <p className="scheduler-book-hint muted">
+                {hasLinkedClient
+                  ? 'Optional. When filled, this address is used for the visit instead of the client\u2019s home address.'
+                  : 'Optional. Overrides the client home address when a client is linked.'}
+              </p>
+            </label>
           ) : null}
 
           {!perVisitReschedule && !perVisitRoutingBook && showClientSection ? (

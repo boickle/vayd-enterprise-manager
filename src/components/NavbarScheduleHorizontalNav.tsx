@@ -4,6 +4,7 @@ import { ChevronDown } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import { getVisibleScoutTabs } from '../scout-tabs';
 import { getSchedulingToolsTabPages } from '../scheduling-tools-tabs';
+import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import TasksNavLabel from './TasksNavLabel';
 import { useTaskNavBadges } from '../hooks/useTaskNavBadges';
 import '../pages/ScheduleLayout.css';
@@ -48,6 +49,14 @@ function isSchedulingToolsTabActive(pathname: string, tabPath: string): boolean 
   return false;
 }
 
+function blockScheduleNavLeave(e: { preventDefault: () => void }): boolean {
+  if (blockRoutingCalendarPreviewNavigation()) {
+    e.preventDefault();
+    return true;
+  }
+  return false;
+}
+
 function SchedulingToolsSubmenuLinks({ onNavigate }: { onNavigate: () => void }) {
   const location = useLocation();
   const tabs = getSchedulingToolsTabPages();
@@ -63,7 +72,10 @@ function SchedulingToolsSubmenuLinks({ onNavigate }: { onNavigate: () => void })
               : ''
           }`}
           role="menuitem"
-          onClick={onNavigate}
+          onClick={(e) => {
+            if (blockScheduleNavLeave(e)) return;
+            onNavigate();
+          }}
         >
           {tab.label}
         </Link>

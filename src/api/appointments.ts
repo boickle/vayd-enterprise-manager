@@ -187,6 +187,21 @@ export function appointmentHasAlternateLocation(
   return appointmentAlternateAddressText(a) != null;
 }
 
+/** Strip alternate routing fields for calendar display after a home-address link. */
+export function appointmentWithoutAlternateRoutingAddress(appt: Appointment): Appointment {
+  const next = { ...appt } as Appointment & Record<string, unknown>;
+  next.alternateAddress = null;
+  next.alternateAddressText = null;
+  next.isAlternateStop = false;
+  const meta = next.newApptMeta;
+  if (meta && typeof meta === 'object') {
+    const copy = { ...(meta as Record<string, unknown>) };
+    delete copy.address;
+    next.newApptMeta = copy;
+  }
+  return next;
+}
+
 /** Coerce range/realtime rows so calendar UI always sees nested + flat alternate fields when present. */
 export function normalizeRangeAppointment(row: Appointment): Appointment {
   const raw = row as Appointment & Record<string, unknown>;
@@ -488,8 +503,8 @@ function mergeRecordObjects(
 }
 
 /**
- * Overlay calendar-range `client` (phone1/phone2) and confirm status onto doctor-day rows.
- * Doctor-day (`GET /appointments/doctor`) is routing-focused; range (`GET /appointments/range`) has full client contact.
+ * Overlay calendar-range client contact and clinical fields onto doctor-day rows.
+ * Doctor-day (`GET /appointments/doctor`) is routing-focused; range (`GET /appointments/range`) has full visit detail.
  */
 export function mergeRangeClientContactOntoDoctorDayAppts(
   appts: DoctorDayAppt[],
@@ -511,12 +526,24 @@ export function mergeRangeClientContactOntoDoctorDayAppts(
       appt.client as Record<string, unknown> | undefined,
       full.client as Record<string, unknown> | undefined
     );
+    const mergedPatient = mergeRecordObjects(
+      appt.patient as Record<string, unknown> | undefined,
+      full.patient as unknown as Record<string, unknown> | undefined
+    );
     const altText = appointmentAlternateAddressText(full);
     const hasAlt = appointmentHasAlternateLocation(full);
     const next: DoctorDayAppt = {
       ...appt,
       confirmStatusName: appt.confirmStatusName ?? full.confirmStatusName ?? undefined,
+      description: appt.description?.trim() || full.description?.trim() || appt.description,
+      instructions: appt.instructions?.trim() || full.instructions?.trim() || appt.instructions,
+      alerts:
+        appt.alerts?.trim() ||
+        full.patient?.alerts?.trim() ||
+        appt.alerts ||
+        undefined,
       ...(mergedClient ? { client: mergedClient } : {}),
+      ...(mergedPatient ? { patient: mergedPatient } : {}),
       ...(altText
         ? {
             alternateAddressText: altText,
@@ -635,6 +662,8 @@ export type DoctorDayAppt = {
   patientPrimaryProvider?: DoctorDayPatientPrimaryProvider | null;
   /** Nested patient row when returned by doctor-day API (sex, alerts, etc.). */
   patient?: Record<string, unknown> | null;
+  /** Pet-level alerts when returned at appointment root (doctor-day / range). */
+  alerts?: string | null;
   /** Routing alternate stop — visit at this address instead of client home. */
   alternateAddressText?: string;
   isAlternateStop?: boolean;

@@ -273,6 +273,22 @@ export function computeEditPreviewPopoverPosition(args: {
   };
 }
 
+/** When the preview slot is not painted yet, park the popover on the right edge. */
+export function fallbackEditPreviewPopoverPosition(args: {
+  vwW: number;
+  vwH: number;
+  cardW?: number;
+  cardEstH?: number;
+  padding?: number;
+}): HoverPopoverPositionResult {
+  const pad = args.padding ?? 12;
+  const width = args.cardW ?? 300;
+  const H = clamp(args.cardEstH ?? 340, 200, args.vwH - 2 * pad);
+  const top = clamp(args.vwH * 0.22, pad, args.vwH - pad - H);
+  const left = clamp(args.vwW - width - pad, pad, args.vwW - pad - width);
+  return { left, top, maxCardH: Math.min(H, args.vwH - pad - top), width };
+}
+
 /** Visit Highlights popover placement (scheduler calendar + Progress modal). */
 export function computeVisitHighlightsPopoverPosition(args: {
   anchorEl?: HTMLElement | null;
@@ -300,7 +316,7 @@ export function computeVisitHighlightsPopoverPosition(args: {
     y: args.y,
     vwW,
     vwH,
-    cardMaxW: narrow ? maxUsableW : 380,
+    cardMaxW: narrow ? maxUsableW : 420,
     cardMinW: narrow ? Math.min(280, maxUsableW) : 280,
     padding: pad,
     offset: narrow ? 10 : 8,

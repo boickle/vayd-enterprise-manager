@@ -1,18 +1,14 @@
 /**
  * PIMS client + patient search (staff).
  *
- * Today this composes existing endpoints. A dedicated backend route would reduce
- * round-trips and allow unified ranking, inactive flags on clients, and phone search:
+ * Patient matches (including by owner/client name) come from `/patients/search`
+ * — same path as the PIMS Patients list. Client name matches use `/clients/search`.
  *
- * Suggested: GET /pims/search?q=&practiceId=&includeInactive=&mode=all|clients|patients
- *   → { clients: [...], patients: [...], meta: { tookMs } }
- *
- * Patient matches (including by owner/client name) should come from `/patients/search`
- * on the backend; this bundle does not call `/clients/search` to fan out patient fetches.
- *
- * For the client profile / invoice view (account balance UI), you will likely need:
- *   GET /clients/:id/billing or GET /clients/:id/invoices — not used by this bundle yet.
+ * Optional GET /pims/search may add extra hits when deployed; it never replaces
+ * the patient/client search endpoints.
  */
+import axios from 'axios';
+import { http } from './http';
 import { searchClientsStaff, type ClientSearchRow } from './clientsStaff';
 import { searchPatientsStaff, type PatientSearchRow } from './patients';
 import {
@@ -36,13 +32,18 @@ function pickStr(v: unknown): string | null {
   return s || null;
 }
 
+function clientRowIdValid(c: ClientSearchRow): boolean {
+  const id = c.id;
+  return id != null && id !== 'undefined' && String(id).trim() !== '';
+}
+
 function patientDisplayName(row: PatientSearchRow): string {
   const r = row as Record<string, unknown>;
   const joined = [pickStr(row.firstName), pickStr(row.lastName)].filter(Boolean).join(' ').trim();
   return (pickStr(row.name) ?? pickStr(r.patientName) ?? joined) || 'Patient';
 }
 
-function normalizePatientSearchRow(row: unknown): PimsPatientSearchHit | null {
+export function normalizePatientSearchRow(row: unknown): PimsPatientSearchHit | null {
   if (!row || typeof row !== 'object') return null;
   const o = row as PatientSearchRow;
   const idRaw = (o as Record<string, unknown>).id ?? (o as Record<string, unknown>).patientId;
@@ -72,6 +73,79 @@ export type PimsUnifiedSearchResult = {
   patients: PimsPatientSearchHit[];
 };
 
+function extractClientListFromPimsSearch(data: unknown): ClientSearchRow[] {
+  if (!data || typeof data !== 'object') return [];
+  if (Array.isArray(data)) return data as ClientSearchRow[];
+  const o = data as Record<string, unknown>;
+  const rows = o.clients ?? o.items ?? o.results;
+  return Array.isArray(rows) ? (rows as ClientSearchRow[]) : [];
+}
+
+function extractPatientListFromPimsSearch(data: unknown): unknown[] {
+  if (!data || typeof data !== 'object') return [];
+  const o = data as Record<string, unknown>;
+  const rows = o.patients;
+  return Array.isArray(rows) ? rows : [];
+}
+
+/** Practice-scoped unified search (optional extra hits when backend supports it). */
+export async function searchPimsStaff(
+  q: string,
+  options?: { practiceId?: number; includeInactive?: boolean }
+): Promise<PimsUnifiedSearchResult> {
+  const trimmed = q.trim();
+  if (!trimmed) return { clients: [], patients: [] };
+  try {
+    const { data } = await http.get('/pims/search', {
+      params: {
+        q: trimmed,
+        ...(options?.practiceId != null ? { practiceId: options.practiceId } : {}),
+        ...(options?.includeInactive ? { includeInactive: true } : {}),
+      },
+    });
+    const clients = extractClientListFromPimsSearch(data).filter(clientRowIdValid);
+    const patients = extractPatientListFromPimsSearch(data)
+      .map((row) => normalizePatientSearchRow(row))
+      .filter(Boolean) as PimsPatientSearchHit[];
+    return { clients, patients };
+  } catch (e) {
+    if (axios.isAxiosError(e) && e.response?.status === 404) {
+      return { clients: [], patients: [] };
+    }
+    throw e;
+  }
+}
+
+function mergeClientRows(base: ClientSearchRow[], extra: ClientSearchRow[]): ClientSearchRow[] {
+  const byId = new Map<string, ClientSearchRow>();
+  for (const row of base) {
+    if (clientRowIdValid(row)) byId.set(String(row.id), row);
+  }
+  for (const row of extra) {
+    if (!clientRowIdValid(row)) continue;
+    const id = String(row.id);
+    if (!byId.has(id)) byId.set(id, row);
+  }
+  return [...byId.values()];
+}
+
+function mergePatientHits(
+  base: PimsPatientSearchHit[],
+  extra: PimsPatientSearchHit[]
+): PimsPatientSearchHit[] {
+  const byId = new Map<string, PimsPatientSearchHit>();
+  for (const row of base) byId.set(String(row.id), row);
+  for (const row of extra) {
+    const id = String(row.id);
+    if (!byId.has(id)) byId.set(id, row);
+  }
+  return [...byId.values()];
+}
+
+/**
+ * Combined client + patient search for staff pickers.
+ * Always uses `/patients/search` (same as PIMS Patients) and `/clients/search`.
+ */
 export async function searchPimsClientsAndPatients(
   q: string,
   options?: { practiceId?: number; activeOnly?: boolean }
@@ -83,17 +157,33 @@ export async function searchPimsClientsAndPatients(
   const practiceId = options?.practiceId;
   const activeOnly = options?.activeOnly !== false;
 
+  const patientOpts = {
+    ...(practiceId != null ? { practiceId } : {}),
+    activeOnly,
+  };
+
   const [clients, patientRows] = await Promise.all([
-    searchClientsStaff(trimmed),
-    searchPatientsStaff(trimmed, {
-      ...(practiceId != null ? { practiceId } : {}),
-      activeOnly,
-    }),
+    searchClientsStaff(trimmed, { includeInactive: !activeOnly }),
+    searchPatientsStaff(trimmed, patientOpts),
   ]);
 
-  const patients = patientRows
+  let mergedClients = clients.filter(clientRowIdValid);
+  let mergedPatients = patientRows
     .map((row) => normalizePatientSearchRow(row))
     .filter(Boolean) as PimsPatientSearchHit[];
 
-  return { clients, patients };
+  if (practiceId != null) {
+    try {
+      const unified = await searchPimsStaff(trimmed, {
+        practiceId,
+        includeInactive: !activeOnly,
+      });
+      mergedClients = mergeClientRows(mergedClients, unified.clients);
+      mergedPatients = mergePatientHits(mergedPatients, unified.patients);
+    } catch {
+      /* optional unified search */
+    }
+  }
+
+  return { clients: mergedClients, patients: mergedPatients };
 }

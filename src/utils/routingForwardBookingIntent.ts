@@ -39,6 +39,11 @@ export type RoutingForwardBookingIntentV1 = {
   sourceAppointmentId: number;
   /** When true, successful book navigates back to the forward booking list. */
   returnToListAfterBook?: boolean;
+  /**
+   * True only while staff entered routing from Forward booking → Book.
+   * Prevents stale sessionStorage from hijacking unrelated routing books.
+   */
+  workspaceActive?: boolean;
 };
 
 function pickStr(v: unknown): string | null {
@@ -70,6 +75,11 @@ export function readRoutingForwardBookingIntent(): RoutingForwardBookingIntentV1
 
 export function forwardBookingIntentIsActive(): boolean {
   return readRoutingForwardBookingIntent() != null;
+}
+
+/** Forward booking workspace mode (list → Book), not merely a stale stored intent row. */
+export function forwardBookingWorkspaceIsActive(): boolean {
+  return readRoutingForwardBookingIntent()?.workspaceActive === true;
 }
 
 export function writeRoutingForwardBookingIntent(

@@ -21,7 +21,8 @@ type EditVisitPreviewPopoverProps = {
   scoreLoading: boolean;
   scoreError: string | null;
   confirmLabel: string;
-  onConfirm: () => void;
+  confirming?: boolean;
+  onConfirm: () => void | Promise<void>;
   onDismiss: () => void;
 };
 
@@ -56,6 +57,7 @@ export function EditVisitPreviewPopover({
   scoreLoading,
   scoreError,
   confirmLabel,
+  confirming = false,
   onConfirm,
   onDismiss,
 }: EditVisitPreviewPopoverProps) {
@@ -173,8 +175,13 @@ export function EditVisitPreviewPopover({
       </div>
 
       <div className="scheduler-edit-preview-popover-actions">
-        <button type="button" className="btn scheduler-edit-preview-popover-confirm" onClick={onConfirm}>
-          {confirmLabel}
+        <button
+          type="button"
+          className="btn scheduler-edit-preview-popover-confirm"
+          onClick={() => void onConfirm()}
+          disabled={confirming || scoreLoading}
+        >
+          {confirming ? 'Saving…' : confirmLabel}
         </button>
       </div>
     </div>

@@ -1,18 +1,42 @@
 import { DateTime } from 'luxon';
 import type { ForwardBookingEntry } from '../api/forwardBooking';
+import { fetchAppointmentById } from '../api/appointments';
 import type { AppointmentType } from '../api/appointmentSettings';
 import type { Appointment } from '../api/roomLoader';
+import { fetchRoutedArrivalWindowIsosForAppointment } from './appointmentRoutedArrivalWindow';
 import { isFixedTimeTypeName } from './editVisitTimePreview';
 import { formatForwardBookingIntervalLabel } from './forwardBookingFromAppointment';
+import { forwardBookingLinkedAppointmentId } from './forwardBookingLinkedVisit';
 
 export type ForwardBookingSmsBookedSlot = {
-  /** e.g. Tuesday, Jun 9 */
+  /** e.g. Monday, June 15th, 2026 */
   dateLabel: string;
   /** Window start time, e.g. 12:35 PM */
   windowStart: string;
   /** Window end time, e.g. 1:20 PM */
   windowEnd: string;
 };
+
+function dayOfMonthWithOrdinal(day: number): string {
+  const mod100 = day % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${day}th`;
+  switch (day % 10) {
+    case 1:
+      return `${day}st`;
+    case 2:
+      return `${day}nd`;
+    case 3:
+      return `${day}rd`;
+    default:
+      return `${day}th`;
+  }
+}
+
+/** Client-facing date in forward-booking SMS — full month, ordinal day, year. */
+export function formatForwardBookingSmsDateLabel(dt: DateTime): string {
+  if (!dt.isValid) return 'xxxxx';
+  return `${dt.toFormat('EEEE, MMMM')} ${dayOfMonthWithOrdinal(dt.day)}, ${dt.toFormat('yyyy')}`;
+}
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -74,7 +98,9 @@ export function formatForwardBookingSmsBookedSlot(
   const end = endIso
     ? DateTime.fromISO(endIso, { zone: 'utc' }).setZone(practiceTz)
     : null;
-  const dateLabel = dateDt.isValid ? dateDt.toFormat('EEEE, MMM d') : start.toFormat('EEEE, MMM d');
+  const dateLabel = dateDt.isValid
+    ? formatForwardBookingSmsDateLabel(dateDt)
+    : formatForwardBookingSmsDateLabel(start);
   const windowStart = start.toFormat('h:mm a');
   const windowEnd =
     end?.isValid && end.toMillis() !== start.toMillis()
@@ -201,6 +227,52 @@ export function formatForwardBookingSmsBookedSlotFromAppointment(
     practiceTz,
     win.dateIsoForLabel
   );
+}
+
+/** Resolve SMS window from routed doctor-day ETAs when possible; else appointment fields or type defaults. */
+export async function resolveForwardBookingSmsBookedSlot(
+  entry: ForwardBookingEntry,
+  practiceTz: string,
+  opts?: {
+    practiceId?: number;
+    appointmentType?: AppointmentTypeWindowFields | null;
+  }
+): Promise<ForwardBookingSmsBookedSlot | undefined> {
+  const appointmentType = opts?.appointmentType ?? null;
+  const practiceId = opts?.practiceId;
+
+  const apptId = forwardBookingLinkedAppointmentId(entry) ?? entry.bookedAppointmentId ?? null;
+  if (apptId != null && practiceId != null) {
+    const appt = await fetchAppointmentById(apptId, { practiceId });
+    if (appt) {
+      const type =
+        appointmentType ??
+        (appt.appointmentType as AppointmentTypeWindowFields | null | undefined) ??
+        null;
+
+      const doctorPimsId =
+        appt.primaryProvider?.pimsId?.trim() || entry.primaryProvider?.pimsId?.trim() || null;
+
+      const routedWin = await fetchRoutedArrivalWindowIsosForAppointment(
+        appt,
+        practiceTz,
+        doctorPimsId
+      );
+      if (routedWin) {
+        return formatForwardBookingSmsBookedSlot(
+          routedWin.startIso,
+          routedWin.endIso,
+          practiceTz,
+          appt.appointmentStart
+        );
+      }
+
+      const fromAppt = formatForwardBookingSmsBookedSlotFromAppointment(appt, practiceTz, type);
+      if (fromAppt) return fromAppt;
+    }
+  }
+
+  return formatForwardBookingSmsBookedSlotFromEntry(entry, practiceTz, appointmentType);
 }
 
 export function formatForwardBookingSmsBookedSlotFromEntry(
