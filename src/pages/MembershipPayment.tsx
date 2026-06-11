@@ -1504,7 +1504,11 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                                   try {
                                     const res = await resolveMembershipDiscountByCode(promoCodeInput);
                                     if (res.valid && res.discount) {
-                                      setAppliedCodeDiscount(res.discount);
+                                      if (res.discount.duration === 'once' && state.billingPreference === 'annual') {
+                                        setPromoCodeError('This code is for monthly plans only and cannot be applied to an annual plan.');
+                                      } else {
+                                        setAppliedCodeDiscount(res.discount);
+                                      }
                                     } else {
                                       setPromoCodeError(res.message || 'Code not found or no longer valid.');
                                     }
@@ -1541,7 +1545,11 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                                 try {
                                   const res = await resolveMembershipDiscountByCode(promoCodeInput);
                                   if (res.valid && res.discount) {
-                                    setAppliedCodeDiscount(res.discount);
+                                    if (res.discount.duration === 'once' && state.billingPreference === 'annual') {
+                                      setPromoCodeError('This code is for monthly plans only and cannot be applied to an annual plan.');
+                                    } else {
+                                      setAppliedCodeDiscount(res.discount);
+                                    }
                                   } else {
                                     setPromoCodeError(res.message || 'Code not found or no longer valid.');
                                   }
