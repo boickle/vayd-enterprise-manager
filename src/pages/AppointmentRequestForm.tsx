@@ -60,6 +60,9 @@ const SHOW_DOCTOR_SELECTION = false;
 /** Set to true to show time slots ("Here are some possible dates and times..."). Code preserved for potential re-enable. */
 const SHOW_TIME_SLOTS = false;
 
+/** Set to true to show the manual promo code entry field on the submit step. Promotions via URL token (?promo=) still work. Code preserved for potential re-enable. */
+const SHOW_PROMO_CODE_FIELD = false;
+
 const EMERGENT_HOW_SOON_VALUES = new Set([
   'Emergent – today',
   'Emergent - Today',
@@ -7007,7 +7010,7 @@ export default function AppointmentRequestForm() {
           <div style={{ flex: 1 }} />
 
           {/* Promo code entry — only on the final submit step */}
-          {isOnSubmitStep && !promoToken && !activePromo && (
+          {SHOW_PROMO_CODE_FIELD && isOnSubmitStep && !promoToken && !activePromo && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
               <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                 <input
