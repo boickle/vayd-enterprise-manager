@@ -45,6 +45,14 @@ import { getZoneSearchBufferMiles, isCreateClientEnabled, isProduction } from '.
 import { listMembershipTransactions } from '../api/membershipTransactions';
 import MembershipSignup from './MembershipSignup';
 import MembershipPayment from './MembershipPayment';
+import {
+  resolveAppointmentRequestPromoToken,
+  resolveAppointmentRequestPromoByCode,
+  formatPromotionDiscount,
+  formatPromotionBannerSubtitle,
+  APPOINTMENT_PROMO_QUERY_PARAM,
+  type PublicAppointmentRequestPromotion,
+} from '../api/appointmentRequestPromotions';
 
 /** Set to true to show doctor selection. Code preserved for potential re-enable. */
 const SHOW_DOCTOR_SELECTION = false;
@@ -563,6 +571,18 @@ export default function AppointmentRequestForm() {
   const [searchParams, setSearchParams] = useSearchParams();
   const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
   const zoneSearchBufferMiles = getZoneSearchBufferMiles();
+
+  // Appointment request promotion — resolved via URL token or manually entered code
+  const [appointmentPromo, setAppointmentPromo] = useState<PublicAppointmentRequestPromotion | null>(null);
+  const promoToken = searchParams.get(APPOINTMENT_PROMO_QUERY_PARAM) ?? null;
+  // Code entered manually by the client (no URL token present)
+  const [promoCodeInput, setPromoCodeInput] = useState('');
+  const [promoCodeApplying, setPromoCodeApplying] = useState(false);
+  const [promoCodeError, setPromoCodeError] = useState<string | null>(null);
+  const [appliedCodePromo, setAppliedCodePromo] = useState<PublicAppointmentRequestPromotion | null>(null);
+  // The single active promo to display/submit (URL token wins over typed code)
+  const activePromo = appointmentPromo ?? appliedCodePromo;
+  const isExistingClientForPromo = isLoggedIn || formData.haveUsedServicesBefore === 'Yes';
 
   const currentPageRef = useRef<Page>(currentPage);
   const isLoggedInRef = useRef(isLoggedIn);
@@ -1993,6 +2013,16 @@ export default function AppointmentRequestForm() {
         console.error('Failed to load client data:', error);
         if (alive) {
           setLoadingVeterinarians(false);
+          if (userEmail) {
+            setFormData((prev) => ({
+              ...prev,
+              email: userEmail,
+              haveUsedServicesBefore: 'Yes',
+            }));
+          } else {
+            setFormData((prev) => ({ ...prev, haveUsedServicesBefore: 'Yes' }));
+          }
+          setCurrentPage('existing-client');
         }
       } finally {
         if (alive) setLoadingClientData(false);
@@ -2006,7 +2036,7 @@ export default function AppointmentRequestForm() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    isLoggedIn, 
+    isLoggedIn,
     userEmail,
   ]);
 
@@ -2289,6 +2319,25 @@ export default function AppointmentRequestForm() {
       clearTimeout(timeoutId);
     };
   }, [practiceId]);
+
+  // Resolve appointment request promo token from ?promo= query param
+  useEffect(() => {
+    if (!promoToken) return;
+    let alive = true;
+    (async () => {
+      try {
+        const promo = await resolveAppointmentRequestPromoToken(promoToken);
+        if (alive) setAppointmentPromo(promo);
+      } catch {
+        // 404 or invalid token — silently hide the banner
+        if (alive) setAppointmentPromo(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [promoToken]);
 
   // Fetch appointment types when logged in, or after new clients confirm a complete address
   useEffect(() => {
@@ -3380,6 +3429,13 @@ export default function AppointmentRequestForm() {
         schedulingNotes: formData.schedulingNotes?.trim() || undefined,
         membershipInterest: formData.membershipInterest || undefined,
         
+        // Appointment request promotion — token (URL) takes precedence over typed code
+        ...(promoToken
+          ? { promotionToken: promoToken }
+          : appliedCodePromo?.code
+          ? { promotionCode: appliedCodePromo.code }
+          : {}),
+
         // Metadata
         formSessionId: formSessionIdRef.current,
         submittedAt: new Date().toISOString(),
@@ -3444,6 +3500,7 @@ export default function AppointmentRequestForm() {
 
   const baskervilleFont = "'Libre Baskerville', 'Times New Roman', serif";
   const isNewClientIntroStep = !isLoggedIn && currentPage === 'intro';
+  const isLoggedInIntroLoading = isLoggedIn && currentPage === 'intro';
   const isNewClientPetStep = !isLoggedIn && currentPage === 'new-client-pet-info';
   const newClientCompactForm = isNewClientIntroStep || isNewClientPetStep;
   const newClientSectionGap = newClientCompactForm ? 10 : 20;
@@ -3674,9 +3731,13 @@ export default function AppointmentRequestForm() {
     const embedded = override?.embedded ?? false;
     switch (pageToRender) {
       case 'intro':
-        // Don't show intro page if user is logged in
+        // Logged-in clients skip intro once client data loads; show a brief placeholder meanwhile
         if (isLoggedIn) {
-          return null;
+          return (
+            <div style={{ textAlign: 'center', padding: isMobile ? '32px 0' : '48px 0', color: '#6b7280', fontSize: '15px' }}>
+              Loading your appointment request…
+            </div>
+          );
         }
         return (
           <div>
@@ -6800,6 +6861,47 @@ export default function AppointmentRequestForm() {
         </header>
       )}
 
+      {/* Employer / appointment promo banner — shown for URL token OR entered code */}
+      {activePromo && (
+        <div
+          style={{
+            background: 'linear-gradient(90deg, #ecfdf5 0%, #d1fae5 100%)',
+            borderBottom: '1px solid #6ee7b7',
+            padding: isMobile ? '10px 16px' : '12px 24px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            flexWrap: 'wrap',
+          }}
+        >
+          <span style={{ fontSize: '20px' }}>🎉</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: isMobile ? '14px' : '15px', color: '#065f46' }}>
+              {activePromo.companyName} employee benefit
+            </div>
+            <div style={{ fontSize: isMobile ? '12px' : '13px', color: '#047857', marginTop: '2px' }}>
+              {formatPromotionBannerSubtitle(activePromo, {
+                isExistingClient: isExistingClientForPromo,
+              })}
+            </div>
+          </div>
+          <div
+            style={{
+              background: '#059669',
+              color: '#fff',
+              borderRadius: '9999px',
+              padding: '4px 14px',
+              fontSize: isMobile ? '12px' : '13px',
+              fontWeight: 700,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+            }}
+          >
+            {formatPromotionDiscount(activePromo)}
+          </div>
+        </div>
+      )}
+
       <div style={{
         maxWidth: '1200px',
         margin: newClientCompactForm ? '8px auto' : isMobile && !isLoggedIn ? '12px auto' : '40px auto',
@@ -6855,6 +6957,7 @@ export default function AppointmentRequestForm() {
           </div>
         )}
 
+        {!(isLoggedInIntroLoading) && (
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: newClientCompactForm ? '12px' : '32px', gap: '12px' }}>
           <style>{`
             @keyframes apptFormSubmitPopIn {
@@ -6902,6 +7005,148 @@ export default function AppointmentRequestForm() {
             </button>
           )}
           <div style={{ flex: 1 }} />
+
+          {/* Promo code entry — only on the final submit step */}
+          {isOnSubmitStep && !promoToken && !activePromo && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  placeholder="Promo code"
+                  value={promoCodeInput}
+                  onChange={(e) => {
+                    setPromoCodeInput(e.target.value.toUpperCase());
+                    setPromoCodeError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void (async () => {
+                        const code = promoCodeInput.trim();
+                        if (!code) return;
+                        setPromoCodeApplying(true);
+                        setPromoCodeError(null);
+                        try {
+                          const promo = await resolveAppointmentRequestPromoByCode(code);
+                          setAppliedCodePromo(promo);
+                        } catch {
+                          setPromoCodeError('Code not found or no longer valid.');
+                        } finally {
+                          setPromoCodeApplying(false);
+                        }
+                      })();
+                    }
+                  }}
+                  disabled={promoCodeApplying}
+                  autoComplete="off"
+                  spellCheck={false}
+                  style={{
+                    padding: '8px 10px',
+                    border: `1px solid ${promoCodeError ? '#ef4444' : '#d1d5db'}`,
+                    borderRadius: '8px',
+                    fontSize: '13px',
+                    fontFamily: 'monospace',
+                    fontWeight: 700,
+                    letterSpacing: '0.05em',
+                    textTransform: 'uppercase',
+                    width: '140px',
+                    outline: 'none',
+                    background: '#fff',
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={promoCodeApplying || !promoCodeInput.trim()}
+                  onClick={() => {
+                    void (async () => {
+                      const code = promoCodeInput.trim();
+                      if (!code) return;
+                      setPromoCodeApplying(true);
+                      setPromoCodeError(null);
+                      try {
+                        const promo = await resolveAppointmentRequestPromoByCode(code);
+                        setAppliedCodePromo(promo);
+                      } catch {
+                        setPromoCodeError('Code not found or no longer valid.');
+                      } finally {
+                        setPromoCodeApplying(false);
+                      }
+                    })();
+                  }}
+                  style={{
+                    padding: '8px 14px',
+                    background: '#0f766e',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: promoCodeApplying || !promoCodeInput.trim() ? 'not-allowed' : 'pointer',
+                    opacity: promoCodeApplying || !promoCodeInput.trim() ? 0.6 : 1,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {promoCodeApplying ? '…' : 'Apply'}
+                </button>
+              </div>
+              {promoCodeError && (
+                <span style={{ fontSize: '12px', color: '#dc2626', fontWeight: 500 }}>
+                  ✗ {promoCodeError}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Applied code pill — shown on the submit step once a code is active */}
+          {isOnSubmitStep && !promoToken && appliedCodePromo && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                background: '#ecfdf5',
+                border: '1px solid #6ee7b7',
+                borderRadius: '8px',
+                padding: '7px 14px',
+              }}
+            >
+              <span style={{ fontSize: '15px' }}>✓</span>
+              <div>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: '#065f46' }}>
+                  <span style={{ fontFamily: 'monospace', letterSpacing: '0.05em' }}>
+                    {appliedCodePromo.code ?? 'Promo'}
+                  </span>
+                  {' — '}
+                  {formatPromotionDiscount(appliedCodePromo)}
+                </div>
+                <div style={{ fontSize: '11px', color: '#047857', marginTop: '1px' }}>
+                  {appliedCodePromo.companyName}
+                  {appliedCodePromo.description ? ` · ${appliedCodePromo.description}` : ''}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setAppliedCodePromo(null);
+                  setPromoCodeInput('');
+                  setPromoCodeError(null);
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '11px',
+                  color: '#6b7280',
+                  textDecoration: 'underline',
+                  padding: 0,
+                  marginLeft: '4px',
+                  flexShrink: 0,
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             {isOnSubmitStep && (
               <span className="appt-form-submit-arrow" style={{ color: '#10b981', fontSize: '28px', fontWeight: 700, lineHeight: 1 }} aria-hidden>→</span>
@@ -6934,6 +7179,7 @@ export default function AppointmentRequestForm() {
             </button>
           </div>
         </div>
+        )}
         </div>
       </div>
 

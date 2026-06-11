@@ -44,6 +44,7 @@ import PublicReferAFriend from './pages/PublicReferAFriend';
 import ErrorPage from './pages/ErrorPage';
 import { usePageTracking } from './hooks/usePageTracking';
 import { isCreateClientEnabled, isProduction } from './utils/env';
+import { savePostLoginRedirect } from './utils/postLoginRedirect';
 import { blockRoutingCalendarPreviewNavigation } from './utils/routingCalendarPreviewGuard';
 import { markSchedulerHandoffPreferRoutingDoctor } from './utils/schedulerCalendarHandoff';
 
@@ -96,6 +97,7 @@ function RouteGuard() {
 
   // Not logged in - redirect to login
   if (!token) {
+    savePostLoginRedirect(location.pathname, location.search, location.hash);
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 

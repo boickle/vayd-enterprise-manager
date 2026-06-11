@@ -2,6 +2,10 @@
 
 interface ImportMetaEnv {
   readonly VITE_API_BASE_URL: string;
+  /** `square` (default) or `stripe` — controls payment SDK and payment-processing API paths. */
+  readonly VITE_PAYMENT_PROVIDER?: string;
+  /** Stripe publishable key (pk_test_… / pk_live_…). Required when VITE_PAYMENT_PROVIDER=stripe. */
+  readonly VITE_STRIPE_PUBLISHABLE_KEY?: string;
   readonly VITE_MOCK_AUTH: string;
   readonly VITE_IS_PROD: string;
   readonly VITE_GA_MEASUREMENT_ID?: string;
