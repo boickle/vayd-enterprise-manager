@@ -1,6 +1,7 @@
 import { DateTime } from 'luxon';
 import type { AppointmentType } from '../api/appointmentSettings';
 import type { DoctorDayAppt } from '../api/appointments';
+import { effectiveWindowForScheduledStart } from './appointmentArrivalWindow';
 import {
   fixedTimeRouteEtaMeaningfullyAfterScheduledStart,
   shouldShowEtaWindowWarning,
@@ -42,18 +43,15 @@ export function effectiveWindowForTypePreview(
   if (arrivalWindowAfter?.startIso && arrivalWindowAfter?.endIso) {
     return arrivalWindowAfter;
   }
-  const typeName = (draftType?.name || draftType?.prettyName || preview.appointmentTypeName || '').trim();
-  if (isFixedTimeTypeName(typeName)) {
-    return { startIso: preview.appointmentStart, endIso: preview.appointmentEnd };
-  }
-  const start = DateTime.fromISO(preview.appointmentStart, { zone: 'utc' }).setZone(practiceTz);
-  if (!start.isValid) return undefined;
-  const before = draftType?.windowBeforeMinutes ?? 60;
-  const after = draftType?.windowAfterMinutes ?? 60;
-  return {
-    startIso: start.minus({ minutes: before }).toISO({ includeOffset: true }) ?? preview.appointmentStart,
-    endIso: start.plus({ minutes: after }).toISO({ includeOffset: true }) ?? preview.appointmentEnd,
-  };
+  return effectiveWindowForScheduledStart(
+    preview.appointmentStart,
+    draftType ??
+      (preview.appointmentTypeName
+        ? { name: preview.appointmentTypeName, prettyName: preview.appointmentTypeName }
+        : undefined),
+    practiceTz,
+    { appointmentEndIso: preview.appointmentEnd }
+  );
 }
 
 /** Window warning for type preview using draft type windows + routed ETA (not slot-search score). */
@@ -151,8 +149,11 @@ function serviceMinutesFromIsoPair(
 
 export function applyEditTimePreviewToDoctorDayAppts(
   appts: DoctorDayAppt[],
-  preview: EditVisitTimePreview
+  preview: EditVisitTimePreview,
+  opts?: { draftType?: AppointmentType; practiceTz?: string }
 ): DoctorDayAppt[] {
+  const practiceTz = opts?.practiceTz ?? 'utc';
+  const draftType = opts?.draftType;
   const original = appts.find((a) => a.id === preview.appointmentId);
   if (!original) return appts;
 
@@ -182,15 +183,8 @@ export function applyEditTimePreviewToDoctorDayAppts(
         endIso: preview.appointmentEnd,
       };
     } else {
-      const start = DateTime.fromISO(preview.appointmentStart, { zone: 'utc' });
-      if (start.isValid) {
-        const before = 60;
-        const after = 60;
-        moved.effectiveWindow = {
-          startIso: start.minus({ minutes: before }).toISO() ?? preview.appointmentStart,
-          endIso: start.plus({ minutes: after }).toISO() ?? preview.appointmentEnd,
-        };
-      }
+      const ew = effectiveWindowForTypePreview(preview, draftType, practiceTz, undefined);
+      if (ew) moved.effectiveWindow = ew;
     }
   }
   (moved as { isPreview?: boolean }).isPreview = true;

@@ -6,13 +6,16 @@ import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import {
   fetchForwardBookings,
   finishForwardBookingFollowUp,
+  clearForwardBookingBookAfterDate,
   patchForwardBooking,
+  removeForwardBooking,
   type ForwardBookingEntry,
 } from '../api/forwardBooking';
 import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
 import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import { ForwardBookingManualCompleteModal } from '../components/ForwardBookingManualCompleteModal';
+import { ForwardBookingBookLaterModal } from '../components/ForwardBookingBookLaterModal';
 import { CreateForwardBookingModal } from '../components/CreateForwardBookingModal';
 import {
   FORWARD_BOOKING_CREATE_APPOINTMENT_PARAM,
@@ -44,7 +47,10 @@ import {
 } from '../utils/forwardBookingReturnSession';
 import {
   formatForwardBookingIntervalLabel,
+  forwardBookingIsHighPriority,
+  forwardBookingTargetDueDayMillis,
   resolveForwardBookingSourceStartIso,
+  resolveForwardBookingTargetDueDateIso,
 } from '../utils/forwardBookingFromAppointment';
 import {
   buildAppointmentTypeCatalogFromTypes,
@@ -54,6 +60,12 @@ import {
   type BookedAppointmentMeta,
 } from '../utils/forwardBookingListVisibility';
 import type { AppointmentTypeCatalog } from '../utils/appointmentTypeSettings';
+import {
+  compareForwardBookingBookLaterEntries,
+  formatForwardBookingBookAfterDate,
+  forwardBookingBookAfterDateIso,
+  forwardBookingIsBookLater,
+} from '../utils/forwardBookingBookLater';
 import {
   forwardBookingHasLinkedVisit,
   forwardBookingLinkedAppointmentId,
@@ -65,12 +77,14 @@ import './Settings.css';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
-type StatusFilter = 'pending' | 'booked' | 'complete';
+type StatusFilter = 'pending' | 'bookLater' | 'booked' | 'complete' | 'removed';
 
 const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'pending', label: 'Needs booking' },
+  { key: 'bookLater', label: 'Book later' },
   { key: 'booked', label: 'Booked' },
   { key: 'complete', label: 'Complete' },
+  { key: 'removed', label: 'Removed' },
 ];
 
 function pickStr(v: unknown): string | null {
@@ -212,15 +226,21 @@ function linkedVisitStatusLine(
   return `Booked: ${visit}`;
 }
 
-function forwardBookingListTab(entry: ForwardBookingEntry): StatusFilter {
+function forwardBookingListTab(entry: ForwardBookingEntry, practiceTz: string): StatusFilter {
+  if (entry.status === 'removed') return 'removed';
   if (entry.status === 'complete') return 'complete';
   if (forwardBookingHasLinkedVisit(entry)) return 'booked';
+  if (forwardBookingIsBookLater(entry, practiceTz)) return 'bookLater';
   return 'pending';
 }
 
-function compareEntries(a: ForwardBookingEntry, b: ForwardBookingEntry): number {
-  const ta = a.targetDueDate ? new Date(a.targetDueDate).getTime() : Number.MAX_SAFE_INTEGER;
-  const tb = b.targetDueDate ? new Date(b.targetDueDate).getTime() : Number.MAX_SAFE_INTEGER;
+function compareEntries(
+  a: ForwardBookingEntry,
+  b: ForwardBookingEntry,
+  practiceTz: string
+): number {
+  const ta = forwardBookingTargetDueDayMillis(a, practiceTz);
+  const tb = forwardBookingTargetDueDayMillis(b, practiceTz);
   if (ta !== tb) return ta - tb;
   return clientDisplay(a).name.localeCompare(clientDisplay(b).name, undefined, { sensitivity: 'base' });
 }
@@ -269,6 +289,11 @@ export default function ForwardBookingPage() {
   const [followUpCompleteError, setFollowUpCompleteError] = useState<Record<number, string | null>>(
     {}
   );
+  const [removing, setRemoving] = useState<Record<number, boolean>>({});
+  const [removeError, setRemoveError] = useState<Record<number, string | null>>({});
+  const [bookLaterEntry, setBookLaterEntry] = useState<ForwardBookingEntry | null>(null);
+  const [bookLaterUpdating, setBookLaterUpdating] = useState<Record<number, boolean>>({});
+  const [bookLaterError, setBookLaterError] = useState<Record<number, string | null>>({});
   const [bookedApptPoints, setBookedApptPoints] = useState<Map<number, number> | null>(null);
   const [bookedApptMeta, setBookedApptMeta] = useState<Map<number, BookedAppointmentMeta> | null>(
     null
@@ -289,6 +314,7 @@ export default function ForwardBookingPage() {
         fetchForwardBookings({
           practiceId: PRACTICE_ID,
           limit: 2000,
+          includeRemoved: true,
         }),
       ]);
       const catalog = buildAppointmentTypeCatalogFromTypes(types);
@@ -448,19 +474,33 @@ export default function ForwardBookingPage() {
   const visibleRows = useMemo(() => rows.filter((r) => forwardBookingEntryVisibleOnList(r)), [rows]);
 
   const tabCounts = useMemo(() => {
-    const counts: Record<StatusFilter, number> = { pending: 0, booked: 0, complete: 0 };
+    const counts: Record<StatusFilter, number> = {
+      pending: 0,
+      bookLater: 0,
+      booked: 0,
+      complete: 0,
+      removed: 0,
+    };
     for (const row of visibleRows) {
-      counts[forwardBookingListTab(row)] += 1;
+      counts[forwardBookingListTab(row, practiceTz)] += 1;
     }
     return counts;
-  }, [visibleRows]);
+  }, [visibleRows, practiceTz]);
 
   const filtered = useMemo(() => {
-    let list = visibleRows.filter((r) => forwardBookingListTab(r) === statusFilter);
+    let list = visibleRows.filter((r) => forwardBookingListTab(r, practiceTz) === statusFilter);
     const q = search.trim().toLowerCase();
-    if (!q) return [...list].sort(compareEntries);
-    return list
-      .filter((r) => {
+    const sortList = (items: ForwardBookingEntry[]) => {
+      if (statusFilter === 'bookLater') {
+        return [...items].sort((a, b) =>
+          compareForwardBookingBookLaterEntries(a, b, practiceTz, (e) => clientDisplay(e).name)
+        );
+      }
+      return [...items].sort((a, b) => compareEntries(a, b, practiceTz));
+    };
+    if (!q) return sortList(list);
+    return sortList(
+      list.filter((r) => {
         const c = clientDisplay(r);
         const pet = pickStr(r.patient?.name) ?? '';
         const prov = providerLabel(r).toLowerCase();
@@ -479,7 +519,8 @@ export default function ForwardBookingPage() {
             monthsOut: r.monthsOut,
           }),
           r.appointmentTypeName ?? '',
-          formatForwardBookingDate(r.targetDueDate, practiceTz),
+          formatForwardBookingDate(resolveForwardBookingTargetDueDateIso(r, practiceTz), practiceTz),
+          formatForwardBookingBookAfterDate(forwardBookingBookAfterDateIso(r), practiceTz),
           prov,
           notes,
           bookingNote,
@@ -489,7 +530,7 @@ export default function ForwardBookingPage() {
           .toLowerCase();
         return hay.includes(q);
       })
-      .sort(compareEntries);
+    );
   }, [visibleRows, statusFilter, search, noteDrafts, practiceTz]);
 
   useEffect(() => {
@@ -599,6 +640,45 @@ export default function ForwardBookingPage() {
     }
   }, []);
 
+  const mergeBookLaterEntry = useCallback((updated: ForwardBookingEntry) => {
+    setRows((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
+  }, []);
+
+  const returnForwardBookingToQueue = useCallback(async (entry: ForwardBookingEntry) => {
+    setBookLaterUpdating((s) => ({ ...s, [entry.id]: true }));
+    setBookLaterError((e) => ({ ...e, [entry.id]: null }));
+    try {
+      const updated = await clearForwardBookingBookAfterDate(entry.id, PRACTICE_ID);
+      mergeBookLaterEntry(updated);
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        (e as Error)?.message ??
+        'Could not return to queue';
+      setBookLaterError((er) => ({ ...er, [entry.id]: String(msg) }));
+    } finally {
+      setBookLaterUpdating((s) => ({ ...s, [entry.id]: false }));
+    }
+  }, [mergeBookLaterEntry]);
+
+  const markForwardBookingRemoved = useCallback(async (entry: ForwardBookingEntry) => {
+    setRemoving((s) => ({ ...s, [entry.id]: true }));
+    setRemoveError((e) => ({ ...e, [entry.id]: null }));
+    try {
+      const updated = await removeForwardBooking(entry.id, PRACTICE_ID);
+      clearForwardBookingLocalLink(updated.id);
+      setRows((prev) => prev.map((r) => (r.id === entry.id ? { ...r, ...updated } : r)));
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        (e as Error)?.message ??
+        'Could not remove forward booking';
+      setRemoveError((er) => ({ ...er, [entry.id]: String(msg) }));
+    } finally {
+      setRemoving((s) => ({ ...s, [entry.id]: false }));
+    }
+  }, []);
+
   const markFollowUpComplete = useCallback(async (entry: ForwardBookingEntry) => {
     setFollowUpCompleting((s) => ({ ...s, [entry.id]: true }));
     setFollowUpCompleteError((e) => ({ ...e, [entry.id]: null }));
@@ -631,6 +711,7 @@ export default function ForwardBookingPage() {
         book, you return here to text the client or mark the row complete when follow-up is
         finished. Booking notes from the visit are read-only; staff notes can be edited below.
         Placing a hold or booking from routing keeps the row on Booked until you mark it complete.
+        Use Book later to hide a row until a chosen date; it returns to Needs booking on that day.
       </p>
 
       {notice ? (
@@ -657,7 +738,7 @@ export default function ForwardBookingPage() {
             onClick={() => setStatusFilter(key)}
           >
             <span>{label}</span>
-            {key === 'pending' || key === 'booked' ? (
+            {key === 'pending' || key === 'bookLater' || key === 'booked' || key === 'removed' ? (
               <span
                 className="settings-muted"
                 style={{
@@ -720,11 +801,21 @@ export default function ForwardBookingPage() {
             const linkedStatusLine = linkedVisitStatusLine(entry, linkedMeta, practiceTz);
             const patientName = pickStr(entry.patient?.name) ?? `Patient #${entry.patientId}`;
             const patientPimsId = pickStr(entry.patient?.pimsId);
+            const resolvedTargetDueDate = resolveForwardBookingTargetDueDateIso(entry, practiceTz);
             const overdue =
-              entry.targetDueDate && dayjs(entry.targetDueDate).startOf('day').isBefore(dayjs().startOf('day'));
+              resolvedTargetDueDate &&
+              dayjs(resolvedTargetDueDate).startOf('day').isBefore(dayjs().startOf('day'));
+            const isBookLater = forwardBookingIsBookLater(entry, practiceTz);
+            const bookAfterIso = forwardBookingBookAfterDateIso(entry);
+            const highPriority =
+              forwardBookingIsHighPriority(entry, practiceTz) &&
+              entry.status !== 'removed';
+            const isRemoved = entry.status === 'removed';
 
             const isComplete = entry.status === 'complete';
-            const showBookedFollowUpActions = hasLinked && !isComplete;
+            const showBookedFollowUpActions = hasLinked && !isComplete && !isRemoved;
+            const showPendingQueueActions = !hasLinked && !isComplete && !isRemoved && !isBookLater;
+            const showBookLaterTabActions = isBookLater;
 
             const rowHighlighted = highlightEntryId === entry.id;
 
@@ -753,22 +844,68 @@ export default function ForwardBookingPage() {
               >
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between' }}>
                   <div style={{ flex: '1 1 240px', minWidth: 0 }}>
-                    {isComplete ? (
-                      <div
-                        style={{
-                          display: 'inline-block',
-                          marginBottom: 8,
-                          padding: '3px 10px',
-                          borderRadius: 6,
-                          fontSize: 12,
-                          fontWeight: 600,
-                          background: '#e0e7ff',
-                          color: '#3730a3',
-                        }}
-                      >
-                        Follow-up complete
-                      </div>
-                    ) : hasLinked ? (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                      {isRemoved ? (
+                        <div
+                          style={{
+                            display: 'inline-block',
+                            padding: '3px 10px',
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            background: '#f1f5f9',
+                            color: '#475569',
+                          }}
+                        >
+                          Removed
+                        </div>
+                      ) : null}
+                      {isBookLater ? (
+                        <div
+                          style={{
+                            display: 'inline-block',
+                            padding: '3px 10px',
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            background: '#e0f2fe',
+                            color: '#0369a1',
+                          }}
+                        >
+                          Book later
+                        </div>
+                      ) : null}
+                      {highPriority && !isComplete ? (
+                        <div
+                          style={{
+                            display: 'inline-block',
+                            padding: '3px 10px',
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 700,
+                            letterSpacing: '0.02em',
+                            background: '#fecaca',
+                            color: '#991b1b',
+                          }}
+                        >
+                          HIGH PRIORITY
+                        </div>
+                      ) : null}
+                      {isComplete ? (
+                        <div
+                          style={{
+                            display: 'inline-block',
+                            padding: '3px 10px',
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            background: '#e0e7ff',
+                            color: '#3730a3',
+                          }}
+                        >
+                          Follow-up complete
+                        </div>
+                      ) : hasLinked ? (
                       <div
                         style={{
                           display: 'inline-block',
@@ -785,7 +922,8 @@ export default function ForwardBookingPage() {
                           ? `${linkedMeta?.typeName?.trim() || 'Hold'} on calendar`
                           : 'Visit booked'}
                       </div>
-                    ) : null}
+                      ) : null}
+                    </div>
                     <div style={{ fontWeight: 600, marginBottom: 4 }}>
                       {c.pimsId ? (
                         <a href={evetClientLink(c.pimsId)} target="_blank" rel="noreferrer">
@@ -840,10 +978,18 @@ export default function ForwardBookingPage() {
                       Original visit: {formatSourceVisit(entry, practiceTz).label}
                       <span> · Target: </span>
                       <span style={overdue && !hasLinked ? { color: 'var(--danger, #c62828)' } : undefined}>
-                        {formatForwardBookingDate(entry.targetDueDate, practiceTz)}
+                        {formatForwardBookingDate(resolvedTargetDueDate, practiceTz)}
                       </span>
                       <span> · Provider: {providerLabel(entry)}</span>
                     </div>
+                    {bookAfterIso ? (
+                      <div className="settings-muted" style={{ fontSize: '0.88rem', marginTop: 4 }}>
+                        Returns to Needs booking:{' '}
+                        <span style={{ fontWeight: 600, color: 'var(--text, #1e293b)' }}>
+                          {formatForwardBookingBookAfterDate(bookAfterIso, practiceTz)}
+                        </span>
+                      </div>
+                    ) : null}
                     {bookingNotesDisplay(entry) ? (
                       <div className="settings-muted" style={{ fontSize: '0.88rem', marginTop: 4 }}>
                         Forward booking note: {bookingNotesDisplay(entry)}
@@ -895,7 +1041,9 @@ export default function ForwardBookingPage() {
                           type="button"
                           className="btn secondary"
                           style={{ fontSize: 12, padding: '4px 12px', flexShrink: 0 }}
-                          disabled={!noteIsDirty(entry) || Boolean(noteSaving[entry.id])}
+                          disabled={
+                          isRemoved || !noteIsDirty(entry) || Boolean(noteSaving[entry.id])
+                        }
                           onClick={() => saveNote(entry)}
                         >
                           {noteSaving[entry.id] ? 'Saving…' : 'Save'}
@@ -915,7 +1063,7 @@ export default function ForwardBookingPage() {
                         onChange={(e) => onNoteChange(entry.id, e.target.value)}
                         placeholder="e.g. Call client in March"
                         aria-label={`Notes for ${c.name}, ${patientName}`}
-                        disabled={Boolean(noteSaving[entry.id])}
+                        disabled={isRemoved || Boolean(noteSaving[entry.id])}
                       />
                       {noteError[entry.id] ? (
                         <span style={{ color: '#b91c1c', fontSize: 12, display: 'block', marginTop: 4 }}>
@@ -934,7 +1082,57 @@ export default function ForwardBookingPage() {
                       alignSelf: 'center',
                     }}
                   >
-                    {hasLinked || isComplete ? (
+                    {isRemoved ? (
+                      hasLinked ? (
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          onClick={() => onViewAppointment(entry)}
+                          disabled={!entry.bookedAppointmentStart?.trim()}
+                        >
+                          View appointment
+                        </button>
+                      ) : null
+                    ) : showBookLaterTabActions ? (
+                      <>
+                        <button type="button" className="btn primary" onClick={() => onBook(entry)}>
+                          Book
+                        </button>
+                        {clientHasSmsPhone(entry) ? (
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            onClick={() => openSmsModal(entry)}
+                          >
+                            Text Client
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          disabled={Boolean(bookLaterUpdating[entry.id])}
+                          onClick={() => void returnForwardBookingToQueue(entry)}
+                        >
+                          {bookLaterUpdating[entry.id] ? 'Saving…' : 'Back to queue'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          disabled={Boolean(bookLaterUpdating[entry.id])}
+                          onClick={() => setBookLaterEntry(entry)}
+                        >
+                          Change date
+                        </button>
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          disabled={Boolean(removing[entry.id])}
+                          onClick={() => void markForwardBookingRemoved(entry)}
+                        >
+                          {removing[entry.id] ? 'Removing…' : 'Remove'}
+                        </button>
+                      </>
+                    ) : hasLinked || isComplete ? (
                       <>
                         {clientHasSmsPhone(entry) ? (
                           <button
@@ -968,8 +1166,16 @@ export default function ForwardBookingPage() {
                             </button>
                           </>
                         ) : null}
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          disabled={Boolean(removing[entry.id])}
+                          onClick={() => void markForwardBookingRemoved(entry)}
+                        >
+                          {removing[entry.id] ? 'Removing…' : 'Remove'}
+                        </button>
                       </>
-                    ) : (
+                    ) : showPendingQueueActions ? (
                       <>
                         {clientHasSmsPhone(entry) ? (
                           <button
@@ -986,12 +1192,37 @@ export default function ForwardBookingPage() {
                         <button
                           type="button"
                           className="btn secondary"
+                          onClick={() => setBookLaterEntry(entry)}
+                        >
+                          Book later…
+                        </button>
+                        <button
+                          type="button"
+                          className="btn secondary"
                           onClick={() => setManualCompleteEntry(entry)}
                         >
                           Mark complete…
                         </button>
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          disabled={Boolean(removing[entry.id])}
+                          onClick={() => void markForwardBookingRemoved(entry)}
+                        >
+                          {removing[entry.id] ? 'Removing…' : 'Remove'}
+                        </button>
                       </>
-                    )}
+                    ) : null}
+                    {bookLaterError[entry.id] ? (
+                      <span style={{ color: '#b91c1c', fontSize: 12, width: '100%' }}>
+                        {bookLaterError[entry.id]}
+                      </span>
+                    ) : null}
+                    {removeError[entry.id] ? (
+                      <span style={{ color: '#b91c1c', fontSize: 12, width: '100%' }}>
+                        {removeError[entry.id]}
+                      </span>
+                    ) : null}
                     {followUpCompleteError[entry.id] ? (
                       <span style={{ color: '#b91c1c', fontSize: 12, width: '100%' }}>
                         {followUpCompleteError[entry.id]}
@@ -1027,6 +1258,15 @@ export default function ForwardBookingPage() {
           entry={manualCompleteEntry}
           onClose={() => setManualCompleteEntry(null)}
           onCompleted={mergeEntry}
+        />
+      ) : null}
+
+      {bookLaterEntry ? (
+        <ForwardBookingBookLaterModal
+          entry={bookLaterEntry}
+          practiceTz={practiceTz}
+          onClose={() => setBookLaterEntry(null)}
+          onSaved={mergeBookLaterEntry}
         />
       ) : null}
 

@@ -19,6 +19,11 @@ import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import type { DayData } from '../pages/MyWeek';
 import { makeMyDayVisualPatientBadge, type MyDayVisualPatientBadge } from './myDayVisualPatientDetails';
 import { mergeEtaFetchIntoDayData, type DayBundleIn } from './schedulerEtaMerge';
+import type { AppointmentType } from '../api/appointmentSettings';
+import {
+  arrivalWindowFromScheduledStart,
+  effectiveWindowForScheduledStart,
+} from './appointmentArrivalWindow';
 import {
   applyEditTimePreviewToDoctorDayAppts,
   type EditVisitTimePreview,
@@ -83,7 +88,9 @@ function splitAddressForRoutingDoctorDay(addr?: string) {
 
 /** Doctor-day row for routing preview — aligned with `MyWeek` virtual injection + `/routing/eta` candidateSlot. */
 function buildDoctorDaySyntheticFromRoutingPreview(
-  preview: RoutingCalendarPreviewPayloadV1
+  preview: RoutingCalendarPreviewPayloadV1,
+  previewAppointmentType?: AppointmentType | null,
+  practiceTz = 'utc'
 ): DoctorDayAppt | null {
   const opt = preview.option;
   const startRaw = String(opt.suggestedStartIso ?? '').trim();
@@ -118,6 +125,14 @@ function buildDoctorDaySyntheticFromRoutingPreview(
   const aw = (opt as { arrivalWindow?: { windowStartIso?: string; windowEndIso?: string } }).arrivalWindow;
   if (aw?.windowStartIso && aw?.windowEndIso) {
     synthetic.effectiveWindow = { startIso: aw.windowStartIso, endIso: aw.windowEndIso };
+  } else {
+    const ew = effectiveWindowForScheduledStart(
+      start.toISO()!,
+      previewAppointmentType ?? undefined,
+      practiceTz,
+      { appointmentEndIso: end.toISO()! }
+    );
+    if (ew) synthetic.effectiveWindow = ew;
   }
   (synthetic as { isPreview?: boolean }).isPreview = true;
   const rawIns = opt.insertionIndex;
@@ -139,9 +154,11 @@ function buildDoctorDaySyntheticFromRoutingPreview(
 
 function injectDoctorDayAppointmentsRoutingPreview(
   appts: DoctorDayAppt[],
-  preview: RoutingCalendarPreviewPayloadV1
+  preview: RoutingCalendarPreviewPayloadV1,
+  previewAppointmentType?: AppointmentType | null,
+  practiceTz = 'utc'
 ): DoctorDayAppt[] {
-  const syn = buildDoctorDaySyntheticFromRoutingPreview(preview);
+  const syn = buildDoctorDaySyntheticFromRoutingPreview(preview, previewAppointmentType, practiceTz);
   if (!syn) return appts;
   const rawIns = preview.option.insertionIndex;
   const ins =
@@ -369,8 +386,12 @@ export type SchedulerDriveRoutingPreviewOptions = {
   routingPreview?: RoutingCalendarPreviewPayloadV1 | null;
   /** Practice-local YYYY-MM-DD for the preview column (must match `day.date` to apply). */
   previewPracticeDateKey?: string | null;
+  /** Appointment type for routing preview — used for ±N arrival windows on synthetic rows. */
+  previewAppointmentType?: AppointmentType | null;
   /** Move an existing visit to proposed times for drive-time preview (edit visit flow). */
   editTimePreview?: EditVisitTimePreview | null;
+  /** Draft type when `editTimePreview.kind` is `type`. */
+  editPreviewDraftType?: AppointmentType | null;
   /** Active reschedule row — omits moved visits from doctor-day + passes `rescheduleContext` to `/routing/eta`. */
   rescheduleIntent?: RoutingRescheduleIntentV1 | null;
 };
@@ -423,6 +444,20 @@ async function fetchEtaForOneDay(
     const insertionIndex = resolveRoutingEtaInsertionIndex(opt.insertionIndex, day.households.length);
     householdsForPayload = orderHouseholdsWithCandidateAtInsertion(day.households, insertionIndex);
 
+    const optArrivalWindow = opt.arrivalWindow as RoutingEtaCandidateSlotSource['arrivalWindow'];
+    const fallbackArrivalWindow =
+      optArrivalWindow?.windowStartIso && optArrivalWindow?.windowEndIso
+        ? optArrivalWindow
+        : arrivalWindowFromScheduledStart(
+            String(opt.suggestedStartIso ?? ''),
+            routingOpts?.previewAppointmentType ?? undefined,
+            day.timezone || 'utc',
+            {
+              appointmentEndIso: DateTime.fromISO(String(opt.suggestedStartIso ?? ''), { zone: 'utc' })
+                .plus({ minutes: Math.max(1, Math.floor(rp.serviceMinutes) || 30) })
+                .toISO() ?? undefined,
+            }
+          );
     const candidateSlot = buildEtaCandidateSlot(
       {
         insertionIndex: opt.insertionIndex as RoutingEtaCandidateSlotSource['insertionIndex'],
@@ -434,7 +469,7 @@ async function fetchEtaForOneDay(
         overrunSeconds: opt.overrunSeconds as RoutingEtaCandidateSlotSource['overrunSeconds'],
         validationLastEtdSec: opt.validationLastEtdSec as RoutingEtaCandidateSlotSource['validationLastEtdSec'],
         validationReturnSec: opt.validationReturnSec as RoutingEtaCandidateSlotSource['validationReturnSec'],
-        arrivalWindow: opt.arrivalWindow as RoutingEtaCandidateSlotSource['arrivalWindow'],
+        arrivalWindow: fallbackArrivalWindow,
       },
       { householdCount: day.households.length, defaultServiceMinutes: rp.serviceMinutes }
     );
@@ -662,7 +697,10 @@ export async function fetchSchedulerDoctorDayBundle(
       routingPreviewOpts?.editTimePreview &&
       routingPreviewOpts.editTimePreview.practiceDateKey === date
     ) {
-      appts = applyEditTimePreviewToDoctorDayAppts(appts, routingPreviewOpts.editTimePreview);
+      appts = applyEditTimePreviewToDoctorDayAppts(appts, routingPreviewOpts.editTimePreview, {
+        draftType: routingPreviewOpts.editPreviewDraftType ?? undefined,
+        practiceTz: resp.timezone,
+      });
     }
 
     if (
@@ -672,7 +710,12 @@ export async function fetchSchedulerDoctorDayBundle(
     ) {
       const ri = routingPreviewOpts.rescheduleIntent ?? readRoutingRescheduleIntent();
       appts = omitRescheduleTargetsFromDoctorDayAppts(appts, ri);
-      appts = injectDoctorDayAppointmentsRoutingPreview(appts, routingPreviewOpts.routingPreview);
+      appts = injectDoctorDayAppointmentsRoutingPreview(
+        appts,
+        routingPreviewOpts.routingPreview,
+        routingPreviewOpts.previewAppointmentType,
+        resp.timezone
+      );
     } else if (routingPreviewOpts?.rescheduleIntent) {
       appts = omitRescheduleTargetsFromDoctorDayAppts(appts, routingPreviewOpts.rescheduleIntent);
     }

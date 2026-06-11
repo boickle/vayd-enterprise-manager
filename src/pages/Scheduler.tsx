@@ -136,6 +136,7 @@ import {
   applyScheduleOverrideToDayBundle,
   fetchScheduleOverridesByDate,
 } from '../utils/scheduleOverrideMerge';
+import { effectiveWindowForScheduledStart } from '../utils/appointmentArrivalWindow';
 import {
   buildEditVisitTimePreview,
   computeEditVisitTypePreviewWindowWarning,
@@ -151,7 +152,13 @@ import {
   resolveAppointmentChangeActorFromAuth,
   detectEditVisitChanges,
 } from '../utils/appointmentChangeAuditNote';
-import { commitEditVisit, commitLinkClientFromEditVisitSelection, validateEditVisitLinkSelection, type EditVisitFormSnapshot } from '../utils/editVisitCommit';
+import {
+  commitAssignPatientFromEditVisitSelection,
+  commitEditVisit,
+  commitLinkClientFromEditVisitSelection,
+  validateEditVisitLinkSelection,
+  type EditVisitFormSnapshot,
+} from '../utils/editVisitCommit';
 import {
   fetchEditVisitTypeScoreCompare,
   type EditVisitPreviewScoreCompare,
@@ -179,8 +186,11 @@ import {
   SchedulerEditVisitModal,
   type SchedulerEditVisitModalHandle,
 } from './SchedulerEditVisitModal';
+import type { EditVisitPatientSelection } from '../components/EditVisitAddPatientPanel';
 import type { EditVisitLinkSelection } from '../components/EditVisitLinkClientPanel';
 import { editVisitLinkClearsAlternateAddress, visitAddressForLinkMatching } from '../utils/visitAddressMatch';
+import { OnMyWaySmsModal } from '../components/OnMyWaySmsModal';
+import { etaMinutesAwayFromNow } from '../utils/onMyWaySmsMessage';
 import { SchedulerActualVisitTimeModal } from './SchedulerActualVisitTimeModal';
 import { SchedulerRemoveVisitModal } from './SchedulerRemoveVisitModal';
 import {
@@ -378,6 +388,8 @@ const SCHEDULER_HOVER_POPOVER_DELAY_MS = 750;
 const SCHEDULER_HOVER_DISMISS_MS = 150;
 /** Match My Week column layout / drive segment math (`MyWeek.tsx` PPM). */
 const PPM = 1.1;
+/** Timed visits at or below this length show client/patient on the time row. */
+const SCHEDULER_EVENT_COMPACT_MAX_MINUTES = 22;
 /** Spacer under nav + height of `.scheduler-day-header` (must stay in sync with CSS). */
 const SCHEDULER_DAY_HEADER_STACK_PX = 96;
 const SLOT_MINUTES = 15;
@@ -1501,8 +1513,20 @@ function buildSchedulerDriveHintForAppt(
   const etaIso = slot?.eta ?? null;
   const etdIso = slot?.etd ?? null;
   /** Appointment-type window (incl. type-preview patches) wins over routed slot windows. */
-  const apptWindowStart = appt.effectiveWindow?.startIso ?? null;
-  const apptWindowEnd = appt.effectiveWindow?.endIso ?? null;
+  let apptWindowStart = appt.effectiveWindow?.startIso ?? null;
+  let apptWindowEnd = appt.effectiveWindow?.endIso ?? null;
+  if (!apptWindowStart || !apptWindowEnd) {
+    const computed = effectiveWindowForScheduledStart(
+      appt.appointmentStart,
+      appt.appointmentType ?? undefined,
+      practiceTz,
+      { appointmentEndIso: appt.appointmentEnd }
+    );
+    if (computed) {
+      apptWindowStart = computed.startIso;
+      apptWindowEnd = computed.endIso;
+    }
+  }
   const windowStartIso =
     apptWindowStart && apptWindowEnd
       ? apptWindowStart
@@ -2291,6 +2315,15 @@ function buildRoutingPreviewSyntheticAppointment(
     return null;
   })();
 
+  const optArrivalWindow = (opt as { arrivalWindow?: { windowStartIso?: string; windowEndIso?: string } })
+    .arrivalWindow;
+  const effectiveWindow =
+    optArrivalWindow?.windowStartIso && optArrivalWindow?.windowEndIso
+      ? { startIso: optArrivalWindow.windowStartIso, endIso: optArrivalWindow.windowEndIso }
+      : effectiveWindowForScheduledStart(startIso, appointmentType, PRACTICE_TZ, {
+          appointmentEndIso: endIso,
+        });
+
   return {
     id: SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID,
     isActive: true,
@@ -2315,6 +2348,7 @@ function buildRoutingPreviewSyntheticAppointment(
           alternateAddressText: routingAlt,
         }
       : {}),
+    ...(effectiveWindow ? { effectiveWindow } : {}),
   } as Appointment;
 }
 
@@ -2617,6 +2651,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const editVisitModalRef = useRef<SchedulerEditVisitModalHandle>(null);
   const editVisitFormSnapshotRef = useRef<EditVisitFormSnapshot | null>(null);
   const [editVisitLinkSelection, setEditVisitLinkSelection] = useState<EditVisitLinkSelection | null>(null);
+  const [editVisitPatientSelection, setEditVisitPatientSelection] =
+    useState<EditVisitPatientSelection | null>(null);
   const [editPreviewScoreCompare, setEditPreviewScoreCompare] =
     useState<EditVisitPreviewScoreCompare | null>(null);
   const [editPreviewScoreLoading, setEditPreviewScoreLoading] = useState(false);
@@ -2641,6 +2677,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   );
   const [actualVisitModal, setActualVisitModal] = useState<Appointment | null>(null);
   const [removeVisitModal, setRemoveVisitModal] = useState<Appointment | null>(null);
+  const [onMyWaySmsAppt, setOnMyWaySmsAppt] = useState<Appointment | null>(null);
   const [embeddedRoomLoaderId, setEmbeddedRoomLoaderId] = useState<number | null>(null);
   const [roomLoaderPdfModalAppt, setRoomLoaderPdfModalAppt] = useState<Appointment | null>(null);
   const [roomLoaderOpening, setRoomLoaderOpening] = useState(false);
@@ -3938,10 +3975,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         ? {
             routingPreview,
             previewPracticeDateKey: routingPreviewColumnKey,
+            previewAppointmentType:
+              typeList.find((t) => t.id === routingPreview.appointmentTypeId) ?? null,
             rescheduleIntent: readRoutingRescheduleIntent(),
           }
         : editTimePreview
-          ? { editTimePreview }
+          ? {
+              editTimePreview,
+              editPreviewDraftType:
+                editTimePreview.kind === 'type' && editTimePreview.appointmentTypeId != null
+                  ? typeList.find((t) => t.id === editTimePreview.appointmentTypeId) ?? null
+                  : null,
+            }
           : null;
 
     void (async () => {
@@ -4058,6 +4103,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     routingPreview,
     routingPreviewColumnKey,
     editTimePreview,
+    typeList,
   ]);
 
   const filteredAppointments = useMemo(() => {
@@ -4551,6 +4597,17 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       driveDayByDate
     );
   }, [hoverAppt, showByDriveTime, resolvedPrimaryProviderId, driveDayByDate]);
+
+  const onMyWaySmsDefaultMinutes = useMemo(() => {
+    if (!onMyWaySmsAppt) return undefined;
+    const hint = buildSchedulerDriveHintForAppt(
+      onMyWaySmsAppt,
+      showByDriveTime,
+      resolvedPrimaryProviderId,
+      driveDayByDate
+    );
+    return etaMinutesAwayFromNow(hint?.etaIso ?? null, PRACTICE_TZ) ?? undefined;
+  }, [onMyWaySmsAppt, showByDriveTime, resolvedPrimaryProviderId, driveDayByDate]);
 
   const modalDriveHint = useMemo((): SchedulerHoverDriveHint | null => {
     if (!modalAppt) return null;
@@ -5204,9 +5261,22 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             disableClientSearch: false,
           }),
       ...(routingAlternateForBook ? { routingAlternateAddress: routingAlternateForBook } : {}),
-      ...(routingStatsTypeKey.trim() && chosenRoutingTypeId != null
-        ? { appointmentTypeId: chosenRoutingTypeId }
-        : {}),
+      ...(isReschedule
+        ? {
+            appointmentTypeId:
+              (routingStatsTypeKey.trim() && chosenRoutingTypeId != null
+                ? chosenRoutingTypeId
+                : undefined) ??
+              (rescheduleSourceAppt?.appointmentType?.id != null
+                ? Number(rescheduleSourceAppt.appointmentType.id)
+                : undefined) ??
+              (ri?.appointmentTypeId != null && Number.isFinite(Number(ri.appointmentTypeId))
+                ? Number(ri.appointmentTypeId)
+                : undefined),
+          }
+        : routingStatsTypeKey.trim() && chosenRoutingTypeId != null
+          ? { appointmentTypeId: chosenRoutingTypeId }
+          : {}),
       preserveDurationFromSlot: true,
       defaultDescription:
         isReschedule && (rescheduleVisitPatches?.length ?? 0) <= 1
@@ -5590,6 +5660,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setEditPlacementMode(false);
     setEditAppt(null);
     setEditVisitLinkSelection(null);
+    setEditVisitPatientSelection(null);
     setEditPreviewScoreCompare(null);
     setEditPreviewScoreError(null);
     setEditPreviewScoreLoading(false);
@@ -5654,15 +5725,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           practiceTz: PRACTICE_TZ,
           changes: editChanges,
         },
-        linkClient: commitLinkClientFromEditVisitSelection(
-          editAppt,
-          editVisitLinkSelection,
-          {
-            actor: appointmentChangeActor,
-            practiceTz: PRACTICE_TZ,
-          }
-        ),
-      });
+          linkClient: commitLinkClientFromEditVisitSelection(
+            editAppt,
+            editVisitLinkSelection,
+            {
+              actor: appointmentChangeActor,
+              practiceTz: PRACTICE_TZ,
+            }
+          ),
+          assignPatient: commitAssignPatientFromEditVisitSelection(editVisitPatientSelection),
+        });
       if (updated?.id != null) {
         setRawAppointments((prev) => {
           const idx = prev.findIndex((a) => a.id === updated.id);
@@ -5717,6 +5789,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     editTimePreview,
     editAppt,
     editVisitLinkSelection,
+    editVisitPatientSelection,
     closeEditVisitModal,
     loadRange,
     editPreviewScoreCompare,
@@ -5885,6 +5958,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             }
             setActualVisitModal(appt);
             return;
+          case 'onMyWayText': {
+            if (!client) {
+              fail('No client on this appointment.');
+              return;
+            }
+            if (!pickStr(client.phone1)) {
+              fail('No phone number on file.');
+              return;
+            }
+            setOnMyWaySmsAppt(appt);
+            return;
+          }
           case 'complete': {
             if (appt.isComplete) {
               fail('This visit is already complete.');
@@ -5924,6 +6009,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             return;
           case 'edit':
             setEditVisitLinkSelection(null);
+            setEditVisitPatientSelection(null);
             setEditTimePreview(null);
             clearEditVisitTimePreview();
             setEditPlacementMode(false);
@@ -6918,6 +7004,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                           const top = Math.max(0, rawTop);
                           const bottom = Math.min(gridHeightPx, rawTop + Math.max(rawH, 16));
                           const h = Math.max(18, bottom - top);
+                          const durationMin = Math.max(0, em - sm);
+                          const isCompactEvent =
+                            durationMin > 0 && durationMin <= SCHEDULER_EVENT_COMPACT_MAX_MINUTES;
                           const wPct = 100 / colCount;
                           const leftPct = (100 * col) / colCount;
                           const apptColors = colorsForAppointment(appt, typeList, typeFillMap);
@@ -6970,20 +7059,39 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                 onMouseLeave={() => endHoverPopoverForAppt(appt.id)}
                               >
                                 <div className="scheduler-routing-preview-slot-default">
-                                  <div className="scheduler-event-time">
+                                  <div
+                                    className={[
+                                      'scheduler-event-time',
+                                      isCompactEvent ? 'scheduler-event-time--compact' : '',
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' ')}
+                                  >
                                     <SchedulerAlternateLocationBadgeForAppt appt={appt} compact />
                                     <SchedulerClientZoneBadge appt={appt} compact />
                                     {scheduledTimeLabel ? (
                                       <span className="scheduler-event-time-text">{scheduledTimeLabel}</span>
                                     ) : null}
+                                    {isCompactEvent ? (
+                                      <span
+                                        className="scheduler-event-time-inline-title"
+                                        title={previewAria}
+                                      >
+                                        {previewPets.length > 0
+                                          ? schedulerEventAppointmentTitle(appt)
+                                          : previewLabel}
+                                      </span>
+                                    ) : null}
                                   </div>
-                                  <div className="scheduler-event-title-row">
-                                    {previewPets.length > 0 ? (
-                                      <SchedulerEventTitleBlock appt={appt} />
-                                    ) : (
-                                      <div className="scheduler-event-title">{previewLabel}</div>
-                                    )}
-                                  </div>
+                                  {!isCompactEvent ? (
+                                    <div className="scheduler-event-title-row">
+                                      {previewPets.length > 0 ? (
+                                        <SchedulerEventTitleBlock appt={appt} />
+                                      ) : (
+                                        <div className="scheduler-event-title">{previewLabel}</div>
+                                      )}
+                                    </div>
+                                  ) : null}
                                 </div>
                               </div>
                             );
@@ -7041,6 +7149,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                               data-reschedule-source={isRescheduleSourceVisit ? '1' : undefined}
                               className={[
                                 'scheduler-event',
+                                isCompactEvent ? 'scheduler-event--compact' : '',
                                 isEditTimePreviewVisit ? 'scheduler-edit-time-preview-slot' : '',
                                 isRescheduleSourceVisit ? 'scheduler-reschedule-source-slot' : '',
                                 isEditVisitActiveSlot ? 'scheduler-edit-visit-active-slot' : '',
@@ -7087,18 +7196,39 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                   <SchedulerPreApptRlIcon confirmStatusName={appt.confirmStatusName} />
                                 </div>
                               ) : null}
-                              <div className="scheduler-event-time">
+                              <div
+                                className={[
+                                  'scheduler-event-time',
+                                  isCompactEvent ? 'scheduler-event-time--compact' : '',
+                                ]
+                                  .filter(Boolean)
+                                  .join(' ')}
+                              >
                                 <SchedulerAlternateLocationBadgeForAppt appt={appt} compact />
                                 <SchedulerClientZoneBadge appt={appt} compact />
                                 {scheduledTimeLabel ? (
                                   <span className="scheduler-event-time-text">{scheduledTimeLabel}</span>
                                 ) : null}
+                                {isCompactEvent ? (
+                                  <>
+                                    <SchedulerNoPatientBadgeForAppt appt={appt} compact />
+                                    <span
+                                      className="scheduler-event-time-inline-title"
+                                      title={schedulerEventAppointmentTitle(appt)}
+                                    >
+                                      {schedulerEventAppointmentTitle(appt)}
+                                    </span>
+                                    {windowWarning ? <SchedulerWindowWarningBadge compact /> : null}
+                                  </>
+                                ) : null}
                               </div>
-                              <div className="scheduler-event-title-row">
-                                <SchedulerEventTitleBlock appt={appt} />
-                                {windowWarning ? <SchedulerWindowWarningBadge compact /> : null}
-                              </div>
-                              {descTrim ? (
+                              {!isCompactEvent ? (
+                                <div className="scheduler-event-title-row">
+                                  <SchedulerEventTitleBlock appt={appt} />
+                                  {windowWarning ? <SchedulerWindowWarningBadge compact /> : null}
+                                </div>
+                              ) : null}
+                              {!isCompactEvent && descTrim ? (
                                 <div className="scheduler-event-notes">
                                   {descTrim}
                                 </div>
@@ -7687,6 +7817,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         />
       ) : null}
 
+      {onMyWaySmsAppt ? (
+        <OnMyWaySmsModal
+          appt={onMyWaySmsAppt}
+          defaultMinutes={onMyWaySmsDefaultMinutes}
+          onClose={() => setOnMyWaySmsAppt(null)}
+        />
+      ) : null}
+
       {removeVisitModal ? (
         <SchedulerRemoveVisitModal
           key={removeVisitModal.id}
@@ -7805,6 +7943,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             }}
             linkSelection={editVisitLinkSelection}
             onLinkSelectionChange={setEditVisitLinkSelection}
+            patientSelection={editVisitPatientSelection}
+            onPatientSelectionChange={setEditVisitPatientSelection}
             onViewPlacement={handleViewPlacement}
             onPreviewSchedule={handlePreviewSchedule}
             onConfirmPreview={confirmEditTimeFromSlot}
