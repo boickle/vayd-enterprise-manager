@@ -4,7 +4,7 @@ import type { Appointment } from './roomLoader';
 
 export type ForwardBookingIntervalUnit = 'days' | 'weeks' | 'months';
 
-export type ForwardBookingStatus = 'pending' | 'booked' | 'complete';
+export type ForwardBookingStatus = 'pending' | 'booked' | 'complete' | 'removed';
 
 export type ForwardBookingClientRef = {
   id: number;
@@ -87,6 +87,11 @@ export type ForwardBookingEntry = {
   bookingNotes?: string | null;
   /** Employee who linked the future appointment (when status is `booked`). */
   bookedBy?: ForwardBookingEmployeeRef | null;
+  /**
+   * When set to a future calendar date (`yyyy-MM-dd` or ISO), row is deferred to Book later
+   * until that date (practice TZ). Cleared or ≤ today → Needs booking.
+   */
+  bookAfterDate?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 };
@@ -96,6 +101,8 @@ export type FetchForwardBookingsParams = {
   /** ISO datetime — hide entries whose booked visit start is before this (default server now). */
   asOf?: string;
   limit?: number;
+  /** When true, include rows with `status: removed` (for the Removed tab). */
+  includeRemoved?: boolean;
 };
 
 function pickIso(v: unknown): string | null {
@@ -123,6 +130,10 @@ export function normalizeForwardBookingEntry(raw: unknown): ForwardBookingEntry 
   }
   if (!row.sourceAppointmentEnd) {
     row.sourceAppointmentEnd = pickIso(o.sourceAppointmentEnd) ?? null;
+  }
+  if (!row.bookAfterDate) {
+    row.bookAfterDate =
+      pickIso(o.bookAfterDate) ?? pickIso(o.book_after_date) ?? row.bookAfterDate ?? null;
   }
   const booked = o.bookedAppointment;
   if (booked && typeof booked === 'object') {
@@ -226,8 +237,10 @@ export type PatchForwardBookingBody = {
   /** Send `null` or `""` to clear. */
   note?: string | null;
   bookingNotes?: string | null;
-  /** `complete` — staff finished follow-up (moves row off the Booked tab). */
+  /** `complete` — staff finished follow-up (moves row off the Booked tab). `removed` — hidden from active tabs. */
   status?: ForwardBookingStatus;
+  /** `yyyy-MM-dd` or ISO date — defer to Book later until this day; send `null` to return to Needs booking. */
+  bookAfterDate?: string | null;
 };
 
 /**
@@ -250,6 +263,31 @@ export async function finishForwardBookingFollowUp(
   practiceId: number
 ): Promise<ForwardBookingEntry> {
   return patchForwardBooking(forwardBookingId, { practiceId, status: 'complete' });
+}
+
+/** PATCH /forward-bookings/:id — remove from active queue (Removed tab). */
+export async function removeForwardBooking(
+  forwardBookingId: number,
+  practiceId: number
+): Promise<ForwardBookingEntry> {
+  return patchForwardBooking(forwardBookingId, { practiceId, status: 'removed' });
+}
+
+/** PATCH /forward-bookings/:id — defer row to Book later until `bookAfterDate`. */
+export async function setForwardBookingBookAfterDate(
+  forwardBookingId: number,
+  practiceId: number,
+  bookAfterDate: string
+): Promise<ForwardBookingEntry> {
+  return patchForwardBooking(forwardBookingId, { practiceId, bookAfterDate });
+}
+
+/** PATCH /forward-bookings/:id — clear deferral (Back to queue). */
+export async function clearForwardBookingBookAfterDate(
+  forwardBookingId: number,
+  practiceId: number
+): Promise<ForwardBookingEntry> {
+  return patchForwardBooking(forwardBookingId, { practiceId, bookAfterDate: null });
 }
 
 export type ForwardBookingFutureAppointment = Pick<

@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { DateTime } from 'luxon';
 import {
+  commitAssignPatientFromEditVisitSelection,
   commitEditVisit,
   commitLinkClientFromEditVisitSelection,
   validateEditVisitLinkSelection,
@@ -33,6 +34,10 @@ import type { EditVisitPreviewKind } from '../utils/editVisitTimePreview';
 import type { EditVisitPreviewScoreCompare } from '../utils/editVisitTypeScoreCompare';
 import { EditVisitOverflowTag } from '../components/EditVisitOverflowTag';
 import {
+  EditVisitAddPatientPanel,
+  type EditVisitPatientSelection,
+} from '../components/EditVisitAddPatientPanel';
+import {
   EditVisitLinkClientPanel,
   type EditVisitLinkSelection,
 } from '../components/EditVisitLinkClientPanel';
@@ -42,6 +47,7 @@ import {
   SchedulerVisitPatientContext,
 } from '../components/SchedulerVisitPatientContext';
 import { submitEditVisitPreviewAcceptedFeedback } from '../utils/routingBookFeedback';
+import { appointmentHasNoPatient } from '../utils/schedulerAddPet';
 import { fullClientHouseholdName } from '../utils/schedulerVisitDisplay';
 import { formatSchedulerBookingApiError } from '../utils/manualBookingPermissions';
 import { appointmentFormFlags, sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
@@ -105,6 +111,9 @@ type Props = {
   /** Parent-owned link selection (survives portal remount during preview). */
   linkSelection?: EditVisitLinkSelection | null;
   onLinkSelectionChange?: (selection: EditVisitLinkSelection | null) => void;
+  /** Patient to attach when visit has a client but no patient. */
+  patientSelection?: EditVisitPatientSelection | null;
+  onPatientSelectionChange?: (selection: EditVisitPatientSelection | null) => void;
   onClose: () => void;
   onSaved: (updated?: Appointment, detail?: { routingFeedbackWarning?: string }) => void;
   onViewPlacement?: (startUtc: string, endUtc: string) => void;
@@ -145,6 +154,8 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       onFormSnapshotChange,
       linkSelection = null,
       onLinkSelectionChange,
+      patientSelection = null,
+      onPatientSelectionChange,
       onClose,
       onSaved,
       onViewPlacement,
@@ -225,7 +236,16 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
     const alternateAddressDisplay = appointmentAlternateAddressText(appt) ?? '';
     const hasAlternateRoutingAddress = appointmentHasAlternateLocation(appt);
     const visitAddressForLink = useMemo(() => visitAddressForLinkMatching(appt), [appt]);
-    const showLinkClientPanel = useMemo(() => !appointmentResolvedClientId(appt), [appt]);
+    const resolvedClientId = useMemo(() => appointmentResolvedClientId(appt), [appt]);
+    const showLinkClientPanel = useMemo(() => !resolvedClientId, [resolvedClientId]);
+    const showAddPatientPanel = useMemo(
+      () => Boolean(resolvedClientId && appointmentHasNoPatient(appt)),
+      [resolvedClientId, appt]
+    );
+    const addPatientClientLabel = useMemo(
+      () => fullClientHouseholdName(appt.client) || 'Client',
+      [appt.client]
+    );
     const clearsAlternateOnLink = useMemo(
       () => editVisitLinkClearsAlternateAddress(appt, linkSelection),
       [appt, linkSelection]
@@ -247,6 +267,12 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         onLinkSelectionChange?.(selection);
       },
       [onLinkSelectionChange]
+    );
+    const handlePatientSelectionChange = useCallback(
+      (selection: EditVisitPatientSelection | null) => {
+        onPatientSelectionChange?.(selection);
+      },
+      [onPatientSelectionChange]
     );
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -461,10 +487,10 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       const linkingClient = Boolean(linkSelection?.clientId?.trim());
       if (editTypeFormFlags.requirePatient) {
         const hasPatient =
-          appt.patient?.id != null ||
+          !appointmentHasNoPatient(appt) ||
+          Boolean(patientSelection?.patientId?.trim()) ||
           (linkingClient && linkSelection?.patientId?.trim());
-        const needsPatient =
-          appointmentResolvedClientId(appt) != null || linkingClient;
+        const needsPatient = resolvedClientId != null || linkingClient;
         if (needsPatient && !hasPatient) {
           setError('This appointment type requires a patient on the visit.');
           return;
@@ -540,6 +566,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                   practiceTz,
                 })
               : undefined,
+          assignPatient: commitAssignPatientFromEditVisitSelection(patientSelection),
         });
         let routingFeedbackWarning: string | undefined;
         if (placementPreviewActive && typeScoreCompare?.feedbackHandoff) {
@@ -576,6 +603,8 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       typeScoreCompare,
       editTypeFormFlags,
       linkSelection,
+      patientSelection,
+      resolvedClientId,
       visitAddressForLink,
       onSaved,
       onClose,
@@ -646,6 +675,14 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         setError(linkValidationError);
         return;
       }
+      if (
+        editTypeFormFlags.requirePatient &&
+        showAddPatientPanel &&
+        !patientSelection?.patientId?.trim()
+      ) {
+        setError('Choose a patient for this visit before booking.');
+        return;
+      }
       setSaving(true);
       void Promise.resolve(onConfirmPreview())
         .catch((e: unknown) => {
@@ -659,6 +696,8 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       linkSelection,
       visitAddressForLink,
       editTypeFormFlags.requirePatient,
+      showAddPatientPanel,
+      patientSelection,
     ]);
 
     const modalPanel = (
@@ -998,6 +1037,16 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                   persistedSelection={linkSelection}
                   onSelectionChange={handleLinkSelectionChange}
                   hideVisitAddress={hasAlternateRoutingAddress}
+                />
+              ) : null}
+
+              {showAddPatientPanel && resolvedClientId ? (
+                <EditVisitAddPatientPanel
+                  clientId={resolvedClientId}
+                  clientLabel={addPatientClientLabel}
+                  requiresPatient={editTypeFormFlags.requirePatient}
+                  persistedSelection={patientSelection}
+                  onSelectionChange={handlePatientSelectionChange}
                 />
               ) : null}
 

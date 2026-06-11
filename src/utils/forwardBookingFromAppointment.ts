@@ -93,6 +93,69 @@ export function forwardBookingTargetDueDateIso(
   return target.toUTC().toISO();
 }
 
+/** Target due date from API or source visit + interval when the API omits it. */
+export function resolveForwardBookingTargetDueDateIso(
+  entry: Pick<
+    ForwardBookingEntry,
+    | 'targetDueDate'
+    | 'sourceAppointmentStart'
+    | 'intervalAmount'
+    | 'intervalUnit'
+    | 'monthsOut'
+  >,
+  practiceTz: string
+): string | null {
+  const fromApi = entry.targetDueDate?.trim();
+  if (fromApi) return fromApi;
+  const interval = resolveForwardBookingIntervalFromEntry(entry);
+  const source = entry.sourceAppointmentStart?.trim();
+  if (!interval || !source) return null;
+  return forwardBookingTargetDueDateIso(interval.amount, interval.unit, source);
+}
+
+export function forwardBookingTargetDueDayMillis(
+  entry: Pick<
+    ForwardBookingEntry,
+    | 'targetDueDate'
+    | 'sourceAppointmentStart'
+    | 'intervalAmount'
+    | 'intervalUnit'
+    | 'monthsOut'
+  >,
+  practiceTz: string
+): number {
+  const iso = resolveForwardBookingTargetDueDateIso(entry, practiceTz);
+  if (!iso) return Number.MAX_SAFE_INTEGER;
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  const day = DateTime.fromISO(iso, { zone: 'utc' }).setZone(tz).startOf('day');
+  return day.isValid ? day.toMillis() : Number.MAX_SAFE_INTEGER;
+}
+
+export const FORWARD_BOOKING_HIGH_PRIORITY_WITHIN_WEEKS = 4;
+
+/** True when the target due date is today or within the next four weeks (practice TZ). */
+export function forwardBookingIsHighPriority(
+  entry: Pick<
+    ForwardBookingEntry,
+    | 'targetDueDate'
+    | 'sourceAppointmentStart'
+    | 'intervalAmount'
+    | 'intervalUnit'
+    | 'monthsOut'
+  >,
+  practiceTz: string,
+  now: DateTime = DateTime.now()
+): boolean {
+  const iso = resolveForwardBookingTargetDueDateIso(entry, practiceTz);
+  if (!iso) return false;
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  const targetDay = DateTime.fromISO(iso, { zone: 'utc' }).setZone(tz).startOf('day');
+  if (!targetDay.isValid) return false;
+  const today = now.setZone(tz).startOf('day');
+  const cutoff = today.plus({ weeks: FORWARD_BOOKING_HIGH_PRIORITY_WITHIN_WEEKS });
+  return targetDay <= cutoff;
+}
+
 /** Resolve interval from API row (new fields first, legacy integer monthsOut). */
 export function resolveForwardBookingIntervalFromEntry(
   entry: Pick<ForwardBookingEntry, 'intervalAmount' | 'intervalUnit' | 'monthsOut'>

@@ -23,6 +23,7 @@ export type SchedulerContextMenuAction =
   | { kind: 'view' }
   | { kind: 'edit' }
   | { kind: 'visitTimes' }
+  | { kind: 'onMyWayText' }
   | { kind: 'complete' }
   | { kind: 'addCharges' }
   | { kind: 'remove' }
@@ -212,6 +213,12 @@ export function SchedulerAppointmentContextMenu({
           disabled={Boolean(visitTimesDisabled)}
           title={visitTimesDisabled ? visitTimesDisabledTitle : undefined}
           onPick={() => onAction({ kind: 'visitTimes' })}
+        />
+        <CtxSubRow
+          label="Send On My Way Text"
+          disabled={!phone1}
+          title={!phone1 ? 'Client has no mobile number on file.' : undefined}
+          onPick={() => phone1 && onAction({ kind: 'onMyWayText' })}
         />
         <CtxSubRow
           label="Complete"

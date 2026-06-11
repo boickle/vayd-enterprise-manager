@@ -112,6 +112,15 @@ function resolveRoutingVisitTypeId(
   return '';
 }
 
+function resolveRescheduleVisitTypeId(
+  visit: RescheduleVisitEdit,
+  types: AppointmentType[]
+): string {
+  const id = visit.appointmentTypeId != null ? String(visit.appointmentTypeId) : '';
+  if (id && types.some((t) => String(t.id) === id)) return id;
+  return '';
+}
+
 function toggleRoutingBookVisitSelected(
   rows: RoutingBookVisitEdit[],
   idx: number,
@@ -597,21 +606,23 @@ export function SchedulerBookModal({
 
   const hasRoutingAlternateAddressText = Boolean(routingVisitAddressText);
 
-  /** Hide alternate UI only when routing preview already had a client (visit uses client home). */
-  const routingPreviewUsesClientHome = Boolean(
-    isRoutingPreviewBook && routingBookHasPrefilledClient && !prefill?.routingAlternateAddress?.trim()
+  /** Routing/reschedule book at client home — hide alternate UI; client card shows home address. */
+  const routingBookUsesClientHome = Boolean(
+    bookedViaRouting &&
+      routingBookHasPrefilledClient &&
+      !prefill?.routingAlternateAddress?.trim()
   );
 
   /** Address-only or explicit alternate routing — show routed stop (read-only in preview). */
   const showRoutingAlternateAddress = Boolean(
     (isRescheduleBook || isRoutingPreviewBook) &&
       hasRoutingAlternateAddressText &&
-      !routingPreviewUsesClientHome
+      !routingBookUsesClientHome
   );
 
   /** Include on create/preview when type allows alternate address (blank is OK). */
   const bookAlternateAddressText = useMemo(() => {
-    if (routingPreviewUsesClientHome) return '';
+    if (routingBookUsesClientHome) return '';
     const trimmed = alternateAddressText.trim();
     const prefillAlt = prefill?.routingAlternateAddress?.trim();
     if (prefillAlt) return trimmed || prefillAlt;
@@ -621,11 +632,11 @@ export function SchedulerBookModal({
     alternateAddressText,
     canUseAlternateAddress,
     prefill?.routingAlternateAddress,
-    routingPreviewUsesClientHome,
+    routingBookUsesClientHome,
   ]);
 
   const alternateAddressTextForSubmit = useMemo(() => {
-    if (routingPreviewUsesClientHome) return '';
+    if (routingBookUsesClientHome) return '';
     const alt = bookAlternateAddressText.trim();
     if (!alt) return '';
     // Routing preview: always book at the routed stop (placement was computed for this address).
@@ -641,7 +652,7 @@ export function SchedulerBookModal({
     bookAlternateAddressText,
     hasRoutingAlternateAddressText,
     isRoutingPreviewBook,
-    routingPreviewUsesClientHome,
+    routingBookUsesClientHome,
     selectedClientAddress,
   ]);
 
@@ -653,7 +664,7 @@ export function SchedulerBookModal({
   const manualBookAlternateVisitAddress =
     bookAlternateAddressText &&
     !showRoutingAlternateAddress &&
-    (canUseAlternateAddress || (isRoutingPreviewBook && !routingPreviewUsesClientHome))
+    (canUseAlternateAddress || (bookedViaRouting && !routingBookUsesClientHome))
       ? bookAlternateAddressText
       : showRoutingAlternateAddress && isRoutingPreviewBook && bookAlternateAddressText
         ? bookAlternateAddressText
@@ -675,9 +686,12 @@ export function SchedulerBookModal({
     return bookOverrideAnchorDate;
   }, [showAllDayFields, allDayEndDate, bookOverrideAnchorDate, practiceTz]);
 
-  /** Manual book: alternate stop when type allows (not for routing-preview client-home books). */
+  /** Manual book: alternate stop when type allows (not when routing/reschedule used client home). */
   const showManualAlternateAddress = Boolean(
-    canUseAlternateAddress && !showRoutingAlternateAddress && !routingPreviewUsesClientHome
+    canUseAlternateAddress &&
+      !showRoutingAlternateAddress &&
+      !routingBookUsesClientHome &&
+      !bookedViaRouting
   );
 
   const showClientSection =
@@ -845,15 +859,23 @@ export function SchedulerBookModal({
 
   const resolveDefaultBookTypeId = useCallback(
     (sortedPicker: AppointmentType[]): string => {
+      const pinnedFromPatch =
+        isRescheduleBook && prefill?.rescheduleVisitPatches?.length === 1
+          ? prefill.rescheduleVisitPatches[0]?.appointmentTypeId
+          : undefined;
       const id = resolveBookModalDefaultAppointmentTypeId({
         sortedPickerTypes: sortedPicker,
         allTypes: appointmentTypes,
         routingStatsTypeKey: prefill?.routingStatsTypeKey,
+        pinnedAppointmentTypeId: pinnedFromPatch ?? prefill?.appointmentTypeId,
       });
       return id != null ? String(id) : '';
     },
     [
       appointmentTypes,
+      isRescheduleBook,
+      prefill?.appointmentTypeId,
+      prefill?.rescheduleVisitPatches,
       prefill?.routingStatsTypeKey,
     ]
   );
@@ -2179,13 +2201,21 @@ export function SchedulerBookModal({
                     </span>
                   </div>
                 </Field>
-                {isRescheduleBook ? (
+                {isRescheduleBook && !perVisitReschedule ? (
                   <Field label="Appointment type">
-                    <div className="scheduler-book-selected">
-                      <span className="scheduler-book-selected-value">
-                        {selectedType?.name || selectedType?.prettyName || '…'}
-                      </span>
-                    </div>
+                    <select
+                      className="scheduler-book-input"
+                      value={typeId}
+                      onChange={(e) => setTypeId(e.target.value)}
+                      required
+                    >
+                      <option value="">Select type…</option>
+                      {routingBookFullAppointmentTypes.map((t) => (
+                        <option key={t.id} value={String(t.id)}>
+                          {t.name || t.prettyName}
+                        </option>
+                      ))}
+                    </select>
                   </Field>
                 ) : null}
               </div>
@@ -2241,11 +2271,42 @@ export function SchedulerBookModal({
                         <span className="scheduler-book-reschedule-visit-was muted">
                           Was {visit.scheduledTimeLabel}
                         </span>
-                        <span className="scheduler-book-reschedule-visit-type muted">
-                          {visit.appointmentTypeLabel}
-                        </span>
                       </div>
                       <BookPatientAlerts alerts={patientAlertsFor(visit.patientId)} />
+                      <Field label="Appointment type">
+                        <select
+                          className="scheduler-book-input"
+                          value={resolveRescheduleVisitTypeId(visit, routingBookFullAppointmentTypes)}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            const typeRow = routingBookFullAppointmentTypes.find(
+                              (t) => String(t.id) === next
+                            );
+                            setRescheduleVisitEdits((rows) =>
+                              rows.map((row, i) =>
+                                i === idx
+                                  ? {
+                                      ...row,
+                                      appointmentTypeId: next ? Number(next) : undefined,
+                                      appointmentTypeLabel:
+                                        typeRow?.name?.trim() ||
+                                        typeRow?.prettyName?.trim() ||
+                                        row.appointmentTypeLabel,
+                                    }
+                                  : row
+                              )
+                            );
+                          }}
+                          required
+                        >
+                          <option value="">Select type…</option>
+                          {routingBookFullAppointmentTypes.map((t) => (
+                            <option key={t.id} value={String(t.id)}>
+                              {t.name || t.prettyName}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
                       <label className="scheduler-book-reschedule-visit-desc">
                         <span className="scheduler-book-reschedule-visit-desc-label muted">
                           Description
