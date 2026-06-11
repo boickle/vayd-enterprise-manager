@@ -301,7 +301,9 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
 
     async function initStripe() {
       setInitializingPaymentForm(true);
-      setError(null);
+      // Do NOT clear error here — a payment failure may have just set it and
+      // triggered this re-init via formResetKey. Errors before a new payment
+      // attempt are cleared inside handlePaymentSubmit instead.
       const pk = getStripePublishableKey();
       if (!pk) {
         setError('Stripe is not fully configured. Please contact support.');
@@ -768,27 +770,45 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
       onEnrollmentSucceeded?.(state.petId);
     } catch (err: any) {
       const status = err?.response?.status;
-      const serverMessage = err?.response?.data?.message ?? err?.response?.data?.error;
-      const isPaymentFailure =
-        status === 500 ||
-        status === 502 ||
-        status === 503 ||
-        /request failed with status code \d+/i.test(String(err?.message ?? '')) ||
-        /network error/i.test(String(err?.message ?? ''));
+      const serverMessage: string | undefined = err?.response?.data?.message ?? err?.response?.data?.error;
+      // Stripe embeds the card error inside providerResponse.error
+      const stripeError = err?.response?.data?.providerResponse?.error;
+      const stripeMessage: string | undefined = stripeError?.message;
+      const declineCode: string | undefined = stripeError?.decline_code ?? stripeError?.code;
+      const adviceCode: string | undefined = stripeError?.advice_code;
 
-      const friendlyMessage = isPaymentFailure
-        ? "We couldn't process your payment. This can happen if your card was declined, has insufficient funds, or there was a temporary issue. Please try entering your information again."
-        : (serverMessage && typeof serverMessage === 'string' ? serverMessage : err?.message) ||
-          'Unable to process payment. Please try entering your information again.';
+      const isCardError = stripeError?.type === 'card_error' || declineCode != null;
+
+      // Map common decline codes to plain-English guidance
+      const declineHint = (() => {
+        if (!declineCode) return '';
+        if (declineCode === 'insufficient_funds') return ' Please use a card with sufficient funds or try a different card.';
+        if (declineCode === 'lost_card' || declineCode === 'stolen_card') return ' Please use a different card.';
+        if (declineCode === 'expired_card') return ' Your card appears to be expired. Please use a different card.';
+        if (declineCode === 'incorrect_cvc') return ' The security code (CVC) was incorrect. Please check and try again.';
+        if (declineCode === 'incorrect_number' || declineCode === 'invalid_number') return ' The card number is invalid. Please check and try again.';
+        if (adviceCode === 'try_again_later') return ' You may try again later, or use a different card.';
+        return ' Please check your card details or try a different card.';
+      })();
+
+      const friendlyMessage = isCardError && stripeMessage
+        ? `${stripeMessage}${declineHint}`
+        : stripeMessage ??
+          (serverMessage && typeof serverMessage === 'string' ? serverMessage : undefined) ??
+          err?.message ??
+          'Unable to process payment. Please try again.';
 
       setError(friendlyMessage);
 
-      setCardholderName('');
-      setAddressLine1('');
-      setAddressLine2('');
-      setLocality('');
-      setAdministrativeDistrictLevel1('');
-      setPostalCode('');
+      // For card errors only reset the card element — billing info is still valid
+      if (!isCardError) {
+        setCardholderName('');
+        setAddressLine1('');
+        setAddressLine2('');
+        setLocality('');
+        setAdministrativeDistrictLevel1('');
+        setPostalCode('');
+      }
       if (paymentProvider === 'square') {
         try {
           if (card && typeof (card as any).destroy === 'function') {
