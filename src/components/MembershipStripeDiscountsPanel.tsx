@@ -5,27 +5,44 @@ import {
   Button,
   Card,
   CardContent,
+  Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
+  FormControlLabel,
+  IconButton,
   InputLabel,
   MenuItem,
+  Radio,
+  RadioGroup,
   Select,
   Stack,
+  Tab,
+  Tabs,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LinkIcon from '@mui/icons-material/Link';
-import Tooltip from '@mui/material/Tooltip';
+import PauseCircleIcon from '@mui/icons-material/PauseCircle';
+import PlayCircleIcon from '@mui/icons-material/PlayCircle';
+import AddIcon from '@mui/icons-material/Add';
+import ArchiveIcon from '@mui/icons-material/Archive';
+import UnarchiveIcon from '@mui/icons-material/Unarchive';
 import {
   createMembershipDiscount,
   createMembershipDiscountLink,
   fetchMembershipDiscounts,
+  updateMembershipDiscount,
   type CreateMembershipDiscountRequest,
   type MembershipDiscountDuration,
   type MembershipDiscountRecord,
@@ -55,34 +72,54 @@ function formatDiscountDuration(duration: MembershipDiscountDuration): string {
   return 'Every invoice';
 }
 
+function formatDate(iso?: string | null): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString();
+}
+
 type AdminDiscountType = 'percent' | 'fixed' | 'first_month_off';
+type CodeOption = 'generate' | 'custom' | 'none';
+type ListView = 'active' | 'archived';
+
+const DEFAULT_FORM = {
+  name: '',
+  displayLabel: '',
+  discountType: 'percent' as AdminDiscountType,
+  percentOff: '10',
+  amountOffDollars: '25',
+  duration: 'forever' as MembershipDiscountDuration,
+  firstMonthOffKind: 'percent' as 'percent' | 'fixed',
+  durationInMonths: '3',
+  maxRedemptions: '',
+  expiresAt: '',
+  codeOption: 'generate' as CodeOption,
+  customCode: '',
+};
 
 export default function MembershipStripeDiscountsPanel() {
+  const [listView, setListView] = useState<ListView>('active');
   const [rows, setRows] = useState<MembershipDiscountRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [linkingId, setLinkingId] = useState<string | null>(null);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [archiveConfirm, setArchiveConfirm] = useState<MembershipDiscountRecord | null>(null);
+  const [archivingId, setArchivingId] = useState<string | null>(null);
 
-  const [name, setName] = useState('');
-  const [displayLabel, setDisplayLabel] = useState('');
-  const [discountType, setDiscountType] = useState<AdminDiscountType>('percent');
-  const [percentOff, setPercentOff] = useState('10');
-  const [amountOffDollars, setAmountOffDollars] = useState('25');
-  const [duration, setDuration] = useState<MembershipDiscountDuration>('forever');
-  const [firstMonthOffKind, setFirstMonthOffKind] = useState<'percent' | 'fixed'>('percent');
-  const [durationInMonths, setDurationInMonths] = useState('3');
-  const [maxRedemptions, setMaxRedemptions] = useState('');
-  const [expiresAt, setExpiresAt] = useState('');
+  const [form, setForm] = useState(DEFAULT_FORM);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchMembershipDiscounts();
+      const data = await fetchMembershipDiscounts({
+        archived: listView === 'archived',
+      });
       setRows(data);
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status;
@@ -97,11 +134,15 @@ export default function MembershipStripeDiscountsPanel() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [listView]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const setField =
+    (field: keyof typeof DEFAULT_FORM) => (e: React.ChangeEvent<HTMLInputElement>) =>
+      setForm((prev) => ({ ...prev, [field]: e.target.value }));
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -110,21 +151,21 @@ export default function MembershipStripeDiscountsPanel() {
     setSuccess(null);
     try {
       const effectiveDuration: MembershipDiscountDuration =
-        discountType === 'first_month_off' ? 'once' : duration;
+        form.discountType === 'first_month_off' ? 'once' : form.duration;
 
       const payload: CreateMembershipDiscountRequest = {
-        name: name.trim(),
-        displayLabel: displayLabel.trim() || undefined,
+        name: form.name.trim(),
+        displayLabel: form.displayLabel.trim() || undefined,
         duration: effectiveDuration,
         createLink: true,
       };
 
       const usePercent =
-        discountType === 'percent' ||
-        (discountType === 'first_month_off' && firstMonthOffKind === 'percent');
+        form.discountType === 'percent' ||
+        (form.discountType === 'first_month_off' && form.firstMonthOffKind === 'percent');
 
       if (usePercent) {
-        const pct = Number(percentOff);
+        const pct = Number(form.percentOff);
         if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
           setError('Enter a percent between 1 and 100.');
           setCreating(false);
@@ -132,7 +173,7 @@ export default function MembershipStripeDiscountsPanel() {
         }
         payload.percentOff = pct;
       } else {
-        const dollars = Number(amountOffDollars);
+        const dollars = Number(form.amountOffDollars);
         if (!Number.isFinite(dollars) || dollars <= 0) {
           setError('Enter a positive dollar amount.');
           setCreating(false);
@@ -141,7 +182,7 @@ export default function MembershipStripeDiscountsPanel() {
         payload.amountOffCents = Math.round(dollars * 100);
       }
 
-      if (discountType === 'first_month_off' && !displayLabel.trim()) {
+      if (form.discountType === 'first_month_off' && !form.displayLabel.trim()) {
         if (payload.percentOff != null) {
           payload.displayLabel =
             payload.percentOff >= 100
@@ -153,7 +194,7 @@ export default function MembershipStripeDiscountsPanel() {
       }
 
       if (effectiveDuration === 'repeating') {
-        const months = Number(durationInMonths);
+        const months = Number(form.durationInMonths);
         if (!Number.isFinite(months) || months < 1) {
           setError('Repeating discounts need duration in months (1 or more).');
           setCreating(false);
@@ -161,8 +202,8 @@ export default function MembershipStripeDiscountsPanel() {
         }
         payload.durationInMonths = months;
       }
-      if (maxRedemptions.trim()) {
-        const max = Number(maxRedemptions);
+      if (form.maxRedemptions.trim()) {
+        const max = Number(form.maxRedemptions);
         if (!Number.isFinite(max) || max < 1) {
           setError('Max redemptions must be a positive number.');
           setCreating(false);
@@ -170,16 +211,30 @@ export default function MembershipStripeDiscountsPanel() {
         }
         payload.maxRedemptions = max;
       }
-      if (expiresAt.trim()) payload.expiresAt = expiresAt.trim();
+      if (form.expiresAt.trim()) payload.expiresAt = form.expiresAt.trim();
+
+      if (form.codeOption === 'generate') {
+        payload.generateCode = true;
+      } else if (form.codeOption === 'custom') {
+        const c = form.customCode.trim().toUpperCase();
+        if (c.length < 3 || c.length > 64) {
+          setError('Custom code must be between 3 and 64 characters.');
+          setCreating(false);
+          return;
+        }
+        payload.code = c;
+      }
 
       const created = await createMembershipDiscount(payload);
       setSuccess(
-        created.linkToken
-          ? 'Discount created. Share link copied below — clients never see the Stripe code.'
-          : 'Discount created. Generate a link from the table if needed.',
+        created.code
+          ? `Discount created. Copy the code "${created.code}" or the link from the table to share.`
+          : created.linkToken
+            ? 'Discount created. Copy the link from the table to share with clients.'
+            : 'Discount created.',
       );
-      setName('');
-      setDisplayLabel('');
+      setForm(DEFAULT_FORM);
+      setDialogOpen(false);
       await load();
     } catch (err: unknown) {
       const msg =
@@ -214,6 +269,7 @@ export default function MembershipStripeDiscountsPanel() {
     await navigator.clipboard.writeText(url);
     setCopiedToken(token);
     setSuccess('Link copied to clipboard.');
+    setTimeout(() => setCopiedToken(null), 3000);
   }
 
   async function copyCode(code: string) {
@@ -221,6 +277,49 @@ export default function MembershipStripeDiscountsPanel() {
     setCopiedCode(code);
     setSuccess(`Code ${code} copied to clipboard.`);
     setTimeout(() => setCopiedCode(null), 3000);
+  }
+
+  async function handleToggleActive(row: MembershipDiscountRecord) {
+    setTogglingId(row.id);
+    setError(null);
+    try {
+      await updateMembershipDiscount(row.id, { active: !row.active });
+      setSuccess(`Promotion ${row.active ? 'deactivated' : 'reactivated'}.`);
+      await load();
+    } catch {
+      setError('Failed to update promotion status.');
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
+  async function handleArchive(row: MembershipDiscountRecord) {
+    setArchivingId(row.id);
+    setError(null);
+    try {
+      await updateMembershipDiscount(row.id, { archived: true, active: false });
+      setSuccess(`"${row.name}" archived.`);
+      setArchiveConfirm(null);
+      await load();
+    } catch {
+      setError('Failed to archive promotion.');
+    } finally {
+      setArchivingId(null);
+    }
+  }
+
+  async function handleRestore(row: MembershipDiscountRecord) {
+    setArchivingId(row.id);
+    setError(null);
+    try {
+      await updateMembershipDiscount(row.id, { archived: false });
+      setSuccess(`"${row.name}" restored to the active list.`);
+      await load();
+    } catch {
+      setError('Failed to restore promotion.');
+    } finally {
+      setArchivingId(null);
+    }
   }
 
   return (
@@ -238,153 +337,35 @@ export default function MembershipStripeDiscountsPanel() {
             </Alert>
           )}
 
-          <Box
-            component="form"
-            onSubmit={handleCreate}
-            sx={{
-              display: 'grid',
-              gap: 2,
-              gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
-            }}
-          >
-            <TextField
-              label="Internal name"
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. VIP client — 20% off"
-              size="small"
-            />
-            <TextField
-              label="Client-facing label (optional)"
-              value={displayLabel}
-              onChange={(e) => setDisplayLabel(e.target.value)}
-              placeholder="e.g. 20% off your membership"
-              size="small"
-              helperText="Shown on signup/payment; not the Stripe code"
-            />
-            <FormControl size="small">
-              <InputLabel id="discount-type-label">Discount type</InputLabel>
-              <Select
-                labelId="discount-type-label"
-                label="Discount type"
-                value={discountType}
-                onChange={(e) => {
-                  const next = e.target.value as AdminDiscountType;
-                  setDiscountType(next);
-                  if (next === 'first_month_off') {
-                    setFirstMonthOffKind('percent');
-                    setPercentOff('100');
-                  }
+          <Box display="flex" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={2}>
+            <Tabs
+              value={listView}
+              onChange={(_, value: ListView) => setListView(value)}
+              aria-label="Membership promotion list"
+            >
+              <Tab value="active" label="Active" />
+              <Tab value="archived" label="Archived" />
+            </Tabs>
+            {listView === 'active' ? (
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={() => {
+                  setForm(DEFAULT_FORM);
+                  setDialogOpen(true);
                 }}
               >
-                <MenuItem value="percent">Percent off</MenuItem>
-                <MenuItem value="fixed">Fixed amount off (USD)</MenuItem>
-                <MenuItem value="first_month_off">First month off</MenuItem>
-              </Select>
-            </FormControl>
-            {discountType === 'first_month_off' && (
-              <FormControl size="small">
-                <InputLabel id="first-month-off-kind-label">First month discount</InputLabel>
-                <Select
-                  labelId="first-month-off-kind-label"
-                  label="First month discount"
-                  value={firstMonthOffKind}
-                  onChange={(e) => {
-                    const kind = e.target.value as 'percent' | 'fixed';
-                    setFirstMonthOffKind(kind);
-                    if (kind === 'percent') setPercentOff('100');
-                  }}
-                >
-                  <MenuItem value="percent">Percent off first month</MenuItem>
-                  <MenuItem value="fixed">Dollar amount off first month</MenuItem>
-                </Select>
-              </FormControl>
-            )}
-            {discountType === 'percent' ||
-            (discountType === 'first_month_off' && firstMonthOffKind === 'percent') ? (
-              <TextField
-                label={
-                  discountType === 'first_month_off' ? 'Percent off the first month' : 'Percent off'
-                }
-                type="number"
-                inputProps={{ min: 1, max: 100 }}
-                value={percentOff}
-                onChange={(e) => setPercentOff(e.target.value)}
-                size="small"
-                helperText={
-                  discountType === 'first_month_off'
-                    ? '100% = free first month (Stripe applies to the first invoice only)'
-                    : undefined
-                }
-              />
-            ) : (
-              <TextField
-                label={
-                  discountType === 'first_month_off'
-                    ? 'Amount off the first month (USD)'
-                    : 'Amount off (USD)'
-                }
-                type="number"
-                inputProps={{ min: 0.01, step: 0.01 }}
-                value={amountOffDollars}
-                onChange={(e) => setAmountOffDollars(e.target.value)}
-                size="small"
-              />
-            )}
-            {discountType !== 'first_month_off' && (
-              <FormControl size="small">
-                <InputLabel id="duration-label">Duration</InputLabel>
-                <Select
-                  labelId="duration-label"
-                  label="Duration"
-                  value={duration}
-                  onChange={(e) => setDuration(e.target.value as MembershipDiscountDuration)}
-                >
-                  <MenuItem value="repeating">Repeating (months)</MenuItem>
-                  <MenuItem value="forever">Every invoice</MenuItem>
-                </Select>
-              </FormControl>
-            )}
-            {duration === 'repeating' && discountType !== 'first_month_off' && (
-              <TextField
-                label="Months"
-                type="number"
-                inputProps={{ min: 1 }}
-                value={durationInMonths}
-                onChange={(e) => setDurationInMonths(e.target.value)}
-                size="small"
-              />
-            )}
-            <TextField
-              label="Max redemptions (optional)"
-              type="number"
-              inputProps={{ min: 1 }}
-              value={maxRedemptions}
-              onChange={(e) => setMaxRedemptions(e.target.value)}
-              size="small"
-            />
-            <TextField
-              label="Expires (optional)"
-              type="date"
-              value={expiresAt}
-              onChange={(e) => setExpiresAt(e.target.value)}
-              size="small"
-              InputLabelProps={{ shrink: true }}
-            />
-            <Box sx={{ gridColumn: { md: '1 / -1' } }}>
-              <Button type="submit" variant="contained" disabled={creating || !name.trim()}>
-                {creating ? 'Creating…' : 'Create discount + link'}
+                New promotion
               </Button>
-            </Box>
+            ) : null}
           </Box>
 
-          <Typography variant="subtitle2" color="text.secondary">
-            Share links use{' '}
-            <code style={{ fontSize: 13 }}>/client-portal/membership-signup?promo=…</code>. For appointment
-            flows use{' '}
-            <code style={{ fontSize: 13 }}>/client-portal/request-appointment/membership-signup?promo=…</code>.
-          </Typography>
+          {listView === 'archived' ? (
+            <Typography variant="body2" color="text.secondary">
+              Archived promotions are hidden from the active list and cannot be used for new signups.
+              Restore a promotion here to make it available again.
+            </Typography>
+          ) : null}
 
           {loading ? (
             <Box display="flex" justifyContent="center" py={2}>
@@ -392,7 +373,9 @@ export default function MembershipStripeDiscountsPanel() {
             </Box>
           ) : rows.length === 0 ? (
             <Typography variant="body2" color="text.secondary">
-              No discounts yet.
+              {listView === 'active'
+                ? 'No active promotions yet. Create one above.'
+                : 'No archived promotions.'}
             </Typography>
           ) : (
             <Box sx={{ overflowX: 'auto' }}>
@@ -403,13 +386,19 @@ export default function MembershipStripeDiscountsPanel() {
                     <TableCell>Offer</TableCell>
                     <TableCell>Duration</TableCell>
                     <TableCell>Redemptions</TableCell>
+                    <TableCell>Started</TableCell>
+                    <TableCell>Expires</TableCell>
                     <TableCell>Code</TableCell>
-                    <TableCell align="right">Link</TableCell>
+                    <TableCell>Status</TableCell>
+                    <TableCell align="right">Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {rows.map((row) => (
-                    <TableRow key={row.id}>
+                    <TableRow
+                      key={row.id}
+                      sx={{ opacity: listView === 'archived' || row.active ? 1 : 0.55 }}
+                    >
                       <TableCell>{row.name}</TableCell>
                       <TableCell>{row.displayLabel || formatDiscountSummary(row)}</TableCell>
                       <TableCell>{formatDiscountDuration(row.duration)}</TableCell>
@@ -417,6 +406,8 @@ export default function MembershipStripeDiscountsPanel() {
                         {row.timesRedeemed ?? 0}
                         {row.maxRedemptions != null ? ` / ${row.maxRedemptions}` : ''}
                       </TableCell>
+                      <TableCell>{formatDate(row.createdAt)}</TableCell>
+                      <TableCell>{formatDate(row.expiresAt)}</TableCell>
                       <TableCell>
                         {row.code ? (
                           <Tooltip title={copiedCode === row.code ? 'Copied!' : 'Copy code'}>
@@ -424,36 +415,105 @@ export default function MembershipStripeDiscountsPanel() {
                               size="small"
                               startIcon={<ContentCopyIcon fontSize="small" />}
                               onClick={() => void copyCode(row.code!)}
-                              sx={{ fontFamily: 'monospace', fontWeight: 700, letterSpacing: 1 }}
+                              sx={{
+                                fontFamily: 'monospace',
+                                fontWeight: 700,
+                                letterSpacing: 1,
+                                minWidth: 0,
+                                px: 1,
+                              }}
                             >
                               {row.code}
                             </Button>
                           </Tooltip>
                         ) : (
                           <Typography variant="body2" color="text.disabled" sx={{ fontSize: 12 }}>
-                            —
+                            Link only
                           </Typography>
                         )}
                       </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={row.active ? 'Active' : 'Inactive'}
+                          color={row.active ? 'success' : 'default'}
+                          size="small"
+                        />
+                      </TableCell>
                       <TableCell align="right">
-                        {row.linkToken ? (
-                          <Button
-                            size="small"
-                            startIcon={<ContentCopyIcon fontSize="small" />}
-                            onClick={() => void copyLinkForToken(row.linkToken!)}
-                          >
-                            {copiedToken === row.linkToken ? 'Copied' : 'Copy link'}
-                          </Button>
-                        ) : (
-                          <Button
-                            size="small"
-                            startIcon={<LinkIcon fontSize="small" />}
-                            disabled={linkingId === row.id}
-                            onClick={() => void handleCreateLink(row.id)}
-                          >
-                            {linkingId === row.id ? '…' : 'Create link'}
-                          </Button>
-                        )}
+                        <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                          {listView === 'active' ? (
+                            <>
+                              {row.linkToken ? (
+                                <Tooltip title={copiedToken === row.linkToken ? 'Copied!' : 'Copy signup link'}>
+                                  <span>
+                                    <IconButton
+                                      size="small"
+                                      onClick={() => void copyLinkForToken(row.linkToken!)}
+                                      disabled={!row.active}
+                                      color={copiedToken === row.linkToken ? 'success' : 'default'}
+                                    >
+                                      <LinkIcon fontSize="small" />
+                                    </IconButton>
+                                  </span>
+                                </Tooltip>
+                              ) : (
+                                <Tooltip title="Create signup link">
+                                  <span>
+                                    <IconButton
+                                      size="small"
+                                      onClick={() => void handleCreateLink(row.id)}
+                                      disabled={!row.active || linkingId === row.id}
+                                      color="default"
+                                    >
+                                      <LinkIcon fontSize="small" />
+                                    </IconButton>
+                                  </span>
+                                </Tooltip>
+                              )}
+                              <Tooltip title={row.active ? 'Deactivate' : 'Reactivate'}>
+                                <span>
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => void handleToggleActive(row)}
+                                    disabled={togglingId === row.id}
+                                    color={row.active ? 'warning' : 'success'}
+                                  >
+                                    {row.active ? (
+                                      <PauseCircleIcon fontSize="small" />
+                                    ) : (
+                                      <PlayCircleIcon fontSize="small" />
+                                    )}
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                              <Tooltip title="Archive">
+                                <span>
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => setArchiveConfirm(row)}
+                                    disabled={archivingId === row.id}
+                                    color="default"
+                                  >
+                                    <ArchiveIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                            </>
+                          ) : (
+                            <Tooltip title="Restore to active list">
+                              <span>
+                                <IconButton
+                                  size="small"
+                                  onClick={() => void handleRestore(row)}
+                                  disabled={archivingId === row.id}
+                                  color="success"
+                                >
+                                  <UnarchiveIcon fontSize="small" />
+                                </IconButton>
+                              </span>
+                            </Tooltip>
+                          )}
+                        </Stack>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -467,6 +527,241 @@ export default function MembershipStripeDiscountsPanel() {
           </Button>
         </Stack>
       </CardContent>
+
+      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Create membership promotion</DialogTitle>
+        <Box component="form" onSubmit={handleCreate}>
+          <DialogContent>
+            <Stack spacing={2} sx={{ pt: 1 }}>
+              <TextField
+                label="Internal name"
+                required
+                value={form.name}
+                onChange={setField('name')}
+                placeholder="e.g. LL Bean — first month free"
+                size="small"
+              />
+              <TextField
+                label="Client-facing label (optional)"
+                value={form.displayLabel}
+                onChange={setField('displayLabel')}
+                placeholder="e.g. First month free on membership"
+                size="small"
+                helperText="Shown on signup/payment"
+              />
+              <FormControl size="small">
+                <InputLabel id="discount-type-label">Discount type</InputLabel>
+                <Select
+                  labelId="discount-type-label"
+                  label="Discount type"
+                  value={form.discountType}
+                  onChange={(e) => {
+                    const next = e.target.value as AdminDiscountType;
+                    setForm((prev) => ({
+                      ...prev,
+                      discountType: next,
+                      ...(next === 'first_month_off'
+                        ? { firstMonthOffKind: 'percent' as const, percentOff: '100' }
+                        : {}),
+                    }));
+                  }}
+                >
+                  <MenuItem value="percent">Percent off</MenuItem>
+                  <MenuItem value="fixed">Fixed amount off (USD)</MenuItem>
+                  <MenuItem value="first_month_off">First month off</MenuItem>
+                </Select>
+              </FormControl>
+              {form.discountType === 'first_month_off' && (
+                <FormControl size="small">
+                  <InputLabel id="first-month-off-kind-label">First month discount</InputLabel>
+                  <Select
+                    labelId="first-month-off-kind-label"
+                    label="First month discount"
+                    value={form.firstMonthOffKind}
+                    onChange={(e) => {
+                      const kind = e.target.value as 'percent' | 'fixed';
+                      setForm((prev) => ({
+                        ...prev,
+                        firstMonthOffKind: kind,
+                        ...(kind === 'percent' ? { percentOff: '100' } : {}),
+                      }));
+                    }}
+                  >
+                    <MenuItem value="percent">Percent off first month</MenuItem>
+                    <MenuItem value="fixed">Dollar amount off first month</MenuItem>
+                  </Select>
+                </FormControl>
+              )}
+              {form.discountType === 'percent' ||
+              (form.discountType === 'first_month_off' && form.firstMonthOffKind === 'percent') ? (
+                <TextField
+                  label={
+                    form.discountType === 'first_month_off' ? 'Percent off the first month' : 'Percent off'
+                  }
+                  type="number"
+                  inputProps={{ min: 1, max: 100 }}
+                  value={form.percentOff}
+                  onChange={setField('percentOff')}
+                  size="small"
+                  helperText={
+                    form.discountType === 'first_month_off'
+                      ? '100% = free first month (Stripe applies to the first invoice only)'
+                      : undefined
+                  }
+                />
+              ) : (
+                <TextField
+                  label={
+                    form.discountType === 'first_month_off'
+                      ? 'Amount off the first month (USD)'
+                      : 'Amount off (USD)'
+                  }
+                  type="number"
+                  inputProps={{ min: 0.01, step: 0.01 }}
+                  value={form.amountOffDollars}
+                  onChange={setField('amountOffDollars')}
+                  size="small"
+                />
+              )}
+              {form.discountType !== 'first_month_off' && (
+                <FormControl size="small">
+                  <InputLabel id="duration-label">Duration</InputLabel>
+                  <Select
+                    labelId="duration-label"
+                    label="Duration"
+                    value={form.duration}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        duration: e.target.value as MembershipDiscountDuration,
+                      }))
+                    }
+                  >
+                    <MenuItem value="repeating">Repeating (months)</MenuItem>
+                    <MenuItem value="forever">Every invoice</MenuItem>
+                  </Select>
+                </FormControl>
+              )}
+              {form.duration === 'repeating' && form.discountType !== 'first_month_off' && (
+                <TextField
+                  label="Months"
+                  type="number"
+                  inputProps={{ min: 1 }}
+                  value={form.durationInMonths}
+                  onChange={setField('durationInMonths')}
+                  size="small"
+                />
+              )}
+              <TextField
+                label="Max redemptions (optional)"
+                type="number"
+                inputProps={{ min: 1 }}
+                value={form.maxRedemptions}
+                onChange={setField('maxRedemptions')}
+                size="small"
+              />
+              <TextField
+                label="Expires (optional)"
+                type="date"
+                value={form.expiresAt}
+                onChange={setField('expiresAt')}
+                size="small"
+                InputLabelProps={{ shrink: true }}
+              />
+
+              <Box>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                  Promo code
+                </Typography>
+                <RadioGroup
+                  value={form.codeOption}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      codeOption: e.target.value as CodeOption,
+                      customCode: '',
+                    }))
+                  }
+                >
+                  <FormControlLabel
+                    value="generate"
+                    control={<Radio size="small" />}
+                    label={
+                      <Typography variant="body2">
+                        Auto-generate a code{' '}
+                        <span style={{ color: '#6b7280', fontSize: 12 }}>(e.g. VAYDH7K2MQ)</span>
+                      </Typography>
+                    }
+                  />
+                  <FormControlLabel
+                    value="custom"
+                    control={<Radio size="small" />}
+                    label={<Typography variant="body2">Use a custom code</Typography>}
+                  />
+                  <FormControlLabel
+                    value="none"
+                    control={<Radio size="small" />}
+                    label={<Typography variant="body2">Link only — no code</Typography>}
+                  />
+                </RadioGroup>
+                {form.codeOption === 'custom' && (
+                  <TextField
+                    label="Custom code"
+                    value={form.customCode}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        customCode: e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''),
+                      }))
+                    }
+                    placeholder="e.g. LLBEAN2026"
+                    size="small"
+                    sx={{ mt: 1 }}
+                    inputProps={{ style: { fontFamily: 'monospace', fontWeight: 700 } }}
+                    helperText="Letters, digits, and dashes. 3–64 characters."
+                    fullWidth
+                  />
+                )}
+              </Box>
+            </Stack>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button onClick={() => setDialogOpen(false)}>Cancel</Button>
+            <Button
+              type="submit"
+              variant="contained"
+              disabled={
+                creating ||
+                !form.name.trim() ||
+                (form.codeOption === 'custom' && form.customCode.trim().length < 3)
+              }
+            >
+              {creating ? 'Creating…' : 'Create promotion'}
+            </Button>
+          </DialogActions>
+        </Box>
+      </Dialog>
+
+      <Dialog open={!!archiveConfirm} onClose={() => setArchiveConfirm(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Archive promotion?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            Archive <strong>{archiveConfirm?.name}</strong>? It will be hidden from the active list and
+            deactivated. You can restore it from the Archived tab.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setArchiveConfirm(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="warning"
+            disabled={!archiveConfirm || archivingId === archiveConfirm.id}
+            onClick={() => archiveConfirm && void handleArchive(archiveConfirm)}
+          >
+            Archive
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Card>
   );
 }

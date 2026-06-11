@@ -287,6 +287,7 @@ export type MembershipDiscountRecord = {
   timesRedeemed?: number;
   expiresAt?: string | null;
   active: boolean;
+  archived?: boolean;
   createdAt?: string;
   /** Latest opaque link token for sharing (if generated). */
   linkToken?: string | null;
@@ -305,7 +306,22 @@ export type CreateMembershipDiscountRequest = {
   expiresAt?: string;
   /** When true, also create an opaque share link token. */
   createLink?: boolean;
+  /** Custom code (letters/digits/dashes, 3–64 chars). Omit for link-only promotions. */
+  code?: string;
+  /** When true and no code is provided, auto-generate a readable unambiguous code. */
+  generateCode?: boolean;
 };
+
+export type UpdateMembershipDiscountRequest = Partial<{
+  name: string;
+  displayLabel: string;
+  active: boolean;
+  archived: boolean;
+  /** Pass empty string to clear an existing code (makes it link-only again). */
+  code: string;
+  /** When true, generate and assign a fresh code. */
+  generateCode: boolean;
+}>;
 
 export type CreateMembershipDiscountLinkRequest = {
   discountId: string;
@@ -398,8 +414,12 @@ export async function listPaymentProviders(): Promise<string[]> {
 const stripeMembershipDiscountsBase = () =>
   `${paymentProcessingApiBasePath()}/membership-discounts`;
 
-export async function fetchMembershipDiscounts(): Promise<MembershipDiscountRecord[]> {
-  const { data } = await http.get(stripeMembershipDiscountsBase());
+export async function fetchMembershipDiscounts(
+  params?: { archived?: boolean },
+): Promise<MembershipDiscountRecord[]> {
+  const { data } = await http.get(stripeMembershipDiscountsBase(), {
+    params: params?.archived === true ? { archived: true } : undefined,
+  });
   const rows = Array.isArray(data) ? data : (data?.items ?? data?.discounts ?? []);
   return rows as MembershipDiscountRecord[];
 }
@@ -409,6 +429,18 @@ export async function createMembershipDiscount(
 ): Promise<MembershipDiscountRecord> {
   const { data } = await http.post(stripeMembershipDiscountsBase(), payload);
   return data as MembershipDiscountRecord;
+}
+
+export async function updateMembershipDiscount(
+  id: string,
+  payload: UpdateMembershipDiscountRequest,
+): Promise<MembershipDiscountRecord> {
+  const { data } = await http.patch(`${stripeMembershipDiscountsBase()}/${encodeURIComponent(id)}`, payload);
+  return data as MembershipDiscountRecord;
+}
+
+export async function deleteMembershipDiscount(id: string): Promise<void> {
+  await http.delete(`${stripeMembershipDiscountsBase()}/${encodeURIComponent(id)}`);
 }
 
 export async function createMembershipDiscountLink(

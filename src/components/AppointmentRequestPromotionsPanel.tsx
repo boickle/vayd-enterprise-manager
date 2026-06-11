@@ -16,6 +16,8 @@ import {
   Radio,
   RadioGroup,
   Stack,
+  Tab,
+  Tabs,
   Table,
   TableBody,
   TableCell,
@@ -29,12 +31,12 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LinkIcon from '@mui/icons-material/Link';
 import PauseCircleIcon from '@mui/icons-material/PauseCircle';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
-import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
+import ArchiveIcon from '@mui/icons-material/Archive';
+import UnarchiveIcon from '@mui/icons-material/Unarchive';
 import {
   buildAppointmentRequestPromoUrl,
   createAppointmentRequestPromotion,
-  deleteAppointmentRequestPromotion,
   fetchAppointmentRequestPromotions,
   updateAppointmentRequestPromotion,
   type AppointmentRequestPromotion,
@@ -57,6 +59,7 @@ function formatDate(iso?: string | null): string {
 }
 
 type CodeOption = 'none' | 'generate' | 'custom';
+type ListView = 'active' | 'archived';
 
 const DEFAULT_FORM = {
   companyName: '',
@@ -71,6 +74,7 @@ const DEFAULT_FORM = {
 };
 
 export default function AppointmentRequestPromotionsPanel() {
+  const [listView, setListView] = useState<ListView>('active');
   const [rows, setRows] = useState<AppointmentRequestPromotion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +84,8 @@ export default function AppointmentRequestPromotionsPanel() {
   const [copiedLinkId, setCopiedLinkId] = useState<number | null>(null);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<number | null>(null);
-  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [archiveConfirm, setArchiveConfirm] = useState<AppointmentRequestPromotion | null>(null);
+  const [archivingId, setArchivingId] = useState<number | null>(null);
 
   const [form, setForm] = useState(DEFAULT_FORM);
 
@@ -88,15 +93,17 @@ export default function AppointmentRequestPromotionsPanel() {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchAppointmentRequestPromotions();
-      setRows(data.filter((r) => !r.isDeleted));
+      const data = await fetchAppointmentRequestPromotions({
+        isDeleted: listView === 'archived',
+      });
+      setRows(data);
     } catch {
       setError('Could not load promotions. Make sure the API is deployed and you have admin access.');
       setRows([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [listView]);
 
   useEffect(() => {
     void load();
@@ -200,23 +207,32 @@ export default function AppointmentRequestPromotionsPanel() {
     }
   }
 
-  async function handleDelete(row: AppointmentRequestPromotion) {
-    if (
-      !window.confirm(
-        `Delete promotion "${row.name}" for ${row.companyName}? This cannot be undone.`,
-      )
-    )
-      return;
-    setDeletingId(row.id);
+  async function handleArchive(row: AppointmentRequestPromotion) {
+    setArchivingId(row.id);
     setError(null);
     try {
-      await deleteAppointmentRequestPromotion(row.id);
-      setSuccess('Promotion deleted.');
+      await updateAppointmentRequestPromotion(row.id, { isDeleted: true, isActive: false });
+      setSuccess(`"${row.companyName}" archived.`);
+      setArchiveConfirm(null);
       await load();
     } catch {
-      setError('Failed to delete promotion.');
+      setError('Failed to archive promotion.');
     } finally {
-      setDeletingId(null);
+      setArchivingId(null);
+    }
+  }
+
+  async function handleRestore(row: AppointmentRequestPromotion) {
+    setArchivingId(row.id);
+    setError(null);
+    try {
+      await updateAppointmentRequestPromotion(row.id, { isDeleted: false });
+      setSuccess(`"${row.companyName}" restored to the active list.`);
+      await load();
+    } catch {
+      setError('Failed to restore promotion.');
+    } finally {
+      setArchivingId(null);
     }
   }
 
@@ -235,25 +251,42 @@ export default function AppointmentRequestPromotionsPanel() {
             </Alert>
           )}
 
-          <Box display="flex" justifyContent="flex-end">
-            <Button
-              variant="contained"
-              startIcon={<AddIcon />}
-              onClick={() => {
-                setForm(DEFAULT_FORM);
-                setDialogOpen(true);
-              }}
+          <Box display="flex" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={2}>
+            <Tabs
+              value={listView}
+              onChange={(_, value: ListView) => setListView(value)}
+              aria-label="Promotion list"
             >
-              New promotion
-            </Button>
+              <Tab value="active" label="Active" />
+              <Tab value="archived" label="Archived" />
+            </Tabs>
+            {listView === 'active' ? (
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={() => {
+                  setForm(DEFAULT_FORM);
+                  setDialogOpen(true);
+                }}
+              >
+                New promotion
+              </Button>
+            ) : null}
           </Box>
 
-          <Typography variant="body2" color="text.secondary">
-            Share via link (
-            <code style={{ fontSize: 13 }}>/client-portal/request-appointment?promo=…</code>) or
-            give clients a short code to enter on the form. Both attach the promotion to the
-            submitted request.
-          </Typography>
+          {listView === 'archived' ? (
+            <Typography variant="body2" color="text.secondary">
+              Archived promotions are hidden from the active list and cannot be used for new requests.
+              Restore a promotion here to make it available again.
+            </Typography>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              Share via link (
+              <code style={{ fontSize: 13 }}>/client-portal/request-appointment?promo=…</code>) or
+              give clients a short code to enter on the form. Both attach the promotion to the
+              submitted request.
+            </Typography>
+          )}
 
           {loading ? (
             <Box display="flex" justifyContent="center" py={2}>
@@ -261,7 +294,9 @@ export default function AppointmentRequestPromotionsPanel() {
             </Box>
           ) : rows.length === 0 ? (
             <Typography variant="body2" color="text.secondary">
-              No promotions yet. Create one above.
+              {listView === 'active'
+                ? 'No active promotions yet. Create one above.'
+                : 'No archived promotions.'}
             </Typography>
           ) : (
             <Box sx={{ overflowX: 'auto' }}>
@@ -272,6 +307,7 @@ export default function AppointmentRequestPromotionsPanel() {
                     <TableCell>Name</TableCell>
                     <TableCell>Discount</TableCell>
                     <TableCell>Redemptions</TableCell>
+                    <TableCell>Started</TableCell>
                     <TableCell>Expires</TableCell>
                     <TableCell>Code</TableCell>
                     <TableCell>Status</TableCell>
@@ -280,7 +316,10 @@ export default function AppointmentRequestPromotionsPanel() {
                 </TableHead>
                 <TableBody>
                   {rows.map((row) => (
-                    <TableRow key={row.id} sx={{ opacity: row.isActive ? 1 : 0.55 }}>
+                    <TableRow
+                      key={row.id}
+                      sx={{ opacity: listView === 'archived' || row.isActive ? 1 : 0.55 }}
+                    >
                       <TableCell sx={{ fontWeight: 500 }}>{row.companyName}</TableCell>
                       <TableCell>{row.name}</TableCell>
                       <TableCell>{formatDiscount(row)}</TableCell>
@@ -288,6 +327,7 @@ export default function AppointmentRequestPromotionsPanel() {
                         {row.timesRedeemed}
                         {row.maxRedemptions != null ? ` / ${row.maxRedemptions}` : ''}
                       </TableCell>
+                      <TableCell>{formatDate(row.created)}</TableCell>
                       <TableCell>{formatDate(row.expiresAt)}</TableCell>
                       <TableCell>
                         {row.code ? (
@@ -322,46 +362,63 @@ export default function AppointmentRequestPromotionsPanel() {
                       </TableCell>
                       <TableCell align="right">
                         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                          <Tooltip title={copiedLinkId === row.id ? 'Copied!' : 'Copy employer link'}>
-                            <span>
-                              <IconButton
-                                size="small"
-                                onClick={() => void handleCopyLink(row)}
-                                disabled={!row.isActive}
-                                color={copiedLinkId === row.id ? 'success' : 'default'}
-                              >
-                                <LinkIcon fontSize="small" />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-                          <Tooltip title={row.isActive ? 'Deactivate' : 'Reactivate'}>
-                            <span>
-                              <IconButton
-                                size="small"
-                                onClick={() => void handleToggleActive(row)}
-                                disabled={togglingId === row.id}
-                                color={row.isActive ? 'warning' : 'success'}
-                              >
-                                {row.isActive ? (
-                                  <PauseCircleIcon fontSize="small" />
-                                ) : (
-                                  <PlayCircleIcon fontSize="small" />
-                                )}
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-                          <Tooltip title="Delete">
-                            <span>
-                              <IconButton
-                                size="small"
-                                onClick={() => void handleDelete(row)}
-                                disabled={deletingId === row.id}
-                                color="error"
-                              >
-                                <DeleteIcon fontSize="small" />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
+                          {listView === 'active' ? (
+                            <>
+                              <Tooltip title={copiedLinkId === row.id ? 'Copied!' : 'Copy employer link'}>
+                                <span>
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => void handleCopyLink(row)}
+                                    disabled={!row.isActive}
+                                    color={copiedLinkId === row.id ? 'success' : 'default'}
+                                  >
+                                    <LinkIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                              <Tooltip title={row.isActive ? 'Deactivate' : 'Reactivate'}>
+                                <span>
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => void handleToggleActive(row)}
+                                    disabled={togglingId === row.id}
+                                    color={row.isActive ? 'warning' : 'success'}
+                                  >
+                                    {row.isActive ? (
+                                      <PauseCircleIcon fontSize="small" />
+                                    ) : (
+                                      <PlayCircleIcon fontSize="small" />
+                                    )}
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                              <Tooltip title="Archive">
+                                <span>
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => setArchiveConfirm(row)}
+                                    disabled={archivingId === row.id}
+                                    color="default"
+                                  >
+                                    <ArchiveIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                            </>
+                          ) : (
+                            <Tooltip title="Restore to active list">
+                              <span>
+                                <IconButton
+                                  size="small"
+                                  onClick={() => void handleRestore(row)}
+                                  disabled={archivingId === row.id}
+                                  color="success"
+                                >
+                                  <UnarchiveIcon fontSize="small" />
+                                </IconButton>
+                              </span>
+                            </Tooltip>
+                          )}
                         </Stack>
                       </TableCell>
                     </TableRow>
@@ -405,7 +462,7 @@ export default function AppointmentRequestPromotionsPanel() {
                 label="Description (optional)"
                 value={form.description}
                 onChange={setField('description')}
-                placeholder="e.g. Acme employees get $50 off their first visit!"
+                placeholder="e.g. Acme employees get $50 off their first or next visit!"
                 size="small"
                 multiline
                 minRows={2}
@@ -511,6 +568,27 @@ export default function AppointmentRequestPromotionsPanel() {
             </Button>
           </DialogActions>
         </Box>
+      </Dialog>
+
+      <Dialog open={!!archiveConfirm} onClose={() => setArchiveConfirm(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Archive promotion?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            Archive <strong>{archiveConfirm?.companyName}</strong>? It will be hidden from the active
+            list and deactivated. You can restore it from the Archived tab.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setArchiveConfirm(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="warning"
+            disabled={!archiveConfirm || archivingId === archiveConfirm.id}
+            onClick={() => archiveConfirm && void handleArchive(archiveConfirm)}
+          >
+            Archive
+          </Button>
+        </DialogActions>
       </Dialog>
     </Card>
   );

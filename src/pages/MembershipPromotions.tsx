@@ -12,8 +12,8 @@ export default function MembershipPromotionsPage() {
           Membership promotion links
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          Create Stripe discounts and share links so clients enroll with the offer applied automatically — they
-          never see the promo code.
+          Create Stripe discounts and share links or promo codes so clients enroll with the offer applied
+          automatically at checkout.
         </Typography>
       </Box>
 

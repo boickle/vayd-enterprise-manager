@@ -270,8 +270,9 @@ function normalizeWellnessPlan(p: any): WellnessPlan {
  * Controller: GET /appointments/client
  */
 export async function fetchClientAppointments(): Promise<ClientAppointment[]> {
-  const { data } = await http.get('/appointments/client');
-  const rows: any[] = Array.isArray(data) ? data : (data?.appointments ?? data ?? []);
+  try {
+    const { data } = await http.get('/appointments/client');
+    const rows: any[] = Array.isArray(data) ? data : (data?.appointments ?? data ?? []);
 
   return rows
     .map((a) => {
@@ -351,6 +352,10 @@ export async function fetchClientAppointments(): Promise<ClientAppointment[]> {
       } as ClientAppointment;
     })
     .filter(Boolean) as ClientAppointment[];
+  } catch (err) {
+    console.warn('Failed to fetch client appointments:', err);
+    return [];
+  }
 }
 
 /** ---------- Pets for the logged-in client ----------

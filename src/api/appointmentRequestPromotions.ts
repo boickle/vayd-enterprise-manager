@@ -57,6 +57,7 @@ export type UpdateAppointmentRequestPromotionRequest = Partial<
   Omit<CreateAppointmentRequestPromotionRequest, 'companyName'> & {
     companyName?: string;
     isActive?: boolean;
+    isDeleted?: boolean;
     /** Pass empty string to clear an existing code (makes it link-only again). */
     code?: string;
     /** When true, generate and assign a fresh code. */
@@ -67,6 +68,7 @@ export type UpdateAppointmentRequestPromotionRequest = Partial<
 export type ListAppointmentRequestPromotionsParams = {
   companyName?: string;
   isActive?: boolean;
+  isDeleted?: boolean;
   practiceId?: number;
 };
 
@@ -160,4 +162,32 @@ export function formatPromotionDiscount(promo: PublicAppointmentRequestPromotion
     return `${promo.percentOff}% off`;
   }
   return 'Discount applied';
+}
+
+function formatPromotionAmountForApply(promo: PublicAppointmentRequestPromotion): string {
+  if (promo.discountType === 'fixed_amount' && promo.amountOffCents != null) {
+    const amount = promo.amountOffCents / 100;
+    return amount % 1 === 0 ? `$${amount.toFixed(0)}` : `$${amount.toFixed(2)}`;
+  }
+  if (promo.discountType === 'percentage' && promo.percentOff != null) {
+    return `${promo.percentOff}%`;
+  }
+  return 'your discount';
+}
+
+export function formatPromotionBannerSubtitle(
+  promo: PublicAppointmentRequestPromotion,
+  options?: { isExistingClient?: boolean },
+): string {
+  const isExistingClient = options?.isExistingClient ?? false;
+
+  if (isExistingClient) {
+    const amount = formatPromotionAmountForApply(promo);
+    return `Thanks for already being a VAYD client! We will apply ${amount} to your next visit once you submit your request!`;
+  }
+
+  return (
+    promo.description ||
+    `${formatPromotionDiscount(promo)} on your first visit — submitted automatically with your request.`
+  );
 }

@@ -418,8 +418,21 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
       setError('Please complete the billing address.');
       return;
     }
+    const trimmedPromoCode = promoCodeInput.trim();
+    if (
+      paymentProvider === 'stripe' &&
+      !state.membershipDiscount &&
+      !state.isUpgrade &&
+      trimmedPromoCode &&
+      (!appliedCodeDiscount ||
+        appliedCodeDiscount.code?.trim().toUpperCase() !== trimmedPromoCode.toUpperCase())
+    ) {
+      setPromoCodeError('Please click Apply to validate your promo code before continuing.');
+      return;
+    }
     setProcessing(true);
     setError(null);
+    setPromoCodeError(null);
 
     try {
       const emailForSquare =
@@ -1144,146 +1157,6 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         </div>
       )}
 
-      {/* Promo code entry — only on Stripe, only when no link-based discount is already applied */}
-      {paymentProvider === 'stripe' && !state.membershipDiscount && !state.isUpgrade && (
-        <div
-          className="cp-card"
-          style={{ marginBottom: 16, padding: 14 }}
-        >
-          {appliedCodeDiscount ? (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 8,
-              }}
-            >
-              <div>
-                <p style={{ margin: 0, fontSize: 14, color: '#065f46', fontWeight: 600 }}>
-                  ✓ {appliedCodeDiscount.displayLabel}
-                </p>
-                <p style={{ margin: '2px 0 0', fontSize: 12, color: '#6b7280' }}>
-                  Code <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{appliedCodeDiscount.code}</span> applied
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setAppliedCodeDiscount(null);
-                  setPromoCodeInput('');
-                  setPromoCodeError(null);
-                }}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: 12,
-                  color: '#6b7280',
-                  textDecoration: 'underline',
-                  padding: 0,
-                  flexShrink: 0,
-                }}
-              >
-                Remove
-              </button>
-            </div>
-          ) : (
-            <>
-              <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 600, color: '#374151' }}>
-                Have a promo code?
-              </p>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  type="text"
-                  placeholder="e.g. VAYDH7K2MQ"
-                  value={promoCodeInput}
-                  onChange={(e) => {
-                    setPromoCodeInput(e.target.value.toUpperCase());
-                    setPromoCodeError(null);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      void (async () => {
-                        if (!promoCodeInput.trim()) return;
-                        setPromoCodeApplying(true);
-                        setPromoCodeError(null);
-                        try {
-                          const res = await resolveMembershipDiscountByCode(promoCodeInput);
-                          if (res.valid && res.discount) {
-                            setAppliedCodeDiscount(res.discount);
-                          } else {
-                            setPromoCodeError(res.message || 'Code not found or no longer valid.');
-                          }
-                        } catch {
-                          setPromoCodeError('Code not found or no longer valid.');
-                        } finally {
-                          setPromoCodeApplying(false);
-                        }
-                      })();
-                    }
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '8px 10px',
-                    border: `1px solid ${promoCodeError ? '#ef4444' : '#d1d5db'}`,
-                    borderRadius: 6,
-                    fontSize: 13,
-                    fontFamily: 'monospace',
-                    letterSpacing: '0.05em',
-                    textTransform: 'uppercase',
-                    outline: 'none',
-                  }}
-                  disabled={promoCodeApplying}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <button
-                  type="button"
-                  disabled={promoCodeApplying || !promoCodeInput.trim()}
-                  onClick={() => {
-                    void (async () => {
-                      setPromoCodeApplying(true);
-                      setPromoCodeError(null);
-                      try {
-                        const res = await resolveMembershipDiscountByCode(promoCodeInput);
-                        if (res.valid && res.discount) {
-                          setAppliedCodeDiscount(res.discount);
-                        } else {
-                          setPromoCodeError(res.message || 'Code not found or no longer valid.');
-                        }
-                      } catch {
-                        setPromoCodeError('Code not found or no longer valid.');
-                      } finally {
-                        setPromoCodeApplying(false);
-                      }
-                    })();
-                  }}
-                  style={{
-                    padding: '8px 16px',
-                    background: '#0f766e',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: 6,
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: promoCodeApplying || !promoCodeInput.trim() ? 'not-allowed' : 'pointer',
-                    opacity: promoCodeApplying || !promoCodeInput.trim() ? 0.6 : 1,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {promoCodeApplying ? 'Applying…' : 'Apply'}
-                </button>
-              </div>
-              {promoCodeError && (
-                <p style={{ margin: '6px 0 0', fontSize: 12, color: '#ef4444' }}>{promoCodeError}</p>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
       <section className="cp-section">
         <div className="cp-card" style={{ padding: 20 }}>
           <h3 style={{ marginTop: 0, marginBottom: 12 }}>
@@ -1561,6 +1434,147 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                 <div key={formResetKey}>
                   <div id="card-container" style={{ border: '1px solid rgba(0,0,0,0.08)', borderRadius: 8, padding: 12 }} />
                 </div>
+                {paymentProvider === 'stripe' && !state.membershipDiscount && !state.isUpgrade && (
+                  <div style={{ marginTop: 4 }}>
+                    {appliedCodeDiscount ? (
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                          padding: '10px 12px',
+                          background: '#ecfdf5',
+                          border: '1px solid #6ee7b7',
+                          borderRadius: 8,
+                        }}
+                      >
+                        <div>
+                          <p style={{ margin: 0, fontSize: 14, color: '#065f46', fontWeight: 600 }}>
+                            ✓ {appliedCodeDiscount.displayLabel}
+                          </p>
+                          <p style={{ margin: '2px 0 0', fontSize: 12, color: '#6b7280' }}>
+                            Code{' '}
+                            <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{appliedCodeDiscount.code}</span>{' '}
+                            applied
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAppliedCodeDiscount(null);
+                            setPromoCodeInput('');
+                            setPromoCodeError(null);
+                          }}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: 12,
+                            color: '#6b7280',
+                            textDecoration: 'underline',
+                            padding: 0,
+                            flexShrink: 0,
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 600, color: '#374151' }}>
+                          Have a promo code?
+                        </p>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <input
+                            type="text"
+                            placeholder="e.g. VAYDH7K2MQ"
+                            value={promoCodeInput}
+                            onChange={(e) => {
+                              setPromoCodeInput(e.target.value.toUpperCase());
+                              setPromoCodeError(null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                void (async () => {
+                                  if (!promoCodeInput.trim()) return;
+                                  setPromoCodeApplying(true);
+                                  setPromoCodeError(null);
+                                  try {
+                                    const res = await resolveMembershipDiscountByCode(promoCodeInput);
+                                    if (res.valid && res.discount) {
+                                      setAppliedCodeDiscount(res.discount);
+                                    } else {
+                                      setPromoCodeError(res.message || 'Code not found or no longer valid.');
+                                    }
+                                  } catch {
+                                    setPromoCodeError('Code not found or no longer valid.');
+                                  } finally {
+                                    setPromoCodeApplying(false);
+                                  }
+                                })();
+                              }
+                            }}
+                            style={{
+                              flex: 1,
+                              padding: '8px 10px',
+                              border: `1px solid ${promoCodeError ? '#ef4444' : '#d1d5db'}`,
+                              borderRadius: 6,
+                              fontSize: 13,
+                              fontFamily: 'monospace',
+                              letterSpacing: '0.05em',
+                              textTransform: 'uppercase',
+                              outline: 'none',
+                            }}
+                            disabled={promoCodeApplying}
+                            autoComplete="off"
+                            spellCheck={false}
+                          />
+                          <button
+                            type="button"
+                            disabled={promoCodeApplying || !promoCodeInput.trim()}
+                            onClick={() => {
+                              void (async () => {
+                                setPromoCodeApplying(true);
+                                setPromoCodeError(null);
+                                try {
+                                  const res = await resolveMembershipDiscountByCode(promoCodeInput);
+                                  if (res.valid && res.discount) {
+                                    setAppliedCodeDiscount(res.discount);
+                                  } else {
+                                    setPromoCodeError(res.message || 'Code not found or no longer valid.');
+                                  }
+                                } catch {
+                                  setPromoCodeError('Code not found or no longer valid.');
+                                } finally {
+                                  setPromoCodeApplying(false);
+                                }
+                              })();
+                            }}
+                            style={{
+                              padding: '8px 16px',
+                              background: '#0f766e',
+                              color: '#fff',
+                              border: 'none',
+                              borderRadius: 6,
+                              fontSize: 13,
+                              fontWeight: 600,
+                              cursor: promoCodeApplying || !promoCodeInput.trim() ? 'not-allowed' : 'pointer',
+                              opacity: promoCodeApplying || !promoCodeInput.trim() ? 0.6 : 1,
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {promoCodeApplying ? 'Applying…' : 'Apply'}
+                          </button>
+                        </div>
+                        {promoCodeError && (
+                          <p style={{ margin: '6px 0 0', fontSize: 12, color: '#ef4444' }}>{promoCodeError}</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
                 <button
                   type="submit"
                   className="btn"

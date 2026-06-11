@@ -486,6 +486,12 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const returnUrlAnotherBase = state?.returnUrlAnotherBase;
   const signedUpParam = searchParams.get('signedUp');
   const promoTokenParam = searchParams.get(MEMBERSHIP_PROMO_QUERY_PARAM)?.trim() || null;
+  /** Appointment request links also use `?promo=` — ignore that token on membership signup. */
+  const isAppointmentPromoContext =
+    fromModal ||
+    fromAppointmentFlow ||
+    location.pathname.includes('/request-appointment');
+  const membershipPromoToken = isAppointmentPromoContext ? null : promoTokenParam;
   const isSigningUpAdditionalPet = Boolean(signedUpParam || (state as any)?.signedUpPetIds?.length);
   const paymentProvider = getFrontendPaymentProvider();
 
@@ -522,7 +528,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const [clientPetCount, setClientPetCount] = useState<number | null>(null);
 
   useEffect(() => {
-    if (paymentProvider !== 'stripe' || !promoTokenParam) {
+    if (paymentProvider !== 'stripe' || !membershipPromoToken) {
       setCheckoutDiscount(null);
       setPromoResolveError(null);
       setPromoResolving(false);
@@ -533,7 +539,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     setPromoResolveError(null);
     (async () => {
       try {
-        const res = await resolveMembershipDiscountToken(promoTokenParam);
+        const res = await resolveMembershipDiscountToken(membershipPromoToken);
         if (!alive) return;
         if (res.valid && res.discount) {
           setCheckoutDiscount(res.discount);
@@ -552,7 +558,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     return () => {
       alive = false;
     };
-  }, [paymentProvider, promoTokenParam]);
+  }, [paymentProvider, membershipPromoToken]);
 
   const brand = 'var(--brand, #0f766e)';
   const brandSoft = 'var(--brand-soft, #e6f7f5)';
@@ -1389,8 +1395,8 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     if (returnUrlAnotherBase) paymentState.returnUrlAnotherBase = returnUrlAnotherBase;
     else if (!fromModal) {
       let anotherBase = '/client-portal/membership-signup';
-      if (promoTokenParam) {
-        anotherBase += `${anotherBase.includes('?') ? '&' : '?'}${MEMBERSHIP_PROMO_QUERY_PARAM}=${encodeURIComponent(promoTokenParam)}`;
+      if (membershipPromoToken) {
+        anotherBase += `${anotherBase.includes('?') ? '&' : '?'}${MEMBERSHIP_PROMO_QUERY_PARAM}=${encodeURIComponent(membershipPromoToken)}`;
       }
       paymentState.returnUrlAnotherBase = anotherBase;
     }
@@ -2464,7 +2470,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
         })()}
       </section>
 
-      {promoResolving && promoTokenParam && (
+      {promoResolving && membershipPromoToken && (
         <p className="cp-muted" style={{ marginTop: 12, fontSize: 14 }}>
           Applying your offer…
         </p>

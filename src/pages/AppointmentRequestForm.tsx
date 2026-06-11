@@ -49,6 +49,7 @@ import {
   resolveAppointmentRequestPromoToken,
   resolveAppointmentRequestPromoByCode,
   formatPromotionDiscount,
+  formatPromotionBannerSubtitle,
   APPOINTMENT_PROMO_QUERY_PARAM,
   type PublicAppointmentRequestPromotion,
 } from '../api/appointmentRequestPromotions';
@@ -581,6 +582,7 @@ export default function AppointmentRequestForm() {
   const [appliedCodePromo, setAppliedCodePromo] = useState<PublicAppointmentRequestPromotion | null>(null);
   // The single active promo to display/submit (URL token wins over typed code)
   const activePromo = appointmentPromo ?? appliedCodePromo;
+  const isExistingClientForPromo = isLoggedIn || formData.haveUsedServicesBefore === 'Yes';
 
   const currentPageRef = useRef<Page>(currentPage);
   const isLoggedInRef = useRef(isLoggedIn);
@@ -2011,6 +2013,16 @@ export default function AppointmentRequestForm() {
         console.error('Failed to load client data:', error);
         if (alive) {
           setLoadingVeterinarians(false);
+          if (userEmail) {
+            setFormData((prev) => ({
+              ...prev,
+              email: userEmail,
+              haveUsedServicesBefore: 'Yes',
+            }));
+          } else {
+            setFormData((prev) => ({ ...prev, haveUsedServicesBefore: 'Yes' }));
+          }
+          setCurrentPage('existing-client');
         }
       } finally {
         if (alive) setLoadingClientData(false);
@@ -2024,7 +2036,7 @@ export default function AppointmentRequestForm() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    isLoggedIn, 
+    isLoggedIn,
     userEmail,
   ]);
 
@@ -3488,6 +3500,7 @@ export default function AppointmentRequestForm() {
 
   const baskervilleFont = "'Libre Baskerville', 'Times New Roman', serif";
   const isNewClientIntroStep = !isLoggedIn && currentPage === 'intro';
+  const isLoggedInIntroLoading = isLoggedIn && currentPage === 'intro';
   const isNewClientPetStep = !isLoggedIn && currentPage === 'new-client-pet-info';
   const newClientCompactForm = isNewClientIntroStep || isNewClientPetStep;
   const newClientSectionGap = newClientCompactForm ? 10 : 20;
@@ -3718,9 +3731,13 @@ export default function AppointmentRequestForm() {
     const embedded = override?.embedded ?? false;
     switch (pageToRender) {
       case 'intro':
-        // Don't show intro page if user is logged in
+        // Logged-in clients skip intro once client data loads; show a brief placeholder meanwhile
         if (isLoggedIn) {
-          return null;
+          return (
+            <div style={{ textAlign: 'center', padding: isMobile ? '32px 0' : '48px 0', color: '#6b7280', fontSize: '15px' }}>
+              Loading your appointment request…
+            </div>
+          );
         }
         return (
           <div>
@@ -6863,8 +6880,9 @@ export default function AppointmentRequestForm() {
               {activePromo.companyName} employee benefit
             </div>
             <div style={{ fontSize: isMobile ? '12px' : '13px', color: '#047857', marginTop: '2px' }}>
-              {activePromo.description ||
-                `${formatPromotionDiscount(activePromo)} on your first visit — submitted automatically with your request.`}
+              {formatPromotionBannerSubtitle(activePromo, {
+                isExistingClient: isExistingClientForPromo,
+              })}
             </div>
           </div>
           <div
@@ -6939,6 +6957,7 @@ export default function AppointmentRequestForm() {
           </div>
         )}
 
+        {!(isLoggedInIntroLoading) && (
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: newClientCompactForm ? '12px' : '32px', gap: '12px' }}>
           <style>{`
             @keyframes apptFormSubmitPopIn {
@@ -7160,6 +7179,7 @@ export default function AppointmentRequestForm() {
             </button>
           </div>
         </div>
+        )}
         </div>
       </div>
 
