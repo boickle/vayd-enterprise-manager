@@ -2055,6 +2055,30 @@ label.scheduler-go-date-heading {
   white-space: nowrap;
 }
 
+.scheduler-event-time--compact {
+  flex-wrap: nowrap;
+  gap: 3px;
+}
+
+.scheduler-event-time--compact .scheduler-event-time-text {
+  flex: 0 1 auto;
+  max-width: 58%;
+}
+
+.scheduler-event-time-inline-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  opacity: 0.95;
+}
+
+.scheduler-event--compact {
+  gap: 0;
+}
+
 .scheduler-event-time .scheduler-client-zone-badge,
 .scheduler-event-time .scheduler-client-zone-badge--compact {
   margin-left: 0;
@@ -4411,7 +4435,8 @@ label.scheduler-go-date-heading {
   color: #9a3412;
 }
 
-.scheduler-edit-link-client {
+.scheduler-edit-link-client,
+.scheduler-edit-add-patient {
   grid-column: 1 / -1;
   margin-top: 4px;
   padding: 16px 18px;
@@ -4419,6 +4444,22 @@ label.scheduler-go-date-heading {
   border: 2px solid #0d9488;
   background: linear-gradient(180deg, #f0fdfa 0%, #ccfbf1 100%);
   color: #134e4a;
+}
+
+.scheduler-edit-add-patient-head {
+  margin-bottom: 12px;
+}
+
+.scheduler-edit-add-patient-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #0f766e;
+}
+
+.scheduler-edit-add-patient-lead {
+  margin: 0;
 }
 
 .scheduler-edit-link-client-head {

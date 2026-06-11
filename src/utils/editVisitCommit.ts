@@ -12,6 +12,7 @@ import {
   visitAddressForLinkMatching,
 } from './visitAddressMatch';
 import type { EditVisitLinkSelection } from '../components/EditVisitLinkClientPanel';
+import type { EditVisitPatientSelection } from '../components/EditVisitAddPatientPanel';
 
 export type EditVisitFormSnapshot = {
   appointmentTypeId: number;
@@ -58,7 +59,26 @@ export type CommitEditVisitInput = {
   };
   /** Attach client/patient to an unlinked visit on the same PATCH. */
   linkClient?: CommitLinkVisitClientInput;
+  /** Attach a patient when the visit already has a client. */
+  assignPatient?: CommitAssignVisitPatientInput;
 };
+
+export type CommitAssignVisitPatientInput = {
+  patientId: number;
+  patientLabel?: string | null;
+};
+
+export function commitAssignPatientFromEditVisitSelection(
+  selection: EditVisitPatientSelection | null | undefined
+): CommitAssignVisitPatientInput | undefined {
+  if (!selection?.patientId?.trim()) return undefined;
+  const patientId = Number(selection.patientId);
+  if (!Number.isFinite(patientId) || patientId <= 0) return undefined;
+  return {
+    patientId,
+    patientLabel: selection.patientLabel,
+  };
+}
 
 export function commitLinkClientFromEditVisitSelection(
   appt: Appointment,
@@ -173,6 +193,14 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
   if (link) {
     patchBody.clientId = link.clientId;
     if (link.patientId != null) patchBody.patientId = link.patientId;
+  }
+
+  const assign = input.assignPatient;
+  if (assign) {
+    if (!Number.isFinite(assign.patientId) || assign.patientId <= 0) {
+      throw new Error('Choose a valid patient.');
+    }
+    patchBody.patientId = assign.patientId;
   }
 
   const updated = await patchAppointment(input.appointmentId, patchBody, {

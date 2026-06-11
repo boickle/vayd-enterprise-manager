@@ -102,7 +102,7 @@ export function routingCardWindowWarningReasons(
 ): RoutingCardWindowWarningReason[] {
   const reasons: RoutingCardWindowWarningReason[] = [];
   if (routingCandidateDownstreamScoreWarning(opt)) reasons.push('downstream-score');
-  if (routingCandidateSuggestedStartWindowWarning(opt)) reasons.push('suggested-start');
+  // suggested-start is computed for scoring but not shown on routing cards.
   if (etaReconciled?.hasAnyWarning) reasons.push('eta-reconciled');
   return reasons;
 }
@@ -115,14 +115,8 @@ export function routingCardWindowWarningMessage(
   if (reasons.includes('eta-reconciled') && reasons.length === 1) {
     return `⚠ Window warning — reconciled drive times show a visit within ${n} minutes of its window end (matches calendar preview).`;
   }
-  if (reasons.includes('downstream-score') && reasons.includes('suggested-start')) {
-    return `⚠ Window warning — tight arrival window and a downstream visit may be pushed near its window end.`;
-  }
   if (reasons.includes('downstream-score')) {
     return `⚠ At least one downstream appointment is pushed within ${n} minutes of its window end.`;
-  }
-  if (reasons.includes('suggested-start')) {
-    return `⚠ Suggested start is within ${n} minutes of this visit's arrival window end.`;
   }
   if (reasons.includes('eta-reconciled')) {
     return `⚠ Window warning — reconciled drive times show a visit within ${n} minutes of its window end (matches calendar preview).`;
