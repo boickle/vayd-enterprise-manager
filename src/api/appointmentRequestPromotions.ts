@@ -129,18 +129,64 @@ export async function resolveAppointmentRequestPromoByCode(
   return data as PublicAppointmentRequestPromotion;
 }
 
+export type RedeemAppointmentRequestPromoRequest = {
+  /** Email from the appointment form — each email can redeem a promotion only once. */
+  email: string;
+  /** Database client id when the user was identified as an existing client. */
+  clientId?: number;
+  appointmentId?: number;
+};
+
+/**
+ * Redeem a promo by token. Responds 409 when this email already redeemed the
+ * promotion, 400 when the overall redemption limit was hit, 404 when invalid/expired.
+ */
 export async function redeemAppointmentRequestPromo(
   token: string,
+  payload: RedeemAppointmentRequestPromoRequest,
 ): Promise<PublicAppointmentRequestPromotion> {
-  const { data } = await http.post(`${PUBLIC_BASE}/${token}/redeem`);
+  const { data } = await http.post(`${PUBLIC_BASE}/${token}/redeem`, payload);
   return data as PublicAppointmentRequestPromotion;
 }
 
+/** Redeem a promo by code. Same status semantics as {@link redeemAppointmentRequestPromo}. */
 export async function redeemAppointmentRequestPromoByCode(
   code: string,
+  payload: RedeemAppointmentRequestPromoRequest,
 ): Promise<PublicAppointmentRequestPromotion> {
-  const { data } = await http.post(`${PUBLIC_BASE}/code/${code.trim().toUpperCase()}/redeem`);
+  const { data } = await http.post(
+    `${PUBLIC_BASE}/code/${code.trim().toUpperCase()}/redeem`,
+    payload,
+  );
   return data as PublicAppointmentRequestPromotion;
+}
+
+export type AppointmentRequestPromoEligibility = {
+  eligible: boolean;
+  /** e.g. "already_redeemed" when this email already used the promotion. */
+  reason?: string;
+};
+
+/** Check whether an email can still redeem a promo (per-promotion, per-email). */
+export async function checkAppointmentRequestPromoEligibility(
+  token: string,
+  email: string,
+): Promise<AppointmentRequestPromoEligibility> {
+  const { data } = await http.get(`${PUBLIC_BASE}/${token}/eligibility`, {
+    params: { email },
+  });
+  return data as AppointmentRequestPromoEligibility;
+}
+
+export async function checkAppointmentRequestPromoEligibilityByCode(
+  code: string,
+  email: string,
+): Promise<AppointmentRequestPromoEligibility> {
+  const { data } = await http.get(
+    `${PUBLIC_BASE}/code/${code.trim().toUpperCase()}/eligibility`,
+    { params: { email } },
+  );
+  return data as AppointmentRequestPromoEligibility;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

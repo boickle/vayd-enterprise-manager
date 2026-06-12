@@ -48,6 +48,8 @@ import MembershipPayment from './MembershipPayment';
 import {
   resolveAppointmentRequestPromoToken,
   resolveAppointmentRequestPromoByCode,
+  checkAppointmentRequestPromoEligibility,
+  checkAppointmentRequestPromoEligibilityByCode,
   formatPromotionDiscount,
   formatPromotionBannerSubtitle,
   APPOINTMENT_PROMO_QUERY_PARAM,
@@ -580,8 +582,10 @@ export default function AppointmentRequestForm() {
   const [promoCodeApplying, setPromoCodeApplying] = useState(false);
   const [promoCodeError, setPromoCodeError] = useState<string | null>(null);
   const [appliedCodePromo, setAppliedCodePromo] = useState<PublicAppointmentRequestPromotion | null>(null);
+  // True when the entered email already redeemed the URL-token promotion (one use per email)
+  const [promoAlreadyUsed, setPromoAlreadyUsed] = useState(false);
   // The single active promo to display/submit (URL token wins over typed code)
-  const activePromo = appointmentPromo ?? appliedCodePromo;
+  const activePromo = promoAlreadyUsed ? null : appointmentPromo ?? appliedCodePromo;
   const isExistingClientForPromo = isLoggedIn || formData.haveUsedServicesBefore === 'Yes';
 
   const currentPageRef = useRef<Page>(currentPage);
@@ -2339,6 +2343,77 @@ export default function AppointmentRequestForm() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [promoToken]);
 
+  // Once the user's email is known, verify they haven't already redeemed the
+  // active promotion (each email can use a given promotion only once).
+  const promoEligibilityEmail = (formData.email || userEmail || '').trim();
+  useEffect(() => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const hasTokenPromo = !!appointmentPromo && !!promoToken;
+    const codePromoCode = appliedCodePromo?.code ?? null;
+
+    if (!emailRegex.test(promoEligibilityEmail) || (!hasTokenPromo && !codePromoCode)) {
+      setPromoAlreadyUsed(false);
+      return;
+    }
+
+    let alive = true;
+    const timeoutId = setTimeout(async () => {
+      try {
+        const result = hasTokenPromo
+          ? await checkAppointmentRequestPromoEligibility(promoToken!, promoEligibilityEmail)
+          : await checkAppointmentRequestPromoEligibilityByCode(codePromoCode!, promoEligibilityEmail);
+        if (!alive) return;
+        const alreadyUsed = result.eligible === false && result.reason === 'already_redeemed';
+        if (alreadyUsed && !hasTokenPromo) {
+          // Typed code: clear it so the entry box reappears with an error message
+          setAppliedCodePromo(null);
+          setPromoCodeError('This promotion has already been used with this email address.');
+          setPromoAlreadyUsed(false);
+        } else {
+          setPromoAlreadyUsed(alreadyUsed);
+        }
+      } catch {
+        // Eligibility is advisory — keep the promo visible; the backend still
+        // enforces the one-use rule at submission time.
+        if (alive) setPromoAlreadyUsed(false);
+      }
+    }, 500); // Debounce while the user types their email
+
+    return () => {
+      alive = false;
+      clearTimeout(timeoutId);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [promoEligibilityEmail, promoToken, appointmentPromo, appliedCodePromo?.code]);
+
+  // Resolve + apply a manually entered promo code, rejecting codes this email already used
+  const applyPromoCode = async () => {
+    const code = promoCodeInput.trim();
+    if (!code) return;
+    setPromoCodeApplying(true);
+    setPromoCodeError(null);
+    try {
+      const promo = await resolveAppointmentRequestPromoByCode(code);
+      const email = (formData.email || userEmail || '').trim();
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        try {
+          const eligibility = await checkAppointmentRequestPromoEligibilityByCode(code, email);
+          if (eligibility.eligible === false && eligibility.reason === 'already_redeemed') {
+            setPromoCodeError('This promotion has already been used with this email address.');
+            return;
+          }
+        } catch {
+          // Advisory only — the backend enforces the rule at submission time
+        }
+      }
+      setAppliedCodePromo(promo);
+    } catch {
+      setPromoCodeError('Code not found or no longer valid.');
+    } finally {
+      setPromoCodeApplying(false);
+    }
+  };
+
   // Fetch appointment types when logged in, or after new clients confirm a complete address
   useEffect(() => {
     if (!isLoggedIn && !isPhysicalAddressComplete(formData.physicalAddress)) {
@@ -3429,8 +3504,11 @@ export default function AppointmentRequestForm() {
         schedulingNotes: formData.schedulingNotes?.trim() || undefined,
         membershipInterest: formData.membershipInterest || undefined,
         
-        // Appointment request promotion — token (URL) takes precedence over typed code
-        ...(promoToken
+        // Appointment request promotion — token (URL) takes precedence over typed code.
+        // Skipped entirely when this email already redeemed the promotion.
+        ...(promoAlreadyUsed
+          ? {}
+          : promoToken
           ? { promotionToken: promoToken }
           : appliedCodePromo?.code
           ? { promotionCode: appliedCodePromo.code }
@@ -3486,8 +3564,23 @@ export default function AppointmentRequestForm() {
       
       setCurrentPage('success');
     } catch (error: any) {
-      const errorMessage =
-        error?.response?.data?.message || 'Failed to submit form. Please try again.';
+      const status = error?.response?.status;
+      const promoWasSubmitted = !promoAlreadyUsed && (!!promoToken || !!appliedCodePromo?.code);
+      let errorMessage: string;
+      if (status === 409 && promoWasSubmitted) {
+        // The promotion was already redeemed with this email — drop it so the
+        // user can resubmit without the discount.
+        errorMessage =
+          'This promotion has already been used with this email address. Please submit again without it.';
+        if (appliedCodePromo) {
+          setAppliedCodePromo(null);
+          setPromoCodeError('This promotion has already been used with this email address.');
+        } else {
+          setPromoAlreadyUsed(true);
+        }
+      } else {
+        errorMessage = error?.response?.data?.message || 'Failed to submit form. Please try again.';
+      }
       trackFormEvent('appointment_form_submit_failed', {
         error_message: errorMessage,
         appointment_type: appointmentType,
@@ -6902,6 +6995,26 @@ export default function AppointmentRequestForm() {
         </div>
       )}
 
+      {/* Promo already redeemed with this email — discount removed */}
+      {promoAlreadyUsed && appointmentPromo && (
+        <div
+          style={{
+            background: '#fffbeb',
+            borderBottom: '1px solid #fcd34d',
+            padding: isMobile ? '10px 16px' : '12px 24px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+          }}
+        >
+          <span style={{ fontSize: '20px' }}>⚠️</span>
+          <div style={{ fontSize: isMobile ? '13px' : '14px', color: '#92400e' }}>
+            This promotion has already been used with this email address, so the discount won't be
+            applied. You can still submit your appointment request.
+          </div>
+        </div>
+      )}
+
       <div style={{
         maxWidth: '1200px',
         margin: newClientCompactForm ? '8px auto' : isMobile && !isLoggedIn ? '12px auto' : '40px auto',
@@ -7021,20 +7134,7 @@ export default function AppointmentRequestForm() {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      void (async () => {
-                        const code = promoCodeInput.trim();
-                        if (!code) return;
-                        setPromoCodeApplying(true);
-                        setPromoCodeError(null);
-                        try {
-                          const promo = await resolveAppointmentRequestPromoByCode(code);
-                          setAppliedCodePromo(promo);
-                        } catch {
-                          setPromoCodeError('Code not found or no longer valid.');
-                        } finally {
-                          setPromoCodeApplying(false);
-                        }
-                      })();
+                      void applyPromoCode();
                     }
                   }}
                   disabled={promoCodeApplying}
@@ -7058,20 +7158,7 @@ export default function AppointmentRequestForm() {
                   type="button"
                   disabled={promoCodeApplying || !promoCodeInput.trim()}
                   onClick={() => {
-                    void (async () => {
-                      const code = promoCodeInput.trim();
-                      if (!code) return;
-                      setPromoCodeApplying(true);
-                      setPromoCodeError(null);
-                      try {
-                        const promo = await resolveAppointmentRequestPromoByCode(code);
-                        setAppliedCodePromo(promo);
-                      } catch {
-                        setPromoCodeError('Code not found or no longer valid.');
-                      } finally {
-                        setPromoCodeApplying(false);
-                      }
-                    })();
+                    void applyPromoCode();
                   }}
                   style={{
                     padding: '8px 14px',
