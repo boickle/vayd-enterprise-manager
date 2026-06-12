@@ -242,13 +242,16 @@ export function excludePatientIdsAtSlot(
   clientId: string,
   slotStartMs: number,
   slotEndMs: number,
-  allAppointments: Appointment[]
+  allAppointments: Appointment[],
+  options?: { excludeAppointmentId?: number }
 ): string[] {
   const cid = String(clientId);
+  const excludeApptId = options?.excludeAppointmentId;
   const out = new Set<string>();
   for (const a of allAppointments) {
     if (!isAppointmentVisible(a)) continue;
     if (a.allDay) continue;
+    if (excludeApptId != null && a.id === excludeApptId) continue;
     if (a.client?.id == null || String(a.client.id) !== cid) continue;
     const iv = appointmentInterval(a);
     if (!iv) continue;

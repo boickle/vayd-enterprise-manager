@@ -16,7 +16,7 @@ import {
   coordsFromClientPayload,
 } from '../utils/manualBookCalendarPreview';
 import { submitRoutingAcceptedFeedbackFromPreview } from '../utils/routingBookFeedback';
-import { completeForwardBookingFromBook } from '../utils/forwardBookingBookComplete';
+import { completeAllForwardBookingVisitsFromBook, completeForwardBookingFromBook } from '../utils/forwardBookingBookComplete';
 import { fetchClientByIdStaff, type ClientSearchRow } from '../api/clientsStaff';
 import {
   searchPimsClientsAndPatients,
@@ -203,6 +203,13 @@ export type SchedulerBookPrefill = {
   /** Forward booking list → routing book — server + POST …/complete attribution. */
   forwardBookingTrackingToken?: string;
   forwardBookingEntryId?: number;
+  /** Group forward booking — one row per pet to mark complete after routing book. */
+  forwardBookingVisitCompletes?: Array<{
+    forwardBookingEntryId: number;
+    forwardBookingTrackingToken: string;
+    patientId: string;
+    patientName?: string;
+  }>;
   /** Calculate Time type name from routing (for reschedule book type resolution). */
   routingStatsTypeKey?: string;
 };
@@ -1572,6 +1579,9 @@ export function SchedulerBookModal({
 
       const forwardBookingToken = prefill?.forwardBookingTrackingToken?.trim();
       const forwardBookingEntryId = prefill?.forwardBookingEntryId;
+      /** Stay on Needs booking until Mark complete — link locally; do not POST /complete. */
+      const skipForwardBookingAutoComplete =
+        forwardBookingEntryId != null || (prefill?.forwardBookingVisitCompletes?.length ?? 0) > 0;
       /** Stay on forward booking list until Mark complete — do not auto-close via tracking token. */
       const forwardBookingCreateExtras =
         forwardBookingToken && forwardBookingEntryId == null
@@ -1579,6 +1589,7 @@ export function SchedulerBookModal({
           : {};
 
       let savedAppointmentId: number | undefined;
+      let forwardBookingWarning: string | undefined;
       if (rescheduleIds.length > 0) {
         const patchBody = {
           appointmentStart: startIso,
@@ -1625,6 +1636,7 @@ export function SchedulerBookModal({
         }
       } else if (perVisitRoutingBook) {
         const selected = routingBookVisitEdits.filter((v) => v.selected);
+        const createdByPatientId = new Map<string, number>();
         for (const visit of selected) {
           const created = await createAppointment({
             practiceId,
@@ -1647,7 +1659,25 @@ export function SchedulerBookModal({
           if (idRaw != null && Number.isFinite(Number(idRaw))) {
             const apptId = Number(idRaw);
             if (savedAppointmentId == null) savedAppointmentId = apptId;
+            if (!visit.isNoPatient && visit.patientId?.trim()) {
+              createdByPatientId.set(visit.patientId.trim(), apptId);
+            }
             await saveAlternateForAppointment(apptId);
+          }
+        }
+        if (
+          savedAppointmentId != null &&
+          !skipForwardBookingAutoComplete &&
+          prefill?.forwardBookingVisitCompletes?.length
+        ) {
+          const multiComplete = await completeAllForwardBookingVisitsFromBook(
+            createdByPatientId,
+            prefill
+          );
+          if (multiComplete.warnings.length > 0) {
+            forwardBookingWarning =
+              'Appointment saved, but some forward bookings could not be marked complete. ' +
+              multiComplete.warnings.join(' ');
           }
         }
       } else {
@@ -1686,8 +1716,13 @@ export function SchedulerBookModal({
         }
       }
 
-      let forwardBookingWarning: string | undefined;
-      if (savedAppointmentId != null && forwardBookingEntryId != null) {
+      if (
+        savedAppointmentId != null &&
+        !skipForwardBookingAutoComplete &&
+        forwardBookingToken &&
+        !perVisitRoutingBook &&
+        !forwardBookingWarning
+      ) {
         const fbComplete = await completeForwardBookingFromBook(savedAppointmentId, prefill);
         if (!fbComplete.completed && fbComplete.error) {
           forwardBookingWarning =

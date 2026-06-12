@@ -43,6 +43,14 @@ import {
   type ForwardBookingDispositionFormState,
 } from '../utils/forwardBookingDisposition';
 import { BookPatientChartButton } from '../components/BookPatientChartButton';
+import {
+  collectSameDayHouseholdVisits,
+  type RescheduleSameDayVisit,
+} from '../utils/routingRescheduleIntent';
+import {
+  defaultForwardBookingHouseholdSelection,
+  householdVisitAlreadyForwardBooked,
+} from '../utils/appointmentVisitTimesBadge';
 import './Scheduler.css';
 
 export type ActualVisitTimeField = 'start' | 'end' | 'both';
@@ -110,6 +118,10 @@ type Props = {
   field?: ActualVisitTimeField;
   practiceId: number;
   practiceTz: string;
+  /** Same-day calendar rows — used to offer forward booking for all household pets. */
+  sameCalendarDayAppointments?: Appointment[];
+  /** Pets that already have a forward-booking list entry — omitted from default selection. */
+  forwardBookingSavedPatientIds?: ReadonlySet<string>;
   accentColor: string;
   onClose: () => void;
   onSaved: (updated: Appointment) => void;
@@ -170,6 +182,51 @@ function primaryPatientContext(appt: Appointment): {
   };
 }
 
+function anchorPatientIdsForAppointment(appt: Appointment): string[] {
+  const multi = (appt as { patients?: { id?: number | string }[] }).patients;
+  if (Array.isArray(multi) && multi.length > 0) {
+    return multi
+      .map((p) => (p.id != null ? String(p.id) : null))
+      .filter((id): id is string => Boolean(id));
+  }
+  if (appt.patient?.id != null) return [String(appt.patient.id)];
+  return [];
+}
+
+function orderHouseholdVisitsForAnchor(
+  visits: RescheduleSameDayVisit[],
+  appt: Appointment
+): RescheduleSameDayVisit[] {
+  if (visits.length <= 1) return visits;
+  const anchorPatientOrder = new Map(
+    anchorPatientIdsForAppointment(appt).map((id, index) => [id, index])
+  );
+  const anchorApptId = appt.id;
+  return [...visits].sort((a, b) => {
+    const aIsAnchor = a.appointmentId === anchorApptId || anchorPatientOrder.has(a.patientId);
+    const bIsAnchor = b.appointmentId === anchorApptId || anchorPatientOrder.has(b.patientId);
+    if (aIsAnchor !== bIsAnchor) return aIsAnchor ? -1 : 1;
+    if (aIsAnchor && bIsAnchor) {
+      const aOrder = anchorPatientOrder.get(a.patientId);
+      const bOrder = anchorPatientOrder.get(b.patientId);
+      if (aOrder != null && bOrder != null && aOrder !== bOrder) return aOrder - bOrder;
+      if (aOrder != null && bOrder == null) return -1;
+      if (aOrder == null && bOrder != null) return 1;
+      if (a.appointmentId === anchorApptId && b.appointmentId !== anchorApptId) return -1;
+      if (a.appointmentId !== anchorApptId && b.appointmentId === anchorApptId) return 1;
+    }
+    return (a.patientName ?? a.patientId).localeCompare(b.patientName ?? b.patientId, undefined, {
+      sensitivity: 'base',
+    });
+  });
+}
+
+function isAnchorHouseholdVisit(visit: RescheduleSameDayVisit, appt: Appointment): boolean {
+  if (visit.appointmentId === appt.id) return true;
+  const anchorIds = anchorPatientIdsForAppointment(appt);
+  return anchorIds.length === 1 && anchorIds[0] === visit.patientId;
+}
+
 function defaultLabsPendingTaskTitle(appt: Appointment): string {
   const subject = [primaryPatientName(appt), pickStr(appt.client?.lastName)].filter(Boolean).join(' ');
   if (!subject) return 'Forward book once labs come back.';
@@ -217,6 +274,8 @@ export function SchedulerActualVisitTimeModal({
   field = 'both',
   practiceId,
   practiceTz,
+  sameCalendarDayAppointments = [],
+  forwardBookingSavedPatientIds = new Set<string>(),
   accentColor,
   onClose,
   onSaved,
@@ -327,6 +386,52 @@ export function SchedulerActualVisitTimeModal({
     [forwardAmount, forwardUnit]
   );
   const forwardBookingPatient = useMemo(() => primaryPatientContext(appt), [appt]);
+  const householdVisits = useMemo(() => {
+    const visits = collectSameDayHouseholdVisits(appt, sameCalendarDayAppointments, practiceTz);
+    return orderHouseholdVisitsForAnchor(visits, appt);
+  }, [appt, sameCalendarDayAppointments, practiceTz]);
+  const isAnchorVisit = useCallback(
+    (visit: RescheduleSameDayVisit) => isAnchorHouseholdVisit(visit, appt),
+    [appt]
+  );
+  const [selectedHouseholdPatientIds, setSelectedHouseholdPatientIds] = useState<Set<string>>(
+    () => defaultForwardBookingHouseholdSelection(householdVisits, forwardBookingSavedPatientIds)
+  );
+  const [selectedVisitTimePatientIds, setSelectedVisitTimePatientIds] = useState<Set<string>>(
+    () => new Set(householdVisits.map((visit) => visit.patientId))
+  );
+
+  useEffect(() => {
+    setSelectedHouseholdPatientIds(
+      defaultForwardBookingHouseholdSelection(householdVisits, forwardBookingSavedPatientIds)
+    );
+    setSelectedVisitTimePatientIds(new Set(householdVisits.map((visit) => visit.patientId)));
+  }, [appt.id, householdVisits, forwardBookingSavedPatientIds]);
+
+  const visitTimeAppointmentIds = useCallback((): number[] => {
+    if (householdVisits.length <= 1) {
+      return typeof appt.id === 'number' ? [appt.id] : [];
+    }
+    const ids = [
+      ...new Set(
+        householdVisits
+          .filter((visit) => selectedVisitTimePatientIds.has(visit.patientId))
+          .map((visit) => visit.appointmentId)
+      ),
+    ];
+    return ids.length > 0 ? ids : typeof appt.id === 'number' ? [appt.id] : [];
+  }, [appt.id, householdVisits, selectedVisitTimePatientIds]);
+
+  const householdVisitScheduledLabel = useCallback(
+    (visit: (typeof householdVisits)[number]): string => {
+      const row =
+        sameCalendarDayAppointments.find((a) => a.id === visit.appointmentId) ?? appt;
+      const start = formatPracticeTime(row.appointmentStart, practiceTz);
+      const end = formatPracticeTime(row.appointmentEnd, practiceTz);
+      return `${start} – ${end}`;
+    },
+    [appt, practiceTz, sameCalendarDayAppointments]
+  );
 
   useEffect(() => {
     forwardBookingFormRef.current = {
@@ -505,13 +610,25 @@ export function SchedulerActualVisitTimeModal({
   const title = isBoth ? 'Start / End Visit' : isStartOnly ? 'Start visit' : 'End visit';
 
   const saveStart = useCallback(
-    async (body: { at?: string; clear?: boolean }) => postAppointmentActualStart(appt.id, body),
-    [appt.id]
+    async (body: { at?: string; clear?: boolean }) => {
+      let last = appt;
+      for (const id of visitTimeAppointmentIds()) {
+        last = await postAppointmentActualStart(id, body);
+      }
+      return last;
+    },
+    [appt, visitTimeAppointmentIds]
   );
 
   const saveEnd = useCallback(
-    async (body: { at?: string; clear?: boolean }) => postAppointmentActualEnd(appt.id, body),
-    [appt.id]
+    async (body: { at?: string; clear?: boolean }) => {
+      let last = appt;
+      for (const id of visitTimeAppointmentIds()) {
+        last = await postAppointmentActualEnd(id, body);
+      }
+      return last;
+    },
+    [appt, visitTimeAppointmentIds]
   );
 
   const forwardInterval = useMemo(() => {
@@ -576,18 +693,32 @@ export function SchedulerActualVisitTimeModal({
       if (!forwardInterval) {
         throw new Error('Select how far out to forward book (number and days, weeks, or months).');
       }
-      const payload = buildCreateForwardBookingPayloadFromAppointment(
-        appt,
-        forwardInterval,
-        practiceId,
-        {
-          bookingNotes: bookingNotes.trim() || null,
-        }
-      );
-      if (!payload) {
-        throw new Error('This visit cannot create a forward booking (needs client and patient).');
+      const visitsToBook =
+        householdVisits.length > 1
+          ? householdVisits.filter((visit) => selectedHouseholdPatientIds.has(visit.patientId))
+          : householdVisits;
+      if (householdVisits.length > 1 && visitsToBook.length === 0) {
+        throw new Error('Select at least one pet to forward book.');
       }
-      await createForwardBooking(payload);
+      for (const visit of visitsToBook) {
+        const sourceAppt =
+          sameCalendarDayAppointments.find((row) => row.id === visit.appointmentId) ?? appt;
+        const payload = buildCreateForwardBookingPayloadFromAppointment(
+          sourceAppt,
+          forwardInterval,
+          practiceId,
+          {
+            bookingNotes: bookingNotes.trim() || null,
+            patientId: Number(visit.patientId),
+          }
+        );
+        if (!payload) {
+          throw new Error(
+            `Could not create a forward booking for ${visit.patientName ?? 'this pet'}.`
+          );
+        }
+        await createForwardBooking(payload);
+      }
     },
     [
       appt,
@@ -596,6 +727,7 @@ export function SchedulerActualVisitTimeModal({
       buildLabsPendingTaskLinks,
       forwardBookingMode,
       forwardInterval,
+      householdVisits,
       isStartOnly,
       labsAssigneeEmployeeId,
       labsTaskDueLocal,
@@ -603,6 +735,8 @@ export function SchedulerActualVisitTimeModal({
       labsTaskTitle,
       dispositionLocked,
       practiceId,
+      sameCalendarDayAppointments,
+      selectedHouseholdPatientIds,
       skipsForwardBookingList,
     ]
   );
@@ -706,6 +840,14 @@ export function SchedulerActualVisitTimeModal({
       setError('Could not determine visit date.');
       return;
     }
+    if (
+      householdVisits.length > 1 &&
+      selectedVisitTimePatientIds.size === 0 &&
+      (startTimeLocal.trim() || endTimeLocal.trim())
+    ) {
+      setError('Select at least one pet to apply visit times to.');
+      return;
+    }
     if (isStartOnly) {
       const at = combineDateAndTimeToUtc(dateKey, startTimeLocal, practiceTz);
       if (!at) {
@@ -802,23 +944,84 @@ export function SchedulerActualVisitTimeModal({
           </button>
         </div>
 
-        <div className="scheduler-modal-body scheduler-modal-body--edit">
+        <div className="scheduler-modal-body">
           {error ? <p className="scheduler-edit-error">{error}</p> : null}
 
           <section className="scheduler-modal-section">
-            <p className="scheduler-actual-visit-scheduled">
-              Scheduled: {formatPracticeTime(appt.appointmentStart, practiceTz)} –{' '}
-              {formatPracticeTime(appt.appointmentEnd, practiceTz)}
-              {existingStartIso || existingEndIso ? (
-                <>
-                  <br />
-                  Recorded:{' '}
-                  {existingStartIso ? formatPracticeTime(existingStartIso, practiceTz) : '—'}
-                  {' – '}
-                  {existingEndIso ? formatPracticeTime(existingEndIso, practiceTz) : '—'}
-                </>
-              ) : null}
-            </p>
+            {householdVisits.length > 1 ? (
+              <>
+                <p className="scheduler-actual-visit-scheduled">
+                  This visit ({patientsLabel(appt)}):{' '}
+                  {formatPracticeTime(appt.appointmentStart, practiceTz)} –{' '}
+                  {formatPracticeTime(appt.appointmentEnd, practiceTz)}
+                  {existingStartIso || existingEndIso ? (
+                    <>
+                      <br />
+                      Recorded:{' '}
+                      {existingStartIso ? formatPracticeTime(existingStartIso, practiceTz) : '—'}
+                      {' – '}
+                      {existingEndIso ? formatPracticeTime(existingEndIso, practiceTz) : '—'}
+                    </>
+                  ) : null}
+                </p>
+                <div className="scheduler-forward-booking-household-pets" style={{ marginBottom: 14 }}>
+                  <p className="settings-muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
+                    Apply actual start/end times to pets in this household today (same times for each
+                    selected pet):
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {householdVisits.map((visit) => (
+                      <label
+                        key={`visit-time-${visit.patientId}`}
+                        className={[
+                          'scheduler-household-pet-row',
+                          isAnchorVisit(visit) ? 'scheduler-household-pet-row--anchor' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedVisitTimePatientIds.has(visit.patientId)}
+                          disabled={saving}
+                          onChange={(e) => {
+                            setSelectedVisitTimePatientIds((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(visit.patientId);
+                              else next.delete(visit.patientId);
+                              return next;
+                            });
+                          }}
+                        />
+                        <span>
+                          <strong>{visit.patientName?.trim() || `Pet ${visit.patientId}`}</strong>
+                          {isAnchorVisit(visit) ? (
+                            <span className="scheduler-household-pet-row-badge">This visit</span>
+                          ) : null}
+                          <span className="settings-muted" style={{ marginLeft: 8 }}>
+                            Scheduled {householdVisitScheduledLabel(visit)}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p className="scheduler-actual-visit-scheduled">
+                Scheduled: {formatPracticeTime(appt.appointmentStart, practiceTz)} –{' '}
+                {formatPracticeTime(appt.appointmentEnd, practiceTz)}
+                {existingStartIso || existingEndIso ? (
+                  <>
+                    <br />
+                    Recorded:{' '}
+                    {existingStartIso ? formatPracticeTime(existingStartIso, practiceTz) : '—'}
+                    {' – '}
+                    {existingEndIso ? formatPracticeTime(existingEndIso, practiceTz) : '—'}
+                  </>
+                ) : null}
+              </p>
+            )}
 
             <div className="scheduler-edit-grid">
               <div className="scheduler-edit-field scheduler-edit-readonly">
@@ -881,7 +1084,60 @@ export function SchedulerActualVisitTimeModal({
                 ) : null}
               </div>
 
-              {forwardBookingPatient ? (
+              {showForwardBookFields && householdVisits.length > 1 ? (
+                <div className="scheduler-forward-booking-household-pets">
+                  <p className="settings-muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
+                    Forward book for pets in this household today (same interval for each selected
+                    pet):
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {householdVisits.map((visit) => {
+                      const alreadyForwardBooked = householdVisitAlreadyForwardBooked(
+                        visit,
+                        forwardBookingSavedPatientIds
+                      );
+                      return (
+                      <label
+                        key={visit.patientId}
+                        className={[
+                          'scheduler-household-pet-row',
+                          isAnchorVisit(visit) ? 'scheduler-household-pet-row--anchor' : '',
+                          alreadyForwardBooked ? 'scheduler-household-pet-row--saved' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedHouseholdPatientIds.has(visit.patientId)}
+                          disabled={forwardBookingFieldsDisabled || alreadyForwardBooked}
+                          onChange={(e) => {
+                            forwardBookingUserEditedRef.current = true;
+                            setSelectedHouseholdPatientIds((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(visit.patientId);
+                              else next.delete(visit.patientId);
+                              return next;
+                            });
+                          }}
+                        />
+                        <span>
+                          {visit.patientName?.trim() || `Pet ${visit.patientId}`}
+                          {isAnchorVisit(visit) ? (
+                            <span className="scheduler-household-pet-row-badge">This visit</span>
+                          ) : null}
+                          {alreadyForwardBooked ? (
+                            <span className="scheduler-household-pet-row-badge scheduler-household-pet-row-badge--saved">
+                              Forward booking saved
+                            </span>
+                          ) : null}
+                        </span>
+                      </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : forwardBookingPatient ? (
                 <div className="scheduler-forward-booking-patient-context">
                   <div className="scheduler-book-patient-name-row">
                     <span className="scheduler-forward-booking-patient-name">

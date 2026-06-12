@@ -2123,6 +2123,15 @@ label.scheduler-go-date-heading {
   font-size: 10px;
 }
 
+.scheduler-appt-visit-times-badge--hover {
+  margin-left: 0;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
 .scheduler-event-title-client-last + .scheduler-appt-visit-times-badge {
   margin-left: 2px;
 }
@@ -3473,6 +3482,50 @@ label.scheduler-go-date-heading {
   color: #64748b;
 }
 
+.scheduler-household-pet-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 14px;
+  padding: 8px 10px;
+  margin: 0 -10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.scheduler-household-pet-row--anchor {
+  background: #f8fafc;
+  box-shadow: inset 3px 0 0 var(--scheduler-accent, #0d9488);
+  outline: 1px solid #cbd5e1;
+  outline-offset: -1px;
+}
+
+.scheduler-household-pet-row-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #fff;
+  background: #0f766e;
+  vertical-align: middle;
+}
+
+.scheduler-household-pet-row-badge--saved {
+  text-transform: none;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: #334155;
+  background: #e2e8f0;
+}
+
+.scheduler-household-pet-row--saved {
+  opacity: 0.85;
+}
+
 .scheduler-actual-visit-footer {
   flex-wrap: wrap;
   gap: 8px;
@@ -3997,6 +4050,10 @@ label.scheduler-go-date-heading {
 .scheduler-modal--edit {
   max-width: 560px;
   width: min(560px, 96vw);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
 }
 
 .scheduler-modal--edit .scheduler-visit-context-block {
@@ -4053,6 +4110,21 @@ label.scheduler-go-date-heading {
 .scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-block-title {
   font-size: 9px;
   margin-bottom: 4px;
+}
+
+.scheduler-tooltip-vh-patient-details-row {
+  margin-top: 2px;
+  margin-bottom: 2px;
+  padding-left: 26px;
+}
+
+.scheduler-tooltip-vh-patient-details-row .scheduler-book-patient-details-btn {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-patient-details-row .scheduler-book-patient-details-btn {
+  font-size: 11px;
 }
 
 .scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-patient-line {
@@ -5025,37 +5097,37 @@ label.scheduler-go-date-heading {
 .scheduler-all-day-span-bar.scheduler-edit-visit-booked-slot {
   z-index: 110;
   overflow: visible;
-  outline: 3px solid rgba(34, 197, 94, 1);
+  outline: 4px solid rgba(249, 115, 22, 1);
   outline-offset: 2px;
   box-shadow:
-    inset 0 0 0 999px rgba(34, 197, 94, 0.24),
-    0 0 0 2px rgba(255, 255, 255, 0.85),
-    0 0 32px 10px rgba(34, 197, 94, 0.72),
-    0 12px 40px rgba(21, 128, 61, 0.48);
-  filter: saturate(1.2) brightness(1.08);
-  animation: scheduler-edit-visit-booked-pulse 5s ease-out forwards;
+    inset 0 0 0 999px rgba(249, 115, 22, 0.22),
+    0 0 0 3px rgba(255, 255, 255, 0.95),
+    0 0 36px 12px rgba(249, 115, 22, 0.78),
+    0 12px 40px rgba(194, 65, 12, 0.45);
+  filter: saturate(1.15) brightness(1.06);
+  animation: scheduler-edit-visit-booked-pulse 6s ease-out forwards;
 }
 
 @keyframes scheduler-edit-visit-booked-pulse {
   0% {
-    outline-color: rgba(74, 222, 128, 1);
+    outline-color: rgba(251, 146, 60, 1);
     box-shadow:
-      inset 0 0 0 999px rgba(34, 197, 94, 0.34),
-      0 0 0 3px rgba(255, 255, 255, 0.95),
-      0 0 44px 14px rgba(34, 197, 94, 0.88),
-      0 14px 48px rgba(21, 128, 61, 0.55);
+      inset 0 0 0 999px rgba(249, 115, 22, 0.32),
+      0 0 0 4px rgba(255, 255, 255, 1),
+      0 0 48px 16px rgba(249, 115, 22, 0.92),
+      0 16px 52px rgba(194, 65, 12, 0.55);
   }
   12%,
   82% {
-    outline-color: rgba(34, 197, 94, 1);
+    outline-color: rgba(249, 115, 22, 1);
     box-shadow:
-      inset 0 0 0 999px rgba(34, 197, 94, 0.24),
-      0 0 0 2px rgba(255, 255, 255, 0.85),
-      0 0 32px 10px rgba(34, 197, 94, 0.72),
-      0 12px 40px rgba(21, 128, 61, 0.48);
+      inset 0 0 0 999px rgba(249, 115, 22, 0.22),
+      0 0 0 3px rgba(255, 255, 255, 0.95),
+      0 0 36px 12px rgba(249, 115, 22, 0.78),
+      0 12px 40px rgba(194, 65, 12, 0.45);
   }
   100% {
-    outline-color: rgba(34, 197, 94, 0);
+    outline-color: rgba(249, 115, 22, 0);
     box-shadow: none;
     filter: none;
   }
@@ -5146,13 +5218,53 @@ label.scheduler-go-date-heading {
   border-radius: 0;
   box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.18);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .scheduler-modal-body--edit {
-  overflow-y: auto;
+  overflow: visible;
+  flex: none;
+  min-height: auto;
+}
+
+.scheduler-modal--edit > .scheduler-modal-body:not(.scheduler-modal-body--edit) {
   flex: 1;
   min-height: 0;
+  overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.scheduler-modal-scroll--edit {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.scheduler-modal--edit .scheduler-modal-header {
+  flex-shrink: 0;
+  max-height: none;
+  overflow: visible;
+}
+
+.scheduler-edit-patient-switch {
+  margin-top: 10px;
+}
+
+.scheduler-edit-patient-switch-field {
+  margin: 0;
+  gap: 6px;
+}
+
+.scheduler-edit-patient-switch-field > span {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
 }
 
 .scheduler-modal--edit-inline {
@@ -5166,20 +5278,6 @@ label.scheduler-go-date-heading {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-}
-
-.scheduler-modal--edit-inline .scheduler-modal-header,
-.scheduler-modal--edit-docked .scheduler-modal-header {
-  max-height: min(38vh, 260px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.scheduler-modal--edit:not(.scheduler-modal--edit-inline):not(.scheduler-modal--edit-docked)
-  .scheduler-modal-header {
-  max-height: min(36vh, 240px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 .scheduler-edit-inline-pane {

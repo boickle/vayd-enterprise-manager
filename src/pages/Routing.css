@@ -61,10 +61,15 @@
   overflow: hidden;
 }
 
-.routing-page-root--calendar-workspace.routing-page-root--stack-columns .routing-route-form-card,
-.routing-page-root--calendar-workspace.routing-page-root--stack-columns .routing-results-card {
+.routing-page-root--calendar-workspace.routing-page-root--stack-columns .routing-route-form-card {
   flex: 1 1 0;
   min-height: 0;
+}
+
+.routing-page-root--calendar-workspace.routing-page-root--stack-columns .routing-results-card {
+  flex: 0 0 auto;
+  max-height: min(38vh, 280px);
+  overflow-y: auto;
 }
 
 .routing-route-form-stack--workspace {
@@ -304,26 +309,6 @@
   line-height: 1.35;
 }
 
-.routing-forward-booking-mode-summary {
-  margin: 0 0 10px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.routing-forward-booking-mode-summary-text {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.routing-forward-booking-mode-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-
 .routing-input--locked {
   background: #f8fafc;
   color: #334155;
@@ -531,7 +516,8 @@
 }
 
 .routing-calculate-time-field .routing-mins-line-input.routing-minutes-flash--active,
-.routing-calculate-time-field .routing-mins-line-input.routing-prefill-flash--active {
+.routing-calculate-time-field .routing-mins-line-input.routing-prefill-flash--active,
+.routing-calculate-time-field .routing-pet-input.routing-prefill-flash--active {
   animation: routingPrefillFlash 0.75s ease-out;
 }
 
@@ -539,7 +525,8 @@
   .routing-page-root .input.routing-prefill-flash--active,
   .routing-page-root select.input.routing-prefill-flash--active,
   .routing-calculate-time-field .routing-mins-line-input.routing-minutes-flash--active,
-  .routing-calculate-time-field .routing-mins-line-input.routing-prefill-flash--active {
+  .routing-calculate-time-field .routing-mins-line-input.routing-prefill-flash--active,
+  .routing-calculate-time-field .routing-pet-input.routing-prefill-flash--active {
     animation: routingPrefillFlash 0.35s ease-out;
   }
 }

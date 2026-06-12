@@ -56,7 +56,7 @@ export function PatientChartSummaryPanel({
       ) : summary ? (
         <div className="patient-chart-summary-sections">
           {showAlerts && summary.alerts ? (
-            <SummarySection title="Alerts">
+            <SummarySection title="Patient alerts">
               <p className="patient-chart-summary-alert-line">
                 <AlertTriangle
                   size={14}

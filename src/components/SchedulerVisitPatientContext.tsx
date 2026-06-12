@@ -7,7 +7,7 @@ import {
   appointmentZoneShortLabel,
 } from '../api/appointments';
 import type { Provider } from '../api/employee';
-import type { Appointment } from '../api/roomLoader';
+import type { Appointment, Patient } from '../api/roomLoader';
 import { patientsForAppointment } from '../utils/schedulerAddPet';
 import {
   appointmentChartPrimaryProviderDiffersFromAssignee,
@@ -92,10 +92,23 @@ type Props = {
   appt: Appointment;
   providers?: readonly Provider[] | null;
   practiceTz: string;
+  /** When set, show these patients instead of the appointment's saved patient(s). */
+  patientsOverride?: Patient[];
+  /** e.g. View Patient Details link on the patient name line (edit visit). */
+  patientDetailsAction?: ReactNode;
+  /** When false, omit membership row (e.g. previewing another pet on the same visit). */
+  showMembership?: boolean;
 };
 
-export function SchedulerVisitPatientContext({ appt, providers, practiceTz }: Props) {
-  const patients = patientsForAppointment(appt);
+export function SchedulerVisitPatientContext({
+  appt,
+  providers,
+  practiceTz,
+  patientsOverride,
+  patientDetailsAction,
+  showMembership = true,
+}: Props) {
+  const patients = patientsOverride ?? patientsForAppointment(appt);
   const member = appointmentPatientMember(appt);
   const chartPrimaryProviderLabel = appointmentPatientChartPrimaryProviderLabel(appt, providers);
   const providerMismatch =
@@ -157,6 +170,9 @@ export function SchedulerVisitPatientContext({ appt, providers, practiceTz }: Pr
                   <span className="scheduler-tooltip-vh-id"> (#{pid})</span>
                 </div>
               </div>
+              {idx === 0 && patientDetailsAction ? (
+                <div className="scheduler-tooltip-vh-patient-details-row">{patientDetailsAction}</div>
+              ) : null}
               <VisitHighlightsRow label="Last weight">{patientLastWeightDisplay(p)}</VisitHighlightsRow>
               {pAlerts ? (
                 <div className="scheduler-tooltip-vh-alerts scheduler-tooltip-vh-alerts--patient">
@@ -180,7 +196,7 @@ export function SchedulerVisitPatientContext({ appt, providers, practiceTz }: Pr
           Provider on chart is <strong>{chartPrimaryProviderLabel}</strong>.
         </div>
       ) : null}
-      {member.isMember ? (
+      {showMembership && member.isMember ? (
         <div className="scheduler-tooltip-vh-patient-membership">
           <div className="scheduler-tooltip-vh-patient-membership-label">Membership</div>
           <div className="scheduler-tooltip-vh-membership">

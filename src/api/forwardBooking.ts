@@ -66,7 +66,8 @@ export type ForwardBookingEntry = {
   /** Visit that ended with forward-book request (ISO UTC). */
   sourceAppointmentStart?: string | null;
   sourceAppointmentEnd?: string | null;
-  sourceAppointmentId: number;
+  /** Omitted or null when staff added forward booking without a source visit. */
+  sourceAppointmentId?: number | null;
   clientId: number;
   patientId: number;
   appointmentTypeId?: number | null;
@@ -187,7 +188,8 @@ export async function fetchForwardBookings(
 
 export type CreateForwardBookingPayload = {
   practiceId: number;
-  sourceAppointmentId: number;
+  /** Omit or null when there is no associated source visit. */
+  sourceAppointmentId?: number | null;
   clientId: number;
   patientId: number;
   intervalAmount: number;

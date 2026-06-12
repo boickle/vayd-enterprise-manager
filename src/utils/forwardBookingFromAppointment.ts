@@ -156,6 +156,100 @@ export function forwardBookingIsHighPriority(
   return targetDay <= cutoff;
 }
 
+export function forwardBookingClientHouseholdKey(
+  entry: Pick<ForwardBookingEntry, 'clientId' | 'client'>
+): string {
+  const id = entry.clientId ?? entry.client?.id;
+  if (id != null && Number.isFinite(Number(id))) return `id:${Number(id)}`;
+  const first = String(entry.client?.firstName ?? '').trim();
+  const last = String(entry.client?.lastName ?? '').trim();
+  const name = [first, last].filter(Boolean).join(' ').trim();
+  return name ? `name:${name.toLowerCase()}` : 'unknown';
+}
+
+export function buildForwardBookingHouseholdMinTargetDueMap(
+  entries: Iterable<ForwardBookingEntry>,
+  practiceTz: string
+): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const entry of entries) {
+    const key = forwardBookingClientHouseholdKey(entry);
+    const day = forwardBookingTargetDueDayMillis(entry, practiceTz);
+    const prev = map.get(key);
+    if (prev == null || day < prev) map.set(key, day);
+  }
+  return map;
+}
+
+function forwardBookingPatientSortName(entry: ForwardBookingEntry): string {
+  const name = String(entry.patient?.name ?? '').trim();
+  if (name) return name;
+  if (entry.patientId != null) return `Patient #${entry.patientId}`;
+  return '';
+}
+
+/** Household order: soonest target date in household, then client name; pets by target date. */
+export function compareForwardBookingListEntries(
+  a: ForwardBookingEntry,
+  b: ForwardBookingEntry,
+  practiceTz: string,
+  clientName: (entry: ForwardBookingEntry) => string,
+  householdMinTargetDue: Map<string, number>
+): number {
+  const keyA = forwardBookingClientHouseholdKey(a);
+  const keyB = forwardBookingClientHouseholdKey(b);
+
+  if (keyA === keyB) {
+    const ta = forwardBookingTargetDueDayMillis(a, practiceTz);
+    const tb = forwardBookingTargetDueDayMillis(b, practiceTz);
+    if (ta !== tb) return ta - tb;
+    return forwardBookingPatientSortName(a).localeCompare(
+      forwardBookingPatientSortName(b),
+      undefined,
+      { sensitivity: 'base' }
+    );
+  }
+
+  const minA = householdMinTargetDue.get(keyA) ?? forwardBookingTargetDueDayMillis(a, practiceTz);
+  const minB = householdMinTargetDue.get(keyB) ?? forwardBookingTargetDueDayMillis(b, practiceTz);
+  if (minA !== minB) return minA - minB;
+
+  const nameCmp = clientName(a).localeCompare(clientName(b), undefined, { sensitivity: 'base' });
+  if (nameCmp !== 0) return nameCmp;
+
+  return keyA.localeCompare(keyB);
+}
+
+export function sortForwardBookingListEntries(
+  entries: ForwardBookingEntry[],
+  practiceTz: string,
+  clientName: (entry: ForwardBookingEntry) => string
+): ForwardBookingEntry[] {
+  const householdMin = buildForwardBookingHouseholdMinTargetDueMap(entries, practiceTz);
+  return [...entries].sort((a, b) =>
+    compareForwardBookingListEntries(a, b, practiceTz, clientName, householdMin)
+  );
+}
+
+export type ForwardBookingHouseholdGroup = {
+  key: string;
+  entries: ForwardBookingEntry[];
+};
+
+/** Preserves entry order — call after household sort so pets stay under their client. */
+export function groupForwardBookingListByHousehold(
+  entries: ForwardBookingEntry[]
+): ForwardBookingHouseholdGroup[] {
+  const groups: ForwardBookingHouseholdGroup[] = [];
+  for (const entry of entries) {
+    const key = forwardBookingClientHouseholdKey(entry);
+    const tail = groups[groups.length - 1];
+    if (tail?.key === key) tail.entries.push(entry);
+    else groups.push({ key, entries: [entry] });
+  }
+  return groups;
+}
+
 /** Resolve interval from API row (new fields first, legacy integer monthsOut). */
 export function resolveForwardBookingIntervalFromEntry(
   entry: Pick<ForwardBookingEntry, 'intervalAmount' | 'intervalUnit' | 'monthsOut'>
@@ -311,13 +405,17 @@ export function buildCreateForwardBookingPayloadFromAppointment(
   if (!appt?.id || typeof appt.id !== 'number') return null;
 
   const patientIdRaw =
-    patientsForAppointment(appt)[0]?.id ??
-    patientIdFromAppointment(appt) ??
-    (opts?.patientId != null ? String(opts.patientId) : null);
+    opts?.patientId != null && Number.isFinite(Number(opts.patientId))
+      ? String(Number(opts.patientId))
+      : (patientsForAppointment(appt)[0]?.id ??
+        patientIdFromAppointment(appt) ??
+        null);
   const clientIdRaw =
-    (appt.client as Client | undefined)?.id ??
-    clientIdFromAppointment(appt) ??
-    (opts?.clientId != null ? String(opts.clientId) : null);
+    opts?.clientId != null && Number.isFinite(Number(opts.clientId))
+      ? String(Number(opts.clientId))
+      : ((appt.client as Client | undefined)?.id ??
+        clientIdFromAppointment(appt) ??
+        null);
 
   const patientId = patientIdRaw != null ? Number(patientIdRaw) : NaN;
   const clientId = clientIdRaw != null ? Number(clientIdRaw) : NaN;
@@ -349,6 +447,32 @@ export function buildCreateForwardBookingPayloadFromAppointment(
     description: appt.description ?? null,
     instructions: appt.instructions ?? null,
     serviceMinutes: minutes,
+    ...(bookingNotes != null ? { bookingNotes } : {}),
+  };
+}
+
+/** POST /forward-bookings when staff adds a follow-up without linking a source visit. */
+export function buildCreateForwardBookingPayloadFromPatient(
+  patientId: number,
+  clientId: number,
+  interval: ForwardBookingInterval,
+  practiceId: number,
+  opts?: {
+    bookingNotes?: string | null;
+  }
+): CreateForwardBookingPayload | null {
+  if (!Number.isFinite(patientId) || patientId <= 0) return null;
+  if (!Number.isFinite(clientId) || clientId <= 0) return null;
+
+  const bookingNotesRaw = opts?.bookingNotes?.trim();
+  const bookingNotes = bookingNotesRaw ? bookingNotesRaw : null;
+
+  return {
+    practiceId,
+    clientId,
+    patientId,
+    intervalAmount: interval.amount,
+    intervalUnit: interval.unit,
     ...(bookingNotes != null ? { bookingNotes } : {}),
   };
 }
