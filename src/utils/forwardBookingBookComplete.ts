@@ -6,13 +6,26 @@ export type ForwardBookingBookCompleteResult = {
   error?: string;
 };
 
+export type ForwardBookingVisitComplete = {
+  forwardBookingEntryId: number;
+  forwardBookingTrackingToken: string;
+  patientId: string;
+};
+
 /** After a successful routing book, link the new appointment to the forward booking entry. */
 export async function completeForwardBookingFromBook(
   appointmentId: number,
-  prefill: SchedulerBookPrefill | null | undefined
+  prefill: SchedulerBookPrefill | null | undefined,
+  opts?: { patientId?: string }
 ): Promise<ForwardBookingBookCompleteResult> {
-  const entryId = prefill?.forwardBookingEntryId;
-  const token = prefill?.forwardBookingTrackingToken?.trim();
+  const completes = prefill?.forwardBookingVisitCompletes;
+  const patientKey = opts?.patientId?.trim();
+  const matched =
+    patientKey && completes?.length
+      ? completes.find((row) => row.patientId.trim() === patientKey)
+      : undefined;
+  const entryId = matched?.forwardBookingEntryId ?? prefill?.forwardBookingEntryId;
+  const token = matched?.forwardBookingTrackingToken?.trim() ?? prefill?.forwardBookingTrackingToken?.trim();
   if (entryId == null || !Number.isFinite(Number(entryId)) || !token) {
     return { completed: false };
   }
@@ -28,4 +41,34 @@ export async function completeForwardBookingFromBook(
     const msg = ax?.response?.data?.message ?? ax?.message ?? 'Could not mark forward booking complete.';
     return { completed: false, error: String(msg) };
   }
+}
+
+export async function completeAllForwardBookingVisitsFromBook(
+  createdByPatientId: Map<string, number>,
+  prefill: SchedulerBookPrefill | null | undefined
+): Promise<{ warnings: string[] }> {
+  const warnings: string[] = [];
+  const rows = prefill?.forwardBookingVisitCompletes;
+  if (!rows?.length) {
+    if (prefill?.forwardBookingEntryId != null) {
+      const firstId = createdByPatientId.values().next().value;
+      if (firstId != null) {
+        const result = await completeForwardBookingFromBook(firstId, prefill);
+        if (!result.completed && result.error) warnings.push(result.error);
+      }
+    }
+    return { warnings };
+  }
+  for (const row of rows) {
+    const apptId = createdByPatientId.get(row.patientId.trim());
+    if (apptId == null) continue;
+    const result = await completeForwardBookingFromBook(apptId, prefill, {
+      patientId: row.patientId,
+    });
+    if (!result.completed && result.error) {
+      const label = row.patientName?.trim() || `Pet ${row.patientId}`;
+      warnings.push(`${label}: ${result.error}`);
+    }
+  }
+  return { warnings };
 }

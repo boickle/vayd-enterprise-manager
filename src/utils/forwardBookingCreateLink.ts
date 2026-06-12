@@ -84,7 +84,9 @@ export function parseCreateForwardBookingPrefillFromUrl(
     if (url.searchParams.get(FORWARD_BOOKING_CREATE_NEW_PARAM) !== '1') return null;
     const patientId = Number(url.searchParams.get(FORWARD_BOOKING_CREATE_PATIENT_PARAM));
     const appointmentId = Number(url.searchParams.get(FORWARD_BOOKING_CREATE_APPOINTMENT_PARAM));
-    if (!Number.isFinite(patientId) || !Number.isFinite(appointmentId)) return null;
+    if (!Number.isFinite(patientId) || patientId <= 0 || !Number.isFinite(appointmentId) || appointmentId <= 0) {
+      return null;
+    }
     return { patientId, appointmentId };
   } catch {
     return null;

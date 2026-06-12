@@ -14,6 +14,8 @@ type Props = {
   practiceTz: string;
   /** Omit alerts when they are already visible elsewhere (book modal). */
   showAlerts?: boolean;
+  /** Exclude this visit from last/next appointment lines (edit visit). */
+  excludeAppointmentId?: string | number | null;
   className?: string;
   label?: string;
 };
@@ -24,6 +26,7 @@ export function BookPatientChartButton({
   practiceId,
   practiceTz,
   showAlerts = false,
+  excludeAppointmentId = null,
   className,
   label = 'Patient details',
 }: Props) {
@@ -42,7 +45,9 @@ export function BookPatientChartButton({
     setLoading(true);
     setError(null);
     try {
-      const loaded = await loadRoutingPatientHoverSummary(id, practiceId, practiceTz);
+      const loaded = await loadRoutingPatientHoverSummary(id, practiceId, practiceTz, {
+        excludeAppointmentId,
+      });
       setSummary(loaded);
     } catch {
       setSummary(null);
@@ -50,7 +55,14 @@ export function BookPatientChartButton({
     } finally {
       setLoading(false);
     }
-  }, [patientId, practiceId, practiceTz]);
+  }, [patientId, practiceId, practiceTz, excludeAppointmentId]);
+
+  useEffect(() => {
+    setOpen(false);
+    setSummary(null);
+    setError(null);
+    setLoading(false);
+  }, [patientId, excludeAppointmentId]);
 
   useEffect(() => {
     if (!open) return;

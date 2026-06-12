@@ -10,6 +10,18 @@ export const ROUTING_FORWARD_BOOKING_INTENT_STORAGE_KEY = 'vayd:routing-forward-
 export const ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT =
   'vayd:routing-forward-booking-intent-updated';
 
+export type RoutingForwardBookingScope = 'selected_pet' | 'household_same_target';
+
+export type ForwardBookingHouseholdEntry = {
+  forwardBookingId: number;
+  trackingToken: string;
+  patientId: string;
+  patientName?: string;
+  appointmentTypeId?: number;
+  appointmentTypeName?: string;
+  targetDueDate?: string | null;
+};
+
 export type RoutingForwardBookingIntentV1 = {
   v: 1;
   appliedToRoutingForm?: boolean;
@@ -36,7 +48,11 @@ export type RoutingForwardBookingIntentV1 = {
   /** Legacy echo only — do not use for due-date math. */
   monthsOut?: number;
   targetDueDate?: string | null;
-  sourceAppointmentId: number;
+  sourceAppointmentId?: number | null;
+  /** Same-client rows with the same target due date (forward booking list group book). */
+  householdEntries?: ForwardBookingHouseholdEntry[];
+  /** Required when `householdEntries` has more than one row. */
+  householdScope?: RoutingForwardBookingScope;
   /** When true, successful book navigates back to the forward booking list. */
   returnToListAfterBook?: boolean;
   /**
@@ -135,6 +151,78 @@ export function dismissRoutingForwardBookingWorkspace(): void {
   }
 }
 
+export function forwardBookingRequiresScopeChoice(
+  intent: RoutingForwardBookingIntentV1 | null
+): boolean {
+  return (intent?.householdEntries?.length ?? 0) > 1;
+}
+
+export function writeRoutingForwardBookingScope(scope: RoutingForwardBookingScope): void {
+  const cur = readRoutingForwardBookingIntent();
+  if (!cur) return;
+  try {
+    sessionStorage.setItem(
+      ROUTING_FORWARD_BOOKING_INTENT_STORAGE_KEY,
+      JSON.stringify({ ...cur, householdScope: scope })
+    );
+  } catch {
+    /* ignore */
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT));
+  }
+}
+
+/** Pet count for routing Calculate Time when a forward-booking scope is selected. */
+export function forwardBookingScopePetCount(
+  scope: RoutingForwardBookingScope | '' | undefined,
+  intent: Pick<RoutingForwardBookingIntentV1, 'householdEntries'> | null | undefined
+): number {
+  if (scope === 'household_same_target') {
+    const n = intent?.householdEntries?.length ?? 0;
+    return n > 0 ? n : 1;
+  }
+  return 1;
+}
+
+export function forwardBookingScopeTargets(intent: RoutingForwardBookingIntentV1): {
+  entries: ForwardBookingHouseholdEntry[];
+  patientId: string;
+} {
+  const all = intent.householdEntries ?? [];
+  const anchor =
+    all.find((e) => e.forwardBookingId === intent.forwardBookingId) ??
+    all.find((e) => e.patientId === intent.patientId) ??
+    all[0];
+  if (intent.householdScope !== 'household_same_target' || all.length <= 1) {
+    const one = anchor ?? {
+      forwardBookingId: intent.forwardBookingId,
+      trackingToken: intent.trackingToken,
+      patientId: intent.patientId,
+    };
+    return { entries: [one], patientId: one.patientId };
+  }
+  return {
+    entries: all,
+    patientId: anchor?.patientId ?? intent.patientId,
+  };
+}
+
+function householdEntryFromForwardBookingRow(entry: ForwardBookingEntry): ForwardBookingHouseholdEntry | null {
+  if (!entry?.id || !entry.trackingToken?.trim() || entry.patientId == null) return null;
+  const typeId = entry.appointmentTypeId;
+  return {
+    forwardBookingId: entry.id,
+    trackingToken: entry.trackingToken.trim(),
+    patientId: String(entry.patientId),
+    patientName: pickStr(entry.patient?.name) ?? undefined,
+    appointmentTypeId:
+      typeId != null && Number.isFinite(Number(typeId)) ? Number(typeId) : undefined,
+    appointmentTypeName: entry.appointmentTypeName?.trim() || undefined,
+    targetDueDate: entry.targetDueDate ?? null,
+  };
+}
+
 export function buildRoutingForwardBookingIntentFromEntry(
   entry: ForwardBookingEntry
 ): RoutingForwardBookingIntentV1 | null {
@@ -188,5 +276,22 @@ export function buildRoutingForwardBookingIntentFromEntry(
     ...(entry.monthsOut != null ? { monthsOut: entry.monthsOut } : {}),
     targetDueDate: entry.targetDueDate ?? null,
     sourceAppointmentId: entry.sourceAppointmentId,
+  };
+}
+
+export function buildRoutingForwardBookingIntentFromEntries(
+  anchor: ForwardBookingEntry,
+  householdRows: ForwardBookingEntry[]
+): RoutingForwardBookingIntentV1 | null {
+  const base = buildRoutingForwardBookingIntentFromEntry(anchor);
+  if (!base) return null;
+  const entries = householdRows
+    .map(householdEntryFromForwardBookingRow)
+    .filter((row): row is ForwardBookingHouseholdEntry => row != null);
+  if (entries.length <= 1) return base;
+  return {
+    ...base,
+    householdEntries: entries,
+    householdScope: undefined,
   };
 }

@@ -576,6 +576,28 @@ export type SchedulerDoctorDayAppointmentZones = {
   effectiveZone: MiniZone;
 };
 
+export type SchedulerDoctorDayEffectiveWindow = {
+  startIso: string;
+  endIso: string;
+};
+
+function effectiveWindowMapFromDoctorDayAppointments(
+  appts: DoctorDayAppt[]
+): Map<string, SchedulerDoctorDayEffectiveWindow> {
+  const out = new Map<string, SchedulerDoctorDayEffectiveWindow>();
+  for (const a of appts) {
+    if (isBlockEntry(a)) continue;
+    const id = a.id != null ? String(a.id) : '';
+    if (!id) continue;
+    const ew = (a as { effectiveWindow?: { startIso?: string; endIso?: string } }).effectiveWindow;
+    const startIso = ew?.startIso?.trim();
+    const endIso = ew?.endIso?.trim();
+    if (!startIso || !endIso) continue;
+    out.set(id, { startIso, endIso });
+  }
+  return out;
+}
+
 function zonesMapFromDoctorDayAppointments(
   appts: DoctorDayAppt[]
 ): Map<string, SchedulerDoctorDayAppointmentZones> {
@@ -596,6 +618,7 @@ export type SchedulerDoctorDayBundleFetch = {
   bundle: DayBundleIn | null;
   membershipByApptId: Map<string, SchedulerDoctorDayMembership>;
   zonesByApptId: Map<string, SchedulerDoctorDayAppointmentZones>;
+  effectiveWindowByApptId: Map<string, SchedulerDoctorDayEffectiveWindow>;
   /** Chart PCP from GET /appointments/doctor (null = explicitly none). */
   patientPrimaryProviderByApptId: Map<string, DoctorDayPatientPrimaryProvider | null>;
 };
@@ -685,12 +708,14 @@ export async function fetchSchedulerDoctorDayBundle(
 ): Promise<SchedulerDoctorDayBundleFetch> {
   const empty = (): Map<string, SchedulerDoctorDayMembership> => new Map();
   const emptyZones = (): Map<string, SchedulerDoctorDayAppointmentZones> => new Map();
+  const emptyEffectiveWindow = (): Map<string, SchedulerDoctorDayEffectiveWindow> => new Map();
   const emptyPcp = (): Map<string, DoctorDayPatientPrimaryProvider | null> => new Map();
   try {
     const resp: DoctorDayResponse = await fetchDoctorDay(date, doctorId);
     let appts: DoctorDayAppt[] = resp?.appointments ?? [];
     const membershipByApptId = membershipMapFromDoctorDayAppointments(appts);
     const zonesByApptId = zonesMapFromDoctorDayAppointments(appts);
+    const effectiveWindowByApptId = effectiveWindowMapFromDoctorDayAppointments(appts);
     const patientPrimaryProviderByApptId = patientPrimaryProviderMapFromDoctorDayAppointments(appts);
 
     if (
@@ -743,9 +768,21 @@ export async function fetchSchedulerDoctorDayBundle(
       startDepotTime: str(resp as any, 'startDepotTime') ?? null,
       endDepotTime: str(resp as any, 'endDepotTime') ?? null,
     };
-    return { bundle, membershipByApptId, zonesByApptId, patientPrimaryProviderByApptId };
+    return {
+      bundle,
+      membershipByApptId,
+      zonesByApptId,
+      effectiveWindowByApptId,
+      patientPrimaryProviderByApptId,
+    };
   } catch {
-    return { bundle: null, membershipByApptId: empty(), zonesByApptId: emptyZones(), patientPrimaryProviderByApptId: emptyPcp() };
+    return {
+      bundle: null,
+      membershipByApptId: empty(),
+      zonesByApptId: emptyZones(),
+      effectiveWindowByApptId: emptyEffectiveWindow(),
+      patientPrimaryProviderByApptId: emptyPcp(),
+    };
   }
 }
 

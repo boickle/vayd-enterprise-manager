@@ -53,10 +53,7 @@ function isExternalAppHref(href: string): boolean {
 }
 
 function isForwardBookingExitControl(target: Element): boolean {
-  return Boolean(
-    target.closest('.scheduler-embedded-forward-booking-bar-dismiss') ||
-      target.closest('.routing-forward-booking-mode-actions .btn')
-  );
+  return Boolean(target.closest('.scheduler-embedded-forward-booking-bar-dismiss'));
 }
 
 /** Clicks that stay inside the forward-booking workflow (routing pane, preview, book modal). */
@@ -71,8 +68,6 @@ export function isAllowedForwardBookingWorkspaceTarget(target: Element): boolean
   if (target.closest('.scheduler-routing-preview-slot')) return true;
   if (target.closest('.scheduler-embedded-preview-bar')) return true;
   if (target.closest('.scheduler-embedded-forward-booking-bar')) return true;
-  if (target.closest('.routing-forward-booking-mode-summary')) return true;
-  if (target.closest('.routing-forward-booking-mode-actions')) return true;
   if (target.closest('.scheduler-modal-backdrop')) return true;
   if (target.closest('.scheduler-modal')) return true;
   if (target.closest('.scheduler-edit-preview-popover-shell')) return true;

@@ -18,7 +18,7 @@ function patientsMatch(a: Patient, b: Patient): boolean {
   return !!(an && bn && an === bn);
 }
 
-function profileToPatient(profile: unknown, base: Patient): Patient {
+export function profileToPatient(profile: unknown, base: Patient): Patient {
   if (!profile || typeof profile !== 'object') return base;
   const po = profile as Record<string, unknown>;
   const sexSources = sexSourceStringsFromRecord(po);
@@ -127,4 +127,27 @@ export async function enrichAppointmentPatientProfiles(appt: Appointment): Promi
   }
 
   return next;
+}
+
+/** Load a patient row for scheduler display (sex, breed, weight, alerts, chart PCP). */
+export async function fetchPatientDisplayById(
+  patientId: string,
+  fallback?: { name?: string }
+): Promise<Patient | null> {
+  const id = patientId.trim();
+  if (!id) return null;
+  const numericId = Number(id);
+  const base: Patient = {
+    id: Number.isFinite(numericId) && numericId > 0 ? numericId : 0,
+    name: fallback?.name?.trim() || 'Patient',
+    isActive: true,
+    isDeleted: false,
+  };
+  try {
+    const profile = await fetchPatientProfileForRow({ id });
+    if (!profile) return base;
+    return profileToPatient(profile, base);
+  } catch {
+    return base.name !== 'Patient' || base.id > 0 ? base : null;
+  }
 }

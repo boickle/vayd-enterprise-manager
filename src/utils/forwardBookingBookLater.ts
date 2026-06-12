@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon';
 import type { ForwardBookingEntry } from '../api/forwardBooking';
+import { forwardBookingClientHouseholdKey } from './forwardBookingFromAppointment';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
 
 export type ForwardBookingBookLaterQuickPick = {
@@ -80,14 +81,66 @@ export function forwardBookingBookLaterQuickPicks(practiceTz: string): ForwardBo
   ];
 }
 
+export function buildForwardBookingHouseholdMinBookAfterMap(
+  entries: Iterable<ForwardBookingEntry>,
+  practiceTz: string
+): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const entry of entries) {
+    const key = forwardBookingClientHouseholdKey(entry);
+    const day = forwardBookingBookAfterDayMillis(entry, practiceTz);
+    const prev = map.get(key);
+    if (prev == null || day < prev) map.set(key, day);
+  }
+  return map;
+}
+
+function forwardBookingPatientSortName(entry: ForwardBookingEntry): string {
+  const name = String(entry.patient?.name ?? '').trim();
+  if (name) return name;
+  if (entry.patientId != null) return `Patient #${entry.patientId}`;
+  return '';
+}
+
+/** Household order: soonest book-after date, then client name; pets by book-after date. */
 export function compareForwardBookingBookLaterEntries(
   a: ForwardBookingEntry,
   b: ForwardBookingEntry,
   practiceTz: string,
-  clientName: (entry: ForwardBookingEntry) => string
+  clientName: (entry: ForwardBookingEntry) => string,
+  householdMinBookAfter: Map<string, number>
 ): number {
-  const ta = forwardBookingBookAfterDayMillis(a, practiceTz);
-  const tb = forwardBookingBookAfterDayMillis(b, practiceTz);
-  if (ta !== tb) return ta - tb;
-  return clientName(a).localeCompare(clientName(b), undefined, { sensitivity: 'base' });
+  const keyA = forwardBookingClientHouseholdKey(a);
+  const keyB = forwardBookingClientHouseholdKey(b);
+
+  if (keyA === keyB) {
+    const ta = forwardBookingBookAfterDayMillis(a, practiceTz);
+    const tb = forwardBookingBookAfterDayMillis(b, practiceTz);
+    if (ta !== tb) return ta - tb;
+    return forwardBookingPatientSortName(a).localeCompare(
+      forwardBookingPatientSortName(b),
+      undefined,
+      { sensitivity: 'base' }
+    );
+  }
+
+  const minA = householdMinBookAfter.get(keyA) ?? forwardBookingBookAfterDayMillis(a, practiceTz);
+  const minB = householdMinBookAfter.get(keyB) ?? forwardBookingBookAfterDayMillis(b, practiceTz);
+  if (minA !== minB) return minA - minB;
+
+  const nameCmp = clientName(a).localeCompare(clientName(b), undefined, { sensitivity: 'base' });
+  if (nameCmp !== 0) return nameCmp;
+
+  return keyA.localeCompare(keyB);
+}
+
+export function sortForwardBookingBookLaterListEntries(
+  entries: ForwardBookingEntry[],
+  practiceTz: string,
+  clientName: (entry: ForwardBookingEntry) => string
+): ForwardBookingEntry[] {
+  const householdMin = buildForwardBookingHouseholdMinBookAfterMap(entries, practiceTz);
+  return [...entries].sort((a, b) =>
+    compareForwardBookingBookLaterEntries(a, b, practiceTz, clientName, householdMin)
+  );
 }
