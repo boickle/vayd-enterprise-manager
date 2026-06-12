@@ -739,6 +739,47 @@ export async function fetchPaymentsForDay(date: string): Promise<PaymentDayRow[]
 }
 
 // =========================
+// Stripe revenue analytics
+// =========================
+
+export type StripeRevenueDay = {
+  date: string; // "YYYY-MM-DD"
+  revenue: number;
+  count: number;
+};
+
+export type StripeRevenueResponse = {
+  start: string;
+  end: string;
+  totalRevenue: number;
+  totalCount: number;
+  byDay: StripeRevenueDay[];
+};
+
+/**
+ * Fetch Stripe revenue between start/end (inclusive).
+ * GET /analytics/payments/stripe?start=YYYY-MM-DD&end=YYYY-MM-DD
+ */
+export async function fetchStripeRevenue(params: {
+  start: string;
+  end: string;
+}): Promise<StripeRevenueResponse> {
+  const { data } = await http.get('/analytics/payments/stripe', { params });
+  const byDay: any[] = Array.isArray(data?.byDay) ? data.byDay : [];
+  return {
+    start: String(data?.start ?? params.start),
+    end: String(data?.end ?? params.end),
+    totalRevenue: Number(data?.totalRevenue ?? 0),
+    totalCount: Number(data?.totalCount ?? 0),
+    byDay: byDay.map((r) => ({
+      date: String(r.date),
+      revenue: Number(r.revenue ?? 0),
+      count: Number(r.count ?? 0),
+    })),
+  };
+}
+
+// =========================
 // Square payments listing
 // =========================
 

@@ -36,6 +36,7 @@ import {
   fetchPaymentsAnalytics,
   fetchPaymentsReconciliation,
   fetchSquarePayments,
+  fetchStripeRevenue,
   filterSquarePaymentsForDay,
   sumCreditCardPaymentsForDay,
   sumSquarePayments,
@@ -145,6 +146,10 @@ export default function PaymentsAnalyticsPage() {
   const [squareCardCount, setSquareCardCount] = useState(0);
   const [oursCardTotal, setOursCardTotal] = useState(0);
   const [oursCardCount, setOursCardCount] = useState(0);
+  const [stripeLoading, setStripeLoading] = useState(false);
+  const [stripeError, setStripeError] = useState<string | null>(null);
+  const [stripeTotal, setStripeTotal] = useState(0);
+  const [stripeCount, setStripeCount] = useState(0);
   const open = Boolean(anchorEl);
 
   const today = dayjs().startOf('day');
@@ -265,6 +270,44 @@ export default function PaymentsAnalyticsPage() {
     };
   }, [revenueDayKey]);
 
+  // Stripe received for the selected daily revenue day
+  useEffect(() => {
+    let alive = true;
+    setStripeLoading(true);
+    setStripeError(null);
+    (async () => {
+      try {
+        const res = await fetchStripeRevenue({
+          start: revenueDayKey,
+          end: revenueDayKey,
+        });
+        if (!alive) return;
+
+        // Prefer the byDay row for the exact day; fall back to range totals
+        const dayRow = res.byDay.find((d) => d.date.slice(0, 10) === revenueDayKey);
+        setStripeTotal(dayRow ? dayRow.revenue : res.totalRevenue);
+        setStripeCount(dayRow ? dayRow.count : res.totalCount);
+      } catch (err: unknown) {
+        if (!alive) return;
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        if (status === 503) {
+          setStripeError('Stripe is not configured on the server.');
+        } else {
+          setStripeError(
+            err instanceof Error ? err.message : 'Failed to load Stripe revenue'
+          );
+        }
+        setStripeTotal(0);
+        setStripeCount(0);
+      } finally {
+        if (alive) setStripeLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [revenueDayKey]);
+
   const creditCardTotalsMatch = useMemo(() => {
     return Math.abs(oursCardTotal - squareCardTotal) < 0.005;
   }, [oursCardTotal, squareCardTotal]);
@@ -318,7 +361,8 @@ export default function PaymentsAnalyticsPage() {
   }, [series, seriesAll, revenueDayKey]);
   const revenueDayPracticeRevenue = revenueDayRow?.practiceRevenue ?? 0;
   const revenueDayOnlinePharmacyRevenue = revenueDayRow?.onlinePharmacyRevenue ?? 0;
-  const revenueDaySubscriptionRevenue = revenueDayRow?.subscriptionRevenue ?? 0;
+  /** Square (subscription) revenue for the day, from the payments analytics series. */
+  const revenueDaySquareRevenue = revenueDayRow?.subscriptionRevenue ?? 0;
   const revenueDayPaymentsBreakdown = revenueDayPracticeRevenue + revenueDayOnlinePharmacyRevenue;
   const revenueDayRecordedRevenue = revenueDayRow?.revenue ?? 0;
   const revenueDayUseLegacyPaymentsRow =
@@ -328,7 +372,7 @@ export default function PaymentsAnalyticsPage() {
     : revenueDayPaymentsBreakdown > 0
       ? revenueDayPaymentsBreakdown
       : revenueDayRecordedRevenue;
-  const revenueDayTotalRevenue = revenueDayPaymentsTotal + revenueDaySubscriptionRevenue;
+  const revenueDayTotalRevenue = revenueDayPaymentsTotal + revenueDaySquareRevenue + stripeTotal;
 
   const topDays = useMemo(() => {
     const copy = [...dataset];
@@ -586,10 +630,22 @@ export default function PaymentsAnalyticsPage() {
               )}
               <Box display="flex" justifyContent="space-between" alignItems="baseline">
                 <Typography variant="body2" color="text.secondary">
-                  Subscription revenue
+                  Square revenue
                 </Typography>
                 <Typography variant="body1" fontWeight={600}>
-                  {fmtUSD(revenueDaySubscriptionRevenue)}
+                  {fmtUSD(revenueDaySquareRevenue)}
+                </Typography>
+              </Box>
+              <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                <Typography variant="body2" color="text.secondary">
+                  Stripe revenue
+                </Typography>
+                <Typography variant="body1" fontWeight={600}>
+                  {stripeLoading ? (
+                    <CircularProgress size={14} />
+                  ) : (
+                    fmtUSD(stripeTotal)
+                  )}
                 </Typography>
               </Box>
               <Divider sx={{ my: 0.5 }} />
@@ -729,6 +785,38 @@ export default function PaymentsAnalyticsPage() {
                 <Typography variant="caption" color="text.secondary" display="block">
                   Use &ldquo;Match credit cards&rdquo; to see which individual payments matched or
                   did not.
+                </Typography>
+              </Stack>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Stripe received (same day as daily revenue card) */}
+        <Card variant="outlined">
+          <CardHeader
+            title={isRevenueDayToday ? 'Stripe Received Today' : 'Stripe Received'}
+            subheader="Payments recorded in Stripe for this day"
+          />
+          <CardContent>
+            {stripeLoading ? (
+              <Box display="flex" justifyContent="center" py={1}>
+                <CircularProgress size={24} />
+              </Box>
+            ) : stripeError ? (
+              <Alert severity="warning">{stripeError}</Alert>
+            ) : (
+              <Stack spacing={1}>
+                <Box display="flex" justifyContent="space-between" alignItems="baseline">
+                  <Typography variant="body2" color="text.secondary">
+                    All Stripe received
+                  </Typography>
+                  <Typography variant="body1" fontWeight={600}>
+                    {fmtUSD(stripeTotal)}
+                  </Typography>
+                </Box>
+                <Typography variant="caption" color="text.secondary">
+                  {stripeCount.toLocaleString()} payment{stripeCount === 1 ? '' : 's'} ·{' '}
+                  {revenueDayLabel}
                 </Typography>
               </Stack>
             )}
