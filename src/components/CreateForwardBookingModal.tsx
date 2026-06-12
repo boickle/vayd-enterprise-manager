@@ -9,6 +9,7 @@ import { fetchPatientByIdStaff, searchPatientsStaff, type PatientSearchRow } fro
 import type { Appointment } from '../api/roomLoader';
 import {
   buildCreateForwardBookingPayloadFromAppointment,
+  buildCreateForwardBookingPayloadFromPatient,
   FORWARD_BOOKING_AMOUNT_OPTIONS,
   FORWARD_BOOKING_UNIT_OPTIONS,
   type ForwardBookingIntervalUnit,
@@ -20,6 +21,9 @@ import '../pages/Scheduler.css';
 import '../pages/Settings.css';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+
+/** Select value when staff adds forward booking without a linked source visit. */
+const NO_ASSOCIATED_VISIT = '__no_source_visit__';
 
 type Props = {
   practiceId?: number;
@@ -153,7 +157,7 @@ export function CreateForwardBookingModal({
                 label: patientSearchLabel(row),
               };
             })
-            .filter((x) => Number.isFinite(x.id))
+            .filter((x) => Number.isFinite(x.id) && x.id > 0)
         );
         setPatientOpen(true);
       } catch {
@@ -208,7 +212,7 @@ export function CreateForwardBookingModal({
   );
 
   useEffect(() => {
-    if (!prefill) return;
+    if (!prefill?.patientId || prefill.patientId <= 0) return;
     let cancelled = false;
     void (async () => {
       let label = prefill.patientLabel?.trim() || '';
@@ -227,7 +231,10 @@ export function CreateForwardBookingModal({
       const pick = { id: prefill.patientId, label };
       setSelectedPatient(pick);
       setPatientQuery(label);
-      await loadAppointments(prefill.patientId, prefill.appointmentId);
+      await loadAppointments(
+        prefill.patientId,
+        prefill.appointmentId > 0 ? prefill.appointmentId : undefined
+      );
     })();
     return () => {
       cancelled = true;
@@ -246,7 +253,12 @@ export function CreateForwardBookingModal({
       setError('Select a patient.');
       return;
     }
-    if (!selectedAppointment) {
+    if (!selectedAppointmentId) {
+      setError('Select a source visit or choose No associated visit.');
+      return;
+    }
+    const noAssociatedVisit = selectedAppointmentId === NO_ASSOCIATED_VISIT;
+    if (!noAssociatedVisit && !selectedAppointment) {
       setError('Select the source visit to forward book from.');
       return;
     }
@@ -258,11 +270,42 @@ export function CreateForwardBookingModal({
     setBusy(true);
     setError(null);
     try {
-      const fullAppt =
-        (await fetchAppointmentById(selectedAppointment.id, { practiceId })) ?? selectedAppointment;
-      const apptForPayload: Appointment = { ...selectedAppointment, ...fullAppt };
+      let clientId = NaN;
+      if (noAssociatedVisit) {
+        try {
+          const patientData = await fetchPatientByIdStaff(selectedPatient.id);
+          const owners = clientsForPatientSearchRow(patientData as PatientSearchRow);
+          const ownerId = owners[0]?.id;
+          if (ownerId != null) clientId = Number(ownerId);
+        } catch {
+          /* ignore */
+        }
+        if (!Number.isFinite(clientId)) {
+          setError('Could not resolve the client for this patient.');
+          return;
+        }
+        const payload = buildCreateForwardBookingPayloadFromPatient(
+          selectedPatient.id,
+          clientId,
+          { amount, unit: forwardUnit },
+          practiceId,
+          { bookingNotes: bookingNotes.trim() || null }
+        );
+        if (!payload) {
+          setError('Could not create forward booking for this patient.');
+          return;
+        }
+        const created = await createForwardBooking(payload);
+        onCreated(created);
+        onClose();
+        return;
+      }
 
-      let clientId = Number(clientIdFromAppointment(apptForPayload));
+      const fullAppt =
+        (await fetchAppointmentById(selectedAppointment!.id, { practiceId })) ?? selectedAppointment!;
+      const apptForPayload: Appointment = { ...selectedAppointment!, ...fullAppt };
+
+      clientId = Number(clientIdFromAppointment(apptForPayload));
       if (!Number.isFinite(clientId)) {
         try {
           const patientData = await fetchPatientByIdStaff(selectedPatient.id);
@@ -319,7 +362,7 @@ export function CreateForwardBookingModal({
             <p className="scheduler-modal-eyebrow">Forward booking</p>
             <h2 id="create-forward-booking-title">Add forward booking</h2>
             <p className="scheduler-modal-subtitle">
-              Choose the source visit and how far out to schedule the follow-up.
+              Choose a source visit (or none) and how far out to schedule the follow-up.
             </p>
           </div>
           <button type="button" className="scheduler-modal-close" aria-label="Close" onClick={onClose}>
@@ -345,7 +388,7 @@ export function CreateForwardBookingModal({
                 }}
                 disabled={busy}
                 autoComplete="off"
-                placeholder="Search patient name…"
+                placeholder="Enter patient"
                 style={{ width: '100%' }}
               />
               {patientSearching ? (
@@ -387,10 +430,6 @@ export function CreateForwardBookingModal({
               <p className="settings-muted" style={{ margin: '8px 0 0', fontSize: 13 }}>
                 Select a patient to load their visits.
               </p>
-            ) : appointments.length === 0 ? (
-              <p className="settings-muted" style={{ margin: '8px 0 0', fontSize: 13 }}>
-                No visits found for this patient.
-              </p>
             ) : (
               <select
                 className="settings-input"
@@ -399,7 +438,8 @@ export function CreateForwardBookingModal({
                 disabled={busy}
                 style={{ width: '100%' }}
               >
-                <option value="">Select visit…</option>
+                <option value="">Select…</option>
+                <option value={NO_ASSOCIATED_VISIT}>No associated visit</option>
                 {appointments.map((a) => (
                   <option key={a.id} value={String(a.id)}>
                     {formatSourceApptOption(a, practiceTz)}
@@ -407,6 +447,11 @@ export function CreateForwardBookingModal({
                 ))}
               </select>
             )}
+            {selectedPatient && !appointmentsLoading && appointments.length === 0 ? (
+              <p className="settings-muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
+                No visits on file for this patient — choose No associated visit above.
+              </p>
+            ) : null}
           </label>
 
           <div className="scheduler-edit-two-col" style={{ marginTop: 12 }}>

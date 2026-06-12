@@ -11,16 +11,18 @@ import {
 } from 'react';
 import { DateTime } from 'luxon';
 import {
-  commitAssignPatientFromEditVisitSelection,
   commitEditVisit,
   commitLinkClientFromEditVisitSelection,
+  resolveEditVisitAssignPatient,
   validateEditVisitLinkSelection,
+  validateEditVisitPatientSelection,
   type EditVisitFormSnapshot,
 } from '../utils/editVisitCommit';
-import type { Appointment } from '../api/roomLoader';
+import type { Appointment, Patient } from '../api/roomLoader';
 import {
   appointmentAlternateAddressText,
   appointmentHasAlternateLocation,
+  isPracticeCalendarBlockAppointment,
 } from '../api/appointments';
 import type { AppointmentType } from '../api/appointmentSettings';
 import type { Provider } from '../api/employee';
@@ -33,6 +35,7 @@ import {
 import type { EditVisitPreviewKind } from '../utils/editVisitTimePreview';
 import type { EditVisitPreviewScoreCompare } from '../utils/editVisitTypeScoreCompare';
 import { EditVisitOverflowTag } from '../components/EditVisitOverflowTag';
+import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import {
   EditVisitAddPatientPanel,
   type EditVisitPatientSelection,
@@ -47,7 +50,8 @@ import {
   SchedulerVisitPatientContext,
 } from '../components/SchedulerVisitPatientContext';
 import { submitEditVisitPreviewAcceptedFeedback } from '../utils/routingBookFeedback';
-import { appointmentHasNoPatient } from '../utils/schedulerAddPet';
+import { appointmentHasNoPatient, excludePatientIdsAtSlot, patientsForAppointment } from '../utils/schedulerAddPet';
+import { fetchPatientDisplayById } from '../utils/schedulerPatientEnrich';
 import { fullClientHouseholdName } from '../utils/schedulerVisitDisplay';
 import { formatSchedulerBookingApiError } from '../utils/manualBookingPermissions';
 import { appointmentFormFlags, sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
@@ -90,6 +94,8 @@ export type SchedulerEditVisitModalHandle = {
 
 type Props = {
   appt: Appointment;
+  /** Arrival window from doctor-day effectiveWindow (when available). */
+  arrivalWindowLine?: string | null;
   practiceId: number;
   practiceTz: string;
   appointmentTypes: AppointmentType[];
@@ -108,12 +114,16 @@ type Props = {
   draftPreviewAppointmentEnd?: string | null;
   /** Latest form values for calendar Book / Adjust time. */
   onFormSnapshotChange?: (snapshot: EditVisitFormSnapshot | null) => void;
+  /** Restored after sidebar portal remount during placement preview. */
+  initialFormSnapshot?: EditVisitFormSnapshot | null;
   /** Parent-owned link selection (survives portal remount during preview). */
   linkSelection?: EditVisitLinkSelection | null;
   onLinkSelectionChange?: (selection: EditVisitLinkSelection | null) => void;
   /** Patient to attach when visit has a client but no patient. */
   patientSelection?: EditVisitPatientSelection | null;
   onPatientSelectionChange?: (selection: EditVisitPatientSelection | null) => void;
+  /** Practice calendar appointments — used to block duplicate pets in the same time slot. */
+  practiceAppointments?: Appointment[];
   onClose: () => void;
   onSaved: (updated?: Appointment, detail?: { routingFeedbackWarning?: string }) => void;
   onViewPlacement?: (startUtc: string, endUtc: string) => void;
@@ -139,6 +149,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
   function SchedulerEditVisitModal(
     {
       appt,
+      arrivalWindowLine,
       practiceId,
       practiceTz,
       appointmentTypes,
@@ -152,10 +163,12 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       draftPreviewAppointmentStart = null,
       draftPreviewAppointmentEnd = null,
       onFormSnapshotChange,
+      initialFormSnapshot = null,
       linkSelection = null,
       onLinkSelectionChange,
       patientSelection = null,
       onPatientSelectionChange,
+      practiceAppointments = [],
       onClose,
       onSaved,
       onViewPlacement,
@@ -207,6 +220,12 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       ) {
         return String(draftPreviewAppointmentTypeId);
       }
+      if (
+        initialFormSnapshot?.appointmentTypeId != null &&
+        Number.isFinite(Number(initialFormSnapshot.appointmentTypeId))
+      ) {
+        return String(initialFormSnapshot.appointmentTypeId);
+      }
       return String(appt.appointmentType?.id ?? '');
     });
     const primaryProviderId = useMemo(() => String(appt.primaryProvider?.id ?? ''), [appt.primaryProvider?.id]);
@@ -216,12 +235,17 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
     );
     const [additionalEmployeeIds, setAdditionalEmployeeIds] = useState<number[]>(() =>
       normalizeEmployeeIds(
-        appt.additionalEmployeeIds ??
+        initialFormSnapshot?.additionalEmployeeIds ??
+          appt.additionalEmployeeIds ??
           appt.additionalEmployees?.map((emp) => Number(emp.id)).filter((id) => Number.isFinite(id))
       )
     );
-    const [description, setDescription] = useState(appt.description ?? '');
-    const [instructions, setInstructions] = useState(appt.instructions ?? '');
+    const [description, setDescription] = useState(
+      () => initialFormSnapshot?.description ?? appt.description ?? ''
+    );
+    const [instructions, setInstructions] = useState(
+      () => initialFormSnapshot?.instructions ?? appt.instructions ?? ''
+    );
     const statusName = appt.statusName ?? '';
     const confirmStatusName = appt.confirmStatusName ?? '';
     const isComplete = appt.isComplete;
@@ -242,6 +266,102 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       () => Boolean(resolvedClientId && appointmentHasNoPatient(appt)),
       [resolvedClientId, appt]
     );
+    const currentPatientId = useMemo(() => {
+      const p = patientsForAppointment(appt)[0];
+      return p?.id != null ? String(p.id) : null;
+    }, [appt]);
+    const displayPatientId = useMemo(() => {
+      const selected = patientSelection?.patientId?.trim();
+      if (selected) return selected;
+      return currentPatientId;
+    }, [patientSelection?.patientId, currentPatientId]);
+    const displayPatientLabel = useMemo(() => {
+      if (patientSelection?.patientLabel?.trim()) return patientSelection.patientLabel.trim();
+      const saved = patientsForAppointment(appt)[0];
+      return saved?.name?.trim() ?? '';
+    }, [patientSelection?.patientLabel, appt]);
+    const previewingDifferentPatient = useMemo(
+      () =>
+        Boolean(
+          patientSelection?.patientId?.trim() &&
+            patientSelection.patientId.trim() !== (currentPatientId ?? '')
+        ),
+      [patientSelection?.patientId, currentPatientId]
+    );
+    const [displayPatient, setDisplayPatient] = useState<Patient | null>(null);
+    useEffect(() => {
+      if (!displayPatientId) {
+        setDisplayPatient(null);
+        return;
+      }
+      const saved = patientsForAppointment(appt)[0];
+      const isSavedPatient =
+        saved && String(saved.id) === displayPatientId && !previewingDifferentPatient;
+      if (isSavedPatient) {
+        setDisplayPatient(saved);
+        return;
+      }
+      let cancelled = false;
+      void fetchPatientDisplayById(displayPatientId, { name: displayPatientLabel })
+        .then((loaded) => {
+          if (!cancelled) setDisplayPatient(loaded);
+        })
+        .catch(() => {
+          if (!cancelled) setDisplayPatient(null);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [displayPatientId, displayPatientLabel, appt, previewingDifferentPatient]);
+    const displayAppt = useMemo((): Appointment => {
+      if (!displayPatient) return appt;
+      const pcp = displayPatient.primaryProvider;
+      return {
+        ...appt,
+        patient: displayPatient,
+        patients: [displayPatient],
+        ...(previewingDifferentPatient
+          ? {
+              patientPrimaryProvider: pcp
+                ? {
+                    id: pcp.id,
+                    firstName: pcp.firstName,
+                    lastName: pcp.lastName,
+                    title: pcp.title,
+                    designation: pcp.title,
+                    isProvider: pcp.isProvider,
+                  }
+                : null,
+            }
+          : {}),
+      } as Appointment;
+    }, [appt, displayPatient, previewingDifferentPatient]);
+    const patientsOverride = useMemo(() => {
+      if (displayPatient) return [displayPatient];
+      if (displayPatientId && displayPatientLabel) {
+        const numericId = Number(displayPatientId);
+        return [
+          {
+            id: Number.isFinite(numericId) && numericId > 0 ? numericId : 0,
+            name: displayPatientLabel,
+            isActive: true,
+            isDeleted: false,
+          },
+        ];
+      }
+      return undefined;
+    }, [displayPatient, displayPatientId, displayPatientLabel]);
+    const showChangePatientPanel = useMemo(
+      () =>
+        Boolean(
+          resolvedClientId &&
+            !appointmentHasNoPatient(appt) &&
+            !appt.allDay &&
+            !isPracticeCalendarBlockAppointment(appt)
+        ),
+      [resolvedClientId, appt]
+    );
+    const showPatientPickerPanel = showAddPatientPanel || showChangePatientPanel;
     const addPatientClientLabel = useMemo(
       () => fullClientHouseholdName(appt.client) || 'Client',
       [appt.client]
@@ -338,6 +458,29 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       return { startUtc, endUtc };
     }, [appt.allDay, allDayStartDate, allDayEndDate, appointmentDateKey, startTime, endTime, practiceTz]);
 
+    const blockedPatientIdsForSlot = useMemo(() => {
+      if (!resolvedClientId || appt.allDay) return [];
+      const { startUtc, endUtc } = buildStartEndUtc();
+      if (!startUtc || !endUtc) return [];
+      const start = DateTime.fromISO(startUtc, { zone: 'utc' });
+      const end = DateTime.fromISO(endUtc, { zone: 'utc' });
+      if (!start.isValid || !end.isValid) return [];
+      const excludeAppointmentId = typeof appt.id === 'number' ? appt.id : undefined;
+      return excludePatientIdsAtSlot(
+        resolvedClientId,
+        start.toMillis(),
+        end.toMillis(),
+        practiceAppointments,
+        { excludeAppointmentId }
+      );
+    }, [
+      resolvedClientId,
+      appt.allDay,
+      appt.id,
+      practiceAppointments,
+      buildStartEndUtc,
+    ]);
+
     const initialTypeId = String(appt.appointmentType?.id ?? '');
 
     const timesDirty = useMemo(() => {
@@ -384,6 +527,41 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       return Number(appointmentTypeId);
     }, [placementPreviewKind, draftPreviewAppointmentTypeId, appointmentTypeId]);
 
+    const buildFormSnapshot = useCallback((): EditVisitFormSnapshot | null => {
+      const tid = effectiveAppointmentTypeId;
+      const pid = Number(primaryProviderId);
+      if (!Number.isFinite(tid) || tid <= 0 || !Number.isFinite(pid) || pid <= 0) {
+        return null;
+      }
+      return {
+        appointmentTypeId: tid,
+        primaryProviderId: pid,
+        additionalEmployeeIds,
+        description,
+        instructions,
+        statusName,
+        confirmStatusName,
+        isComplete,
+        allDay: appt.allDay,
+      };
+    }, [
+      effectiveAppointmentTypeId,
+      primaryProviderId,
+      additionalEmployeeIds,
+      description,
+      instructions,
+      statusName,
+      confirmStatusName,
+      isComplete,
+      appt.allDay,
+    ]);
+
+    const flushFormSnapshot = useCallback(() => {
+      const snapshot = buildFormSnapshot();
+      onFormSnapshotChange?.(snapshot);
+      return snapshot;
+    }, [buildFormSnapshot, onFormSnapshotChange]);
+
     useEffect(() => {
       if (
         placementPreviewActive &&
@@ -398,35 +576,8 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
 
     useEffect(() => {
       if (!onFormSnapshotChange) return;
-      const tid = effectiveAppointmentTypeId;
-      const pid = Number(primaryProviderId);
-      if (!Number.isFinite(tid) || tid <= 0 || !Number.isFinite(pid) || pid <= 0) {
-        onFormSnapshotChange(null);
-        return;
-      }
-      onFormSnapshotChange({
-        appointmentTypeId: tid,
-        primaryProviderId: pid,
-        additionalEmployeeIds,
-        description,
-        instructions,
-        statusName,
-        confirmStatusName,
-        isComplete,
-        allDay: appt.allDay,
-      });
-    }, [
-      onFormSnapshotChange,
-      effectiveAppointmentTypeId,
-      primaryProviderId,
-      additionalEmployeeIds,
-      description,
-      instructions,
-      statusName,
-      confirmStatusName,
-      isComplete,
-      appt.allDay,
-    ]);
+      onFormSnapshotChange(buildFormSnapshot());
+    }, [onFormSnapshotChange, buildFormSnapshot]);
 
     useLayoutEffect(() => {
       if (!placementPreviewActive || !draftPreviewAppointmentStart || !draftPreviewAppointmentEnd) {
@@ -471,6 +622,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
 
     const handleSave = useCallback(async () => {
       setError(null);
+      flushFormSnapshot();
       const tidFromPreview =
         placementPreviewActive &&
         placementPreviewKind === 'type' &&
@@ -516,6 +668,18 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       }
       if (DateTime.fromISO(endUtc) <= DateTime.fromISO(startUtc)) {
         setError(appt.allDay ? 'End date must be on or after the start date.' : 'End time must be after start time.');
+        return;
+      }
+
+      const patientValidationError = validateEditVisitPatientSelection({
+        appt,
+        patientSelection,
+        slotStartIso: startUtc,
+        slotEndIso: endUtc,
+        allAppointments: practiceAppointments,
+      });
+      if (patientValidationError) {
+        setError(patientValidationError);
         return;
       }
 
@@ -566,7 +730,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                   practiceTz,
                 })
               : undefined,
-          assignPatient: commitAssignPatientFromEditVisitSelection(patientSelection),
+          assignPatient: resolveEditVisitAssignPatient(appt, patientSelection),
         });
         let routingFeedbackWarning: string | undefined;
         if (placementPreviewActive && typeScoreCompare?.feedbackHandoff) {
@@ -606,8 +770,10 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       patientSelection,
       resolvedClientId,
       visitAddressForLink,
+      practiceAppointments,
       onSaved,
       onClose,
+      flushFormSnapshot,
     ]);
 
     useImperativeHandle(ref, () => ({ save: handleSave }), [handleSave]);
@@ -631,12 +797,14 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
     }
 
     function handleViewPlacementClick() {
+      flushFormSnapshot();
       const times = validateTimes();
       if (!times) return;
       onViewPlacement?.(times.startUtc, times.endUtc);
     }
 
     function handlePreviewScheduleClick() {
+      flushFormSnapshot();
       const times = validateTimes();
       if (!times) return;
       const tid = Number(appointmentTypeId);
@@ -666,6 +834,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
 
     const handleConfirmPreviewClick = useCallback(() => {
       if (!onConfirmPreview) return;
+      flushFormSnapshot();
       const linkValidationError = validateEditVisitLinkSelection({
         linkSelection,
         visitAddress: visitAddressForLink,
@@ -677,11 +846,25 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       }
       if (
         editTypeFormFlags.requirePatient &&
-        showAddPatientPanel &&
+        showPatientPickerPanel &&
         !patientSelection?.patientId?.trim()
       ) {
         setError('Choose a patient for this visit before booking.');
         return;
+      }
+      const previewTimes = buildStartEndUtc();
+      if (previewTimes.startUtc && previewTimes.endUtc) {
+        const patientValidationError = validateEditVisitPatientSelection({
+          appt,
+          patientSelection,
+          slotStartIso: previewTimes.startUtc,
+          slotEndIso: previewTimes.endUtc,
+          allAppointments: practiceAppointments,
+        });
+        if (patientValidationError) {
+          setError(patientValidationError);
+          return;
+        }
       }
       setSaving(true);
       void Promise.resolve(onConfirmPreview())
@@ -693,11 +876,15 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         });
     }, [
       onConfirmPreview,
+      flushFormSnapshot,
       linkSelection,
       visitAddressForLink,
       editTypeFormFlags.requirePatient,
-      showAddPatientPanel,
+      showPatientPickerPanel,
       patientSelection,
+      appt,
+      practiceAppointments,
+      buildStartEndUtc,
     ]);
 
     const modalPanel = (
@@ -717,18 +904,51 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         style={{ ['--scheduler-accent' as string]: accentColor }}
       >
         <div className="scheduler-modal-accent" aria-hidden />
-        <div className="scheduler-modal-header">
-          <div className="scheduler-modal-header-text">
-            <p className="scheduler-modal-eyebrow">Edit visit</p>
-            <h2 id="scheduler-edit-title" className="scheduler-modal-title-h">
-              <span className="scheduler-modal-title-client">
-                {editVisitTitle}
-              </span>
-              <SchedulerVisitClientZoneBadge appt={appt} compact />
-            </h2>
-            <SchedulerVisitClientHeaderAlerts appt={appt} />
-            <SchedulerVisitPatientContext appt={appt} providers={providers} practiceTz={practiceTz} />
-            {visitStartEnd.start.isValid && visitStartEnd.end.isValid ? (
+        <div className="scheduler-modal-scroll scheduler-modal-scroll--edit">
+          <div className="scheduler-modal-header">
+            <div className="scheduler-modal-header-text">
+              <p className="scheduler-modal-eyebrow">Edit visit</p>
+              <h2 id="scheduler-edit-title" className="scheduler-modal-title-h">
+                <span className="scheduler-modal-title-client">
+                  {editVisitTitle}
+                </span>
+                <SchedulerVisitClientZoneBadge appt={appt} compact />
+              </h2>
+              <SchedulerVisitClientHeaderAlerts appt={appt} />
+              <SchedulerVisitPatientContext
+                appt={displayAppt}
+                providers={providers}
+                practiceTz={practiceTz}
+                patientsOverride={patientsOverride}
+                showMembership={!previewingDifferentPatient}
+                patientDetailsAction={
+                  displayPatientId ? (
+                    <BookPatientChartButton
+                      key={displayPatientId}
+                      patientId={displayPatientId}
+                      patientName={displayPatient?.name ?? displayPatientLabel}
+                      practiceId={practiceId}
+                      practiceTz={practiceTz}
+                      excludeAppointmentId={appt.id}
+                      label="View Patient Details"
+                    />
+                  ) : null
+                }
+              />
+              {showChangePatientPanel && resolvedClientId ? (
+                <EditVisitAddPatientPanel
+                  compact
+                  clientId={resolvedClientId}
+                  clientLabel={addPatientClientLabel}
+                  requiresPatient={editTypeFormFlags.requirePatient}
+                  mode="change"
+                  initialPatientId={currentPatientId}
+                  blockedPatientIds={blockedPatientIdsForSlot}
+                  persistedSelection={patientSelection}
+                  onSelectionChange={handlePatientSelectionChange}
+                />
+              ) : null}
+              {visitStartEnd.start.isValid && visitStartEnd.end.isValid ? (
               <p className="scheduler-modal-subtitle">
                 {appt.allDay ? (
                   (() => {
@@ -750,6 +970,11 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
             ) : (
               <p className="scheduler-modal-subtitle">{appointmentDateLabel}</p>
             )}
+            {arrivalWindowLine ? (
+              <p className="scheduler-modal-subtitle">
+                Window of arrival: {arrivalWindowLine}
+              </p>
+            ) : null}
             {bookedSummary ? (
               <p className="scheduler-edit-booked-summary" role="status">
                 {bookedSummary}
@@ -1045,6 +1270,8 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                   clientId={resolvedClientId}
                   clientLabel={addPatientClientLabel}
                   requiresPatient={editTypeFormFlags.requirePatient}
+                  mode="add"
+                  blockedPatientIds={blockedPatientIdsForSlot}
                   persistedSelection={patientSelection}
                   onSelectionChange={handlePatientSelectionChange}
                 />
@@ -1061,6 +1288,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
               </label>
             </div>
           </section>
+        </div>
         </div>
 
         <div className="scheduler-edit-footer">

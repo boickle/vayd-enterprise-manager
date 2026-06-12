@@ -1,5 +1,6 @@
 import { patchAppointment, putAppointmentAlternateAddress } from '../api/appointments';
 import type { Appointment } from '../api/roomLoader';
+import { DateTime } from 'luxon';
 import {
   appendEditedByStaffNote,
   appendLinkedClientStaffNote,
@@ -8,11 +9,13 @@ import {
 } from './appointmentChangeAuditNote';
 import {
   addressMatchAllowsLink,
+  appointmentResolvedClientId,
   compareVisitAddressToClientHome,
   visitAddressForLinkMatching,
 } from './visitAddressMatch';
 import type { EditVisitLinkSelection } from '../components/EditVisitLinkClientPanel';
 import type { EditVisitPatientSelection } from '../components/EditVisitAddPatientPanel';
+import { excludePatientIdsAtSlot, patientsForAppointment } from './schedulerAddPet';
 
 export type EditVisitFormSnapshot = {
   appointmentTypeId: number;
@@ -78,6 +81,52 @@ export function commitAssignPatientFromEditVisitSelection(
     patientId,
     patientLabel: selection.patientLabel,
   };
+}
+
+/** PATCH patient only when the selection differs from the visit's current patient. */
+export function resolveEditVisitAssignPatient(
+  appt: Appointment,
+  selection: EditVisitPatientSelection | null | undefined
+): CommitAssignVisitPatientInput | undefined {
+  if (!selection?.patientId?.trim()) return undefined;
+  const nextId = selection.patientId.trim();
+  const current = patientsForAppointment(appt)[0]?.id;
+  if (current != null && String(current) === nextId) return undefined;
+  return commitAssignPatientFromEditVisitSelection(selection);
+}
+
+export function validateEditVisitPatientSelection(input: {
+  appt: Appointment;
+  patientSelection: EditVisitPatientSelection | null | undefined;
+  slotStartIso: string;
+  slotEndIso: string;
+  allAppointments: Appointment[];
+}): string | null {
+  const patientId = input.patientSelection?.patientId?.trim();
+  if (!patientId) return null;
+
+  const clientId = appointmentResolvedClientId(input.appt);
+  if (!clientId) return null;
+
+  const current = patientsForAppointment(input.appt)[0]?.id;
+  if (current != null && String(current) === patientId) return null;
+
+  const start = DateTime.fromISO(input.slotStartIso, { zone: 'utc' });
+  const end = DateTime.fromISO(input.slotEndIso, { zone: 'utc' });
+  if (!start.isValid || !end.isValid) return null;
+
+  const excludeAppointmentId = typeof input.appt.id === 'number' ? input.appt.id : undefined;
+  const blocked = excludePatientIdsAtSlot(
+    clientId,
+    start.toMillis(),
+    end.toMillis(),
+    input.allAppointments,
+    { excludeAppointmentId }
+  );
+  if (!blocked.includes(patientId)) return null;
+
+  const name = input.patientSelection?.patientLabel?.trim() || 'This patient';
+  return `${name} is already scheduled for this client at this time. Choose a different patient or reschedule the other visit.`;
 }
 
 export function commitLinkClientFromEditVisitSelection(

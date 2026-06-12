@@ -79,17 +79,20 @@ import {
   type RoutingRescheduleScope,
 } from '../utils/routingRescheduleIntent';
 import {
+  forwardBookingRequiresScopeChoice,
+  forwardBookingScopePetCount,
+  forwardBookingScopeTargets,
   markForwardBookingIntentAppliedToRoutingForm,
   readRoutingForwardBookingIntent,
   ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT,
-  dismissRoutingForwardBookingWorkspace,
   forwardBookingWorkspaceIsActive,
+  writeRoutingForwardBookingScope,
+  type RoutingForwardBookingScope,
 } from '../utils/routingForwardBookingIntent';
 import {
   formatForwardBookingIntervalLabel,
   forwardBookingRoutingSearchDateRange,
 } from '../utils/forwardBookingFromAppointment';
-import { FORWARD_BOOKING_LIST_PATH } from '../utils/forwardBookingReturnSession';
 import {
   appointmentTypeForRoutingStatsKey,
   resolveRoutingChosenAppointmentTypeId,
@@ -1525,7 +1528,7 @@ type RoutingProps = {
   calendarWorkspaceMode?: boolean;
 };
 
-type RoutingPrefillFlashField = 'doctor' | 'client' | 'address' | 'minutes' | 'apptType';
+type RoutingPrefillFlashField = 'doctor' | 'client' | 'address' | 'minutes' | 'apptType' | 'pets';
 
 export default function Routing({ calendarWorkspaceMode = false }: RoutingProps) {
   const { token: authToken, userId: authUserId, doctorId: authDoctorInternalId } = useAuth();
@@ -1864,27 +1867,37 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     return ri.rescheduleScope ?? '';
   });
   const [rescheduleScopeError, setRescheduleScopeError] = useState(false);
+  const [forwardBookingScope, setForwardBookingScope] = useState<RoutingForwardBookingScope | ''>(() => {
+    const intent = readRoutingForwardBookingIntent();
+    if (!intent || !forwardBookingRequiresScopeChoice(intent)) return '';
+    return intent.householdScope ?? '';
+  });
+  const [forwardBookingScopeError, setForwardBookingScopeError] = useState(false);
 
   const activeForwardBookingIntent = useMemo(
     () => (hasActiveForwardBookingWorkspace ? readRoutingForwardBookingIntent() : null),
     [hasActiveForwardBookingWorkspace]
   );
 
-  const forwardBookingModeSummary = useMemo(() => {
+  const lockForwardBookingClient = hasActiveForwardBookingWorkspace;
+
+  const showForwardBookingScopeField = useMemo(
+    () => hasActiveForwardBookingWorkspace && forwardBookingRequiresScopeChoice(activeForwardBookingIntent),
+    [hasActiveForwardBookingWorkspace, activeForwardBookingIntent]
+  );
+
+  const forwardBookingScopePetLabel = useMemo(() => {
     const intent = activeForwardBookingIntent;
-    if (!intent) return '';
-    const client = intent.clientDisplayLabel?.trim() || 'Client';
-    const intervalLabel = formatForwardBookingIntervalLabel({
-      intervalAmount: intent.intervalAmount,
-      intervalUnit: intent.intervalUnit,
-    });
-    const dueHint = intent.targetDueDate
-      ? `Target around ${intent.targetDueDate.slice(0, 10)} (${intervalLabel}).`
-      : `Book ${intervalLabel}.`;
-    return `Forward booking for ${client}. ${dueHint} Run Get Best Route and preview a slot.`;
+    if (!intent) return 'This pet only';
+    const row = intent.householdEntries?.find((e) => e.patientId === intent.patientId);
+    const name = row?.patientName?.trim();
+    return name ? `Only ${name}` : 'This pet only';
   }, [activeForwardBookingIntent]);
 
-  const lockForwardBookingClient = hasActiveForwardBookingWorkspace;
+  const forwardBookingHouseholdLabel = useMemo(() => {
+    const count = activeForwardBookingIntent?.householdEntries?.length ?? 0;
+    return count > 1 ? `All pets with same target (${count})` : 'All pets with same target';
+  }, [activeForwardBookingIntent]);
 
   const activeRescheduleIntent = useMemo(
     () => readRoutingRescheduleIntent(),
@@ -1917,6 +1930,44 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       return ' routing-reschedule-prefill-highlight';
     },
     [hasActiveRescheduleIntent, activeRescheduleIntent, showRescheduleScopeField]
+  );
+
+  const routingForwardBookingHighlightClass = useCallback(
+    (field: RoutingPrefillFlashField | 'scope') => {
+      if (!hasActiveForwardBookingWorkspace) return '';
+      const intent = activeForwardBookingIntent;
+      if (!intent) return '';
+      if (field === 'scope') {
+        return showForwardBookingScopeField ? ' routing-reschedule-prefill-highlight' : '';
+      }
+      if (field === 'doctor' && !intent.primaryDoctorPimsId?.trim()) return '';
+      if (field === 'client' && !intent.clientId?.trim()) return '';
+      if (field === 'address' && !intent.address?.trim()) return '';
+      if (field === 'minutes' && !(intent.serviceMinutes > 0)) return '';
+      if (
+        field === 'apptType' &&
+        !intent.appointmentTypeName?.trim() &&
+        (intent.appointmentTypeId == null || !Number.isFinite(Number(intent.appointmentTypeId)))
+      ) {
+        return '';
+      }
+      return ' routing-reschedule-prefill-highlight';
+    },
+    [hasActiveForwardBookingWorkspace, activeForwardBookingIntent, showForwardBookingScopeField]
+  );
+
+  const routingWorkspaceHighlightClass = useCallback(
+    (field: RoutingPrefillFlashField | 'scope') => {
+      if (hasActiveRescheduleIntent) return routingRescheduleHighlightClass(field);
+      if (hasActiveForwardBookingWorkspace) return routingForwardBookingHighlightClass(field);
+      return '';
+    },
+    [
+      hasActiveRescheduleIntent,
+      hasActiveForwardBookingWorkspace,
+      routingForwardBookingHighlightClass,
+      routingRescheduleHighlightClass,
+    ]
   );
 
   const rescheduleScopePetLabel = useMemo(() => {
@@ -1961,11 +2012,6 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     setFeedbackError(null);
     setFeedbackToast(null);
   }, []);
-
-  const exitForwardBookingWorkspace = useCallback(() => {
-    dismissRoutingForwardBookingWorkspace();
-    navigate(FORWARD_BOOKING_LIST_PATH);
-  }, [navigate]);
 
   const resetRoutingFormAfterRescheduleDismiss = useCallback(() => {
     setForm((f) => {
@@ -2054,6 +2100,16 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   useEffect(() => {
     function syncForwardBookingWorkspaceFlag() {
       setHasActiveForwardBookingWorkspace(forwardBookingWorkspaceIsActive());
+      const intent = readRoutingForwardBookingIntent();
+      if (!intent) {
+        setForwardBookingScope('');
+        return;
+      }
+      if (!forwardBookingRequiresScopeChoice(intent)) {
+        setForwardBookingScope('selected_pet');
+        return;
+      }
+      setForwardBookingScope(intent.householdScope ?? '');
     }
     syncForwardBookingWorkspaceFlag();
     window.addEventListener(ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT, syncForwardBookingWorkspaceFlag);
@@ -3173,6 +3229,38 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     applyRoutingServiceMinutes,
   ]);
 
+  /** Keep Calculate Time pets in sync when forward-booking scope is restored from session. */
+  useEffect(() => {
+    if (!hasActiveForwardBookingWorkspace || !showForwardBookingScopeField) return;
+    if (!forwardBookingScope) return;
+    const intent = activeForwardBookingIntent;
+    if (!intent) return;
+    const nextPets = forwardBookingScopePetCount(forwardBookingScope, intent);
+    setRoutingPetCount((prev) => (prev === nextPets ? prev : nextPets));
+  }, [
+    hasActiveForwardBookingWorkspace,
+    showForwardBookingScopeField,
+    forwardBookingScope,
+    activeForwardBookingIntent,
+  ]);
+
+  const onForwardBookingScopeChange = useCallback(
+    (scope: RoutingForwardBookingScope) => {
+      setForwardBookingScope(scope);
+      setForwardBookingScopeError(false);
+      writeRoutingForwardBookingScope(scope);
+
+      const intent = readRoutingForwardBookingIntent();
+      const nextPets = forwardBookingScopePetCount(scope, intent);
+      setRoutingPetCount(nextPets);
+      triggerRoutingPrefillFlash(['pets']);
+      if (routingApptStatsTypeKey.trim()) {
+        applyRoutingServiceMinutes(routingApptStatsTypeKey, nextPets, { pulse: true });
+      }
+    },
+    [routingApptStatsTypeKey, applyRoutingServiceMinutes, triggerRoutingPrefillFlash]
+  );
+
   // Fetch doctor name if missing
   useEffect(() => {
     const pid = result?.selectedDoctorPimsId || result?.doctorPimsId;
@@ -3544,6 +3632,19 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       };
     }
 
+    const fbi = readRoutingForwardBookingIntent();
+    if (
+      fbi?.workspaceActive &&
+      forwardBookingRequiresScopeChoice(fbi) &&
+      !fbi.householdScope
+    ) {
+      setForwardBookingScopeError(true);
+      return {
+        valid: false,
+        error: 'Choose whether to book only this pet or all pets with the same target date.',
+      };
+    }
+
     const clientTypeConflict = getRoutingClientTypeConflictMessage();
     if (clientTypeConflict) {
       return { valid: false, error: clientTypeConflict };
@@ -3852,20 +3953,6 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
             {rescheduleModeSummary}
           </p>
         ) : null}
-        {hasActiveForwardBookingWorkspace && forwardBookingModeSummary ? (
-          <div className="routing-forward-booking-mode-summary" role="status">
-            <p className="routing-forward-booking-mode-summary-text muted">{forwardBookingModeSummary}</p>
-            <div className="routing-forward-booking-mode-actions">
-              <button
-                type="button"
-                className="btn secondary"
-                onClick={exitForwardBookingWorkspace}
-              >
-                Exit forward booking
-              </button>
-            </div>
-          </div>
-        ) : null}
         <form
           onSubmit={onSubmit}
           className={[
@@ -3900,7 +3987,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                       'input',
                       doctorRequiredBeforeApptType ? 'routing-input--error' : '',
                       routingPrefillFlashClass('doctor'),
-                      routingRescheduleHighlightClass('doctor'),
+                      routingWorkspaceHighlightClass('doctor'),
                     ]
                       .filter(Boolean)
                       .join(' ')}
@@ -4067,7 +4154,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                   <span className="routing-visit-stack-label muted">Appointment Type</span>
                   <select
                     id="routing-visit-type-select"
-                    className={`input routing-input-compact routing-visit-type-select${routingPrefillFlashClass('apptType')}${routingRescheduleHighlightClass('apptType')}${
+                    className={`input routing-input-compact routing-visit-type-select${routingPrefillFlashClass('apptType')}${routingWorkspaceHighlightClass('apptType')}${
                       routingClientTypeConflictMessage ? ' routing-input--error' : ''
                     }`}
                     disabled={apptLengthsLoading}
@@ -4117,7 +4204,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                   </span>
                   <input
                     id="routing-visit-pets"
-                    className="input routing-input-compact routing-pet-input"
+                    className={`input routing-input-compact routing-pet-input${routingPrefillFlashClass('pets')}`}
                     type="number"
                     min={1}
                     inputMode="numeric"
@@ -4171,7 +4258,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                   id="routing-visit-mins"
                   className={`input routing-input-compact routing-mins-line-input${
                     routingMinutesPulse ? ' routing-minutes-flash--active' : ''
-                  }${routingPrefillFlashClass('minutes')}${routingRescheduleHighlightClass('minutes')}`}
+                  }${routingPrefillFlashClass('minutes')}${routingWorkspaceHighlightClass('minutes')}`}
                   aria-label="Service minutes"
                     title="Auto-filled when you pick a type and pets, or enter minutes here to override."
                     type="number"
@@ -4197,7 +4284,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                     id="routing-reschedule-scope"
                     className={`input routing-input-compact routing-reschedule-scope-select${
                       rescheduleScopeError ? ' routing-input--error' : ''
-                    }${routingRescheduleHighlightClass('scope')}`}
+                    }${routingWorkspaceHighlightClass('scope')}`}
                     required
                     aria-required
                     aria-invalid={rescheduleScopeError}
@@ -4217,10 +4304,51 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                   </select>
                 </label>
               ) : null}
+              {showForwardBookingScopeField ? (
+                <label
+                  className="routing-reschedule-scope-stack"
+                  htmlFor="routing-forward-booking-scope"
+                >
+                  <span className="routing-calculate-time-minutes-heading muted">
+                    Forward booking
+                    <span className="routing-required-mark" aria-hidden="true">
+                      {' '}
+                      *
+                    </span>
+                  </span>
+                  <select
+                    id="routing-forward-booking-scope"
+                    className={`input routing-input-compact routing-reschedule-scope-select${
+                      forwardBookingScopeError ? ' routing-input--error' : ''
+                    }${routingWorkspaceHighlightClass('scope')}`}
+                    required
+                    aria-required
+                    aria-invalid={forwardBookingScopeError}
+                    value={forwardBookingScope}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === 'selected_pet' || v === 'household_same_target') {
+                        onForwardBookingScopeChange(v);
+                      }
+                    }}
+                  >
+                    <option value="" disabled>
+                      Choose…
+                    </option>
+                    <option value="selected_pet">{forwardBookingScopePetLabel}</option>
+                    <option value="household_same_target">{forwardBookingHouseholdLabel}</option>
+                  </select>
+                </label>
+              ) : null}
             </div>
             {showRescheduleScopeField && rescheduleScopeError ? (
               <div className="danger routing-route-hint" role="alert">
                 Choose whether to reschedule only this pet or all pets at this household today.
+              </div>
+            ) : null}
+            {showForwardBookingScopeField && forwardBookingScopeError ? (
+              <div className="danger routing-route-hint" role="alert">
+                Choose whether to book only this pet or all pets with the same target date.
               </div>
             ) : null}
             {form.doctorId.trim() && routingAppointmentTypes.length === 0 ? (
@@ -4239,7 +4367,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           <Field label="Client">
               <div ref={clientBoxRef} style={{ position: 'relative' }}>
                 <input
-                  className={`input${routingPrefillFlashClass('client')}${routingRescheduleHighlightClass('client')}${
+                  className={`input${routingPrefillFlashClass('client')}${routingWorkspaceHighlightClass('client')}${
                     routingClientTypeConflictMessage ? ' routing-input--error' : ''
                   }${lockForwardBookingClient ? ' routing-input--locked' : ''}`}
                   value={clientQuery}
@@ -4392,7 +4520,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           <Field label="Address">
             <div className="routing-address-row">
               <input
-                className={`input routing-address-input${routingPrefillFlashClass('address')}${routingRescheduleHighlightClass('address')}`}
+                className={`input routing-address-input${routingPrefillFlashClass('address')}${routingWorkspaceHighlightClass('address')}`}
                 value={form.newAppt.address ?? ''}
                 onChange={(e) => onNewApptChange('address', e.target.value)}
                 placeholder="Street, city (optional if client has address)"

@@ -1,7 +1,76 @@
 import type { Appointment } from '../api/roomLoader';
 import type { DayData } from '../pages/MyWeek';
+import { effectiveWindowForScheduledStart } from './appointmentArrivalWindow';
 import { appointmentPracticeDateKey } from './editVisitTimeFields';
 import { fetchSchedulerDriveContextForDate } from './schedulerDriveEta';
+
+export type ArrivalWindowHouseholdContext = {
+  windowStartIso?: string | null;
+  windowEndIso?: string | null;
+  effectiveWindow?: { startIso?: string; endIso?: string } | null;
+  primary?: { effectiveWindow?: { startIso?: string; endIso?: string } } | null;
+};
+
+export type ArrivalWindowSlotContext = {
+  windowStartIso?: string | null;
+  windowEndIso?: string | null;
+};
+
+/**
+ * Resolve arrival window isos for scheduler / doctor-day views.
+ * Priority: explicit appointment effectiveWindow → doctor-day effectiveWindow → routed slot → type defaults.
+ */
+export function resolveArrivalWindowIsos(args: {
+  apptEffectiveWindow?: { startIso?: string; endIso?: string } | null;
+  household?: ArrivalWindowHouseholdContext | null;
+  slot?: ArrivalWindowSlotContext | null;
+  scheduledStartIso?: string | null;
+  appointmentType?: Appointment['appointmentType'];
+  appointmentEndIso?: string | null;
+  practiceTz: string;
+  allowTypeFallback?: boolean;
+}): { startIso: string; endIso: string } | null {
+  const apptStart = args.apptEffectiveWindow?.startIso?.trim() || null;
+  const apptEnd = args.apptEffectiveWindow?.endIso?.trim() || null;
+  if (apptStart && apptEnd) {
+    return { startIso: apptStart, endIso: apptEnd };
+  }
+
+  const h = args.household;
+  const doctorDayStart =
+    h?.effectiveWindow?.startIso?.trim() ||
+    h?.windowStartIso?.trim() ||
+    h?.primary?.effectiveWindow?.startIso?.trim() ||
+    null;
+  const doctorDayEnd =
+    h?.effectiveWindow?.endIso?.trim() ||
+    h?.windowEndIso?.trim() ||
+    h?.primary?.effectiveWindow?.endIso?.trim() ||
+    null;
+  if (doctorDayStart && doctorDayEnd) {
+    return { startIso: doctorDayStart, endIso: doctorDayEnd };
+  }
+
+  if (args.slot?.windowStartIso != null && args.slot?.windowEndIso != null) {
+    const slotStart = args.slot.windowStartIso.trim();
+    const slotEnd = args.slot.windowEndIso.trim();
+    if (slotStart && slotEnd) {
+      return { startIso: slotStart, endIso: slotEnd };
+    }
+  }
+
+  if (args.allowTypeFallback !== false && args.scheduledStartIso) {
+    const computed = effectiveWindowForScheduledStart(
+      args.scheduledStartIso,
+      args.appointmentType ?? undefined,
+      args.practiceTz,
+      { appointmentEndIso: args.appointmentEndIso ?? undefined }
+    );
+    if (computed) return computed;
+  }
+
+  return null;
+}
 
 function householdAndSlotForAppointment(
   dayData: DayData,
@@ -19,7 +88,7 @@ function householdAndSlotForAppointment(
   return null;
 }
 
-/** Same window priority as Scheduler hover + Doctor Day: routed ETA slot, then doctor-day effectiveWindow. */
+/** Same window priority as Scheduler hover + Doctor Day. */
 export function arrivalWindowIsosFromDriveDay(
   dayData: DayData,
   apptId: string | number,
@@ -28,32 +97,17 @@ export function arrivalWindowIsosFromDriveDay(
   const row = householdAndSlotForAppointment(dayData, apptId);
   if (!row) return null;
   const { h, slot } = row;
-
-  const apptWindowStart = apptEffectiveWindow?.startIso?.trim() || null;
-  const apptWindowEnd = apptEffectiveWindow?.endIso?.trim() || null;
-
-  const windowStartIso =
-    apptWindowStart && apptWindowEnd
-      ? apptWindowStart
-      : (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
-        (h as { windowStartIso?: string | null }).windowStartIso ??
-        (h as { effectiveWindow?: { startIso?: string } }).effectiveWindow?.startIso ??
-        (h as { primary?: { effectiveWindow?: { startIso?: string } } }).primary?.effectiveWindow
-          ?.startIso ??
-        null;
-
-  const windowEndIso =
-    apptWindowStart && apptWindowEnd
-      ? apptWindowEnd
-      : (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
-        (h as { windowEndIso?: string | null }).windowEndIso ??
-        (h as { effectiveWindow?: { endIso?: string } }).effectiveWindow?.endIso ??
-        (h as { primary?: { effectiveWindow?: { endIso?: string } } }).primary?.effectiveWindow
-          ?.endIso ??
-        null;
-
-  if (!windowStartIso?.trim() || !windowEndIso?.trim()) return null;
-  return { startIso: windowStartIso.trim(), endIso: windowEndIso.trim() };
+  const practiceTz = dayData.timezone || 'America/New_York';
+  const primary = (h as { primary?: { appointmentStart?: string; appointmentEnd?: string; appointmentType?: Appointment['appointmentType'] } }).primary;
+  return resolveArrivalWindowIsos({
+    apptEffectiveWindow,
+    household: h as ArrivalWindowHouseholdContext,
+    slot,
+    scheduledStartIso: h.startIso ?? primary?.appointmentStart ?? null,
+    appointmentType: primary?.appointmentType,
+    appointmentEndIso: h.endIso ?? primary?.appointmentEnd ?? null,
+    practiceTz,
+  });
 }
 
 /** Load doctor-day + `/routing/eta` and return the routed arrival window for one appointment. */

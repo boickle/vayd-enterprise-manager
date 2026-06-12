@@ -1,7 +1,7 @@
 import { DateTime } from 'luxon';
 import type { Appointment } from '../api/roomLoader';
 import { fetchPatientAppointmentsStaff } from '../api/pimsAppointments';
-import { fetchPatientMedicalRecordStaff } from '../api/patients';
+import { fetchPatientMedicalRecordStaff, fetchPatientProfileForRow } from '../api/patients';
 import type { MedicalRecordBundle } from './patientChartFromMedicalRecord';
 import {
   appointmentNotesDisplay,
@@ -13,6 +13,46 @@ function pickStr(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v).trim();
   return s || null;
+}
+
+function alertsTextFromValue(v: unknown): string | null {
+  if (v == null) return null;
+  if (typeof v === 'string') {
+    const s = v.trim();
+    return s || null;
+  }
+  if (Array.isArray(v) && v.length) {
+    const joined = v
+      .map((a) => (typeof a === 'string' ? a : pickStr((a as Record<string, unknown>)?.message)))
+      .filter(Boolean)
+      .join(' ');
+    return joined || null;
+  }
+  return null;
+}
+
+export function patientAlertsFromRecord(raw: unknown): string | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const nested =
+    o.patient && typeof o.patient === 'object' && !Array.isArray(o.patient)
+      ? (o.patient as Record<string, unknown>)
+      : null;
+  if (nested) {
+    const fromNested =
+      alertsTextFromValue(nested.alerts) ??
+      pickStr(nested.alert) ??
+      pickStr(nested.patientAlert) ??
+      pickStr(nested.patientAlerts);
+    if (fromNested) return fromNested;
+  }
+  return (
+    alertsTextFromValue(o.alerts) ??
+    pickStr(o.alert) ??
+    pickStr(o.patientAlert) ??
+    pickStr(o.patientAlerts) ??
+    null
+  );
 }
 
 export type RoutingPatientReminderLine = {
@@ -51,7 +91,7 @@ export function extractActivePatientsFromClientStaffRecord(raw: unknown): Routin
     out.push({
       id: String(idRaw),
       name,
-      alerts: pickStr(o.alerts),
+      alerts: patientAlertsFromRecord(o),
     });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
@@ -178,30 +218,48 @@ function isFutureAppointment(a: Appointment, asOfMs: number): boolean {
   return Number.isFinite(startMs) && startMs > asOfMs;
 }
 
+function matchesExcludedAppointment(
+  a: Appointment,
+  excludeAppointmentId: string | number | null | undefined
+): boolean {
+  if (excludeAppointmentId == null || excludeAppointmentId === '') return false;
+  return String(a.id) === String(excludeAppointmentId);
+}
+
 export async function loadRoutingPatientHoverSummary(
   patientId: string,
   practiceId: number,
   practiceTz: string,
-  opts?: { alerts?: string | null }
+  opts?: {
+    alerts?: string | null;
+    /** Omit this visit from last/next appointment (e.g. the appointment being edited). */
+    excludeAppointmentId?: string | number | null;
+  }
 ): Promise<RoutingPatientHoverSummary> {
   const asOfMs = Date.now();
+  const excludeAppointmentId = opts?.excludeAppointmentId;
 
-  const [medicalRecord, appointments] = await Promise.all([
+  const [medicalRecord, appointments, patientProfile] = await Promise.all([
     fetchPatientMedicalRecordStaff(patientId).catch(() => null),
     fetchPatientAppointmentsStaff(patientId, { practiceId }).catch(() => [] as Appointment[]),
+    fetchPatientProfileForRow({ id: patientId }).catch(() => null),
   ]);
 
-  const alerts =
-    opts?.alerts?.trim() ||
-    pickStr((medicalRecord as Record<string, unknown> | null)?.alerts) ||
-    null;
+  const alerts = opts?.alerts?.trim() || patientAlertsFromRecord(patientProfile) || null;
 
   const past = appointments
-    .filter((a) => isBookablePastAppointment(a, asOfMs))
+    .filter(
+      (a) =>
+        isBookablePastAppointment(a, asOfMs) &&
+        !matchesExcludedAppointment(a, excludeAppointmentId)
+    )
     .sort((a, b) => Date.parse(b.appointmentStart) - Date.parse(a.appointmentStart))[0];
 
   const future = appointments
-    .filter((a) => isFutureAppointment(a, asOfMs))
+    .filter(
+      (a) =>
+        isFutureAppointment(a, asOfMs) && !matchesExcludedAppointment(a, excludeAppointmentId)
+    )
     .sort((a, b) => Date.parse(a.appointmentStart) - Date.parse(b.appointmentStart))[0];
 
   const parsedReminders = parseRemindersFromMedicalRecord(medicalRecord, practiceTz);
