@@ -274,6 +274,7 @@ export default function ForwardBookingPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [manualCompleteEntry, setManualCompleteEntry] = useState<ForwardBookingEntry | null>(null);
   const [smsEntry, setSmsEntry] = useState<ForwardBookingEntry | null>(null);
+  const [smsPrimaryProviderId, setSmsPrimaryProviderId] = useState<number | null>(null);
   const [smsMessage, setSmsMessage] = useState('');
   const [smsSending, setSmsSending] = useState(false);
   const [smsError, setSmsError] = useState<string | null>(null);
@@ -368,9 +369,15 @@ export default function ForwardBookingPage() {
         const entry = list.find((r) => r.id === openSmsForReturn.forwardBookingEntryId);
         const points = metaMap.get(openSmsForReturn.bookedAppointmentId)?.points ?? 0;
         if (entry && points <= 0 && clientHasSmsPhone(entry)) {
-          const bookedSlot = await resolveBookedSlotForSms(entry);
+          const resolved = await resolveBookedSlotForSms(entry);
           setSmsError(null);
-          setSmsMessage(buildForwardBookingSmsMessage(entry, bookedSlot ? { bookedSlot } : undefined));
+          setSmsMessage(
+            buildForwardBookingSmsMessage(
+              entry,
+              resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : undefined
+            )
+          );
+          setSmsPrimaryProviderId(resolved.primaryProviderId ?? null);
           setSmsEntry(entry);
         }
       }
@@ -564,13 +571,20 @@ export default function ForwardBookingPage() {
   const openSmsModal = async (entry: ForwardBookingEntry) => {
     if (!clientHasSmsPhone(entry)) return;
     setSmsError(null);
-    const bookedSlot = await resolveBookedSlotForSms(entry);
-    setSmsMessage(buildForwardBookingSmsMessage(entry, bookedSlot ? { bookedSlot } : undefined));
+    const resolved = await resolveBookedSlotForSms(entry);
+    setSmsMessage(
+      buildForwardBookingSmsMessage(
+        entry,
+        resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : undefined
+      )
+    );
+    setSmsPrimaryProviderId(resolved.primaryProviderId ?? null);
     setSmsEntry(entry);
   };
 
   const closeSmsModal = () => {
     setSmsEntry(null);
+    setSmsPrimaryProviderId(null);
     setSmsMessage('');
     setSmsError(null);
   };
@@ -589,6 +603,7 @@ export default function ForwardBookingPage() {
       await sendClientSms(smsEntry.clientId, {
         message: smsMessage.trim(),
         ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
+        ...(smsPrimaryProviderId != null ? { primaryProviderId: smsPrimaryProviderId } : {}),
       });
       closeSmsModal();
     } catch (e: unknown) {
