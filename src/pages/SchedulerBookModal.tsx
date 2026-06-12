@@ -17,6 +17,7 @@ import {
 } from '../utils/manualBookCalendarPreview';
 import { submitRoutingAcceptedFeedbackFromPreview } from '../utils/routingBookFeedback';
 import { completeForwardBookingFromBook } from '../utils/forwardBookingBookComplete';
+import { completeAppointmentRequestFromBook } from '../utils/appointmentRequestBookComplete';
 import { fetchClientByIdStaff, type ClientSearchRow } from '../api/clientsStaff';
 import {
   searchPimsClientsAndPatients,
@@ -203,6 +204,8 @@ export type SchedulerBookPrefill = {
   /** Forward booking list → routing book — server + POST …/complete attribution. */
   forwardBookingTrackingToken?: string;
   forwardBookingEntryId?: number;
+  /** Appointment request list → routing book — POST …/request-submissions/:id/book after create. */
+  appointmentRequestSubmissionId?: number;
   /** Calculate Time type name from routing (for reschedule book type resolution). */
   routingStatsTypeKey?: string;
 };
@@ -235,6 +238,7 @@ type Props = {
   onBooked: (detail?: {
     routingFeedbackWarning?: string;
     forwardBookingWarning?: string;
+    appointmentRequestWarning?: string;
     schedulingOverrideWarning?: string;
     schedulingOverridesApplied?: boolean;
     savedAppointmentId?: number;
@@ -1696,6 +1700,16 @@ export function SchedulerBookModal({
         }
       }
 
+      let appointmentRequestWarning: string | undefined;
+      const appointmentRequestSubmissionId = prefill?.appointmentRequestSubmissionId;
+      if (savedAppointmentId != null && appointmentRequestSubmissionId != null) {
+        const arComplete = await completeAppointmentRequestFromBook(savedAppointmentId, prefill);
+        if (!arComplete.completed && arComplete.error) {
+          appointmentRequestWarning =
+            'Appointment saved, but the request could not be marked booked. ' + arComplete.error;
+        }
+      }
+
       let schedulingOverrideWarning: string | undefined;
       let schedulingOverridesApplied = false;
       const markRoutingDayOff = scheduleOverrideDayOffRef.current || scheduleOverrideDayOff;
@@ -1738,11 +1752,13 @@ export function SchedulerBookModal({
       const bookedDetail =
         routingFeedbackWarning ||
         forwardBookingWarning ||
+        appointmentRequestWarning ||
         schedulingOverrideWarning ||
         schedulingOverridesApplied
           ? {
               routingFeedbackWarning,
               forwardBookingWarning,
+              appointmentRequestWarning,
               schedulingOverrideWarning,
               schedulingOverridesApplied,
             }

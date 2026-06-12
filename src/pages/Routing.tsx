@@ -91,6 +91,17 @@ import {
 } from '../utils/forwardBookingFromAppointment';
 import { FORWARD_BOOKING_LIST_PATH } from '../utils/forwardBookingReturnSession';
 import {
+  APPOINTMENT_REQUESTS_LIST_PATH,
+} from '../utils/appointmentRequestReturnSession';
+import {
+  appointmentRequestWorkspaceIsActive,
+  dismissRoutingAppointmentRequestWorkspace,
+  markAppointmentRequestIntentAppliedToRoutingForm,
+  readRoutingAppointmentRequestIntent,
+  ROUTING_APPOINTMENT_REQUEST_INTENT_UPDATED_EVENT,
+  ROUTING_DISMISS_APPOINTMENT_REQUEST_EVENT,
+} from '../utils/routingAppointmentRequestIntent';
+import {
   appointmentTypeForRoutingStatsKey,
   resolveRoutingChosenAppointmentTypeId,
 } from '../utils/routingCalculateTimeType';
@@ -1857,6 +1868,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const [hasActiveForwardBookingWorkspace, setHasActiveForwardBookingWorkspace] = useState(() =>
     forwardBookingWorkspaceIsActive()
   );
+  const [hasActiveAppointmentRequestWorkspace, setHasActiveAppointmentRequestWorkspace] = useState(
+    () => appointmentRequestWorkspaceIsActive()
+  );
   const [rescheduleScope, setRescheduleScope] = useState<RoutingRescheduleScope | ''>(() => {
     const ri = readRoutingRescheduleIntent();
     if (!ri) return '';
@@ -1884,7 +1898,25 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     return `Forward booking for ${client}. ${dueHint} Run Get Best Route and preview a slot.`;
   }, [activeForwardBookingIntent]);
 
+  const activeAppointmentRequestIntent = useMemo(
+    () => (hasActiveAppointmentRequestWorkspace ? readRoutingAppointmentRequestIntent() : null),
+    [hasActiveAppointmentRequestWorkspace]
+  );
+
+  const appointmentRequestModeSummary = useMemo(() => {
+    const intent = activeAppointmentRequestIntent;
+    if (!intent) return '';
+    const client = intent.clientDisplayLabel?.trim() || 'Client';
+    const howSoon = intent.howSoon?.trim();
+    return howSoon
+      ? `Appointment request from ${client}. Urgency: ${howSoon}. Run Get Best Route and preview a slot.`
+      : `Appointment request from ${client}. Run Get Best Route and preview a slot.`;
+  }, [activeAppointmentRequestIntent]);
+
   const lockForwardBookingClient = hasActiveForwardBookingWorkspace;
+  const lockAppointmentRequestClient =
+    hasActiveAppointmentRequestWorkspace && Boolean(activeAppointmentRequestIntent?.clientId?.trim());
+  const lockQueueClient = lockForwardBookingClient || lockAppointmentRequestClient;
 
   const activeRescheduleIntent = useMemo(
     () => readRoutingRescheduleIntent(),
@@ -1965,6 +1997,11 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const exitForwardBookingWorkspace = useCallback(() => {
     dismissRoutingForwardBookingWorkspace();
     navigate(FORWARD_BOOKING_LIST_PATH);
+  }, [navigate]);
+
+  const exitAppointmentRequestWorkspace = useCallback(() => {
+    dismissRoutingAppointmentRequestWorkspace();
+    navigate(APPOINTMENT_REQUESTS_LIST_PATH);
   }, [navigate]);
 
   const resetRoutingFormAfterRescheduleDismiss = useCallback(() => {
@@ -2061,6 +2098,22 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       window.removeEventListener(
         ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT,
         syncForwardBookingWorkspaceFlag
+      );
+  }, []);
+
+  useEffect(() => {
+    function syncAppointmentRequestWorkspaceFlag() {
+      setHasActiveAppointmentRequestWorkspace(appointmentRequestWorkspaceIsActive());
+    }
+    syncAppointmentRequestWorkspaceFlag();
+    window.addEventListener(
+      ROUTING_APPOINTMENT_REQUEST_INTENT_UPDATED_EVENT,
+      syncAppointmentRequestWorkspaceFlag
+    );
+    return () =>
+      window.removeEventListener(
+        ROUTING_APPOINTMENT_REQUEST_INTENT_UPDATED_EVENT,
+        syncAppointmentRequestWorkspaceFlag
       );
   }, []);
 
@@ -2350,6 +2403,123 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     };
   }, [triggerRoutingPrefillFlash]);
 
+  /** Appointment request list → hydrate Routing form once per intent row. */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function mergeAppointmentRequestIntentFromList() {
+      const intent = readRoutingAppointmentRequestIntent();
+      if (!intent || !intent.workspaceActive || intent.appliedToRoutingForm) return;
+      if (readRoutingRescheduleIntent()) return;
+      if (readRoutingForwardBookingIntent()?.workspaceActive) return;
+
+      let pimsDoc = '';
+      let doctorDisplayName = intent.preferredDoctorDisplayName?.trim() ?? '';
+      const preferredId = intent.preferredDoctorId?.trim();
+      if (preferredId) {
+        try {
+          const providerRows = await fetchPrimaryProviders();
+          if (cancelled) return;
+          const match = providerRows.find(
+            (p) =>
+              String(p.id) === preferredId ||
+              String(p.pimsId ?? '') === preferredId ||
+              String((p as { pimsId?: string }).pimsId ?? '') === preferredId
+          );
+          if (match?.pimsId) {
+            pimsDoc = String(match.pimsId).trim();
+            doctorDisplayName =
+              doctorDisplayName ||
+              match.name?.trim() ||
+              [match.firstName, match.lastName].filter(Boolean).join(' ').trim();
+          }
+        } catch {
+          /* optional */
+        }
+      }
+
+      const startDate = DateTime.now().setZone(DEFAULT_PRACTICE_TIMEZONE).toISODate() ?? '';
+      const endDate =
+        DateTime.now().setZone(DEFAULT_PRACTICE_TIMEZONE).plus({ days: 14 }).toISODate() ?? '';
+
+      setForm((f) => ({
+        ...f,
+        ...(pimsDoc ? { doctorId: pimsDoc } : {}),
+        ...(startDate && endDate ? { startDate, endDate } : {}),
+        newAppt: {
+          ...f.newAppt,
+          serviceMinutes:
+            intent.serviceMinutes > 0 ? intent.serviceMinutes : Math.max(15, f.newAppt.serviceMinutes || 45),
+          ...(intent.address?.trim() ? { address: intent.address.trim() } : {}),
+        },
+      }));
+
+      let syncedClient: Client | null = null;
+      const clientId = intent.clientId?.trim();
+      if (clientId) {
+        try {
+          const raw = await fetchClientByIdStaff(clientId);
+          if (cancelled) return;
+          syncedClient = staffRecordToRoutingClient(raw);
+          if (syncedClient) {
+            pickClientRef.current(syncedClient);
+          }
+        } catch {
+          /* fall back to label only */
+        }
+      }
+
+      if (!syncedClient && !cancelled) {
+        const label = intent.clientDisplayLabel?.trim();
+        if (label) {
+          setClientQuery(label);
+          if (clientId) {
+            setForm((f) => ({
+              ...f,
+              newAppt: { ...f.newAppt, clientId },
+            }));
+          }
+        }
+      }
+
+      const typeName = intent.appointmentTypeName?.trim();
+      if (typeName) setRoutingApptStatsTypeKey(typeName);
+
+      if (pimsDoc) {
+        setDoctorQuery(doctorDisplayName || `Doctor ${pimsDoc}`);
+      }
+
+      const flashFields: RoutingPrefillFlashField[] = [];
+      if (pimsDoc) flashFields.push('doctor');
+      if (syncedClient || intent.clientDisplayLabel?.trim()) flashFields.push('client');
+      if (intent.address?.trim() || (syncedClient && formatClientAddress(syncedClient)))
+        flashFields.push('address');
+      if (intent.serviceMinutes > 0) flashFields.push('minutes');
+      if (typeName) flashFields.push('apptType');
+      if (flashFields.length > 0) triggerRoutingPrefillFlash(flashFields);
+
+      setResult(null);
+      setFeedbackError(null);
+      const howSoon = intent.howSoon?.trim();
+      setFeedbackToast(
+        howSoon
+          ? `Appointment request loaded (${howSoon}). Run routing and preview a slot.`
+          : 'Appointment request loaded. Run routing and preview a slot.'
+      );
+      markAppointmentRequestIntentAppliedToRoutingForm();
+    }
+
+    void mergeAppointmentRequestIntentFromList();
+    const onIntentUpdated = () => {
+      void mergeAppointmentRequestIntentFromList();
+    };
+    window.addEventListener(ROUTING_APPOINTMENT_REQUEST_INTENT_UPDATED_EVENT, onIntentUpdated);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(ROUTING_APPOINTMENT_REQUEST_INTENT_UPDATED_EVENT, onIntentUpdated);
+    };
+  }, [triggerRoutingPrefillFlash]);
+
   useEffect(() => {
     if (!calendarWorkspaceMode) return;
     function onDismissReschedule() {
@@ -2369,6 +2539,17 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     window.addEventListener(ROUTING_DISMISS_FORWARD_BOOKING_EVENT, onDismissForwardBooking);
     return () =>
       window.removeEventListener(ROUTING_DISMISS_FORWARD_BOOKING_EVENT, onDismissForwardBooking);
+  }, [calendarWorkspaceMode, resetRoutingFormAfterForwardBookingDismiss]);
+
+  useEffect(() => {
+    if (!calendarWorkspaceMode) return;
+    function onDismissAppointmentRequest() {
+      setHasActiveAppointmentRequestWorkspace(false);
+      resetRoutingFormAfterForwardBookingDismiss();
+    }
+    window.addEventListener(ROUTING_DISMISS_APPOINTMENT_REQUEST_EVENT, onDismissAppointmentRequest);
+    return () =>
+      window.removeEventListener(ROUTING_DISMISS_APPOINTMENT_REQUEST_EVENT, onDismissAppointmentRequest);
   }, [calendarWorkspaceMode, resetRoutingFormAfterForwardBookingDismiss]);
 
   /** Clear stale routing results when the search doctor changes; calendar stays on the source visit. */
@@ -2795,7 +2976,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
   /** Drop stale clientId from session restore when the client field is empty (e.g. prior visit). */
   useEffect(() => {
-    if (lockForwardBookingClient) return;
+    if (lockQueueClient) return;
     if (clientQuery.trim()) return;
     setForm((f) => {
       if (!f.newAppt.clientId?.trim()) return f;
@@ -2816,7 +2997,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
   // Client search
   useEffect(() => {
-    if (lockForwardBookingClient) {
+    if (lockQueueClient) {
       setClientResults([]);
       setShowClientDropdown(false);
       return;
@@ -2843,13 +3024,14 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       }
     }, 300);
     return () => clearTimeout(t);
-  }, [clientQuery, lockForwardBookingClient]);
+  }, [clientQuery, lockQueueClient]);
 
-  /** Keep forward-booking client fixed to the list row that started this session. */
+  /** Keep queue client fixed to the list row that started this session. */
   useEffect(() => {
-    if (!lockForwardBookingClient) return;
-    const intent = readRoutingForwardBookingIntent();
-    const anchorClientId = intent?.clientId?.trim();
+    if (!lockQueueClient) return;
+    const anchorClientId =
+      readRoutingForwardBookingIntent()?.clientId?.trim() ||
+      readRoutingAppointmentRequestIntent()?.clientId?.trim();
     if (!anchorClientId) return;
     const currentClientId = form.newAppt.clientId?.trim();
     if (currentClientId === anchorClientId) return;
@@ -2867,7 +3049,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
             ...f,
             newAppt: { ...f.newAppt, clientId: anchorClientId },
           }));
-          const label = intent?.clientDisplayLabel?.trim();
+          const label =
+            readRoutingForwardBookingIntent()?.clientDisplayLabel?.trim() ||
+            readRoutingAppointmentRequestIntent()?.clientDisplayLabel?.trim();
           if (label) setClientQuery(label);
         }
       } catch {
@@ -2876,7 +3060,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           ...f,
           newAppt: { ...f.newAppt, clientId: anchorClientId },
         }));
-        const label = intent?.clientDisplayLabel?.trim();
+        const label =
+          readRoutingForwardBookingIntent()?.clientDisplayLabel?.trim() ||
+          readRoutingAppointmentRequestIntent()?.clientDisplayLabel?.trim();
         if (label) setClientQuery(label);
       }
     })();
@@ -2884,7 +3070,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     return () => {
       cancelled = true;
     };
-  }, [lockForwardBookingClient, form.newAppt.clientId]);
+  }, [lockQueueClient, form.newAppt.clientId]);
 
   // Doctor search
   useEffect(() => {
@@ -3255,9 +3441,10 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     c: Client,
     opts?: { alternateAddress?: string | null; skipAlternateConfirm?: boolean }
   ) {
-    if (lockForwardBookingClient) {
-      const intent = readRoutingForwardBookingIntent();
-      const anchorClientId = intent?.clientId?.trim();
+    if (lockQueueClient) {
+      const anchorClientId =
+        readRoutingForwardBookingIntent()?.clientId?.trim() ||
+        readRoutingAppointmentRequestIntent()?.clientId?.trim();
       if (anchorClientId && String(c.id) !== anchorClientId) return;
     }
     if (!opts?.skipAlternateConfirm) {
@@ -3845,6 +4032,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
             <span className="routing-reschedule-mode-badge">Rescheduling</span>
           ) : hasActiveForwardBookingWorkspace ? (
             <span className="routing-forward-booking-mode-badge">Forward booking</span>
+          ) : hasActiveAppointmentRequestWorkspace ? (
+            <span className="routing-forward-booking-mode-badge">Appointment request</span>
           ) : null}
         </div>
         {hasActiveRescheduleIntent && rescheduleModeSummary ? (
@@ -3862,6 +4051,22 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                 onClick={exitForwardBookingWorkspace}
               >
                 Exit forward booking
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {hasActiveAppointmentRequestWorkspace && appointmentRequestModeSummary ? (
+          <div className="routing-forward-booking-mode-summary" role="status">
+            <p className="routing-forward-booking-mode-summary-text muted">
+              {appointmentRequestModeSummary}
+            </p>
+            <div className="routing-forward-booking-mode-actions">
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={exitAppointmentRequestWorkspace}
+              >
+                Exit appointment request
               </button>
             </div>
           </div>
@@ -4241,13 +4446,13 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                 <input
                   className={`input${routingPrefillFlashClass('client')}${routingRescheduleHighlightClass('client')}${
                     routingClientTypeConflictMessage ? ' routing-input--error' : ''
-                  }${lockForwardBookingClient ? ' routing-input--locked' : ''}`}
+                  }${lockQueueClient ? ' routing-input--locked' : ''}`}
                   value={clientQuery}
                   aria-invalid={Boolean(routingClientTypeConflictMessage)}
-                  readOnly={lockForwardBookingClient}
-                  disabled={lockForwardBookingClient}
+                  readOnly={lockQueueClient}
+                  disabled={lockQueueClient}
                   onChange={(e) => {
-                    if (lockForwardBookingClient) return;
+                    if (lockQueueClient) return;
                     const next = e.target.value;
                     setClientQuery(next);
                     setClientActiveIdx(-1);
@@ -4259,13 +4464,19 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                       }));
                     }
                   }}
-                  placeholder={lockForwardBookingClient ? 'Client locked for forward booking' : 'Type last name...'}
+                  placeholder={
+                    lockForwardBookingClient
+                      ? 'Client locked for forward booking'
+                      : lockAppointmentRequestClient
+                        ? 'Client locked for appointment request'
+                        : 'Type last name...'
+                  }
                   onFocus={() => {
-                    if (lockForwardBookingClient) return;
+                    if (lockQueueClient) return;
                     clientResults.length && setShowClientDropdown(true);
                   }}
                   onKeyDown={(e) => {
-                    if (lockForwardBookingClient) return;
+                    if (lockQueueClient) return;
                     if (!clientResults.length) return;
 
                     if (e.key === 'ArrowDown') {
@@ -4291,13 +4502,13 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                   }}
                 />
 
-                {clientSearching && !lockForwardBookingClient && (
+                {clientSearching && !lockQueueClient && (
                   <div className="muted" style={{ marginTop: 6 }}>
                     Searching...
                   </div>
                 )}
 
-                {!lockForwardBookingClient && showClientDropdown && clientResults.length > 0 && (
+                {!lockQueueClient && showClientDropdown && clientResults.length > 0 && (
                   <ul
                     className="dropdown"
                     role="listbox"
@@ -4369,10 +4580,11 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                   </ul>
                 )}
               </div>
-              {lockForwardBookingClient ? (
+              {lockQueueClient ? (
                 <p className="muted routing-route-hint routing-forward-booking-client-lock-hint">
-                  Client is fixed for this forward booking. Use Exit forward booking to choose a
-                  different client.
+                  {lockForwardBookingClient
+                    ? 'Client is fixed for this forward booking. Use Exit forward booking to choose a different client.'
+                    : 'Client is fixed for this appointment request. Use Exit appointment request to choose a different client.'}
                 </p>
               ) : null}
             </Field>
