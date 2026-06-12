@@ -17,6 +17,18 @@ export type ForwardBookingSmsBookedSlot = {
   windowEnd: string;
 };
 
+export type ForwardBookingSmsBookedContext = {
+  bookedSlot?: ForwardBookingSmsBookedSlot;
+  /** Booked visit assignee — send SMS from their Quo/OpenPhone line when set. */
+  primaryProviderId?: number;
+};
+
+function primaryProviderIdFromEntry(entry: ForwardBookingEntry): number | undefined {
+  const id = entry.primaryProvider?.id;
+  if (id == null || !Number.isFinite(Number(id))) return undefined;
+  return Number(id);
+}
+
 function dayOfMonthWithOrdinal(day: number): string {
   const mod100 = day % 100;
   if (mod100 >= 11 && mod100 <= 13) return `${day}th`;
@@ -56,16 +68,6 @@ function clientFirstName(entry: ForwardBookingEntry): string {
     .trim();
   const token = full.split(/\s+/).filter(Boolean)[0];
   return token || 'there';
-}
-
-function doctorLastName(entry: ForwardBookingEntry): string {
-  const p = entry.primaryProvider;
-  if (!p) return 'your veterinarian';
-  const ln = pickStr(p.lastName);
-  if (ln) return ln;
-  const full = pickStr(p.name) ?? [pickStr(p.firstName), pickStr(p.lastName)].filter(Boolean).join(' ');
-  const parts = full.split(/\s+/).filter(Boolean);
-  return parts.length > 0 ? parts[parts.length - 1]! : 'your veterinarian';
 }
 
 /** Interval phrase for “book … in …” (drops trailing “out”). */
@@ -237,14 +239,20 @@ export async function resolveForwardBookingSmsBookedSlot(
     practiceId?: number;
     appointmentType?: AppointmentTypeWindowFields | null;
   }
-): Promise<ForwardBookingSmsBookedSlot | undefined> {
+): Promise<ForwardBookingSmsBookedContext> {
   const appointmentType = opts?.appointmentType ?? null;
   const practiceId = opts?.practiceId;
+  const fallbackProviderId = primaryProviderIdFromEntry(entry);
 
   const apptId = forwardBookingLinkedAppointmentId(entry) ?? entry.bookedAppointmentId ?? null;
   if (apptId != null && practiceId != null) {
     const appt = await fetchAppointmentById(apptId, { practiceId });
     if (appt) {
+      const bookedProviderId =
+        appt.primaryProvider?.id != null && Number.isFinite(Number(appt.primaryProvider.id))
+          ? Number(appt.primaryProvider.id)
+          : fallbackProviderId;
+
       const type =
         appointmentType ??
         (appt.appointmentType as AppointmentTypeWindowFields | null | undefined) ??
@@ -259,20 +267,31 @@ export async function resolveForwardBookingSmsBookedSlot(
         doctorPimsId
       );
       if (routedWin) {
-        return formatForwardBookingSmsBookedSlot(
-          routedWin.startIso,
-          routedWin.endIso,
-          practiceTz,
-          appt.appointmentStart
-        );
+        return {
+          bookedSlot: formatForwardBookingSmsBookedSlot(
+            routedWin.startIso,
+            routedWin.endIso,
+            practiceTz,
+            appt.appointmentStart
+          ),
+          primaryProviderId: bookedProviderId,
+        };
       }
 
       const fromAppt = formatForwardBookingSmsBookedSlotFromAppointment(appt, practiceTz, type);
-      if (fromAppt) return fromAppt;
+      if (fromAppt) {
+        return { bookedSlot: fromAppt, primaryProviderId: bookedProviderId };
+      }
+
+      return { primaryProviderId: bookedProviderId };
     }
   }
 
-  return formatForwardBookingSmsBookedSlotFromEntry(entry, practiceTz, appointmentType);
+  const bookedSlot = formatForwardBookingSmsBookedSlotFromEntry(entry, practiceTz, appointmentType);
+  return {
+    ...(bookedSlot ? { bookedSlot } : {}),
+    ...(fallbackProviderId != null ? { primaryProviderId: fallbackProviderId } : {}),
+  };
 }
 
 export function formatForwardBookingSmsBookedSlotFromEntry(
@@ -298,13 +317,12 @@ export function buildForwardBookingSmsMessage(
   opts?: { bookedSlot?: ForwardBookingSmsBookedSlot }
 ): string {
   const first = clientFirstName(entry);
-  const drLast = doctorLastName(entry);
   const pets = petNamesPhrase(entry);
   const timeframe = forwardBookingTimeFramePhrase(entry);
   const datePart = opts?.bookedSlot?.dateLabel?.trim() || 'xxxxx';
   const windowStart = opts?.bookedSlot?.windowStart?.trim() || 'xxxx';
   const windowEnd = opts?.bookedSlot?.windowEnd?.trim() || 'xxxx';
-  return `Hi ${first}. I'm following up on Dr. ${drLast}'s request to book ${pets} in ${timeframe}. Could we come by on ${datePart} between ${windowStart} and ${windowEnd}?`;
+  return `Hi ${first}. I'm following up on your VAYD team's request to book ${pets} in ${timeframe}. Could they come by on ${datePart} between ${windowStart} and ${windowEnd}?`;
 }
 
 export function clientHasSmsPhone(entry: ForwardBookingEntry): boolean {
