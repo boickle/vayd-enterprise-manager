@@ -802,16 +802,23 @@ function appointmentActualVisitTimesTitle(appt: Appointment, practiceTz: string)
 function SchedulerApptVisitTimesBadge({
   appt,
   forwardBookingSourceAppointmentIds,
+  variant = 'card',
 }: {
   appt: Appointment;
   forwardBookingSourceAppointmentIds: ReadonlySet<number>;
+  variant?: 'card' | 'hover';
 }) {
   if (!appointmentShowsVisitTimesClock(appt, forwardBookingSourceAppointmentIds)) return null;
   const title = appointmentActualVisitTimesTitle(appt, PRACTICE_TZ);
   if (!title) return null;
   return (
     <span
-      className="scheduler-appt-visit-times-badge scheduler-appt-visit-times-badge--hover"
+      className={[
+        'scheduler-appt-visit-times-badge',
+        variant === 'hover' ? 'scheduler-appt-visit-times-badge--hover' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       title={title}
       aria-label={title}
     >
@@ -896,10 +903,19 @@ function SchedulerMemberHeartInline({ membershipName }: { membershipName: string
 function SchedulerEventTitleBlock({
   appt,
   variant = 'timed',
+  forwardBookingSourceAppointmentIds,
 }: {
   appt: Appointment;
   variant?: 'timed' | 'allDay';
+  forwardBookingSourceAppointmentIds?: ReadonlySet<number>;
 }) {
+  const visitTimesBadge =
+    forwardBookingSourceAppointmentIds != null ? (
+      <SchedulerApptVisitTimesBadge
+        appt={appt}
+        forwardBookingSourceAppointmentIds={forwardBookingSourceAppointmentIds}
+      />
+    ) : null;
   const c = appt.client;
   const member = appointmentPatientMember(appt);
   const clientLast = pickStr(c?.lastName);
@@ -925,6 +941,7 @@ function SchedulerEventTitleBlock({
         <span className="scheduler-event-title-fallback">{desc}</span>
         {zoneInTitle && zone ? <SchedulerZoneBadgeInline zoneShort={zone} title={zoneTitle} compact /> : null}
         <SchedulerApptCompleteBadge appt={appt} />
+        {visitTimesBadge}
       </Shell>
     );
   }
@@ -938,6 +955,7 @@ function SchedulerEventTitleBlock({
         <span className="scheduler-event-title-fallback">{fallback}</span>
         {zoneInTitle && zone ? <SchedulerZoneBadgeInline zoneShort={zone} title={zoneTitle} compact /> : null}
         <SchedulerApptCompleteBadge appt={appt} />
+        {visitTimesBadge}
       </Shell>
     );
   }
@@ -959,10 +977,12 @@ function SchedulerEventTitleBlock({
         <>
           <span className="scheduler-event-title-client-last"> {clientLast}</span>
           <SchedulerApptCompleteBadge appt={appt} />
+          {visitTimesBadge}
         </>
       ) : (
         <>
           <SchedulerApptCompleteBadge appt={appt} />
+          {visitTimesBadge}
         </>
       )}
     </Shell>
@@ -1736,6 +1756,7 @@ export function SchedulerHoverContent({
                 <SchedulerApptVisitTimesBadge
                   appt={appt}
                   forwardBookingSourceAppointmentIds={forwardBookingSourceAppointmentIds}
+                  variant="hover"
                 />
               ) : null}
             </div>
@@ -7037,7 +7058,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                           </div>
                         ) : null}
                         <span className="scheduler-all-day-span-bar-text">
-                          <SchedulerEventTitleBlock appt={appt} variant="allDay" />
+                          <SchedulerEventTitleBlock
+                            appt={appt}
+                            variant="allDay"
+                            forwardBookingSourceAppointmentIds={forwardBookingSourceAppointmentIds}
+                          />
                         </span>
                       </div>
                     );
@@ -7350,7 +7375,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                   {!isCompactEvent ? (
                                     <div className="scheduler-event-title-row">
                                       {previewPets.length > 0 ? (
-                                        <SchedulerEventTitleBlock appt={appt} />
+                                        <SchedulerEventTitleBlock
+                                          appt={appt}
+                                          forwardBookingSourceAppointmentIds={
+                                            forwardBookingSourceAppointmentIds
+                                          }
+                                        />
                                       ) : (
                                         <div className="scheduler-event-title">{previewLabel}</div>
                                       )}
@@ -7483,13 +7513,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                     >
                                       {schedulerEventAppointmentTitle(appt)}
                                     </span>
+                                    <SchedulerApptVisitTimesBadge
+                                      appt={appt}
+                                      forwardBookingSourceAppointmentIds={forwardBookingSourceAppointmentIds}
+                                    />
                                     {windowWarning ? <SchedulerWindowWarningBadge compact /> : null}
                                   </>
                                 ) : null}
                               </div>
                               {!isCompactEvent ? (
                                 <div className="scheduler-event-title-row">
-                                  <SchedulerEventTitleBlock appt={appt} />
+                                  <SchedulerEventTitleBlock
+                                    appt={appt}
+                                    forwardBookingSourceAppointmentIds={forwardBookingSourceAppointmentIds}
+                                  />
                                   {windowWarning ? <SchedulerWindowWarningBadge compact /> : null}
                                 </div>
                               ) : null}
